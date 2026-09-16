@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dcim_backend.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+
+# Env / secrets — never commit real values, only .env.example
+.env
+.env.*
+!.env.example
+!backend/.env.example
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Logs
+*.log

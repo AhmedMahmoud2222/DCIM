@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dcim_app
+          POSTGRES_PASSWORD: dcim_dev_password
+          POSTGRES_DB: dcim_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U dcim_app -d dcim_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
+      REDIS_URL: redis://localhost:6379/1
+      JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
+      ENVIRONMENT: test
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Enable required Postgres extensions
+        run: |
+          PGPASSWORD=dcim_dev_password psql -h localhost -U dcim_app -d dcim_test -c \
+            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
+      - name: Lint (ruff)
+        run: ruff check app tests
+      - name: Type check (mypy)
+        run: mypy app
+      - name: Run migrations
+        run: alembic upgrade head
+      - name: Bootstrap privileged retention role
+        run: PGPASSWORD=dcim_dev_password psql -h localhost -U dcim_app -d dcim_test -f scripts/bootstrap_privileged_roles.sql
+      - name: Run tests
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npm run typecheck
+      - run: npx eslint . --ext ts,tsx
+      - run: npm run build
