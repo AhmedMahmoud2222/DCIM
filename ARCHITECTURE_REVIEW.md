@@ -1,12 +1,12 @@
 # ARCHITECTURE_REVIEW.md
 
 **Project:** In-House DCIM Platform
-**Version:** 1.2 (targeted revision of v1.1)
+**Version:** 1.3 (closes the two Phase 1 blockers from the final architecture validation gate)
 **Phase:** 0 — Architecture (pre-implementation)
-**Status:** TARGETED REVISION COMPLETE — AWAITING FINAL RED-TEAM VALIDATION
+**Status:** PHASE 1 BLOCKERS CLOSED — SEE RE-VALIDATION GATE
 **Date:** 2026-09-16
 
-Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCHITECTURE_RED_TEAM_REPORT.md` (adversarial findings against v1.1), `ARCHITECTURE_CHANGE_MATRIX.md` (this revision's before/after trace), `ARCHITECTURE_TARGETED_REVISION_REPORT.md` (this revision's summary).
+Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCHITECTURE_RED_TEAM_REPORT.md` (adversarial findings against v1.1), `ARCHITECTURE_CHANGE_MATRIX.md` (v1.1→v1.2 before/after trace), `ARCHITECTURE_TARGETED_REVISION_REPORT.md` (v1.2 summary), `FINAL_ARCHITECTURE_VALIDATION_REPORT.md` (the gate that found F1 and confirmed H7 open — superseded by its v2 addendum recording this fix).
 
 ---
 
@@ -17,8 +17,9 @@ Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCH
 | 1.0 | 2026-09-16 | Initial Phase 0 architecture |
 | 1.1 | 2026-09-16 | Revision closing identity, placement, spatial-authority, power-topology, telemetry-identity, collector, event/outbox, and security gaps identified in the v1.1 review pass. |
 | 1.2 | 2026-09-16 | Targeted revision resolving red-team findings C1–C5 (asset replacement, U-range exclusion semantics, exactly-one-current-placement enforcement, placement/power concurrency control, floor-plan import security boundary), H1 (complete ManagedAsset subtype matrix), H6 (AuditLog partitioning/retention), H7 (site-scoped RBAC decision status), and M1 (identity-reference naming reconciliation). Scope was strictly limited to these findings — see `ARCHITECTURE_CHANGE_MATRIX.md` for the full before/after trace and the explicit list of findings intentionally left deferred. |
+| 1.3 | 2026-09-16 | Closes the two Phase 1 blockers found at the final architecture validation gate: **F1** — `EquipmentPlacement`'s rack-mounted `CHECK` now also requires `side IS NOT NULL`, closing a residual gap where a NULL `side` silently escaped both of §7a's exclusion constraints; **H7** — the architecture owner recorded Option B (§32a): Phase 1 ships with global authorization, site-scoped RBAC enforcement is built additively when the stated trigger condition is met. No other section changed. |
 
-This document supersedes v1.1 in place. §4 (identity), §7–§8 (placement/spatial), §10 (floor-plan import), §13 (power subtype), §30 (audit), §32 (RBAC), §36 (API concurrency), §38 (database), §46 (ADRs), §47 (phases), and §49 (open decisions) carry v1.2 changes; every other section is unchanged from v1.1. A new §47b (Architecture Invariant & Enforcement Matrix) is added. Nothing in this revision reverses ManagedAsset, PowerNode, EquipmentPlacement/RackPlacement, the integration layering, or the Outbox pattern — all five remain exactly as v1.1 defined them.
+This document supersedes v1.2 in place. §7 (F1's `CHECK` constraint) and §32a (H7's recorded decision), plus their references in §47a and §49, carry v1.3 changes; every other section is unchanged from v1.2. Nothing in this revision reverses ManagedAsset, PowerNode, EquipmentPlacement/RackPlacement, the integration layering, or the Outbox pattern.
 
 ---
 
@@ -334,9 +335,11 @@ EquipmentPlacement   PK id, equipment_id FK→ManagedAsset NOT NULL,
                      rotation_deg NULL, mounting_method TEXT NULL, orientation NULL,
                      version INT NOT NULL DEFAULT 1 (v1.2, §7c),
                      effective_from TIMESTAMPTZ NOT NULL, effective_to TIMESTAMPTZ NULL,
-                     CHECK (placement_type <> 'rack_mounted' OR (rack_id IS NOT NULL AND u_range IS NOT NULL)),
+                     CHECK (placement_type <> 'rack_mounted' OR (rack_id IS NOT NULL AND u_range IS NOT NULL AND side IS NOT NULL)) (v1.3 — closes F1),
                      IDX(equipment_id, effective_to), IDX(rack_id, effective_to)
 ```
+
+**v1.3 correction (finding F1, final validation gate):** the constraint above now also requires `side IS NOT NULL` for every rack-mounted placement. Without this, a row left with `side = NULL` produces `NULL` (not `false`) for both `occupies_front`/`occupies_rear` (§7a's generated columns), and a `NULL` value in a partial exclusion constraint's `WHERE` clause excludes that row from enforcement entirely — silently reopening the exact same-U-range overlap risk the §7a constraints exist to close. Requiring `side` to be one of `front`/`rear`/`both` at the same point the schema already requires `rack_id`/`u_range` closes this without changing §7a's constraints themselves — every rack-mounted row is now guaranteed to fall into at least one of `occupies_front`/`occupies_rear`'s enforced sets.
 
 "Current placement" = `effective_to IS NULL`; a queryable view `equipment_current_placement` (indexed the same way) is what the rack elevation endpoint and floor/wall equipment lists actually read, so callers never hand-roll the `effective_to IS NULL` filter. Moving equipment — rack to rack, or rack to floor-standing — closes the current row (`effective_to = now()`) and opens a new one; this **is** the placement history, so no separate history table is needed (correcting v1.0's split `Equipment` + `EquipmentPlacementHistory` into one temporal table, per the temporal model in §29).
 
@@ -1098,9 +1101,15 @@ Site-scoped enforcement (actually filtering queries by a user's assigned scope) 
 | **B** | Phase 1 intentionally ships with global authorization; site-scoped RBAC is a defined later phase, built when the stated trigger condition (two operationally distinct teams sharing one deployment) is actually met | Phase 1 proceeds as currently scoped in this document; every authenticated user with a global role can read/write every site's data until enforcement is built — an explicitly accepted, temporary condition, not a silent one |
 | **C** | Another explicitly documented decision, approved by the architecture owner | To be recorded here once made |
 
-**Decision status as of this revision: MANAGEMENT DECISION REQUIRED.** No such decision exists elsewhere in this repository. This document does not select an option on its own authority. **Option B is noted as the architecturally lower-cost default if no stakeholder has an immediate site-isolation need** — but this is a recommendation for the decision-maker to confirm or override, not a selection.
+**Decision recorded (v1.3): Option B.** The architecture owner has confirmed Phase 1 intentionally ships with global authorization; site-scoped RBAC is a defined later addition, built when the stated trigger condition (two operationally distinct teams sharing one deployment) is actually met. This is recorded here as an explicit, dated decision — not a default reached by silence, and not this document selecting on its own authority (the decision was made by the architecture owner in response to the options above being presented at the final validation gate).
 
-**Step D — Phase 1 gate consequence, stated plainly regardless of which option is eventually chosen:** Phase 1 cannot proceed on an *unconfirmed* assumption about this. If Phase 1 implementation begins before this decision is recorded, it must begin under Option B's stated condition **explicitly acknowledged by the architecture owner as a temporary, accepted risk** — not by default silence. This is tracked as a Phase 1 entry-criterion in §47.
+**Consequences of Option B, made explicit rather than left implicit:**
+- Every authenticated user holding a global role can read and write every site's data from Phase 1 onward, until enforcement middleware is built. This is an **accepted, temporary condition**, not an oversight.
+- `RoleAssignment.scope_type`/`scope_id` (§32) remain in the schema, unused for enforcement, ready for the additive middleware described above when the trigger condition is met — no schema change is needed at that time, only new query-filtering logic.
+- **Finding F6 (final validation gate) does not activate under Option B:** F6 flagged that `TelemetryReading`/`Event`/`Alarm` carry no denormalized site reference, which would matter *only* if Option A were chosen (RBAC-filtered queries at telemetry's target scale would need one). Since Option B was chosen, no denormalized site column is required now. If the trigger condition is ever met and enforcement is built, F6's concern must be re-evaluated at that time — it is not resolved, it is correctly inert under the option actually selected.
+- Phase 1 proceeds exactly as scoped in this document — no additional query-filtering middleware, no schema change, no timeline extension.
+
+**Step D — Phase 1 gate consequence:** with the decision now recorded, this is no longer an unconfirmed assumption blocking Phase 1's entry criterion (§47a). The trigger condition itself remains the thing to watch for — the day two operationally distinct teams share one deployment, enforcement work becomes required, scoped and estimable (additive middleware, per AD20, §46) rather than a surprise.
 
 ---
 
@@ -1489,7 +1498,7 @@ No phase was reordered. Per finding:
 | C5 (Import security boundary) | NO PHASE CHANGE | — | — | New prerequisite: the quarantine/isolated-parse/SIR boundary (§10a) is now part of Phase 6's scope, not an add-on after — Phase 6's exit gate cannot pass without it | — | — |
 | H1 (Subtype matrix) | NO PHASE CHANGE | Directly informs Phase 2/3/4's table definitions (Rack/Equipment) and Phase 7's (PDU/UPS/Generator/PowerPanel) — no new work, just removes ambiguity those phases already had to resolve themselves | — | — | Directly informs Phase 7 | — |
 | H6 (AuditLog partitioning) | New prerequisite: AuditLog's partitioned schema and the privileged retention role are part of Phase 1's database/audit foundation (§65) | — | — | — | — | — |
-| H7 (RBAC decision) | **Blocking entry criterion**: Phase 1 cannot begin its RBAC foundation work without the decision in §32a being recorded (Option A/B/C) — see §65 | — | — | — | — | — |
+| H7 (RBAC decision) | **RESOLVED (v1.3):** Option B recorded (§32a) — Phase 1 proceeds with global authorization as originally scoped; no additional Phase 1 work | — | — | — | — | — |
 | M1 (Naming) | NO PHASE CHANGE | NO PHASE CHANGE | NO PHASE CHANGE | NO PHASE CHANGE | NO PHASE CHANGE | Documentation-only, no phase depends on the column name itself |
 
 ---
@@ -1548,7 +1557,7 @@ These are organizational/operational decisions this document does not make on th
 | Decision | Options | Recommended direction | Decision owner | Required by phase | Status |
 |---|---|---|---|---|---|
 | Single vs. multi-tenant | Single-tenant / multi-org-in-one-DB | Single-tenant (§32) | Product owner | Phase 2 | Open |
-| Site-scoped RBAC enforcement timing | Option A (build before Phase 1) / Option B (defer to trigger condition) / Option C (other) — see §32a | Option B noted as architecture's lower-cost default absent a conflicting need, **but this is explicitly MANAGEMENT DECISION REQUIRED, not yet made (§32a, v1.2)** | Architecture owner | **Phase 1 entry criterion (v1.2) — blocking** | **Open, escalated in v1.2** |
+| Site-scoped RBAC enforcement timing | Option A / Option B / Option C — see §32a | **Decided (v1.3): Option B.** Phase 1 ships with global authorization; enforcement is built additively when the trigger condition (two operationally distinct teams sharing one deployment) is met | Architecture owner | Re-evaluate at the trigger condition, not before | **Decided** |
 | AuditLog retention duration (v1.2, new) | A specific "keep for N years" figure, per compliance requirement | Mechanism (partitioning + archive-don't-delete + privileged role) is specified in §30a regardless of the number; the number itself is not invented here | Compliance/Legal + architecture owner | Phase 1 (mechanism), ongoing (duration) | Open |
 | Edge collector deployment | Build in Phase 8 / defer entirely | Defer past Phase 13 unless a site with real WAN constraints is identified | Ops/Infra | Phase 8 planning | Open |
 | Priority device vendors/models for SNMP | (needs a concrete list) | — | DCIM operations | Phase 8 | Open |
@@ -1581,6 +1590,6 @@ These are organizational/operational decisions this document does not make on th
 
 ---
 
-**Architecture status (v1.2): TARGETED REVISION COMPLETE — AWAITING FINAL RED-TEAM VALIDATION**
+**Architecture status (v1.3): BOTH PHASE 1 BLOCKERS CLOSED — SEE RE-VALIDATION GATE FOR VERDICT**
 
-This document, together with `ARCHITECTURE_CHANGE_MATRIX.md` and `ARCHITECTURE_TARGETED_REVISION_REPORT.md`, is the complete v1.2 targeted-revision deliverable. C1–C5 are resolved architecturally (§4a, §7a, §7b, §7c/§13a, §10a); H1, H6, and M1 are resolved (§4b, §30a, §4/§16/§25 reconciliation); H7 is escalated to an explicit, still-open management decision (§32a) rather than silently assumed. No Phase 1 implementation — repository scaffolding, database migrations, backend/frontend code, authentication, integrations, 2D/3D engines — begins until this revision passes final adversarial validation and the H7 decision is recorded.
+This document, together with `ARCHITECTURE_CHANGE_MATRIX.md`, `ARCHITECTURE_TARGETED_REVISION_REPORT.md`, and `FINAL_ARCHITECTURE_VALIDATION_REPORT.md` (and its v1.3 addendum), is the complete revision chain. C1–C5, H1, H6, and M1 are resolved (§4a, §4b, §7a, §7b, §7c/§13a, §10a, §30a, §4/§16/§25 reconciliation). F1 (the residual C2 gap found at the final validation gate) is closed in §7. H7 is now a recorded decision, not an open question (§32a: Option B). Whether this is sufficient to authorize Phase 1 is the re-validation gate's call, not this document's own — see `FINAL_ARCHITECTURE_VALIDATION_REPORT.md`'s v1.3 addendum for the actual verdict.
