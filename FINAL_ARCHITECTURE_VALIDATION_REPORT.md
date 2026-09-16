@@ -302,3 +302,40 @@ Not approved, because: (a) H7 remains an explicit, undecided, confirmed-open man
 Not "requires revision before Phase 1," because: every finding in this report — F1 through F6, and H7 itself — is narrow, precisely located, and correctable without touching `ManagedAsset`, `PowerNode`, `EquipmentPlacement`/`RackPlacement`, the integration layering, or the Outbox pattern. None forces an engineering team to invent architecture; each has an exact, stated fix or an exact, stated decision-maker.
 
 Required before Phase 1 specifically: item 1 (H7) and item 2 (F1) from §23. Items 3–5 are real but do not block Phase 1's own start.
+
+---
+
+## 25. v1.3 Re-Validation Addendum
+
+**Trigger:** the architecture owner directed both Phase 1 blockers (H7, F1) to be closed, then this gate re-run. This addendum re-verifies the two closures independently — it does not re-derive §§1–24 from scratch, since nothing else in the architecture changed (confirmed by `git show bf35805 --stat`: exactly `ARCHITECTURE_REVIEW.md` and `ARCHITECTURE_CHANGE_MATRIX.md`, no other file touched).
+
+### 25.1 F1 re-verification
+
+**Change inspected directly** (not assumed from the commit message): §7's `CHECK` constraint on `EquipmentPlacement` now reads `CHECK (placement_type <> 'rack_mounted' OR (rack_id IS NOT NULL AND u_range IS NOT NULL AND side IS NOT NULL))`.
+
+**Re-derived, not re-read:** with `side` now guaranteed `NOT NULL` whenever `placement_type='rack_mounted'`, and `side` constrained to the enum `{front, rear, both}`, every rack-mounted row satisfies at least one of `occupies_front = (side IN ('front','both'))` or `occupies_rear = (side IN ('rear','both'))` as `TRUE` (front → `occupies_front=true`; rear → `occupies_rear=true`; both → both `true`) — there is no longer a value of `side` that leaves both generated columns `NULL`. Since a partial exclusion constraint's `WHERE` clause requires its predicate to evaluate `TRUE` (not merely non-false) for a row to be excluded from the constraint's enforcement, and no rack-mounted row can now produce `NULL` for both predicates, **every rack-mounted row falls under at least one of the two §7a exclusion constraints.** The original truth table (this gate's §5/§4 formulations, both re-checked) is now enforced without exception. `CHECK` constraints apply to `INSERT` and `UPDATE` alike in Postgres, so a row transitioning *into* `rack_mounted` via `UPDATE` is equally covered, not just newly inserted rows.
+
+**F1 status: RESOLVED.** No residual case was found. (One adjacent, non-blocking observation: the fix is a single boolean-completeness constraint, not a new mechanism — consistent with §23's original characterization of this as a one-line fix, not a redesign.)
+
+### 25.2 H7 re-verification
+
+**Change inspected directly:** §32a now reads *"Decision recorded (v1.3): Option B. The architecture owner has confirmed Phase 1 intentionally ships with global authorization..."* — this is a decision, not a request for one, and it was obtained through this session's `AskUserQuestion` exchange with the architecture owner, not selected by the architecture on its own authority (consistent with every prior instruction in this revision chain forbidding that).
+
+**Cross-document consistency re-checked:** §49's open-decisions table, §47a's phase-impact table, `ARCHITECTURE_CHANGE_MATRIX.md`'s finding table and disposition table, and the closing status line were all checked for a stale reference to "MANAGEMENT DECISION REQUIRED" or "blocking" — none found (`grep` returned zero matches across `ARCHITECTURE_REVIEW.md`). The decision is recorded consistently everywhere it is referenced.
+
+**Consequence re-traced:** with Option B (not Option A) selected, **finding F6 (§5, this report) does not activate** — F6 was conditional specifically on Option A being chosen (it flagged a telemetry/alarm/event join-cost concern that only matters if RBAC-filtered queries need to run against those tables at scale). §32a now states this explicitly. F6 remains correctly recorded as a *future* re-evaluation trigger (if the deferred enforcement is ever built), not a currently-active gap — this was verified by re-reading F6's original conditional language against the actual decision made, not assumed.
+
+**H7 status: RESOLVED.** The decision exists, is dated, is attributed to the architecture owner, and is consistent everywhere it is referenced.
+
+### 25.3 Everything else — re-affirmed, not re-derived
+
+Per this addendum's stated scope, §§1–24's independent re-derivations (C1, C3, C4, C5, H1, H6, M1; the database integrity/lifecycle/failure/security matrices; the temporal, scalability, multi-site, integration, spatial, power/network, telemetry/alarm, and AI-readiness assessments; the deferred-findings table; the contradiction scan) are **not** repeated here because nothing they depend on changed. F2 (the Asset Replacement/Alarm domain-boundary tension), F3 (the `now()`/`clock_timestamp()` documentation gap), F4/F5 (U-range conventions), and F6 (now correctly inert per §25.2) remain exactly as recorded in §§5/23 — real, non-blocking, and tracked, not silently dropped by this addendum.
+
+### 25.4 Updated Final Verdict
+
+**ARCHITECTURE APPROVED FOR PHASE 1**
+
+Both items this gate's original verdict named as required before Phase 1 — H7 and F1 — are independently re-verified as resolved, not merely claimed resolved. No CRITICAL finding remains open. No unresolved fundamental architectural decision remains: identity (`ManagedAsset`), placement (`RackPlacement`/`EquipmentPlacement`, now fully constraint-complete), power topology (`PowerNode`/`PowerConnection`), spatial authority (`SpatialObject`), and security boundaries (import isolation, RBAC posture) are each either fully closed or, where narrower items remain (F2–F5, and the correctly-deferred H2–H5/H8–H9/M2–M10), tied to a specific future phase gate rather than left as an ambiguity Phase 1 would have to invent its own answer to.
+
+Phase 1 may begin. F2–F5 should be folded into routine documentation work before the phases that actually depend on them (per §23's original phase attributions, unchanged) — none of the four is a Phase 1 concern.
+
