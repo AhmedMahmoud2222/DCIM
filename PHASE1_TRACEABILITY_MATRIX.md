@@ -4,6 +4,13 @@ Every Phase 1 requirement (from the Phase 1 implementation prompt, §§7–37) t
 architecture → implementation → test. "DEFERRED — FUTURE PHASE" marks anything correctly
 out of scope.
 
+**Update (targeted correction, see `PHASE1_CORRECTION_REPORT.md`):** the "Audit
+foundation" and "Idempotency" rows below were re-verified false — an independent
+red-team (`PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md`) found the audit append-only
+guarantee did not actually hold at the database level (Finding C1), and the idempotency
+mechanism broke under true concurrency (Finding H1). Both have since been corrected; the
+rows below reflect the corrected state, not the original claim.
+
 | Architecture Requirement | Architecture Section | Implementation | Test | Status | Notes |
 |---|---|---|---|---|---|
 | Async DB session + connection pooling | §7 | `app/db/session.py` | `tests/integration/*` (implicitly, every test uses it) | DONE | `pool_size=10, max_overflow=5`, `pool_pre_ping=True` |
@@ -14,7 +21,7 @@ out of scope.
 | Location hierarchy (Organization→Room) | §8, v1.0 §6.2 | `app/domain/location/models.py`, `app/api/v1/locations.py` | `tests/api/test_locations.py` | DONE | Schema retrieved from git history — see `PHASE1_BASELINE.md` |
 | Floor-plan geometry / 2D / 3D | §8 (explicit exclusion) | — | — | DEFERRED — FUTURE PHASE | Correctly not built |
 | `ManagedAsset` identity/lifecycle anchor | §9 | `app/domain/identity/models.py` | `tests/integration/test_db_constraints.py`, `tests/api/test_managed_assets.py` | DONE | No subtype tables |
-| `ManagedAsset.id` immutability | §9, §12 | PK, never updated; `replaces_asset_id` FK | `tests/integration/test_db_constraints.py::test_asset_replacement_identity_never_collides` | DONE | Full `ReplaceAsset` *workflow* deferred |
+| `ManagedAsset.id` immutability | §9, §12 | PK, never updated; `replaces_asset_id` FK with self-reference CHECK + cycle-prevention trigger (migration `0003_correction`, Findings M2/M3) | `tests/integration/test_db_constraints.py::test_asset_replacement_identity_never_collides` + 4 self-reference/cycle regression tests | DONE | Full `ReplaceAsset` *workflow* still deferred; the identity/graph invariants it will build on were tightened by the correction |
 | Lifecycle states/transitions | §10 | `app/domain/identity/models.py` (`ALLOWED_LIFECYCLE_TRANSITIONS`) | `tests/unit/test_lifecycle.py`, `tests/api/test_managed_assets.py` | DONE | No invented states |
 | Lifecycle transition auditability | §10 | `app/api/v1/managed_assets.py::transition_lifecycle` | `tests/api/test_managed_assets.py` | DONE | |
 | Full Asset Replacement workflow | §10 (explicit exclusion) | — | — | DEFERRED — FUTURE PHASE | Identity relationship (`replaces_asset_id`) exists now per §9; workflow later |
@@ -26,7 +33,7 @@ out of scope.
 | Secure cookie attributes / CORS | §12 | `app/api/v1/auth.py`, `app/main.py` | `tests/api/test_security.py::test_cors_headers_present_for_configured_origin` | DONE | `HttpOnly/SameSite=Strict`, `Secure` in prod |
 | No secret/credential logging | §12 | `app/core/logging.py` (`_redact_sensitive`), `app/application/audit_service.py` (`_redact`) | `tests/api/test_security.py::test_response_never_includes_password_hash` | DONE | |
 | Backend-enforced authorization | §13 | `app/application/rbac.py::require_permission` on every mutating route | `tests/api/test_security.py`, `test_locations.py::test_viewer_cannot_create_locations` | DONE | |
-| Audit foundation (who/when/what/before/after) | §14 | `app/domain/audit/models.py`, `app/application/audit_service.py` | `tests/integration/test_db_constraints.py`, `test_outbox.py` | DONE | |
+| Audit foundation (who/when/what/before/after) | §14 | `app/domain/audit/models.py`, `app/application/audit_service.py`; append-only enforced via `scripts/bootstrap_privileged_roles.sql` (ownership transfer to `dcim_retention_admin` + database-ownership correction) and migration `0003_correction` (defense-in-depth TRUNCATE revoke) | `tests/integration/test_db_constraints.py` (5 dedicated append-only/privilege tests, incl. DROP-via-partition and DROP-via-database-ownership), `test_outbox.py` | DONE — corrected, see Finding C1 | Originally DONE, then found broken by red-team (TRUNCATE + owner DDL + DB-owner DROP all open), now re-verified via real `dcim_app` login connections, not just ORM/SET ROLE |
 | Audit distinct from domain events/Outbox | §14 | Separate tables, separate write paths | `tests/integration/test_outbox.py` | DONE | |
 | Request/correlation identity | §15 | `app/core/correlation.py` | Implicit in every API test (headers echoed) | DONE | Propagated into audit + outbox |
 | Consistent API error handling (RFC 7807) | §16 | `app/core/errors.py` | `tests/api/test_security.py::test_404_does_not_leak_internal_details` | DONE | |
@@ -38,7 +45,7 @@ out of scope.
 | Outbox dispatcher (at-least-once, retry, recovery) | §19 | `app/infrastructure/tasks/outbox_dispatcher.py` | `tests/integration/test_outbox.py` (reclaim tests), manual Celery-worker smoke test | DONE | Stale-processing reclaim added after a real bug was found live |
 | Redis/Celery foundation, named queues | §20 | `app/infrastructure/celery_app.py` | Manual: task registration verified (`celery_app.tasks`), worker boot log inspected | DONE | Only `default`/`maintenance` actually scheduled |
 | No premature domain-specific job logic | §20 | No polling/telemetry/alarm/import task code exists | — | DONE (by absence) | |
-| Idempotency (request/event/job/external identity distinguished) | §21 | `app/domain/idempotency/models.py`, `app/application/idempotency.py`; event_id (Outbox), jti (tokens), job_id (Celery) all distinct | `tests/unit/test_idempotency.py`, `tests/api/test_managed_assets.py` (2 tests) | DONE | |
+| Idempotency (request/event/job/external identity distinguished) | §21 | `app/domain/idempotency/models.py`, `app/application/idempotency.py` (atomic claim/complete/release/reclaim, not a simple check-then-write cache); event_id (Outbox), jti (tokens), job_id (Celery) all distinct | `tests/unit/test_idempotency.py`, `tests/api/test_managed_assets.py`, `tests/integration/test_idempotency_concurrency.py` (5 true-concurrency tests, incl. 10 and 20 genuinely concurrent identical requests against both an in-process ASGI app with per-request sessions and a separate live `uvicorn` process) | DONE — corrected, see Finding H1 | Originally DONE (correct for sequential use), found broken under true concurrency by red-team, now re-verified with real concurrent requests, not sequential assertions |
 | Structured logs with required fields | §22 | `app/core/logging.py` | Manual: log output inspected during smoke tests | DONE | |
 | Liveness/readiness split | §22 | `app/api/v1/health.py` | `tests/api/test_health.py` | DONE | Liveness never touches DB/Redis |
 | Basic metrics infrastructure | §22 | Not implemented | — | **GAP** | See `PHASE1_DEVIATIONS.md` D2 |

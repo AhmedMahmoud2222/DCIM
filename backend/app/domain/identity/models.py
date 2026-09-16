@@ -47,6 +47,15 @@ class ManagedAsset(Base, UUIDPkMixin, TimestampMixin):
         CheckConstraint(f"asset_type IN {ASSET_TYPES!r}", name="asset_type_allowed"),
         CheckConstraint(f"lifecycle_status IN {LIFECYCLE_STATUSES!r}", name="lifecycle_status_allowed"),
         UniqueConstraint("replaces_asset_id", name="uq_managed_asset_replaces_asset_id"),
+        # Findings M2/M3 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+        # PHASE1_CORRECTION_REPORT.md): an asset cannot replace itself. Longer cycles
+        # (A replaces B, B replaces A; or longer chains) cannot be expressed as a
+        # single-row CHECK constraint — that invariant is enforced by the
+        # trg_managed_asset_replacement_acyclic trigger added in migration 0003, which
+        # walks the full replacement chain on INSERT/UPDATE.
+        CheckConstraint(
+            "replaces_asset_id IS NULL OR replaces_asset_id != id", name="no_self_replacement"
+        ),
     )
 
     asset_type: Mapped[str] = mapped_column(String(32), nullable=False)

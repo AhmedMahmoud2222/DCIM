@@ -4,6 +4,17 @@
 **Baseline:** `ARCHITECTURE_REVIEW.md` v1.3, approved at the final validation gate (`FINAL_ARCHITECTURE_VALIDATION_REPORT.md` §25: `ARCHITECTURE APPROVED FOR PHASE 1`)
 **Date:** 2026-09-16
 
+**CORRECTION NOTICE — read before relying on this document.** An independent red-team
+(`PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md`) subsequently found this report's §8 (Audit)
+and idempotency-related claims to be incomplete/incorrect in practice (Findings C1 and
+H1 — audit was not actually append-only at the database level, and the idempotency
+mechanism broke under true concurrency), along with three smaller defects (Findings
+M2/M3 — asset-replacement self-reference/cycle gaps). All have since been corrected; see
+`PHASE1_CORRECTION_REPORT.md` for the full before/after, evidence, and regression tests.
+This document is preserved as-written (original implementation history, not rewritten)
+— treat its §21 verdict (`PHASE 1 COMPLETE — READY FOR PHASE 2`) as superseded by the
+correction report's own verdict, not as current status.
+
 ---
 
 ## 1. Executive Summary

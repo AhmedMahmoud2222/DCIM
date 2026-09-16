@@ -12,17 +12,28 @@ os.environ.setdefault(
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/1")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-not-for-production-use-32ch")
 
+# Test-harness-only superuser connection, distinct from the application's own dcim_app
+# credentials above. Needed because of the Finding C1 correction
+# (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md): dcim_app no
+# longer owns audit_log and no longer holds TRUNCATE/DELETE on it (by design — that is
+# the fix), so resetting audit_log between tests requires a connection that isn't
+# subject to those restrictions. The application itself never uses this connection.
+os.environ.setdefault(
+    "TEST_ADMIN_DATABASE_URL", "postgresql+asyncpg://postgres:postgres_test_admin_password@localhost:5432/dcim_test"
+)
+
 from app.core.security import hash_password  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.domain.auth.models import RoleAssignment, User  # noqa: E402
 from app.main import app  # noqa: E402
 
 TEST_DATABASE_URL = os.environ["DATABASE_URL"]
+TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 
-_TRUNCATE_TABLES = [
+# Truncatable by dcim_app (it owns all of these — only audit_log's ownership changed).
+_APP_TRUNCATE_TABLES = [
     "idempotency_key",
     "outbox_event",
-    "audit_log",
     "managed_asset",
     "room",
     "floor",
@@ -44,10 +55,23 @@ async def db_engine():
     await engine.dispose()
 
 
+@pytest_asyncio.fixture
+async def _admin_engine():
+    # Function-scoped (not session-scoped) to match db_engine's lifecycle and avoid an
+    # asyncpg engine outliving the event loop pytest-asyncio creates per test.
+    engine = create_async_engine(TEST_ADMIN_DATABASE_URL, pool_pre_ping=True)
+    yield engine
+    await engine.dispose()
+
+
 @pytest_asyncio.fixture(autouse=True)
-async def _clean_tables(db_engine):
+async def _clean_tables(db_engine, _admin_engine):
     async with db_engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE TABLE {', '.join(_TRUNCATE_TABLES)} CASCADE"))
+        await conn.execute(text(f"TRUNCATE TABLE {', '.join(_APP_TRUNCATE_TABLES)} CASCADE"))
+    # audit_log: dcim_app is deliberately no longer able to TRUNCATE/DELETE this table
+    # (Finding C1 correction) — reset it via the test-admin superuser connection instead.
+    async with _admin_engine.begin() as conn:
+        await conn.execute(text("TRUNCATE TABLE audit_log"))
     yield
 
 

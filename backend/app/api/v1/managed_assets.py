@@ -8,14 +8,21 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
-from app.application.idempotency import get_cached_response, hash_request_body, store_response
+from app.application.idempotency import (
+    IdempotencyConflict,
+    IdempotencyStillProcessing,
+    complete_claim,
+    get_or_claim,
+    hash_request_body,
+    release_claim,
+)
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, NotFoundError
@@ -25,9 +32,13 @@ router = APIRouter(prefix="/managed-assets", tags=["managed-assets"])
 
 
 class ManagedAssetIn(BaseModel):
-    asset_type: str
-    asset_tag: str
-    serial_number: str | None = None
+    # Finding M1 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md):
+    # max_length here matches each column's actual width (app/domain/identity/models.py)
+    # so an oversized field is rejected as a clean 422 at the API boundary, instead of
+    # reaching the database and surfacing as an unhandled 500 when Postgres rejects it.
+    asset_type: str = Field(max_length=32)
+    asset_tag: str = Field(max_length=64)
+    serial_number: str | None = Field(default=None, max_length=128)
 
 
 class ManagedAssetOut(BaseModel):
@@ -62,54 +73,68 @@ async def create_managed_asset(
         raise ApiError(status_code=422, title="Validation Error", detail=f"asset_type must be one of {ASSET_TYPES}")
 
     request_hash = hash_request_body(body.model_dump())
+    claim = None
     if idempotency_key is not None:
-        cached = await get_cached_response(db, key=idempotency_key, endpoint="POST:/managed-assets")
-        if cached is not None:
-            if cached.request_hash != request_hash:
-                raise ApiError(
-                    status_code=422,
-                    title="Idempotency Key Reused",
-                    detail="This Idempotency-Key was already used with a different request body.",
-                )
-            return ManagedAssetOut(**cached.response_body)
+        try:
+            outcome = await get_or_claim(db, key=idempotency_key, endpoint="POST:/managed-assets", request_hash=request_hash)
+        except IdempotencyConflict as exc:
+            raise ApiError(
+                status_code=422,
+                title="Idempotency Key Reused",
+                detail="This Idempotency-Key was already used with a different request body.",
+            ) from exc
+        except IdempotencyStillProcessing as exc:
+            raise ApiError(
+                status_code=503,
+                title="Request Still Processing",
+                detail="An identical request with this Idempotency-Key is still being processed. Retry shortly.",
+            ) from exc
+        if outcome.cached is not None:
+            assert outcome.cached.response_body is not None  # only unset while status='processing'
+            return ManagedAssetOut(**outcome.cached.response_body)
+        claim = outcome.claim
 
-    asset = ManagedAsset(asset_type=body.asset_type, asset_tag=body.asset_tag, serial_number=body.serial_number)
-    db.add(asset)
-    await db.flush()
+    # Captured now, before any rollback can expire `claim`'s attributes — accessing an
+    # expired ORM attribute triggers an implicit lazy-load, which cannot run outside an
+    # awaited context and would raise MissingGreenlet inside the except block below.
+    claim_id = claim.id if claim is not None else None
 
-    request_id, correlation_id = _request_ids(request)
-    await write_audit_log(
-        db,
-        actor_user_id=ctx.user.id,
-        action="managed_asset.create",
-        entity_type="managed_asset",
-        entity_id=asset.id,
-        request_id=request_id,
-        correlation_id=correlation_id,
-        after={"asset_type": asset.asset_type, "asset_tag": asset.asset_tag, "lifecycle_status": asset.lifecycle_status},
-    )
-    await write_outbox_event(
-        db,
-        event_type="ManagedAssetCreated",
-        aggregate_type="managed_asset",
-        aggregate_id=asset.id,
-        payload={"asset_type": asset.asset_type, "asset_tag": asset.asset_tag},
-        correlation_id=correlation_id,
-    )
+    try:
+        asset = ManagedAsset(asset_type=body.asset_type, asset_tag=body.asset_tag, serial_number=body.serial_number)
+        db.add(asset)
+        await db.flush()
 
-    out = ManagedAssetOut.model_validate(asset)
-    if idempotency_key is not None:
-        await store_response(
+        request_id, correlation_id = _request_ids(request)
+        await write_audit_log(
             db,
-            key=idempotency_key,
-            endpoint="POST:/managed-assets",
-            request_hash=request_hash,
-            response_status=201,
-            response_body=out.model_dump(mode="json"),
+            actor_user_id=ctx.user.id,
+            action="managed_asset.create",
+            entity_type="managed_asset",
+            entity_id=asset.id,
+            request_id=request_id,
+            correlation_id=correlation_id,
+            after={"asset_type": asset.asset_type, "asset_tag": asset.asset_tag, "lifecycle_status": asset.lifecycle_status},
+        )
+        await write_outbox_event(
+            db,
+            event_type="ManagedAssetCreated",
+            aggregate_type="managed_asset",
+            aggregate_id=asset.id,
+            payload={"asset_type": asset.asset_type, "asset_tag": asset.asset_tag},
+            correlation_id=correlation_id,
         )
 
-    await db.commit()
-    return out
+        out = ManagedAssetOut.model_validate(asset)
+        if claim is not None:
+            await complete_claim(db, claim, response_status=201, response_body=out.model_dump(mode="json"))
+
+        await db.commit()
+        return out
+    except Exception:
+        await db.rollback()
+        if claim_id is not None:
+            await release_claim(db, claim_id)
+        raise
 
 
 @router.get("", response_model=Page[ManagedAssetOut])

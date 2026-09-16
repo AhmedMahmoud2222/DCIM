@@ -3,6 +3,13 @@
 **Scope:** Phase 1 — Foundation, per `ARCHITECTURE_REVIEW.md` §47 and the Phase 1 implementation prompt.
 **Status:** Implemented and verified against real PostgreSQL 16 + Redis 7 instances in this session.
 
+**Correction notice:** §7 (Audit) and the Idempotency-Key handling described in §2/§4's
+table originally described guarantees that an independent red-team
+(`PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md`) found did not actually hold — audit was not
+truly append-only (Finding C1) and idempotency broke under true concurrency (Finding H1).
+The affected passages below have been updated to describe the corrected implementation;
+see `PHASE1_CORRECTION_REPORT.md` for the full before/after and evidence.
+
 ---
 
 ## 1. Implemented Scope
@@ -23,11 +30,11 @@ managed-asset list).
 
 | Architecture section | What it required | Where implemented |
 |---|---|---|
-| §4/§4a (Identity, Asset Replacement) | `ManagedAsset` shared-PK identity anchor | `app/domain/identity/models.py` — anchor only, no subtype (§9 of the Phase 1 prompt explicitly scopes replacement's *workflow* to a later phase; the schema field (`replaces_asset_id`) exists and is DB-tested, the `ReplaceAsset` operation itself is not built) |
+| §4/§4a (Identity, Asset Replacement) | `ManagedAsset` shared-PK identity anchor | `app/domain/identity/models.py` — anchor only, no subtype (§9 of the Phase 1 prompt explicitly scopes replacement's *workflow* to a later phase; the schema field (`replaces_asset_id`) exists and is DB-tested, the `ReplaceAsset` operation itself is not built). Self-reference and replacement-cycle prevention added by migration `0003_correction` (Findings M2/M3 — see `PHASE1_CORRECTION_REPORT.md`): a `CHECK` constraint blocks `replaces_asset_id = id`, and a `BEFORE INSERT OR UPDATE` trigger walks the full replacement chain to block any cycle (direct 2-cycle or longer), not just the immediate case |
 | v1.0 §6.1 (User/Role/Permission — retrieved from git history per `PHASE1_BASELINE.md`) | RBAC schema | `app/domain/auth/models.py`, seeded in `migrations/versions/0002_...py` |
 | v1.0 §6.2 (Location hierarchy — retrieved from git history) | Organization→Room | `app/domain/location/models.py` |
 | §7c (Concurrency) | `version`/If-Match, `FOR UPDATE` pattern | `app/application/concurrency.py`, applied to `Room` in `app/api/v1/locations.py` |
-| §21 (Idempotency) | Idempotency-Key ledger | `app/domain/idempotency/models.py`, `app/application/idempotency.py`, applied to `POST /managed-assets` |
+| §21 (Idempotency) | Idempotency-Key ledger | `app/domain/idempotency/models.py`, `app/application/idempotency.py` — atomic claim (`INSERT ... ON CONFLICT DO NOTHING`, committed immediately) rather than a check-then-write cache, so concurrent identical requests serialize correctly instead of racing; applied to `POST /managed-assets`. Corrected (Finding H1 — see `PHASE1_CORRECTION_REPORT.md`): the original check-cache-then-write sequence had no serialization, so genuinely concurrent identical requests mostly received an incorrect `409` instead of the idempotent replay |
 | §22 (Outbox) | Transactional outbox, at-least-once dispatch | `app/domain/outbox/models.py`, `app/application/outbox_service.py`, `app/infrastructure/tasks/outbox_dispatcher.py` |
 | §30/§30a (Audit) | Partitioned, append-only `AuditLog`, privileged retention role | `app/domain/audit/models.py`, `migrations/versions/0002_...py`, `scripts/bootstrap_privileged_roles.sql` |
 | §31 (Security Hardening) | Argon2id, 15-min access/7-day rotating refresh, HttpOnly/Secure/SameSite cookie, CSRF | `app/core/security.py`, `app/api/v1/auth.py` |
@@ -80,8 +87,27 @@ unauthenticated visitor.
 Every location-hierarchy write, every `ManagedAsset` create/lifecycle-transition, and
 every login writes a synchronous `AuditLog` row in the same transaction as the mutation.
 Table is monthly-partitioned; the application's DB role (`dcim_app`) has `INSERT`/`SELECT`
-only — verified directly (not assumed) that `UPDATE`/`DELETE` from that role fail with
-`permission denied for table audit_log` against a real database.
+only.
+
+**Corrected (Finding C1 — see `PHASE1_CORRECTION_REPORT.md`):** verifying only
+`UPDATE`/`DELETE` denial, as the original implementation did, is not sufficient — `dcim_app`
+also retained `TRUNCATE` (a separate, distinct privilege the original migration never
+revoked) and, because it *owned* `audit_log`, retained `ALTER`/`DROP` rights regardless of
+any `REVOKE` (PostgreSQL treats those as inherent to ownership, not a grantable privilege).
+A deeper layer, found only while validating the fix: PostgreSQL also grants the *database
+owner* an implicit `DROP TABLE` right over every table in that database, independent of
+per-table ownership — so `dcim_app` being the owner of the `dcim` database itself (the
+original setup) could still drop `audit_log`'s partitions even after table-level ownership
+was transferred away. audit_log (and every partition) is now owned by a dedicated,
+`NOLOGIN` `dcim_retention_admin` role (`scripts/bootstrap_privileged_roles.sql`), `dcim_app`
+is granted exactly `INSERT`/`SELECT`, `TRUNCATE` is explicitly revoked as defense-in-depth,
+and `dcim_app` is no longer the database owner. Partition creation (which requires
+ALTER-level rights on the parent) goes through a narrowly-scoped `SECURITY DEFINER` SQL
+function `dcim_app` is granted `EXECUTE` on, not direct DDL. Verified against real
+`dcim_app` *login* connections (not a superuser session with `SET ROLE`, which can mask the
+database-ownership behavior): `TRUNCATE`, `UPDATE`, `DELETE`, `ALTER`, and `DROP` (both the
+parent table and any individual partition) all fail with `permission denied`/`must be
+owner`; `INSERT`/`SELECT` and partition creation via the scoped function still succeed.
 
 ## 8. Outbox
 
@@ -126,11 +152,18 @@ error-leakage, dependency vulnerabilities) and its results.
 
 ## 13. Testing
 
-59 tests (`pytest`), all passing against real PostgreSQL 16 and Redis 7 instances started
-for this session — not SQLite, not mocks, not an in-memory substitute. Breakdown: 15 unit
-(pure logic), 12 integration (real DB constraints, outbox atomicity, audit append-only,
-stale-event reclaim), 32 API (real HTTP contract via FastAPI's ASGI transport: auth, RBAC,
-concurrency, security, health).
+59 tests originally (`pytest`), all passing against real PostgreSQL 16 and Redis 7
+instances started for this session — not SQLite, not mocks, not an in-memory substitute.
+Breakdown: 15 unit (pure logic), 12 integration (real DB constraints, outbox atomicity,
+audit append-only, stale-event reclaim), 32 API (real HTTP contract via FastAPI's ASGI
+transport: auth, RBAC, concurrency, security, health).
+
+**Updated by the targeted correction** (`PHASE1_CORRECTION_REPORT.md`): 76 tests total.
+The 17 new tests close exactly the gap category the red-team identified — none of the
+original 59 attempted `TRUNCATE`/DDL as the `dcim_app` role, and none fired genuinely
+concurrent HTTP requests — plus regression coverage for the M2/M3 replacement
+self-reference/cycle findings and the M1/L3 findings (oversized input, readiness status
+code).
 
 ## 14. Known Limitations
 

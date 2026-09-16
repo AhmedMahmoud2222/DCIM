@@ -31,9 +31,20 @@ red-team/validation documents.
 
 ```bash
 sudo -u postgres psql -c "CREATE USER dcim_app WITH PASSWORD 'dcim_dev_password';"
-sudo -u postgres psql -c "CREATE DATABASE dcim OWNER dcim_app;"
+sudo -u postgres psql -c "CREATE DATABASE dcim;"
+sudo -u postgres psql -d dcim -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
 sudo -u postgres psql -d dcim -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
 ```
+
+**Do not use `CREATE DATABASE dcim OWNER dcim_app`.** PostgreSQL grants the *database
+owner* an implicit right to `DROP TABLE` any table in that database, regardless of who
+owns the individual table or what has been REVOKEd — empirically confirmed during the
+Finding C1 correction (`PHASE1_CORRECTION_REPORT.md`): with `dcim_app` as the database
+owner, it could still `DROP TABLE` `audit_log`'s partitions even after `audit_log` itself
+was transferred to `dcim_retention_admin` and every ordinary privilege was revoked. Only
+the superuser (`postgres`) owns the database; `dcim_app` gets exactly `CREATE, USAGE` on
+the `public` schema, which is enough to run migrations and create/own its own tables, but
+not enough to bypass another role's table ownership.
 
 Repeat for a `dcim_test` database if you'll run the test suite (see Testing below).
 
@@ -75,24 +86,31 @@ Open `http://localhost:5173`. The Vite dev server proxies `/api` to `http://loca
 ## Local Setup (Docker Compose)
 
 ```bash
-cp .env.example .env   # fill in POSTGRES_PASSWORD and JWT_SECRET_KEY
+cp .env.example .env   # fill in POSTGRES_PASSWORD, DCIM_APP_PASSWORD, and JWT_SECRET_KEY
 docker compose up --build
 ```
 
-This starts Postgres, Redis, runs migrations (`migrate` service, runs once), then starts
-the API, Celery worker, Celery beat, and the built frontend (served by nginx on
-`:8080`, proxying `/api` to the backend). **Not executed in this development session**
-(no Docker daemon available in this sandbox) — verified by config review and by every
-container's Dockerfile/compose definition matching the independently-verified local
-setup, but not by an actual `docker compose up` run. Treat as requiring a real
-environment's validation before being relied upon for a first deployment.
+This starts Postgres (bootstrapping the `dcim_app` application role as an ordinary,
+non-superuser role — see `backend/scripts/docker-initdb/01-create-app-role.sh` and
+`PHASE1_CORRECTION_REPORT.md` Finding C1), Redis, runs migrations (`migrate` service),
+runs the one-time privileged `bootstrap-privileges` service (audit_log ownership/grants,
+as the real Postgres superuser), then starts the API, Celery worker, Celery beat, and the
+built frontend (served by nginx on `:8080`, proxying `/api` to the backend). **Not
+executed in this development session** (no Docker daemon available in this sandbox) —
+verified by config review and by every container's Dockerfile/compose definition matching
+the independently-verified local setup, but not by an actual `docker compose up` run.
+Treat as requiring a real environment's validation before being relied upon for a first
+deployment.
 
-After first startup, run once (superuser):
+After first startup, run once:
 
 ```bash
-docker compose exec postgres psql -U dcim_app -d dcim -f /dev/stdin < backend/scripts/bootstrap_privileged_roles.sql
 docker compose exec backend python scripts/create_admin.py --email admin@example.com --name "Admin User"
 ```
+
+(The privileged audit-log bootstrap step above already runs automatically as part of
+`docker compose up`, via the `bootstrap-privileges` service — no manual superuser step is
+needed in the Docker path, unlike the non-Docker local setup.)
 
 ## Database Migrations
 

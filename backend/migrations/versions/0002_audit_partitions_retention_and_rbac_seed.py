@@ -137,4 +137,14 @@ def downgrade() -> None:
     op.execute("DELETE FROM permission")
     op.execute("DELETE FROM location_type")
     op.execute("GRANT UPDATE, DELETE ON audit_log TO dcim_app")
+    # Finding L1 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md):
+    # this previously dropped only audit_log_default, leaving the monthly partitions
+    # upgrade() created still attached to audit_log — an incomplete reversal (harmless on
+    # a subsequent re-upgrade, since partition creation is idempotent, but not a correct
+    # downgrade). Drop every partition this migration created, not just the default one.
+    today = date.today()
+    for offset in range(0, 3):
+        start, _ = _month_bounds(today, offset)
+        name = f"audit_log_{start.strftime('%Y_%m')}"
+        op.execute(f"DROP TABLE IF EXISTS {name}")
     op.execute("DROP TABLE IF EXISTS audit_log_default")
