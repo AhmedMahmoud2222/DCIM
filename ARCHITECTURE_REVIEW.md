@@ -1,12 +1,12 @@
 # ARCHITECTURE_REVIEW.md
 
 **Project:** In-House DCIM Platform
-**Version:** 1.1 (revision of v1.0)
+**Version:** 1.2 (targeted revision of v1.1)
 **Phase:** 0 — Architecture (pre-implementation)
-**Status:** READY FOR ARCHITECTURE APPROVAL
+**Status:** TARGETED REVISION COMPLETE — AWAITING FINAL RED-TEAM VALIDATION
 **Date:** 2026-09-16
 
-Companion document: `ARCHITECTURE_REVISION_REPORT.md` (what changed from v1.0, gap-closure map, gate status).
+Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCHITECTURE_RED_TEAM_REPORT.md` (adversarial findings against v1.1), `ARCHITECTURE_CHANGE_MATRIX.md` (this revision's before/after trace), `ARCHITECTURE_TARGETED_REVISION_REPORT.md` (this revision's summary).
 
 ---
 
@@ -15,9 +15,10 @@ Companion document: `ARCHITECTURE_REVISION_REPORT.md` (what changed from v1.0, g
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-09-16 | Initial Phase 0 architecture |
-| 1.1 | 2026-09-16 | Revision closing identity, placement, spatial-authority, power-topology, telemetry-identity, collector, event/outbox, and security gaps identified in the v1.1 review pass. See revision report for the full diff. |
+| 1.1 | 2026-09-16 | Revision closing identity, placement, spatial-authority, power-topology, telemetry-identity, collector, event/outbox, and security gaps identified in the v1.1 review pass. |
+| 1.2 | 2026-09-16 | Targeted revision resolving red-team findings C1–C5 (asset replacement, U-range exclusion semantics, exactly-one-current-placement enforcement, placement/power concurrency control, floor-plan import security boundary), H1 (complete ManagedAsset subtype matrix), H6 (AuditLog partitioning/retention), H7 (site-scoped RBAC decision status), and M1 (identity-reference naming reconciliation). Scope was strictly limited to these findings — see `ARCHITECTURE_CHANGE_MATRIX.md` for the full before/after trace and the explicit list of findings intentionally left deferred. |
 
-This document supersedes v1.0 in place. Sections are renumbered; a mapping from v1.0 section numbers to v1.1 is in the revision report, not repeated here.
+This document supersedes v1.1 in place. §4 (identity), §7–§8 (placement/spatial), §10 (floor-plan import), §13 (power subtype), §30 (audit), §32 (RBAC), §36 (API concurrency), §38 (database), §46 (ADRs), §47 (phases), and §49 (open decisions) carry v1.2 changes; every other section is unchanged from v1.1. A new §47b (Architecture Invariant & Enforcement Matrix) is added. Nothing in this revision reverses ManagedAsset, PowerNode, EquipmentPlacement/RackPlacement, the integration layering, or the Outbox pattern — all five remain exactly as v1.1 defined them.
 
 ---
 
@@ -94,27 +95,169 @@ v1.0's weakest point: Spatial, Power, Telemetry, Alarm, and Event tables each ca
 **`ManagedAsset`** is the identity root for anything with an independent commissioning lifecycle:
 
 ```text
-ManagedAsset   PK id (UUID), asset_type ENUM(rack/equipment/pdu/ups/generator/power_panel/sensor/cable),
-               UQ asset_tag, lifecycle_status (planned/installed/active/reserved/maintenance/
-               decommissioned/removed), external_ids JSONB (map of external-system → id, e.g.
-               {"servicenow_ci": "...", "discovered_snmp_id": "..."}), created_at, decommissioned_at
+ManagedAsset   PK id (UUID, IMMUTABLE — never reassigned, never reused across physical objects),
+               asset_type ENUM(rack/equipment/pdu/ups/generator/power_panel/sensor/cable/... —
+               extensible, see §4b), UQ asset_tag (mutable, audited), serial_number NULL (manufacturer
+               serial — common to every physical asset, held here once rather than duplicated per
+               subtype table, v1.2), lifecycle_status (planned/installed/active/reserved/maintenance/
+               decommissioned/removed), external_ids JSONB, created_at, decommissioned_at,
+               replaces_asset_id FK→ManagedAsset NULL (v1.2, §4a),
+               UNIQUE (replaces_asset_id) WHERE replaces_asset_id IS NOT NULL (v1.2 — at most one
+               new asset may claim to replace a given old one)
 ```
 
-Concrete tables use **shared-primary-key inheritance**: `Rack.id`, `Equipment.id`, `PDU.id`, `UPS.id`, `Generator.id`, `PowerPanel.id`, `Sensor.id` *are* `ManagedAsset.id` (each is `PK, FK→ManagedAsset`, not a second independent ID). There is exactly one stable identifier per physical asset, and it is the same value in every table that references it.
+Concrete tables use **shared-primary-key inheritance**: `Rack.id`, `Equipment.id`, `PDU.id`, `UPS.id`, `Generator.id`, `PowerPanel.id`, `Sensor.id` *are* `ManagedAsset.id` (each is `PK, FK→ManagedAsset`, not a second independent ID). There is exactly one stable identifier per physical asset, and it is the same value in every table that references it. Full column lists for every subtype are in §4b (v1.2 — resolves red-team finding H1: v1.1 discussed this pattern narratively but never re-published complete subtype schemas).
 
 ```text
 ManagedAsset (id)
-   ├── concrete row: exactly one of Rack / Equipment / PDU / UPS / Generator / PowerPanel / Sensor
+   ├── concrete row: exactly one of Rack / Equipment / PDU / UPS / Generator / PowerPanel / Sensor / ...
    ├── EquipmentPlacement.equipment_id / RackPlacement.rack_id  → FK ManagedAsset.id
-   ├── PowerNode.managed_asset_id                                → FK ManagedAsset.id (nullable, §10)
-   ├── Alarm.managed_asset_id, Event.managed_asset_id             → FK ManagedAsset.id (see caveat below)
+   ├── PowerNode.managed_asset_id                                → FK ManagedAsset.id (nullable, §13)
+   ├── Alarm.object_id, Event.object_id, TelemetryReading.object_id
+   │      (when object_class='managed_asset')                    → resolves to ManagedAsset.id (see caveat below)
    ├── AuditLog.entity_id                                          → FK ManagedAsset.id (when entity is an asset)
-   └── ExternalReference.managed_object_id                         → FK ManagedAsset.id (§32)
+   └── ExternalReference.object_id (when object_class='managed_asset') → resolves to ManagedAsset.id
 ```
 
-**Caveat, stated rather than hidden:** Telemetry, Alarm, and Event must also reference non-asset objects — Room, Site, Building, Floor — which are organizational containers, not assets, and are deliberately **not** part of `ManagedAsset` (a Room isn't commissioned/decommissioned as a physical unit the way a rack is). Postgres cannot express a single native foreign key that targets "whichever of these five tables" polymorphically. Where this is unavoidable (telemetry/alarm/event object references), v1.1 uses a documented, narrower pattern: `object_class ENUM(managed_asset, room, site, building, floor)` + `object_id UUID`, with **application-level validation plus a database trigger** that checks `object_id` exists in the table named by `object_class` before insert — real integrity, just not a native FK, and explicitly called out as the one place this pattern remains (§14, §22). Every other cross-cutting reference in this document uses a real FK to `ManagedAsset.id` or a similarly-scoped identity table (`PowerNode`, §10).
+**Caveat, stated rather than hidden — and reconciled in v1.2 (resolves red-team finding M1):** Telemetry, Alarm, Event, and ExternalReference must also reference non-asset objects — Room, Site, Building, Floor — which are organizational containers, not assets, and are deliberately **not** part of `ManagedAsset` (a Room isn't commissioned/decommissioned as a physical unit the way a rack is). Postgres cannot express a single native foreign key that targets "whichever of these tables" polymorphically. **One pattern, one name, used everywhere this is unavoidable:** `object_class ENUM(managed_asset, room, site, building, floor)` + `object_id UUID`, validated by application code plus a database trigger checking `object_id` exists in the table named by `object_class` before insert. This is the *only* naming used for this pattern in this document — `Alarm`, `Event`, `TelemetryReading`, and `ExternalReference` all use `object_class`/`object_id` exactly as defined in §16/§25, never a column literally named `managed_asset_id` (v1.1's §4 diagram used that name inconsistently with §16/§25's actual table definitions; v1.2 corrects the diagram above to match the one real pattern). Every other cross-cutting reference in this document uses a real FK to `ManagedAsset.id` or a similarly-scoped identity table (`PowerNode`, §13).
 
-**Identifier authority:** `ManagedAsset.asset_tag` is the human-facing authoritative identifier (barcode/QR target, §41 of the original master prompt). `ManagedAsset.id` is the internal stable identifier every table actually joins on. `external_ids` and the new `discovered_device.external_identifier` (§19) hold IDs from other systems for correlation — they are never authoritative and never overwrite `asset_tag`/`id`.
+**Identifier authority:** `ManagedAsset.asset_tag` is the human-facing authoritative identifier. `ManagedAsset.id` is the internal, immutable stable identifier every table actually joins on and the correct target for barcode/QR encoding (not `asset_tag`, which is mutable and audited — encoding the mutable tag would orphan a printed label the day someone renames the asset). `external_ids` and `discovered_device.external_identifier` (§26) hold IDs from other systems for correlation — they are never authoritative and never overwrite `asset_tag`/`id`/`serial_number`.
+
+### 4a. Asset Replacement (v1.2 — resolves red-team finding C1)
+
+**Step A — Locate:** this gap sits entirely in §4; no other v1.1 section defined asset-replacement behavior.
+
+**Step B — Validate:** *Confirmed.* v1.1 asserted "one physical asset, one `ManagedAsset.id`, for its entire life" but never defined the procedure that keeps that true across a real replacement event. Nothing prevented an implementer from mutating an existing `ManagedAsset`/`Rack` row in place when a physical unit was swapped, which would silently make prior telemetry/alarm/audit history describe two different physical objects under one identity.
+
+**Step C — Correct.** v1.2 distinguishes, explicitly, two operations that were previously conflated:
+
+```text
+SAME PHYSICAL ASSET MOVED                         PHYSICAL ASSET REPLACED
+Equipment X: U20 → U30                            Equipment X removed from U20
+   │                                               Equipment Y installed at U20
+   ▼                                                  │
+ManagedAsset.id unchanged                              ▼
+   +                                                ManagedAsset.id for X: unchanged, retired
+new EquipmentPlacement row for X                    NEW ManagedAsset.id created for Y
+(§7 — ordinary placement history)                   Y.replaces_asset_id = X.id
+                                                     new EquipmentPlacement row for Y
+                                                     X's history (telemetry/alarms/audit) stays
+                                                     attributed to X, permanently
+```
+
+**Asset Replacement domain operation** (`ReplaceAsset(old_asset_id, new_asset_attributes, reason) → new_asset_id`), executed as a **single database transaction**:
+
+1. Validate `old_asset_id`'s `lifecycle_status ∈ {installed, active, maintenance, reserved}` — an already-`removed` asset cannot be "replaced" again (it was already replaced or decommissioned outright; the domain rule rejects this with a clear error rather than allowing an ambiguous chain).
+2. Create a new `ManagedAsset` row (new UUID) with `replaces_asset_id = old_asset_id`. The partial unique constraint on `replaces_asset_id` guarantees at most one new asset claims this replacement.
+3. Set `old_asset.lifecycle_status = 'removed'`, `old_asset.decommissioned_at = now()`. **The old row's identity, `asset_tag`, `serial_number`, and every historical fact about it are never edited to describe the new asset.**
+4. Close the old asset's current placement row (`RackPlacement`/`EquipmentPlacement`, §7/§8 — `effective_to = now()`) via the same locked close-then-open sequence defined for an ordinary move (§7c/C4). If the new asset occupies the same rack/U/room, its placement is opened at that location through the **ordinary placement-open operation** — never by editing the old placement row's `rack_id`/`equipment_id` to point at the new asset. If the new asset is installed elsewhere, it simply receives whatever placement reflects its real location.
+5. Any `Alarm` in `active`/`acknowledged` state against the old asset transitions to `cleared` with a system-generated `Event` (`event_type='alarm_cleared_on_asset_retirement'`) — an alarm is never left open against a `removed` asset.
+6. `TelemetryReading` and `ExternalReference` rows already pointing at `old_asset_id` are **never modified or reattributed** — they remain the permanent historical record of the old physical object, exactly as §12 (Single Source of Truth) requires.
+7. One `AuditLog` entry captures the replacement (`action='asset_replaced'`, `before={old_asset_id, old_status}`, `after={new_asset_id}`, `reason` REQUIRED — added to the guarded-action list in §30) plus one `OutboxEvent` (`AssetReplaced`, payload `{old_asset_id, new_asset_id, location, replaced_at}` — added to the event-type list in §22).
+
+**Step D — Enforcement:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| One `ManagedAsset` id = one physical lifecycle, never reused | `id` is PK, never updated after insert (immutability is a row-level guarantee any PK provides) | `ReplaceAsset` always creates a new row, never updates `asset_type`/`id` of an existing one | Replacement is its own endpoint (`POST /api/v1/managed-assets/{id}/replace`), not a `PATCH` on the existing asset | `AssetReplaced` event + `asset_replaced` audit entry, both required | Given any `ManagedAsset.id`, every `TelemetryReading`/`Event`/`Alarm` row referencing it describes exactly one physical object for its whole history |
+| At most one asset claims to replace a given old one | `UNIQUE(replaces_asset_id) WHERE NOT NULL` | — | Transaction fails cleanly (`409`) on a race to replace the same asset twice | Failed attempt is not audited (nothing changed) | A `replaces_asset_id` chain never forks |
+
+**Step E — Boundary check:** no second source of truth is introduced — `replaces_asset_id` is metadata about *succession*, not a mechanism for reattributing history; the reverse "replaced by" lookup (`SELECT id FROM managed_asset WHERE replaces_asset_id = :old_id`) is a query, not a duplicated column.
+
+**Step F — Dependencies updated:** §7/§8 (placement transfer uses the ordinary move operation), §22 (new `AssetReplaced` event type), §30 (replacement added to the guarded-action `reason`-required list), §46 (new AD21).
+
+**Non-impact:** `ManagedAsset`'s shared-PK-inheritance pattern, `asset_type` enum, and every other subtype table are unchanged.
+
+### 4b. ManagedAsset Subtype Matrix (v1.2 — resolves red-team finding H1)
+
+**Step A — Locate:** v1.1 discussed the shared-PK pattern narratively (§4) and referenced `RackModelRevision`/PowerNode/etc. from other sections, but never re-published a complete, authoritative column list for any concrete subtype table after introducing `ManagedAsset`.
+
+**Step B — Validate:** *Confirmed.* An implementer starting Phase 2 from v1.1 alone would need to mentally merge v1.0's now-partially-superseded table definitions with v1.1's structural changes (room_id removed from Rack, rack_id/u_position removed from Equipment, identity fields moved to `ManagedAsset`) — exactly the ambiguity §65 of the red-team gate warns against.
+
+**Step C — Correct.** The rule, stated once: **`ManagedAsset` = identity + lifecycle anchor. A subtype table = domain-specific state only — it never repeats `asset_tag`, `serial_number`, `lifecycle_status`, or `external_ids`.** Placement (location) lives in `RackPlacement`/`EquipmentPlacement` for anything that moves with any regularity, or a plain FK for large fixed installations — never on the subtype table itself.
+
+```text
+Rack                PK id FK→ManagedAsset, model_revision_id FK→RackModelRevision NOT NULL,
+                    name, barcode, owner NULL, installed_at, commissioned_at, notes,
+                    custom_attributes JSONB
+                    Placement: RackPlacement (temporal — racks are moved/re-sited)
+                    Telemetry: object_class='managed_asset' rows against this id
+                    Power: usually a PowerConnection *target* only via mounted PDUs/equipment,
+                           not itself a PowerNode unless the rack has its own metered feed
+                    Network: none directly (its mounted Equipment/PDU carry EquipmentInterface rows)
+
+Equipment           PK id FK→ManagedAsset, model_revision_id FK→EquipmentModelRevision NOT NULL,
+                    hostname NULL, ip_address INET NULL, mac_address NULL, owner NULL, service NULL,
+                    environment NULL, installed_at, warranty_expires_at NULL, notes,
+                    custom_attributes JSONB
+                    Placement: EquipmentPlacement (temporal — §7; placement_type covers rack/floor/
+                               wall/ceiling/other)
+                    Telemetry: object_class='managed_asset'
+                    Power: PowerNode(node_type='equipment_power_input', owning_asset_id=this.id) —
+                           one or two nodes (dual-corded)
+                    Network: EquipmentInterface.equipment_id = this.id (column name retained from
+                             v1.1 for continuity; see §4c naming note)
+
+PDU                 PK id FK→ManagedAsset, pdu_model_id FK→PDUModel NOT NULL, ip_address INET NULL,
+                    protocol ENUM(snmp/rest/none), input_voltage NULL, rated_current_a NULL
+                    Placement: EquipmentPlacement (v1.2 — a PDU is rack-mounted exactly like
+                               Equipment; it uses the same temporal mechanism rather than a bespoke
+                               one, so a future "smart PDU" or "rack PDU" subtype needs no new
+                               placement design). placement_type is typically 'rack_mounted'.
+                    Telemetry: object_class='managed_asset' (input voltage/current/power etc. are
+                               telemetry, not columns here — v1.1 §34 capability-driven principle,
+                               unchanged)
+                    Power: PowerNode(node_type='pdu', managed_asset_id=this.id) — the PDU itself is
+                           a power-graph node; see PDUOutlet below for its outlets
+                    Network: EquipmentInterface rows only if the PDU has its own management NIC
+
+PDUOutlet           PK id FK→PowerNode UNIQUE, pdu_asset_id FK→ManagedAsset NOT NULL,
+                    outlet_number, UQ(pdu_asset_id, outlet_number), label NULL, state
+                    ENUM(on/off/unknown)
+                    **NOT a ManagedAsset** (H1 explicit question, answered): an outlet has no
+                    independent lifecycle — it is never separately installed, decommissioned, or
+                    replaced apart from its parent PDU. It is identified by its owning PDU's
+                    ManagedAsset.id plus its outlet_number, consistent with v1.1 §13's own
+                    reasoning for sub-component PowerNodes.
+
+UPS                 PK id FK→ManagedAsset, capacity_kva, runtime_minutes NULL,
+                    room_id FK→Room NOT NULL
+                    Placement: **plain FK to Room, not temporal EquipmentPlacement** (v1.2
+                    simplification, deliberate: a UPS is a large fixed installation that is
+                    relocated only as a major project, not a routine move — forcing it through the
+                    close/open temporal machinery designed for frequent moves adds complexity with
+                    no operational benefit; if a UPS relocation ever does happen, it is recorded as
+                    an audited `room_id` update, not a placement-history row)
+                    Power: PowerNode(node_type='ups', managed_asset_id=this.id)
+
+Generator           PK id FK→ManagedAsset, capacity_kw, fuel_type NULL, site_id FK→Site NOT NULL
+                    Placement: plain FK to Site (same rationale as UPS — generators are yard/roof
+                    fixed installations)
+                    Power: PowerNode(node_type='generator', managed_asset_id=this.id)
+
+PowerPanel          PK id FK→ManagedAsset, capacity_kw, room_id FK→Room NOT NULL
+                    Placement: plain FK to Room (same rationale as UPS)
+                    Power: PowerNode(node_type='power_panel', managed_asset_id=this.id)
+
+Sensor              PK id FK→ManagedAsset, sensor_type ENUM(temperature/humidity/airflow/pressure/
+                    door/leak)
+                    Placement: EquipmentPlacement (v1.2 — sensors are wall/ceiling-mounted and do
+                    get rehung/relocated occasionally; placement_type typically 'wall_mounted' or
+                    'ceiling_mounted')
+                    Telemetry: object_class='managed_asset' — the sensor itself is the source of
+                    the readings it reports (distinct from Collector, which is the *transport*)
+```
+
+**Extensibility (the H1 success criterion — "future asset classes without redesigning ManagedAsset"):** adding **CRAC, CRAH, Chiller, ATS, Transformer, Busway, Rack PDU, Smart Cabinet**, or any future physical asset class requires exactly three additive decisions, none touching `ManagedAsset`:
+1. Add one `asset_type` enum value.
+2. Add one thin subtype table, keyed `PK id FK→ManagedAsset`, holding only that class's domain-specific attributes.
+3. Choose temporal placement (`RackPlacement`/`EquipmentPlacement`, for anything moved with any regularity) **or** a plain FK (for fixed installations, per the UPS/Generator/PowerPanel pattern) — and, if it participates in the power or network graph, add a `PowerNode`/`EquipmentInterface` row exactly as any existing subtype does.
+
+No new identity mechanism, no change to `ManagedAsset`'s columns, no change to any cross-cutting domain (Telemetry/Alarm/Event/Audit) is ever required to add a subtype.
+
+### 4c. Naming Note (LOW, tracked — not fixed in this revision)
+
+`EquipmentPlacement.equipment_id` and `EquipmentInterface.equipment_id` retain that column name from v1.1 for continuity even though both now explicitly scope to any placeable/networkable `ManagedAsset` (Equipment, PDU, Sensor), not only the `Equipment` subtype narrowly. Renaming both to `asset_id` would be clearer but is a cosmetic change outside this revision's scope (it fixes no confirmed defect on its own). **Recorded under OUT-OF-SCOPE / FUTURE REVISION** (§ARCHITECTURE_CHANGE_MATRIX.md) rather than done silently.
 
 ---
 
@@ -185,20 +328,129 @@ EquipmentPlacement   PK id, equipment_id FK→ManagedAsset NOT NULL,
                      rack_id FK→ManagedAsset NULL (Rack; required iff placement_type=rack_mounted),
                      u_range INT4RANGE NULL (required iff rack_mounted),
                      side ENUM(front/rear/both) NULL,
-                     spatial_object_id FK→SpatialObject NULL UNIQUE (present once the item has been
-                     placed on a floor plan — floor/wall/ceiling items use this for x/y/z; rack-mounted
-                     items may also have one, for a 3D room view, without it being their placement authority),
+                     occupies_front BOOLEAN GENERATED ALWAYS AS (side IN ('front','both')) STORED (v1.2),
+                     occupies_rear  BOOLEAN GENERATED ALWAYS AS (side IN ('rear','both'))  STORED (v1.2),
+                     spatial_object_id FK→SpatialObject NULL UNIQUE,
                      rotation_deg NULL, mounting_method TEXT NULL, orientation NULL,
+                     version INT NOT NULL DEFAULT 1 (v1.2, §7c),
                      effective_from TIMESTAMPTZ NOT NULL, effective_to TIMESTAMPTZ NULL,
                      CHECK (placement_type <> 'rack_mounted' OR (rack_id IS NOT NULL AND u_range IS NOT NULL)),
-                     EXCLUDE USING gist (rack_id WITH =, u_range WITH &&, side WITH <>)
-                       WHERE (placement_type = 'rack_mounted' AND effective_to IS NULL),
                      IDX(equipment_id, effective_to), IDX(rack_id, effective_to)
 ```
 
-"Current placement" = `effective_to IS NULL`; a materialized/queryable view `equipment_current_placement` (indexed the same way) is what the rack elevation endpoint and floor/wall equipment lists actually read, so callers never hand-roll the `effective_to IS NULL` filter. Moving equipment — rack to rack, or rack to floor-standing — closes the current row (`effective_to = now()`) and opens a new one; this **is** the placement history, so no separate history table is needed (correcting v1.0's split `Equipment` + `EquipmentPlacementHistory` into one temporal table, per the temporal model in §29).
+"Current placement" = `effective_to IS NULL`; a queryable view `equipment_current_placement` (indexed the same way) is what the rack elevation endpoint and floor/wall equipment lists actually read, so callers never hand-roll the `effective_to IS NULL` filter. Moving equipment — rack to rack, or rack to floor-standing — closes the current row (`effective_to = now()`) and opens a new one; this **is** the placement history, so no separate history table is needed (correcting v1.0's split `Equipment` + `EquipmentPlacementHistory` into one temporal table, per the temporal model in §29).
 
-The U-overlap exclusion constraint (needs `btree_gist`, flagged in §51/Open Decisions) now supports front/rear half-depth co-occupancy: two rows with the same `rack_id` and overlapping `u_range` are allowed only if their `side` differs and neither is `both`.
+### 7a. U-Range Overlap Semantics (v1.2 — resolves red-team finding C2)
+
+**Step A — Locate:** the single `EXCLUDE ... side WITH <>` constraint shown in v1.1's §7.
+
+**Step B — Validate:** *Confirmed, and worth showing exactly why.* A GiST exclusion constraint rejects a candidate row only when **every** listed operator evaluates true against some existing row. `side WITH <>` therefore rejects a new row only when the two rows' `side` values **differ** — meaning v1.1's constraint blocked the one case it was supposed to allow (front+rear coexisting) and allowed the two cases it was supposed to block (two `front` rows overlapping, or anything overlapping a `both` row). The red-team's own suggested literal SQL was not adopted as-is; the semantics below were derived independently and checked row-by-row against the required truth table.
+
+**Step C — Correct.** Required truth table (unchanged from the request, restated as the specification this constraint must satisfy):
+
+| Side A | Side B | Overlap | Allowed? |
+|---|---|---|---|
+| front | front | yes | NO |
+| front | both | yes | NO |
+| rear | rear | yes | NO |
+| rear | both | yes | NO |
+| front | rear | yes | **YES** |
+| both | both | yes | NO |
+| any | any | no | YES |
+
+**Database enforcement strategy:** two computed boolean columns (`occupies_front`, `occupies_rear`, shown above — `GENERATED ALWAYS AS ... STORED`, so `side` remains the single, only-writable source of truth and the booleans are derived, indexable projections of it, never a second independent representation) plus **two partial exclusion constraints**, one per occupied plane:
+
+```text
+ALTER TABLE equipment_placement ADD CONSTRAINT no_front_overlap
+  EXCLUDE USING gist (rack_id WITH =, u_range WITH &&)
+  WHERE (placement_type = 'rack_mounted' AND effective_to IS NULL AND occupies_front);
+
+ALTER TABLE equipment_placement ADD CONSTRAINT no_rear_overlap
+  EXCLUDE USING gist (rack_id WITH =, u_range WITH &&)
+  WHERE (placement_type = 'rack_mounted' AND effective_to IS NULL AND occupies_rear);
+```
+
+(Shown for semantic precision — this is architecture documentation, not a migration; the exact DDL is subject to implementation validation.)
+
+**Why this satisfies every row of the truth table:** a partial exclusion constraint's `WHERE` clause determines which rows are even subject to it. `front`/`both` rows have `occupies_front=true` and are compared against each other by `no_front_overlap` — any two with overlapping `u_range` in the same rack conflict (blocks front–front, front–both, both–both). `rear`/`both` rows are compared by `no_rear_overlap` the same way (blocks rear–rear, rear–both). A `front` row (`occupies_rear=false`) is never in `no_rear_overlap`'s constrained set, and a `rear` row (`occupies_front=false`) is never in `no_front_overlap`'s set — so front vs. rear rows are never compared against each other by either constraint, and **legitimately overlap without conflict.** Non-overlapping `u_range`s never trigger either constraint regardless of `side` (the GiST `&&` operator is false). The `WHERE effective_to IS NULL` clause scopes both constraints to current placements only — historical (closed) rows, including a case where a *replaced* asset (§4a) occupied the exact same U range as its replacement, are correctly excluded from the check because they are never both open at once (the replacement operation closes the old row before opening the new one, in the same transaction).
+
+**Cross-rack behavior:** unaffected — the `rack_id WITH =` term means overlap in different racks never conflicts.
+
+**Step D — Enforcement summary:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| Two same-side (or `both`) placements never overlap a U range in one rack | Two partial GiST exclusion constraints (above) | Placement service pre-validates and surfaces a friendly error before hitting the DB constraint | `409` on constraint violation, surfaced with the conflicting placement's details | Rejected attempt is not audited (nothing changed); a successful placement is | Truth table above passes for every row, verified by construction (§7a) — **requires PostgreSQL integration test to confirm in practice** |
+
+**Step E — Boundary check:** no second source of truth — `occupies_front`/`occupies_rear` are generated from `side`, never independently set.
+
+**Step F — Dependencies updated:** §7c (concurrency, below) sequences the close-then-open transaction so these constraints are checked against a consistent snapshot; §4a (replacement) relies on this ordering.
+
+### 7b. Exactly-One-Current-Placement (v1.2 — resolves red-team finding C3)
+
+**Step A — Locate:** v1.1's §7/§8 stated "exactly one row per asset has `effective_to IS NULL`" backed only by a non-unique index comment.
+
+**Step B — Validate:** *Confirmed.* An `IDX` enforces nothing; a retried move request, a close/open race, or a bulk-import bug could leave two `EquipmentPlacement`/`RackPlacement` rows for the same asset both "current" — which directly undermines §12 (Single Source of Truth).
+
+**Step C — Correct.** The red-team's own suggestion (`UNIQUE(asset_id) WHERE effective_to IS NULL`) is valid but was evaluated against a stronger alternative and superseded by it: a **range-exclusion constraint over the whole validity interval**, which catches the same "two current rows" defect *and* the broader case of two historical rows for the same asset ever overlapping in time (a bug creating two rows both claiming to cover the same period) — one mechanism, a strictly larger guarantee:
+
+```text
+ALTER TABLE equipment_placement ADD CONSTRAINT one_timeline_per_asset
+  EXCLUDE USING gist (
+    equipment_id WITH =,
+    tstzrange(effective_from, effective_to) WITH &&
+  );
+```
+
+(Postgres's `tstzrange(from, NULL)` produces the unbounded-upper range `[effective_from, ∞)` for a currently-open row, so two attempts to open a second current row for the same asset are range-overlapping by construction and rejected — "at most one current" falls out of the same constraint that also guarantees "no two historical intervals for one asset ever overlap." The equivalent `UNIQUE(...) WHERE effective_to IS NULL` remains a valid, simpler fallback if the range-based form is judged too implicit for the implementation team's comfort; either satisfies C3.) The identical constraint applies to `RackPlacement` keyed on `rack_id`.
+
+**Distinguishing the two invariants the request asks about:**
+- **"At most one current placement"** — the constraint above enforces this as a hard DB guarantee, including the zero-current case (an asset in transit, newly created but not yet installed, or fully decommissioned with its placement row closed and nothing reopened — all valid, all zero-current states).
+- **"An active asset must have exactly one current placement"** — this is a *cross-table existence* requirement (`ManagedAsset.lifecycle_status='active'` implies a matching current-placement row exists) that Postgres cannot express as a single declarative constraint without deferred triggers of meaningful complexity for what is fundamentally a data-quality question, not a physical-impossibility question. v1.2 enforces this at the **domain layer**: the `lifecycle_status → 'active'` transition is rejected by the service layer unless a current placement already exists, and a scheduled consistency check (reusing the existing Alarm/Event machinery, §17/§23) raises a data-quality alarm for any `active` asset found with zero current placements — visible to operators rather than silently wrong.
+- **Future-dated placements are out of scope for v1.1/v1.2**: `effective_from` is always ≤ the transaction's `now()` at insert time — placements are recorded as they happen, not scheduled in advance. This keeps "current" unambiguous (`effective_to IS NULL`, without also needing `effective_from <= now()`). Scheduled/future placements are recorded under OUT-OF-SCOPE / FUTURE REVISION if ever needed.
+
+**Step D — Enforcement summary:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| At most one current placement per asset | Range-exclusion constraint (or equivalent partial unique index) on `RackPlacement`/`EquipmentPlacement` | Move/install/retire workflow always closes-before-opening | §7c | Placement-change events | Two concurrently-current rows for one asset are impossible — **requires PostgreSQL integration test** |
+| Active asset has exactly one current placement | Not DB-enforceable cleanly; not attempted | Activation blocked without a current placement; scheduled consistency check | — | Data-quality alarm on violation | Violations are surfaced, not silent |
+
+### 7c. Concurrency Control for Placement (v1.2 — resolves red-team finding C4, this part)
+
+**Step A — Locate:** v1.1 §36 scoped `version`/`If-Match` to `Rack`, `Equipment`, `AlarmRule` — none of which hold placement data after §7/§8 moved it into `EquipmentPlacement`/`RackPlacement`.
+
+**Step B — Validate:** *Confirmed.* The tables two concurrent operators actually race on (moving the same asset, per the red-team's Test 28 scenario) had no stated concurrency mechanism at all.
+
+**Step C — Correct — the move/retire transaction:**
+
+```text
+BEGIN;
+  SELECT * FROM equipment_placement
+    WHERE id = :expected_current_placement_id AND effective_to IS NULL
+    FOR UPDATE;                                  -- blocks a concurrent mover on the same asset
+  -- if zero rows returned (either raced-and-lost, or the client's view was stale):
+  --   ABORT → 409, response body includes the actual current placement so the client can refresh
+  UPDATE equipment_placement SET effective_to = now() WHERE id = :locked_row_id;
+  INSERT INTO equipment_placement (...) VALUES (...);  -- the new current row
+COMMIT;
+```
+
+This relies on standard, unexotic Postgres behavior: under READ COMMITTED, a `SELECT ... FOR UPDATE` that blocks on a locked row re-evaluates that row's `WHERE` clause against the *post-commit* state once unblocked (`EvalPlanQual`). Since the query's `WHERE` includes `effective_to IS NULL`, a transaction that was waiting behind a just-committed move finds **zero rows**, not the stale row it originally intended to lock — the service layer treats "zero rows" as the conflict signal and returns `409` with the fresh current-placement state, never a silent double-write. This is exactly what makes the 7a/7b DB constraints a backstop rather than the primary defense: concurrency control here produces a clean `409`; without it, a race would instead surface as a raw constraint-violation error.
+
+**Idempotency-Key interaction (§21):** the Idempotency-Key check runs **first**, before the `FOR UPDATE` sequence above — a client retrying an already-succeeded move (e.g., after a network timeout) gets back the original result, not a false `409`. Ordering: Idempotency-Key lookup → placement lock/close/open → response.
+
+**Concurrent placement retirement (two workflows closing the same current placement):** if the *intended end state* is identical for both (both are decommissioning the asset, not moving it to different destinations), a second workflow finding zero rows on retirement is treated as an **idempotent no-op success**, not a `409` — retiring an already-retired asset achieves the caller's intent. A second workflow attempting a *move* (a different destination) does surface `409`, since the caller's intended destination might not match what actually happened.
+
+**Step D — Enforcement summary:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| Concurrent moves of the same asset never both "succeed" against different intended destinations | Row lock via `FOR UPDATE`, re-evaluated on unblock | Move/retire workflow as above | `409` with current state on conflict; idempotent no-op on same-intent retire | Only the winning transaction is audited/eventedI | **Requires PostgreSQL integration test** to confirm `EvalPlanQual` behavior under load |
+
+**Step E — Boundary check:** no second source of truth — the lock targets the same row the exclusion constraints protect; nothing is cached or duplicated to make this work.
+
+**Step F — Dependencies:** §4a's replacement operation reuses this exact sequence; §13a (below) applies the analogous pattern to `PowerConnection`.
 
 Rack elevation is still computed, never stored: `SELECT ... FROM equipment_current_placement WHERE rack_id = :id AND placement_type='rack_mounted' ORDER BY lower(u_range)`, joined to `RackModelRevision.height_u` for the frame.
 
@@ -219,9 +471,16 @@ FloorPlan  →  SpatialLayer  →  SpatialObject (geometry + x/y/z/rotation, can
 RackPlacement   PK id, rack_id FK→ManagedAsset NOT NULL, room_id FK→Room NOT NULL,
                 spatial_object_id FK→SpatialObject NULL UNIQUE,
                 x_mm NULL, y_mm NULL, rotation_deg NULL,
+                version INT NOT NULL DEFAULT 1 (v1.2, §7c's concurrency pattern applies identically here),
                 effective_from NOT NULL, effective_to NULL,
-                IDX(rack_id, effective_to) -- exactly one row per rack has effective_to IS NULL
+                EXCLUDE USING gist (rack_id WITH =, tstzrange(effective_from, effective_to) WITH &&)
+                  (v1.2 — resolves red-team finding C3; identical mechanism and rationale as §7b's
+                  EquipmentPlacement constraint, applied here to guarantee at most one current room/
+                  coordinate assignment per rack and no overlapping historical intervals),
+                IDX(rack_id, effective_to)
 ```
+
+Moving/closing/opening a `RackPlacement` row follows the identical locked close-then-open transaction defined in §7c (`SELECT ... FOR UPDATE ... WHERE rack_id = :id AND effective_to IS NULL`, `409` on zero-rows-after-unblock) — resolving red-team finding C4 for racks the same way §7c resolves it for equipment.
 
 `Rack` (the concrete `ManagedAsset` subtype table) has **no** `room_id` column. A rack's current room is `SELECT room_id FROM rack_placement WHERE rack_id = :id AND effective_to IS NULL` — read through the `rack_current_placement` view. There is exactly one place a rack's room lives.
 
@@ -275,16 +534,75 @@ class FloorPlanImporter(Protocol):
 Registered implementations: `SVGImporter`, `DXFImporter`, `PDFImporter`, `VSDXImporter`, `ImageImporter`. `ImageImporter` (PNG/JPG) explicitly performs calibration-only import — no shape auto-detection — stated as `NOT IMPLEMENTED` for that capability rather than faked, unchanged from v1.0's stance.
 
 ```text
-Source File → Importer.can_handle/parse → Geometry Normalization → Coordinate Transformation (§9)
-   → Object Classification (rectangle aspect-ratio/size vs. known RackModelRevision footprints, text-label
-     matching against existing asset tags)
-   → Candidate Detection → Confidence Scoring
-   → Human Review (FloorPlanImportCandidate queue)
-   → Confirmed Spatial Objects (SpatialObject rows)
-   → Inventory Association (new Rack, or linked to an existing one by asset-tag match)
+Upload → Quarantine → Validation → Isolated Parse (§10a) → Sanitized Intermediate Representation (SIR)
+   → Coordinate Transformation (§9) → Object Classification (rectangle aspect-ratio/size vs. known
+     RackModelRevision footprints, text-label matching against existing asset tags)
+   → Candidate Detection → Confidence Scoring → Human Review (FloorPlanImportCandidate queue)
+   → Confirmed Spatial Objects (SpatialObject rows) → Inventory Association (new Rack, or linked to an
+     existing one by asset-tag match)
 ```
 
 Adding a new format is additive: implement the three-method interface and register it. Nothing in `spatial` or `rack`/`equipment` changes. No candidate becomes an authoritative `Rack`/`SpatialObject`/`EquipmentPlacement` without an explicit confirm action (batch-confirm above a confidence threshold is a UI convenience, never the default).
+
+### 10a. Untrusted-File Parsing Security Boundary (v1.2 — resolves red-team finding C5)
+
+**Step A — Locate:** v1.1 §10 described format detection, classification, and confidence scoring in detail but never addressed the safety of the parsing step itself.
+
+**Step B — Validate:** *Confirmed.* SVG/DXF/VSDX are XML- or ZIP-based formats with known attack surfaces (XXE, zip/decompression bombs, path traversal, embedded scripts); PDF parsers have their own history of memory-exhaustion and parsing-bug classes. User-uploaded files reaching an unconstrained parser in the same runtime that holds database credentials is a genuine trust-boundary gap, not a theoretical one.
+
+**Step C — Correct.** Every uploaded file is untrusted input, always, regardless of extension or claimed type. The pipeline (updated above) inserts an explicit boundary **before** any geometry the rest of the system can act on exists:
+
+```text
+Upload
+   ↓  (file lands in a quarantine area — not the working import directory, not scanned into
+   ↓   inventory-adjacent storage)
+Quarantine
+   ↓
+Validation  — content-sniffed (magic bytes, not filename/extension) file-type check; reject on
+   ↓           mismatch. File-size cap enforced. For ZIP-based containers (VSDX): decompressed-size
+   ↓           limit and compression-ratio guard (reject if decompressed:compressed exceeds a
+   ↓           configured threshold — the zip-bomb defense) checked before any entry is expanded.
+   ↓           Malformed files are rejected here, not best-effort-parsed.
+Isolated Parse  — runs in a narrowly-scoped worker/subprocess that:
+   ↓               • holds NO PostgreSQL credentials
+   ↓               • holds NO general Redis credentials (at most a narrow, write-only progress channel)
+   ↓               • has NO route to the device/collector/BMS network
+   ↓               • has NO outbound network access beyond reading the quarantined file
+   ↓               • has every XML parser configured with external entity resolution and DTD
+   ↓                 processing DISABLED (the XXE defense) and external resource references
+   ↓                 (e.g. an SVG <image href="..."> to an outside URL) stripped, never fetched
+   ↓               • cannot execute embedded content (an SVG <script> tag is stripped and reported
+   ↓                 as an unsupported/rejected object, never executed)
+   ↓               • is bounded: hard wall-clock timeout, memory limit (cgroup/ulimit), and a cap on
+   ↓                 the number of objects/entities parsed before the job aborts as failed
+Sanitized Intermediate Representation (SIR)  — the ONLY thing that crosses back out of the isolated
+   ↓                                            parse step: a schema-validated, constrained structure
+   ↓                                            of normalized shapes/text/coordinates. No raw markup,
+   ↓                                            no scripts, no external references survive into it.
+   ↓                                            This SIR is what v1.1 already called "Geometry
+   ↓                                            Normalization" — v1.2's fix is inserting the trust
+   ↓                                            boundary one step earlier than v1.1 implied, so the
+   ↓                                            parse itself, not just the classification after it,
+   ↓                                            is isolated.
+(rest of the v1.1 pipeline, unchanged, operating only on the SIR — never on the raw file again)
+```
+
+The importer — at every stage — never directly mutates authoritative DCIM inventory (unchanged v1.1 principle, now explicitly extended one step earlier to cover the parser itself, which also never touches inventory or credentials).
+
+**Also specified, minimally (per the explicit instruction not to over-build this into an enterprise malware platform):**
+- **Malware-scan hook:** an optional integration point after quarantine, before parse — framework only, `NOT IMPLEMENTED` against any specific product, consistent with how ExternalReference/ITSM and notification providers are already framework-only elsewhere in this document.
+- **Audit trail:** `FloorPlanImportJob`/`FloorPlanImportDiagnostics` (§11, unchanged) now explicitly capture uploader identity, file hash, and which control (if any) rejected the file (size/ratio/timeout/malformed).
+- **Cleanup:** quarantined and intermediate files are deleted after job resolution (success or failure), on a short, configurable retention window — no indefinite retention of arbitrary uploaded content.
+- **Sensitive data handling:** access to quarantined/source files is scoped by the same `floor_plan:import` permission as the import feature itself.
+- **Site/tenant authorization:** import jobs are scoped to the `Room`/`Site` the uploading user has permission for — this inherits whatever RBAC scoping exists (see §32/H7) automatically, since it is just another `room_id`-scoped write, with no special-casing required.
+
+**Step D — Enforcement summary:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| Untrusted files never reach inventory/credentials directly | N/A (execution-boundary control, not a DB constraint) | Quarantine → isolated-parse → SIR pipeline; only SIR is used past this point | Import job is async (§36), status polled/subscribed | Import job diagnostics + audit trail | A malformed/malicious file produces a failed job with diagnostics, never a partial write to inventory, never parser code execution outside its resource limits — **requires security testing to validate control effectiveness; architecturally defined, not yet implementation-verified** |
+
+**Step E — Boundary check:** the SIR is not a new source of truth — it is the same "Geometry Normalization" output v1.1 already treated as an intermediate, review-gated artifact; v1.2 only moves the trust boundary to enclose the parser that produces it.
 
 ---
 
@@ -336,9 +654,30 @@ PowerNode      PK id, node_type ENUM(generator/ups/power_panel/power_circuit/pdu
 
 PowerConnection   PK id, source_node_id FK→PowerNode NOT NULL, target_node_id FK→PowerNode NOT NULL,
                   connection_type ENUM(feed/distribution), feed_label ENUM(A/B/single), phase,
-                  voltage, rated_current_a, status, effective_from NOT NULL, effective_to NULL,
+                  voltage, rated_current_a, status, version INT NOT NULL DEFAULT 1 (v1.2, §13a),
+                  effective_from NOT NULL, effective_to NULL,
                   IDX(source_node_id, effective_to), IDX(target_node_id, effective_to)
 ```
+
+`PDUOutlet` (`PK id FK→PowerNode UNIQUE, pdu_asset_id FK→ManagedAsset, outlet_number, ...`) is fully specified in §4b alongside the rest of the `ManagedAsset` subtype matrix.
+
+### 13a. Concurrency Control for Power Topology (v1.2 — resolves red-team finding C4, this part)
+
+**Step A — Locate:** v1.1 §36 did not scope `version`/`If-Match` to `PowerConnection`.
+
+**Step B — Validate:** *Confirmed.* Two operators editing the same power connection (Test 11) or one disconnecting while another modifies (Test 11) had no stated conflict-detection mechanism.
+
+**Step C — Correct.** `PowerConnection` is a single-row edit target (unlike placement, it isn't a close-then-open pair for an ordinary edit), so straightforward optimistic concurrency suffices: the API requires `If-Match` against `PowerConnection.version` for `PATCH`; a mismatch is rejected with `409` before any write. For the specific **disconnect** operation (which closes a connection, `effective_to = now()`, rather than editing it) — a concurrent modify-and-disconnect race uses the same `SELECT ... FOR UPDATE` pattern as §7c: the row is locked before either the update or the close, and whichever transaction commits first wins; the second, on unblocking, finds `effective_to` already set (for a disconnect race) or `version` already incremented (for a modify race) and returns `409`, never a silent overwrite. When creating a new `PowerConnection` between two `PowerNode`s, both node rows are locked in a canonical order (lower UUID first) to prevent a deadlock between two transactions connecting the same pair of nodes in opposite order.
+
+**Step D — Enforcement summary:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| Concurrent edit/disconnect of one `PowerConnection` never silently overwrites | `version` column | Canonical node-lock ordering on create | `If-Match`/`409`, or `FOR UPDATE`/`409` for disconnect races | Only the winning transaction is audited/evented | **Requires PostgreSQL integration test** |
+
+**Step E — Boundary check:** no new source of truth; `version` is bookkeeping on the existing row.
+
+**Out of scope for this revision (recorded, not fixed):** self-loop prevention (`source_node_id <> target_node_id`) and cycle-detection on the recursive power-path CTE were flagged by the red-team as H4 — **not** in this revision's mandatory scope (C1–C5, H1, H6, H7, M1) and therefore left deferred; see `ARCHITECTURE_CHANGE_MATRIX.md`.
 
 Every Generator/UPS/PowerPanel/PDU (already `ManagedAsset` subtypes, §4) gets exactly one `PowerNode` row at creation. Every `PowerCircuit`/`PDUOutlet` (owned sub-components, not independent assets) gets a `PowerNode` row referencing its owner via `owning_asset_id`. `EquipmentPowerInput` — a connector on an equipment item, not a table of its own — is likewise a `PowerNode` row with `owning_asset_id` = the equipment's `ManagedAsset.id`; a dual-corded server has two such `PowerNode` rows (feed A, feed B).
 
@@ -683,7 +1022,32 @@ AuditLog   PK audit_id, actor_user_id FK→User NULL, action, entity_type, entit
            user_agent NULL, before JSONB, after JSONB, result ENUM(success/failure), reason NULL
 ```
 
-Fields marked `sensitive` in a small config (credential payloads, password hashes, encrypted secrets) are **never** captured in `before`/`after` — redacted to `"***REDACTED***"` at the serialization layer before the row is written, not after. `reason` is required by the service layer for specific guarded actions (e.g., re-pointing a `Rack` to a different `RackModelRevision`, §31/original v1.0's AD2). Append-only is enforced at the database grant level: the application's DB role has no `UPDATE`/`DELETE` privilege on `audit_log` — only `INSERT` and `SELECT` — so even a bug in application code cannot silently rewrite history.
+Fields marked `sensitive` in a small config (credential payloads, password hashes, encrypted secrets) are **never** captured in `before`/`after` — redacted to `"***REDACTED***"` at the serialization layer before the row is written, not after. `reason` is required by the service layer for specific guarded actions (e.g., re-pointing a `Rack` to a different `RackModelRevision`, §31/original v1.0's AD2; **Asset Replacement, §4a, v1.2**). Append-only is enforced at the database grant level: the application's DB role has no `UPDATE`/`DELETE` privilege on `audit_log` — only `INSERT` and `SELECT` — so even a bug in application code cannot silently rewrite history.
+
+### 30a. AuditLog Partitioning and Retention (v1.2 — resolves red-team finding H6)
+
+**Step A — Locate:** §38's partitioning strategy named only `TelemetryReading` and `Event`; `AuditLog` was omitted despite an identical unbounded-growth profile (every mutation, every domain, at 10,000+ rack / 100,000+ equipment scale).
+
+**Step B — Validate:** *Confirmed*, and a second, related gap: the append-only DB grant that correctly protects `AuditLog` from tampering (above) also means a future *legitimate, approved* retention policy has no stated path to execute — the application role that can't `DELETE` also can't purge old partitions.
+
+**Step C — Correct.**
+- **Partitioning:** `AuditLog` is added to §38's monthly declarative range-partitioning strategy, partitioned on `timestamp`, with the same indexing pattern as `Event` (`entity_type, entity_id, timestamp` and `actor_user_id, timestamp`).
+- **Growth characteristics:** comparable order-of-magnitude to `Event` over time (one row per mutation across every domain, bursty during bulk imports) — smaller than `TelemetryReading` but equally unbounded without a retention mechanism.
+- **Retention duration is a compliance question, not an engineering one** — the actual "keep for N years" number is an **open organizational decision** (§49, new item), not invented here. What v1.2 specifies regardless of the eventual number is the **mechanism**:
+  - **Default posture: archive, don't delete.** Given audit data's evidentiary value, partitions older than the approved retention window are detached and exported to cold/object storage (compressed), not dropped outright, unless a specific legal/compliance policy calls for deletion.
+  - **A separate, privileged database role** (e.g. `dcim_retention_admin`) — distinct from the application's normal role — is the only credential that can detach/archive/drop old `AuditLog` partitions. This role is used exclusively by a scheduled, tightly-scoped maintenance job (the existing `maintenance` Celery queue, §35) — never by the application's request-handling path, never used interactively by a human directly (a human need is satisfied by triggering the job, not connecting with the privileged role).
+  - **The retention job's own actions are themselves logged** — structured application logs (§37) at minimum, recording which partitions were archived/dropped, when, and by which job run — avoiding the circularity of needing to write to the very table whose deletion-restriction is the point.
+  - **Backup interaction:** a detached/archived partition remains in backup scope until its export is completed and verified, so there is never a window where data exists in neither the live table nor a completed backup (§45, unchanged, cross-referenced here).
+
+**Step D — Enforcement summary:**
+
+| Invariant | DB enforcement | Domain enforcement | API/concurrency | Audit/event | Acceptance criterion |
+|---|---|---|---|---|---|
+| AuditLog growth stays operationally bounded | Monthly partitioning (as Event/Telemetry) | Retention policy applied by a scheduled job, not ad hoc | Privileged role scoped to that job only | Retention actions logged (structured logs, not AuditLog itself) | Old partitions are archived/dropped only by the privileged path; the application role never gains destructive privilege |
+
+**Step E — Boundary check:** no second source of truth — archived partitions are the same rows, relocated, not duplicated; application-role privileges are unchanged (still no `UPDATE`/`DELETE`).
+
+**Step F — Dependencies updated:** §38 (partitioning list), §45 (backup interaction note), §49 (new open decision: approved retention duration).
 
 ---
 
@@ -719,6 +1083,24 @@ RoleAssignment   PK (user_id FK→User, role_id FK→Role, scope_type ENUM(globa
 ```
 
 Site-scoped enforcement (actually filtering queries by a user's assigned scope) is **not wired up** in Phase 1 — it becomes architecturally necessary, not optional, the first time two operationally distinct teams share one deployment and need isolation (a concrete trigger condition, not a vague "later"). Until then, `RoleAssignment` rows with `scope_type != global` may exist but are not enforced; enforcement is additive middleware on top of the existing `require_permission` dependency (§8 of v1.0, unchanged), not a schema change, when the trigger condition is met.
+
+### 32a. Site-Scoped RBAC — Decision Status (v1.2 — resolves red-team finding H7)
+
+**Step A — Locate:** §32 above, and Open Decision #2 in §49.
+
+**Step B — Validate:** *Confirmed as an open item, not a hidden defect* — v1.1 already disclosed the deferral; the red-team review's contribution is insisting this be an explicit, dated management decision before Phase 1 begins, not a default reached by silence, since Phase 1 builds the RBAC foundation itself.
+
+**Step C — Record the decision, without making it.** Per the explicit instruction not to select an option on the architecture's own preference, the three options are recorded here exactly as they must be presented to the architecture owner:
+
+| Option | Description | Consequence if chosen |
+|---|---|---|
+| **A** | Site-scoped RBAC enforcement is required *before* Phase 1 ships | Phase 1's RBAC foundation (§65 of the red-team gate) must include the query-filtering middleware referenced above as in-scope work, not deferred — this extends Phase 1's scope and timeline |
+| **B** | Phase 1 intentionally ships with global authorization; site-scoped RBAC is a defined later phase, built when the stated trigger condition (two operationally distinct teams sharing one deployment) is actually met | Phase 1 proceeds as currently scoped in this document; every authenticated user with a global role can read/write every site's data until enforcement is built — an explicitly accepted, temporary condition, not a silent one |
+| **C** | Another explicitly documented decision, approved by the architecture owner | To be recorded here once made |
+
+**Decision status as of this revision: MANAGEMENT DECISION REQUIRED.** No such decision exists elsewhere in this repository. This document does not select an option on its own authority. **Option B is noted as the architecturally lower-cost default if no stakeholder has an immediate site-isolation need** — but this is a recommendation for the decision-maker to confirm or override, not a selection.
+
+**Step D — Phase 1 gate consequence, stated plainly regardless of which option is eventually chosen:** Phase 1 cannot proceed on an *unconfirmed* assumption about this. If Phase 1 implementation begins before this decision is recorded, it must begin under Option B's stated condition **explicitly acknowledged by the architecture owner as a temporary, accepted risk** — not by default silence. This is tracked as a Phase 1 entry-criterion in §47.
 
 ---
 
@@ -764,7 +1146,7 @@ polling | telemetry | alarms | imports | reports | notifications | maintenance |
 
 `/api/v1` REST is preserved. Additions:
 
-- **Optimistic concurrency:** a `version INT` column on frequently-contended entities (`Rack`, `Equipment`, `AlarmRule`); `PATCH` requires `If-Match`, returns `409 Conflict` on mismatch.
+- **Optimistic concurrency:** a `version INT` column on frequently-contended entities. **Corrected in v1.2 (resolves red-team finding C4):** v1.1 scoped this to `Rack`, `Equipment`, `AlarmRule` — but placement and topology data live in `RackPlacement`, `EquipmentPlacement`, and `PowerConnection` (§7/§8/§13), which is what concurrent operators actually contend on. The scope is now: `AlarmRule` (simple `If-Match`), `PowerConnection` (`If-Match`, §13a), and `RackPlacement`/`EquipmentPlacement` (locked close-then-open transaction returning `409` on a lost race, §7c — a stronger mechanism than `If-Match` alone, since a "move" is a multi-row operation, not a single-row edit). `Rack`/`Equipment` themselves (the `ManagedAsset` subtype rows) hold no placement/topology data post-v1.1 and have correspondingly little concurrent-edit contention risk; they may still carry a `version` column for their own narrow fields (name, notes) at implementation time, but this is not the mechanism protecting placement or power correctness.
 - **Idempotency-Key header:** supported on POST endpoints with external side-effects (trigger a floor-plan import, send a test notification) so client retries are safe.
 - **Correlation:** every request gets/propagates `X-Request-Id` (generated if absent), stamped into `AuditLog`/`Event`/`OutboxEvent` for end-to-end tracing (§23, §25).
 - **Errors:** `application/problem+json` (RFC 7807), unchanged from v1.0.
@@ -791,9 +1173,10 @@ Correlation chain, propagated and loggable together: `request_id` (one HTTP call
 - **Schema ownership:** a single Postgres schema (`public`) with domain-prefixed table names for Phase 1–13 — simpler migrations and no cross-schema FK friction; multi-schema separation is reserved for if/when a module is actually extracted into its own service (§6), not adopted preemptively.
 - **FK strategy:** real foreign keys everywhere Postgres can express them; the two documented exceptions (telemetry/event/alarm `object_class`+`object_id`, §4/§16/§25) use application validation plus a database trigger, stated explicitly rather than silently accepted as a gap.
 - **JSONB boundaries:** unchanged principle — `custom_attributes`, model-revision `mounting`/`features`, `raw_attributes` (discovered state), notification channel config. Never core relational facts.
-- **Partitioning:** `TelemetryReading` and `Event` are declaratively range-partitioned by month from Phase 1.
-- **Concurrency:** optimistic locking (`version`, §36) for user-editable master data; `SELECT ... FOR UPDATE` plus the GIST exclusion constraint together (belt-and-suspenders) on the U-range placement write path, since bulk import can race the constraint check with an in-flight transaction.
-- **Required extensions:** `btree_gist` (U-range exclusion constraints, §7), `pgcrypto` or equivalent (UUID generation). Both flagged for confirmation in the target hosting environment (§53).
+- **Partitioning:** `TelemetryReading`, `Event`, **and `AuditLog` (added in v1.2, §30a — resolves red-team finding H6)** are declaratively range-partitioned by month from Phase 1.
+- **Concurrency:** optimistic locking (`version`, §36) for `PowerConnection`/`AlarmRule`; `SELECT ... FOR UPDATE` combined with the GiST exclusion constraints (§7a/§7b, corrected in v1.2) on the placement write path — this pairing is deliberate, not redundant: the lock produces a clean `409` for the common concurrent-move case, while the exclusion constraints remain a backstop against any write path that reaches the database without going through the locked service-layer transaction (e.g., a bulk import, §9 v1.0).
+- **Required extensions:** `btree_gist` (needed for both the U-range exclusion constraints, §7a, and the `tstzrange`-based placement-timeline exclusion constraints, §7b/§8 — v1.2 uses this extension more heavily than v1.1 did, making its confirmation in the target hosting environment more important, not less), `pgcrypto` or equivalent (UUID generation). Both flagged for confirmation in the target hosting environment (§53/§49).
+- **Privileged retention role** (v1.2, §30a): a database role distinct from the application's, scoped only to a scheduled maintenance job, authorized to detach/archive/drop old `AuditLog` (and, per existing v1.1 `RetentionPolicy`, `TelemetryReading`) partitions.
 
 ---
 
@@ -1024,6 +1407,43 @@ RPO/RTO are **explicitly not assumed** — flagged as requiring management-appro
 *Alternatives:* Build full enforcement in Phase 1 (rejected — no current requirement justifies the cost); ignore scoping entirely (rejected — v1.0 already flagged it as likely needed, and retrofitting query-level scoping later is more expensive than reserving the column now).
 *Consequences:* If the trigger condition is met earlier than expected, enforcement work is scoped and estimable (additive middleware) rather than a schema surprise.
 
+### New in v1.2 (targeted revision)
+
+**AD21 — Asset Replacement as an explicit domain operation.**
+*Context:* v1.1 asserted permanent, unique physical-asset identity but never defined the procedure for a physical swap.
+*Decision:* `ReplaceAsset` transactionally retires the old `ManagedAsset` and creates a new one linked via `replaces_asset_id`, never mutating the old identity.
+*Rationale:* The alternative (editing the existing row) would silently corrupt years of historical attribution the first time it happened.
+*Alternatives:* Mutate the existing row and rely on `AuditLog` to record the change (rejected — audit records the change but doesn't prevent all *subsequent* telemetry/alarm history from misattributing to the wrong physical object going forward, since nothing else in the system would know the identity's meaning changed mid-stream).
+*Consequences:* One new nullable, uniquely-constrained FK column on `ManagedAsset`; one new domain operation and event type; no impact to any other subtype table.
+
+**AD22 — Corrected U-range exclusion via computed occupancy columns + dual partial constraints.**
+*Context:* v1.1's single `side WITH <>` exclusion constraint enforced the inverse of the intended semantics.
+*Decision:* Two GiST partial exclusion constraints, gated on `GENERATED`-column projections (`occupies_front`/`occupies_rear`) of `side`, verified row-by-row against the required truth table.
+*Rationale:* A single constraint expressing "conflict unless sides differ, except both-vs-anything" cannot be written as one exclusion predicate; two predicates, each scoped to one occupied plane, composes correctly and was checked exhaustively rather than assumed.
+*Alternatives:* A custom PostgreSQL operator encoding side-compatibility directly (rejected — more powerful than needed, and generated boolean columns are far easier for an implementation team to read, test, and reason about than a custom operator class).
+*Consequences:* Two constraints instead of one; `btree_gist` remains the only extension dependency.
+
+**AD23 — Placement/topology concurrency via row-lock-then-reevaluate, not purely optimistic concurrency.**
+*Context:* v1.1 scoped `version`/`If-Match` to the wrong tables and, even if rescoped, optimistic concurrency alone doesn't cleanly handle a multi-row close-then-open operation.
+*Decision:* `RackPlacement`/`EquipmentPlacement` moves use `SELECT ... FOR UPDATE` on the current-placement row, relying on Postgres's standard `EvalPlanQual` re-check to surface a clean `409` on a lost race; `PowerConnection` (a single-row edit target) uses simpler `version`/`If-Match`.
+*Rationale:* Matching the mechanism to the shape of the operation (multi-row temporal transition vs. single-row edit) rather than forcing one pattern everywhere.
+*Alternatives:* Serializable isolation level for all placement transactions (rejected — correct but unnecessarily costly given a targeted row lock achieves the same outcome for this specific, well-understood access pattern).
+*Consequences:* Two related but distinct concurrency patterns to document and implement correctly; both are standard, well-known Postgres techniques, not novel mechanisms.
+
+**AD24 — Untrusted-file parsing isolated behind a Sanitized Intermediate Representation boundary.**
+*Context:* v1.1 had no stated parser security boundary for user-uploaded floor plans.
+*Decision:* Parsing runs in a credential-less, network-restricted, resource-bounded worker; only a schema-validated SIR crosses back into the trusted pipeline.
+*Rationale:* The existing v1.1 pipeline already had a natural insertion point ("Geometry Normalization"); v1.2 moves the trust boundary one step earlier to enclose the parser itself, rather than inventing a new pipeline stage.
+*Alternatives:* Rely on library-level XXE/zip-bomb mitigations alone without process/credential isolation (rejected — defense in depth is warranted given the parser handles arbitrary user uploads and a library-level bug is not defended against by library-level configuration alone).
+*Consequences:* Requires a distinct execution environment (subprocess/container) for the parse step at implementation time — an infrastructure/deployment detail, not a domain-model change.
+
+**AD25 — Complete `ManagedAsset` subtype matrix, with placement-mechanism choice made explicit per subtype.**
+*Context:* v1.1 introduced the shared-PK pattern but never published complete subtype schemas, and PDU/Sensor placement was left undefined entirely.
+*Decision:* §4b's matrix; PDU and Sensor use `EquipmentPlacement` (temporal — they move); UPS/Generator/PowerPanel use a plain FK to `Room`/`Site` (fixed installations, relocated only as major projects).
+*Rationale:* Forcing every subtype through the same temporal-placement machinery regardless of how often it actually moves adds complexity without benefit for the fixed-installation cases; the distinction is made explicit rather than left for each future subtype to reinvent inconsistently.
+*Alternatives:* Force all subtypes through `EquipmentPlacement` uniformly (rejected — UPS/Generator/PowerPanel relocations are rare, audited, project-level events, not the routine moves the temporal model optimizes for; a plain FK is simpler and equally correct for that access pattern).
+*Consequences:* Two placement patterns to document (already done, §4b) instead of one; every future subtype's placement choice is a decision the matrix already shows how to make, not a new design question.
+
 ---
 
 ## 47. Phase Sequencing
@@ -1055,6 +1475,42 @@ The reordering proposed for review is adopted, with the stated rationale for eac
 - **Acceptance criteria:** the phase's slice of the §64 (original master prompt) end-to-end workflow is demonstrable against real (seeded) data, not mocked.
 - **Architecture constraints:** nothing in the phase may violate §12 (Single Source of Truth) or introduce a second representation of a fact this document already assigns an owner (§42).
 - **Exit gate:** a phase completion report per the original master prprompt's §72 format, explicitly listing what was deferred — "no hidden scope."
+
+### 47a. v1.2 Phase Impact
+
+No phase was reordered. Per finding:
+
+| Finding | Phase 1 | Phase 2 (Location/Inventory) | Phase 5 (Spatial) | Phase 6 (Import) | Phase 7 (Power) | Other phases |
+|---|---|---|---|---|---|---|
+| C1 (Asset Replacement) | NO PHASE CHANGE | New prerequisite: the `ReplaceAsset` operation and `replaces_asset_id` must exist before Phase 2 is considered complete (it's part of `ManagedAsset`, built in this phase) | — | — | — | — |
+| C2 (U-range exclusion) | NO PHASE CHANGE | — | New prerequisite: `EquipmentPlacement`'s corrected dual-constraint mechanism (§7a) must be in place before Phase 5 exit gate, since Phase 4 (Equipment/Elevation) already depends on U-range integrity | — | — | — |
+| C3 (Exactly-one-current) | NO PHASE CHANGE | New prerequisite: the range-exclusion constraint (§7b) ships with `RackPlacement`/`EquipmentPlacement` themselves (Phase 2/4), not deferred to Phase 5 | Confirms/depends on the same constraint | — | — | — |
+| C4 (Concurrency) | New prerequisite: the `SELECT ... FOR UPDATE` pattern (§7c) and `version` columns are part of Phase 1's API-conventions foundation (§65), not added later | — | — | — | New prerequisite: `PowerConnection.version` ships with Phase 7 | — |
+| C5 (Import security boundary) | NO PHASE CHANGE | — | — | New prerequisite: the quarantine/isolated-parse/SIR boundary (§10a) is now part of Phase 6's scope, not an add-on after — Phase 6's exit gate cannot pass without it | — | — |
+| H1 (Subtype matrix) | NO PHASE CHANGE | Directly informs Phase 2/3/4's table definitions (Rack/Equipment) and Phase 7's (PDU/UPS/Generator/PowerPanel) — no new work, just removes ambiguity those phases already had to resolve themselves | — | — | Directly informs Phase 7 | — |
+| H6 (AuditLog partitioning) | New prerequisite: AuditLog's partitioned schema and the privileged retention role are part of Phase 1's database/audit foundation (§65) | — | — | — | — | — |
+| H7 (RBAC decision) | **Blocking entry criterion**: Phase 1 cannot begin its RBAC foundation work without the decision in §32a being recorded (Option A/B/C) — see §65 | — | — | — | — | — |
+| M1 (Naming) | NO PHASE CHANGE | NO PHASE CHANGE | NO PHASE CHANGE | NO PHASE CHANGE | NO PHASE CHANGE | Documentation-only, no phase depends on the column name itself |
+
+---
+
+## 47b. Architecture Invariant & Enforcement Matrix (v1.2, new)
+
+Every invariant this revision touches, in one place, each traced to a concrete enforcement mechanism rather than a paragraph of intent:
+
+| Invariant | Source of Truth | DB Enforcement | Domain Enforcement | API/Concurrency | Audit/Event | Acceptance Criterion |
+|---|---|---|---|---|---|---|
+| ManagedAsset identity: one physical lifecycle, one id, forever | `ManagedAsset` | PK, never updated | Lifecycle-transition rules; subtype creation is centralized | — | `AuditLog` on every lifecycle transition | Every reference to one `ManagedAsset.id`, across every domain, describes one physical object for its entire history |
+| Asset replacement: old identity never reused | `ManagedAsset.replaces_asset_id` | `UNIQUE(replaces_asset_id) WHERE NOT NULL`, FK | `ReplaceAsset` transaction (§4a) | Single transaction; dedicated endpoint, not a `PATCH` | `AssetReplaced` event + `asset_replaced` audit (reason required) | Old asset's telemetry/alarm/audit history is never edited or reattributed |
+| Current rack placement: at most one, ever | `RackPlacement` | Range-exclusion constraint on `(rack_id, tstzrange(effective_from, effective_to))` (§8) | Close-then-open workflow | `FOR UPDATE` + `409` on lost race (§7c pattern, applied to racks) | Placement-change event per move | Two simultaneously-current `RackPlacement` rows for one rack are impossible |
+| Current equipment placement: at most one, ever | `EquipmentPlacement` | Range-exclusion constraint on `(equipment_id, tstzrange(...))` (§7b) | Close-then-open workflow | `FOR UPDATE` + `409` on lost race (§7c) | Placement-change event per move | Two simultaneously-current `EquipmentPlacement` rows for one asset are impossible |
+| Active asset has exactly one current placement | `ManagedAsset.lifecycle_status` + `EquipmentPlacement`/`RackPlacement` | Not DB-enforceable cleanly; not attempted (§7b) | Activation blocked without a current placement; scheduled consistency check | — | Data-quality alarm on violation | Violations are surfaced, never silently wrong |
+| U-range overlap: truth table (§7a) holds exactly | `EquipmentPlacement.side`, `occupies_front`/`occupies_rear` (generated) | Two partial GiST exclusion constraints (§7a) | Pre-validation before hitting the DB constraint | `409` with conflicting placement detail | Rejected attempts are not audited (nothing changed) | Truth table passes for every row — requires PostgreSQL integration test |
+| Placement/topology concurrency: no silent overwrite | `RackPlacement`/`EquipmentPlacement`/`PowerConnection` | Row locks (`FOR UPDATE`) re-evaluated on unblock; `version` on `PowerConnection` | Idempotency-Key check runs before the concurrency check (§7c) | `409` + fresh state, or idempotent no-op for same-intent retirement | Only the winning transaction is audited/evented | Requires PostgreSQL integration test under concurrent load |
+| Power topology: real FKs, no dangling edges | `PowerNode`/`PowerConnection` | FK on both ends (unchanged from v1.1) | `PowerNode` created alongside every power-graph participant (service discipline, §46 risk 1, unchanged) | `409` on concurrent edit/disconnect (§13a) | Topology-change event | No `PowerConnection` edge can reference a non-existent `PowerNode` (self-loop/cycle prevention remains H4, explicitly deferred) |
+| Import security: untrusted files never reach inventory/credentials directly | Quarantine → isolated parse → SIR pipeline (§10a) | N/A (execution-boundary, not a DB constraint) | Parser worker is credential-less and network-restricted | Import job is async, status polled (§36) | Import diagnostics + audit trail | Architecturally defined; requires security testing to validate control effectiveness |
+| AuditLog: bounded growth, tamper-evident, but purgeable by policy | `AuditLog` | Monthly partitioning; app role has no UPDATE/DELETE | Retention policy executed only by a separate privileged role/job (§30a) | — | Retention actions logged (structured logs) | Application code can never purge audit history; an approved retention policy can, through the privileged path only |
+| Identity-reference naming: one pattern, one name | `Alarm`/`Event`/`TelemetryReading`/`ExternalReference` | Trigger validates `object_id` against `object_class` (unchanged mechanism, v1.1) | — | — | — | §4's diagram and §16/§25's table definitions now use the identical column names — no reader-facing inconsistency remains |
 
 ---
 
@@ -1092,7 +1548,8 @@ These are organizational/operational decisions this document does not make on th
 | Decision | Options | Recommended direction | Decision owner | Required by phase | Status |
 |---|---|---|---|---|---|
 | Single vs. multi-tenant | Single-tenant / multi-org-in-one-DB | Single-tenant (§32) | Product owner | Phase 2 | Open |
-| Site-scoped RBAC enforcement timing | Build now / defer to trigger condition | Defer (§32) | Product owner | Whenever the trigger condition is met | Open (direction set) |
+| Site-scoped RBAC enforcement timing | Option A (build before Phase 1) / Option B (defer to trigger condition) / Option C (other) — see §32a | Option B noted as architecture's lower-cost default absent a conflicting need, **but this is explicitly MANAGEMENT DECISION REQUIRED, not yet made (§32a, v1.2)** | Architecture owner | **Phase 1 entry criterion (v1.2) — blocking** | **Open, escalated in v1.2** |
+| AuditLog retention duration (v1.2, new) | A specific "keep for N years" figure, per compliance requirement | Mechanism (partitioning + archive-don't-delete + privileged role) is specified in §30a regardless of the number; the number itself is not invented here | Compliance/Legal + architecture owner | Phase 1 (mechanism), ongoing (duration) | Open |
 | Edge collector deployment | Build in Phase 8 / defer entirely | Defer past Phase 13 unless a site with real WAN constraints is identified | Ops/Infra | Phase 8 planning | Open |
 | Priority device vendors/models for SNMP | (needs a concrete list) | — | DCIM operations | Phase 8 | Open |
 | TimescaleDB availability in target hosting | Can install / cannot | Confirm before committing Phase 9 to it (§39) | Infra/DBA | Phase 9 | Open |
@@ -1119,9 +1576,11 @@ These are organizational/operational decisions this document does not make on th
 5. `PowerNode` creation discipline (AD10) is a service-layer responsibility, not automatic — a code-review/testing risk if a future contributor adds a power-graph participant without also creating its `PowerNode` row.
 6. Two required Postgres extensions (`btree_gist`, and a UUID-generation extension) need confirming in the target hosting environment (§49) — same category of risk as v1.0's single-extension flag, now covering both the U-range constraint and `ManagedAsset`/UUID identity strategy.
 7. The Outbox dispatcher (§22) is a new single point that, if not itself monitored (§37), could silently back up — flagged as a required Observability surface, not optional.
+8. **(v1.2, new)** The corrected U-range exclusion constraints (§7a), the `tstzrange`-based placement-timeline exclusion constraints (§7b/§8), and the `FOR UPDATE`/`EvalPlanQual` concurrency pattern (§7c/§13a) are architecturally validated by construction (checked row-by-row against the required truth table, and against documented Postgres transaction-isolation semantics) but **not yet validated against a running PostgreSQL instance** — every one of these mechanisms requires a PostgreSQL integration test before Phase 2/5/7's exit gate, not merely a code review.
+9. **(v1.2, new)** The floor-plan import security boundary (§10a) is architecturally defined but its actual effectiveness against real malformed/malicious files requires security testing at implementation time — this document specifies the control, not evidence that the control holds under attack.
 
 ---
 
-**Architecture status: READY FOR ARCHITECTURE APPROVAL**
+**Architecture status (v1.2): TARGETED REVISION COMPLETE — AWAITING FINAL RED-TEAM VALIDATION**
 
-This document (with its companion `ARCHITECTURE_REVISION_REPORT.md`) is the complete v1.1 Phase 0 deliverable. No Phase 1 implementation — repository scaffolding, database migrations, backend/frontend code, authentication, integrations, 2D/3D engines — begins until this revision is explicitly approved or further revised.
+This document, together with `ARCHITECTURE_CHANGE_MATRIX.md` and `ARCHITECTURE_TARGETED_REVISION_REPORT.md`, is the complete v1.2 targeted-revision deliverable. C1–C5 are resolved architecturally (§4a, §7a, §7b, §7c/§13a, §10a); H1, H6, and M1 are resolved (§4b, §30a, §4/§16/§25 reconciliation); H7 is escalated to an explicit, still-open management decision (§32a) rather than silently assumed. No Phase 1 implementation — repository scaffolding, database migrations, backend/frontend code, authentication, integrations, 2D/3D engines — begins until this revision passes final adversarial validation and the H7 decision is recorded.
