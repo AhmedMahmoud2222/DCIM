@@ -64,7 +64,10 @@ export async function apiFetch<T>(
   const doFetch = async (): Promise<Response> => {
     const token = useAuthStore.getState().accessToken;
     const headers = new Headers(init.headers);
-    headers.set("Content-Type", "application/json");
+    // FormData bodies (file uploads) need the browser to set Content-Type itself,
+    // including the multipart boundary — an explicit application/json here would
+    // otherwise silently corrupt every upload request.
+    if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
     if (token) headers.set("Authorization", `Bearer ${token}`);
     if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
     if (ifMatch !== undefined) headers.set("If-Match", String(ifMatch));

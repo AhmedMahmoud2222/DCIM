@@ -6,6 +6,9 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
   { to: "/locations", label: "Locations" },
   { to: "/managed-assets", label: "Managed Assets" },
+  { to: "/racks", label: "Racks" },
+  { to: "/equipment", label: "Equipment" },
+  { to: "/floor-plans", label: "Floor Plans" },
 ];
 
 export function AppShell() {
