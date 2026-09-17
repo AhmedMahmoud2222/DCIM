@@ -1,10 +1,13 @@
 """Floor-plan import job execution (§10/§36: "floor-plan import... is asynchronous —
 202 Accepted + a job resource URL to poll"). The uploaded bytes are passed as the task
 argument (base64-encoded, JSON-serializable) rather than written to a shared filesystem
-path — consistent with app.application.svg_sanitizer's in-memory-only design, and a
-reasonable choice at the 5MB SVG size cap this pipeline enforces; a much larger
-file-size ceiling would call for a different transport (e.g. object storage with a
-short-lived signed reference), not attempted here since it isn't needed at this scale."""
+path of this pipeline's own choosing — a reasonable choice at the 5MB SVG size cap this
+pipeline enforces; a much larger file-size ceiling would call for a different transport
+(e.g. object storage with a short-lived signed reference), not attempted here since it
+isn't needed at this scale. (This is a separate claim from app.application.svg_sanitizer's
+own docstring, corrected per RT-2: the upload *endpoint* itself, upstream of this task,
+does spool to a real OS temp file above 1MB via Starlette's UploadFile — see that
+docstring for what does and doesn't still hold there.)"""
 
 import base64
 from datetime import UTC, datetime

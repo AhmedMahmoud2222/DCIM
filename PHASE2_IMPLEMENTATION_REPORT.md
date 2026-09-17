@@ -232,12 +232,20 @@ outright, not best-effort parsed), a hard element-count cap (5,000) enforced *du
 walk (bounds a pathological-but-small file without a separate timeout), `<script>`/
 event-handler-attribute/external-reference stripping, and a Sanitized Intermediate
 Representation (`SirShape`) as the only thing that crosses back out of the module — never
-raw markup or `Element` objects. Processing is entirely in-memory (bytes are never
-written to any path on disk), which is a *stronger* property than a quarantine-directory
-design specifically for path-traversal purposes. Disclosed limitation: this does not run
-inside a separate OS-level subprocess/container with a credential-free identity, unlike
-the architecture's "narrowly-scoped worker" language — a genuine infrastructure control
-this implementation does not provide (see `PHASE2_GAP_ANALYSIS.md` §3.4).
+raw markup or `Element` objects. Correction (RT-2, PHASE2_CORRECTION_REPORT.md): this
+section previously claimed processing was "entirely in-memory (bytes are never written to
+any path on disk)". Independent red-team testing, and this correction's own repeat
+verification via live `/proc/<pid>/fd` monitoring during real uploads at 1.5MB/5MB/20MB,
+found that claim false above 1MB — Starlette's `UploadFile` spools to a real, immediately
+unlinked OS temp file before the endpoint or this module ever sees the bytes, for any
+upload over 1MB (the common case at this project's 5MB/20MB caps). The property that does
+still hold, and is the one that actually matters for path traversal: that temp file's path
+is derived from process-random state, never from the uploaded filename, so no
+attacker-controlled filename can influence where anything is written. Disclosed
+limitation, unchanged: this does not run inside a separate OS-level subprocess/container
+with a credential-free identity, unlike the architecture's "narrowly-scoped worker"
+language — a genuine infrastructure control this implementation does not provide (see
+`PHASE2_GAP_ANALYSIS.md` §3.4).
 
 Every attack in the adversarial matrix below was actually run, not just designed:
 

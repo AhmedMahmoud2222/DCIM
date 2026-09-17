@@ -9,6 +9,8 @@ database to observe its effect."""
 import base64
 import uuid
 
+import pytest
+
 from app.infrastructure.tasks.floorplan_import import run_floor_plan_import_job, validate_and_run_raster_import_job
 from tests.api._phase2_helpers import create_room
 
@@ -397,3 +399,248 @@ async def test_get_nonexistent_floor_plan_is_404(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     resp = await client.get(f"/api/v1/floor-plans/{uuid.uuid4()}", headers=headers)
     assert resp.status_code == 404
+
+
+# --------------------------------------------------------------------------- RT-1 regression
+# (PHASE2_INDEPENDENT_RED_TEAM_REPORT.md finding RT-1: the SpatialLayer lookup-then-create
+# race in accept_import_candidate — see PHASE2_CORRECTION_REPORT.md for the full fix.)
+
+
+def _svg_with_n_shapes(n: int) -> bytes:
+    rects = "".join(f'<rect x="{i * 20}" y="10" width="10" height="10" />' for i in range(n))
+    return f'<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="300">{rects}</svg>'.encode()
+
+
+async def _setup_floor_plan_with_n_candidates(client, headers, room_id, n: int):
+    floor_plan = (await client.post("/api/v1/floor-plans", json={"room_id": room_id}, headers=headers)).json()
+    job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("rt1.svg", _svg_with_n_shapes(n), "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+    _run_import(job["id"], _svg_with_n_shapes(n))
+    candidates = (
+        await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates?limit=200", headers=headers)
+    ).json()
+    assert len(candidates["items"]) == n
+    return floor_plan, job, [c["id"] for c in candidates["items"]]
+
+
+async def _imported_layer_count(floor_plan_id: str) -> int:
+    import os
+
+    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test")
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    try:
+        async with engine.connect() as conn:
+            count = (
+                await conn.execute(
+                    text("SELECT count(*) FROM spatial_layer WHERE floor_plan_id = :fp AND layer_type = 'imported'"),
+                    {"fp": floor_plan_id},
+                )
+            ).scalar_one()
+        return count
+    finally:
+        await engine.dispose()
+
+
+async def test_rt1_sequential_acceptance_creates_exactly_one_imported_layer(client, auth_headers):
+    """Test A: two candidates for the same floor plan, accepted sequentially — the
+    baseline (non-racing) case must still converge on exactly one canonical layer."""
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan, job, cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 2)
+
+    for cid in cand_ids:
+        resp = await client.post(
+            f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cid}/accept",
+            json={"object_type": "imported_shape"}, headers=headers,
+        )
+        assert resp.status_code == 200
+
+    assert await _imported_layer_count(floor_plan["id"]) == 1
+
+
+async def test_rt1_direct_db_bypass_of_duplicate_imported_layer_is_rejected(db_session):
+    """Test E: attempt to insert a second 'imported' SpatialLayer for the same
+    floor_plan_id directly via the ORM, bypassing the API entirely — proves the invariant
+    is enforced by PostgreSQL itself (migration 0005's partial unique index), not merely
+    by application code."""
+    import sqlalchemy.exc
+
+    from app.domain.location.models import Building, City, Country, Floor, Organization, Room, Site
+    from app.domain.spatial.models import FloorPlan, SpatialLayer
+
+    org = Organization(name=f"RT1-{uuid.uuid4().hex[:8]}")
+    db_session.add(org)
+    await db_session.flush()
+    country = Country(organization_id=org.id, name="RT1")
+    db_session.add(country)
+    await db_session.flush()
+    city = City(country_id=country.id, name="RT1")
+    db_session.add(city)
+    await db_session.flush()
+    site = Site(city_id=city.id, code=f"RT1-{uuid.uuid4().hex[:6]}", name="RT1")
+    db_session.add(site)
+    await db_session.flush()
+    building = Building(site_id=site.id, code="A", name="A")
+    db_session.add(building)
+    await db_session.flush()
+    floor = Floor(building_id=building.id, name="F1", level_number=1)
+    db_session.add(floor)
+    await db_session.flush()
+    room = Room(floor_id=floor.id, code=f"RT1-{uuid.uuid4().hex[:6]}", name="RT1")
+    db_session.add(room)
+    await db_session.flush()
+    floor_plan = FloorPlan(room_id=room.id, revision_number=1, status="draft")
+    db_session.add(floor_plan)
+    await db_session.flush()
+
+    db_session.add(SpatialLayer(floor_plan_id=floor_plan.id, name="Imported", layer_type="imported", z_order=0))
+    await db_session.commit()
+
+    db_session.add(SpatialLayer(floor_plan_id=floor_plan.id, name="Imported (duplicate attempt)", layer_type="imported", z_order=0))
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_rt1_20_concurrent_accepts_of_different_candidates_no_duplicate_layer_no_500(client, auth_headers):
+    """Test C (and the core reproduction of RT-1 itself): 20 genuinely concurrent accept
+    requests for 20 DIFFERENT candidates of the same import job, each on its own
+    database session/connection — the exact attack
+    PHASE2_INDEPENDENT_RED_TEAM_REPORT.md's attack_r7_spatiallayer_race.py used to prove
+    the original defect (17/20 requests failed with 500 before this fix)."""
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.api.deps import get_db
+    from app.main import app
+    from tests.conftest import TEST_DATABASE_URL
+
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan, job, cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 20)
+
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=25, max_overflow=10)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    async def _override():
+        async with session_factory() as session:
+            yield session
+
+    # Not `.pop(get_db, None)` in `finally` below: that would remove the `client`
+    # fixture's own override entirely (same dict key), rather than restore it — leaving
+    # every subsequent `client.post()` call in *this* test (Test D's recovery/fresh_accept
+    # calls just below) to fall through to app/db/session.py's real, module-level
+    # production `get_db`/`engine`, created once at import time and never meant to be
+    # touched by this test's own event loop. That mismatch is exactly what previously
+    # surfaced here as a confusing asyncpg "different loop" crash — restoring the prior
+    # override instead avoids it.
+    previous_override = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = _override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            async def _accept(cid):
+                return await ac.post(
+                    f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cid}/accept",
+                    json={"object_type": "imported_shape"}, headers=headers,
+                )
+
+            results = await asyncio.gather(*[_accept(cid) for cid in cand_ids])
+    finally:
+        if previous_override is not None:
+            app.dependency_overrides[get_db] = previous_override
+        else:
+            app.dependency_overrides.pop(get_db, None)
+        await engine.dispose()
+
+    statuses = [r.status_code for r in results]
+    assert statuses.count(500) == 0, f"expected zero 500s, got statuses={statuses}"
+    assert statuses.count(200) == 20, f"expected all 20 distinct-candidate accepts to succeed, got statuses={statuses}"
+    assert await _imported_layer_count(floor_plan["id"]) == 1, "exactly one canonical Imported layer must exist after the race"
+
+    # Test D: post-race recovery — the floor plan must still be fully usable afterward.
+    _, job2, more_cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 1)
+    # accept against the ORIGINAL floor plan/job via a brand-new candidate to prove the
+    # workflow isn't permanently broken (the original defect's compounding failure mode).
+    recovery = await client.post(
+        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cand_ids[0]}/reject", headers=headers
+    )
+    # cand_ids[0] was already accepted by the race above — rejecting an already-accepted
+    # candidate must be a clean 409, not a 500, proving the endpoint is still healthy.
+    assert recovery.status_code == 409
+    fresh_accept = await client.post(
+        f"/api/v1/floor-plans/import-jobs/{job2['id']}/candidates/{more_cand_ids[0]}/accept",
+        json={"object_type": "imported_shape"}, headers=headers,
+    )
+    assert fresh_accept.status_code == 200
+
+
+async def test_rt1_20_concurrent_accepts_of_the_same_candidate_exactly_one_wins(client, auth_headers):
+    """Test B: 20 genuinely concurrent accept requests for the SAME candidate. Before the
+    FOR UPDATE locking fix, concurrent requests could each observe status='pending' and
+    each create their own SpatialObject, silently overwriting resulting_spatial_object_id
+    and leaving orphaned duplicate SpatialObjects. Exactly one request must win."""
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.api.deps import get_db
+    from app.main import app
+    from tests.conftest import TEST_DATABASE_URL
+
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan, job, cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 1)
+    candidate_id = cand_ids[0]
+
+    concurrency = 20
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=25, max_overflow=10)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    async def _override():
+        async with session_factory() as session:
+            yield session
+
+    # See the matching comment in test_rt1_20_concurrent_accepts_of_different_candidates_
+    # no_duplicate_layer_no_500 above: restore the previous override rather than pop it,
+    # so the `objects` check below (via `client`) doesn't fall through to the real
+    # production get_db/engine.
+    previous_override = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = _override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            async def _accept():
+                return await ac.post(
+                    f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
+                    json={"object_type": "imported_shape"}, headers=headers,
+                )
+
+            results = await asyncio.gather(*[_accept() for _ in range(concurrency)])
+    finally:
+        if previous_override is not None:
+            app.dependency_overrides[get_db] = previous_override
+        else:
+            app.dependency_overrides.pop(get_db, None)
+        await engine.dispose()
+
+    statuses = [r.status_code for r in results]
+    assert statuses.count(500) == 0, f"expected zero 500s, got statuses={statuses}"
+    assert statuses.count(200) == 1, f"expected exactly one winner, got statuses={statuses}"
+    assert statuses.count(409) == concurrency - 1, f"expected {concurrency - 1} conflicts, got statuses={statuses}"
+
+    objects = (await client.get(f"/api/v1/floor-plans/{floor_plan['id']}/objects", headers=headers)).json()
+    assert len(objects) == 1, f"expected exactly one SpatialObject (no orphaned duplicates), got {len(objects)}"

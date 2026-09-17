@@ -6,10 +6,12 @@ import base64
 import hashlib
 import uuid
 from datetime import datetime
+from typing import cast
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import Table, func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -201,7 +203,10 @@ async def upload_floor_plan_file(
         raise ApiError(status_code=413, title="Payload Too Large", detail="Uploaded file exceeds the maximum allowed size.")
 
     # Never trust the client-supplied filename for anything beyond display — no
-    # filesystem path is ever constructed from it (nothing here is written to disk).
+    # filesystem path this application constructs is ever derived from it. (`file.read()`
+    # above may itself have already spooled to a real, immediately-unlinked OS temp file
+    # if `content` is over 1MB — that's Starlette's UploadFile, using its own
+    # process-random path, never this filename; see svg_sanitizer.py's docstring, RT-2.)
     original_filename = (file.filename or "upload")[:255]
     file_hash = hashlib.sha256(content).hexdigest()
 
@@ -348,6 +353,67 @@ class AcceptCandidateIn(BaseModel):
         return value
 
 
+async def _get_or_create_imported_layer(db: AsyncSession, floor_plan_id: uuid.UUID) -> SpatialLayer:
+    """RT-1 correction (PHASE2_INDEPENDENT_RED_TEAM_REPORT.md finding RT-1): the previous
+    unlocked SELECT-then-INSERT here let concurrent accept requests for different
+    candidates of the same job each observe no existing "Imported" layer and each create
+    one, producing duplicate layers and — once duplicated — a permanent
+    MultipleResultsFound/500 on every subsequent accept for that floor plan.
+
+    Race-safe by construction: `INSERT ... ON CONFLICT (floor_plan_id) WHERE
+    layer_type = 'imported' DO NOTHING` — targeting migration 0005's partial unique
+    index by its column list + predicate (index inference; PostgreSQL's `ON CONFLICT ON
+    CONSTRAINT` clause only matches a true catalogued constraint, and a *partial* unique
+    index, unlike a plain one, can only ever be expressed as an index, never as a
+    `UNIQUE` table constraint — the same reason migration 0004's own
+    `uq_floor_plan_one_active_per_room` is a raw partial index rather than a named
+    constraint) — either wins and creates the one canonical row, or — if a concurrent
+    transaction is mid-insert for the same floor_plan_id — blocks on that row's lock
+    (real DB-level serialization, not an application lock, so it holds across multiple
+    Uvicorn workers/processes) until that transaction commits or rolls back, then
+    correctly reports no row inserted. Either way a plain re-SELECT afterward is
+    guaranteed to find the canonical row: nothing in this codebase ever deletes a
+    SpatialLayer, so a row observed via conflict can't have vanished by the time we
+    re-fetch it. This is the same INSERT-as-atomic-claim pattern
+    `app/application/idempotency.py` already uses elsewhere in this codebase — not a new
+    mechanism.
+
+    `index_where` below is deliberately `text("layer_type = 'imported'")` — a genuine SQL
+    literal — and NOT `table.c.layer_type == "imported"` (a Python comparison that
+    compiles to a *bound parameter*, e.g. `WHERE layer_type = $7`). That distinction was
+    found live, under this correction's own real-Uvicorn browser validation (not caught by
+    any pytest run, which never drives one physical connection through this statement
+    enough times to trigger it): PostgreSQL's extended query protocol re-plans a prepared
+    statement generically after ~5 executions on the same connection, and a *generic* plan
+    cannot verify a parameter's runtime value against a partial index's predicate — so the
+    bound-parameter form started intermittently throwing "no unique or exclusion
+    constraint matching the ON CONFLICT specification" once a pooled connection had reused
+    this statement enough times, while a fresh connection (or the first few uses) still
+    worked, exactly the pattern observed. A literal predicate has no such value to verify
+    at plan time, so it matches on every plan, generic or custom."""
+    table = cast(Table, SpatialLayer.__table__)
+    insert_stmt = (
+        pg_insert(table)
+        .values(id=uuid.uuid4(), floor_plan_id=floor_plan_id, name="Imported", layer_type="imported", z_order=0)
+        .on_conflict_do_nothing(
+            index_elements=[table.c.floor_plan_id], index_where=text("layer_type = 'imported'")
+        )
+        .returning(table.c.id)
+    )
+    layer_id = (await db.execute(insert_stmt)).scalar_one_or_none()
+    if layer_id is None:
+        layer_id = (
+            await db.execute(
+                select(SpatialLayer.id).where(
+                    SpatialLayer.floor_plan_id == floor_plan_id, SpatialLayer.layer_type == "imported"
+                )
+            )
+        ).scalar_one()
+    layer = await db.get(SpatialLayer, layer_id)
+    assert layer is not None
+    return layer
+
+
 @router.post("/import-jobs/{job_id}/candidates/{candidate_id}/accept", response_model=ImportCandidateOut)
 async def accept_import_candidate(
     job_id: uuid.UUID,
@@ -359,8 +425,22 @@ async def accept_import_candidate(
 ) -> FloorPlanImportCandidate:
     """The only path by which imported geometry becomes an authoritative SpatialObject
     (§21 of the Phase 2 prompt) — always an explicit human decision, never automatic,
-    regardless of the importer's own confidence score."""
-    candidate = await db.get(FloorPlanImportCandidate, candidate_id)
+    regardless of the importer's own confidence score.
+
+    RT-1 correction: locks the candidate row (`FOR UPDATE`, the same idiom
+    app/application/placement_service.py already uses) before checking/changing its
+    status. Without this, two concurrent accepts of the *same* candidate could both
+    observe status='pending' under READ COMMITTED, both create their own SpatialObject,
+    and the second UPDATE would silently overwrite the first's `resulting_spatial_
+    object_id` — leaving an orphaned duplicate SpatialObject and an inconsistent audit
+    trail, the same class of "unlocked check-then-act" defect RT-1 diagnosed for the
+    layer lookup. Locking here makes the second request's transaction block until the
+    first commits, then correctly observe status='accepted' and return a clean 409."""
+    candidate = (
+        await db.execute(
+            select(FloorPlanImportCandidate).where(FloorPlanImportCandidate.id == candidate_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if candidate is None or candidate.job_id != job_id:
         raise NotFoundError(f"Candidate {candidate_id} not found for job {job_id}.")
     if candidate.status != "pending":
@@ -369,12 +449,7 @@ async def accept_import_candidate(
     job = await db.get(FloorPlanImportJob, job_id)
     assert job is not None
 
-    layer_stmt = select(SpatialLayer).where(SpatialLayer.floor_plan_id == job.floor_plan_id, SpatialLayer.layer_type == "imported")
-    layer = (await db.execute(layer_stmt)).scalar_one_or_none()
-    if layer is None:
-        layer = SpatialLayer(floor_plan_id=job.floor_plan_id, name="Imported", layer_type="imported", z_order=0)
-        db.add(layer)
-        await db.flush()
+    layer = await _get_or_create_imported_layer(db, job.floor_plan_id)
 
     geometry = candidate.raw_geometry
     spatial_object = SpatialObject(
@@ -418,7 +493,13 @@ async def reject_import_candidate(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("floor_plan:manage")),
 ) -> FloorPlanImportCandidate:
-    candidate = await db.get(FloorPlanImportCandidate, candidate_id)
+    # RT-1 correction: same locked-row idiom as accept_import_candidate, for the same
+    # reason — see that function's docstring.
+    candidate = (
+        await db.execute(
+            select(FloorPlanImportCandidate).where(FloorPlanImportCandidate.id == candidate_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if candidate is None or candidate.job_id != job_id:
         raise NotFoundError(f"Candidate {candidate_id} not found for job {job_id}.")
     if candidate.status != "pending":
