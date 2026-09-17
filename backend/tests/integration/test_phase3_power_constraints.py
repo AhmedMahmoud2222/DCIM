@@ -180,3 +180,57 @@ async def test_invalid_percentage_threshold_rejected(db_session):
     db_session.add(cap)
     with pytest.raises(sqlalchemy.exc.IntegrityError, match="warning_threshold_pct_range"):
         await db_session.flush()
+
+
+# ------------------------------------------------------------------------- F-M3 correction
+# PHASE3_HOSTILE_SELF_AUDIT.md F-M3 / PHASE3_CORRECTION_DESIGN.md Part 11 (migration 0007):
+# pdu_outlet.pdu_asset_id must reference a managed_asset whose asset_type is literally
+# 'pdu' -- proven here by attempting a direct ORM/SQL bypass of the API's own subtype
+# check (create_pdu_outlet's `db.get(PDU, ...)` guard), which this test deliberately
+# skips to prove the DATABASE itself, not just the API, rejects the mismatch.
+
+
+@pytest.mark.asyncio
+async def test_pdu_outlet_rejects_non_pdu_asset_at_db_level(db_session):
+    from app.domain.identity.models import ManagedAsset
+    from app.domain.power.models import PDUOutlet
+
+    # A ManagedAsset that is NOT a PDU (asset_type='rack') -- the API layer's own
+    # create_pdu_outlet always checks `db.get(PDU, ...)` first and would never reach
+    # this insert in practice; this test bypasses that check entirely to prove the
+    # database-level composite FK is the actual, independent backstop.
+    non_pdu_asset = ManagedAsset(asset_type="rack", asset_tag=f"NON-PDU-{uuid.uuid4().hex[:8]}", lifecycle_status="planned")
+    db_session.add(non_pdu_asset)
+    await db_session.flush()
+
+    node = PowerNode(node_type="pdu_outlet", owning_asset_id=non_pdu_asset.id, label="bypass-outlet")
+    db_session.add(node)
+    await db_session.flush()
+
+    outlet = PDUOutlet(power_node_id=node.id, pdu_asset_id=non_pdu_asset.id, outlet_number=1, state="unknown")
+    db_session.add(outlet)
+    with pytest.raises(sqlalchemy.exc.IntegrityError, match="fk_pdu_outlet_pdu_asset_id_managed_asset"):
+        await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_pdu_outlet_accepts_genuine_pdu_asset_at_db_level(db_session):
+    """Sanity counterpart to the rejection test above: a genuine PDU-typed asset must
+    still be accepted by the same composite FK, proving the correction is not merely
+    rejecting everything."""
+    from app.domain.identity.models import ManagedAsset
+    from app.domain.power.models import PDU, PDUOutlet
+
+    pdu_asset = ManagedAsset(asset_type="pdu", asset_tag=f"REAL-PDU-{uuid.uuid4().hex[:8]}", lifecycle_status="planned")
+    db_session.add(pdu_asset)
+    await db_session.flush()
+    db_session.add(PDU(id=pdu_asset.id, name="Real PDU", protocol="none", version=1))
+    await db_session.flush()
+
+    node = PowerNode(node_type="pdu_outlet", owning_asset_id=pdu_asset.id, label="genuine-outlet")
+    db_session.add(node)
+    await db_session.flush()
+
+    outlet = PDUOutlet(power_node_id=node.id, pdu_asset_id=pdu_asset.id, outlet_number=1, state="unknown")
+    db_session.add(outlet)
+    await db_session.flush()  # must not raise

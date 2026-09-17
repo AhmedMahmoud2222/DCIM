@@ -238,3 +238,116 @@ async def test_default_thresholds_apply_when_node_has_none_configured(db_session
     exceptions = await derive_node_capacity_exceptions(db_session, parent, "test-node")
     codes = {e.code for e in exceptions}
     assert "CAPACITY_NEAR_LIMIT" in codes
+
+
+# ------------------------------------------------------------------------- F-H1 regression
+# PHASE3_HOSTILE_SELF_AUDIT.md F-H1 / PHASE3_CORRECTION_DESIGN.md Part 7: a node whose OWN
+# capacity is known but whose ALLOCATION is unknown (bounded traversal) must never produce
+# an empty exception list -- it must produce CAPACITY_UNKNOWN.
+
+
+@pytest.mark.asyncio
+async def test_capacity_unknown_emitted_when_capacity_known_but_allocation_bounded(db_session, monkeypatch):
+    """The exact hostile-audit F-H1 reproduction: root has a known rated_capacity_kw:
+    its allocation roll-up is forced to hit the traversal bound (simulating a large
+    real deployment), which must still surface CAPACITY_UNKNOWN -- not an empty list."""
+    import app.application.power_graph as power_graph
+
+    monkeypatch.setattr(power_graph, "MAX_TRAVERSAL_NODES", 2)
+
+    root = await _make_node(db_session, "root")
+    await _set_capacity(db_session, root, rated=100)
+    prev = root
+    for i in range(5):
+        child = await _make_node(db_session, f"chain{i}")
+        await _connect(db_session, prev, child)
+        prev = child
+
+    figures = await get_capacity_figures(db_session, root)
+    assert figures.effective_capacity_kw == 100.0, "root's own capacity must remain known"
+    assert figures.allocated_kw is None
+    assert figures.data_quality == "unknown"
+
+    exceptions = await derive_node_capacity_exceptions(db_session, root, "test-node")
+    codes = {e.code for e in exceptions}
+    assert codes == {"CAPACITY_UNKNOWN"}, (
+        f"a node with known capacity but unknown allocation must surface CAPACITY_UNKNOWN, got {codes}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_capacity_unknown_does_not_also_report_overload_or_near_limit(db_session, monkeypatch):
+    """CAPACITY_UNKNOWN must be the only exception for a node whose utilization
+    genuinely cannot be computed -- it must never coexist with a fabricated
+    OVERLOAD/NEAR_LIMIT conclusion drawn from incomplete data."""
+    import app.application.power_graph as power_graph
+
+    monkeypatch.setattr(power_graph, "MAX_TRAVERSAL_NODES", 2)
+
+    root = await _make_node(db_session, "root")
+    await _set_capacity(db_session, root, rated=1, critical=1, warning=1)  # tiny thresholds
+    prev = root
+    for i in range(5):
+        child = await _make_node(db_session, f"chain{i}")
+        await _connect(db_session, prev, child)
+        prev = child
+
+    exceptions = await derive_node_capacity_exceptions(db_session, root, "test-node")
+    codes = {e.code for e in exceptions}
+    assert codes == {"CAPACITY_UNKNOWN"}
+    assert "CAPACITY_OVERLOAD" not in codes
+    assert "CAPACITY_NEAR_LIMIT" not in codes
+
+
+# ------------------------------------------------------------------------- F-H2 regression
+# PHASE3_HOSTILE_SELF_AUDIT.md F-H2 / PHASE3_CORRECTION_DESIGN.md Part 8 (Model A): a
+# retired node's own capacity must not contribute to an ancestor's allocated_kw roll-up.
+
+
+async def _retire(db_session, node_id: uuid.UUID) -> None:
+    node = await db_session.get(PowerNode, node_id)
+    node.retired_at = datetime.now(UTC)
+    await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_retired_pdu_capacity_excluded_from_ancestor_allocated_kw(db_session):
+    """Utility -> PDU (retired, 5kW) must not count that 5kW toward the utility's own
+    allocated_kw once the PDU is retired -- retirement must have an immediate,
+    operationally meaningful effect without a separate manual disconnect step."""
+    utility = await _make_node(db_session, "utility")
+    pdu = await _make_node(db_session, "pdu")
+    await _connect(db_session, utility, pdu)
+    await _set_capacity(db_session, pdu, rated=5)
+
+    allocated, quality = await compute_allocated_kw(db_session, utility)
+    assert allocated == 5.0 and quality == "known", "sanity check: allocation counts the live PDU"
+
+    await _retire(db_session, pdu)
+
+    allocated_after, quality_after = await compute_allocated_kw(db_session, utility)
+    assert allocated_after is None or allocated_after == 0.0, (
+        f"a retired PDU's capacity must not count toward its ancestor's allocated_kw, got {allocated_after}"
+    )
+    assert quality_after == "not_applicable", (
+        "with its only child retired, the utility has nothing left to allocate -- "
+        f"expected not_applicable, got {quality_after!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_retired_intermediate_does_not_poison_ancestor_with_unknown_quality(db_session):
+    """A retired node with no capacity record and no live children must not spuriously
+    appear as an 'unknown' child in its parent's allocation sum (a phantom child that
+    was never excluded from `children_of` would corrupt this to 'unknown')."""
+    utility = await _make_node(db_session, "utility")
+    retired_intermediate = await _make_node(db_session, "retired_intermediate")
+    live_sibling = await _make_node(db_session, "live_sibling")
+    await _connect(db_session, utility, retired_intermediate)
+    await _connect(db_session, utility, live_sibling)
+    await _set_capacity(db_session, live_sibling, rated=10)
+    await _retire(db_session, retired_intermediate)
+
+    allocated, quality = await compute_allocated_kw(db_session, utility)
+    assert quality == "known", f"a retired sibling with no capacity must not poison quality to 'unknown', got {quality}"
+    assert allocated == 10.0, f"only the live sibling's capacity should count, got {allocated}"

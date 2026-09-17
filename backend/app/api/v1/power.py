@@ -1,9 +1,12 @@
 """Power topology + capacity endpoints (ARCHITECTURE_REVIEW.md §13/§13a/§14;
-PHASE3_GAP_ANALYSIS.md). Every mutation is audited and outboxed exactly like
-racks.py/equipment.py; `PowerConnection` create/disconnect follow §13a's concurrency
-recipe precisely (canonical node-lock ordering + cycle check on create, `FOR UPDATE` on
-disconnect); capacity edits use the same `version`/`If-Match` pattern as `Rack`/
-`Equipment`'s own narrow-field edits."""
+PHASE3_GAP_ANALYSIS.md; PHASE3_HOSTILE_SELF_AUDIT.md; PHASE3_CORRECTION_DESIGN.md).
+Every mutation is audited and outboxed exactly like racks.py/equipment.py;
+`PowerConnection` create/disconnect follow §13a's concurrency recipe precisely
+(a system-wide advisory lock, then canonical node-lock ordering, then cycle check on
+create -- see power_graph.py's own docstring for why the advisory lock is now the
+primary safety mechanism, F-C1 correction; `FOR UPDATE` on disconnect); capacity edits
+use the same `version`/`If-Match` pattern as `Rack`/`Equipment`'s own narrow-field
+edits, via the shared `parse_if_match` helper (F-M1 correction)."""
 
 import uuid
 from datetime import UTC, datetime
@@ -11,12 +14,13 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import check_version_match, parse_if_match, require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.power_capacity import (
     derive_node_capacity_exceptions,
@@ -31,9 +35,11 @@ from app.application.power_graph import (
     get_downstream_node_ids,
     get_upstream_node_ids,
     lock_node_pair_in_canonical_order,
+    with_connection_mutation_lock,
 )
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
+from app.core.logging import get_logger
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Equipment
 from app.domain.power.models import (
@@ -46,6 +52,8 @@ from app.domain.power.models import (
     PowerNode,
     PowerPanel,
 )
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/power", tags=["power"])
 
@@ -383,74 +391,117 @@ async def create_power_connection(
     body: PowerConnectionIn, request: Request, db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("power:manage")),
 ) -> PowerConnectionOut:
-    source = await db.get(PowerNode, body.source_node_id)
-    target = await db.get(PowerNode, body.target_node_id)
-    if source is None:
-        raise NotFoundError(f"PowerNode {body.source_node_id} not found.")
-    if target is None:
-        raise NotFoundError(f"PowerNode {body.target_node_id} not found.")
-    if source.retired_at is not None or target.retired_at is not None:
-        raise ApiError(status_code=422, title="Node Retired", detail="Cannot connect a retired PowerNode.")
-
-    # §13a: lock both endpoints in canonical (lower-UUID-first) order before the cycle
-    # check, so no concurrent transaction can create a conflicting edge in between.
-    await lock_node_pair_in_canonical_order(db, body.source_node_id, body.target_node_id)
-
-    try:
-        await assert_would_not_create_cycle(db, source_node_id=body.source_node_id, target_node_id=body.target_node_id)
-    except WouldCreateCycle as exc:
-        await db.rollback()
-        raise ApiError(
-            status_code=422, title="Invalid Topology",
-            detail=f"Connecting {exc.source_node_id} -> {exc.target_node_id} would create a cycle in the power graph.",
-        ) from exc
-    except GraphTraversalBounded as exc:
-        await db.rollback()
-        raise ApiError(
-            status_code=422, title="Graph Too Large",
-            detail=f"Cycle check aborted: traversal from {exc.root_id} exceeded its {exc.limit_kind} bound.",
-        ) from exc
-
-    existing = (
-        await db.execute(
-            select(PowerConnection.id).where(
-                PowerConnection.source_node_id == body.source_node_id,
-                PowerConnection.target_node_id == body.target_node_id,
-                PowerConnection.feed_label == body.feed_label,
-                PowerConnection.effective_to.is_(None),
-            )
-        )
-    ).first()
-    if existing is not None:
-        await db.rollback()
-        raise ConflictError(
-            detail=f"An active {body.feed_label!r} connection already exists between these two nodes."
-        )
-
-    connection = PowerConnection(
-        source_node_id=body.source_node_id, target_node_id=body.target_node_id, connection_type=body.connection_type,
-        feed_label=body.feed_label, phase=body.phase, voltage=body.voltage, rated_current_a=body.rated_current_a,
-        status=body.status, version=1, effective_from=datetime.now(UTC),
-    )
-    db.add(connection)
-    await db.flush()
-
+    """F-C1 correction (PHASE3_CORRECTION_DESIGN.md Part 6): every statement below the
+    advisory-lock acquisition runs while holding
+    `power_graph.POWER_TOPOLOGY_MUTATION_LOCK_KEY` for the remainder of this
+    transaction -- no other connection-creation transaction, anywhere in the graph, can
+    be inside this same critical section concurrently. This is what makes the cycle
+    check below trustworthy even for two edges on completely disjoint node pairs (the
+    exact race PHASE3_HOSTILE_SELF_AUDIT.md's F-C1 demonstrated the old per-pair-only
+    locking could not prevent)."""
     request_id, correlation_id = _request_ids(request)
-    await write_audit_log(
-        db, actor_user_id=ctx.user.id, action="power.connection.create", entity_type="power_connection",
-        entity_id=connection.id, request_id=request_id, correlation_id=correlation_id,
-        after={
-            "source_node_id": str(body.source_node_id), "target_node_id": str(body.target_node_id),
-            "feed_label": body.feed_label,
-        },
-    )
-    await write_outbox_event(
-        db, event_type="PowerConnectionChanged", aggregate_type="power_connection", aggregate_id=connection.id,
-        payload={"source_node_id": str(body.source_node_id), "target_node_id": str(body.target_node_id)},
-        correlation_id=correlation_id,
-    )
-    await db.commit()
-    return PowerConnectionOut.model_validate(connection)
+    try:
+        async with with_connection_mutation_lock(db):
+            source = await db.get(PowerNode, body.source_node_id)
+            target = await db.get(PowerNode, body.target_node_id)
+            if source is None:
+                raise NotFoundError(f"PowerNode {body.source_node_id} not found.")
+            if target is None:
+                raise NotFoundError(f"PowerNode {body.target_node_id} not found.")
+            if source.retired_at is not None or target.retired_at is not None:
+                raise ApiError(status_code=422, title="Node Retired", detail="Cannot connect a retired PowerNode.")
+
+            # Retained beneath the advisory lock for its own same-pair deadlock-avoidance
+            # guarantee (§13a); no longer the sole mechanism protecting cross-pair
+            # cycles, since the advisory lock above already fully serializes this
+            # critical section against every other connection-creation transaction.
+            await lock_node_pair_in_canonical_order(db, body.source_node_id, body.target_node_id)
+
+            try:
+                await assert_would_not_create_cycle(
+                    db, source_node_id=body.source_node_id, target_node_id=body.target_node_id
+                )
+            except WouldCreateCycle as exc:
+                logger.info(
+                    "power_connection_cycle_rejected",
+                    source_node_id=str(exc.source_node_id), target_node_id=str(exc.target_node_id),
+                    request_id=request_id, correlation_id=correlation_id,
+                )
+                raise ApiError(
+                    status_code=422, title="Invalid Topology",
+                    detail=(
+                        f"Connecting {exc.source_node_id} -> {exc.target_node_id} would create a cycle "
+                        "in the power graph."
+                    ),
+                ) from exc
+            except GraphTraversalBounded as exc:
+                logger.warning(
+                    "power_graph_traversal_bound_exceeded",
+                    root_id=str(exc.root_id), limit_kind=exc.limit_kind, direction="downstream",
+                    request_id=request_id, correlation_id=correlation_id,
+                )
+                raise ApiError(
+                    status_code=422, title="Graph Too Large",
+                    detail=f"Cycle check aborted: traversal from {exc.root_id} exceeded its {exc.limit_kind} bound.",
+                ) from exc
+
+            existing = (
+                await db.execute(
+                    select(PowerConnection.id).where(
+                        PowerConnection.source_node_id == body.source_node_id,
+                        PowerConnection.target_node_id == body.target_node_id,
+                        PowerConnection.feed_label == body.feed_label,
+                        PowerConnection.effective_to.is_(None),
+                    )
+                )
+            ).first()
+            if existing is not None:
+                raise ConflictError(
+                    detail=f"An active {body.feed_label!r} connection already exists between these two nodes."
+                )
+
+            connection = PowerConnection(
+                source_node_id=body.source_node_id, target_node_id=body.target_node_id,
+                connection_type=body.connection_type, feed_label=body.feed_label, phase=body.phase,
+                voltage=body.voltage, rated_current_a=body.rated_current_a, status=body.status, version=1,
+                effective_from=datetime.now(UTC),
+            )
+            db.add(connection)
+            await db.flush()
+
+            await write_audit_log(
+                db, actor_user_id=ctx.user.id, action="power.connection.create", entity_type="power_connection",
+                entity_id=connection.id, request_id=request_id, correlation_id=correlation_id,
+                after={
+                    "source_node_id": str(body.source_node_id), "target_node_id": str(body.target_node_id),
+                    "feed_label": body.feed_label,
+                },
+            )
+            await write_outbox_event(
+                db, event_type="PowerConnectionChanged", aggregate_type="power_connection",
+                aggregate_id=connection.id,
+                payload={"source_node_id": str(body.source_node_id), "target_node_id": str(body.target_node_id)},
+                correlation_id=correlation_id,
+            )
+            await db.commit()
+            return PowerConnectionOut.model_validate(connection)
+    except OperationalError as exc:
+        # F-C1 correction (PHASE3_CORRECTION_DESIGN.md Part 6, item 3): the chosen
+        # advisory-lock design does not require automatic retry for its own expected
+        # path (it fully serializes rather than racing and aborting), so this is a
+        # defensive net for an unrelated PostgreSQL-level failure (e.g. a genuine
+        # deadlock, sqlstate 40P01, from some other lock interaction) rather than a
+        # routine occurrence -- logged and surfaced as a clean, retryable 503 rather
+        # than an unhandled 500, never silently retried automatically.
+        sqlstate = getattr(exc.orig, "sqlstate", None)
+        logger.warning(
+            "power_connection_create_db_operational_error",
+            sqlstate=sqlstate, request_id=request_id, correlation_id=correlation_id,
+        )
+        raise ApiError(
+            status_code=503, title="Service Unavailable",
+            detail="A transient database contention error occurred while creating this connection. Retry the request.",
+        ) from exc
 
 
 @router.patch("/connections/{connection_id}", response_model=PowerConnectionOut)
@@ -564,13 +615,20 @@ class TopologyNodeOut(BaseModel):
 
 @router.get("/nodes/{node_id}/upstream", response_model=list[TopologyNodeOut])
 async def get_node_upstream(
-    node_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("power:read")),
+    node_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("power:read")),
 ) -> list[TopologyNodeOut]:
     if await db.get(PowerNode, node_id) is None:
         raise NotFoundError(f"PowerNode {node_id} not found.")
     try:
         ids = await get_upstream_node_ids(db, node_id)
     except GraphTraversalBounded as exc:
+        request_id, correlation_id = _request_ids(request)
+        logger.warning(
+            "power_graph_traversal_bound_exceeded",
+            root_id=str(exc.root_id), limit_kind=exc.limit_kind, direction="upstream",
+            request_id=request_id, correlation_id=correlation_id,
+        )
         raise ApiError(
             status_code=422, title="Graph Too Large",
             detail=f"Upstream traversal from {exc.root_id} exceeded its {exc.limit_kind} bound.",
@@ -583,13 +641,20 @@ async def get_node_upstream(
 
 @router.get("/nodes/{node_id}/downstream", response_model=list[TopologyNodeOut])
 async def get_node_downstream(
-    node_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("power:read")),
+    node_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("power:read")),
 ) -> list[TopologyNodeOut]:
     if await db.get(PowerNode, node_id) is None:
         raise NotFoundError(f"PowerNode {node_id} not found.")
     try:
         ids = await get_downstream_node_ids(db, node_id)
     except GraphTraversalBounded as exc:
+        request_id, correlation_id = _request_ids(request)
+        logger.warning(
+            "power_graph_traversal_bound_exceeded",
+            root_id=str(exc.root_id), limit_kind=exc.limit_kind, direction="downstream",
+            request_id=request_id, correlation_id=correlation_id,
+        )
         raise ApiError(
             status_code=422, title="Graph Too Large",
             detail=f"Downstream traversal from {exc.root_id} exceeded its {exc.limit_kind} bound.",
@@ -659,7 +724,13 @@ async def set_node_capacity(
     a capacity record is versioned history, not an in-place-edited row. `If-Match` is
     required whenever a current record already exists (first-time creation for a node
     with none yet needs no precondition, matching create_rack's own optional-placement
-    convention)."""
+    convention).
+
+    F-M1 correction (PHASE3_CORRECTION_DESIGN.md Part 9): `If-Match` is parsed via the
+    shared `parse_if_match` helper (`app/application/concurrency.py`) rather than an ad
+    hoc `int(...)` call, so a malformed value raises the same clean `400 Bad Request`
+    every other If-Match-consuming endpoint already produces, instead of an unhandled
+    `ValueError` surfacing as a generic `500`."""
     if await db.get(PowerNode, node_id) is None:
         raise NotFoundError(f"PowerNode {node_id} not found.")
 
@@ -672,12 +743,12 @@ async def set_node_capacity(
     ).scalar_one_or_none()
 
     if current is not None:
-        if if_match is None:
+        if_match_version = parse_if_match(if_match)
+        if if_match_version is None:
             raise ApiError(
                 status_code=428, title="Precondition Required",
                 detail="This node already has a capacity record; If-Match is required to replace it.",
             )
-        if_match_version = int(if_match.strip().strip('"'))
         check_version_match(expected=if_match_version, actual=current.version)
         current.effective_to = datetime.now(UTC)
         next_version = current.version + 1

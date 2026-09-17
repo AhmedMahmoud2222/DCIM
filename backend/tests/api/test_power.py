@@ -361,3 +361,259 @@ async def test_dashboard_requires_permission(client, auth_headers):
     headers = await auth_headers("Viewer")
     r = await client.get("/api/v1/dashboard/summary", headers=headers)
     assert r.status_code == 200
+
+
+# --------------------------------------------------------------------- F-C1 correction
+# PHASE3_HOSTILE_SELF_AUDIT.md F-C1 / PHASE3_CORRECTION_DESIGN.md Parts 4-6: the global
+# advisory lock must make it impossible for two concurrent connection-creation requests
+# to jointly close a cycle, even on completely disjoint node pairs.
+
+
+def _per_request_client_ctx(app, db_session):
+    """Shared setup for every F-C1 concurrency test below: overrides `get_db` with a
+    fresh AsyncSession per request from a dedicated engine (never the shared
+    single-session `client`/`db_session` fixtures, which cannot represent real
+    concurrent database sessions), and restores the original override afterward."""
+    import httpx
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.api.deps import get_db
+    from tests.conftest import TEST_DATABASE_URL
+
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=10)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    async def _override():
+        async with session_factory() as session:
+            yield session
+
+    def make_client():
+        transport = httpx.ASGITransport(app=app)
+        return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+    async def cleanup():
+        async def _restore_shared_session():
+            yield db_session
+
+        app.dependency_overrides[get_db] = _restore_shared_session
+        await engine.dispose()
+
+    app.dependency_overrides[get_db] = _override
+    return make_client, cleanup
+
+
+async def _post_connection(make_client, headers, source_id, target_id):
+    async with make_client() as c:
+        return await c.post("/api/v1/power/connections", json=connection_body(source_id, target_id), headers=headers)
+
+
+async def test_hostile_f_c1_independent_pair_race_cannot_create_cycle(client, auth_headers, db_session):
+    """The exact PHASE3_HOSTILE_SELF_AUDIT.md F-C1 reproduction, through the real API:
+    pre-existing N2->N3, N4->N1; concurrent POSTs create N1->N2 and N3->N4, which
+    together would close a 4-cycle. Before the F-C1 correction this was demonstrated to
+    let both commit. After the correction (a global advisory lock serializing every
+    connection-creation transaction), exactly one must succeed and the other must be
+    rejected as a cycle -- never both succeeding, and never both failing."""
+    from app.main import app
+
+    headers = await auth_headers("DCIM Manager")
+    n1 = await create_utility(client, headers, "F-C1 N1")
+    n2 = await create_utility(client, headers, "F-C1 N2")
+    n3 = await create_utility(client, headers, "F-C1 N3")
+    n4 = await create_utility(client, headers, "F-C1 N4")
+    r = await client.post("/api/v1/power/connections", json=connection_body(n2["id"], n3["id"]), headers=headers)
+    assert r.status_code == 201, r.text
+    r = await client.post("/api/v1/power/connections", json=connection_body(n4["id"], n1["id"]), headers=headers)
+    assert r.status_code == 201, r.text
+
+    make_client, cleanup = _per_request_client_ctx(app, db_session)
+    try:
+        results = await asyncio.gather(
+            _post_connection(make_client, headers, n1["id"], n2["id"]),
+            _post_connection(make_client, headers, n3["id"], n4["id"]),
+        )
+    finally:
+        await cleanup()
+
+    codes = sorted(r.status_code for r in results)
+    assert codes == [201, 422], f"expected exactly one success and one cycle rejection, got {codes}"
+
+    # Final-graph-acyclicity assertion: whichever edge committed, the graph as a whole
+    # must not contain the 4-cycle N1->N2->N3->N4->N1.
+    downstream = (await client.get(f"/api/v1/power/nodes/{n2['id']}/downstream", headers=headers)).json()
+    downstream_ids = {n["node_id"] for n in downstream}
+    n1_reachable_from_n2 = n1["id"] in downstream_ids
+    n1_to_n2_exists = (
+        await client.get("/api/v1/power/connections", headers=headers, params={"node_id": n1["id"]})
+    ).json()
+    n1_to_n2_committed = any(
+        c["source_node_id"] == n1["id"] and c["target_node_id"] == n2["id"] and c["effective_to"] is None
+        for c in n1_to_n2_exists["items"]
+    )
+    assert not (n1_to_n2_committed and n1_reachable_from_n2), (
+        "the true 4-cycle (both N1->N2 committed AND N1 reachable from N2 via the rest "
+        "of the chain) must never be simultaneously true"
+    )
+
+
+async def test_hostile_f_c1_race_repeated_ten_times(client, auth_headers, db_session):
+    """The same race, repeated across independent node quadruples in one test run, to
+    catch timing-dependent flakiness a single trial might miss."""
+    from app.main import app
+
+    headers = await auth_headers("DCIM Manager")
+    for trial in range(10):
+        n1 = await create_utility(client, headers, f"F-C1-rep{trial}-N1")
+        n2 = await create_utility(client, headers, f"F-C1-rep{trial}-N2")
+        n3 = await create_utility(client, headers, f"F-C1-rep{trial}-N3")
+        n4 = await create_utility(client, headers, f"F-C1-rep{trial}-N4")
+        r = await client.post("/api/v1/power/connections", json=connection_body(n2["id"], n3["id"]), headers=headers)
+        assert r.status_code == 201
+        r = await client.post("/api/v1/power/connections", json=connection_body(n4["id"], n1["id"]), headers=headers)
+        assert r.status_code == 201
+
+        make_client, cleanup = _per_request_client_ctx(app, db_session)
+        try:
+            results = await asyncio.gather(
+                _post_connection(make_client, headers, n1["id"], n2["id"]),
+                _post_connection(make_client, headers, n3["id"], n4["id"]),
+            )
+        finally:
+            await cleanup()
+
+        codes = sorted(r.status_code for r in results)
+        assert codes == [201, 422], f"trial {trial}: expected [201, 422], got {codes}"
+
+
+async def test_hostile_f_c1_three_concurrent_writers_cannot_close_a_triangle(client, auth_headers, db_session):
+    """3+ concurrent writers (task requirement): three transactions each add one edge
+    of a triangle (A->B, B->C, C->A) concurrently. At most one of the three edges that
+    would complete the triangle may commit -- never all three."""
+    from app.main import app
+
+    headers = await auth_headers("DCIM Manager")
+    a = await create_utility(client, headers, "F-C1-tri-A")
+    b = await create_utility(client, headers, "F-C1-tri-B")
+    c = await create_utility(client, headers, "F-C1-tri-C")
+
+    make_client, cleanup = _per_request_client_ctx(app, db_session)
+    try:
+        results = await asyncio.gather(
+            _post_connection(make_client, headers, a["id"], b["id"]),
+            _post_connection(make_client, headers, b["id"], c["id"]),
+            _post_connection(make_client, headers, c["id"], a["id"]),
+        )
+    finally:
+        await cleanup()
+
+    codes = [r.status_code for r in results]
+    assert codes.count(201) == 2, f"exactly two of the three triangle edges may commit, got {codes}"
+    assert codes.count(422) == 1, f"exactly one must be rejected as closing the triangle, got {codes}"
+
+
+async def test_concurrent_independent_valid_mutations_both_succeed(client, auth_headers, db_session):
+    """The advisory lock must serialize, not falsely reject: two completely unrelated,
+    individually valid connection creations (disjoint node pairs, no shared topology)
+    running concurrently must BOTH succeed -- proving the correction does not
+    over-reject legitimate concurrent work."""
+    from app.main import app
+
+    headers = await auth_headers("DCIM Manager")
+    a1 = await create_utility(client, headers, "Independent A1")
+    a2 = await create_utility(client, headers, "Independent A2")
+    b1 = await create_utility(client, headers, "Independent B1")
+    b2 = await create_utility(client, headers, "Independent B2")
+
+    make_client, cleanup = _per_request_client_ctx(app, db_session)
+    try:
+        results = await asyncio.gather(
+            _post_connection(make_client, headers, a1["id"], a2["id"]),
+            _post_connection(make_client, headers, b1["id"], b2["id"]),
+        )
+    finally:
+        await cleanup()
+
+    codes = [r.status_code for r in results]
+    assert codes == [201, 201], f"two unrelated valid mutations must both succeed, got {codes}"
+
+
+async def test_f_c1_rollback_on_rejected_cycle_leaves_no_partial_edge(client, auth_headers):
+    """A rejected cycle-creation attempt must leave no partially-committed row behind —
+    the connection list for the rejected pair must be empty afterward."""
+    headers = await auth_headers("DCIM Manager")
+    a = await create_utility(client, headers, "Rollback A")
+    b = await create_utility(client, headers, "Rollback B")
+    r = await client.post("/api/v1/power/connections", json=connection_body(a["id"], b["id"]), headers=headers)
+    assert r.status_code == 201
+
+    r2 = await client.post("/api/v1/power/connections", json=connection_body(b["id"], a["id"]), headers=headers)
+    assert r2.status_code == 422
+
+    conns = (await client.get("/api/v1/power/connections", headers=headers, params={"node_id": b["id"]})).json()
+    b_to_a = [
+        c for c in conns["items"]
+        if c["source_node_id"] == b["id"] and c["target_node_id"] == a["id"] and c["effective_to"] is None
+    ]
+    assert b_to_a == [], "the rejected b->a attempt must not have left any row behind"
+
+
+# --------------------------------------------------------------------- F-M1 correction
+
+
+async def test_malformed_if_match_on_capacity_put_is_a_clean_400_not_a_500(client, auth_headers):
+    """PHASE3_HOSTILE_SELF_AUDIT.md F-M1: a malformed (non-integer) If-Match header on
+    the capacity PUT endpoint must produce the same clean 400 every other If-Match
+    consumer already produces, never an unhandled exception."""
+    headers = await auth_headers("DCIM Manager")
+    node = await create_utility(client, headers, "If-Match test node")
+    r1 = await client.put(f"/api/v1/power/nodes/{node['id']}/capacity", json={"rated_capacity_kw": 10}, headers=headers)
+    assert r1.status_code == 200
+
+    r2 = await client.put(
+        f"/api/v1/power/nodes/{node['id']}/capacity",
+        json={"rated_capacity_kw": 20},
+        headers={**headers, "If-Match": "not-a-number"},
+    )
+    assert r2.status_code == 400, r2.text
+
+
+# --------------------------------------------------------------------- F-H2 correction
+
+
+async def test_retired_intermediate_node_produces_power_path_missing_for_equipment(client, auth_headers):
+    """The exact task-specified scenario: Utility -> Retired PDU -> Equipment feed must
+    NOT report the equipment as still powered through the retired node -- it must show
+    a broken (missing) upstream path once the PDU is retired."""
+    from tests.api._phase2_helpers import create_equipment
+
+    headers = await auth_headers("DCIM Manager")
+    utility = await create_utility(client, headers, "F-H2 Utility")
+    pdu = await create_pdu(client, headers, tag="F-H2-PDU")
+    equipment = await create_equipment(client, headers)
+    equipment_asset_id = equipment["id"]
+
+    r = await client.post("/api/v1/power/connections", json=connection_body(utility["id"], pdu["id"]), headers=headers)
+    assert r.status_code == 201, r.text
+    feed = await client.post(
+        "/api/v1/power/equipment-feeds",
+        json={"equipment_asset_id": equipment_asset_id, "label": "Feed A"},
+        headers=headers,
+    )
+    assert feed.status_code == 201, feed.text
+    feed_node_id = feed.json()["id"]
+    r = await client.post("/api/v1/power/connections", json=connection_body(pdu["id"], feed_node_id), headers=headers)
+    assert r.status_code == 201, r.text
+
+    summary_before = (
+        await client.get(f"/api/v1/power/equipment/{equipment_asset_id}/power-summary", headers=headers)
+    ).json()
+    assert summary_before["feed_nodes"][0]["has_upstream_path"] is True
+
+    await client.post(f"/api/v1/power/nodes/{pdu['id']}/retire", headers=headers)
+
+    summary_after = (
+        await client.get(f"/api/v1/power/equipment/{equipment_asset_id}/power-summary", headers=headers)
+    ).json()
+    assert summary_after["feed_nodes"][0]["has_upstream_path"] is False, (
+        "a retired intermediate PDU must not count as a valid upstream path for the equipment it used to feed"
+    )

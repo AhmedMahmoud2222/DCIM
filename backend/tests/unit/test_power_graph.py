@@ -160,3 +160,97 @@ async def test_traversal_bounded_on_pathological_depth(db_session, monkeypatch):
     with pytest.raises(GraphTraversalBounded) as exc_info:
         await get_downstream_node_ids(db_session, nodes[0])
     assert exc_info.value.limit_kind == "depth"
+
+
+# --------------------------------------------------------------------- F-H2 regression
+# PHASE3_HOSTILE_SELF_AUDIT.md F-H2 / PHASE3_CORRECTION_DESIGN.md Part 8 (Model A):
+# retired nodes are excluded from operational traversal, and must not act as a bridge.
+
+
+async def _retire(db_session, node_id: uuid.UUID) -> None:
+    from datetime import UTC, datetime
+
+    node = await db_session.get(PowerNode, node_id)
+    node.retired_at = datetime.now(UTC)
+    await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_retired_intermediate_node_breaks_downstream_traversal(db_session):
+    """Utility -> Retired PDU -> Equipment must NOT report Equipment as reachable from
+    Utility -- the retired node must not act as a bridge."""
+    utility = await _make_node(db_session, label="utility")
+    pdu = await _make_node(db_session, label="pdu")
+    equipment = await _make_node(db_session, label="equipment")
+    await _connect(db_session, utility, pdu)
+    await _connect(db_session, pdu, equipment)
+    await _retire(db_session, pdu)
+
+    downstream = await get_downstream_node_ids(db_session, utility)
+    assert downstream == set(), f"retired PDU must not bridge to equipment, got {downstream}"
+
+
+@pytest.mark.asyncio
+async def test_retired_intermediate_node_breaks_upstream_traversal(db_session):
+    """Symmetric to the downstream case: querying upstream from Equipment must not
+    reach Utility through a retired intermediate PDU."""
+    utility = await _make_node(db_session, label="utility")
+    pdu = await _make_node(db_session, label="pdu")
+    equipment = await _make_node(db_session, label="equipment")
+    await _connect(db_session, utility, pdu)
+    await _connect(db_session, pdu, equipment)
+    await _retire(db_session, pdu)
+
+    upstream = await get_upstream_node_ids(db_session, equipment)
+    assert upstream == set(), f"retired PDU must not bridge upstream to utility, got {upstream}"
+
+
+@pytest.mark.asyncio
+async def test_retired_traversal_root_still_shows_its_own_direct_neighbor(db_session):
+    """Querying downstream directly FROM a retired node's own traversal root is a
+    deliberate exception to the retirement filter (documented in power_graph.py's
+    module docstring): retirement hides a node from OTHER nodes' operational
+    calculations (see the intermediate-node tests above), but does not hide the node's
+    own historical connections when it is inspected directly -- preserving the
+    historical/audit information the correction design explicitly requires. A
+    non-retired direct neighbor is therefore still found."""
+    retired_root = await _make_node(db_session, label="retired_root")
+    equipment = await _make_node(db_session, label="equipment")
+    await _connect(db_session, retired_root, equipment)
+    await _retire(db_session, retired_root)
+
+    downstream = await get_downstream_node_ids(db_session, retired_root)
+    assert downstream == {equipment}, (
+        "a retired node's own direct traversal is a historical/audit query and is not "
+        f"itself filtered by this design's chosen semantics, got {downstream}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_retired_downstream_leaf_excluded_from_results(db_session):
+    """A retired node reached as a leaf (nothing further beyond it) is still excluded
+    from the result set itself, not merely from further expansion."""
+    utility = await _make_node(db_session, label="utility")
+    retired_leaf = await _make_node(db_session, label="retired_leaf")
+    await _connect(db_session, utility, retired_leaf)
+    await _retire(db_session, retired_leaf)
+
+    downstream = await get_downstream_node_ids(db_session, utility)
+    assert downstream == set(), "a retired leaf must not appear in the operational result set"
+
+
+@pytest.mark.asyncio
+async def test_non_retired_sibling_unaffected_by_retired_branch(db_session):
+    """Retirement filtering must be scoped to the retired node's own branch -- a live
+    sibling branch from the same parent must be unaffected."""
+    root = await _make_node(db_session, label="root")
+    retired_branch = await _make_node(db_session, label="retired_branch")
+    live_branch = await _make_node(db_session, label="live_branch")
+    live_leaf = await _make_node(db_session, label="live_leaf")
+    await _connect(db_session, root, retired_branch, feed_label="A")
+    await _connect(db_session, root, live_branch, feed_label="B")
+    await _connect(db_session, live_branch, live_leaf)
+    await _retire(db_session, retired_branch)
+
+    downstream = await get_downstream_node_ids(db_session, root)
+    assert downstream == {live_branch, live_leaf}, downstream

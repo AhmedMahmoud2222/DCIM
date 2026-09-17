@@ -43,8 +43,16 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.power_graph import MAX_TRAVERSAL_DEPTH, MAX_TRAVERSAL_NODES, get_upstream_node_ids
+from app.application.power_graph import (
+    MAX_TRAVERSAL_DEPTH,
+    MAX_TRAVERSAL_NODES,
+    get_upstream_node_ids,
+    non_retired_node_ids,
+)
+from app.core.logging import get_logger
 from app.domain.power.models import PowerCapacity, PowerConnection, PowerNode
+
+logger = get_logger(__name__)
 
 DEFAULT_WARNING_THRESHOLD_PCT = 80.0
 DEFAULT_CRITICAL_THRESHOLD_PCT = 95.0
@@ -95,7 +103,19 @@ async def compute_allocated_kw(db: AsyncSession, root_id: uuid.UUID) -> tuple[fl
     `power_graph`'s own traversal. Returns `(value, data_quality)`. `data_quality` is
     `"not_applicable"` when the node has no downstream children at all (a leaf — there is
     nothing to allocate), `"unknown"` when at least one branch bottoms out at a node with
-    neither a capacity record nor further children carrying one, `"known"` otherwise."""
+    neither a capacity record nor further children carrying one, `"known"` otherwise.
+
+    F-H2 correction (PHASE3_CORRECTION_DESIGN.md Part 8, Model A): a retired node must
+    not act as an operational bridge for this roll-up either — its own capacity (if it
+    still has a stale record) must not be counted into an ancestor's `allocated_kw`, and
+    nothing further downstream of it may be discovered through it. Both pass 1's subtree
+    discovery and pass 2's `children_of` edge set are filtered against
+    `PowerNode.retired_at IS NULL`, mirroring `power_graph._traverse`'s own filtering
+    exactly, so a retired PDU between a live utility and live downstream equipment
+    contributes nothing to the utility's allocated capacity, and nothing beneath the
+    retired PDU is ever discovered. The traversal *root* itself is not filtered here for
+    the same reason `power_graph`'s traversal root is not: directly inspecting a retired
+    node's own allocation is a legitimate historical/audit query, not a bridging concern."""
     # Pass 1: discover every node in the downstream subtree, level by level (bounded),
     # purely to know the full node set and level order for pass 3 — the actual edges are
     # (re-)fetched in one batched query in pass 2 rather than accumulated here.
@@ -114,7 +134,12 @@ async def compute_allocated_kw(db: AsyncSession, root_id: uuid.UUID) -> tuple[fl
                 )
             )
         ).scalars().all()
-        next_frontier = [target_id for target_id in rows if target_id not in visited]
+        candidate_next = [target_id for target_id in rows if target_id not in visited]
+        # F-H2: drop retired candidates before they are counted as part of this
+        # subtree — they must not contribute their own capacity, and nothing beyond
+        # them may be discovered through them.
+        active_next = await non_retired_node_ids(db, set(candidate_next))
+        next_frontier = [target_id for target_id in candidate_next if target_id in active_next]
         levels.append(frontier)
         for target_id in next_frontier:
             visited.add(target_id)
@@ -123,11 +148,19 @@ async def compute_allocated_kw(db: AsyncSession, root_id: uuid.UUID) -> tuple[fl
         frontier = next_frontier
 
     # Pass 2: fetch children-by-parent for every discovered node in one batched query.
+    # Joined against PowerNode so a retired *target* is excluded even if it happens to
+    # be reached as a one-hop child of a node already in `all_ids` (pass 1 only
+    # prevents a retired node from being further expanded through -- this join is what
+    # keeps it from being counted as a direct child's own capacity contribution too).
     all_ids = list(visited)
     edge_rows = (
         await db.execute(
-            select(PowerConnection.source_node_id, PowerConnection.target_node_id).where(
-                PowerConnection.source_node_id.in_(all_ids), PowerConnection.effective_to.is_(None)
+            select(PowerConnection.source_node_id, PowerConnection.target_node_id)
+            .join(PowerNode, PowerNode.id == PowerConnection.target_node_id)
+            .where(
+                PowerConnection.source_node_id.in_(all_ids),
+                PowerConnection.effective_to.is_(None),
+                PowerNode.retired_at.is_(None),
             )
         )
     ).all()
@@ -239,20 +272,49 @@ async def get_capacity_figures(db: AsyncSession, power_node_id: uuid.UUID) -> Ca
 async def derive_node_capacity_exceptions(db: AsyncSession, power_node_id: uuid.UUID, label: str) -> list[CapacityException]:
     """Deterministic capacity checks for one node (§13). Thresholds fall back to the
     module defaults only when the node's own `PowerCapacity` record doesn't specify one —
-    never a silently-invented number with no fallback path documented."""
+    never a silently-invented number with no fallback path documented.
+
+    F-H1 correction (PHASE3_CORRECTION_DESIGN.md Part 7): the precedence check below now
+    keys off `figures.data_quality == "unknown"` directly, not off
+    `figures.effective_capacity_kw is None` alone. PHASE3_HOSTILE_SELF_AUDIT.md's F-H1
+    demonstrated the previous version: a node whose *own* rated/configured capacity was
+    known, but whose *allocation* roll-up hit `compute_allocated_kw`'s bounded-traversal
+    limit (entirely plausible at the master prompt's own target scale of 5,000+ power
+    nodes), had `utilization_pct is None` (correctly) but `effective_capacity_kw is not
+    None` (also correctly) -- and the old code's inner `if effective_capacity_kw is None`
+    guard meant neither branch fired, silently returning an *empty* exception list for a
+    node whose true state was unknown, not healthy. `data_quality` is exactly the field
+    `get_capacity_figures` already sets to `"unknown"` in precisely this situation (and
+    in every other situation where utilization cannot be computed), so branching on it
+    directly closes every such case in one place rather than re-deriving a narrower
+    condition that misses some of them."""
     cap = await get_current_capacity(db, power_node_id)
     figures = await get_capacity_figures(db, power_node_id)
     exceptions: list[CapacityException] = []
 
-    if figures.utilization_pct is None:
-        if figures.effective_capacity_kw is None:
-            exceptions.append(
-                CapacityException(
-                    code=CAPACITY_UNKNOWN, severity="info", power_node_id=power_node_id,
-                    message=f"{label}: no rated/configured capacity recorded — utilization cannot be computed.",
-                    observed_value=None, threshold=None,
-                )
+    if figures.data_quality == "unknown":
+        logger.info(
+            "power_capacity_unknown",
+            power_node_id=str(power_node_id),
+            effective_capacity_known=figures.effective_capacity_kw is not None,
+            allocated_known=figures.allocated_kw is not None,
+        )
+        exceptions.append(
+            CapacityException(
+                code=CAPACITY_UNKNOWN, severity="info", power_node_id=power_node_id,
+                message=(
+                    f"{label}: capacity or allocation data is incomplete — utilization cannot be computed "
+                    "(this may mean rated/configured capacity is not recorded, or the downstream allocation "
+                    "could not be fully resolved)."
+                ),
+                observed_value=None, threshold=None,
             )
+        )
+        return exceptions
+    if figures.utilization_pct is None:
+        # Reachable only for data_quality == "not_applicable" (a leaf node with nothing
+        # downstream to allocate, or zero effective capacity) -- neither an overload nor
+        # an unknown-data condition, so no exception is the correct, healthy outcome.
         return exceptions
 
     warning_pct: float = DEFAULT_WARNING_THRESHOLD_PCT
@@ -310,18 +372,22 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
     feed_infos: list[dict[str, uuid.UUID | str | bool | float | None]] = []
     upstream_sets: dict[uuid.UUID, set[uuid.UUID]] = {}
     for node in feed_nodes:
-        has_upstream = (
-            await db.execute(
-                select(PowerConnection.id).where(
-                    PowerConnection.target_node_id == node.id, PowerConnection.effective_to.is_(None)
-                )
-            )
-        ).first()
+        # F-H2 correction (PHASE3_CORRECTION_DESIGN.md Part 8): "has an upstream path"
+        # must mean "reaches some live upstream node via the retirement-aware
+        # traversal", not merely "an active connection row happens to point at this
+        # node" -- the latter would still be true for `Utility -> Retired PDU ->
+        # Equipment` (the direct edge into the equipment's feed node from the retired
+        # PDU still exists as a row), incorrectly reporting a healthy path through a
+        # node that is no longer operationally part of the graph. `get_upstream_
+        # node_ids` already excludes retired nodes from its result (power_graph.py),
+        # so a feed fed only by a retired node now correctly yields an empty upstream
+        # set here.
         upstream_sets[node.id] = await get_upstream_node_ids(db, node.id)
+        has_upstream_path = len(upstream_sets[node.id]) > 0
         figures = await get_capacity_figures(db, node.id)
         feed_infos.append(
             {
-                "power_node_id": node.id, "feed_label": None, "has_upstream_path": has_upstream is not None,
+                "power_node_id": node.id, "feed_label": None, "has_upstream_path": has_upstream_path,
                 "effective_capacity_kw": figures.effective_capacity_kw,
             }
         )

@@ -36,7 +36,16 @@ against yet."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Computed,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -159,18 +168,35 @@ class PowerNode(Base, UUIDPkMixin, TimestampMixin):
 class PDUOutlet(Base, TimestampMixin):
     """§4b: NOT a ManagedAsset. `PK id FK->power_node UNIQUE` — the outlet's identity
     lives entirely in its PowerNode row (node_type='pdu_outlet', owning_asset_id=the
-    PDU's ManagedAsset.id); this table holds only the outlet-specific columns."""
+    PDU's ManagedAsset.id); this table holds only the outlet-specific columns.
+
+    F-M3 correction (migration 0007; PHASE3_CORRECTION_DESIGN.md Part 11):
+    `pdu_asset_id` is no longer FK'd to `managed_asset.id` alone (satisfiable by any
+    ManagedAsset subtype) — `pdu_asset_expected_type` is a generated column fixed to the
+    literal `'pdu'`, and the composite FK `(pdu_asset_id, pdu_asset_expected_type) ->
+    managed_asset (id, asset_type)` can only be satisfied when the referenced asset's
+    own `asset_type` is actually `'pdu'`. The application never writes to
+    `pdu_asset_expected_type` — PostgreSQL computes and stores it."""
 
     __tablename__ = "pdu_outlet"
     __table_args__ = (
         UniqueConstraint("pdu_asset_id", "outlet_number", name="uq_pdu_outlet_pdu_asset_id_outlet_number"),
         CheckConstraint(f"state IN {OUTLET_STATES!r}", name="state_allowed"),
+        ForeignKeyConstraint(
+            ["pdu_asset_id", "pdu_asset_expected_type"],
+            ["managed_asset.id", "managed_asset.asset_type"],
+            name="fk_pdu_outlet_pdu_asset_id_managed_asset",
+            ondelete="CASCADE",
+        ),
     )
 
     power_node_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("power_node.id", ondelete="CASCADE"), primary_key=True
     )
-    pdu_asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_asset.id", ondelete="CASCADE"), nullable=False)
+    pdu_asset_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    pdu_asset_expected_type: Mapped[str] = mapped_column(
+        String, Computed("'pdu'", persisted=True), nullable=False
+    )
     outlet_number: Mapped[int] = mapped_column(nullable=False)
     label: Mapped[str | None] = mapped_column(String(64))
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
