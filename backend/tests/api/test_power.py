@@ -363,6 +363,89 @@ async def test_dashboard_requires_permission(client, auth_headers):
     assert r.status_code == 200
 
 
+# ------------------------------------------------------------ N+1 performance regression guard
+# PHASE3_N1_CORRECTION_REPORT.md: proves the batch-loading correction actually removed the
+# N+1 pattern, as an ordinary, always-run regression test -- not a one-off measurement
+# script. Asserts query count stays *bounded* as node count grows (not a fragile exact
+# number, which would break on the next unrelated schema/query change) rather than
+# growing linearly with the number of capacity-bearing nodes, which is the textbook N+1
+# signature this correction removes.
+
+
+async def _build_capacity_chain(db_session, n: int, capacity_every: int = 5):
+    """n utility_intake nodes in a single chain, capacity records on every `capacity_
+    every`-th node -- enough to trigger the old per-capacity-record N+1 pattern many
+    times over at even a modest n, without the cost of a full HTTP-driven build."""
+    import uuid as _uuid
+    from datetime import UTC, datetime
+
+    from app.domain.power.models import PowerCapacity, PowerConnection, PowerNode
+
+    node_ids = []
+    for i in range(n):
+        node = PowerNode(node_type="utility_intake", label=f"n{i}")
+        db_session.add(node)
+        await db_session.flush()
+        node_ids.append(node.id)
+        if i > 0:
+            db_session.add(
+                PowerConnection(
+                    source_node_id=node_ids[i - 1], target_node_id=node_ids[i], connection_type="feed",
+                    feed_label="single", status="active", version=1, effective_from=datetime.now(UTC),
+                )
+            )
+        if i % capacity_every == 0:
+            db_session.add(
+                PowerCapacity(
+                    power_node_id=node_ids[i], rated_capacity_kw=1.0, version=1,
+                    effective_from=datetime.now(UTC), id=_uuid.uuid4(),
+                )
+            )
+    await db_session.commit()
+
+
+async def _count_queries(db_engine, coro):
+    from sqlalchemy import event
+
+    count = 0
+
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        nonlocal count
+        count += 1
+
+    event.listen(db_engine.sync_engine, "before_cursor_execute", _before_cursor_execute)
+    try:
+        await coro
+    finally:
+        event.remove(db_engine.sync_engine, "before_cursor_execute", _before_cursor_execute)
+    return count
+
+
+async def test_dashboard_summary_query_count_does_not_grow_linearly_with_scale(client, auth_headers, db_session, db_engine):
+    """The core N+1 regression guard: query count at 1,000 capacity-bearing-adjacent
+    nodes must not be anywhere near proportional to query count at 100 -- the old
+    per-node loop grew ~1:1 with capacity-record count (PHASE3_N1_CORRECTION_REPORT.md
+    Section 2's fresh baseline measured this directly); the batch path's query count is
+    dominated by a small, fixed number of whole-graph queries per request, so a 10x
+    increase in node count must not translate into anywhere near a 10x increase in
+    query count."""
+    headers = await auth_headers("DCIM Manager")
+
+    await _build_capacity_chain(db_session, 100)
+    queries_at_100 = await _count_queries(db_engine, client.get("/api/v1/dashboard/summary", headers=headers))
+
+    await _build_capacity_chain(db_session, 1000)
+    queries_at_1000 = await _count_queries(db_engine, client.get("/api/v1/dashboard/summary", headers=headers))
+
+    assert queries_at_100 < 50, f"unexpectedly high query count even at n=100: {queries_at_100}"
+    # Bounded, not proportional: a 10x node-count increase must cost far less than a 10x
+    # query-count increase (the old code was ~1:1; this asserts nowhere close to that).
+    assert queries_at_1000 < queries_at_100 * 3, (
+        f"query count grew from {queries_at_100} (n=100) to {queries_at_1000} (n=1000) -- "
+        "this is the N+1 signature the batch-loading correction is required to remove"
+    )
+
+
 # --------------------------------------------------------------------- F-C1 correction
 # PHASE3_HOSTILE_SELF_AUDIT.md F-C1 / PHASE3_CORRECTION_DESIGN.md Parts 4-6: the global
 # advisory lock must make it impossible for two concurrent connection-creation requests

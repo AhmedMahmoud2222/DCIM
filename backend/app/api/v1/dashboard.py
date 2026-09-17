@@ -12,7 +12,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.power_capacity import derive_node_capacity_exceptions, equipment_power_summary
+from app.application.power_capacity import (
+    classify_equipment_redundancy_from_snapshot,
+    derive_node_capacity_exceptions,
+    derive_node_capacity_exceptions_from_snapshot,
+    equipment_power_summary,
+    load_equipment_feed_batch,
+    load_power_graph_snapshot,
+)
 from app.application.rbac import require_permission
 from app.domain.location.models import Building, Floor, Room, Site
 from app.domain.physical.models import Equipment, Rack
@@ -20,6 +27,33 @@ from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.power.models import PowerCapacity, PowerNode
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+async def _distinct_equipment_ids(db: AsyncSession) -> list[uuid.UUID]:
+    equipment_ids = (
+        await db.execute(
+            select(PowerNode.owning_asset_id).where(
+                PowerNode.node_type == "equipment_power_input", PowerNode.retired_at.is_(None),
+                PowerNode.owning_asset_id.isnot(None),
+            ).distinct()
+        )
+    ).scalars().all()
+    return [e for e in equipment_ids if e is not None]
+
+
+async def _build_batch_context(db: AsyncSession, capacity_rows: list[PowerCapacity]):
+    """PHASE3_N1_CORRECTION_REPORT.md: builds the one shared `PowerGraphSnapshot` +
+    equipment feed batch both dashboard endpoints need, instead of each endpoint
+    re-deriving capacity/redundancy per node/per equipment item via its own repeated
+    queries. Returns `None` when the snapshot reports `truncated=True` (the active
+    graph exceeded `MAX_BATCH_GRAPH_EDGES`) -- callers MUST fall back to the original
+    per-node functions for the whole request in that case, never mix the two."""
+    snapshot = await load_power_graph_snapshot(db, capacity_rows=capacity_rows)
+    if snapshot.truncated:
+        return None
+    equipment_ids = await _distinct_equipment_ids(db)
+    feed_nodes_by_asset, feed_label_by_node = await load_equipment_feed_batch(db, equipment_ids)
+    return snapshot, equipment_ids, feed_nodes_by_asset, feed_label_by_node
 
 
 class SiteSummaryOut(BaseModel):
@@ -185,32 +219,44 @@ async def get_dashboard_summary(
     # --------------------------------------------------------------- power summary
     overloaded = 0
     near_capacity = 0
-    for cap in capacity_rows:
-        for exc in await derive_node_capacity_exceptions(db, cap.power_node_id, ""):
-            if exc.code == "CAPACITY_OVERLOAD":
-                overloaded += 1
-            elif exc.code == "CAPACITY_NEAR_LIMIT":
-                near_capacity += 1
-
-    equipment_ids = (
-        await db.execute(
-            select(PowerNode.owning_asset_id).where(
-                PowerNode.node_type == "equipment_power_input", PowerNode.retired_at.is_(None),
-                PowerNode.owning_asset_id.isnot(None),
-            ).distinct()
-        )
-    ).scalars().all()
-    equipment_ids = [e for e in equipment_ids if e is not None]
     missing_path = 0
     degraded = 0
-    for equipment_id in equipment_ids:
-        if equipment_id is None:
-            continue
-        summary = await equipment_power_summary(db, equipment_id)
-        if summary.redundancy_classification == "degraded":
-            degraded += 1
-        elif any(not f["has_upstream_path"] for f in summary.feed_nodes):
-            missing_path += 1
+    batch_ctx = await _build_batch_context(db, capacity_rows)
+    if batch_ctx is not None:
+        snapshot, equipment_ids, feed_nodes_by_asset, feed_label_by_node = batch_ctx
+        memo: dict = {}
+        for cap in capacity_rows:
+            for exc in derive_node_capacity_exceptions_from_snapshot(snapshot, cap.power_node_id, "", memo):
+                if exc.code == "CAPACITY_OVERLOAD":
+                    overloaded += 1
+                elif exc.code == "CAPACITY_NEAR_LIMIT":
+                    near_capacity += 1
+        for equipment_id in equipment_ids:
+            summary = classify_equipment_redundancy_from_snapshot(
+                snapshot, equipment_id, feed_nodes_by_asset.get(equipment_id, []), feed_label_by_node, memo
+            )
+            if summary.redundancy_classification == "degraded":
+                degraded += 1
+            elif any(not f["has_upstream_path"] for f in summary.feed_nodes):
+                missing_path += 1
+    else:
+        # Fallback (PHASE3_N1_CORRECTION_REPORT.md): the active graph exceeded the
+        # batch path's whole-graph bound -- preserve the original per-node behavior
+        # exactly (including its own per-node MAX_TRAVERSAL_NODES/DEPTH bound) rather
+        # than compute anything from an intentionally-incomplete snapshot.
+        for cap in capacity_rows:
+            for exc in await derive_node_capacity_exceptions(db, cap.power_node_id, ""):
+                if exc.code == "CAPACITY_OVERLOAD":
+                    overloaded += 1
+                elif exc.code == "CAPACITY_NEAR_LIMIT":
+                    near_capacity += 1
+        equipment_ids = await _distinct_equipment_ids(db)
+        for equipment_id in equipment_ids:
+            summary = await equipment_power_summary(db, equipment_id)
+            if summary.redundancy_classification == "degraded":
+                degraded += 1
+            elif any(not f["has_upstream_path"] for f in summary.feed_nodes):
+                missing_path += 1
 
     power_summary = PowerSummaryOut(
         total_power_nodes=power_nodes_count, overloaded_nodes=overloaded, near_capacity_nodes=near_capacity,
@@ -238,6 +284,47 @@ async def get_dashboard_exceptions(
     exact object/condition/message a click should navigate to."""
     out: list[ExceptionItemOut] = []
     capacity_rows = (await db.execute(select(PowerCapacity).where(PowerCapacity.effective_to.is_(None)))).scalars().all()
+
+    batch_ctx = await _build_batch_context(db, capacity_rows)
+    if batch_ctx is not None:
+        snapshot, equipment_ids, feed_nodes_by_asset, feed_label_by_node = batch_ctx
+        label_by_node: dict[uuid.UUID, str] = {}
+        node_ids = [cap.power_node_id for cap in capacity_rows]
+        if node_ids:
+            rows = (await db.execute(select(PowerNode.id, PowerNode.label).where(PowerNode.id.in_(node_ids)))).all()
+            label_by_node = {nid: lbl for nid, lbl in rows}
+        memo: dict = {}
+        for cap in capacity_rows:
+            label = label_by_node.get(cap.power_node_id, str(cap.power_node_id))
+            for exc in derive_node_capacity_exceptions_from_snapshot(snapshot, cap.power_node_id, label, memo):
+                out.append(
+                    ExceptionItemOut(
+                        code=exc.code, severity=exc.severity, object_type="power_node", object_id=exc.power_node_id,
+                        message=exc.message,
+                    )
+                )
+        for equipment_id in equipment_ids:
+            summary = classify_equipment_redundancy_from_snapshot(
+                snapshot, equipment_id, feed_nodes_by_asset.get(equipment_id, []), feed_label_by_node, memo
+            )
+            if summary.redundancy_classification == "degraded":
+                out.append(
+                    ExceptionItemOut(
+                        code="REDUNDANCY_DEGRADED", severity="warning", object_type="equipment", object_id=equipment_id,
+                        message="Redundant feeds share an upstream dependency or one feed is missing its path.",
+                    )
+                )
+            elif summary.redundancy_classification == "single_feed":
+                out.append(
+                    ExceptionItemOut(
+                        code="POWER_PATH_MISSING", severity="info", object_type="equipment", object_id=equipment_id,
+                        message="Only a single power feed is modeled for this equipment.",
+                    )
+                )
+        return out
+
+    # Fallback (PHASE3_N1_CORRECTION_REPORT.md): preserve original per-node behavior
+    # exactly, same rationale as get_dashboard_summary's own fallback branch.
     for cap in capacity_rows:
         node = await db.get(PowerNode, cap.power_node_id)
         label = node.label if node else str(cap.power_node_id)
@@ -249,18 +336,8 @@ async def get_dashboard_exceptions(
                 )
             )
 
-    equipment_ids = (
-        await db.execute(
-            select(PowerNode.owning_asset_id).where(
-                PowerNode.node_type == "equipment_power_input", PowerNode.retired_at.is_(None),
-                PowerNode.owning_asset_id.isnot(None),
-            ).distinct()
-        )
-    ).scalars().all()
-    equipment_ids = [e for e in equipment_ids if e is not None]
+    equipment_ids = await _distinct_equipment_ids(db)
     for equipment_id in equipment_ids:
-        if equipment_id is None:
-            continue
         summary = await equipment_power_summary(db, equipment_id)
         if summary.redundancy_classification == "degraded":
             out.append(
