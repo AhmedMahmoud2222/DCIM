@@ -8,7 +8,10 @@ input, always, regardless of extension or claimed type. This module implements e
   resolution all explicitly forbidden
 - a hard element-count cap enforced *during* the walk (not after), bounding both memory
   and wall-clock time for a pathological-but-small-byte-count file (e.g. deeply
-  repeated/nested elements) without needing a separate timeout mechanism
+  repeated elements) without needing a separate timeout mechanism
+- a hard nesting-depth cap (`MAX_NESTING_DEPTH`), enforced by an iterative (not
+  recursive) tree walk — see `_walk`'s own docstring for the incident this closes
+  (PHASE2_NESTED_SVG_CORRECTION_REPORT.md)
 - `<script>`/event-handler-attribute/external-reference stripping — nothing that could
   execute or fetch anything survives into the SIR
 - the Sanitized Intermediate Representation (`SanitizeResult.shapes`) is the *only*
@@ -44,6 +47,7 @@ from defusedxml.ElementTree import ParseError, fromstring
 MAX_SVG_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_RASTER_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB — calibration-only, no parsing
 MAX_ELEMENTS = 5_000
+MAX_NESTING_DEPTH = 200  # PHASE2_NESTED_SVG_CORRECTION_REPORT.md — see _walk's docstring
 MAX_COORDINATE = 1_000_000  # matches app.application.spatial_validation's bound
 
 DANGEROUS_TAGS = {"script", "foreignobject", "animate", "animatetransform", "set", "iframe", "use", "image"}
@@ -152,54 +156,90 @@ def _safe_float(value: str | None, default: float = 0.0) -> float:
     return f
 
 
-def _walk(element: Element, result: SanitizeResult) -> None:
-    for child in list(element):
+def _walk(root: Element, result: SanitizeResult) -> None:
+    """Iterative (explicit-stack) pre-order walk — deliberately not a recursive
+    function calling itself per child, which a prior version of this module was.
+
+    PHASE2_NESTED_SVG_CORRECTION_REPORT.md: a deeply nested SVG (~960+ levels of
+    `<g>`, independently reproduced by red-team testing at a small, trivially
+    craftable file size) drove that recursive version past Python's own interpreter
+    call-stack limit, raising an uncaught `RecursionError` — a resource-exhaustion
+    defect distinct from (and not covered by) `MAX_ELEMENTS`, which bounds *breadth*
+    (how many sibling elements this walk is willing to look at) but did nothing to
+    bound *depth* (how many levels of nested containers this walk is willing to
+    descend into). An explicit stack removes Python's own call-stack depth as an
+    attack surface entirely, regardless of how deep a document claims to be — pushing
+    another `(element, depth)` tuple onto a Python list never risks a `RecursionError`.
+
+    `MAX_NESTING_DEPTH` (200) is a separate, deterministic business rule on top of
+    that, not a recursion-limit workaround: a legitimate data-center floor plan —
+    even a heavily layered CAD/Visio export grouping racks, equipment, and
+    annotations into their own named layers — has no plausible reason to nest more
+    than a handful of `<g>` levels deep. 200 is generous against any realistic floor
+    plan while remaining far below where any recursive implementation (this one or a
+    future regression back to one) would ever approach Python's own default
+    recursion limit (1000), and while remaining a small, cheap, O(depth) list even at
+    depths in the tens of thousands — an attacker cannot force unbounded CPU or
+    memory purely through nesting, since traversal is rejected outright the moment
+    the limit is exceeded, before any of that depth is actually walked.
+
+    Traversal order (and therefore `result.shapes` ordering, `objects_discovered`
+    counts, and warnings) is identical to the previous recursive implementation:
+    each element is fully processed — and its own children are then fully exhausted,
+    depth-first — before its next sibling is visited, exactly as
+    `for child in list(element): process(child); _walk(child, result)` used to
+    produce. Children are pushed in reverse so the leftmost is popped (and thus
+    visited) next."""
+    stack: list[tuple[Element, int]] = [(child, 1) for child in reversed(list(root))]
+    while stack:
+        element, depth = stack.pop()
+
         if result.objects_discovered >= MAX_ELEMENTS:
             result.warnings.append(f"element count cap ({MAX_ELEMENTS}) reached; remaining elements ignored")
             return
         result.objects_discovered += 1
-        tag = _local_tag(child.tag)
+        tag = _local_tag(element.tag)
 
         if tag in DANGEROUS_TAGS:
             result.warnings.append(f"stripped disallowed element <{tag}>")
             result.unsupported_object_count += 1
-            continue  # never recurse into a stripped element's children either
+            continue  # never descend into a stripped element's children either
 
-        for attr in list(child.attrib):
+        for attr in list(element.attrib):
             if attr.lower().startswith("on"):
                 result.warnings.append(f"stripped event-handler attribute '{attr}' from <{tag}>")
-                del child.attrib[attr]
+                del element.attrib[attr]
 
-        href = child.attrib.get("href") or child.attrib.get(XLINK_HREF)
+        href = element.attrib.get("href") or element.attrib.get(XLINK_HREF)
         if href and re.match(r"^(https?:)?//|^[a-z][a-z0-9+.-]*:", href, re.IGNORECASE) and not href.startswith("#"):
             result.warnings.append(f"stripped external reference on <{tag}>: {href[:80]!r}")
-            child.attrib.pop("href", None)
-            child.attrib.pop(XLINK_HREF, None)
+            element.attrib.pop("href", None)
+            element.attrib.pop(XLINK_HREF, None)
 
         if tag == "rect":
             result.shapes.append(
                 SirShape(
                     shape_type="rect",
-                    x=_safe_float(child.attrib.get("x")),
-                    y=_safe_float(child.attrib.get("y")),
-                    width=_safe_float(child.attrib.get("width")),
-                    height=_safe_float(child.attrib.get("height")),
+                    x=_safe_float(element.attrib.get("x")),
+                    y=_safe_float(element.attrib.get("y")),
+                    width=_safe_float(element.attrib.get("width")),
+                    height=_safe_float(element.attrib.get("height")),
                 )
             )
         elif tag == "circle":
             result.shapes.append(
                 SirShape(
                     shape_type="circle",
-                    x=_safe_float(child.attrib.get("cx")),
-                    y=_safe_float(child.attrib.get("cy")),
-                    radius=_safe_float(child.attrib.get("r")),
+                    x=_safe_float(element.attrib.get("cx")),
+                    y=_safe_float(element.attrib.get("cy")),
+                    radius=_safe_float(element.attrib.get("r")),
                 )
             )
         elif tag == "text":
-            text_content = "".join(child.itertext()).strip()[:255]
+            text_content = "".join(element.itertext()).strip()[:255]
             result.shapes.append(
                 SirShape(
-                    shape_type="text", x=_safe_float(child.attrib.get("x")), y=_safe_float(child.attrib.get("y")),
+                    shape_type="text", x=_safe_float(element.attrib.get("x")), y=_safe_float(element.attrib.get("y")),
                     text=text_content,
                 )
             )
@@ -208,4 +248,13 @@ def _walk(element: Element, result: SanitizeResult) -> None:
         else:
             result.unsupported_object_count += 1
 
-        _walk(child, result)
+        children = list(element)
+        if children and depth >= MAX_NESTING_DEPTH:
+            # Only rejecting here (an element *with* children, at the limit) rather
+            # than unconditionally at `depth >= MAX_NESTING_DEPTH` matters at the exact
+            # boundary: a leaf element sitting at depth MAX_NESTING_DEPTH is fully
+            # processed and legitimate — there is nothing deeper to reject — only an
+            # element that would require descending past the limit is rejected.
+            raise SvgRejected(f"SVG nesting exceeds the {MAX_NESTING_DEPTH}-level depth limit")
+
+        stack.extend((child, depth + 1) for child in reversed(children))

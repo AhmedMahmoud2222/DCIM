@@ -240,6 +240,192 @@ async def test_svg_over_the_svg_specific_cap_is_accepted_then_fails_async_with_a
     assert "size limit" in job_status.json()["rejection_reason"]
 
 
+# --------------------------------------------------------------------------- nested-SVG
+# regression (PHASE2_NESTED_SVG_CORRECTION_REPORT.md): a deeply nested SVG previously
+# crashed the sanitizer's (then-recursive) tree walk with an uncaught RecursionError,
+# which app.infrastructure.tasks.floorplan_import's `except SvgRejected` did not catch —
+# the job was left permanently stuck at status='parsing', never reaching 'failed', with
+# no diagnostics and no recovery path. Independently found and reproduced by
+# PHASE2_INDEPENDENT_RED_TEAM_REVALIDATION_REPORT.md.
+
+
+def _deeply_nested_svg(depth: int) -> bytes:
+    return (
+        b'<svg xmlns="http://www.w3.org/2000/svg">'
+        + b"<g>" * depth
+        + b'<rect x="0" y="0" width="1" height="1" />'
+        + b"</g>" * depth
+        + b"</svg>"
+    )
+
+
+async def test_deeply_nested_svg_transitions_to_failed_not_stuck_in_parsing(client, auth_headers):
+    """The literal independently-reported attack (~960-970 levels of nested <g>) must
+    reach a terminal 'failed' state with a useful, diagnosable reason — not remain
+    indefinitely at 'parsing' because the parser exception escaped normal handling."""
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan = (await client.post("/api/v1/floor-plans", json={"room_id": room_id}, headers=headers)).json()
+    attack_svg = _deeply_nested_svg(970)
+
+    job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("attack.svg", attack_svg, "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+    assert job["status"] == "queued"
+
+    _run_import(job["id"], attack_svg)
+
+    job_status = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}", headers=headers)
+    body = job_status.json()
+    assert body["status"] == "failed", f"expected 'failed', job is stuck at {body['status']!r}"
+    assert body["rejection_reason"] is not None
+    assert "depth limit" in body["rejection_reason"]
+
+    diagnostics = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/diagnostics", headers=headers)
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["errors"]
+
+    candidates = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates", headers=headers)
+    assert candidates.json()["items"] == [], "a failed import must not leave any candidates behind"
+
+
+async def test_much_deeper_nested_svg_also_fails_cleanly_not_just_at_the_reported_depth(client, auth_headers):
+    """Substantially beyond the previously reported ~960+ level attack — proves the fix
+    is a genuine removal of recursion depth as an attack surface, not a narrow patch
+    tuned to one specific depth."""
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan = (await client.post("/api/v1/floor-plans", json={"room_id": room_id}, headers=headers)).json()
+    extreme_svg = _deeply_nested_svg(20_000)
+
+    job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("extreme.svg", extreme_svg, "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+
+    _run_import(job["id"], extreme_svg)
+
+    job_status = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}", headers=headers)
+    assert job_status.json()["status"] == "failed"
+
+
+async def test_repeated_malicious_nested_svg_uploads_do_not_prevent_a_later_valid_import(client, auth_headers):
+    """Running the malicious payload repeatedly must not leave stale job state or corrupt
+    the process such that a subsequent, entirely unrelated, legitimate import fails."""
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan = (await client.post("/api/v1/floor-plans", json={"room_id": room_id}, headers=headers)).json()
+    attack_svg = _deeply_nested_svg(970)
+
+    for _ in range(5):
+        job = (
+            await client.post(
+                f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+                files={"file": ("attack.svg", attack_svg, "image/svg+xml")},
+                headers=headers,
+            )
+        ).json()
+        _run_import(job["id"], attack_svg)
+        job_status = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}", headers=headers)
+        assert job_status.json()["status"] == "failed"
+
+    good_job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("good.svg", BENIGN_SVG, "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+    _run_import(good_job["id"], BENIGN_SVG)
+    good_status = await client.get(f"/api/v1/floor-plans/import-jobs/{good_job['id']}", headers=headers)
+    assert good_status.json()["status"] == "parsed"
+
+
+async def test_concurrent_malicious_and_valid_imports_do_not_cross_contaminate(client, auth_headers):
+    """A bad SVG in one job must never corrupt or block an unrelated, concurrently
+    processed job's own state."""
+    import asyncio
+
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan = (await client.post("/api/v1/floor-plans", json={"room_id": room_id}, headers=headers)).json()
+    attack_svg = _deeply_nested_svg(970)
+
+    bad_job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("attack.svg", attack_svg, "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+    good_job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("good.svg", BENIGN_SVG, "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+
+    async def run_bad():
+        await asyncio.to_thread(_run_import, bad_job["id"], attack_svg)
+
+    async def run_good():
+        await asyncio.to_thread(_run_import, good_job["id"], BENIGN_SVG)
+
+    await asyncio.gather(run_bad(), run_good())
+
+    bad_status = await client.get(f"/api/v1/floor-plans/import-jobs/{bad_job['id']}", headers=headers)
+    good_status = await client.get(f"/api/v1/floor-plans/import-jobs/{good_job['id']}", headers=headers)
+    assert bad_status.json()["status"] == "failed"
+    assert good_status.json()["status"] == "parsed"
+
+
+async def test_unexpected_non_svgrejected_exception_still_reaches_a_terminal_state(client, auth_headers, monkeypatch):
+    """The recursion-depth guard closes the *specific* reported defect, but the same
+    structural gap (only SvgRejected was ever caught) could just as easily have let any
+    other unanticipated exception leave a job stuck in 'parsing' forever. Simulate a
+    completely unrelated bug — a bare ValueError from inside sanitize_svg — and confirm
+    the task's defensive backstop still reaches 'failed', with a safe/generic reason, and
+    that the task itself still raises (so Celery's own failure bookkeeping is meaningful)."""
+    import app.infrastructure.tasks.floorplan_import as task_module
+
+    def _boom(content: bytes):
+        raise ValueError("simulated unrelated parser bug")
+
+    monkeypatch.setattr(task_module, "sanitize_svg", _boom)
+
+    headers = await auth_headers("DCIM Manager")
+    room_id = await create_room(client, auth_headers)
+    floor_plan = (await client.post("/api/v1/floor-plans", json={"room_id": room_id}, headers=headers)).json()
+    job = (
+        await client.post(
+            f"/api/v1/floor-plans/{floor_plan['id']}/upload",
+            files={"file": ("floorplan.svg", BENIGN_SVG, "image/svg+xml")},
+            headers=headers,
+        )
+    ).json()
+
+    with pytest.raises(ValueError, match="simulated unrelated parser bug"):
+        _run_import(job["id"], BENIGN_SVG)
+
+    job_status = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}", headers=headers)
+    body = job_status.json()
+    assert body["status"] == "failed", f"expected 'failed', job is stuck at {body['status']!r}"
+    assert body["rejection_reason"] is not None
+    # Never the raw exception text — a safe, generic message only.
+    assert "simulated unrelated parser bug" not in body["rejection_reason"]
+
+    candidates = await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates", headers=headers)
+    assert candidates.json()["items"] == [], "no partial candidate state after an unexpected failure"
+
+
 async def test_accepting_a_candidate_creates_an_authoritative_spatial_object(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     room_id = await create_room(client, auth_headers)

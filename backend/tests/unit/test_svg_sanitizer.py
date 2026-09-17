@@ -2,11 +2,23 @@ import pytest
 
 from app.application.svg_sanitizer import (
     MAX_ELEMENTS,
+    MAX_NESTING_DEPTH,
     MAX_SVG_FILE_SIZE_BYTES,
     SvgRejected,
     sanitize_svg,
     validate_raster_image,
 )
+
+
+def _nested_group_svg(depth: int) -> bytes:
+    """A single <rect> nested `depth` levels deep inside `depth` <g> elements."""
+    return (
+        b'<svg xmlns="http://www.w3.org/2000/svg">'
+        + b"<g>" * depth
+        + b'<rect x="0" y="0" width="1" height="1" />'
+        + b"</g>" * depth
+        + b"</svg>"
+    )
 
 
 def test_sanitize_svg_extracts_rect_circle_and_text_shapes():
@@ -95,6 +107,85 @@ def test_sanitize_svg_caps_element_count_without_hanging():
     result = sanitize_svg(content)
     assert result.objects_discovered == MAX_ELEMENTS
     assert any("element count cap" in w for w in result.warnings)
+
+
+# --------------------------------------------------------------------------- nested-SVG
+# regression (PHASE2_NESTED_SVG_CORRECTION_REPORT.md): a deeply nested SVG (~960+ levels
+# of <g>) previously crashed the (then-recursive) walk with an uncaught RecursionError.
+# `_walk` is now iterative and enforces an explicit, deterministic MAX_NESTING_DEPTH.
+
+
+def test_sanitize_svg_moderate_nesting_succeeds():
+    """A legitimate, if unusually deeply grouped, floor plan (well under the limit) must
+    still import normally — this control must not restrict real data-center floor plans."""
+    result = sanitize_svg(_nested_group_svg(20))
+    assert len(result.shapes) == 1
+    assert result.shapes[0].shape_type == "rect"
+
+
+def test_sanitize_svg_accepts_exactly_the_maximum_allowed_depth():
+    result = sanitize_svg(_nested_group_svg(MAX_NESTING_DEPTH - 1))
+    assert len(result.shapes) == 1
+
+
+def test_sanitize_svg_rejects_one_level_beyond_the_maximum_allowed_depth():
+    with pytest.raises(SvgRejected, match="depth limit"):
+        sanitize_svg(_nested_group_svg(MAX_NESTING_DEPTH))
+
+
+def test_sanitize_svg_rejects_the_independently_reported_red_team_depth_without_recursionerror():
+    """The literal attack PHASE2_INDEPENDENT_RED_TEAM_REVALIDATION_REPORT.md
+    independently reproduced: ~960-970 levels of nested <g>, previously an uncaught
+    RecursionError. Must now be a clean, deterministic SvgRejected."""
+    try:
+        sanitize_svg(_nested_group_svg(970))
+    except SvgRejected:
+        pass
+    else:
+        pytest.fail("expected SvgRejected for 970-level nesting")
+
+
+def test_sanitize_svg_rejects_extreme_nesting_depth_quickly_and_without_recursionerror():
+    """Substantially beyond the previously reported depth (960+) — the iterative walk
+    must reject this just as fast and just as cleanly, proving the fix is a genuine
+    removal of Python call-stack depth as an attack surface, not a narrowly-tuned patch
+    for one specific depth."""
+    import time
+
+    for depth in (20_000, 100_000):
+        t0 = time.monotonic()
+        with pytest.raises(SvgRejected, match="depth limit"):
+            sanitize_svg(_nested_group_svg(depth))
+        assert time.monotonic() - t0 < 2.0, f"depth {depth} took too long to reject"
+
+
+def test_sanitize_svg_preserves_shape_order_after_switching_to_iterative_traversal():
+    """The rewrite from a recursive to an iterative walk must not change the resulting
+    shape order for any document that doesn't hit the new depth limit."""
+    content = b"""<svg xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="1" width="1" height="1" />
+        <g>
+            <rect x="2" y="2" width="1" height="1" />
+            <circle cx="3" cy="3" r="1" />
+        </g>
+        <rect x="4" y="4" width="1" height="1" />
+    </svg>"""
+    result = sanitize_svg(content)
+    assert [(s.shape_type, s.x) for s in result.shapes] == [
+        ("rect", 1.0), ("rect", 2.0), ("circle", 3.0), ("rect", 4.0),
+    ]
+
+
+def test_sanitize_svg_repeated_malicious_deep_svg_does_not_corrupt_subsequent_calls():
+    """Running the malicious payload repeatedly must not leave any interpreter-level
+    state (e.g. a raised-but-not-fully-unwound recursion) that corrupts a later, unrelated
+    call in the same process."""
+    for _ in range(5):
+        with pytest.raises(SvgRejected, match="depth limit"):
+            sanitize_svg(_nested_group_svg(5_000))
+    # A completely normal file afterward must still succeed cleanly.
+    result = sanitize_svg(b'<svg xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="1" height="1"/></svg>')
+    assert len(result.shapes) == 1
 
 
 def test_sanitize_svg_clamps_out_of_range_coordinates_rather_than_propagating_them():
