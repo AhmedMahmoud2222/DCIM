@@ -31,6 +31,12 @@ TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 
 # Truncatable by dcim_app (it owns all of these — only audit_log's ownership changed).
+# managed_asset/room are already listed, and Postgres's TRUNCATE ... CASCADE follows the
+# full FK dependency closure regardless of each FK's own ON DELETE action — so rack,
+# equipment, rack_placement, equipment_placement, floor_plan, spatial_layer,
+# spatial_object, and floor_plan_import_job/diagnostics/candidate are all cascaded from
+# managed_asset/room automatically. Only the catalog tables (no FK back to either) need
+# to be listed explicitly.
 _APP_TRUNCATE_TABLES = [
     "idempotency_key",
     "outbox_event",
@@ -45,6 +51,10 @@ _APP_TRUNCATE_TABLES = [
     "refresh_token",
     "role_assignment",
     "app_user",
+    "rack_model_revision",
+    "rack_model",
+    "equipment_model_revision",
+    "equipment_model",
 ]
 
 
