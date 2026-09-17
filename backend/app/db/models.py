@@ -10,6 +10,17 @@ from app.domain.auth.models import (  # noqa: F401
     RolePermission,
     User,
 )
+from app.domain.catalog.models import (  # noqa: F401
+    EquipmentModel,
+    EquipmentModelRevision,
+    RackModel,
+    RackModelRevision,
+)
+from app.domain.floorplan_import.models import (  # noqa: F401
+    FloorPlanImportCandidate,
+    FloorPlanImportDiagnostics,
+    FloorPlanImportJob,
+)
 from app.domain.idempotency.models import IdempotencyKey  # noqa: F401
 from app.domain.identity.models import ManagedAsset  # noqa: F401
 from app.domain.location.models import (  # noqa: F401
@@ -23,3 +34,6 @@ from app.domain.location.models import (  # noqa: F401
     Site,
 )
 from app.domain.outbox.models import OutboxEvent  # noqa: F401
+from app.domain.physical.models import Equipment, Rack  # noqa: F401
+from app.domain.placement.models import EquipmentPlacement, RackPlacement  # noqa: F401
+from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401

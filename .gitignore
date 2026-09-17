@@ -24,3 +24,6 @@ dist/
 
 # Logs
 *.log
+
+# Redis dump artifact (local redis-server default save location)
+dump.rdb
