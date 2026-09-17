@@ -3,9 +3,17 @@ import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getEquipment, moveEquipment, retireEquipment } from "@/features/equipment/api";
+import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, SIDES, Side } from "@/types";
+
+const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
+  dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
+  single_feed: { text: "Single feed (no redundancy)", color: "bg-slate-700 text-slate-300" },
+  degraded: { text: "Redundancy degraded", color: "bg-yellow-800 text-yellow-100" },
+  no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-500" },
+};
 
 const LIFECYCLE_COLORS: Record<string, string> = {
   planned: "bg-slate-700 text-slate-200",
@@ -34,6 +42,16 @@ export function EquipmentDetailPage() {
   });
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
+  const powerSummaryQuery = useQuery({
+    queryKey: ["power", "equipment-summary", equipmentId],
+    queryFn: () => getEquipmentPowerSummary(equipmentId!),
+    enabled: !!equipmentId,
+  });
+
+  const addFeedMutation = useMutation({
+    mutationFn: (label: string) => createEquipmentFeed(equipmentId!, label),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["power", "equipment-summary", equipmentId] }),
+  });
 
   const moveMutation = useMutation({
     mutationFn: () =>
@@ -250,6 +268,59 @@ export function EquipmentDetailPage() {
             </div>
           </dl>
         </div>
+      </div>
+
+      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-300">Power</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => addFeedMutation.mutate("Feed A")}
+              disabled={addFeedMutation.isPending}
+              className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+            >
+              + Feed A
+            </button>
+            <button
+              onClick={() => addFeedMutation.mutate("Feed B")}
+              disabled={addFeedMutation.isPending}
+              className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+            >
+              + Feed B
+            </button>
+            <Link to="/power" className="rounded bg-slate-800 px-2 py-1 text-xs text-blue-400 hover:bg-slate-700">
+              Open topology →
+            </Link>
+          </div>
+        </div>
+        {powerSummaryQuery.data && (
+          <>
+            {(() => {
+              const r = REDUNDANCY_LABELS[powerSummaryQuery.data.redundancy_classification];
+              return <span className={`mb-3 inline-block rounded px-2 py-0.5 text-xs ${r.color}`}>{r.text}</span>;
+            })()}
+            <div className="mt-2 space-y-1">
+              {powerSummaryQuery.data.feed_nodes.map((feed) => (
+                <div key={feed.power_node_id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-1.5 text-xs">
+                  <span className="font-mono text-slate-400">{feed.power_node_id.slice(0, 8)}…</span>
+                  <span>{feed.feed_label ?? "unlabeled"}</span>
+                  <span className={feed.has_upstream_path ? "text-green-400" : "text-red-400"}>
+                    {feed.has_upstream_path ? "path OK" : "no upstream path"}
+                  </span>
+                  <span>{feed.effective_capacity_kw === null ? "capacity unknown" : `${feed.effective_capacity_kw.toFixed(1)} kW`}</span>
+                </div>
+              ))}
+              {powerSummaryQuery.data.feed_nodes.length === 0 && (
+                <p className="text-xs italic text-slate-500">No power feeds modeled for this equipment yet.</p>
+              )}
+            </div>
+            {powerSummaryQuery.data.effective_demand_kw !== null && (
+              <p className="mt-2 text-xs text-slate-400">
+                Effective demand: {powerSummaryQuery.data.effective_demand_kw.toFixed(1)} kW
+              </p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

@@ -243,3 +243,117 @@ export interface RoomSpatialView {
   equipment: RoomEquipment[];
   objects: SpatialObject[];
 }
+
+// --------------------------------------------------------------------- Power
+
+export interface PowerNode {
+  id: string;
+  node_type: string;
+  managed_asset_id: string | null;
+  owning_asset_id: string | null;
+  label: string;
+  retired_at: string | null;
+  created_at: string;
+}
+
+export interface PowerConnection {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  connection_type: string;
+  feed_label: string;
+  phase: string | null;
+  voltage: number | null;
+  rated_current_a: number | null;
+  status: string;
+  version: number;
+  effective_from: string;
+  effective_to: string | null;
+}
+
+export interface TopologyNode {
+  node_id: string;
+  label: string;
+  node_type: string;
+}
+
+export interface CapacityFigures {
+  power_node_id: string;
+  rated_capacity_kw: number | null;
+  configured_capacity_kw: number | null;
+  effective_capacity_kw: number | null;
+  allocated_kw: number | null;
+  available_kw: number | null;
+  utilization_pct: number | null;
+  measured_load_kw: number | null;
+  data_quality: "known" | "unknown" | "not_applicable";
+  redundancy_factor: string | null;
+  warning_threshold_pct: number | null;
+  critical_threshold_pct: number | null;
+  version: number | null;
+}
+
+export interface CapacityException {
+  code: string;
+  severity: "critical" | "warning" | "info";
+  power_node_id: string;
+  label: string;
+  message: string;
+  observed_value: number | null;
+  threshold: number | null;
+}
+
+export interface EquipmentPowerFeed {
+  power_node_id: string;
+  feed_label: string | null;
+  has_upstream_path: boolean;
+  effective_capacity_kw: number | null;
+}
+
+export interface EquipmentPowerSummary {
+  equipment_asset_id: string;
+  feed_nodes: EquipmentPowerFeed[];
+  redundancy_classification: "dual_feed_healthy" | "single_feed" | "degraded" | "no_power_modeled";
+  effective_demand_kw: number | null;
+  data_quality: string;
+}
+
+export interface DashboardSummary {
+  site_summary: {
+    sites: number;
+    buildings: number;
+    floors: number;
+    rooms: number;
+    racks: number;
+    equipment: number;
+    power_nodes: number;
+  };
+  capacity_summary: {
+    total_configured_kw: number | null;
+    total_allocated_kw: number | null;
+    total_available_kw: number | null;
+    utilization_pct: number | null;
+    nodes_with_known_capacity: number;
+    nodes_with_unknown_capacity: number;
+  };
+  rack_summary: {
+    total_racks: number;
+    occupied_racks: number;
+    available_racks: number;
+  };
+  power_summary: {
+    total_power_nodes: number;
+    overloaded_nodes: number;
+    near_capacity_nodes: number;
+    missing_power_path_equipment: number;
+    redundancy_degraded_equipment: number;
+  };
+}
+
+export interface DashboardExceptionItem {
+  code: string;
+  severity: "critical" | "warning" | "info";
+  object_type: string;
+  object_id: string;
+  message: string;
+}

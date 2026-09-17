@@ -40,6 +40,9 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 _APP_TRUNCATE_TABLES = [
     "idempotency_key",
     "outbox_event",
+    "power_node",  # utility_intake rows have neither managed_asset_id nor owning_asset_id
+    # set, so they aren't reached by managed_asset's own CASCADE below — power_connection/
+    # power_capacity/pdu_outlet (all FK -> power_node) are still cascaded from this.
     "managed_asset",
     "room",
     "floor",

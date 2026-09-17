@@ -39,6 +39,11 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "floor_plan:import",
         "floor_plan:manage",
         "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
     ],
     "DCIM Manager": [
         "organization:read",
@@ -59,6 +64,11 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "floor_plan:import",
         "floor_plan:manage",
         "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
     ],
     "Engineer": [
         "organization:read",
@@ -76,6 +86,10 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "floor_plan:read",
         "floor_plan:import",
         "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "dashboard:read",
     ],
     "Operator": [
         "organization:read",
@@ -88,6 +102,9 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "equipment:place",
         "floor_plan:read",
         "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
     ],
     "Viewer": [
         "organization:read",
@@ -97,6 +114,9 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "equipment:read",
         "floor_plan:read",
         "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
     ],
 }
 """Every role that can write a resource also explicitly holds read on it — permission

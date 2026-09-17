@@ -1,7 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { getEquipmentPowerSummary } from "@/features/power/api";
 import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/features/racks/api";
 import { RackElevationView } from "@/features/racks/RackElevationView";
 import { ApiError } from "@/lib/apiClient";
@@ -30,6 +31,14 @@ export function RackDetailPage() {
     enabled: !!rackId,
   });
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
+
+  const equipmentIds = elevationQuery.data?.slots.map((s) => s.equipment_id) ?? [];
+  const powerSummaryQueries = useQueries({
+    queries: equipmentIds.map((id) => ({
+      queryKey: ["power", "equipment-summary", id],
+      queryFn: () => getEquipmentPowerSummary(id),
+    })),
+  });
 
   const moveMutation = useMutation({
     mutationFn: () =>
@@ -186,10 +195,40 @@ export function RackDetailPage() {
         </div>
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Elevation</h2>
         {elevationQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {elevationQuery.data && <RackElevationView elevation={elevationQuery.data} />}
+      </div>
+
+      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-300">Rack Power Summary</h2>
+          <Link to="/power" className="rounded bg-slate-800 px-2 py-1 text-xs text-blue-400 hover:bg-slate-700">
+            Open topology →
+          </Link>
+        </div>
+        {equipmentIds.length === 0 && <p className="text-xs italic text-slate-500">No equipment mounted in this rack.</p>}
+        <div className="space-y-1">
+          {elevationQuery.data?.slots.map((slot, i) => {
+            const summary = powerSummaryQueries[i]?.data;
+            return (
+              <div key={slot.equipment_id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-1.5 text-xs">
+                <span>{slot.asset_tag}</span>
+                {summary ? (
+                  <>
+                    <span>{summary.redundancy_classification.replace(/_/g, " ")}</span>
+                    <span>
+                      {summary.effective_demand_kw === null ? "demand unknown" : `${summary.effective_demand_kw.toFixed(1)} kW`}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-slate-500">loading…</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

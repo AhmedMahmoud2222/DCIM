@@ -36,4 +36,14 @@ from app.domain.location.models import (  # noqa: F401
 from app.domain.outbox.models import OutboxEvent  # noqa: F401
 from app.domain.physical.models import Equipment, Rack  # noqa: F401
 from app.domain.placement.models import EquipmentPlacement, RackPlacement  # noqa: F401
+from app.domain.power.models import (  # noqa: F401
+    PDU,
+    UPS,
+    Generator,
+    PDUOutlet,
+    PowerCapacity,
+    PowerConnection,
+    PowerNode,
+    PowerPanel,
+)
 from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401
