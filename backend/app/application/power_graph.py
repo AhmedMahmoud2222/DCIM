@@ -179,10 +179,21 @@ async def with_connection_mutation_lock(db: AsyncSession) -> AsyncIterator[None]
     """F-C1 correction (PHASE3_CORRECTION_DESIGN.md Parts 4/6). Every application code
     path that can insert an active `PowerConnection` row MUST run its
     lock-canonical-pair -> cycle-check -> insert -> commit sequence inside this context
-    manager, as the *first* statement of that transaction (before
+    manager, as the *first statement of the route's own critical section* (before
     `lock_node_pair_in_canonical_order`, which is retained beneath this for its own
     same-pair deadlock-avoidance guarantee, now redundant for cross-pair correctness but
-    harmless to keep).
+    harmless to keep). Documentation precision note (PHASE3_INDEPENDENT_VALIDATION_
+    REPORT.md, item 10): this is deliberately not phrased as "the first statement of
+    the transaction" -- on `create_power_connection`, FastAPI's own dependency chain
+    (`require_permission` -> `get_auth_context`) already issues a read-only permission-
+    lookup `SELECT` on the same `AsyncSession` before the route body runs, which is what
+    actually auto-begins the underlying SQLAlchemy/Postgres transaction. This has no
+    functional effect on the lock's guarantee (`pg_advisory_xact_lock`'s scope is tied to
+    whichever transaction is current when it is called, regardless of when that
+    transaction started, and the preceding read has no side effects to interact with)
+    -- but the transaction's *first statement* and this lock's position as the first
+    statement *of the code this docstring is actually describing* are two different
+    claims, and only the latter is asserted here.
 
     `pg_advisory_xact_lock` is transaction-scoped: it is acquired for the remainder of
     the current transaction only and is released automatically on COMMIT or ROLLBACK --
