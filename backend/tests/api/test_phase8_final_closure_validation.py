@@ -608,28 +608,21 @@ async def test_stale_assignment_after_reassignment_is_cleanly_rejected(client, a
     assert await _device_count(db_session, "20.13.0.2") == 1
 
 
-async def test_security_sweep_capability_declaration_has_no_payload_size_bound(client, auth_headers):
-    """Security-sweep finding (not caused by I1-I4, pre-existing since the original
-    Phase 8 implementation, not touched by this correction's diff): unlike
-    `IngestRecordIn.raw_attributes` (explicitly bounded to `MAX_RAW_ATTRIBUTES_BYTES` =
-    8192 after finding S1), `CapabilityDeclareIn.protocol_codes` has no `Field(...)`
-    length bound at all -- an authenticated collector can declare an arbitrarily large
-    list, and `declare_capabilities` loops over every entry attempting one INSERT per
-    unique code. This test proves acceptance at a moderate size (not an exhaustive
-    resource-exhaustion proof, which would be slow and heavy to run in CI) -- it
-    documents the gap as a passing regression, since this is classified NON-BLOCKING
-    (see PHASE8_FINAL_CLOSURE_VALIDATION.md): it does not violate a correctness,
-    machine-trust, idempotency, or data-integrity invariant, only a resource-bounding
-    hygiene gap requiring an already-authenticated collector to exploit."""
+async def test_security_sweep_capability_declaration_now_has_a_payload_size_bound(client, auth_headers):
+    """UPDATED for PRE_MVP_CONSOLIDATION_REPORT.md (finding FV2): this test originally
+    documented (see git history) that `CapabilityDeclareIn.protocol_codes` had no
+    `Field(...)` length bound at all, as this function's own prior docstring said to
+    update once a bound existed. `protocol_codes` is now bounded to 64 entries -- see
+    `tests/api/test_fv2_config_capability_bounds.py` for the full hostile matrix
+    (over-bound, at-bound, overlong single entry). This test now only confirms the
+    bound is actually enforced end-to-end through this exact endpoint, not just at the
+    Pydantic-model level."""
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)
     large_list = [f"unbounded-code-{i}" for i in range(5000)]
     resp = await client.post(f"/api/v1/collectors/{collector['id']}/capabilities", json={"protocol_codes": large_list}, headers=headers)
-    assert resp.status_code == 204, (
-        f"documenting current behavior: a 5000-entry capability list is currently "
-        f"accepted with no size bound, got {resp.status_code} instead -- if this "
-        f"assertion starts failing, either a bound was added (update this test to "
-        f"reflect it) or something else broke: {resp.text}"
+    assert resp.status_code == 422, (
+        f"expected the new FV2 bound to reject a 5000-entry capability list, got {resp.status_code}: {resp.text}"
     )
 
 

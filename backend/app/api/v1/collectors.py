@@ -8,6 +8,7 @@ NEVER the user JWT)."""
 import json
 import uuid
 from datetime import UTC, datetime
+from typing import TypeVar
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field, field_validator
@@ -42,6 +43,50 @@ def _request_ids(request: Request) -> tuple[str | None, str | None]:
     return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
 
 
+# Pre-MVP consolidation hardening (Codex M1): every collector-authenticated endpoint
+# shares this one dependency, so ONE bound here protects all of them, sized for the
+# largest LEGITIMATE request any of them makes -- a full 500-record ingest batch
+# (MAX_BATCH_RECORDS below), each record allowed up to MAX_RAW_ATTRIBUTES_BYTES (8192)
+# of raw_attributes plus a few hundred bytes of surrounding JSON fields/syntax:
+# 500 * (8192 + ~300) ~= 4.25 MiB. 8 MiB leaves real headroom without being
+# effectively unbounded. Heartbeat's own body is a few dozen bytes, so this same cap
+# applied there is generous, not tight.
+MAX_COLLECTOR_REQUEST_BYTES = 8 * 1024 * 1024
+
+
+async def _read_body_bounded(request: Request, *, max_bytes: int) -> bytes:
+    """Never trust `Content-Length` alone -- it can be absent (chunked transfer),
+    wrong, or a deliberate lie. This reads the ACTUAL bytes the client sends, off
+    `request.stream()` (the same underlying source `request.body()` itself reads
+    from), and aborts the instant the running total exceeds `max_bytes`, regardless of
+    what any header claimed. HMAC verification still needs the complete raw body when
+    the request is within the limit, so this returns exactly what `request.body()`
+    would have -- it does not change what gets signed, only how much this process is
+    willing to buffer before giving up."""
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > max_bytes:
+                raise ApiError(
+                    status_code=413, title="Request Too Large",
+                    detail=f"Request body exceeds the maximum of {max_bytes} bytes.",
+                )
+        except ValueError:
+            pass  # a malformed Content-Length is not itself trusted either way -- the byte-counted read below is authoritative
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise ApiError(
+                status_code=413, title="Request Too Large",
+                detail=f"Request body exceeds the maximum of {max_bytes} bytes.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def get_current_collector(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -53,8 +98,19 @@ async def get_current_collector(
     """The collector machine-trust dependency (master prompt §9) -- deliberately a
     SEPARATE dependency from `app.api.deps.get_current_user`/`app.application.rbac.
     require_permission`, never composed with them. A collector never acquires RBAC
-    permissions; it authenticates to a narrow, purpose-built set of endpoints only."""
-    raw_body = await request.body()
+    permissions; it authenticates to a narrow, purpose-built set of endpoints only.
+
+    Deliberately reads the body itself via the bounded stream reader above, rather
+    than declaring a FastAPI-native Pydantic `body: SomeModel` parameter on the
+    route -- empirically confirmed (a minimal repro against this exact FastAPI/
+    Starlette version) that when a route ALSO has such a parameter, FastAPI resolves
+    it independently and Starlette caches the full body the first time anything reads
+    it, so declaring both would buffer the complete body before this bound ever runs,
+    silently defeating it. The bytes are stashed on `request.state.raw_body` so the
+    route itself can validate them into its own Pydantic model AFTER this bound has
+    already been enforced."""
+    raw_body = await _read_body_bounded(request, max_bytes=MAX_COLLECTOR_REQUEST_BYTES)
+    request.state.raw_body = raw_body
     try:
         return await verify_collector_request(
             db, collector_id_header=x_collector_id, timestamp_header=x_collector_timestamp,
@@ -62,6 +118,26 @@ async def get_current_collector(
         )
     except CollectorAuthError as exc:
         raise UnauthorizedCollectorError(str(exc)) from exc
+
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+def _parse_body(request: Request, model: type[_ModelT]) -> _ModelT:
+    """Validates `request.state.raw_body` (set by `get_current_collector` above)
+    against a Pydantic model, producing the SAME 422 problem-detail shape FastAPI's
+    own automatic body-parsing would have -- the route never declares that parameter
+    itself, precisely to avoid the double-buffering this function's own docstring
+    on `get_current_collector` explains."""
+    from pydantic import ValidationError
+
+    try:
+        return model.model_validate_json(request.state.raw_body)
+    except ValidationError as exc:
+        raise ApiError(
+            status_code=422, title="Validation Error", detail="One or more fields failed validation.",
+            type_="https://dcim.internal/errors/validation",
+        ) from exc
 
 
 # ------------------------------------------------------------------------- registration
@@ -149,7 +225,19 @@ async def get_collector(
 
 
 class CapabilityDeclareIn(BaseModel):
-    protocol_codes: list[str]
+    # Pre-MVP consolidation hardening (Codex FV2): bounded so a request cannot force
+    # unbounded per-unique-code work in `declare_capabilities` (one INSERT attempt per
+    # entry). 64 codes and 64 characters each are both far more generous than any real
+    # deployment needs -- the built-in codes today are "icmp"/"rest"/"snmp".
+    protocol_codes: list[str] = Field(max_length=64)
+
+    @field_validator("protocol_codes")
+    @classmethod
+    def _bound_each_code_length(cls, v: list[str]) -> list[str]:
+        for code in v:
+            if len(code) > 64:
+                raise ValueError("Each protocol_code must be at most 64 characters.")
+        return v
 
 
 @router.post("/{collector_id}/capabilities", status_code=204)
@@ -245,11 +333,12 @@ class HeartbeatIn(BaseModel):
 
 @router.post("/{collector_id}/heartbeat", status_code=204)
 async def heartbeat(
-    collector_id: uuid.UUID, body: HeartbeatIn, db: AsyncSession = Depends(get_db),
+    collector_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
     collector: Collector = Depends(get_current_collector),
 ) -> None:
     if collector.id != collector_id:
         raise UnauthorizedCollectorError("Signed collector identity does not match the URL path.")
+    body = _parse_body(request, HeartbeatIn)
     await record_heartbeat(
         db, collector=collector, queue_depth=body.queue_depth, cpu_pct=body.cpu_pct, mem_pct=body.mem_pct, status=body.status,
     )
@@ -286,6 +375,14 @@ class IngestBatchIn(BaseModel):
 class IngestRecordResult(BaseModel):
     dedup_key: str
     status: str  # "accepted" | "duplicate" | "rejected"
+    # Pre-MVP consolidation hardening (Codex M3): a stable, safe-to-parse code a
+    # collector's own retry/backoff logic can branch on, independent of `error`'s
+    # exact wording -- NOT_ASSIGNED / IDEMPOTENCY_CONFLICT / PROCESSING /
+    # INTERNAL_PROCESSING_ERROR. `error` is always a hand-written, safe message; for
+    # `INTERNAL_PROCESSING_ERROR` it is deliberately generic -- the real exception
+    # detail (which can include SQL/constraint-internal text) is logged server-side
+    # only, never returned to the collector.
+    error_code: str | None = None
     error: str | None = None
 
 
@@ -296,7 +393,7 @@ class IngestBatchOut(BaseModel):
 
 @router.post("/{collector_id}/ingest", response_model=IngestBatchOut)
 async def ingest_batch(
-    collector_id: uuid.UUID, body: IngestBatchIn, db: AsyncSession = Depends(get_db),
+    collector_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
     collector: Collector = Depends(get_current_collector),
 ) -> IngestBatchOut:
     """§10 of the master prompt (WAN outage / store-and-forward): the CENTRAL side of
@@ -315,6 +412,7 @@ async def ingest_batch(
     receives the backlog.\""""
     if collector.id != collector_id:
         raise UnauthorizedCollectorError("Signed collector identity does not match the URL path.")
+    body = _parse_body(request, IngestBatchIn)
     if len(body.records) > MAX_BATCH_RECORDS:
         raise ApiError(
             status_code=413, title="Batch Too Large",
@@ -336,7 +434,7 @@ async def ingest_batch(
         except IdempotencyConflict:
             results.append(
                 IngestRecordResult(
-                    dedup_key=record.dedup_key, status="rejected",
+                    dedup_key=record.dedup_key, status="rejected", error_code="IDEMPOTENCY_CONFLICT",
                     error="This dedup_key was already used with a different request body.",
                 )
             )
@@ -344,7 +442,7 @@ async def ingest_batch(
         except IdempotencyStillProcessing:
             results.append(
                 IngestRecordResult(
-                    dedup_key=record.dedup_key, status="rejected",
+                    dedup_key=record.dedup_key, status="rejected", error_code="PROCESSING",
                     error="This record is still being processed by a concurrent request; retry shortly.",
                 )
             )
@@ -398,13 +496,37 @@ async def ingest_batch(
             # real and make it visible to other sessions/requests.
             await db.commit()
             results.append(IngestRecordResult(dedup_key=record.dedup_key, status="accepted"))
-        except Exception as exc:  # noqa: BLE001 -- one record's failure (e.g. an
-            # unknown integration_id) must not fail the rest of the batch; the nested
-            # transaction has already been rolled back to its savepoint by the `async
-            # with` block above (automatic on exception), so only this record's own
-            # attempted writes were discarded. The claim is released so a retry of
-            # just this record can succeed later.
+        except ApiError as exc:
+            # The nested transaction has already been rolled back to its savepoint by
+            # the `async with` block above (automatic on exception), so only this
+            # record's own attempted writes were discarded. The claim is released so a
+            # retry of just this record can succeed later. `ApiError.detail` is always
+            # a hand-written, safe-for-collectors message (the only one raised in this
+            # block today is the "Not Assigned" 403 above) -- safe to return as-is.
             await idem.release_claim(db, claim_id)
-            results.append(IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error=str(exc)))
+            results.append(
+                IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error_code="NOT_ASSIGNED", error=exc.detail)
+            )
+        except Exception as exc:  # noqa: BLE001 -- one record's failure (e.g. a
+            # database constraint violation from ingest_discovery) must not fail the
+            # rest of the batch -- same savepoint/claim-release reasoning as above.
+            # Pre-MVP consolidation hardening (Codex M3): this branch catches whatever
+            # ingest_discovery/complete_claim can raise that ISN'T a hand-written
+            # ApiError -- an IntegrityError's own str() includes the raw SQL statement
+            # and constraint-internal detail, which must never reach a collector
+            # response. The full exception is logged server-side (structlog's own
+            # `_redact_sensitive` processor still applies); the collector gets a
+            # stable, generic code and message only.
+            await idem.release_claim(db, claim_id)
+            logger.error(
+                "ingest_batch_record_processing_failed", batch_id=body.batch_id, collector_id=str(collector.id),
+                dedup_key=record.dedup_key, integration_id=str(record.integration_id), error=str(exc),
+            )
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected", error_code="INTERNAL_PROCESSING_ERROR",
+                    error="An internal error occurred while processing this record.",
+                )
+            )
 
     return IngestBatchOut(batch_id=body.batch_id, results=results)
