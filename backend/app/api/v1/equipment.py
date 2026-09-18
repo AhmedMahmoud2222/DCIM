@@ -4,7 +4,7 @@ fields the chosen `placement_type` requires and leaves the rest NULL, matching
 EquipmentPlacement's own CHECK constraint."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field, model_validator

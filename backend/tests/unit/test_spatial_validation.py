@@ -1,8 +1,8 @@
 import pytest
 
 from app.application.spatial_validation import (
-    check_rack_overlap_in_room,
     check_rack_footprint_within_room,
+    check_rack_overlap_in_room,
     validate_coordinate,
     validate_rotation_degrees,
     validate_u_range_against_rack_capacity,
