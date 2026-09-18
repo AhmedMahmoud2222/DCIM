@@ -57,6 +57,9 @@ class ProtocolDriver(ABC):
 
     protocol_code: str
 
+    def __init__(self, integration_id: uuid.UUID) -> None:
+        self.integration_id = integration_id
+
     @abstractmethod
     async def connect(self, *, target_host: str, target_port: int | None, config: dict, credential: str | None) -> None: ...
 
