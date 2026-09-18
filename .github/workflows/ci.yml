@@ -39,6 +39,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
       REDIS_URL: redis://localhost:6379/1
       JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
+      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
       ENVIRONMENT: test
       PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
     defaults:
