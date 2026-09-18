@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 
 import pytest
 import sqlalchemy.exc
-from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import Range
 
 from app.domain.catalog.models import RackModelRevision

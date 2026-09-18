@@ -56,7 +56,6 @@ async def test_room_spatial_view_for_nonexistent_room_is_404(client, auth_header
 
 
 async def test_viewer_can_read_spatial_view(client, auth_headers):
-    engineer_headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
 
     viewer_headers = await auth_headers("Viewer")
