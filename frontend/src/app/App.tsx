@@ -9,6 +9,9 @@ import { EquipmentPage } from "@/features/equipment/EquipmentPage";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { RoomFloorPlanPage } from "@/features/floor-plans/RoomFloorPlanPage";
 import { FloorPlansPage } from "@/features/floor-plans/FloorPlansPage";
+import { CollectorsPage } from "@/features/integrations/CollectorsPage";
+import { DiscoveryPage } from "@/features/integrations/DiscoveryPage";
+import { IntegrationsPage } from "@/features/integrations/IntegrationsPage";
 import { LocationsPage } from "@/features/locations/LocationsPage";
 import { ManagedAssetsPage } from "@/features/managed-assets/ManagedAssetsPage";
 import { PowerTopologyPage } from "@/features/power/PowerTopologyPage";
@@ -35,6 +38,9 @@ export function App() {
               <Route path="/floor-plans" element={<FloorPlansPage />} />
               <Route path="/floor-plans/room/:roomId" element={<RoomFloorPlanPage />} />
               <Route path="/power" element={<PowerTopologyPage />} />
+              <Route path="/collectors" element={<CollectorsPage />} />
+              <Route path="/integrations" element={<IntegrationsPage />} />
+              <Route path="/discovery" element={<DiscoveryPage />} />
             </Route>
           </Route>
         </Routes>

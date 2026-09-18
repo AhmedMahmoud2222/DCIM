@@ -50,6 +50,22 @@ class ForbiddenError(ApiError):
         )
 
 
+class UnauthorizedCollectorError(ApiError):
+    """Phase 8: the collector machine-trust boundary's own 401 (never the user-JWT
+    `UnauthenticatedError` in app/api/deps.py -- a collector is not a user). Deliberately
+    generic across every failure mode in app/application/collector_auth.py (unknown
+    collector, disabled collector, expired timestamp, bad signature, replayed nonce) so
+    an unauthenticated caller cannot distinguish which check failed."""
+
+    def __init__(self, detail: str = "Collector authentication failed."):
+        super().__init__(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            title="Collector Unauthorized",
+            detail=detail,
+            type_="https://dcim.internal/errors/collector-unauthorized",
+        )
+
+
 def _problem(request: Request, *, status_code: int, title: str, detail: str, type_: str = "about:blank") -> JSONResponse:
     request_id = getattr(request.state, "request_id", None)
     return JSONResponse(

@@ -318,6 +318,74 @@ export interface EquipmentPowerSummary {
   data_quality: string;
 }
 
+// --------------------------------------------------------- Integrations / Collectors (Phase 8)
+
+export interface Collector {
+  id: string;
+  name: string;
+  collector_type: "central" | "edge";
+  site_id: string | null;
+  status: "registered" | "active" | "disabled";
+  version_string: string | null;
+  health: "healthy" | "stale" | "offline";
+  last_heartbeat_at: string | null;
+  seconds_since_heartbeat: number | null;
+}
+
+export interface CollectorWithSecret extends Collector {
+  secret: string;
+}
+
+export interface CollectorCapability {
+  protocol_code: string;
+}
+
+export interface CollectorAssignment {
+  id: string;
+  collector_id: string;
+  integration_id: string;
+  effective_from: string;
+  effective_to: string | null;
+}
+
+export interface Integration {
+  id: string;
+  name: string;
+  integration_type: string;
+  site_id: string | null;
+  target_host: string;
+  target_port: number | null;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  poll_interval_seconds: number;
+  last_poll_at: string | null;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  consecutive_failures: number;
+  has_credential: boolean;
+  assigned_collector_id: string | null;
+  version: number;
+}
+
+export interface DiscoveredDevice {
+  id: string;
+  integration_id: string;
+  external_identifier: string;
+  status: "new" | "reconciled" | "ignored";
+  matched_managed_asset_id: string | null;
+  raw_attributes: Record<string, unknown>;
+}
+
+export interface ReconciliationDiff {
+  id: string;
+  discovered_device_id: string;
+  diff_type: string;
+  status: "pending" | "accepted" | "rejected";
+  field_name: string | null;
+  discovered_value: string | null;
+  authoritative_value: string | null;
+}
+
 export interface DashboardSummary {
   site_summary: {
     sites: number;

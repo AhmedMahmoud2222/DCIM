@@ -11,6 +11,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/1")
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-not-for-production-use-32ch")
+os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", "eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=")
 
 # Test-harness-only superuser connection, distinct from the application's own dcim_app
 # credentials above. Needed because of the Finding C1 correction

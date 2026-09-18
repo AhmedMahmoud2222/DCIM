@@ -3,10 +3,13 @@ from fastapi import APIRouter
 from app.api.v1 import (
     auth,
     catalog,
+    collectors,
     dashboard,
+    discovery,
     equipment,
     floor_plans,
     health,
+    integrations,
     locations,
     managed_assets,
     power,
@@ -28,3 +31,6 @@ api_router.include_router(floor_plans.router)
 api_router.include_router(spatial.router)
 api_router.include_router(power.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(collectors.router)
+api_router.include_router(integrations.router)
+api_router.include_router(discovery.router)

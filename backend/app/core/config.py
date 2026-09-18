@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
+    # Phase 8: Fernet key for Integration credential-at-rest encryption
+    # (app/core/secrets.py). A urlsafe-base64-encoded 32-byte key, e.g. the output of
+    # `Fernet.generate_key()`. See app/core/secrets.py's own docstring: this is an
+    # explicit OPEN DECISION for production KMS migration, not a finished design.
+    credential_encryption_key: str = Field(..., min_length=32)
+
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     api_v1_prefix: str = "/api/v1"

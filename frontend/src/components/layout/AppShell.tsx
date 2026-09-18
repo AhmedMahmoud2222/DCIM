@@ -10,6 +10,9 @@ const NAV_ITEMS = [
   { to: "/equipment", label: "Equipment" },
   { to: "/floor-plans", label: "Floor Plans" },
   { to: "/power", label: "Power Topology" },
+  { to: "/collectors", label: "Collectors" },
+  { to: "/integrations", label: "Integrations" },
+  { to: "/discovery", label: "Discovery" },
 ];
 
 export function AppShell() {
