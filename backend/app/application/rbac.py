@@ -51,6 +51,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "collector:assign",
         "discovery:read",
         "discovery:reconcile",
+        "telemetry:read",
+        "telemetry:manage",
     ],
     "DCIM Manager": [
         "organization:read",
@@ -83,6 +85,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "collector:assign",
         "discovery:read",
         "discovery:reconcile",
+        "telemetry:read",
+        "telemetry:manage",
     ],
     "Engineer": [
         "organization:read",
@@ -108,6 +112,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "collector:read",
         "discovery:read",
         "discovery:reconcile",
+        "telemetry:read",
     ],
     "Operator": [
         "organization:read",
@@ -126,6 +131,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "integration:read",
         "collector:read",
         "discovery:read",
+        "telemetry:read",
     ],
     "Viewer": [
         "organization:read",
@@ -141,6 +147,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "integration:read",
         "collector:read",
         "discovery:read",
+        "telemetry:read",
     ],
 }
 """Every role that can write a resource also explicitly holds read on it — permission

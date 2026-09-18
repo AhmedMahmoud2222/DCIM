@@ -15,6 +15,7 @@ from app.api.v1 import (
     power,
     racks,
     spatial,
+    telemetry,
     users,
 )
 
@@ -34,3 +35,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(collectors.router)
 api_router.include_router(integrations.router)
 api_router.include_router(discovery.router)
+api_router.include_router(telemetry.router)
