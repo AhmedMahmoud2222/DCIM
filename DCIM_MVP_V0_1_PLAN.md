@@ -69,3 +69,16 @@
 ## Plan self-review
 
 Coverage maps queue/retry/SNMP to Tasks 1–3, telemetry/alarm to Task 4, and product/demo/performance/docs to Task 5. No placeholder interfaces are referenced outside their producing task. The full VendorProfile/DeviceProfile catalog and unrelated deferred findings remain outside this plan.
+
+## Long-term telemetry retention and downsampling
+
+Raw sensor telemetry is retained at normal polling resolution for one year. After that,
+the controlled retention job stores one daily aggregate per integration/sensor/metric/day
+with average, minimum, maximum, sample count and unit. It commits the aggregate before
+deleting eligible raw rows in the same transaction, so interruption cannot leave a day
+with neither representation. The job is idempotent; late readings for an already
+aggregated day cause that day to be recomputed/merged on the next run. History selects
+raw, daily, or both across the boundary and identifies its resolution. Daily aggregates
+have unlimited retention by default; configurable policy changes are processed by the
+job, never by immediate destructive configuration changes. Alarm lifecycle/history is
+explicitly excluded and retains its independent policy.

@@ -48,4 +48,9 @@ from app.domain.power.models import (  # noqa: F401
     PowerPanel,
 )
 from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401
-from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading  # noqa: F401
+from app.domain.telemetry.models import (  # noqa: F401
+    DailyTelemetryAggregate,
+    IntegrationMetricMapping,
+    MonitoringPolicy,
+    TelemetryReading,
+)

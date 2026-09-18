@@ -1,7 +1,7 @@
 """Bounded read APIs and collector-authenticated telemetry ingestion."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from app.application.rbac import require_permission
 from app.application.telemetry_service import MetricMappingNotFound, ingest_reading
 from app.core.errors import ApiError
 from app.domain.integration.models import Collector
-from app.domain.telemetry.models import CANONICAL_METRICS, IntegrationMetricMapping, TelemetryReading
+from app.domain.telemetry.models import CANONICAL_METRICS, DailyTelemetryAggregate, IntegrationMetricMapping, TelemetryReading
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 MAX_HISTORY_POINTS = 1000
@@ -57,6 +57,13 @@ class TelemetryOut(BaseModel):
     received_at: datetime
 
 
+class TelemetryHistoryOut(TelemetryOut):
+    resolution: str = "raw"
+    minimum_value: float | None = None
+    maximum_value: float | None = None
+    sample_count: int | None = None
+
+
 class MetricMappingIn(BaseModel):
     integration_id: uuid.UUID
     source_identifier: str = Field(max_length=255)
@@ -72,7 +79,9 @@ class MetricMappingOut(MetricMappingIn):
 
 @router.post("/mappings", response_model=MetricMappingOut, status_code=201)
 async def create_metric_mapping(
-    body: MetricMappingIn, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("telemetry:manage")),
+    body: MetricMappingIn,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:manage")),
 ) -> MetricMappingOut:
     if body.canonical_metric not in CANONICAL_METRICS:
         raise ApiError(status_code=422, title="Invalid canonical metric", detail="Metric is not supported by the MVP catalog.")
@@ -80,12 +89,20 @@ async def create_metric_mapping(
     db.add(mapping)
     await db.flush()
     await write_audit_log(
-        db, actor_user_id=ctx.user.id, action="telemetry.mapping.create", entity_type="integration_metric_mapping",
-        entity_id=mapping.id, request_id=None, correlation_id=None,
+        db,
+        actor_user_id=ctx.user.id,
+        action="telemetry.mapping.create",
+        entity_type="integration_metric_mapping",
+        entity_id=mapping.id,
+        request_id=None,
+        correlation_id=None,
         after={"integration_id": str(mapping.integration_id), "canonical_metric": mapping.canonical_metric},
     )
     await write_outbox_event(
-        db, event_type="MetricMappingCreated", aggregate_type="integration_metric_mapping", aggregate_id=mapping.id,
+        db,
+        event_type="MetricMappingCreated",
+        aggregate_type="integration_metric_mapping",
+        aggregate_id=mapping.id,
         payload={"integration_id": str(mapping.integration_id), "canonical_metric": mapping.canonical_metric},
     )
     await db.commit()
@@ -101,13 +118,25 @@ async def list_metric_mappings(
     stmt = select(IntegrationMetricMapping).order_by(IntegrationMetricMapping.created_at)
     if integration_id is not None:
         stmt = stmt.where(IntegrationMetricMapping.integration_id == integration_id)
-    return [MetricMappingOut(id=row.id, integration_id=row.integration_id, source_identifier=row.source_identifier,
-        canonical_metric=row.canonical_metric, unit=row.unit, scale=float(row.scale), label=row.label)
-        for row in (await db.execute(stmt)).scalars().all()]
+    return [
+        MetricMappingOut(
+            id=row.id,
+            integration_id=row.integration_id,
+            source_identifier=row.source_identifier,
+            canonical_metric=row.canonical_metric,
+            unit=row.unit,
+            scale=float(row.scale),
+            label=row.label,
+        )
+        for row in (await db.execute(stmt)).scalars().all()
+    ]
 
 
 async def ingest_collector_telemetry(
-    db: AsyncSession, *, collector: Collector, body: TelemetryBatchIn,
+    db: AsyncSession,
+    *,
+    collector: Collector,
+    body: TelemetryBatchIn,
 ) -> TelemetryBatchOut:
     """Per-record ACKs retain unacknowledged edge-queue records for retry."""
     from app.application.collector_service import current_assignment
@@ -120,10 +149,15 @@ async def ingest_collector_telemetry(
             continue
         try:
             outcome = await ingest_reading(
-                db, collector_id=collector.id, integration_id=record.integration_id,
-                dedup_key=record.dedup_key, external_identifier=record.external_identifier,
-                source_identifier=record.source_identifier, occurred_at=record.occurred_at,
-                value=record.value, attributes=record.attributes,
+                db,
+                collector_id=collector.id,
+                integration_id=record.integration_id,
+                dedup_key=record.dedup_key,
+                external_identifier=record.external_identifier,
+                source_identifier=record.source_identifier,
+                occurred_at=record.occurred_at,
+                value=record.value,
+                attributes=record.attributes,
             )
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="duplicate" if outcome.duplicate else "accepted"))
         except MetricMappingNotFound:
@@ -134,9 +168,11 @@ async def ingest_collector_telemetry(
 
 @router.get("/latest", response_model=list[TelemetryOut])
 async def latest_readings(
-    integration_id: uuid.UUID | None = None, metric: str | None = None,
+    integration_id: uuid.UUID | None = None,
+    metric: str | None = None,
     limit: int = Query(default=100, ge=1, le=MAX_HISTORY_POINTS),
-    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("telemetry:read")),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:read")),
 ) -> list[TelemetryOut]:
     stmt = select(TelemetryReading).order_by(TelemetryReading.occurred_at.desc()).limit(limit)
     if integration_id is not None:
@@ -147,23 +183,78 @@ async def latest_readings(
     return [_out(row) for row in rows]
 
 
-@router.get("/history", response_model=list[TelemetryOut])
+@router.get("/history", response_model=list[TelemetryHistoryOut])
 async def metric_history(
-    integration_id: uuid.UUID, metric: str, start: datetime, end: datetime,
+    integration_id: uuid.UUID,
+    metric: str,
+    start: datetime,
+    end: datetime,
     limit: int = Query(default=500, ge=1, le=MAX_HISTORY_POINTS),
-    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("telemetry:read")),
-) -> list[TelemetryOut]:
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:read")),
+) -> list[TelemetryHistoryOut]:
     if start >= end:
         raise ApiError(status_code=422, title="Invalid time range", detail="start must be before end.")
-    stmt = select(TelemetryReading).where(
-        TelemetryReading.integration_id == integration_id,
-        TelemetryReading.metric == metric,
-        TelemetryReading.occurred_at >= start,
-        TelemetryReading.occurred_at <= end,
-    ).order_by(TelemetryReading.occurred_at.asc()).limit(limit)
-    return [_out(row) for row in (await db.execute(stmt)).scalars().all()]
+    cutoff = datetime.now(UTC) - timedelta(days=365)
+    raw_stmt = (
+        select(TelemetryReading)
+        .where(
+            TelemetryReading.integration_id == integration_id,
+            TelemetryReading.metric == metric,
+            TelemetryReading.occurred_at >= start,
+            TelemetryReading.occurred_at <= end,
+            TelemetryReading.occurred_at >= cutoff,
+        )
+        .order_by(TelemetryReading.occurred_at.asc())
+        .limit(limit)
+    )
+    daily_stmt = (
+        select(DailyTelemetryAggregate)
+        .where(
+            DailyTelemetryAggregate.integration_id == integration_id,
+            DailyTelemetryAggregate.metric == metric,
+            DailyTelemetryAggregate.day >= start.date(),
+            DailyTelemetryAggregate.day <= end.date(),
+            DailyTelemetryAggregate.day < cutoff.date(),
+        )
+        .order_by(DailyTelemetryAggregate.day.asc())
+        .limit(limit)
+    )
+    raw = [_history_raw(row) for row in (await db.execute(raw_stmt)).scalars().all()]
+    daily = [_history_daily(row) for row in (await db.execute(daily_stmt)).scalars().all()]
+    return sorted([*daily, *raw], key=lambda item: item.occurred_at)[:limit]
 
 
 def _out(row: TelemetryReading) -> TelemetryOut:
-    return TelemetryOut(id=row.id, integration_id=row.integration_id, external_identifier=row.external_identifier,
-        metric=row.metric, unit=row.unit, value=float(row.value), occurred_at=row.occurred_at, received_at=row.received_at)
+    return TelemetryOut(
+        id=row.id,
+        integration_id=row.integration_id,
+        external_identifier=row.external_identifier,
+        metric=row.metric,
+        unit=row.unit,
+        value=float(row.value),
+        occurred_at=row.occurred_at,
+        received_at=row.received_at,
+    )
+
+
+def _history_raw(row: TelemetryReading) -> TelemetryHistoryOut:
+    return TelemetryHistoryOut(**_out(row).model_dump(), resolution="raw")
+
+
+def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
+    occurred_at = datetime.combine(row.day, datetime.min.time(), tzinfo=UTC)
+    return TelemetryHistoryOut(
+        id=row.id,
+        integration_id=row.integration_id,
+        external_identifier=row.external_identifier,
+        metric=row.metric,
+        unit=row.unit,
+        value=float(row.average_value),
+        occurred_at=occurred_at,
+        received_at=occurred_at,
+        resolution="daily",
+        minimum_value=float(row.minimum_value),
+        maximum_value=float(row.maximum_value),
+        sample_count=row.sample_count,
+    )

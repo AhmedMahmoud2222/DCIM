@@ -39,21 +39,37 @@ class AlarmOut(BaseModel):
     last_value: float
 
 
+class AlarmHistoryPage(BaseModel):
+    items: list[AlarmOut]
+    next_cursor: str | None = None
+
+
 @router.post("/rules", status_code=201)
-async def create_alarm_rule(body: AlarmRuleIn, db: AsyncSession = Depends(get_db),
-                            ctx=Depends(require_permission("alarm:manage"))) -> dict:
+async def create_alarm_rule(
+    body: AlarmRuleIn, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:manage"))
+) -> dict:
     if body.rule_type not in RULE_TYPES or ((body.rule_type == "availability_unavailable") != (body.threshold is None)):
         from app.core.errors import ApiError
+
         raise ApiError(status_code=422, title="Invalid alarm rule", detail="Rule type and threshold are inconsistent.")
     rule = AlarmRule(id=uuid.uuid4(), **body.model_dump())
     db.add(rule)
     await db.flush()
     await write_audit_log(
-        db, actor_user_id=ctx.user.id, action="alarm.rule.create", entity_type="alarm_rule", entity_id=rule.id,
-        request_id=None, correlation_id=None, after={"integration_id": str(rule.integration_id), "metric": rule.metric},
+        db,
+        actor_user_id=ctx.user.id,
+        action="alarm.rule.create",
+        entity_type="alarm_rule",
+        entity_id=rule.id,
+        request_id=None,
+        correlation_id=None,
+        after={"integration_id": str(rule.integration_id), "metric": rule.metric},
     )
     await write_outbox_event(
-        db, event_type="AlarmRuleCreated", aggregate_type="alarm_rule", aggregate_id=rule.id,
+        db,
+        event_type="AlarmRuleCreated",
+        aggregate_type="alarm_rule",
+        aggregate_id=rule.id,
         payload={"rule_id": str(rule.id), "integration_id": str(rule.integration_id)},
     )
     await db.commit()
@@ -61,10 +77,15 @@ async def create_alarm_rule(body: AlarmRuleIn, db: AsyncSession = Depends(get_db
 
 
 @router.get("", response_model=list[AlarmOut])
-async def list_alarms(status: str | None = Query(default=None), limit: int = Query(default=100, ge=1, le=1000),
-                      db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:read"))) -> list[AlarmOut]:
+async def list_alarms(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("alarm:read")),
+) -> list[AlarmOut]:
     if status is not None and status not in ALARM_STATUSES:
         from app.core.errors import ApiError
+
         raise ApiError(status_code=422, title="Invalid alarm status", detail="Unknown alarm status.")
     stmt = select(Alarm).order_by(Alarm.opened_at.desc()).limit(limit)
     if status:
@@ -72,9 +93,50 @@ async def list_alarms(status: str | None = Query(default=None), limit: int = Que
     return [_out(row) for row in (await db.execute(stmt)).scalars().all()]
 
 
+@router.get("/history", response_model=AlarmHistoryPage)
+async def alarm_history(
+    status: str | None = Query(default=None),
+    integration_id: uuid.UUID | None = None,
+    managed_asset_id: uuid.UUID | None = None,
+    rule_id: uuid.UUID | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    cursor: datetime | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("alarm:read")),
+) -> AlarmHistoryPage:
+    """Keyset history for presets or arbitrary retained ranges; no alarm downsampling."""
+    stmt = select(Alarm).order_by(Alarm.opened_at.desc(), Alarm.id.desc()).limit(limit + 1)
+    if status is not None:
+        if status not in ALARM_STATUSES:
+            from app.core.errors import ApiError
+
+            raise ApiError(status_code=422, title="Invalid alarm status", detail="Unknown alarm status.")
+        stmt = stmt.where(Alarm.status == status)
+    for column, value in (
+        (Alarm.integration_id, integration_id),
+        (Alarm.managed_asset_id, managed_asset_id),
+        (Alarm.rule_id, rule_id),
+    ):
+        if value is not None:
+            stmt = stmt.where(column == value)
+    if start is not None:
+        stmt = stmt.where(Alarm.opened_at >= start)
+    if end is not None:
+        stmt = stmt.where(Alarm.opened_at <= end)
+    if cursor is not None:
+        stmt = stmt.where(Alarm.opened_at < cursor)
+    rows = (await db.execute(stmt)).scalars().all()
+    page, has_more = rows[:limit], len(rows) > limit
+    next_cursor = page[-1].opened_at.isoformat() if has_more and page else None
+    return AlarmHistoryPage(items=[_out(row) for row in page], next_cursor=next_cursor)
+
+
 @router.post("/{alarm_id}/acknowledge", response_model=AlarmOut)
-async def acknowledge(alarm_id: uuid.UUID, db: AsyncSession = Depends(get_db),
-                      ctx=Depends(require_permission("alarm:manage"))) -> AlarmOut:
+async def acknowledge(
+    alarm_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:manage"))
+) -> AlarmOut:
     alarm = (await db.execute(select(Alarm).where(Alarm.id == alarm_id).with_for_update())).scalar_one_or_none()
     if alarm is None:
         raise NotFoundError("Alarm not found.")
@@ -84,6 +146,14 @@ async def acknowledge(alarm_id: uuid.UUID, db: AsyncSession = Depends(get_db),
 
 
 def _out(row: Alarm) -> AlarmOut:
-    return AlarmOut(id=row.id, rule_id=row.rule_id, integration_id=row.integration_id, subject_key=row.subject_key,
-                    status=row.status, opened_at=row.opened_at, acknowledged_at=row.acknowledged_at,
-                    cleared_at=row.cleared_at, last_value=float(row.last_value))
+    return AlarmOut(
+        id=row.id,
+        rule_id=row.rule_id,
+        integration_id=row.integration_id,
+        subject_key=row.subject_key,
+        status=row.status,
+        opened_at=row.opened_at,
+        acknowledged_at=row.acknowledged_at,
+        cleared_at=row.cleared_at,
+        last_value=float(row.last_value),
+    )

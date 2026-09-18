@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # deployment's configuration. Lets a REST integration target 127.0.0.1/::1.
     rest_integration_allow_loopback: bool = False
 
+    # MVP monitoring-policy defaults. Retention is a controlled job, never an
+    # immediate destructive side effect of changing configuration.
+    default_poll_interval_seconds: int = 300
+    telemetry_raw_retention_days: int = 365
+    telemetry_daily_retention_days: int | None = None
+    alarm_history_retention_days: int | None = None
+
     api_v1_prefix: str = "/api/v1"
 
     log_level: str = "INFO"
