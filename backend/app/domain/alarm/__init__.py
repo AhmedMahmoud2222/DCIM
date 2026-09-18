@@ -1,0 +1,1 @@
+"""MVP alarm domain."""

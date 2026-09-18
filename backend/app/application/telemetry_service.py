@@ -40,4 +40,11 @@ async def ingest_reading(
         received_at=received_at, attributes=attributes or {},
     ).on_conflict_do_nothing(constraint="uq_telemetry_reading_collector_dedup").returning(TelemetryReading.id)
     reading_id = (await db.execute(statement)).scalar_one_or_none()
+    if reading_id is not None:
+        # The explicit application boundary prevents the telemetry ORM domain from
+        # depending on alarm persistence while retaining one transaction.
+        from app.application.alarm_service import evaluate_reading
+        reading = await db.get(TelemetryReading, reading_id)
+        assert reading is not None
+        await evaluate_reading(db, reading)
     return TelemetryIngestResult(reading_id=reading_id, duplicate=reading_id is None)
