@@ -112,13 +112,27 @@ async def verify_collector_request(
     if collector is None or collector.status != "active":
         raise CollectorAuthError("Unknown or inactive collector.")
 
+    # Finding I1 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): bound the header's length
+    # before parsing (a real Unix-seconds timestamp is never more than ~11 digits for
+    # millennia; this also keeps `int()` itself cheap, though CPython's own integer-
+    # string-conversion limit already guards against a pathologically long digit
+    # string), and compare entirely in integer epoch-seconds space -- never construct
+    # a `datetime` from the untrusted value. `datetime.fromtimestamp()` raises
+    # `OverflowError`/`ValueError`/`OSError` (the exact set differs by platform and by
+    # how far out of range the value is) for a timestamp outside the platform's
+    # representable range, and that call is NOT where this trust boundary should ever
+    # need to look up a calendar date in the first place -- "is this timestamp within
+    # N seconds of now" is a pure integer-arithmetic question, and integer arithmetic
+    # in Python has no overflow limit at all, so this is the correct fix, not a broader
+    # catch bolted onto the old approach.
+    if not timestamp_header or len(timestamp_header) > 20:
+        raise CollectorAuthError("Malformed timestamp.")
     try:
         ts = int(timestamp_header)
     except (ValueError, TypeError) as exc:
         raise CollectorAuthError("Malformed timestamp.") from exc
-    now = datetime.now(UTC)
-    request_time = datetime.fromtimestamp(ts, tz=UTC)
-    if abs((now - request_time).total_seconds()) > REQUEST_TIMESTAMP_WINDOW_SECONDS:
+    now_ts = int(datetime.now(UTC).timestamp())
+    if abs(now_ts - ts) > REQUEST_TIMESTAMP_WINDOW_SECONDS:
         raise CollectorAuthError("Request timestamp outside the accepted window.")
 
     if not nonce_header or len(nonce_header) > 64:
