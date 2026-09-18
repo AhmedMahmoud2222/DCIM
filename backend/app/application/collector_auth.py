@@ -47,7 +47,9 @@ import hmac
 import secrets
 import uuid
 from datetime import UTC, datetime
+from typing import cast
 
+from sqlalchemy import Table
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +57,8 @@ from app.core.secrets import SecretDecryptionError, decrypt_secret
 from app.domain.integration.models import Collector, CollectorRequestNonce
 
 REQUEST_TIMESTAMP_WINDOW_SECONDS = 300
+
+_NONCE_TABLE = cast(Table, CollectorRequestNonce.__table__)
 
 
 class CollectorAuthError(Exception):
@@ -82,10 +86,10 @@ async def claim_nonce(db: AsyncSession, *, collector_id: uuid.UUID, nonce: str) 
     the claim is visible to other concurrent requests under MVCC, not just at the end
     of this request's own transaction."""
     stmt = (
-        pg_insert(CollectorRequestNonce.__table__)
+        pg_insert(_NONCE_TABLE)
         .values(id=uuid.uuid4(), collector_id=collector_id, nonce=nonce, seen_at=datetime.now(UTC))
         .on_conflict_do_nothing(index_elements=["collector_id", "nonce"])
-        .returning(CollectorRequestNonce.__table__.c.id)
+        .returning(_NONCE_TABLE.c.id)
     )
     result = await db.execute(stmt)
     claimed = result.scalar_one_or_none() is not None
@@ -112,13 +116,27 @@ async def verify_collector_request(
     if collector is None or collector.status != "active":
         raise CollectorAuthError("Unknown or inactive collector.")
 
+    # Finding I1 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): bound the header's length
+    # before parsing (a real Unix-seconds timestamp is never more than ~11 digits for
+    # millennia; this also keeps `int()` itself cheap, though CPython's own integer-
+    # string-conversion limit already guards against a pathologically long digit
+    # string), and compare entirely in integer epoch-seconds space -- never construct
+    # a `datetime` from the untrusted value. `datetime.fromtimestamp()` raises
+    # `OverflowError`/`ValueError`/`OSError` (the exact set differs by platform and by
+    # how far out of range the value is) for a timestamp outside the platform's
+    # representable range, and that call is NOT where this trust boundary should ever
+    # need to look up a calendar date in the first place -- "is this timestamp within
+    # N seconds of now" is a pure integer-arithmetic question, and integer arithmetic
+    # in Python has no overflow limit at all, so this is the correct fix, not a broader
+    # catch bolted onto the old approach.
+    if not timestamp_header or len(timestamp_header) > 20:
+        raise CollectorAuthError("Malformed timestamp.")
     try:
         ts = int(timestamp_header)
     except (ValueError, TypeError) as exc:
         raise CollectorAuthError("Malformed timestamp.") from exc
-    now = datetime.now(UTC)
-    request_time = datetime.fromtimestamp(ts, tz=UTC)
-    if abs((now - request_time).total_seconds()) > REQUEST_TIMESTAMP_WINDOW_SECONDS:
+    now_ts = int(datetime.now(UTC).timestamp())
+    if abs(now_ts - ts) > REQUEST_TIMESTAMP_WINDOW_SECONDS:
         raise CollectorAuthError("Request timestamp outside the accepted window.")
 
     if not nonce_header or len(nonce_header) > 64:

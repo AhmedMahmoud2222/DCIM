@@ -38,6 +38,7 @@ rather than their sum — the whole point of A/B redundancy is that either feed 
 carry the full load, so summing them would overstate real demand by up to 2x."""
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -549,7 +550,7 @@ class PowerGraphSnapshot:
 
 
 async def load_power_graph_snapshot(
-    db: AsyncSession, capacity_rows: list[PowerCapacity] | None = None
+    db: AsyncSession, capacity_rows: Sequence[PowerCapacity] | None = None
 ) -> PowerGraphSnapshot:
     """Exactly 2 queries when `capacity_rows` is supplied (the caller's own
     already-fetched `PowerCapacity` rows -- `dashboard.py` always has these before it
@@ -845,6 +846,9 @@ async def load_equipment_feed_batch(
     feed_nodes_by_asset: dict[uuid.UUID, list[PowerNode]] = {}
     feed_node_ids: list[uuid.UUID] = []
     for node in feed_nodes:
+        # owning_asset_id is nullable on PowerNode in general, but the query above
+        # filters to `owning_asset_id IN equipment_ids`, which excludes NULL rows.
+        assert node.owning_asset_id is not None
         feed_nodes_by_asset.setdefault(node.owning_asset_id, []).append(node)
         feed_node_ids.append(node.id)
 

@@ -11,9 +11,16 @@ import pytest
 
 from app.application.drivers.base import DriverConnectionError
 from app.application.drivers.icmp import ICMPDriver
+from app.application.drivers.network_policy import NetworkPolicy
 from app.application.drivers.rest import RESTDriver
 from app.application.drivers.snmp import MetricMapping, SimulatedSNMPTransport, SNMPDriver
 from app.main import app
+
+# Pre-MVP consolidation hardening (Codex H1): RESTDriver now validates every target
+# against a NetworkPolicy before connecting (see network_policy.py), so these
+# in-process ASGI-transport tests need an explicit, narrowly-scoped test policy that
+# allows loopback -- production's own default policy never does.
+_TEST_REST_POLICY = NetworkPolicy(allow_loopback=True, allowed_ports=frozenset({80, 443}))
 
 
 @pytest.mark.asyncio
@@ -62,9 +69,9 @@ async def test_icmp_driver_disconnect_is_idempotent():
 async def test_rest_driver_polls_real_health_endpoint_in_process():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
-        driver = RESTDriver(uuid.uuid4(), client=http_client)
+        driver = RESTDriver(uuid.uuid4(), client=http_client, network_policy=_TEST_REST_POLICY)
         await driver.connect(
-            target_host="test", target_port=None,
+            target_host="127.0.0.1", target_port=None,
             config={"scheme": "http", "path": "/api/v1/health/live"}, credential=None,
         )
         try:
@@ -79,9 +86,9 @@ async def test_rest_driver_polls_real_health_endpoint_in_process():
 async def test_rest_driver_raises_on_http_error_status():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
-        driver = RESTDriver(uuid.uuid4(), client=http_client)
+        driver = RESTDriver(uuid.uuid4(), client=http_client, network_policy=_TEST_REST_POLICY)
         await driver.connect(
-            target_host="test", target_port=None,
+            target_host="127.0.0.1", target_port=None,
             config={"scheme": "http", "path": "/api/v1/nonexistent-path-xyz"}, credential=None,
         )
         with pytest.raises(DriverConnectionError):

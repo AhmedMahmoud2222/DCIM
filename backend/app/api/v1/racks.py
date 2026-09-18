@@ -4,7 +4,7 @@ transaction (app/application/placement_service.py); `elevation` is computed on e
 read from EquipmentPlacement, never stored (§12/§7c)."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
@@ -162,7 +162,14 @@ async def create_rack(
         )
 
         if body.room_id is not None:
-            await move_rack(db, rack_id=rack.id, room_id=body.room_id, x_mm=body.x_mm, y_mm=body.y_mm, rotation_deg=body.rotation_deg)
+            await move_rack(
+                db,
+                rack_id=rack.id,
+                room_id=body.room_id,
+                x_mm=body.x_mm,
+                y_mm=body.y_mm,
+                rotation_deg=body.rotation_deg,
+            )
             await write_outbox_event(
                 db, event_type="RackMoved", aggregate_type="rack", aggregate_id=rack.id,
                 payload={"room_id": str(body.room_id)}, correlation_id=correlation_id,

@@ -82,8 +82,22 @@ async def accept_reconciliation(
 ) -> ReconciliationDiff:
     """The ONE place `DiscoveredDevice.matched_managed_asset_id` may be set. Requires an
     ALREADY-EXISTING `ManagedAsset` (never creates one) -- linking to a nonexistent
-    asset is rejected, not silently accepted as a dangling reference."""
-    diff = await db.get(ReconciliationDiff, diff_id)
+    asset is rejected, not silently accepted as a dangling reference.
+
+    Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): a plain `db.get()` followed by
+    an app-level `if diff.status != "pending"` check does not serialize two concurrent
+    decisions (e.g. accept and reject) on the same diff -- under READ COMMITTED both
+    requests can read `status == "pending"` before either commits, so both proceed,
+    both write a "the decision" audit entry, and whichever commits last silently
+    overwrites the other's terminal state. `SELECT ... FOR UPDATE` (same pattern as the
+    existing Phase 3 F-C1 concurrency fix elsewhere in this codebase) makes the row lock
+    the point of serialization instead: the second concurrent request blocks on this
+    query until the first request's transaction commits (releasing the lock), then sees
+    the now-committed non-"pending" status and gets a clean 409 -- no schema change, no
+    new column, this is a pure locking-strategy fix."""
+    diff = (
+        await db.execute(select(ReconciliationDiff).where(ReconciliationDiff.id == diff_id).with_for_update())
+    ).scalar_one_or_none()
     if diff is None:
         raise NotFoundError(f"ReconciliationDiff {diff_id} not found.")
     if diff.status != "pending":
@@ -121,7 +135,13 @@ async def reject_reconciliation(
     db: AsyncSession, *, diff_id: uuid.UUID, actor_user_id: uuid.UUID, request_id: str | None,
     correlation_id: str | None, reason: str | None = None,
 ) -> ReconciliationDiff:
-    diff = await db.get(ReconciliationDiff, diff_id)
+    """Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): same `SELECT ... FOR UPDATE`
+    fix as `accept_reconciliation` -- see that function's docstring for the full
+    rationale. The row lock is what serializes a concurrent accept-vs-reject (or
+    reject-vs-reject) race on the same diff, not the `status` check by itself."""
+    diff = (
+        await db.execute(select(ReconciliationDiff).where(ReconciliationDiff.id == diff_id).with_for_update())
+    ).scalar_one_or_none()
     if diff is None:
         raise NotFoundError(f"ReconciliationDiff {diff_id} not found.")
     if diff.status != "pending":

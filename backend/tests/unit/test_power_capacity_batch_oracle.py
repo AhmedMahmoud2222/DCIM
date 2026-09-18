@@ -22,7 +22,6 @@ import pytest
 
 from app.application.power_capacity import (
     classify_equipment_redundancy_from_snapshot,
-    compute_allocated_kw,
     compute_allocated_kw_from_snapshot,
     derive_node_capacity_exceptions,
     derive_node_capacity_exceptions_from_snapshot,
