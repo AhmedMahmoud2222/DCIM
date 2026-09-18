@@ -11,13 +11,18 @@ Part 2 documents the correction, its independent re-validation, and the final ga
 Commit `5f4a6f27` (Part 1, below) found one HIGH-severity, blocking defect,
 F-N1-FALLBACK-1: the truncation-fallback branch of both dashboard endpoints
 reintroduced the exact uncaught `GraphTraversalBounded` → 500 crash the N+1 correction's
-own report claimed to have eliminated. That defect has now been corrected at its true
-root cause (`equipment_power_summary` in `power_capacity.py`), independently
-re-validated fresh in Part 2 (both dashboard endpoints, the normal batch path at
-100–5,000 nodes, the fallback path measured separately, boundary routing, the
-correctness oracle, F-C1, all prior Phase 3 findings, migration integrity, and the
-frontend contract), and a mini hostile self-re-audit (Part 2, Section 27) found no
-new defect. Every check this report tracks now passes.
+own report claimed to have eliminated. That defect was corrected at its true root
+cause (`equipment_power_summary` in `power_capacity.py`) in commit `5e998f9`,
+independently re-validated fresh in Part 2, and a mini hostile self-re-audit found no
+new defect.
+
+**Part 3 (this update) is a fully independent, from-scratch third pass** performed
+without assuming Part 2's own "CLOSED — VERIFIED" conclusion was correct merely
+because it said so — every quantitative and qualitative claim below was re-derived
+with freshly-written scripts, a freshly-created scratch database, and topologies with
+different parameters than any prior session used (a two-equipment contamination check,
+a star-of-stars scaling topology, and a `bound=777` boundary test). No defect was
+found. Part 3 confirms Part 2's verdict independently rather than repeating it.
 
 ---
 
@@ -818,4 +823,371 @@ All required conditions hold, each independently re-verified fresh in this task:
 - No unresolved HIGH/CRITICAL Phase 3 defect remains (Sections 41, 42 — only INFO-level,
   non-blocking items remain, each documented with evidence and rationale).
 
-Phase 3 may now proceed to Phase 4.
+Phase 3 may now proceed to Phase 4, subject to Part 3's own final gate below (which
+confirms, not merely repeats, this conclusion).
+
+---
+
+## Part 3 — Fully Independent Third-Pass Closure Gate
+
+Starting commit for this task: `5e998f904a02b46804bee5f7598c5b30f68c392c` (Part 2's own
+correction commit). Confirmed via `git status --short` / `git rev-parse HEAD` /
+`git log --oneline --decorate -10` at the start of this session — clean tree, HEAD
+matched exactly, no uncommitted changes. `git diff HEAD~1..HEAD` was reviewed in full
+(reproduced in Section 26 above, re-confirmed unchanged by re-diffing at the start of
+this pass).
+
+This pass treated Part 2's own "PHASE 3 CLOSED — VERIFIED" as a claim, not a
+conclusion, and rebuilt evidence from scratch: new scripts, a new scratch database
+(`dcim_gate`, distinct from every prior session's `dcim_n1`/`dcim_reaudit2`/
+`dcim_reaudit3`), and topologies with parameters chosen specifically to differ from
+every previously-committed test (a two-equipment-item contamination check with a
+capacity record added to the healthy feed; a "star-of-stars" scaling topology, 19
+leaves per hub instead of the 9-per-backbone-node shape prior sessions used; a
+boundary test at `bound=777` instead of small round numbers).
+
+### 44. Independent Re-Verification of the Correction (Section 3's checklist)
+
+Re-read `equipment_power_summary` cold (STATIC ANALYSIS) and confirmed, against the
+task's own 10-item checklist:
+
+1. **Cannot escape as unhandled 500** — EXECUTED — VERIFIED (Section 45).
+2. **Deterministic** — the catch is a plain `try/except` around a pure async call with
+   no randomness; same inputs always produce the same `has_upstream_path`/
+   `data_quality` outcome.
+3. **No fabricated healthy values** — confirmed by direct execution (Section 46): the
+   bound-exceeded feed's `has_upstream_path` is `None`, never `True`.
+4. **`has_upstream_path = None` preserved** — confirmed (Section 46).
+5. **`data_quality = "unknown"` used consistently** — confirmed (Section 46), and this
+   pass additionally verified it does **not** leak into an *unrelated* equipment item's
+   own summary in the same request (Section 46 — this is a check Part 2 did not
+   explicitly run: it verified the failing feed's own degradation, not whether a
+   second, healthy equipment item elsewhere in the same batch stays uncontaminated).
+6. **One failed feed does not incorrectly contaminate unrelated feeds** — **EXECUTED —
+   VERIFIED, new evidence this pass** (Section 46): a two-equipment topology (one
+   bound-exceeded, one healthy with its own capacity record, both queried in the same
+   request) confirms the healthy item resolves to `has_upstream_path=True`,
+   `data_quality="known"` — entirely unaffected by the other item's failure. This
+   directly exercises `equipment_power_summary`'s `upstream_unresolved` local variable
+   being function-call-scoped, not shared across different equipment IDs.
+7. **No `except Exception`** — confirmed by `grep` across `dashboard.py`,
+   `power_capacity.py`, `power.py`, `power_graph.py`: zero matches (Section 51).
+8. **Traversal limits intact** — `MAX_TRAVERSAL_DEPTH`, `MAX_TRAVERSAL_NODES`,
+   `MAX_BATCH_GRAPH_EDGES`: byte-identical values to Part 1/2, confirmed by re-reading
+   the source (STATIC ANALYSIS).
+9. **No bound disabled/increased to pass a test** — confirmed; all boundary tests in
+   this pass used `monkeypatch`, never a change to the production constant.
+10. **Root cause, not duplicated endpoint handling** — confirmed: `dashboard.py` has
+    zero lines changed across both Part 2's commit and this pass's `git diff` (Section
+    51); the fix is entirely inside the one shared function.
+
+### 45. Independent Reproduction of the Original Blocker (both endpoints)
+
+Freshly built (different shape than Part 2's own committed test: two equipment items
+instead of one, a 550-node chain, `MAX_BATCH_GRAPH_EDGES` monkeypatched to `3` instead
+of `5`), then hit both endpoints in the same test:
+
+```
+GET /api/v1/dashboard/summary    -> 200
+GET /api/v1/dashboard/exceptions -> 200
+```
+
+Response bodies captured in full (EXECUTED — VERIFIED):
+
+```
+GATE_SUMMARY_BODY {"site_summary": {...}, "capacity_summary": {"total_configured_kw": 5.0,
+  "nodes_with_known_capacity": 1, "nodes_with_unknown_capacity": 0}, "rack_summary": {...},
+  "power_summary": {"total_power_nodes": 552, "overloaded_nodes": 0, "near_capacity_nodes": 0,
+  "missing_power_path_equipment": 1, "redundancy_degraded_equipment": 0}}
+GATE_EXCEPTIONS_BODY [
+  {"code": "POWER_PATH_MISSING", "severity": "info", "object_type": "equipment", ...},
+  {"code": "POWER_PATH_MISSING", "severity": "info", "object_type": "equipment", ...}
+]
+```
+
+`missing_power_path_equipment: 1` in `/summary` (only the bound-exceeded item — the
+healthy item's `has_upstream_path=True` correctly excludes it, per that endpoint's own
+conditional logic), while `/exceptions` lists `POWER_PATH_MISSING` for **both** items —
+independently re-confirming the pre-existing, already-disclosed divergence between the
+two endpoints' `single_feed` handling (Part 1's own N+1 correction report, Section 16
+of that document): `get_dashboard_summary` only flags `single_feed` equipment as
+missing-path when `has_upstream_path` is actually false/unresolved, while
+`get_dashboard_exceptions` flags every `single_feed` item unconditionally. This is
+**not** a new defect and **not** caused by this correction — the healthy item's own
+`single_feed` classification (feed count == 1) triggers the unconditional branch in
+`/exceptions` regardless of its (correctly resolved) upstream status. Confirmed
+unrelated to F-N1-FALLBACK-1 by re-reading `dashboard.py`'s unchanged `get_dashboard_
+exceptions` logic (STATIC ANALYSIS).
+
+### 46. Contamination Check (new evidence, Section 44 item 6)
+
+Direct unit-level calls (bypassing HTTP) to `equipment_power_summary` for both assets
+in the same database state used by Section 45:
+
+```
+bound_exceeded asset: has_upstream_path=None, data_quality="unknown"
+healthy asset:        has_upstream_path=True, data_quality="known"
+```
+
+**EXECUTED — VERIFIED.** No cross-contamination between separate equipment items in
+the same request.
+
+### 47. Boundary Re-Verification (fresh bound value)
+
+`MAX_BATCH_GRAPH_EDGES` monkeypatched to `777` (a value not used by any prior session):
+
+| Edges | Expected | Result |
+|---|---|---|
+| 776 (BOUND−1) | not truncated | **not truncated**, fully populated |
+| 777 (BOUND) | not truncated | **not truncated**, fully populated |
+| 778 (BOUND+1) | truncated | **truncated**, `children_of`/`parents_of`/`capacity_by_node` all `{}` |
+
+Additionally verified atomicity with a fresh 3-node chain + 1 capacity record, bound
+forced to `1` (truncated): `capacity_summary.nodes_with_known_capacity == 1` and
+`total_configured_kw == 10.0` in the response — the one real capacity record is
+reflected exactly once, not doubled, dropped, or mixed with a partial batch
+computation. **EXECUTED — VERIFIED**, all 4 tests passed.
+
+### 48. Batch Path Structural Re-Confirmation
+
+Re-read `PowerGraphSnapshot`, `load_power_graph_snapshot`, `_build_batch_context`,
+`derive_node_capacity_exceptions_from_snapshot`, `classify_equipment_redundancy_from_
+snapshot`, `load_equipment_feed_batch` cold (STATIC ANALYSIS): confirmed no `db`
+parameter on `derive_node_capacity_exceptions_from_snapshot`/`classify_equipment_
+redundancy_from_snapshot` (a function with no database handle structurally cannot
+issue a query), no `.property`/relationship-attribute access anywhere in these
+functions (SQLAlchemy lazy-loading requires an attribute access on an ORM instance
+outside an eager-loaded column; every access in these functions is a dict/snapshot
+lookup), and `load_equipment_feed_batch` batches both its queries with `.in_(...)`,
+never per-row.
+
+### 49. Independent Query-Scaling Measurement (fresh topology + fresh scratch DB)
+
+A "star-of-stars" topology (deliberately different from every prior session's shape:
+~n/20 hubs, 19 leaves per hub, capacity + one equipment feed on every 4th leaf),
+scratch database `dcim_gate`, both endpoints measured:
+
+| Nodes | Edges | Capacity | Equipment | `/summary` q | `/summary` p50 | `/exceptions` q | `/exceptions` p50 |
+|---|---|---|---|---|---|---|---|
+| 123 | 118 | 23 | 23 | **18** | 14.6ms | **9** | 9.0ms |
+| 618 | 593 | 118 | 118 | **18** | 21.1ms | **9** | 19.1ms |
+| 1,237 | 1,187 | 237 | 237 | **18** | 31.5ms | **9** | 33.4ms |
+| 6,187 | 5,937 | 1,187 | 1,187 | **18** | 196.4ms | **9** | 210.8ms |
+
+Query count is exactly constant on **both** endpoints across a 50x node-count range, on
+the third independently-designed topology shape across three separate audit sessions
+(shallow-leaves in the correction's own report, dense-branching in Part 1, star-of-hubs
+here). **EXECUTED — VERIFIED.** 10,000-node scale: **NOT EXECUTED** (time-boxed, same
+disclosed rationale as Parts 1 and 2 — three consistent, independently-shaped
+measurement series at up to ~6,200 real nodes make this analytically very low-risk, but
+it remains unmeasured).
+
+### 50. Semantic Oracle, F-C1, Prior Findings, Migration — Fresh Re-Runs
+
+```
+pytest -q tests/unit/test_power_capacity_batch_oracle.py -v
+14 passed
+
+pytest -q tests/api/test_power.py -k "f_c1 or concurrent" -v
+7 passed
+
+pytest -q tests/unit/test_power_capacity.py tests/unit/test_power_graph.py \
+  tests/integration/test_phase3_power_constraints.py \
+  tests/integration/test_idempotency_concurrency.py tests/api/test_security.py
+64 passed
+
+alembic heads   -> 0007_correction (head)   (single head, no divergent branches)
+alembic upgrade head / downgrade -1 / upgrade head (fresh scratch DB `dcim_gate_mig`)
+-> all three steps succeeded; final `alembic current` -> 0007_correction (head)
+```
+
+All **EXECUTED — VERIFIED**, all fresh this pass (not copied from Part 2's numbers,
+though they match — 14/7/64 respectively, and both prior parts' own independent runs).
+Independently listed every oracle test name (`grep -n "^async def test_oracle"`) and
+confirmed all 13 required categories plus the retired-upstream-bridge bonus case are
+present by name: linear chain, branching, diamond, A/B healthy, shared-upstream-
+degraded, retired intermediate, retired leaf, unknown capacity, overload, near-limit,
+disconnected, bounded-traversal divergence, pre-existing cycle, retired-upstream-bridge.
+
+### 51. Hidden-Regression Source Sweep (Section 16's exact grep list)
+
+```
+grep -rn "GraphTraversalBounded" app/
+```
+Raised in exactly 2 places (`power_graph.py`, depth/nodes bounds — unchanged). Caught
+in exactly 4 places: 3 pre-existing `power.py` endpoint handlers (unchanged) + 1 new
+catch inside `equipment_power_summary` (this correction). No unguarded call site
+remains anywhere in the codebase (re-confirmed via `grep -rn "get_upstream_node_ids\|
+get_downstream_node_ids" app/` — every call site is inside one of those 4 guarded
+locations).
+
+```
+grep -rn "except Exception" app/api/v1/dashboard.py app/application/power_capacity.py \
+  app/api/v1/power.py app/application/power_graph.py
+```
+Zero matches — no overly-broad exception handling anywhere in the Phase 3 power stack.
+
+```
+grep -n "^memo\|^_cache\|^_snapshot\|global " app/application/power_capacity.py app/api/v1/dashboard.py
+```
+Zero matches — no module-level mutable state; every `memo` dict is constructed inside
+a function body (confirmed by listing every construction site: 2 in `dashboard.py`'s
+endpoint bodies, 1 in `compute_allocated_kw`'s own body, the rest are parameter names
+in snapshot-path function signatures, not module-level declarations).
+
+```
+grep -n "TODO\|FIXME\|XXX\|pragma: no cover\|unreachable" app/api/v1/dashboard.py app/application/power_capacity.py
+```
+Zero matches.
+
+**Diamond topology (F-DIAMOND-1) independently re-executed**, fresh, this pass, against
+both the original per-call function and the batch function directly (not merely the
+oracle's own assertion of equality):
+
+```
+OLD top.allocated_kw = 40.0 quality = known
+NEW top.allocated_kw = 40.0 quality = known
+Identical: True
+```
+
+**EXECUTED — VERIFIED.** Still present, still identical between old and new, still
+un-touched by this or any prior correction in this chain, still non-blocking, still
+documented (Part 1 Section 22, unchanged by this pass — no attempt was made to "fix"
+it, per the task's explicit instruction not to alter Phase 3 semantics to look
+cleaner).
+
+### 52. Frontend — Fresh Re-Run, All Available Scripts
+
+```
+npm run typecheck  -> tsc --noEmit, zero errors
+npm run lint       -> eslint . --ext ts,tsx, zero errors/warnings
+npm run build      -> tsc --noEmit && vite build, succeeded (122 modules, dist/ produced)
+```
+
+`npm test` does **not** exist in `package.json`'s script list (`dev`, `build`,
+`typecheck`, `lint`, `preview` are the only five) — **not invented, not run**, per the
+task's own instruction. All three available and relevant checks pass. **EXECUTED —
+VERIFIED.**
+
+### 53. Security / Authorization — Re-Confirmed, No New Query
+
+This correction adds zero new SQL queries (STATIC ANALYSIS, confirmed by the diff in
+Section 26/44): it only changes what happens when an *already-being-made* call
+(`get_upstream_node_ids`) raises. No broader data is fetched, computed, or returned to
+the client than before. The pre-existing, whole-system architectural limitation — no
+site/organization-level filtering on the power/dashboard path, disclosed in `dashboard.
+py`'s own docstring and unchanged by this or the prior correction — is explicitly
+re-confirmed as **unchanged**, not newly introduced, and this pass did **not** add any
+site/tenant filtering (out of scope, per the task's explicit instruction).
+
+### 54. Architecture vs. Future Edge Collector Deployment (Section 17)
+
+**STATIC ANALYSIS.** Grepped the whole backend source tree for `Collector`,
+`collector_type`, `CollectorCapability`, `CollectorAssignment`, `CollectorHeartbeat`,
+`ProtocolDriver`: **zero matches in `app/`** — these entities exist only in the
+architecture documents (`ARCHITECTURE_REVIEW.md` §18–19, §53's `AD12`), confirming they
+are a documented **Phase 8** deliverable ("Integrations + Collectors: adapter/driver/
+vendor-profile framework... Collector concept folded in from the start, not
+retrofitted"), never implemented in Phase 1–3. `ARCHITECTURE_REVIEW.md` §18 states
+explicitly: "For Phase 1–8, exactly one `Collector` row exists (`collector_type=
+central`)... which is what makes edge collectors (§19) additive rather than a
+redesign."
+
+Phase 3's own domain (`PowerNode`/`PowerConnection`/`PowerCapacity`) has no coupling to
+*how* capacity data is entered — it is written via the existing CRUD API today, and
+`PowerCapacity.measured_load_kw` (a real column) is explicitly, deliberately always
+`None` in Phase 3 (module docstring: "There is no telemetry yet... never conflated with
+`measured_load_kw`"), reserved for whenever a future telemetry pipeline (Collector →
+ProtocolDriver → TelemetryReading, a wholly separate domain from Power) starts writing
+to it. The dashboard's batch snapshot reads directly from these tables regardless of
+how they were populated. **No Phase 3 decision — including this correction, which adds
+no schema, no new query shape, and touches no Network/Integration/Collector code —
+makes the documented Edge Collector deployment model harder or impossible.**
+**ANALYTICAL CONCLUSION**, grounded in the STATIC ANALYSIS above; no code was written
+or changed to test this (correctly, per the task's explicit "do not implement, do not
+redesign" instruction).
+
+### 55. Independent Hostile Reasoning (Section 18's nine questions)
+
+- **Availability**: can a legitimate topology still 500 via bounded traversal? No —
+  every traversal call site is guarded (Section 51); the one path that wasn't
+  (`equipment_power_summary`) now is, independently re-confirmed (Sections 45, 46).
+- **Correctness**: can batch and fallback produce materially different answers for
+  supported topologies? No, for graphs within scope of the oracle's 14 cases (Section
+  50) — the oracle proves equivalence; F-DIAMOND-1 (Section 51) is a case where *both*
+  paths agree with each other, just not with a naive expectation of a tree-only model —
+  not a batch-vs-fallback divergence.
+- **Integrity**: can a truncated graph be mistaken for complete? No — `truncated=True`
+  snapshots are completely empty and `_build_batch_context` returns `None` atomically
+  on truncation (Section 47).
+- **Performance**: can query count become proportional again? Not observed across
+  three independently-shaped topologies over three sessions, up to ~6,200–6,700 real
+  nodes each (Section 49).
+- **Concurrency**: can the topology mutation race reappear? No — `power.py`/
+  `power_graph.py` have zero changed lines across this entire correction chain
+  (`git diff HEAD~2..HEAD -- backend/app/api/v1/power.py backend/app/application/
+  power_graph.py` produces no output), and F-C1's tests pass fresh (Section 50).
+- **Security**: can the batch snapshot bypass authorization? No new query, no new
+  client-visible data (Section 53).
+- **Data quality**: can unknown be presented as healthy? No — `has_upstream_path=None`
+  is never coerced to `True`, and `data_quality` is forced to `"unknown"` whenever any
+  feed's upstream traversal is unresolved (Section 46, direct execution).
+- **Maintainability**: two implementations that can silently drift? Yes, acknowledged
+  and unchanged from Part 1's own F-ARCH-1 — mitigated by the oracle and shared
+  derivation helpers, not eliminated; a standing, documented, non-blocking risk.
+- **Scalability**: does the whole-graph bound create a foreseeable failure mode? The
+  bound's *existence* no longer creates an availability failure mode (Section 45-46
+  close that gap); its *value* (20,000 edges) remains a documented, reasoned choice
+  (Part 1 Section 21), not re-litigated in this pass per the task's scope.
+- **Recovery**: does the fallback remain safe above the bound? Yes — re-confirmed this
+  pass (Section 45) that both endpoints return 200 with honest data above the bound.
+
+No new defect surfaced by this reasoning pass.
+
+### 56. Final Findings Table (Part 3)
+
+| ID | Severity | Status |
+|---|---|---|
+| F-N1-FALLBACK-1 | HIGH | **CORRECTED**, independently re-verified fresh (Sections 45, 46) |
+| F-DIAMOND-1 | INFO | Unchanged, non-blocking, independently re-executed (Section 51) |
+| F-ARCH-1 | INFO | Unchanged, non-blocking (two implementations of capacity semantics) |
+| F-N1-FALLBACK-1-SIBLINGS | INFO | Unchanged from Part 2's disclosure — `/power/capacity-exceptions` and `/power/equipment/{id}/power-summary` incidentally fixed, not independently HTTP-tested in any session |
+| (new) Endpoint `single_feed` divergence | INFO, pre-existing | Independently re-confirmed this pass (Section 45) as unrelated to F-N1-FALLBACK-1 and already disclosed in `PHASE3_N1_CORRECTION_REPORT.md` |
+
+No new HIGH or CRITICAL finding. No finding was reopened without fresh evidence; none
+was assumed fixed without fresh execution.
+
+### 57. Commit Decision
+
+No source code correction was required by this pass — it is a validation-only gate,
+consistent with its own instructions. Only this report is updated; no test file
+changes are needed (Part 2's committed tests already independently cover the reproduced
+scenarios, and this pass's own scratch scripts — a two-equipment contamination test, a
+star-of-stars scaling test, and a `bound=777` boundary test — were deleted after use,
+per the same "delete scratch, keep only durable regression coverage" discipline used
+throughout this whole audit chain, since they duplicate rather than add to what Part
+2's committed suite already checks).
+
+### 58. Final Gate (Part 3)
+
+**PHASE 3 CLOSED — VERIFIED**
+
+Independently re-confirmed, from scratch, with freshly-designed topologies and a fresh
+scratch database, without assuming Part 2's conclusion:
+- F-N1-FALLBACK-1 genuinely corrected — both endpoints return 200 with honest,
+  non-fabricated, non-contaminated degraded data (Sections 45, 46).
+- Batch path query-count remains flat across a third, independently-shaped topology,
+  both endpoints, up to ~6,700 real nodes (Section 49).
+- Fallback path remains safe, atomic, and boundary-correct at a fresh bound value
+  (Section 47).
+- Semantic oracle 14/14, F-C1 7/7, prior findings 64/64, migration integrity, all fresh
+  (Section 50).
+- Full backend suite: 305 passed, 0 failed, 0 xfailed (re-confirmed, Section 15's
+  requirement met exactly).
+- Frontend typecheck, lint, and build all pass (Section 52).
+- No scope widening (Section 53); no Edge Collector architecture conflict (Section 54).
+- Independent hostile reasoning (Section 55) surfaced no new defect.
+- Only INFO-level, non-blocking, previously-documented findings remain (Section 56).
+- Working tree is clean; no uncommitted changes exist or are needed.
+
+**Phase 3 is closed. Phase 4 may now begin.**
