@@ -47,7 +47,9 @@ import hmac
 import secrets
 import uuid
 from datetime import UTC, datetime
+from typing import cast
 
+from sqlalchemy import Table
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +57,8 @@ from app.core.secrets import SecretDecryptionError, decrypt_secret
 from app.domain.integration.models import Collector, CollectorRequestNonce
 
 REQUEST_TIMESTAMP_WINDOW_SECONDS = 300
+
+_NONCE_TABLE = cast(Table, CollectorRequestNonce.__table__)
 
 
 class CollectorAuthError(Exception):
@@ -82,10 +86,10 @@ async def claim_nonce(db: AsyncSession, *, collector_id: uuid.UUID, nonce: str) 
     the claim is visible to other concurrent requests under MVCC, not just at the end
     of this request's own transaction."""
     stmt = (
-        pg_insert(CollectorRequestNonce.__table__)
+        pg_insert(_NONCE_TABLE)
         .values(id=uuid.uuid4(), collector_id=collector_id, nonce=nonce, seen_at=datetime.now(UTC))
         .on_conflict_do_nothing(index_elements=["collector_id", "nonce"])
-        .returning(CollectorRequestNonce.__table__.c.id)
+        .returning(_NONCE_TABLE.c.id)
     )
     result = await db.execute(stmt)
     claimed = result.scalar_one_or_none() is not None

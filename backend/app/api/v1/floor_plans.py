@@ -258,12 +258,18 @@ async def list_import_jobs(
     ctx=Depends(require_permission("floor_plan:read")),
 ) -> Page:
     stmt = select(FloorPlanImportJob).where(FloorPlanImportJob.floor_plan_id == floor_plan_id)
-    total = (
-        await db.execute(select(func.count()).select_from(FloorPlanImportJob).where(FloorPlanImportJob.floor_plan_id == floor_plan_id))
-    ).scalar_one()
-    rows = (
-        await db.execute(stmt.order_by(FloorPlanImportJob.created_at.desc()).offset(pagination.offset).limit(pagination.limit))
-    ).scalars().all()
+    count_stmt = (
+        select(func.count())
+        .select_from(FloorPlanImportJob)
+        .where(FloorPlanImportJob.floor_plan_id == floor_plan_id)
+    )
+    total = (await db.execute(count_stmt)).scalar_one()
+    paged_stmt = (
+        stmt.order_by(FloorPlanImportJob.created_at.desc())
+        .offset(pagination.offset)
+        .limit(pagination.limit)
+    )
+    rows = (await db.execute(paged_stmt)).scalars().all()
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)
 
 
@@ -333,7 +339,12 @@ async def list_import_candidates(
         stmt = stmt.where(FloorPlanImportCandidate.status == status)
         count_stmt = count_stmt.where(FloorPlanImportCandidate.status == status)
     total = (await db.execute(count_stmt)).scalar_one()
-    rows = (await db.execute(stmt.order_by(FloorPlanImportCandidate.created_at).offset(pagination.offset).limit(pagination.limit))).scalars().all()
+    paged_stmt = (
+        stmt.order_by(FloorPlanImportCandidate.created_at)
+        .offset(pagination.offset)
+        .limit(pagination.limit)
+    )
+    rows = (await db.execute(paged_stmt)).scalars().all()
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)
 
 
@@ -469,7 +480,8 @@ async def accept_import_candidate(
     candidate.status = "accepted"
     candidate.resulting_spatial_object_id = spatial_object.id
     candidate.reviewed_by_user_id = ctx.user.id
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
 
     candidate.reviewed_at = _dt.now(UTC)
     await db.flush()
@@ -505,7 +517,8 @@ async def reject_import_candidate(
     if candidate.status != "pending":
         raise ApiError(status_code=409, title="Conflict", detail=f"Candidate is already {candidate.status}.")
 
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
 
     candidate.status = "rejected"
     candidate.reviewed_by_user_id = ctx.user.id

@@ -21,7 +21,7 @@ from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.core.secrets import encrypt_secret
-from app.domain.integration.models import Integration
+from app.domain.integration.models import CollectorAssignment, Integration
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -63,7 +63,7 @@ class IntegrationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-def _build_out(integration: Integration, assignment: object | None) -> IntegrationOut:
+def _build_out(integration: Integration, assignment: CollectorAssignment | None) -> IntegrationOut:
     return IntegrationOut(
         id=integration.id, name=integration.name, integration_type=integration.integration_type,
         site_id=integration.site_id, target_host=integration.target_host, target_port=integration.target_port,

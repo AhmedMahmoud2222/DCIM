@@ -5,6 +5,7 @@ room) is applied server-side before aggregation, not client-side after fetching
 everything (§15)."""
 
 import uuid
+from collections.abc import Sequence
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -41,7 +42,7 @@ async def _distinct_equipment_ids(db: AsyncSession) -> list[uuid.UUID]:
     return [e for e in equipment_ids if e is not None]
 
 
-async def _build_batch_context(db: AsyncSession, capacity_rows: list[PowerCapacity]):
+async def _build_batch_context(db: AsyncSession, capacity_rows: Sequence[PowerCapacity]):
     """PHASE3_N1_CORRECTION_REPORT.md: builds the one shared `PowerGraphSnapshot` +
     equipment feed batch both dashboard endpoints need, instead of each endpoint
     re-deriving capacity/redundancy per node/per equipment item via its own repeated
