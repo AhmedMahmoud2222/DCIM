@@ -309,6 +309,10 @@ async def move_equipment_endpoint(
             raise NotFoundError(f"Rack {body.rack_id} not found.")
         model_revision = await db.get(RackModelRevision, rack.model_revision_id)
         assert model_revision is not None
+        # EquipmentMoveIn._check_shape already guarantees u_start/u_end are set when
+        # placement_type == "rack_mounted".
+        assert body.u_start is not None
+        assert body.u_end is not None
         validate_u_range_against_rack_capacity(u_start=body.u_start, u_end=body.u_end, rack_height_u=model_revision.height_u)
 
     if_match_version = int(if_match.strip().strip('"')) if if_match else None
