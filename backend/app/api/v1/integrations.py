@@ -5,11 +5,12 @@ only ever decrypted in-process by the polling orchestrator
 (app/application/collector_service.py's `run_polling_cycle`), never serialized back out
 through this router."""
 
+import json
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,9 +22,34 @@ from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.core.secrets import encrypt_secret
-from app.domain.integration.models import Integration
+from app.domain.integration.models import CollectorAssignment, Integration
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+
+# Pre-MVP consolidation hardening (Codex FV2): `config` is a one-time, admin-authored
+# object (a REST integration's path/method/headers, an SNMP integration's version),
+# not a per-poll payload -- more generous than `IngestRecordIn.raw_attributes`'s 8192
+# bytes is appropriate, but "arbitrary dict, no bound at all" is not. 16 KiB and 6
+# levels of nesting comfortably fit any real integration's configuration (a REST
+# integration's own `headers` dict is one level deep) without being unbounded.
+MAX_CONFIG_BYTES = 16_384
+MAX_CONFIG_NESTING_DEPTH = 6
+
+
+def _json_nesting_depth(value: object, current: int = 0) -> int:
+    if isinstance(value, dict) and value:
+        return max(_json_nesting_depth(v, current + 1) for v in value.values())
+    if isinstance(value, list) and value:
+        return max(_json_nesting_depth(v, current + 1) for v in value)
+    return current
+
+
+def _bound_config(v: dict) -> dict:
+    if len(json.dumps(v)) > MAX_CONFIG_BYTES:
+        raise ValueError(f"config must serialize to at most {MAX_CONFIG_BYTES} bytes")
+    if _json_nesting_depth(v) > MAX_CONFIG_NESTING_DEPTH:
+        raise ValueError(f"config must not nest more than {MAX_CONFIG_NESTING_DEPTH} levels deep")
+    return v
 
 
 def _request_ids(request: Request) -> tuple[str | None, str | None]:
@@ -40,6 +66,11 @@ class IntegrationIn(BaseModel):
     credential: str | None = Field(default=None, max_length=2000, description="Plaintext, write-only -- never returned.")
     poll_interval_seconds: int = 60
     enabled: bool = True
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config_bounds(cls, v: dict) -> dict:
+        return _bound_config(v)
 
 
 class IntegrationOut(BaseModel):
@@ -63,7 +94,7 @@ class IntegrationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-def _build_out(integration: Integration, assignment: object | None) -> IntegrationOut:
+def _build_out(integration: Integration, assignment: CollectorAssignment | None) -> IntegrationOut:
     return IntegrationOut(
         id=integration.id, name=integration.name, integration_type=integration.integration_type,
         site_id=integration.site_id, target_host=integration.target_host, target_port=integration.target_port,
@@ -133,6 +164,11 @@ class IntegrationPatchIn(BaseModel):
     target_port: int | None = None
     config: dict | None = None
     credential: str | None = Field(default=None, max_length=2000, description="If provided, replaces the stored credential.")
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config_bounds(cls, v: dict | None) -> dict | None:
+        return v if v is None else _bound_config(v)
 
 
 @router.patch("/{integration_id}", response_model=IntegrationOut)

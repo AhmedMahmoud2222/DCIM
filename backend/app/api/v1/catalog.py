@@ -102,10 +102,18 @@ async def list_rack_model_revisions(
     ctx=Depends(require_permission("rack:read")),
 ) -> Page:
     stmt = select(RackModelRevision).where(RackModelRevision.rack_model_id == rack_model_id)
-    total = (
-        await db.execute(select(func.count()).select_from(RackModelRevision).where(RackModelRevision.rack_model_id == rack_model_id))
-    ).scalar_one()
-    rows = (await db.execute(stmt.order_by(RackModelRevision.created_at).offset(pagination.offset).limit(pagination.limit))).scalars().all()
+    count_stmt = (
+        select(func.count())
+        .select_from(RackModelRevision)
+        .where(RackModelRevision.rack_model_id == rack_model_id)
+    )
+    total = (await db.execute(count_stmt)).scalar_one()
+    paged_stmt = (
+        stmt.order_by(RackModelRevision.created_at)
+        .offset(pagination.offset)
+        .limit(pagination.limit)
+    )
+    rows = (await db.execute(paged_stmt)).scalars().all()
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)
 
 
