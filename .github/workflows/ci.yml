@@ -79,6 +79,13 @@ jobs:
         run: alembic upgrade head
       - name: Bootstrap privileged retention role
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
+      - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
+        # app/application/drivers/icmp.py opens a genuine SOCK_RAW/IPPROTO_ICMP socket
+        # (documented there as a real operational requirement, not silently assumed) --
+        # the runner's default non-root user cannot do that without this capability, so
+        # tests/unit/test_drivers.py and the collector poll-now tests would otherwise
+        # fail with PermissionError on every run, regardless of this PR's own changes.
+        run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
       - name: Run tests
         run: pytest -q
 
