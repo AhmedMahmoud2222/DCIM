@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.power_graph import (
     MAX_TRAVERSAL_DEPTH,
     MAX_TRAVERSAL_NODES,
+    GraphTraversalBounded,
     get_upstream_node_ids,
     non_retired_node_ids,
 )
@@ -398,6 +399,7 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
 
     feed_infos: list[dict[str, uuid.UUID | str | bool | float | None]] = []
     upstream_sets: dict[uuid.UUID, set[uuid.UUID]] = {}
+    upstream_unresolved = False
     for node in feed_nodes:
         # F-H2 correction (PHASE3_CORRECTION_DESIGN.md Part 8): "has an upstream path"
         # must mean "reaches some live upstream node via the retirement-aware
@@ -409,8 +411,31 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
         # node_ids` already excludes retired nodes from its result (power_graph.py),
         # so a feed fed only by a retired node now correctly yields an empty upstream
         # set here.
-        upstream_sets[node.id] = await get_upstream_node_ids(db, node.id)
-        has_upstream_path = len(upstream_sets[node.id]) > 0
+        #
+        # F-N1-FALLBACK-1 correction (PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md): a
+        # bound-exceeded upstream traversal must degrade this one feed's path status to
+        # unknown, exactly like `compute_allocated_kw` already does for its own bound --
+        # it never raises, only ever returns `(None, "unknown")`. This function was the
+        # one place in this module that instead let `GraphTraversalBounded` escape
+        # uncaught, crashing every caller that aggregates over many equipment items
+        # (dashboard.py's truncation fallback, `GET /power/capacity-exceptions`, and
+        # `GET /power/equipment/{id}/power-summary`, none of which guarded this call).
+        # `has_upstream_path=None` (not `False`) is deliberate: `False` would fabricate
+        # a specific "no path exists" answer for data that was never actually resolved
+        # -- the same "never silently treat unresolved as a known value" discipline
+        # this module's docstring already states for capacity figures.
+        try:
+            upstream_sets[node.id] = await get_upstream_node_ids(db, node.id)
+            has_upstream_path: bool | None = len(upstream_sets[node.id]) > 0
+        except GraphTraversalBounded as exc:
+            logger.warning(
+                "power_graph_traversal_bound_exceeded",
+                root_id=str(exc.root_id), limit_kind=exc.limit_kind, direction="upstream",
+                context="equipment_power_summary",
+            )
+            upstream_sets[node.id] = set()
+            has_upstream_path = None
+            upstream_unresolved = True
         figures = await get_capacity_figures(db, node.id)
         feed_infos.append(
             {
@@ -462,6 +487,16 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
     else:
         effective_demand = sum(known_capacities)
         data_quality = "known" if len(known_capacities) == len(feed_infos) else "unknown"
+
+    # F-N1-FALLBACK-1 (PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md): a feed whose
+    # upstream path could not be resolved makes this whole summary's data_quality
+    # "unknown" too, regardless of how well-resolved the capacity side is --
+    # `redundancy_classification` above may already have leaned conservative (toward
+    # "degraded") from treating that feed's `has_upstream_path` as missing, but the
+    # caller must be told this is an unresolved-data condition, not a confirmed one,
+    # the same distinction `CAPACITY_UNKNOWN` already draws elsewhere in this module.
+    if upstream_unresolved:
+        data_quality = "unknown"
 
     return EquipmentPowerSummary(
         equipment_asset_id=equipment_asset_id, feed_nodes=feed_infos, redundancy_classification=classification,

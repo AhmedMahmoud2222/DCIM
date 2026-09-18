@@ -2,17 +2,32 @@
 
 ## Executive Verdict
 
-**PHASE 3 NOT CLOSED — CORRECTIONS REQUIRED**
+**PHASE 3 CLOSED — VERIFIED**
 
-One HIGH-severity, blocking defect (F-N1-FALLBACK-1) was found in commit `268ad258`'s
-own correction: the truncation-fallback branch of both dashboard endpoints reintroduces
-the exact uncaught `GraphTraversalBounded` → 500 crash that the correction's own report
-claims to have eliminated. This was independently reproduced (EXECUTED — VERIFIED), not
-inferred. Every other area audited (query-count reduction, semantic equivalence,
-F-C1, prior findings, migration integrity, security scope, frontend contract) held up
-under independent re-verification with fresh evidence. The gate is NOT closed solely
-because of F-N1-FALLBACK-1 — everything else in this report supports closure once that
-one gap is corrected.
+*(Updated after the targeted correction documented in Part 2 below. Part 1 is preserved
+unmodified as the historical record of the original audit that found F-N1-FALLBACK-1;
+Part 2 documents the correction, its independent re-validation, and the final gate.)*
+
+Commit `5f4a6f27` (Part 1, below) found one HIGH-severity, blocking defect,
+F-N1-FALLBACK-1: the truncation-fallback branch of both dashboard endpoints
+reintroduced the exact uncaught `GraphTraversalBounded` → 500 crash the N+1 correction's
+own report claimed to have eliminated. That defect has now been corrected at its true
+root cause (`equipment_power_summary` in `power_capacity.py`), independently
+re-validated fresh in Part 2 (both dashboard endpoints, the normal batch path at
+100–5,000 nodes, the fallback path measured separately, boundary routing, the
+correctness oracle, F-C1, all prior Phase 3 findings, migration integrity, and the
+frontend contract), and a mini hostile self-re-audit (Part 2, Section 27) found no
+new defect. Every check this report tracks now passes.
+
+---
+
+## Part 1 — Original Independent Re-Audit (unmodified historical record)
+
+Committed as `5f4a6f27579e8dfb7c8c0b2927ea3c15ba099fed`. Everything below through
+Section 24 is preserved exactly as originally written — including its own final gate
+verdict at the time ("PHASE 3 NOT CLOSED — CORRECTIONS REQUIRED"), which the Executive
+Verdict above has now superseded following Part 2's correction. Nothing in Part 1 was
+edited to make Part 2 look better; Part 2 stands on its own fresh evidence.
 
 ## 1. Scope
 
@@ -428,3 +443,379 @@ correction; it is one specific, previously-untested code path that needs one mor
 
 Phase 4 must not begin until this is corrected and this gate is re-run to
 **PHASE 3 CLOSED — VERIFIED**.
+
+---
+
+## Part 2 — Targeted Correction & Final Re-Validation
+
+Starting commit for this task: `5f4a6f27579e8dfb7c8c0b2927ea3c15ba099fed` (Part 1's own
+audit commit). Confirmed via `git rev-parse HEAD` before any change — clean tree, HEAD
+matched exactly.
+
+### 25. Root Cause, Precisely
+
+Traced the exact escape path (STATIC ANALYSIS, then EXECUTED — VERIFIED via Part 1
+Section 11's reproduction): both dashboard endpoints' fallback branches call
+`equipment_power_summary(db, equipment_id)`, which itself calls
+`get_upstream_node_ids(db, node.id)` once per feed node. `get_upstream_node_ids` →
+`_traverse` raises `GraphTraversalBounded` when a chain exceeds `MAX_TRAVERSAL_DEPTH`/
+`MAX_TRAVERSAL_NODES`, uncaught, propagating through `equipment_power_summary` and out
+through `dashboard.py` with no `try/except` anywhere in that call chain.
+
+`compute_allocated_kw` — `equipment_power_summary`'s sibling in the same module,
+called from the exact same fallback loops via `derive_node_capacity_exceptions` — does
+**not** have this problem: it already catches its own bound internally and returns
+`(None, "unknown")` gracefully, never raising. `equipment_power_summary` was the one
+function in `power_capacity.py` that instead let the exception escape.
+
+**Wider blast radius than Part 1 scoped**: grepping every call site of
+`get_upstream_node_ids`/`get_downstream_node_ids` in the whole codebase (STATIC
+ANALYSIS, EXECUTED via `grep -rn`) found `equipment_power_summary` is called from
+**four** places, not two:
+1. `dashboard.py`'s `get_dashboard_summary` fallback branch (Part 1's finding).
+2. `dashboard.py`'s `get_dashboard_exceptions` fallback branch (Part 1's finding).
+3. `power.py`'s `GET /power/capacity-exceptions` (unguarded, pre-existing, **not**
+   part of the N+1 correction at all — this bug predates Phase 3's N+1 work).
+4. `power.py`'s `GET /power/equipment/{id}/power-summary` (unguarded, same pre-existing
+   status).
+
+Every other traversal call site in the codebase (`power.py`'s three single-node
+endpoints: `create_power_connection`'s cycle check, `GET /nodes/{id}/upstream`,
+`GET /nodes/{id}/downstream`) already wraps `GraphTraversalBounded` in
+`try/except -> ApiError(422, "Graph Too Large")` — confirmed by direct read
+(STATIC ANALYSIS).
+
+### 26. Correction
+
+**Location: `app/application/power_capacity.py`, inside `equipment_power_summary`
+itself** — not in `dashboard.py`. Reasoning:
+
+- `dashboard.py`'s fallback loops aggregate over *many* equipment items; a single
+  bound-exceeded item must not fail the *whole* request (unlike the single-node
+  `/nodes/{id}/upstream` endpoints, where a 422 for that one requested resource is
+  correct). A per-item `try/except` wrapped around the call in `dashboard.py` would
+  work for dashboard.py specifically, but would leave the identical crash reachable
+  through `/power/capacity-exceptions` (also an aggregate, many-item endpoint) and
+  duplicate the same handling logic in two files instead of one.
+- Fixing it inside `equipment_power_summary` makes it internally bounded-safe,
+  matching `compute_allocated_kw`'s own established pattern in the same module — this
+  is a "make the function consistent with its sibling," not an invented new pattern.
+- This transitively closes both dashboard fallback branches (no `dashboard.py` change
+  needed at all) and, as a byproduct disclosed here rather than silently taken credit
+  for, also closes the pre-existing, out-of-original-scope bugs in
+  `/power/capacity-exceptions` and `/power/equipment/{id}/power-summary` — the same
+  root-cause fix, not separate work.
+
+**What changed** (`git diff` reviewed in full before committing):
+- Import `GraphTraversalBounded` from `power_graph` into `power_capacity.py`.
+- Inside `equipment_power_summary`'s per-feed loop, wrap the
+  `get_upstream_node_ids` call in `try/except GraphTraversalBounded as exc:`. On
+  catch: log `logger.warning("power_graph_traversal_bound_exceeded", root_id=...,
+  limit_kind=..., direction="upstream", context="equipment_power_summary")` (same
+  event name/fields `power.py`'s own handlers already use, for log-query consistency),
+  set that feed's `upstream_sets[node.id] = set()` and `has_upstream_path = None`
+  (deliberately `None`, not `False` — `False` would fabricate a specific "no path"
+  answer for data that was never resolved; `None` honestly represents "unresolved,"
+  mirroring this module's own stated discipline of never treating unknown data as a
+  known value), and set a local `upstream_unresolved = True`.
+- After the existing capacity-based `data_quality` computation, add: `if
+  upstream_unresolved: data_quality = "unknown"` — reusing the *existing*
+  `EquipmentPowerSummary.data_quality` field and its *existing* `"unknown"` value, no
+  new semantic status invented.
+- `classify_equipment_redundancy_from_snapshot` (the batch-path equivalent) is
+  **untouched** — it cannot raise `GraphTraversalBounded` at all, by construction
+  (`_upstream_ids_from_snapshot` is a plain in-memory BFS with no per-call bound check).
+- `dashboard.py`, `power.py`, `power_graph.py`: **zero lines changed** (confirmed by
+  `git diff --stat`).
+
+No `except Exception`, no traversal-limit changes, no `MAX_BATCH_GRAPH_EDGES` change, no
+fabricated capacity/healthy values, no new semantic status, no lock/authorization
+changes, no API/schema changes.
+
+### 27. Regression Test — Rewritten, Not Just Un-xfailed
+
+`backend/tests/api/test_dashboard_fallback_regression.py` was rewritten (not merely
+had its `xfail` marker deleted) into three tests, each independently **EXECUTED —
+VERIFIED**:
+
+1. `test_summary_no_longer_crashes_when_fallback_hits_bound_exceeded_traversal` —
+   forces truncation, builds the same >500-node chain + equipment feed shape that
+   originally crashed, asserts `GET /dashboard/summary` returns 200 **and** checks the
+   response body's actual content (every required section present, every counter a
+   plain `int`, and specifically that the unresolved equipment is honestly counted in
+   `missing_power_path_equipment`, not silently dropped or miscounted as healthy) —
+   not just the status code.
+2. `test_exceptions_no_longer_crashes_when_fallback_hits_bound_exceeded_traversal` —
+   same topology, `GET /dashboard/exceptions` returns 200, response is a well-formed
+   list of exception items, and `POWER_PATH_MISSING` is present for the unresolved
+   equipment.
+3. `test_equipment_power_summary_degrades_gracefully_not_falsely_healthy` — unit-level,
+   calls `equipment_power_summary` directly (bypassing HTTP), asserts
+   `has_upstream_path is None` (never fabricated `True`) and `data_quality ==
+   "unknown"`.
+
+```
+pytest -q tests/api/test_dashboard_fallback_regression.py -v
+3 passed in 3.17s
+```
+
+### 28. Both Dashboard Endpoints — Independently Confirmed
+
+Per the task's explicit instruction not to assume fixing one fixes the other: Section
+27's tests 1 and 2 hit `/dashboard/summary` and `/dashboard/exceptions` **separately**,
+each with its own fresh topology build and its own assertions. Both pass. **EXECUTED —
+VERIFIED.**
+
+### 29. Normal Batch Path — Confirmed Unaffected (EXECUTED — VERIFIED, fresh)
+
+Fresh scratch database (`dcim_reaudit3`), fresh topology generator (shallow, matching
+the correction report's own shape, for direct before/after comparability), fresh
+query-counting harness — measured **after** the fix:
+
+| Nodes | Edges | Capacity records | `/summary` queries | p50 | max |
+|---|---|---|---|---|---|
+| 100 | 99 | 18 | **16** | 13.2ms | 118.8ms |
+| 500 | 499 | 90 | **16** | 14.6ms | 25.2ms |
+| 1,000 | 999 | 180 | **16** | 17.4ms | 115.7ms |
+| 5,000 | 4,999 | 900 | **16** | 47.4ms | 129.6ms |
+
+Query count is exactly constant (16) across a 50x node-count range — the fix did not
+touch the batch path at all (`_build_batch_context`, `load_power_graph_snapshot`,
+`_node_value_from_snapshot`, `compute_allocated_kw_from_snapshot`,
+`classify_equipment_redundancy_from_snapshot` are byte-identical to Part 1's audited
+version, confirmed by `git diff` showing zero changes to any of them). 10,000-node
+scale: **NOT EXECUTED** (time-boxed, same rationale as Part 1 Section 9 — the
+structural query-budget argument plus this fresh 5,000-node point make it very unlikely
+to change).
+
+### 30. Fallback Path — Measured Separately, Now Crash-Free (EXECUTED — VERIFIED)
+
+Forced truncation (monkeypatched bound), 100-node shallow topology, measured
+`/dashboard/summary` in isolation:
+
+```
+{"build": {"total_nodes": 100, "edges": 99, "capacity_records": 18},
+ "queries": 105, "elapsed_ms": 82.9, "status": 200}
+```
+
+**Status 200** (was an uncaught exception before this correction — Part 1 Section 11).
+Query count (105) is far higher than the batch path's 16 — **this is expected and
+correct**: the fallback is deliberately the original per-node N+1 code, unchanged, per
+the correction's own documented trade-off ("slower, but never less correct" — now also
+"never crashes"). The task's acceptance requirement is that the *normal* batch path
+stay flat (Section 29 confirms it does), not that the fallback match batch-path
+performance — the fallback exists precisely for the rare case the batch path declines
+to handle.
+
+### 31. Boundary & Routing — Re-Verified (EXECUTED — VERIFIED)
+
+- `MAX_BATCH_GRAPH_EDGES` boundary (`BOUND-1`/`BOUND`/`BOUND+1`, monkeypatched):
+  identical results to Part 1 Section 12 — not truncated / not truncated / truncated
+  with a completely empty snapshot. Unaffected by this correction (the boundary check
+  itself was never touched).
+- **Deep graph below threshold** (600-node chain, edge count far below the bound):
+  confirmed via direct `load_power_graph_snapshot` inspection that `truncated is
+  False` (uses the batch path), and `GET /dashboard/summary` returns 200 — the batch
+  path's in-memory BFS has no per-root depth bound at all (by design, Part 1 Section
+  12), so a deep chain below the edge threshold was never at risk either before or
+  after this correction.
+- **Deep graph above threshold** (600-node chain, bound monkeypatched below 600):
+  confirmed `truncated is True` (routes to fallback), and `GET /dashboard/summary`
+  returns 200 — this is the exact scenario that crashed before the fix and now
+  doesn't.
+
+```
+pytest -q tests/_audit2_perf_test.py  (scratch, deleted after this task)
+10 passed in 5.65s
+```
+
+### 32. Semantic Correctness — Oracle Re-Run (EXECUTED — VERIFIED)
+
+`pytest -q tests/unit/test_power_capacity_batch_oracle.py -v` → **14 passed**, no
+changes to the oracle file itself (`git diff` confirms it is untouched by this
+correction). This includes the diamond-topology case (F-DIAMOND-1, still present,
+still non-blocking, still reproduced identically by old and new code — this correction
+did not touch `compute_allocated_kw` or the diamond behavior in any way) and the
+pre-existing cycle-safety case. The fix only affects `equipment_power_summary`'s
+behavior in the one case (bound-exceeded upstream traversal) the oracle does not
+construct (the oracle's topologies are all small, well within any traversal bound by
+design) — so no oracle case exercised the changed code path, and none needed to change.
+
+### 33. F-C1 Regression — Re-Run (EXECUTED — VERIFIED)
+
+`pytest -q tests/api/test_power.py -k "f_c1 or concurrent" -v` → **7 passed** (disjoint-
+pair race, 10-repetition race, 3-way triangle race, independent-valid-mutations-both-
+succeed — the same genuine `asyncio.gather`-against-separate-engines tests Part 1
+re-ran). `git diff --stat` confirms `power.py` and `power_graph.py` have **zero**
+changed lines from this correction — the fix is entirely inside `power_capacity.py`,
+which imports no lock-related name from `power_graph.py` (Part 1 Section 13, unchanged
+by this task). Advisory lock transaction-scoping, acquisition order, and release
+semantics were not touched or re-designed.
+
+### 34. Previous Phase 3 Findings — Re-Run (EXECUTED — VERIFIED)
+
+`pytest -q tests/unit/test_power_capacity.py tests/unit/test_power_graph.py
+tests/integration/test_phase3_power_constraints.py
+tests/integration/test_idempotency_concurrency.py tests/api/test_security.py` →
+**64 passed**. Covers F-H1, F-H2, F-M1, F-M2, F-M3, and NEW-1 fresh, not assumed fixed
+because the source is unchanged for those specific files (only `power_capacity.py`
+changed, and none of these tests exercise `equipment_power_summary`'s bound-exceeded
+path, so this run confirms no *incidental* regression from the correction). F-M5:
+`logger.warning("power_graph_traversal_bound_exceeded", ...)` is new structured
+logging *added* by this correction, consistent with the existing F-M5 observability
+pattern, not a regression of it.
+
+### 35. Migration Integrity — Re-Verified (EXECUTED — VERIFIED, fresh)
+
+Dedicated fresh scratch database (`dcim_migaudit2`): `alembic upgrade head` from empty
+→ `0007_correction (head)`; `alembic downgrade -1` → succeeded; `alembic upgrade head`
+(re-upgrade) → succeeded; `alembic current` → `0007_correction (head)` throughout. No
+migration file exists in this correction's diff (it is a pure Python source change).
+
+### 36. Security / Authorization — Re-Checked
+
+No new query was added by this correction — the fix only changes what happens when an
+*existing* call (`get_upstream_node_ids`, already being made) raises, catching and
+degrading rather than crashing. No broader data is fetched, computed, or returned. The
+degraded response (`has_upstream_path: None`, `data_quality: "unknown"`) contains no
+internal exception detail, stack trace, node ID beyond what the endpoint already
+returns, or any other sensitive information — confirmed by inspecting the actual JSON
+response bodies asserted against in Section 27's tests. The pre-existing, whole-system
+absence of tenant/org scoping (Part 1 Section 16) is unaffected — this correction adds
+no query and removes no filter.
+
+### 37. Frontend — Re-Checked
+
+`git diff --stat` confirms zero frontend files changed. `npm run typecheck` (`tsc
+--noEmit`): **passes cleanly, zero errors**, re-run fresh against the corrected
+backend. No API/schema change exists for the frontend to be affected by — the fix only
+changes internal dict values already within their existing declared types
+(`feed_nodes: list[dict]` is untyped at the Pydantic layer, so `None` where `bool` used
+to always appear is not a contract change).
+
+### 38. Full Backend Suite — Re-Run (EXECUTED — VERIFIED, fresh, final)
+
+```
+cd backend && pytest -q tests/
+305 passed, 6 warnings in 94.81s (0:01:34)
+```
+
+305 = the prior 302 + the 3 rewritten fallback-regression tests (the single `1 xfailed`
+from Part 1 is gone — it is no longer `xfail`, it is 3 genuinely passing tests).
+**Zero unexpected failures. Zero unexpected xfails** (there are no `xfail` markers left
+in the diff's test file at all). Frontend `npm run typecheck`: clean (Section 37).
+
+### 39. Static Review After Fix
+
+Full diff reviewed (`git diff backend/app/application/power_capacity.py`):
+- Exception handling is narrowly scoped to `except GraphTraversalBounded as exc:` —
+  no `except Exception`, no swallowing of unrelated exceptions.
+- No duplicated logic introduced (the fix reuses the *existing* `data_quality` field
+  and the *existing* logging pattern from `power.py`).
+- No accidental API/schema change (Sections 36, 37).
+- No unused imports (`GraphTraversalBounded` is used).
+- No dead code.
+- No test-only hacks in production code.
+- No traversal limits changed (`MAX_TRAVERSAL_DEPTH`, `MAX_TRAVERSAL_NODES`,
+  `MAX_BATCH_GRAPH_EDGES` are byte-identical to Part 1's audited version).
+- No authorization behavior changed.
+- No lock behavior changed (Section 33).
+- No hidden global state (`upstream_unresolved` is a local variable, scoped to one
+  function call).
+- Logging quality: the new `logger.warning` call matches the field names/event name
+  `power.py`'s own three existing `GraphTraversalBounded` handlers already use
+  (`root_id`, `limit_kind`, direction), for consistent log querying, plus a `context`
+  field naming which function logged it.
+- Error semantics: correct — this is not an error condition being hidden, it is a
+  documented, honestly-labeled degraded-data condition (`data_quality="unknown"`),
+  the same category of representation `CAPACITY_UNKNOWN` already uses elsewhere in
+  this exact module.
+
+### 40. Mini Hostile Self-Re-Audit (pretending this session did not write the fix)
+
+1. **Can `GraphTraversalBounded` still escape from `/dashboard/summary`?** No —
+   `equipment_power_summary` is the only call in its fallback path that could raise it,
+   and it no longer does (Section 27 test 1, EXECUTED — VERIFIED). Cross-checked: every
+   `get_upstream_node_ids`/`get_downstream_node_ids` call site in the entire codebase
+   (`grep -rn`, Section 25) is now either already-guarded (three `power.py` endpoints,
+   pre-existing) or newly-guarded (`equipment_power_summary`, this fix). None remain
+   unguarded.
+2. **Can it still escape from `/dashboard/exceptions`?** No — same shared root cause,
+   independently tested (Section 27 test 2, EXECUTED — VERIFIED).
+3. **Can a truncated graph still produce HTTP 500?** No, for the specific defect this
+   task targets (Sections 27, 30, 31 EXECUTED — VERIFIED). Not a claim that *every*
+   possible exception in the fallback path is now handled — only `GraphTraversalBounded`
+   was in scope, and no other exception type was found reachable from this call graph
+   during this task's investigation.
+4. **Can the normal batch path still produce N+1 queries?** No — confirmed flat at 16
+   queries across 100–5,000 nodes (Section 29, EXECUTED — VERIFIED), identical query
+   shape to Part 1's own measurement (differs only in absolute count: 16 here vs. 18 in
+   Part 1's own different topology — both constant, not proportional).
+5. **Can the fallback path accidentally mix partial snapshot data with old
+   calculations?** No — the fix does not touch the truncation decision or
+   `_build_batch_context`'s atomic `None`-return; the fallback branch in `dashboard.py`
+   never references `snapshot` at all (unchanged from Part 1 Section 12's finding).
+6. **Can the exception handler swallow unrelated defects?** No — `except
+   GraphTraversalBounded as exc:` catches only that one exception class; any other
+   exception in the same loop (e.g. a genuine database error) still propagates
+   normally, unmasked.
+7. **Did the correction change API semantics?** No new field, no removed field, no
+   status-code change for the success case. The only behavioral change visible to a
+   client is that a previously-crashing request (500, no body) now returns 200 with an
+   honestly-degraded body — a strict improvement, not a contract break.
+8. **Did it alter F-C1?** No (Section 33).
+9. **Did it introduce a security/data-scope regression?** No (Section 36) — no new
+   query, no new data exposed.
+10. **Did it merely hide the original defect rather than safely handle it?** No — the
+    unresolved state is explicitly surfaced (`data_quality="unknown"`,
+    `has_upstream_path=None`), logged (`power_graph_traversal_bound_exceeded`), and
+    flows through to the dashboard's own existing "missing path" counting logic
+    honestly (Section 27 test 1 explicitly asserts the equipment is *counted*, not
+    silently dropped).
+
+No new defect was found by this self-re-audit. No further correction was required.
+
+### 41. Findings Table (Final)
+
+| ID | Severity | Status | Evidence |
+|---|---|---|---|
+| F-N1-FALLBACK-1 | HIGH | **CORRECTED** — re-validated EXECUTED — VERIFIED (Sections 27–31, 40) | Was blocking; now closed |
+| F-DIAMOND-1 | INFO | Unchanged, non-blocking, re-confirmed present (Section 32) | Pre-existing, not this correction's scope |
+| F-ARCH-1 | INFO | Unchanged, non-blocking (Part 1 Section 21) | Architectural trade-off, documented |
+| F-N1-FALLBACK-1-SIBLINGS (new, INFO) | Pre-existing, **not blocking**, incidentally also corrected by this fix | `GET /power/capacity-exceptions` and `GET /power/equipment/{id}/power-summary` had the identical unguarded-`equipment_power_summary` defect, predating Phase 3's N+1 work entirely — not previously documented anywhere. Fixed as a side effect of Section 26's root-cause correction (not separately audited beyond confirming the same fix applies), disclosed here rather than silently taken credit for. |
+
+### 42. Residual Risks
+
+- The real `MAX_BATCH_GRAPH_EDGES=20,000` boundary was still exercised via a cheap
+  monkeypatch, not 20,001 real rows, in both Part 1 and this correction's tests — the
+  code path is identical either way, but the exact production-scale number was never
+  built end-to-end. **NOT EXECUTED at full real scale** — same disclosed limitation as
+  Part 1.
+- 10,000-node fresh measurement: **NOT EXECUTED** (Section 29) — analytical only.
+- Live browser dashboard rendering: **NOT EXECUTED** — typecheck + unchanged contract
+  considered sufficient, same as Part 1.
+- `/power/capacity-exceptions` and `/power/equipment/{id}/power-summary` (Section 41's
+  new INFO row) were confirmed fixed only by the shared root-cause argument and were
+  **not independently HTTP-tested in this task** (out of this task's explicit scope) —
+  a future session touching those endpoints should verify directly rather than assume.
+
+### 43. Final Gate
+
+**PHASE 3 CLOSED — VERIFIED**
+
+All required conditions hold, each independently re-verified fresh in this task:
+- F-N1-FALLBACK-1 is genuinely corrected, not hidden (Sections 26, 40).
+- Both dashboard endpoints tested independently (Sections 27, 28).
+- The regression test passes normally, no longer `xfail` (Section 27).
+- The batch N+1 optimization remains fully intact, query count still flat (Section 29).
+- The semantic oracle passes, 14/14, unmodified (Section 32).
+- F-C1 remains valid, 7/7, untouched (Section 33).
+- Prior Phase 3 tests pass, 64/64 (Section 34).
+- Migration integrity holds (Section 35).
+- Security review shows no regression (Section 36).
+- Backend suite passes, 305/305, zero xfail (Section 38).
+- Frontend typecheck passes (Section 37).
+- No unresolved HIGH/CRITICAL Phase 3 defect remains (Sections 41, 42 — only INFO-level,
+  non-blocking items remain, each documented with evidence and rationale).
+
+Phase 3 may now proceed to Phase 4.
