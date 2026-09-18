@@ -16,8 +16,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from app.application.collector_auth import compute_signature
 from tests.api._phase3_helpers import create_room_and_site
 
@@ -159,19 +157,12 @@ async def test_sim_10_out_of_order_delivery_last_write_wins_on_last_seen(client,
     assert device["raw_attributes"]["occurred_at"].startswith(earlier[:19])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): ingest_batch's per-record "
-    "except block calls `await db.rollback()`, which expires EVERY object tracked by the "
-    "session -- including the request-scoped `collector` object obtained once via "
-    "Depends(get_current_collector) before the loop starts. Every record processed AFTER "
-    "the first rejection then crashes with an unhandled MissingGreenlet error the moment "
-    "the S2 assignment check reads `collector.id` again, and is wrongly marked 'rejected' "
-    "instead of 'accepted' -- breaking partial-batch-isolation for the exact 'valid and "
-    "invalid records mixed in one batch' scenario the master prompt requires. Reproduces "
-    "against app/api/v1/collectors.py's ingest_batch.",
-)
 async def test_sim_11_partial_ack_mixed_batch(client, auth_headers):
+    """Finding I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: `ingest_batch` now
+    isolates each record inside its own SAVEPOINT (`db.begin_nested()`) instead of
+    rolling back the whole session on failure, so the request-scoped `collector` object
+    (and every other record's own state) survives a sibling's rejection -- every record
+    after the first rejection is processed correctly, not wrongly rejected."""
     headers = await auth_headers("DCIM Manager")
     sim, integration = await _register_and_assign(client, headers)
     good1 = _record(integration["id"], "10.0.0.60")

@@ -6,6 +6,7 @@ claims. No production code is modified by this file."""
 
 import asyncio
 import json
+import time
 import uuid
 
 import pytest
@@ -19,62 +20,127 @@ from tests.api._phase8_helpers import create_integration, register_collector, si
 from tests.conftest import TEST_DATABASE_URL
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding I1 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): datetime.fromtimestamp() "
-    "in verify_collector_request is not inside the timestamp try/except -- an "
-    "out-of-range X-Collector-Timestamp raises an unhandled OverflowError (500), not a "
-    "clean 401. Reproduces against app/application/collector_auth.py:120.",
+async def _heartbeat_with_raw_timestamp(client, collector, timestamp_header: str):
+    """Signs a real heartbeat request but substitutes an arbitrary, possibly-invalid
+    raw string for the timestamp header (the signature is still computed over that
+    exact string, so a well-formed-but-out-of-window timestamp still signs correctly
+    -- only a malformed one fails at parsing, never at signature verification)."""
+    body = {"status": "ok"}
+    raw_body = json.dumps(body).encode()
+    nonce = uuid.uuid4().hex
+    sig = compute_signature(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), timestamp=timestamp_header,
+        nonce=nonce, raw_body=raw_body,
+    )
+    sig_headers = {
+        "X-Collector-Id": collector["id"], "X-Collector-Timestamp": timestamp_header,
+        "X-Collector-Nonce": nonce, "X-Collector-Signature": sig, "Content-Type": "application/json",
+    }
+    return await client.post(f"/api/v1/collectors/{collector['id']}/heartbeat", content=raw_body, headers=sig_headers), nonce
+
+
+@pytest.mark.parametrize(
+    "timestamp_header",
+    [
+        "9" * 30,  # extremely large positive -- previously OverflowError (Finding I1)
+        "-" + "9" * 30,  # extremely large negative -- previously OverflowError (Finding I1)
+        "not-a-number",  # non-integer
+        "",  # empty
+        "12.5",  # not a valid int literal
+        "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999",  # 99 digits
+    ],
 )
-async def test_I1_oversized_timestamp_header_crashes_instead_of_clean_401(client, auth_headers):
-    """Independent finding I1: `verify_collector_request` parses `X-Collector-Timestamp`
-    with `int(timestamp_header)` inside a try/except, but the SUBSEQUENT
-    `datetime.fromtimestamp(ts, tz=UTC)` call is NOT inside that try/except. A timestamp
-    header that parses as a valid (huge) integer but is out of `datetime`'s representable
-    range raises an unhandled `OverflowError`, which is not a `CollectorAuthError` and is
-    not caught anywhere in the call chain (`get_current_collector` only catches
-    `CollectorAuthError`) -- it should reach FastAPI's generic 500 handler instead of a
-    clean 401."""
+async def test_I1_malformed_or_out_of_range_timestamp_rejected_cleanly(client, auth_headers, timestamp_header):
+    """Finding I1 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: every one of these
+    previously either crashed with an unhandled OverflowError/ValueError (a 500) or was
+    inconsistently handled. `verify_collector_request` now compares entirely in integer
+    epoch-seconds space and bounds the header's length before parsing, so every
+    malformed or out-of-range value is rejected as a clean 401 -- never a 500, and with
+    no traceback or internal detail in the response body."""
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    resp, _nonce = await _heartbeat_with_raw_timestamp(client, collector, timestamp_header)
+    assert resp.status_code == 401, f"expected a clean 401, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert "OverflowError" not in resp.text and "Traceback" not in resp.text
+    assert "traceback" not in json.dumps(body).lower()
+
+
+async def test_I1_stale_timestamp_still_rejected_cleanly(client, auth_headers):
+    """A well-formed but too-old timestamp must still be rejected -- the I1 fix must not
+    weaken the existing replay-window behavior for ordinary out-of-window values."""
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    stale = str(int(time.time()) - 10_000)
+    resp, _nonce = await _heartbeat_with_raw_timestamp(client, collector, stale)
+    assert resp.status_code == 401
+
+
+async def test_I1_future_timestamp_still_rejected_cleanly(client, auth_headers):
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    future = str(int(time.time()) + 10_000)
+    resp, _nonce = await _heartbeat_with_raw_timestamp(client, collector, future)
+    assert resp.status_code == 401
+
+
+async def test_I1_valid_timestamp_within_skew_still_accepted(client, auth_headers):
+    """Existing valid-request behavior must be unchanged by the I1 correction."""
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    valid = str(int(time.time()))
+    resp, _nonce = await _heartbeat_with_raw_timestamp(client, collector, valid)
+    assert resp.status_code == 204
+
+
+async def test_I1_invalid_timestamp_does_not_consume_the_nonce(client, auth_headers, db_session):
+    """A request rejected for a bad timestamp must never reach nonce claiming -- the
+    same nonce must still be usable by a subsequent, validly-timestamped request."""
+    from sqlalchemy import text
+
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)
     body = {"status": "ok"}
     raw_body = json.dumps(body).encode()
-    huge_timestamp = "9" * 30  # parses fine as a Python int, but out of datetime's range
     nonce = uuid.uuid4().hex
-    sig = compute_signature(
-        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), timestamp=huge_timestamp,
-        nonce=nonce, raw_body=raw_body,
+
+    bad_ts = "9" * 30
+    bad_sig = compute_signature(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), timestamp=bad_ts, nonce=nonce, raw_body=raw_body,
     )
-    sig_headers = {
-        "X-Collector-Id": collector["id"], "X-Collector-Timestamp": huge_timestamp,
-        "X-Collector-Nonce": nonce, "X-Collector-Signature": sig, "Content-Type": "application/json",
-    }
-    resp = await client.post(f"/api/v1/collectors/{collector['id']}/heartbeat", content=raw_body, headers=sig_headers)
-    # A well-behaved trust boundary must reject a malformed/out-of-range timestamp with a
-    # clean 4xx, never a 500. This assertion documents the DESIRED behavior; if it fails,
-    # the defect is confirmed (see report finding I1).
-    assert resp.status_code in (400, 401, 422), f"expected a clean 4xx, got {resp.status_code}: {resp.text}"
+    bad_resp = await client.post(
+        f"/api/v1/collectors/{collector['id']}/heartbeat", content=raw_body,
+        headers={
+            "X-Collector-Id": collector["id"], "X-Collector-Timestamp": bad_ts, "X-Collector-Nonce": nonce,
+            "X-Collector-Signature": bad_sig, "Content-Type": "application/json",
+        },
+    )
+    assert bad_resp.status_code == 401
+
+    count = (
+        await db_session.execute(text("SELECT count(*) FROM collector_request_nonce WHERE nonce = :n"), {"n": nonce})
+    ).scalar_one()
+    assert count == 0, "an invalid-timestamp request must never claim a nonce"
+
+    good_ts = str(int(time.time()))
+    good_sig = compute_signature(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), timestamp=good_ts, nonce=nonce, raw_body=raw_body,
+    )
+    good_resp = await client.post(
+        f"/api/v1/collectors/{collector['id']}/heartbeat", content=raw_body,
+        headers={
+            "X-Collector-Id": collector["id"], "X-Collector-Timestamp": good_ts, "X-Collector-Nonce": nonce,
+            "X-Collector-Signature": good_sig, "Content-Type": "application/json",
+        },
+    )
+    assert good_resp.status_code == 204, "the same nonce must still be usable after an invalid-timestamp rejection"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding I2 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): idem.get_or_claim() in "
-    "ingest_batch is called BEFORE the per-record try/except, so an IdempotencyConflict "
-    "(same dedup_key reused with a different payload) is unhandled and crashes the WHOLE "
-    "batch with a 500, instead of marking only that one record 'rejected' and letting "
-    "valid sibling records survive. Reproduces against app/api/v1/collectors.py:326.",
-)
-async def test_I2_same_dedup_key_different_payload_crashes_whole_batch(client, auth_headers):
-    """Independent finding I2: inside `ingest_batch`'s per-record loop,
-    `idem.get_or_claim(...)` is called BEFORE the per-record `try:` block starts. When it
-    raises `IdempotencyConflict` (the exact "same dedup_key + different payload" scenario
-    the master prompt's §10 explicitly requires be tested), that exception is not caught
-    by the per-record `except Exception` (which only wraps the code AFTER the claim is
-    obtained) -- it propagates out of the whole `ingest_batch` endpoint, turning one
-    malicious/buggy record into a hard failure for the ENTIRE batch, not just that one
-    record. This directly contradicts the endpoint's own docstring and the master
-    prompt's explicit partial-batch-isolation requirement ("valid siblings survive
-    invalid records")."""
+async def test_I2_same_dedup_key_different_payload_no_longer_crashes_whole_batch(client, auth_headers):
+    """Finding I2 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: `idem.get_or_claim`
+    is now called inside its own try/except in `ingest_batch`, so an `IdempotencyConflict`
+    (same dedup_key reused with a different payload) is caught and marks only that one
+    record 'rejected' -- valid sibling records in the same batch are unaffected."""
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)
     await client.post(f"/api/v1/collectors/{collector['id']}/capabilities", json={"protocol_codes": ["icmp"]}, headers=headers)
@@ -117,34 +183,20 @@ async def test_I2_same_dedup_key_different_payload_crashes_whole_batch(client, a
     raw2 = json.dumps(mixed_payload).encode()
     sig2 = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw2)
     r2 = await client.post(f"/api/v1/collectors/{collector['id']}/ingest", content=raw2, headers={**sig2, "Content-Type": "application/json"})
-    # DESIRED behavior: 200, with the conflicting record marked "rejected" and the
-    # legitimate sibling record marked "accepted" -- proving partial-batch isolation
-    # actually holds even for an idempotency-hash conflict, not just for a DB-level
-    # rejection. If this fails, the defect (whole-batch crash) is confirmed.
     assert r2.status_code == 200, f"expected isolated per-record handling, got a batch-wide failure: {r2.status_code} {r2.text}"
     results = {r["dedup_key"]: r["status"] for r in r2.json()["results"]}
+    assert results.get(dedup_key) == "rejected"
     assert results.get(good_key) == "accepted", f"a valid sibling record must survive a conflicting one, got: {results}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): accept_reconciliation/"
-    "reject_reconciliation fetch ReconciliationDiff via a plain db.get() with no row "
-    "lock and no optimistic-concurrency version check, so two genuinely concurrent "
-    "requests (one accept, one reject) on the same diff can both pass the 'pending' "
-    "guard and both report 200 -- a lost-update race, not a deterministic single "
-    "winner. Reproduces against app/application/discovery_service.py.",
-)
-async def test_I3_concurrent_accept_and_reject_race_on_same_diff(make_user, db_session):
-    """Independent finding I3: `accept_reconciliation`/`reject_reconciliation` both
-    fetch the `ReconciliationDiff` via a plain `db.get()` (no `SELECT ... FOR UPDATE`,
-    no optimistic-concurrency version check) and then unconditionally overwrite
-    `diff.status`. Two genuinely concurrent requests -- one accept, one reject -- on the
-    SAME diff can both pass the `diff.status != "pending"` guard (both read "pending"
-    before either commits) and both report success, with only the last committed write
-    actually reflected in the database -- exactly the "accept vs reject race" scenario
-    the master prompt's §13/§14 explicitly requires be tested. This uses genuinely
-    separate DB sessions/connections (the `per_request_client` pattern from
+async def test_I3_concurrent_accept_and_reject_race_no_longer_loses_a_decision(make_user, db_session):
+    """Corrected behavior for Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md):
+    `accept_reconciliation`/`reject_reconciliation` now fetch the `ReconciliationDiff`
+    via `SELECT ... FOR UPDATE`, so two genuinely concurrent requests -- one accept, one
+    reject -- on the SAME diff are serialized on the row lock: the second request blocks
+    until the first commits, then observes the now-committed non-"pending" status and
+    gets a clean 409, instead of both racing past the "pending" guard. This uses
+    genuinely separate DB sessions/connections (the `per_request_client` pattern from
     tests/integration/test_idempotency_concurrency.py), not a shared session, so it is a
     real concurrency test, not a sequential simulation."""
 
@@ -217,9 +269,9 @@ async def test_I3_concurrent_accept_and_reject_race_on_same_diff(make_user, db_s
         await engine.dispose()
 
     statuses = [r.status_code for r in results]
-    # DESIRED behavior: exactly one of the two racing decisions succeeds (200) and the
-    # other is rejected as a conflict (409) -- deterministic, matching the "Already
-    # Decided" guard's own intent. If BOTH return 200, the race is confirmed: two
-    # human decisions both reported success while the database holds only one.
+    # Corrected behavior: exactly one of the two racing decisions succeeds (200) and the
+    # other is rejected as a clean conflict (409) -- deterministic, matching the
+    # "Already Decided" guard's own intent, with the SELECT ... FOR UPDATE row lock as
+    # the actual point of serialization.
     assert statuses.count(200) == 1, f"expected exactly one racing decision to win, got statuses {statuses}"
     assert statuses.count(409) == 1, f"expected exactly one racing decision to lose as a clean conflict, got statuses {statuses}"

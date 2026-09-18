@@ -28,6 +28,7 @@ from app.application.collector_service import (
     run_polling_cycle,
 )
 from app.application.discovery_service import ingest_discovery
+from app.application.idempotency import IdempotencyConflict, IdempotencyStillProcessing
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, NotFoundError, UnauthorizedCollectorError
 from app.core.logging import get_logger
@@ -323,46 +324,86 @@ async def ingest_batch(
     results: list[IngestRecordResult] = []
     for record in body.records:
         request_hash = idem.hash_request_body(record.model_dump(mode="json"))
-        outcome = await idem.get_or_claim(
-            db, key=f"{collector_id}:{record.dedup_key}", endpoint="collector_ingest", request_hash=request_hash,
-        )
+        # Findings I2/I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): `get_or_claim` itself
+        # can raise (a reused dedup_key with a different payload, or a claim still
+        # genuinely in flight) -- that must be isolated to THIS record exactly like
+        # every other per-record failure, never allowed to escape and fail sibling
+        # records still to be processed.
+        try:
+            outcome = await idem.get_or_claim(
+                db, key=f"{collector_id}:{record.dedup_key}", endpoint="collector_ingest", request_hash=request_hash,
+            )
+        except IdempotencyConflict:
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected",
+                    error="This dedup_key was already used with a different request body.",
+                )
+            )
+            continue
+        except IdempotencyStillProcessing:
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected",
+                    error="This record is still being processed by a concurrent request; retry shortly.",
+                )
+            )
+            continue
+
         if outcome.cached is not None:
             results.append(IngestRecordResult(dedup_key=record.dedup_key, status="duplicate"))
             continue
 
         assert outcome.claim is not None
-        claim_id = outcome.claim.id  # read now -- a rollback below expires the ORM object
+        claim_id = outcome.claim.id
+        # Finding I4: a failed record must not corrupt the SESSION-wide ORM state that
+        # later records (and the request-scoped `collector` object obtained once via
+        # Depends(get_current_collector) before this loop began) still depend on. A
+        # full `await db.rollback()` here expires EVERY object the session is
+        # currently tracking, not just this record's own attempted writes -- the next
+        # record's `collector.id` read would then need an implicit lazy reload outside
+        # an awaited context, crashing with MissingGreenlet. A SAVEPOINT (nested
+        # transaction) is the correct, narrower primitive: rolling one back discards
+        # only the DML issued since it was opened (this record's own attempted
+        # DiscoveredDevice/ReconciliationDiff/Outbox writes), leaving every other
+        # object in the session's identity map -- including `collector` -- untouched
+        # and still perfectly usable on the next iteration.
         try:
-            # §27 (trust boundary): a valid collector signature only proves WHO is
-            # sending this batch, never that this collector is authorized to report
-            # for `record.integration_id` -- a registered collector is semi-trusted,
-            # not an implicitly-authoritative source for any integration it names
-            # (PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S2). Per-record, not
-            # per-batch, so one record naming an unassigned integration doesn't cost
-            # the whole batch.
-            assignment = await current_assignment(db, record.integration_id)
-            if assignment is None or assignment.collector_id != collector.id:
-                raise ApiError(
-                    status_code=403, title="Not Assigned",
-                    detail=(
-                        f"Collector {collector.id} is not the currently assigned collector "
-                        f"for integration {record.integration_id}."
-                    ),
+            async with db.begin_nested():
+                # §27 (trust boundary): a valid collector signature only proves WHO is
+                # sending this batch, never that this collector is authorized to report
+                # for `record.integration_id` -- a registered collector is semi-trusted,
+                # not an implicitly-authoritative source for any integration it names
+                # (PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S2). Per-record, not
+                # per-batch, so one record naming an unassigned integration doesn't cost
+                # the whole batch.
+                assignment = await current_assignment(db, record.integration_id)
+                if assignment is None or assignment.collector_id != collector.id:
+                    raise ApiError(
+                        status_code=403, title="Not Assigned",
+                        detail=(
+                            f"Collector {collector.id} is not the currently assigned collector "
+                            f"for integration {record.integration_id}."
+                        ),
+                    )
+                enriched_attrs = dict(record.raw_attributes)
+                enriched_attrs["occurred_at"] = record.occurred_at.isoformat()
+                enriched_attrs["received_at"] = datetime.now(UTC).isoformat()
+                await ingest_discovery(
+                    db, integration_id=record.integration_id, external_identifier=record.external_identifier,
+                    raw_attributes=enriched_attrs, correlation_id=None, causation_id=body.batch_id,
                 )
-            enriched_attrs = dict(record.raw_attributes)
-            enriched_attrs["occurred_at"] = record.occurred_at.isoformat()
-            enriched_attrs["received_at"] = datetime.now(UTC).isoformat()
-            await ingest_discovery(
-                db, integration_id=record.integration_id, external_identifier=record.external_identifier,
-                raw_attributes=enriched_attrs, correlation_id=None, causation_id=body.batch_id,
-            )
-            await idem.complete_claim(db, outcome.claim, response_status=200, response_body={"status": "accepted"})
+                await idem.complete_claim(db, outcome.claim, response_status=200, response_body={"status": "accepted"})
+            # The savepoint above released cleanly (no exception) -- persist it for
+            # real and make it visible to other sessions/requests.
             await db.commit()
             results.append(IngestRecordResult(dedup_key=record.dedup_key, status="accepted"))
         except Exception as exc:  # noqa: BLE001 -- one record's failure (e.g. an
-            # unknown integration_id) must not fail the rest of the batch; the claim is
-            # released so a retry of just this record can succeed later.
-            await db.rollback()
+            # unknown integration_id) must not fail the rest of the batch; the nested
+            # transaction has already been rolled back to its savepoint by the `async
+            # with` block above (automatic on exception), so only this record's own
+            # attempted writes were discarded. The claim is released so a retry of
+            # just this record can succeed later.
             await idem.release_claim(db, claim_id)
             results.append(IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error=str(exc)))
 
