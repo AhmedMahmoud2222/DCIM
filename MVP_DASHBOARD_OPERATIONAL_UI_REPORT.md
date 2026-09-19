@@ -63,3 +63,17 @@ Collector and integration health remain separate views.  Dashboard alarm counts 
 bounded open-alarm result pending a dedicated aggregate read model if deployments need
 counts beyond the current API cap.  The demo remains the existing seeded/simulator path;
 this checkpoint adds no production-domain demo shortcut.
+
+## GitHub CI validation
+
+GitHub Actions CI run `35423397272` completed successfully for commit
+`5b85849fd410d8e92652e0666d15a3f5ef497c99`.  Its PostgreSQL 16 backend job executed
+`alembic upgrade head`, confirmed exactly one Alembic head, and completed the migration
+round trip `head -> 0010_mvp_alarms -> head`; this explicitly downgraded
+`0013_metric_asset` to `0012_retention_series_identity` and re-upgraded it.
+
+Executed results: Ruff passed, mypy passed for 99 source files, PostgreSQL retention
+validation passed (6 tests), and the remaining backend suite passed (531 tests, 14
+warnings).  The frontend job passed TypeScript typecheck, ESLint, and production build.
+The only GitHub annotation was the platform Node 20 deprecation notice from GitHub
+Actions dependencies; it is not an application test failure.
