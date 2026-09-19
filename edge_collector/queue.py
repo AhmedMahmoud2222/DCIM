@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,8 +44,9 @@ class QueueMetrics:
 class SQLiteQueue:
     """A transactionally bounded SQLite queue for unacknowledged observations."""
 
-    def __init__(self, config: CollectorConfig) -> None:
+    def __init__(self, config: CollectorConfig, *, clock: Callable[[], datetime] | None = None) -> None:
         self.config = config
+        self._clock = clock or _utc_now
         self.config.database_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._connection = sqlite3.connect(str(config.database_path), isolation_level=None)
@@ -74,7 +75,7 @@ class SQLiteQueue:
     def enqueue(self, record: QueueRecord) -> bool:
         payload_json = json.dumps(record.payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         payload_bytes = len(payload_json.encode("utf-8"))
-        now = _utc_now()
+        now = self._clock()
         with self._transaction():
             self._expire(now)
             existing = self._connection.execute(

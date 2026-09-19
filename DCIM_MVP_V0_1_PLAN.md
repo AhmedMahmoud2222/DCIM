@@ -82,3 +82,17 @@ raw, daily, or both across the boundary and identifies its resolution. Daily agg
 have unlimited retention by default; configurable policy changes are processed by the
 job, never by immediate destructive configuration changes. Alarm lifecycle/history is
 explicitly excluded and retains its independent policy.
+
+### Retention validation clarification
+
+The canonical telemetry-series identity is `integration + managed asset (or the
+unmanaged sentinel) + external identifier + canonical metric + unit`. It is stored as
+`series_key` on both raw readings and daily aggregates, is unique with the UTC calendar
+day on aggregates, and is the only identity used for late-arrival merge and compaction.
+This prevents an asset replacement or unit change from being silently merged into a
+historical series. The retention cutoff is calendar-day based: only UTC days strictly
+before the cutoff date are compacted, so the boundary day remains raw even when part of
+it is older than the rolling instant. A late reading for an existing aggregate updates
+that aggregate in the ingestion transaction and is then removed; a late reading with no
+aggregate remains raw for the normal compactor. Alarm `opened_at`/`cleared_at` retain the
+edge `occurred_at`; telemetry `received_at` remains central receipt evidence.

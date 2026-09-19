@@ -18,4 +18,4 @@ def test_monitoring_defaults_and_polling_presets():
 def test_daily_aggregate_preserves_daily_excursion_information():
     names = {column.name for column in DailyTelemetryAggregate.__table__.columns}
     assert {"average_value", "minimum_value", "maximum_value", "sample_count", "day", "metric", "unit"} <= names
-    assert any(index.name == "uq_daily_telemetry_sensor_metric_day" for index in DailyTelemetryAggregate.__table__.constraints)
+    assert any(index.name == "uq_daily_telemetry_series_day" for index in DailyTelemetryAggregate.__table__.constraints)

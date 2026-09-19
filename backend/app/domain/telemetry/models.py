@@ -16,6 +16,20 @@ from app.db.base import Base, TimestampMixin, UUIDPkMixin
 CANONICAL_METRICS = ("temperature_c", "humidity_percent", "power_kw", "load_percent", "availability")
 
 
+def telemetry_series_key(
+    integration_id: uuid.UUID, managed_asset_id: uuid.UUID | None, external_identifier: str, metric: str, unit: str
+) -> str:
+    """Return the immutable identity used by raw and downsampled telemetry.
+
+    An external identifier alone is not stable enough: the same integration can
+    legitimately report different assets or units with the same label during a
+    replacement.  The asset (when present), source identifier, canonical metric
+    and unit therefore all participate in the durable series identity.
+    """
+    asset_component = str(managed_asset_id) if managed_asset_id is not None else "unmanaged"
+    return ":".join((str(integration_id), asset_component, external_identifier, metric, unit))
+
+
 class IntegrationMetricMapping(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "integration_metric_mapping"
     __table_args__ = (
@@ -48,6 +62,7 @@ class TelemetryReading(Base, UUIDPkMixin):
     )
     managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), index=True)
     external_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    series_key: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -65,13 +80,15 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
 
     __tablename__ = "daily_telemetry_aggregate"
     __table_args__ = (
-        UniqueConstraint("integration_id", "external_identifier", "metric", "day", name="uq_daily_telemetry_sensor_metric_day"),
+        UniqueConstraint("series_key", "day", name="uq_daily_telemetry_series_day"),
+        Index("ix_daily_telemetry_series_day", "series_key", "day"),
         Index("ix_daily_telemetry_integration_metric_day", "integration_id", "metric", "day"),
         Index("ix_daily_telemetry_asset_metric_day", "managed_asset_id", "metric", "day"),
     )
     integration_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("integration.id", ondelete="CASCADE"), nullable=False)
     managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), nullable=True)
     external_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
+    series_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     day: Mapped[date] = mapped_column(nullable=False)

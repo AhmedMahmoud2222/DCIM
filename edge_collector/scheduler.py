@@ -36,10 +36,21 @@ class PollSchedule:
             return False
         if self.last_started_at is None:
             return True
-        return now >= self.last_started_at + timedelta(
-            seconds=self.interval_seconds
-            + stable_jitter_seconds(self.integration_id, self.interval_seconds)
-        )
+        return now >= self.next_due_at()
+
+    def next_due_at(self) -> datetime:
+        """Return the next stable grid slot, not ``last start + jitter``.
+
+        Stable phase staggering spreads integrations without adding permanent
+        cadence drift.  A slow poll that misses slots gets one next execution,
+        rather than a backlog of overlapping executions.
+        """
+        if self.last_started_at is None:
+            raise ValueError("no next due time before the first poll")
+        offset = stable_jitter_seconds(self.integration_id, self.interval_seconds)
+        timestamp = int(self.last_started_at.timestamp())
+        next_slot = ((timestamp - offset) // self.interval_seconds + 1) * self.interval_seconds + offset
+        return datetime.fromtimestamp(next_slot, tz=self.last_started_at.tzinfo)
 
     def start(self, now: datetime) -> bool:
         if not self.due(now):

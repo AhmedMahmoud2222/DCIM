@@ -8,28 +8,29 @@ from edge_collector.config import CollectorConfig
 from edge_collector.queue import QueueCorruptionError, QueueRecord, SQLiteQueue
 
 UTC = timezone.utc
+TEST_NOW = datetime(2026, 9, 18, tzinfo=UTC)
 
 
 def record(identifier: str, at: datetime | None = None) -> QueueRecord:
     return QueueRecord(
         record_id=identifier,
-        occurred_at=at or datetime(2026, 9, 18, tzinfo=UTC),
+        occurred_at=at or TEST_NOW,
         payload={"metric": "temperature_c", "value": 21.5, "source": identifier},
     )
 
 
 def queue_at(tmp_path, **overrides) -> SQLiteQueue:
-    return SQLiteQueue(CollectorConfig(database_path=tmp_path / "queue.sqlite3", **overrides))
+    return SQLiteQueue(CollectorConfig(database_path=tmp_path / "queue.sqlite3", **overrides), clock=lambda: TEST_NOW)
 
 
 def test_restart_preserves_unacknowledged_records(tmp_path):
     """Removing the process must not remove a collected, unsent observation."""
     path = tmp_path / "queue.sqlite3"
-    queue = SQLiteQueue(CollectorConfig(database_path=path))
+    queue = SQLiteQueue(CollectorConfig(database_path=path), clock=lambda: TEST_NOW)
     queue.enqueue(record("first"))
     queue.close()
 
-    reopened = SQLiteQueue(CollectorConfig(database_path=path))
+    reopened = SQLiteQueue(CollectorConfig(database_path=path), clock=lambda: TEST_NOW)
 
     assert [item.record_id for item in reopened.list_due(datetime(2026, 9, 19, tzinfo=UTC))] == ["first"]
 

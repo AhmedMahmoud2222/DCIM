@@ -8,6 +8,7 @@ from edge_collector.retry import RetryPolicy
 from edge_collector.runtime import EdgeRuntime
 
 UTC = timezone.utc
+TEST_NOW = datetime(2026, 9, 18, tzinfo=UTC)
 
 
 class FakeClient:
@@ -28,13 +29,13 @@ class FakeClient:
 
 
 def make_record(identifier: str) -> QueueRecord:
-    return QueueRecord(identifier, datetime(2026, 9, 18, tzinfo=UTC), {"external_identifier": identifier})
+    return QueueRecord(identifier, TEST_NOW, {"external_identifier": identifier})
 
 
 def test_runtime_acknowledges_only_accepted_and_duplicate_records(tmp_path):
     from edge_collector.client import AckResult
 
-    queue = SQLiteQueue(CollectorConfig(tmp_path / "queue.sqlite"))
+    queue = SQLiteQueue(CollectorConfig(tmp_path / "queue.sqlite"), clock=lambda: TEST_NOW)
     queue.enqueue(make_record("accepted"))
     queue.enqueue(make_record("rejected"))
     queue.enqueue(make_record("duplicate"))
@@ -51,7 +52,7 @@ def test_runtime_defers_timeout_using_bounded_backoff(tmp_path):
     from edge_collector.client import RetryableTransportError
 
     now = datetime(2026, 9, 18, 1, tzinfo=UTC)
-    queue = SQLiteQueue(CollectorConfig(tmp_path / "queue.sqlite"))
+    queue = SQLiteQueue(CollectorConfig(tmp_path / "queue.sqlite"), clock=lambda: TEST_NOW)
     queue.enqueue(make_record("timeout"))
     client = FakeClient(flush_error=RetryableTransportError("timeout"))
     runtime = EdgeRuntime(
@@ -69,7 +70,7 @@ def test_runtime_sends_heartbeat_periodically_with_queue_metrics(tmp_path):
     from edge_collector.client import AckResult
 
     now = datetime(2026, 9, 18, 1, tzinfo=UTC)
-    queue = SQLiteQueue(CollectorConfig(tmp_path / "queue.sqlite"))
+    queue = SQLiteQueue(CollectorConfig(tmp_path / "queue.sqlite"), clock=lambda: TEST_NOW)
     client = FakeClient(AckResult(frozenset(), frozenset()))
     runtime = EdgeRuntime(
         queue, client, retry_policy=RetryPolicy(jitter_ratio=0), heartbeat_interval_seconds=60, clock=lambda: now

@@ -18,9 +18,13 @@ from app.domain.telemetry.models import TelemetryReading
 
 def condition_matches(rule_type: str, threshold: float | None, value: float) -> bool:
     if rule_type == "threshold_high":
-        return value > float(threshold)  # threshold presence is DB-enforced
+        if threshold is None:
+            raise ValueError("threshold rule lacks a threshold")
+        return value > threshold
     if rule_type == "threshold_low":
-        return value < float(threshold)
+        if threshold is None:
+            raise ValueError("threshold rule lacks a threshold")
+        return value < threshold
     if rule_type == "availability_unavailable":
         return value <= 0
     raise ValueError(f"Unsupported alarm rule type: {rule_type}")
@@ -61,7 +65,30 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
         matches = condition_matches(
             rule.rule_type, float(rule.threshold) if rule.threshold is not None else None, float(reading.value)
         )
+        # Collector delivery is at-least-once and may be out of occurrence order.
+        # Never let an older reading overwrite a lifecycle decision made from a
+        # newer observation.  The original occurred_at remains the operational
+        # event time; received_at is retained in the reading/details for traceability.
+        if open_alarm is not None and open_alarm.telemetry_reading_id is not None:
+            previous = await db.get(TelemetryReading, open_alarm.telemetry_reading_id)
+            if previous is not None and reading.occurred_at < previous.occurred_at:
+                continue
         if matches and open_alarm is None:
+            latest_cleared = (
+                await db.execute(
+                    select(Alarm)
+                    .where(
+                        Alarm.rule_id == rule.id,
+                        Alarm.subject_key == subject_key,
+                        Alarm.status == "CLEARED",
+                        Alarm.cleared_at >= reading.occurred_at,
+                    )
+                    .order_by(Alarm.cleared_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if latest_cleared is not None:
+                continue
             alarm = Alarm(
                 id=uuid.uuid4(),
                 rule_id=rule.id,

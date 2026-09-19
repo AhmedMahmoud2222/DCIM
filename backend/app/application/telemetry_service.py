@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
+from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading, telemetry_series_key
 
 
 class MetricMappingNotFound(ValueError):
@@ -52,6 +52,9 @@ async def ingest_reading(
             integration_id=integration_id,
             mapping_id=mapping.id,
             external_identifier=external_identifier,
+            series_key=telemetry_series_key(
+                integration_id, None, external_identifier, mapping.canonical_metric, mapping.unit
+            ),
             dedup_key=dedup_key,
             metric=mapping.canonical_metric,
             unit=mapping.unit,

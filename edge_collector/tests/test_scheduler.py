@@ -27,5 +27,21 @@ def test_one_inflight_poll_and_stable_bounded_jitter():
     schedule.finish()
     jitter = stable_jitter_seconds("integration-a", 300)
     assert stable_jitter_seconds("integration-a", 300) == jitter
-    assert not schedule.due(now + timedelta(seconds=299 + jitter))
-    assert schedule.due(now + timedelta(seconds=300 + jitter))
+    next_due = schedule.next_due_at()
+    assert stable_jitter_seconds("integration-a", 300) == jitter
+    assert next_due > now
+    assert (next_due - now).total_seconds() <= 300
+    assert not schedule.due(next_due - timedelta(microseconds=1))
+    assert schedule.due(next_due)
+
+
+def test_stable_phase_does_not_add_jitter_to_every_cycle():
+    schedule = PollSchedule("integration-b")
+    first = datetime(2026, 9, 19, tzinfo=UTC)
+    assert schedule.start(first)
+    schedule.finish()
+    second = schedule.next_due_at()
+    assert schedule.start(second)
+    schedule.finish()
+    third = schedule.next_due_at()
+    assert (third - second).total_seconds() == 300

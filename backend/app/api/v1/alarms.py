@@ -1,11 +1,13 @@
 """Minimal human alarm API; collectors only ever submit telemetry."""
 
+import base64
+import json
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -101,7 +103,7 @@ async def alarm_history(
     rule_id: uuid.UUID | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
-    cursor: datetime | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("alarm:read")),
@@ -126,10 +128,16 @@ async def alarm_history(
     if end is not None:
         stmt = stmt.where(Alarm.opened_at <= end)
     if cursor is not None:
-        stmt = stmt.where(Alarm.opened_at < cursor)
+        cursor_opened_at, cursor_id = _decode_cursor(cursor)
+        stmt = stmt.where(
+            or_(
+                Alarm.opened_at < cursor_opened_at,
+                and_(Alarm.opened_at == cursor_opened_at, Alarm.id < cursor_id),
+            )
+        )
     rows = (await db.execute(stmt)).scalars().all()
     page, has_more = rows[:limit], len(rows) > limit
-    next_cursor = page[-1].opened_at.isoformat() if has_more and page else None
+    next_cursor = _encode_cursor(page[-1]) if has_more and page else None
     return AlarmHistoryPage(items=[_out(row) for row in page], next_cursor=next_cursor)
 
 
@@ -157,3 +165,18 @@ def _out(row: Alarm) -> AlarmOut:
         cleared_at=row.cleared_at,
         last_value=float(row.last_value),
     )
+
+
+def _encode_cursor(alarm: Alarm) -> str:
+    payload = json.dumps({"opened_at": alarm.opened_at.isoformat(), "id": str(alarm.id)}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        return datetime.fromisoformat(payload["opened_at"]), uuid.UUID(payload["id"])
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        from app.core.errors import ApiError
+
+        raise ApiError(status_code=422, title="Invalid history cursor", detail="Cursor is malformed.") from error
