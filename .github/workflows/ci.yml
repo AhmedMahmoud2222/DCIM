@@ -77,6 +77,12 @@ jobs:
         run: mypy app
       - name: Run migrations
         run: alembic upgrade head
+      - name: Validate retention migration round trip
+        run: |
+          test "$(alembic heads | wc -l)" -eq 1
+          alembic downgrade 0010_mvp_alarms
+          alembic upgrade head
+          test "$(alembic heads | wc -l)" -eq 1
       - name: Bootstrap privileged retention role
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
       - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
@@ -86,8 +92,10 @@ jobs:
         # tests/unit/test_drivers.py and the collector poll-now tests would otherwise
         # fail with PermissionError on every run, regardless of this PR's own changes.
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
-      - name: Run tests
-        run: pytest -q
+      - name: Run PostgreSQL retention hostile validation
+        run: pytest -q tests/integration/test_mvp_retention_hostile.py
+      - name: Run regression tests
+        run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
 
   frontend:
     runs-on: ubuntu-latest

@@ -41,6 +41,16 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 _APP_TRUNCATE_TABLES = [
     "idempotency_key",
     "outbox_event",
+    # MVP telemetry/alarm tables are per-test data, just like inventory.  Listing
+    # their roots prevents focused PostgreSQL retention tests from observing a
+    # prior test's daily aggregate or collector-scoped deduplication key.
+    "alarm",
+    "alarm_rule",
+    "daily_telemetry_aggregate",
+    "telemetry_reading",
+    "integration_metric_mapping",
+    "integration",
+    "collector",
     "power_node",  # utility_intake rows have neither managed_asset_id nor owning_asset_id
     # set, so they aren't reached by managed_asset's own CASCADE below — power_connection/
     # power_capacity/pdu_outlet (all FK -> power_node) are still cascaded from this.

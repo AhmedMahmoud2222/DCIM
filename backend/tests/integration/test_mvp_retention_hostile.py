@@ -4,11 +4,14 @@ These tests deliberately use the actual ORM transaction boundary.  They are not
 SQLite substitutes: row locking and the unique constraint are PostgreSQL behavior.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.application.telemetry_retention import compact_eligible_raw, merge_late_reading
 from app.domain.integration.models import Collector, Integration
@@ -131,3 +134,50 @@ async def test_rollback_after_flush_or_delete_preserves_recoverable_raw(db_sessi
     # New transaction sees original raw record; no committed aggregate exists.
     assert (await db_session.execute(select(TelemetryReading))).scalar_one()
     assert (await db_session.execute(select(DailyTelemetryAggregate))).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_daily_series_day_unique_constraint_is_database_enforced(db_session, telemetry_series):
+    now, integration, _ = telemetry_series
+    series_key = telemetry_series_key(integration.id, None, "sensor-a", "temperature_c", "celsius")
+    day = (now - timedelta(days=366)).date()
+    db_session.add_all(
+        (
+            DailyTelemetryAggregate(
+                integration_id=integration.id, external_identifier="sensor-a", series_key=series_key,
+                metric="temperature_c", unit="celsius", day=day,
+                average_value=1, minimum_value=1, maximum_value=1, sample_count=1,
+            ),
+            DailyTelemetryAggregate(
+                integration_id=integration.id, external_identifier="sensor-a", series_key=series_key,
+                metric="temperature_c", unit="celsius", day=day,
+                average_value=2, minimum_value=2, maximum_value=2, sample_count=1,
+            ),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_overlapping_postgres_compactors_do_not_double_count(db_engine, db_session, telemetry_series):
+    now, _, add = telemetry_series
+    old = now - timedelta(days=366)
+    for value in (1, 2, 4):
+        await add(value=value, occurred_at=old)
+    await db_session.commit()
+    sessions = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+
+    async def worker() -> None:
+        async with sessions() as session:
+            async with session.begin():
+                await compact_eligible_raw(session, now=now)
+
+    await asyncio.gather(worker(), worker())
+    aggregates = (await db_session.execute(select(DailyTelemetryAggregate))).scalars().all()
+    raw = (await db_session.execute(select(TelemetryReading))).scalars().all()
+    assert len(aggregates) == 1
+    assert aggregates[0].sample_count == 3
+    assert float(aggregates[0].average_value) == pytest.approx(7 / 3)
+    assert raw == []
