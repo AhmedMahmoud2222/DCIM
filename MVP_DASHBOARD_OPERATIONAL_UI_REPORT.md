@@ -28,6 +28,10 @@ by `managed_asset_id`; it never matches a hostname, asset tag, or external ident
 in the browser.  Migration `0013_metric_mapping_managed_asset` adds the nullable FK
 and index without guessing mappings for historical data.
 
+The migration file is named `0013_metric_mapping_managed_asset.py`; its Alembic
+revision is the PostgreSQL-compatible `0013_metric_asset` (the version table's
+established `VARCHAR(32)` limit is part of migration compatibility).
+
 ## Operations views
 
 Equipment now shows current telemetry, occurred and (where different) received time,

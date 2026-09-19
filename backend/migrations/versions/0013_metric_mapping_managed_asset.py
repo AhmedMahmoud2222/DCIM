@@ -7,7 +7,8 @@ Revises: 0012_retention_series_identity
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0013_metric_mapping_managed_asset"
+# alembic_version.version_num is VARCHAR(32) in the established schema.
+revision = "0013_metric_asset"
 down_revision = "0012_retention_series_identity"
 branch_labels = None
 depends_on = None
