@@ -4,7 +4,6 @@ export interface TelemetryReading {
   id: string;
   integration_id: string;
   managed_asset_id: string | null;
-  managed_asset_id: string | null;
   external_identifier: string;
   metric: string;
   unit: string;
@@ -22,6 +21,7 @@ export interface Alarm {
   id: string;
   rule_id: string;
   integration_id: string;
+  managed_asset_id: string | null;
   subject_key: string;
   status: "ACTIVE" | "ACKNOWLEDGED" | "CLEARED";
   opened_at: string;
