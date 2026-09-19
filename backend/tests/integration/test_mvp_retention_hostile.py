@@ -117,6 +117,9 @@ async def test_late_without_aggregate_remains_raw_until_normal_compaction(db_ses
 async def test_rollback_after_flush_or_delete_preserves_recoverable_raw(db_session, telemetry_series, monkeypatch):
     now, _, add = telemetry_series
     await add(value=8, occurred_at=now - timedelta(days=366))
+    # The raw observation must already be durable before simulating a later
+    # compaction failure; otherwise this would only test rollback of setup data.
+    await db_session.commit()
     original_flush = db_session.flush
     calls = 0
 
