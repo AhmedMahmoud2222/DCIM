@@ -33,6 +33,7 @@ class AlarmOut(BaseModel):
     id: uuid.UUID
     rule_id: uuid.UUID
     integration_id: uuid.UUID
+    managed_asset_id: uuid.UUID | None
     subject_key: str
     status: str
     opened_at: datetime
@@ -158,6 +159,7 @@ def _out(row: Alarm) -> AlarmOut:
         id=row.id,
         rule_id=row.rule_id,
         integration_id=row.integration_id,
+        managed_asset_id=row.managed_asset_id,
         subject_key=row.subject_key,
         status=row.status,
         opened_at=row.opened_at,

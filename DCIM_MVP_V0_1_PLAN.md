@@ -70,6 +70,16 @@
 
 Coverage maps queue/retry/SNMP to Tasks 1–3, telemetry/alarm to Task 4, and product/demo/performance/docs to Task 5. No placeholder interfaces are referenced outside their producing task. The full VendorProfile/DeviceProfile catalog and unrelated deferred findings remain outside this plan.
 
+### Operational UI implementation note
+
+The MVP operator path reuses the existing Dashboard, location hierarchy, room floor
+plan, rack elevation, equipment detail, power, collector and integration screens.  A
+thin metric mapping may reference one authoritative `ManagedAsset`; collector ingestion
+copies that association into telemetry and the equipment view queries it directly.
+Freshness is two configured integration polling intervals, with no global five-minute
+assumption.  History consumes the bounded raw/daily telemetry API and retains its
+resolution metadata.  Alarm acknowledgement remains server-authorized and audited.
+
 ## Long-term telemetry retention and downsampling
 
 Raw sensor telemetry is retained at normal polling resolution for one year. After that,

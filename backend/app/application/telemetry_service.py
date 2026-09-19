@@ -51,9 +51,10 @@ async def ingest_reading(
             collector_id=collector_id,
             integration_id=integration_id,
             mapping_id=mapping.id,
+            managed_asset_id=mapping.managed_asset_id,
             external_identifier=external_identifier,
             series_key=telemetry_series_key(
-                integration_id, None, external_identifier, mapping.canonical_metric, mapping.unit
+                integration_id, mapping.managed_asset_id, external_identifier, mapping.canonical_metric, mapping.unit
             ),
             dedup_key=dedup_key,
             metric=mapping.canonical_metric,

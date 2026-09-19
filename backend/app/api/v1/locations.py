@@ -403,6 +403,7 @@ async def create_room(
 @router.get("/rooms", response_model=Page[RoomOut])
 async def list_rooms(
     floor_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
@@ -412,6 +413,14 @@ async def list_rooms(
     if floor_id is not None:
         stmt = stmt.where(Room.floor_id == floor_id)
         count_stmt = count_stmt.where(Room.floor_id == floor_id)
+    if site_id is not None:
+        site_rooms = (
+            Floor.id == Room.floor_id,
+            Building.id == Floor.building_id,
+            Building.site_id == site_id,
+        )
+        stmt = stmt.join(Floor, site_rooms[0]).join(Building, site_rooms[1]).where(site_rooms[2])
+        count_stmt = count_stmt.join(Floor, site_rooms[0]).join(Building, site_rooms[1]).where(site_rooms[2])
     total = (await db.execute(count_stmt)).scalar_one()
     rows = (await db.execute(stmt.order_by(Room.code).offset(pagination.offset).limit(pagination.limit))).scalars().all()
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)

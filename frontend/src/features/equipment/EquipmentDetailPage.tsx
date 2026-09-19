@@ -5,6 +5,8 @@ import { Link, useParams } from "react-router-dom";
 import { getEquipment, moveEquipment, retireEquipment } from "@/features/equipment/api";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
+import { acknowledgeAlarm, getAlarmHistory, getLatestTelemetry, getTelemetryHistory } from "@/features/telemetry/api";
+import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, SIDES, Side } from "@/types";
 
@@ -34,6 +36,8 @@ export function EquipmentDetailPage() {
   const [uStart, setUStart] = useState("");
   const [uEnd, setUEnd] = useState("");
   const [side, setSide] = useState<Side>("front");
+  const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
+  const [historyHours, setHistoryHours] = useState(24);
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -46,6 +50,22 @@ export function EquipmentDetailPage() {
     queryKey: ["power", "equipment-summary", equipmentId],
     queryFn: () => getEquipmentPowerSummary(equipmentId!),
     enabled: !!equipmentId,
+  });
+  const latestTelemetryQuery = useQuery({
+    queryKey: ["telemetry", "latest", equipmentId], queryFn: () => getLatestTelemetry(equipmentId!), enabled: !!equipmentId,
+  });
+  const alarmHistoryQuery = useQuery({
+    queryKey: ["alarms", "equipment", equipmentId], queryFn: () => getAlarmHistory(equipmentId!), enabled: !!equipmentId,
+  });
+  const metric = selectedMetric ?? latestTelemetryQuery.data?.[0]?.metric ?? null;
+  const historyQuery = useQuery({
+    queryKey: ["telemetry", "history", equipmentId, metric, historyHours],
+    queryFn: () => getTelemetryHistory(equipmentId!, metric!, new Date(Date.now() - historyHours * 3_600_000), new Date()),
+    enabled: !!equipmentId && !!metric,
+  });
+  const acknowledgeMutation = useMutation({
+    mutationFn: acknowledgeAlarm,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alarms", "equipment", equipmentId] }),
   });
 
   const addFeedMutation = useMutation({
@@ -321,6 +341,47 @@ export function EquipmentDetailPage() {
             )}
           </>
         )}
+      </div>
+
+      <div className="mt-6 rounded border border-slate-800 bg-slate-900 p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-300">Live metrics</h2>
+        {latestTelemetryQuery.isLoading && <p className="text-sm text-slate-400">Loading telemetry…</p>}
+        {latestTelemetryQuery.isError && <p className="text-sm text-red-400">Telemetry is currently unavailable.</p>}
+        {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-500">No telemetry is associated with this equipment.</p>}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {latestTelemetryQuery.data?.map((reading) => {
+            const ageMs = Date.now() - new Date(reading.occurred_at).getTime();
+            // Two configured acquisition cycles is the MVP stale threshold.  The
+            // backend supplies the integration-specific cadence in the same query.
+            const stale = reading.expected_poll_interval_seconds != null && ageMs > reading.expected_poll_interval_seconds * 2_000;
+            return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded bg-slate-800/60 p-3 text-left hover:bg-slate-800">
+              <p className="text-xs uppercase tracking-wide text-slate-500">{reading.metric}</p>
+              <p className="mt-1 text-xl font-semibold">{reading.value} <span className="text-sm text-slate-400">{reading.unit}</span></p>
+              <p className={stale ? "mt-1 text-xs text-yellow-400" : "mt-1 text-xs text-green-400"}>{stale ? "Stale" : "Current"} · occurred {new Date(reading.occurred_at).toLocaleString()}</p>
+              {reading.received_at !== reading.occurred_at && <p className="mt-1 text-xs text-slate-500">received {new Date(reading.received_at).toLocaleString()}</p>}
+            </button>;
+          })}
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+          <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-300">Metric history</h2>
+            <select value={historyHours} onChange={(e) => setHistoryHours(Number(e.target.value))} className="rounded bg-slate-800 px-2 py-1 text-xs">
+              <option value={1}>Last 1 hour</option><option value={24}>Last 24 hours</option><option value={168}>Last 7 days</option><option value={720}>Last 30 days</option><option value={2160}>Last 3 months</option><option value={4320}>Last 6 months</option><option value={8760}>Last 1 year</option>
+            </select></div>
+          {!metric && <p className="text-sm italic text-slate-500">Choose a live metric to view its history.</p>}
+          {historyQuery.isLoading && metric && <p className="text-sm text-slate-400">Loading history…</p>}
+          {historyQuery.isError && <p className="text-sm text-red-400">Unable to load the selected history range.</p>}
+          {historyQuery.data?.length === 0 && <p className="text-sm italic text-slate-500">No readings in this range.</p>}
+          {historyQuery.data && <TelemetryTrend points={historyQuery.data} />}
+          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.value} avg (${point.minimum_value}–${point.maximum_value}, n=${point.sample_count})` : point.value} {point.unit} <span className="text-slate-500">{point.resolution ?? "raw"}</span></span></div>)}</div>
+        </div>
+        <div className="rounded border border-slate-800 bg-slate-900 p-4"><h2 className="mb-3 text-sm font-semibold text-slate-300">Alarm history</h2>
+          {alarmHistoryQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
+          {alarmHistoryQuery.data?.items.length === 0 && <p className="text-sm italic text-slate-500">No alarms for this equipment.</p>}
+          <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.last_value}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-500">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-500">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
+        </div>
       </div>
     </div>
   );

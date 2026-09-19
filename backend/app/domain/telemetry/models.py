@@ -40,6 +40,12 @@ class IntegrationMetricMapping(Base, UUIDPkMixin, TimestampMixin):
     integration_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("integration.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # The mapping is the narrow, authoritative bridge from an acquired source
+    # identifier to inventory.  It deliberately points at ManagedAsset rather
+    # than introducing a second monitoring asset identity.
+    managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("managed_asset.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     source_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     canonical_metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
