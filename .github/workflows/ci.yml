@@ -43,6 +43,10 @@ jobs:
       TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:dcim_dev_superuser_password@localhost:5432/dcim_test
       ENVIRONMENT: test
       PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
+      # Backend contract tests also validate the independently packaged Edge
+      # scheduler constants; expose the repository root without installing the
+      # Edge runtime into the backend distribution.
+      PYTHONPATH: ${{ github.workspace }}
     defaults:
       run:
         working-directory: backend
