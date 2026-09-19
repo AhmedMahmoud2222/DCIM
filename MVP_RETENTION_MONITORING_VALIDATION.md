@@ -54,22 +54,36 @@ reopen a lifecycle already cleared by a later reading.
 - Targeted mypy for retention, alarms and settings: **passed**.
 - `alembic heads`: one head, `0012_retention_series_identity`.
 
-## PostgreSQL and migration limitation
+### Authoritative PostgreSQL CI evidence
 
-The committed hostile PostgreSQL suite is
-`backend/tests/integration/test_mvp_retention_hostile.py`. It covers independent
-aggregate arithmetic, series isolation, complete-day boundary, repeat processing, late
-arrival, no-existing-aggregate behavior and injected persistence failure rollback.
-Execution is blocked in this environment: `localhost:5432` refuses connections
-(`ConnectionRefusedError: [WinError 1225]`), and Docker is not installed. Consequently
-fresh upgrade, downgrade/re-upgrade, database constraints, transaction-failure and
-concurrent-worker behavior have **not** been runtime-verified here. No claim is made
-that those PostgreSQL checks passed.
+GitHub Actions [CI run 35413529110](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/35413529110)
+ran against the existing PostgreSQL **16** service configuration on commit
+`764f42dbd49b132aceadf1b1f2b1e4d61589c761`.
 
-## Remaining non-blocker work
+- Fresh database migration to head: passed.
+- Retention migration validation: `head → 0010_mvp_alarms → head` passed; exactly
+  one Alembic head was asserted before and after.
+- `pytest -q tests/integration/test_mvp_retention_hostile.py`: **6 passed in
+  1.51s**. This executed aggregate arithmetic, independent series/metric isolation,
+  complete-day boundary handling, repeat processing, late-arrival merge,
+  no-existing-aggregate behavior, rollback recoverability, database uniqueness, and
+  two overlapping PostgreSQL compactor workers.
+- Backend regression: **531 passed, 14 warnings in 191.02s**. This includes the
+  existing telemetry, alarm, collector/integration, RBAC, audit and outbox coverage.
+- Ruff, mypy, frontend typecheck/lint/build: passed.
 
-Run the committed PostgreSQL suite plus fresh/head, head→0010 and 0010→head migrations
-in a host with the repository's PostgreSQL service before accepting this destructive
-retention checkpoint. Dashboard/UI work remains blocked pending that execution.
+The first CI attempt identified a test-fixture issue rather than a retention defect:
+the rollback test had not committed its setup reading before intentionally rolling back
+the compaction transaction. It was corrected in `e1b41f4`; the succeeding CI run above
+is the authoritative result. The CI workflow was also corrected to expose the repository
+root on `PYTHONPATH`, allowing the existing monitoring contract test to import the Edge
+scheduler package during backend regression.
 
-MVP RETENTION & MONITORING VALIDATION INCOMPLETE — DASHBOARD BLOCKED
+## Remaining limitations
+
+The local Windows workspace still has no PostgreSQL/Docker service, but that limitation
+is closed for this checkpoint by the authoritative GitHub Actions PostgreSQL evidence.
+This is an MVP validation result, not a production scale/load or long-duration retention
+benchmark. Dashboard/UI work has intentionally not started.
+
+POSTGRESQL RETENTION CI VALIDATION PASSED — READY FOR INDEPENDENT REVIEW
