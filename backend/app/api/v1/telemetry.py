@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -182,20 +182,38 @@ async def latest_readings(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("telemetry:read")),
 ) -> list[TelemetryOut]:
+    # Rank *after* filtering, so limit means "latest series returned", never
+    # "raw rows inspected".  `series_key` is the canonical durable telemetry
+    # identity shared with retention.  UUID closes otherwise exact timestamp ties.
+    ranked = select(
+        TelemetryReading.id.label("reading_id"),
+        func.row_number().over(
+            partition_by=TelemetryReading.series_key,
+            order_by=(
+                TelemetryReading.occurred_at.desc(),
+                TelemetryReading.received_at.desc(),
+                TelemetryReading.id.desc(),
+            ),
+        ).label("series_rank"),
+    )
+    if integration_id is not None:
+        ranked = ranked.where(TelemetryReading.integration_id == integration_id)
+    if managed_asset_id is not None:
+        ranked = ranked.where(TelemetryReading.managed_asset_id == managed_asset_id)
+    if metric is not None:
+        ranked = ranked.where(TelemetryReading.metric == metric)
+    ranked_subquery = ranked.subquery()
+
     # Poll cadence comes from the authoritative integration configuration in the
     # same bounded query; the UI must not guess a global interval or issue N+1 reads.
     stmt = (
         select(TelemetryReading, Integration.poll_interval_seconds)
         .join(Integration, Integration.id == TelemetryReading.integration_id)
-        .order_by(TelemetryReading.occurred_at.desc())
+        .join(ranked_subquery, ranked_subquery.c.reading_id == TelemetryReading.id)
+        .where(ranked_subquery.c.series_rank == 1)
+        .order_by(TelemetryReading.occurred_at.desc(), TelemetryReading.received_at.desc(), TelemetryReading.id.desc())
         .limit(limit)
     )
-    if integration_id is not None:
-        stmt = stmt.where(TelemetryReading.integration_id == integration_id)
-    if managed_asset_id is not None:
-        stmt = stmt.where(TelemetryReading.managed_asset_id == managed_asset_id)
-    if metric is not None:
-        stmt = stmt.where(TelemetryReading.metric == metric)
     rows = (await db.execute(stmt)).all()
     return [_out(row, poll_interval_seconds=interval) for row, interval in rows]
 
