@@ -14,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.application.telemetry_retention import compact_eligible_raw, merge_late_reading
+from app.application.telemetry_service import ingest_reading
+from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.models import (
     DailyTelemetryAggregate,
@@ -96,6 +98,68 @@ async def test_retry_and_late_arrival_update_only_matching_series(db_session, te
     assert await merge_late_reading(db_session, late, now=now)
     await db_session.delete(late)
     await db_session.commit()
+    aggregate = (await db_session.execute(select(DailyTelemetryAggregate))).scalar_one()
+    assert aggregate.sample_count == 2
+    assert float(aggregate.average_value) == pytest.approx(15)
+    assert float(aggregate.minimum_value) == pytest.approx(10)
+    assert float(aggregate.maximum_value) == pytest.approx(20)
+
+
+@pytest.mark.asyncio
+async def test_ingested_late_reading_is_merged_once_then_cannot_be_compacted_again(db_session, telemetry_series):
+    """The ingestion boundary owns deletion after a successful late aggregate merge.
+
+    This exercises the real caller rather than deleting a test row directly: merge,
+    raw-row deletion, and aggregate update share the caller's transaction.  A later
+    compactor must therefore find no raw row to add a second time.
+    """
+    now, integration, _ = telemetry_series
+    asset = ManagedAsset(
+        id=uuid.uuid4(), asset_type="equipment", asset_tag=f"late-asset-{uuid.uuid4().hex}", lifecycle_status="active"
+    )
+    mapping = (
+        await db_session.execute(
+            select(IntegrationMetricMapping).where(IntegrationMetricMapping.integration_id == integration.id)
+        )
+    ).scalar_one()
+    mapping.managed_asset_id = asset.id
+    old = now - timedelta(days=366)
+    series_key = telemetry_series_key(integration.id, asset.id, "sensor-a", "temperature_c", "celsius")
+    db_session.add_all(
+        (
+            asset,
+            DailyTelemetryAggregate(
+                integration_id=integration.id,
+                managed_asset_id=asset.id,
+                external_identifier="sensor-a",
+                series_key=series_key,
+                metric="temperature_c",
+                unit="celsius",
+                day=old.date(),
+                average_value=10,
+                minimum_value=10,
+                maximum_value=10,
+                sample_count=1,
+            ),
+        )
+    )
+    await db_session.flush()
+
+    result = await ingest_reading(
+        db_session,
+        collector_id=(await db_session.execute(select(Collector.id).limit(1))).scalar_one(),
+        integration_id=integration.id,
+        dedup_key="late-once",
+        external_identifier="sensor-a",
+        source_identifier="temp",
+        occurred_at=old + timedelta(hours=1),
+        value=20,
+    )
+    assert result.duplicate is False
+    await db_session.flush()
+    assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []
+
+    assert await compact_eligible_raw(db_session, now=now) == 0
     aggregate = (await db_session.execute(select(DailyTelemetryAggregate))).scalar_one()
     assert aggregate.sample_count == 2
     assert float(aggregate.average_value) == pytest.approx(15)
