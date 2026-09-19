@@ -68,12 +68,12 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
                 ]
               : [{ x: LABEL_COL_WIDTH_PX + (slot.side === "rear" ? COL_WIDTH_PX + 4 : 0), width: COL_WIDTH_PX }];
           return boxes.map((box, i) => (
-            <g key={`${slot.equipment_id}-${i}`}>
+            <a key={`${slot.equipment_id}-${i}`} href={`/equipment/${slot.equipment_id}`} aria-label={`Open ${slot.hostname ?? slot.asset_tag}`}>
               <rect x={box.x + 1} y={y + 1} width={box.width - 2} height={height - 2} fill={color} opacity={0.85} rx={2} />
               <text x={box.x + 6} y={y + height / 2 + 4} fontSize={10} fill="#f1f5f9">
                 {(slot.hostname ?? slot.asset_tag).slice(0, 22)}
               </text>
-            </g>
+            </a>
           ));
         })}
       </svg>

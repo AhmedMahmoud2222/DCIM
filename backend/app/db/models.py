@@ -1,6 +1,7 @@
 """Single import point ensuring every ORM model is registered on Base.metadata before
 Alembic autogenerate or `Base.metadata.create_all` runs."""
 
+from app.domain.alarm.models import Alarm, AlarmRule  # noqa: F401
 from app.domain.audit.models import AuditLog  # noqa: F401
 from app.domain.auth.models import (  # noqa: F401
     Permission,
@@ -47,3 +48,9 @@ from app.domain.power.models import (  # noqa: F401
     PowerPanel,
 )
 from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401
+from app.domain.telemetry.models import (  # noqa: F401
+    DailyTelemetryAggregate,
+    IntegrationMetricMapping,
+    MonitoringPolicy,
+    TelemetryReading,
+)

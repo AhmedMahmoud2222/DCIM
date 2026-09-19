@@ -4,7 +4,7 @@ import { useAuth } from "@/features/auth/useAuth";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
-  { to: "/locations", label: "Locations" },
+  { to: "/infrastructure", label: "Infrastructure" },
   { to: "/managed-assets", label: "Managed Assets" },
   { to: "/racks", label: "Racks" },
   { to: "/equipment", label: "Equipment" },

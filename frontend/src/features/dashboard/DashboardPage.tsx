@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
 import { getDashboardExceptions, getDashboardSummary } from "@/features/power/api";
+import { getOpenAlarms } from "@/features/telemetry/api";
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "bg-red-900 text-red-100",
@@ -24,6 +25,8 @@ export function DashboardPage() {
   const { user } = useAuth();
   const summaryQuery = useQuery({ queryKey: ["dashboard", "summary"], queryFn: () => getDashboardSummary() });
   const exceptionsQuery = useQuery({ queryKey: ["dashboard", "exceptions"], queryFn: getDashboardExceptions });
+  const activeAlarmsQuery = useQuery({ queryKey: ["alarms", "active"], queryFn: () => getOpenAlarms("ACTIVE") });
+  const acknowledgedAlarmsQuery = useQuery({ queryKey: ["alarms", "acknowledged"], queryFn: () => getOpenAlarms("ACKNOWLEDGED") });
 
   const s = summaryQuery.data;
 
@@ -63,6 +66,14 @@ export function DashboardPage() {
             <StatCard label="Available" value={s.rack_summary.available_racks} />
           </div>
 
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Operations</h2>
+          <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <StatCard label="Active Alarms" value={activeAlarmsQuery.data?.length ?? "—"} sub="open operational conditions" />
+            <StatCard label="Acknowledged" value={acknowledgedAlarmsQuery.data?.length ?? "—"} sub="awaiting clearance" />
+            <Link to="/collectors"><StatCard label="Collectors" value="Inspect" sub="heartbeat and health" /></Link>
+            <Link to="/integrations"><StatCard label="Integrations" value="Inspect" sub="source status and cadence" /></Link>
+          </div>
+
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Power Capacity</h2>
           <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard
@@ -82,6 +93,13 @@ export function DashboardPage() {
           </div>
         </>
       )}
+
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Open alarms</h2>
+      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+        {activeAlarmsQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
+        {activeAlarmsQuery.data?.length === 0 && <p className="text-sm text-slate-500">No active alarms.</p>}
+        <div className="space-y-2">{activeAlarmsQuery.data?.slice(0, 8).map((alarm) => <div key={alarm.id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-2 text-sm"><div><span className="mr-2 rounded bg-red-900 px-1.5 py-0.5 text-[10px] text-red-100">ACTIVE</span><span>{alarm.subject_key} · {alarm.last_value}</span><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></div>{alarm.managed_asset_id && <Link className="text-xs text-blue-400 hover:underline" to={`/equipment/${alarm.managed_asset_id}`}>Equipment →</Link>}</div>)}</div>
+      </div>
 
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Infrastructure Exceptions</h2>
       <div className="rounded border border-slate-800 bg-slate-900 p-4">

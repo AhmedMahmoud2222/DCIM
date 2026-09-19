@@ -139,6 +139,22 @@ hashing), integration (real PostgreSQL — DB constraints, outbox atomicity, aud
 append-only enforcement), and API (real HTTP contract through FastAPI's ASGI transport —
 auth, RBAC, concurrency, security).
 
+**ICMP driver tests require `CAP_NET_RAW`.** `app/application/drivers/icmp.py` opens a
+genuine `SOCK_RAW`/`IPPROTO_ICMP` socket (not a shell-out to `ping`), which the kernel
+only permits to `root` or a process holding `CAP_NET_RAW`. Running `pytest` as an
+unprivileged, non-root user without that capability fails `tests/unit/test_drivers.py`'s
+ICMP tests and two of `test_collectors.py`'s poll-now tests with `PermissionError`. Grant
+it once before running tests, rather than running the whole test process as root:
+
+```bash
+sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
+```
+
+CI (`.github/workflows/ci.yml`) does this on every run, since GitHub-hosted runners are
+non-root by default. This is a real operational requirement for wherever this driver
+actually runs (the central collector process today, or a future Edge Collector), not
+something to silently work around.
+
 ## Lint / Type Checking
 
 ```bash

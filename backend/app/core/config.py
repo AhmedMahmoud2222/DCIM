@@ -29,6 +29,25 @@ class Settings(BaseSettings):
 
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
+    # Pre-MVP consolidation hardening (Codex H1 / SSRF, PRE_MVP_CONSOLIDATION_REPORT.md):
+    # the DCIM-specific allowlist of network ranges a REST integration is permitted to
+    # poll -- e.g. ["10.10.0.0/16", "172.20.10.0/24"]. Deliberately empty by default
+    # (deny-by-default): an operator must explicitly configure the private ranges
+    # their own DCIM devices (UPS/PDU/BMS gateways/sensors/network devices/management
+    # controllers) actually live in. See app/application/drivers/network_policy.py.
+    rest_integration_allowed_networks: list[str] = Field(default_factory=list)
+    rest_integration_allowed_ports: list[int] = Field(default_factory=lambda: [80, 443])
+    # Test/development-only escape hatch -- must never be true in a production
+    # deployment's configuration. Lets a REST integration target 127.0.0.1/::1.
+    rest_integration_allow_loopback: bool = False
+
+    # MVP monitoring-policy defaults. Retention is a controlled job, never an
+    # immediate destructive side effect of changing configuration.
+    default_poll_interval_seconds: int = 300
+    telemetry_raw_retention_days: int = 365
+    telemetry_daily_retention_days: int | None = None
+    alarm_history_retention_days: int | None = None
+
     api_v1_prefix: str = "/api/v1"
 
     log_level: str = "INFO"

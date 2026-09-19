@@ -148,6 +148,7 @@ def run_floor_plan_import_job(job_id: str, content_b64: str) -> None:
             diagnostics.racks_detected = racks_detected
             diagnostics.ambiguous_count = diagnostics.objects_classified - racks_detected
             diagnostics.finished_at = datetime.now(UTC)
+            assert diagnostics.started_at is not None
             diagnostics.duration_ms = int((diagnostics.finished_at - diagnostics.started_at).total_seconds() * 1000)
 
             job.status = "parsed"
@@ -200,6 +201,7 @@ def validate_and_run_raster_import_job(job_id: str, content_b64: str, declared_f
 
             diagnostics.warnings = ["raster image accepted for calibration-only import; no shape auto-detection is performed"]
             diagnostics.finished_at = datetime.now(UTC)
+            assert diagnostics.started_at is not None
             diagnostics.duration_ms = int((diagnostics.finished_at - diagnostics.started_at).total_seconds() * 1000)
             job.status = "parsed"
             job.finished_at = diagnostics.finished_at

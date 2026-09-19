@@ -18,6 +18,11 @@ stale cached status can ever exist."""
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.application.drivers.base import ProtocolDriver
+    from app.application.drivers.network_policy import NetworkPolicy
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -307,6 +312,31 @@ class PollOutcome:
     external_identifier: str | None = None
 
 
+def _build_rest_network_policy() -> "NetworkPolicy":
+    """Translates central `Settings` into the plain, portable `NetworkPolicy` REST
+    driver targets are validated against -- this is the ONE place central
+    configuration crosses into the otherwise domain-neutral `drivers/` package. A
+    future Edge Collector builds the equivalent object from its own local config
+    instead of this function."""
+    import ipaddress
+
+    from app.application.drivers.network_policy import NetworkPolicy
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for cidr in settings.rest_integration_allowed_networks:
+        try:
+            networks.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            continue  # a malformed entry in configuration must not crash polling; it is simply not honored
+    return NetworkPolicy(
+        allowed_networks=tuple(networks),
+        allowed_ports=frozenset(settings.rest_integration_allowed_ports),
+        allow_loopback=settings.rest_integration_allow_loopback,
+    )
+
+
 async def run_polling_cycle(db: AsyncSession, *, collector_id: uuid.UUID) -> list[PollOutcome]:
     """§14 of the master prompt ("Failure Isolation"): iterates every integration
     currently assigned to `collector_id` and polls each with its own driver, in its own
@@ -324,6 +354,13 @@ async def run_polling_cycle(db: AsyncSession, *, collector_id: uuid.UUID) -> lis
     from app.application.drivers import get_driver_class
     from app.application.drivers.base import DriverConnectionError
     from app.core.secrets import decrypt_secret
+
+    # Pre-MVP consolidation hardening (Codex H1 / SSRF): built HERE, from central
+    # Settings, and passed into the driver as plain data -- `network_policy.py` itself
+    # never imports `app.core.config`, so a future Edge Collector builds its own
+    # NetworkPolicy from its own local config and passes it to the SAME RESTDriver
+    # class this process packages, with no change to the driver.
+    rest_policy = _build_rest_network_policy()
 
     assignments = (
         await db.execute(
@@ -350,8 +387,14 @@ async def run_polling_cycle(db: AsyncSession, *, collector_id: uuid.UUID) -> lis
 
         integration.last_poll_at = datetime.now(UTC)
         try:
-            driver_class = get_driver_class(integration.integration_type)
-            driver = driver_class(integration.id)
+            driver: ProtocolDriver
+            if integration.integration_type == "rest":
+                from app.application.drivers.rest import RESTDriver
+
+                driver = RESTDriver(integration.id, network_policy=rest_policy)
+            else:
+                driver_class = get_driver_class(integration.integration_type)
+                driver = driver_class(integration.id)
             credential = decrypt_secret(integration.credential_ciphertext) if integration.credential_ciphertext else None
             await driver.connect(
                 target_host=integration.target_host, target_port=integration.target_port,

@@ -13,6 +13,8 @@ import { CollectorsPage } from "@/features/integrations/CollectorsPage";
 import { DiscoveryPage } from "@/features/integrations/DiscoveryPage";
 import { IntegrationsPage } from "@/features/integrations/IntegrationsPage";
 import { LocationsPage } from "@/features/locations/LocationsPage";
+import { InfrastructurePage } from "@/features/locations/InfrastructurePage";
+import { SiteDetailPage } from "@/features/locations/SiteDetailPage";
 import { ManagedAssetsPage } from "@/features/managed-assets/ManagedAssetsPage";
 import { PowerTopologyPage } from "@/features/power/PowerTopologyPage";
 import { RackDetailPage } from "@/features/racks/RackDetailPage";
@@ -30,6 +32,8 @@ export function App() {
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/locations" element={<LocationsPage />} />
+              <Route path="/infrastructure" element={<InfrastructurePage />} />
+              <Route path="/sites/:siteId" element={<SiteDetailPage />} />
               <Route path="/managed-assets" element={<ManagedAssetsPage />} />
               <Route path="/racks" element={<RacksPage />} />
               <Route path="/racks/:rackId" element={<RackDetailPage />} />
