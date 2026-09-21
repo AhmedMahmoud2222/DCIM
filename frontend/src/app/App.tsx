@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { EventsPage } from "@/features/telemetry/EventsPage";
 import { EquipmentDetailPage } from "@/features/equipment/EquipmentDetailPage";
 import { EquipmentPage } from "@/features/equipment/EquipmentPage";
 import { LoginPage } from "@/features/auth/LoginPage";
@@ -31,6 +32,7 @@ export function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<DashboardPage />} />
+              <Route path="/events" element={<EventsPage />} />
               <Route path="/locations" element={<LocationsPage />} />
               <Route path="/infrastructure" element={<InfrastructurePage />} />
               <Route path="/sites/:siteId" element={<SiteDetailPage />} />

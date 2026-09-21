@@ -67,11 +67,11 @@ export function RackDetailPage() {
   const selectedSlot = inspectedSlot ?? elevationQuery.data?.slots[0] ?? null;
 
   return (
-    <div className="page">
+    <div className="page flex flex-col gap-5 !space-y-0">
       <Link to="/racks" className="text-sm text-slate-400 hover:text-indigo-300">← All racks</Link>
       <PageHeader eyebrow={rack.asset_tag} title={rack.name} description="Physical placement, capacity, elevation, and modeled power context." actions={<StatusBadge label={rack.lifecycle_status} tone={rack.lifecycle_status === "active" ? "healthy" : "neutral"} />} />
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="order-2 grid gap-6 lg:grid-cols-2">
         <div className="surface p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Placement</h2>
           {rack.placement ? (
@@ -181,7 +181,7 @@ export function RackDetailPage() {
         </div>
       </div>
 
-      <div className="surface p-5">
+      <div className="surface order-1 p-4">
         <SectionTitle title="Rack elevation" detail={`${elevationQuery.data?.height_u ?? "—"}U cabinet · select equipment for its operational view`} />
         {elevationQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {elevationQuery.data && <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -206,7 +206,7 @@ export function RackDetailPage() {
         </div>}
       </div>
 
-      <div className="surface p-5">
+      <div className="surface order-3 p-5">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Rack Power Summary</h2>
           <Link to="/power" className="rounded bg-slate-800 px-2 py-1 text-xs text-blue-400 hover:bg-slate-700">

@@ -42,7 +42,7 @@
   .rack-elevation-legend { @apply mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-medium text-slate-400; }
   .rack-elevation-legend span { @apply inline-flex items-center gap-1.5; }
   .rack-elevation-legend i { @apply inline-block h-2.5 w-2.5 rounded-sm; }
-  .rack-elevation-scroll { @apply max-h-[760px] overflow-auto rounded-lg border border-slate-800 bg-[#050912] p-3; }
+  .rack-elevation-scroll { @apply min-h-[500px] max-h-[calc(100vh-250px)] overflow-auto rounded-lg border border-slate-800 bg-[#050912] p-3; }
   .rack-elevation-svg { @apply block min-w-[690px]; }
   .rack-elevation-face-label { @apply fill-slate-400 text-xs font-semibold tracking-[0.24em]; }
   .rack-elevation-u-label { @apply fill-slate-500 text-[10px] font-medium; }
@@ -59,4 +59,11 @@
   .power-kpi { @apply flex min-h-24 flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/35 p-4 text-slate-200; }
   .power-kpi span { @apply text-xs font-medium text-slate-500; }
   .power-kpi strong { @apply mt-2 text-sm font-semibold; }
+  .events-tabs { @apply inline-flex rounded-lg border border-slate-700 bg-slate-950/50 p-1; }
+  .events-tabs button { @apply inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-400 transition hover:text-slate-100; }
+  .events-tabs button span { @apply rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300; }
+  .events-tabs button.is-active { @apply bg-indigo-500/20 text-indigo-100 shadow-sm; }
+  .events-tabs button.is-active span { @apply bg-indigo-400/20 text-indigo-100; }
+  .floor-plan-page { @apply gap-5; }
+  .floor-plan-workspace { @apply min-h-0; }
 }

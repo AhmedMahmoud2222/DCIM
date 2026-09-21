@@ -30,7 +30,7 @@ export function DashboardPage() {
 
     {summary && <>
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Active conditions" value={activeCount ?? "—"} detail="Requires operator attention" tone={(activeCount ?? 0) > 0 ? "critical" : "healthy"} />
+        <Link to="/events" className="block"><MetricCard label="Active conditions" value={activeCount ?? "—"} detail="Requires operator attention · open Events" tone={(activeCount ?? 0) > 0 ? "critical" : "healthy"} /></Link>
         <MetricCard label="Acknowledged" value={acknowledgedAlarmsQuery.data?.length ?? "—"} detail="Awaiting clearance" tone={(acknowledgedAlarmsQuery.data?.length ?? 0) > 0 ? "warning" : "neutral"} />
         <MetricCard label="Capacity exceptions" value={exceptionCount ?? "—"} detail="Power and topology checks" tone={(exceptionCount ?? 0) > 0 ? "warning" : "healthy"} />
         <MetricCard label="Rack availability" value={`${summary.rack_summary.available_racks}/${summary.rack_summary.total_racks}`} detail={`${summary.rack_summary.occupied_racks} occupied racks`} tone="info" />
@@ -45,9 +45,9 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="surface p-5">
-          <SectionTitle title="Open alarms" detail="Current conditions, not historical events" action={<Link to="/equipment" className="text-xs font-medium text-indigo-300 hover:text-indigo-200">Equipment</Link>} />
+          <SectionTitle title="Open alarms" detail="Current conditions, not historical events" action={<Link to="/events" className="text-xs font-medium text-indigo-300 hover:text-indigo-200">Open Events</Link>} />
           <div className="mt-4 space-y-2">
-            {activeAlarmsQuery.data?.slice(0, 6).map((alarm) => <div key={alarm.id} className="rounded-lg border border-slate-800 bg-slate-950/30 p-3"><div className="flex items-center justify-between gap-2"><StatusBadge label="Active" tone="critical" /><span className="truncate text-xs text-slate-500">{alarm.subject_key}</span></div><p className="mt-2 text-sm text-slate-200">{alarm.last_value ?? "No current value"}</p><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.managed_asset_id && <Link className="mt-2 inline-block text-xs text-indigo-300 hover:text-indigo-200" to={`/equipment/${alarm.managed_asset_id}`}>Open equipment</Link>}</div>)}
+            {activeAlarmsQuery.data?.slice(0, 6).map((alarm) => <Link key={alarm.id} to="/events" className="block rounded-lg border border-slate-800 bg-slate-950/30 p-3 transition hover:border-indigo-400/30 hover:bg-slate-800/40"><div className="flex items-center justify-between gap-2"><StatusBadge label="Active" tone="critical" /><span className="truncate text-xs text-slate-500">{alarm.subject_key}</span></div><p className="mt-2 text-sm text-slate-200">{alarm.last_value ?? "No current value"}</p><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></Link>)}
             {activeAlarmsQuery.data?.length === 0 && <EmptyState title="No active alarms" detail="No current alarm condition has been reported." />}
           </div>
         </div>

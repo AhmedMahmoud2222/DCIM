@@ -32,6 +32,17 @@ export interface Alarm {
 
 export interface AlarmHistoryPage { items: Alarm[]; next_cursor: string | null }
 
+export interface AlarmHistoryFilters {
+  status?: Alarm["status"];
+  integrationId?: string;
+  managedAssetId?: string;
+  ruleId?: string;
+  start?: Date;
+  end?: Date;
+  cursor?: string;
+  limit?: number;
+}
+
 export const getLatestTelemetry = (managedAssetId: string) =>
   apiFetch<TelemetryReading[]>(`/telemetry/latest?managed_asset_id=${encodeURIComponent(managedAssetId)}&limit=100`);
 
@@ -40,14 +51,21 @@ export const getTelemetryHistory = (assetId: string, metric: string, start: Date
     `/telemetry/history?managed_asset_id=${encodeURIComponent(assetId)}&metric=${encodeURIComponent(metric)}&start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=1000`,
   );
 
-export const getAlarmHistory = (assetId: string, start?: Date, end?: Date, cursor?: string) => {
-  const params = new URLSearchParams({ managed_asset_id: assetId, limit: "50" });
-  if (start) params.set("start", start.toISOString());
-  if (end) params.set("end", end.toISOString());
-  if (cursor) params.set("cursor", cursor);
+export const listAlarmHistory = (filters: AlarmHistoryFilters = {}) => {
+  const params = new URLSearchParams({ limit: String(filters.limit ?? 50) });
+  if (filters.status) params.set("status", filters.status);
+  if (filters.integrationId) params.set("integration_id", filters.integrationId);
+  if (filters.managedAssetId) params.set("managed_asset_id", filters.managedAssetId);
+  if (filters.ruleId) params.set("rule_id", filters.ruleId);
+  if (filters.start) params.set("start", filters.start.toISOString());
+  if (filters.end) params.set("end", filters.end.toISOString());
+  if (filters.cursor) params.set("cursor", filters.cursor);
   return apiFetch<AlarmHistoryPage>(`/alarms/history?${params.toString()}`);
 };
 
+export const getAlarmHistory = (assetId: string, start?: Date, end?: Date, cursor?: string) =>
+  listAlarmHistory({ managedAssetId: assetId, start, end, cursor });
+
 export const acknowledgeAlarm = (id: string) => apiFetch<Alarm>(`/alarms/${id}/acknowledge`, { method: "POST" });
-export const getOpenAlarms = (status?: "ACTIVE" | "ACKNOWLEDGED") =>
-  apiFetch<Alarm[]>(`/alarms${status ? `?status=${status}` : ""}`);
+export const getOpenAlarms = (status?: "ACTIVE" | "ACKNOWLEDGED", limit = 100) =>
+  apiFetch<Alarm[]>(`/alarms?${new URLSearchParams({ limit: String(limit), ...(status ? { status } : {}) }).toString()}`);

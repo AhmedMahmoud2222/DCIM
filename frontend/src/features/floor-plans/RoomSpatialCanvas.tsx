@@ -38,7 +38,7 @@ export function RoomSpatialCanvas({ view }: { view: RoomSpatialView }) {
       <div className="flex gap-2"><button className="action-secondary !px-2 !py-1 text-xs" onClick={() => setZoom((value) => Math.min(3, +(value + 0.25).toFixed(2)))}>Zoom in</button><button className="action-secondary !px-2 !py-1 text-xs" onClick={() => setZoom((value) => Math.max(0.5, +(value - 0.25).toFixed(2)))}>Zoom out</button><button className="action-secondary !px-2 !py-1 text-xs" onClick={reset}>Fit view</button></div>
     </div>
     <div className="relative bg-[#070c15] p-4">
-      <svg viewBox={viewBox} className="h-[min(66vh,680px)] w-full touch-none rounded-lg border border-slate-800" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => setDrag(null)} onPointerCancel={() => setDrag(null)} aria-label={`Floor plan for ${view.room_name}`}>
+      <svg viewBox={viewBox} className="h-[clamp(440px,calc(100vh-300px),760px)] w-full touch-none rounded-lg border border-slate-800" onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => setDrag(null)} onPointerCancel={() => setDrag(null)} aria-label={`Floor plan for ${view.room_name}`}>
         <defs><pattern id="floor-grid" width="500" height="500" patternUnits="userSpaceOnUse"><path d="M 500 0 L 0 0 0 500" fill="none" stroke="#1e293b" strokeWidth="16" /></pattern></defs>
         <rect x={0} y={0} width={width} height={height} fill="#0b1220" />
         <rect x={0} y={0} width={width} height={height} fill="url(#floor-grid)" />

@@ -17,6 +17,7 @@ import {
 import { RoomSpatialCanvas } from "@/features/floor-plans/RoomSpatialCanvas";
 import { listRooms } from "@/features/racks/api";
 import { ApiError } from "@/lib/apiClient";
+import { PageHeader } from "@/components/ui/ProductUi";
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-slate-700 text-slate-200",
@@ -35,6 +36,7 @@ export function RoomFloorPlanPage() {
   const queryClient = useQueryClient();
   const [selectedFloorPlanId, setSelectedFloorPlanId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [showAdministration, setShowAdministration] = useState(false);
 
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
   const room = roomsQuery.data?.items.find((r) => r.id === roomId);
@@ -138,19 +140,19 @@ export function RoomFloorPlanPage() {
   const selectedFloorPlan = floorPlansQuery.data?.items.find((fp) => fp.id === selectedFloorPlanId);
 
   return (
-    <div>
-      <Link to="/floor-plans" className="mb-4 inline-block text-sm text-slate-400 hover:text-slate-200">
+    <div className="page floor-plan-page">
+      <Link to="/floor-plans" className="text-sm text-slate-400 hover:text-slate-200">
         ← Floor Plans
       </Link>
-      <h1 className="mb-6 text-lg font-semibold">{room?.name ?? "Room"} — Spatial View</h1>
+      <PageHeader eyebrow="Infrastructure / Room" title={`${room?.name ?? "Room"} spatial view`} description="Authoritative rack placement and the current floor-plan revision. Canvas controls only inspect the view; administration remains secondary." />
 
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-300">2D Layout</h2>
+      <div className="surface floor-plan-workspace p-4">
+        <div className="mb-3 flex items-center justify-between gap-4"><div><h2 className="text-base font-semibold text-slate-100">Operational canvas</h2><p className="mt-1 text-sm text-slate-500">Select a rack for its contextual workspace.</p></div>{spatialViewQuery.data?.active_floor_plan_id && <span className="status-badge border-emerald-500/30 bg-emerald-500/10 text-emerald-300">Active revision {spatialViewQuery.data.active_floor_plan_revision}</span>}</div>
         {spatialViewQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {spatialViewQuery.error && <p className="text-sm text-red-400">{(spatialViewQuery.error as Error).message}</p>}
         {spatialViewQuery.data && (
           <>
-            <p className="mb-2 text-xs text-slate-500">
+            <p className="mb-3 text-sm text-slate-500">
               {spatialViewQuery.data.active_floor_plan_id
                 ? `Active revision ${spatialViewQuery.data.active_floor_plan_revision}`
                 : "No active floor plan for this room yet — showing placed racks/equipment only."}
@@ -160,7 +162,12 @@ export function RoomFloorPlanPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="flex items-center justify-between border-t border-slate-800 pt-4">
+        <div><h2 className="text-base font-semibold text-slate-100">Revision & import administration</h2><p className="mt-1 text-sm text-slate-500">Secondary to operational inspection; expand only when maintaining the room plan.</p></div>
+        <button className="action-secondary" onClick={() => setShowAdministration((value) => !value)}>{showAdministration ? "Hide administration" : "Manage revisions & imports"}</button>
+      </div>
+
+      {showAdministration && <div className="grid gap-6 xl:grid-cols-2">
         <div className="rounded border border-slate-800 bg-slate-900 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-300">Floor Plan Revisions</h2>
@@ -299,7 +306,7 @@ export function RoomFloorPlanPage() {
             </>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
