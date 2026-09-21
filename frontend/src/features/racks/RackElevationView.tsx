@@ -1,4 +1,5 @@
 import { RackElevation } from "@/types";
+import { Link } from "react-router-dom";
 
 const U_HEIGHT_PX = 22;
 const COL_WIDTH_PX = 160;
@@ -19,7 +20,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
   const uToY = (u: number) => totalHeight - (u - 1) * U_HEIGHT_PX - U_HEIGHT_PX;
 
   return (
-    <div>
+    <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-4">
       <div className="mb-2 flex gap-6 text-xs text-slate-400">
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 rounded-sm" style={{ background: SIDE_COLOR.front }} /> Front
@@ -31,7 +32,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
           <span className="inline-block h-3 w-3 rounded-sm" style={{ background: SIDE_COLOR.both }} /> Both
         </span>
       </div>
-      <svg width={svgWidth} height={totalHeight + 4} className="rounded border border-slate-800 bg-slate-950">
+      <svg width={svgWidth} height={totalHeight + 4} className="rounded-lg border border-slate-700 bg-[#080d17] shadow-inner">
         {Array.from({ length: elevation.height_u }, (_, i) => i + 1).map((u) => (
           <g key={u}>
             <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="#64748b">
@@ -68,12 +69,12 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
                 ]
               : [{ x: LABEL_COL_WIDTH_PX + (slot.side === "rear" ? COL_WIDTH_PX + 4 : 0), width: COL_WIDTH_PX }];
           return boxes.map((box, i) => (
-            <a key={`${slot.equipment_id}-${i}`} href={`/equipment/${slot.equipment_id}`} aria-label={`Open ${slot.hostname ?? slot.asset_tag}`}>
+            <Link key={`${slot.equipment_id}-${i}`} to={`/equipment/${slot.equipment_id}`} aria-label={`Open ${slot.hostname ?? slot.asset_tag}`}>
               <rect x={box.x + 1} y={y + 1} width={box.width - 2} height={height - 2} fill={color} opacity={0.85} rx={2} />
               <text x={box.x + 6} y={y + height / 2 + 4} fontSize={10} fill="#f1f5f9">
                 {(slot.hostname ?? slot.asset_tag).slice(0, 22)}
               </text>
-            </a>
+            </Link>
           ));
         })}
       </svg>

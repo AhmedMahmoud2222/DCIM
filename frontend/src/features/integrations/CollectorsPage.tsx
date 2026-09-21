@@ -11,15 +11,11 @@ import {
   triggerPollNow,
 } from "@/features/integrations/api";
 import { ApiError } from "@/lib/apiClient";
-
-const HEALTH_COLORS: Record<string, string> = {
-  healthy: "bg-green-900 text-green-200",
-  stale: "bg-amber-900 text-amber-200",
-  offline: "bg-red-900 text-red-200",
-};
+import { PageHeader, StatusBadge } from "@/components/ui/ProductUi";
 
 function HealthBadge({ health }: { health: string }) {
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] ${HEALTH_COLORS[health] ?? "bg-slate-700"}`}>{health}</span>;
+  const tone = health === "healthy" ? "healthy" : health === "stale" ? "stale" : health === "offline" ? "critical" : "neutral";
+  return <StatusBadge label={health} tone={tone} />;
 }
 
 function fmtSeconds(s: number | null): string {
@@ -78,15 +74,11 @@ export function CollectorsPage() {
   const assignedIntegrations = integrationsQuery.data?.filter((i) => i.assigned_collector_id === selectedId) ?? [];
 
   return (
-    <div>
-      <h1 className="mb-1 text-lg font-semibold">Collectors</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        Central and edge collectors acquire telemetry via SNMP/ICMP/REST and forward it to this server. A collector
-        never holds the authoritative inventory itself (Phase 8).
-      </p>
+    <div className="page">
+      <PageHeader eyebrow="Connectivity" title="Collectors" description="Central and edge collectors acquire observations and forward them to the DCIM service. Health reflects the current heartbeat classification, not physical device health." />
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="grid gap-6 xl:grid-cols-3">
+        <div className="surface p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-300">Registered Collectors</h2>
             <button
@@ -175,14 +167,14 @@ export function CollectorsPage() {
 
         <div className="col-span-2 space-y-4">
           {!selected && (
-            <div className="rounded border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+            <div className="surface p-5 text-sm text-slate-500">
               Select a collector from the list to inspect it.
             </div>
           )}
 
           {selected && (
             <>
-              <div className="rounded border border-slate-800 bg-slate-900 p-4">
+              <div className="surface p-5">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-200">{selected.name}</h2>
@@ -232,7 +224,7 @@ export function CollectorsPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="rounded border border-slate-800 bg-slate-900 p-4">
+                <div className="surface p-4">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Capabilities</h3>
                   <div className="mb-2 flex flex-wrap gap-1">
                     {capabilitiesQuery.data?.map((c) => (
@@ -268,7 +260,7 @@ export function CollectorsPage() {
                   </form>
                 </div>
 
-                <div className="rounded border border-slate-800 bg-slate-900 p-4">
+                <div className="surface p-4">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Assigned Integrations</h3>
                   <div className="mb-2 space-y-1">
                     {assignedIntegrations.map((i) => (

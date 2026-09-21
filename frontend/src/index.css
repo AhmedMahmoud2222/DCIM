@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+  body { @apply m-0 min-w-[320px] bg-[#080d17] font-sans text-slate-100 antialiased; }
+  * { @apply border-slate-800; }
+  button, input, select { font: inherit; }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { @apply outline-none ring-2 ring-indigo-400 ring-offset-2 ring-offset-slate-950; }
+}
+
+@layer components {
+  .page { @apply mx-auto w-full max-w-[1600px] space-y-6; }
+  .page-header { @apply flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-end lg:justify-between; }
+  .page-header h1 { @apply text-2xl font-semibold tracking-tight text-slate-50; }
+  .page-eyebrow { @apply mb-1 text-xs font-medium text-indigo-300; }
+  .page-description { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-400; }
+  .page-actions { @apply flex shrink-0 flex-wrap items-center gap-2; }
+  .surface { @apply rounded-xl border border-slate-800 bg-slate-900/70 shadow-[0_14px_38px_rgba(0,0,0,.16)]; }
+  .surface-muted { @apply rounded-xl border border-slate-800/80 bg-slate-900/40; }
+  .section-title { @apply flex items-end justify-between gap-4; }
+  .section-title h2 { @apply text-sm font-semibold text-slate-100; }
+  .section-title p { @apply mt-1 text-xs text-slate-500; }
+  .status-badge { @apply inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium capitalize; }
+  .metric-card { @apply relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-[0_10px_30px_rgba(0,0,0,.14)]; }
+  .metric-card-accent { @apply absolute inset-x-0 top-0 h-0.5; }
+  .metric-card-label { @apply text-xs font-medium text-slate-400; }
+  .metric-card-value { @apply mt-2 text-2xl font-semibold tracking-tight text-slate-50; }
+  .metric-card-detail { @apply mt-1 text-xs text-slate-500; }
+  .action-primary { @apply inline-flex items-center justify-center rounded-lg bg-indigo-500 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50; }
+  .action-secondary { @apply inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50; }
+  .field { @apply w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600; }
+  .empty-state { @apply flex min-h-32 items-center gap-4 rounded-lg border border-dashed border-slate-700 bg-slate-950/30 p-5; }
+  .empty-state-mark { @apply flex h-9 w-9 items-center justify-center rounded-lg bg-slate-800 text-xl text-slate-500; }
+  .data-table { @apply w-full min-w-[620px] text-left text-sm; }
+  .data-table thead { @apply border-b border-slate-800 bg-slate-950/30 text-xs font-medium text-slate-400; }
+  .data-table th { @apply px-4 py-3; }
+  .data-table td { @apply px-4 py-3; }
+  .data-table tbody tr { @apply border-b border-slate-800/70 transition hover:bg-slate-800/40; }
+}

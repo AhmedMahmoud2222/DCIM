@@ -6,15 +6,7 @@ import { getEquipmentPowerSummary } from "@/features/power/api";
 import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/features/racks/api";
 import { RackElevationView } from "@/features/racks/RackElevationView";
 import { ApiError } from "@/lib/apiClient";
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
-};
+import { PageHeader, SectionTitle, StatusBadge } from "@/components/ui/ProductUi";
 
 export function RackDetailPage() {
   const { rackId } = useParams<{ rackId: string }>();
@@ -63,30 +55,20 @@ export function RackDetailPage() {
     if (moveRoomId) moveMutation.mutate();
   }
 
-  if (rackQuery.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
-  if (rackQuery.error) return <p className="text-sm text-red-400">{(rackQuery.error as Error).message}</p>;
+  if (rackQuery.isLoading) return <div className="surface-muted p-5 text-sm text-slate-400">Loading rack and elevation…</div>;
+  if (rackQuery.error) return <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">{(rackQuery.error as Error).message}</div>;
   const rack = rackQuery.data;
   if (!rack) return null;
 
   const currentRoom = roomsQuery.data?.items.find((r) => r.id === rack.placement?.room_id);
 
   return (
-    <div>
-      <Link to="/racks" className="mb-4 inline-block text-sm text-slate-400 hover:text-slate-200">
-        ← Racks
-      </Link>
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">{rack.name}</h1>
-          <p className="font-mono text-sm text-slate-400">{rack.asset_tag}</p>
-        </div>
-        <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
-          {rack.lifecycle_status}
-        </span>
-      </div>
+    <div className="page">
+      <Link to="/racks" className="text-sm text-slate-400 hover:text-indigo-300">← All racks</Link>
+      <PageHeader eyebrow={rack.asset_tag} title={rack.name} description="Physical placement, capacity, elevation, and modeled power context." actions={<StatusBadge label={rack.lifecycle_status} tone={rack.lifecycle_status === "active" ? "healthy" : "neutral"} />} />
 
-      <div className="mb-6 grid grid-cols-2 gap-6">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="surface p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Placement</h2>
           {rack.placement ? (
             <dl className="space-y-1 text-sm">
@@ -175,7 +157,7 @@ export function RackDetailPage() {
           )}
         </div>
 
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="surface p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Details</h2>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
@@ -195,13 +177,13 @@ export function RackDetailPage() {
         </div>
       </div>
 
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-300">Elevation</h2>
+      <div className="surface p-5">
+        <SectionTitle title="Rack elevation" detail={`${elevationQuery.data?.height_u ?? "—"}U cabinet · select equipment for its operational view`} />
         {elevationQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {elevationQuery.data && <RackElevationView elevation={elevationQuery.data} />}
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="surface p-5">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Rack Power Summary</h2>
           <Link to="/power" className="rounded bg-slate-800 px-2 py-1 text-xs text-blue-400 hover:bg-slate-700">

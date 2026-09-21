@@ -11,8 +11,11 @@ import {
   getDownstream,
   getNodeCapacity,
   getUpstream,
+  listConnections,
   listPowerNodes,
 } from "@/features/power/api";
+import { TopologyGraph } from "@/features/power/TopologyGraph";
+import { PageHeader, SectionTitle } from "@/components/ui/ProductUi";
 import { ApiError } from "@/lib/apiClient";
 
 const NODE_TYPE_COLORS: Record<string, string> = {
@@ -64,6 +67,7 @@ export function PowerTopologyPage() {
     queryKey: ["power", "nodes", filterType],
     queryFn: () => listPowerNodes(filterType || undefined),
   });
+  const connectionsQuery = useQuery({ queryKey: ["power", "connections"], queryFn: () => listConnections() });
 
   const upstreamQuery = useQuery({
     queryKey: ["power", "upstream", selectedNodeId],
@@ -111,14 +115,14 @@ export function PowerTopologyPage() {
   const capacity = capacityQuery.data;
 
   return (
-    <div>
-      <h1 className="mb-1 text-lg font-semibold">Power Topology</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        Select a power node to inspect its upstream source chain, downstream loads, and capacity. No live telemetry
-        yet — capacity figures come from rated/configured values and topology roll-up only (Phase 3).
-      </p>
+    <div className="page">
+      <PageHeader eyebrow="Power operations" title="Power topology" description="Trace source-to-load paths and inspect topology-derived capacity. Measurements are shown only when the API provides them." />
+      <section className="surface p-5">
+        <SectionTitle title="Operational topology" detail="Directional lines reflect active modeled connections. Select a node to inspect its path and capacity." />
+        <div className="mt-4"><TopologyGraph nodes={nodesQuery.data?.items ?? []} connections={connectionsQuery.data?.items ?? []} selectedId={selectedNodeId} onSelect={setSelectedNodeId} /></div>
+      </section>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid gap-6 xl:grid-cols-3">
         {/* Node list */}
         <div className="rounded border border-slate-800 bg-slate-900 p-4">
           <div className="mb-3 flex items-center justify-between">

@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 
 import { createIntegration, listIntegrations, updateIntegration } from "@/features/integrations/api";
 import { ApiError } from "@/lib/apiClient";
+import { PageHeader, StatusBadge } from "@/components/ui/ProductUi";
 
 function fmtDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString() : "—";
@@ -42,17 +43,13 @@ export function IntegrationsPage() {
   });
 
   return (
-    <div>
-      <h1 className="mb-1 text-lg font-semibold">Integrations</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        An Integration describes a device or device group a collector polls (protocol, target, credentials). Credentials
-        are write-only — never returned by this API once stored.
-      </p>
+    <div className="page">
+      <PageHeader eyebrow="Connectivity" title="Integrations" description="Configure the monitored source, protocol, and cadence. Stored credentials remain write-only and disabled integrations are never represented as connected." />
 
       <div className="mb-4">
         <button
           onClick={() => setShowCreateForm((v) => !v)}
-          className="rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="action-secondary text-xs"
         >
           + New Integration
         </button>
@@ -64,7 +61,7 @@ export function IntegrationsPage() {
             e.preventDefault();
             createMutation.mutate();
           }}
-          className="mb-4 max-w-md space-y-2 rounded border border-slate-700 bg-slate-800/50 p-3"
+          className="surface mb-4 max-w-md space-y-2 p-4"
         >
           <input
             value={name}
@@ -111,9 +108,9 @@ export function IntegrationsPage() {
         </form>
       )}
 
-      <div className="overflow-x-auto rounded border border-slate-800 bg-slate-900">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-slate-800 text-slate-400">
+      <div className="surface overflow-x-auto">
+        <table className="data-table">
+          <thead>
             <tr>
               <th className="p-2">Name</th>
               <th className="p-2">Type</th>
@@ -128,12 +125,12 @@ export function IntegrationsPage() {
           </thead>
           <tbody>
             {integrationsQuery.data?.map((i) => (
-              <tr key={i.id} className="border-b border-slate-800/50">
+              <tr key={i.id}>
                 <td className="p-2">{i.name}</td>
                 <td className="p-2">{i.integration_type}</td>
                 <td className="p-2">{i.target_host}</td>
                 <td className="p-2">
-                  <span className={i.enabled ? "text-green-400" : "text-slate-500"}>{i.enabled ? "enabled" : "disabled"}</span>
+                  <StatusBadge label={i.enabled ? "Enabled" : "Disabled"} tone={i.enabled ? "healthy" : "neutral"} />
                 </td>
                 <td className="p-2">{fmtDate(i.last_poll_at)}</td>
                 <td className="p-2">{fmtDate(i.last_success_at)}</td>

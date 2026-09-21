@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getEquipment, moveEquipment, retireEquipment } from "@/features/equipment/api";
@@ -9,21 +9,13 @@ import { acknowledgeAlarm, getAlarmHistory, getLatestTelemetry, getTelemetryHist
 import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, SIDES, Side } from "@/types";
+import { PageHeader, StatusBadge } from "@/components/ui/ProductUi";
 
 const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
   dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
   single_feed: { text: "Single feed (no redundancy)", color: "bg-slate-700 text-slate-300" },
   degraded: { text: "Redundancy degraded", color: "bg-yellow-800 text-yellow-100" },
   no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-500" },
-};
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
 };
 
 export function EquipmentDetailPage() {
@@ -37,7 +29,9 @@ export function EquipmentDetailPage() {
   const [uEnd, setUEnd] = useState("");
   const [side, setSide] = useState<Side>("front");
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
-  const [historyHours, setHistoryHours] = useState(24);
+  const [historyRange, setHistoryRange] = useState("24");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -58,10 +52,15 @@ export function EquipmentDetailPage() {
     queryKey: ["alarms", "equipment", equipmentId], queryFn: () => getAlarmHistory(equipmentId!), enabled: !!equipmentId,
   });
   const metric = selectedMetric ?? latestTelemetryQuery.data?.[0]?.metric ?? null;
+  const historyWindow = useMemo(() => {
+    if (historyRange !== "custom") { const hours = Number(historyRange); return { start: new Date(Date.now() - hours * 3_600_000), end: new Date(), valid: true }; }
+    const start = new Date(customStart); const end = new Date(customEnd);
+    return { start, end, valid: Boolean(customStart && customEnd && !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start < end) };
+  }, [customEnd, customStart, historyRange]);
   const historyQuery = useQuery({
-    queryKey: ["telemetry", "history", equipmentId, metric, historyHours],
-    queryFn: () => getTelemetryHistory(equipmentId!, metric!, new Date(Date.now() - historyHours * 3_600_000), new Date()),
-    enabled: !!equipmentId && !!metric,
+    queryKey: ["telemetry", "history", equipmentId, metric, historyRange, customStart, customEnd],
+    queryFn: () => getTelemetryHistory(equipmentId!, metric!, historyWindow.start, historyWindow.end),
+    enabled: !!equipmentId && !!metric && historyWindow.valid,
   });
   const acknowledgeMutation = useMutation({
     mutationFn: acknowledgeAlarm,
@@ -110,19 +109,11 @@ export function EquipmentDetailPage() {
   const currentRack = equipment.placement?.rack_id ? racksQuery.data?.items.find((r) => r.id === equipment.placement!.rack_id) : null;
 
   return (
-    <div>
+    <div className="page">
       <Link to="/equipment" className="mb-4 inline-block text-sm text-slate-400 hover:text-slate-200">
         ← Equipment
       </Link>
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">{equipment.hostname ?? equipment.asset_tag}</h1>
-          <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
-        </div>
-        <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[equipment.lifecycle_status] ?? "bg-slate-700"}`}>
-          {equipment.lifecycle_status}
-        </span>
-      </div>
+      <PageHeader eyebrow={equipment.asset_tag} title={equipment.hostname ?? equipment.asset_tag} description="Placement, modeled power context, current readings, and retained history for this equipment." actions={<StatusBadge label={equipment.lifecycle_status} tone={equipment.lifecycle_status === "active" ? "healthy" : "neutral"} />} />
 
       <div className="grid grid-cols-2 gap-6">
         <div className="rounded border border-slate-800 bg-slate-900 p-4">
@@ -367,9 +358,10 @@ export function EquipmentDetailPage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="rounded border border-slate-800 bg-slate-900 p-4">
           <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-300">Metric history</h2>
-            <select value={historyHours} onChange={(e) => setHistoryHours(Number(e.target.value))} className="rounded bg-slate-800 px-2 py-1 text-xs">
-              <option value={1}>Last 1 hour</option><option value={24}>Last 24 hours</option><option value={168}>Last 7 days</option><option value={720}>Last 30 days</option><option value={2160}>Last 3 months</option><option value={4320}>Last 6 months</option><option value={8760}>Last 1 year</option>
+            <select value={historyRange} onChange={(e) => setHistoryRange(e.target.value)} className="field w-auto !py-1 text-xs">
+              <option value="1">Last 1 hour</option><option value="24">Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option><option value="2160">Last 3 months</option><option value="4320">Last 6 months</option><option value="8760">Last 1 year</option><option value="custom">Custom range</option>
             </select></div>
+          {historyRange === "custom" && <div className="mb-3 grid gap-2 sm:grid-cols-2"><label className="text-xs text-slate-400">Start<input aria-label="History start" type="datetime-local" className="field mt-1" value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></label><label className="text-xs text-slate-400">End<input aria-label="History end" type="datetime-local" className="field mt-1" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></label>{!historyWindow.valid && <p className="sm:col-span-2 text-xs text-amber-200">Select a start time before the end time to load custom history.</p>}</div>}
           {!metric && <p className="text-sm italic text-slate-500">Choose a live metric to view its history.</p>}
           {historyQuery.isLoading && metric && <p className="text-sm text-slate-400">Loading history…</p>}
           {historyQuery.isError && <p className="text-sm text-red-400">Unable to load the selected history range.</p>}

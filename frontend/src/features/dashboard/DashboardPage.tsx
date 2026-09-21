@@ -1,24 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
+import { EmptyState, MetricCard, PageHeader, SectionTitle, StatusBadge } from "@/components/ui/ProductUi";
 import { useAuth } from "@/features/auth/useAuth";
 import { getDashboardExceptions, getDashboardSummary } from "@/features/power/api";
 import { getOpenAlarms } from "@/features/telemetry/api";
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "bg-red-900 text-red-100",
-  warning: "bg-yellow-800 text-yellow-100",
-  info: "bg-slate-700 text-slate-200",
-};
-
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <div className="rounded border border-slate-800 bg-slate-900 p-4">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-slate-100">{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
-    </div>
-  );
+function exceptionTone(severity: string) {
+  if (severity === "critical") return "critical" as const;
+  if (severity === "warning") return "warning" as const;
+  return "info" as const;
 }
 
 export function DashboardPage() {
@@ -27,100 +18,45 @@ export function DashboardPage() {
   const exceptionsQuery = useQuery({ queryKey: ["dashboard", "exceptions"], queryFn: getDashboardExceptions });
   const activeAlarmsQuery = useQuery({ queryKey: ["alarms", "active"], queryFn: () => getOpenAlarms("ACTIVE") });
   const acknowledgedAlarmsQuery = useQuery({ queryKey: ["alarms", "acknowledged"], queryFn: () => getOpenAlarms("ACKNOWLEDGED") });
+  const summary = summaryQuery.data;
+  const activeCount = activeAlarmsQuery.data?.length;
+  const exceptionCount = exceptionsQuery.data?.length;
 
-  const s = summaryQuery.data;
+  return <div className="page">
+    <PageHeader eyebrow="Operations overview" title={`Good ${new Date().getHours() < 12 ? "morning" : "afternoon"}, ${user?.full_name ?? "operator"}`} description="A concise view of infrastructure conditions, active operational work, and capacity risk. Values are reported by the DCIM APIs; unavailable signals stay explicitly unknown." actions={<Link to="/infrastructure" className="action-secondary">Explore infrastructure</Link>} />
 
-  return (
-    <div>
-      <h1 className="mb-1 text-lg font-semibold">Welcome, {user?.full_name}</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        Operational overview across infrastructure, power topology, and capacity. Every number below is computed by
-        the API from live data — nothing here is aggregated in the browser.
-      </p>
+    {(summaryQuery.isLoading || activeAlarmsQuery.isLoading || exceptionsQuery.isLoading) && <div className="surface-muted p-5 text-sm text-slate-400">Loading operational status…</div>}
+    {summaryQuery.isError && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">The dashboard summary is unavailable. Individual operational screens remain available from the sidebar.</div>}
 
-      {summaryQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
+    {summary && <>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Active conditions" value={activeCount ?? "—"} detail="Requires operator attention" tone={(activeCount ?? 0) > 0 ? "critical" : "healthy"} />
+        <MetricCard label="Acknowledged" value={acknowledgedAlarmsQuery.data?.length ?? "—"} detail="Awaiting clearance" tone={(acknowledgedAlarmsQuery.data?.length ?? 0) > 0 ? "warning" : "neutral"} />
+        <MetricCard label="Capacity exceptions" value={exceptionCount ?? "—"} detail="Power and topology checks" tone={(exceptionCount ?? 0) > 0 ? "warning" : "healthy"} />
+        <MetricCard label="Rack availability" value={`${summary.rack_summary.available_racks}/${summary.rack_summary.total_racks}`} detail={`${summary.rack_summary.occupied_racks} occupied racks`} tone="info" />
+      </section>
 
-      {s && (
-        <>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Site Summary</h2>
-          <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
-            <StatCard label="Sites" value={s.site_summary.sites} />
-            <StatCard label="Buildings" value={s.site_summary.buildings} />
-            <StatCard label="Floors" value={s.site_summary.floors} />
-            <StatCard label="Rooms" value={s.site_summary.rooms} />
-            <Link to="/racks">
-              <StatCard label="Racks" value={s.site_summary.racks} />
-            </Link>
-            <Link to="/equipment">
-              <StatCard label="Equipment" value={s.site_summary.equipment} />
-            </Link>
-            <Link to="/power">
-              <StatCard label="Power Nodes" value={s.site_summary.power_nodes} />
-            </Link>
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,.75fr)]">
+        <div className="surface p-5">
+          <SectionTitle title="Operational exceptions" detail="Conditions reported by the current dashboard data" action={<Link to="/power" className="text-xs font-medium text-indigo-300 hover:text-indigo-200">Open power workspace</Link>} />
+          <div className="mt-4 space-y-2">
+            {exceptionsQuery.data?.map((exception, index) => <Link key={`${exception.object_id}-${index}`} to="/power" className="group flex items-start gap-3 rounded-lg border border-slate-800 bg-slate-950/30 p-3 transition hover:border-slate-700 hover:bg-slate-800/40"><StatusBadge label={exception.severity} tone={exceptionTone(exception.severity)} /><div className="min-w-0 flex-1"><p className="text-sm text-slate-200">{exception.message}</p><p className="mt-1 text-xs text-slate-500">{exception.code.replace(/_/g, " ")}</p></div><span className="text-slate-600 transition group-hover:text-indigo-300">›</span></Link>)}
+            {exceptionsQuery.data?.length === 0 && <EmptyState title="No infrastructure exceptions" detail="The current capacity and topology checks do not report an exception." />}
           </div>
-
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Rack Capacity</h2>
-          <div className="mb-6 grid grid-cols-3 gap-4">
-            <StatCard label="Total Racks" value={s.rack_summary.total_racks} />
-            <StatCard label="Occupied" value={s.rack_summary.occupied_racks} />
-            <StatCard label="Available" value={s.rack_summary.available_racks} />
-          </div>
-
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Operations</h2>
-          <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <StatCard label="Active Alarms" value={activeAlarmsQuery.data?.length ?? "—"} sub="open operational conditions" />
-            <StatCard label="Acknowledged" value={acknowledgedAlarmsQuery.data?.length ?? "—"} sub="awaiting clearance" />
-            <Link to="/collectors"><StatCard label="Collectors" value="Inspect" sub="heartbeat and health" /></Link>
-            <Link to="/integrations"><StatCard label="Integrations" value="Inspect" sub="source status and cadence" /></Link>
-          </div>
-
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Power Capacity</h2>
-          <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <StatCard
-              label="Configured Capacity"
-              value={s.capacity_summary.total_configured_kw === null ? "unknown" : `${s.capacity_summary.total_configured_kw.toFixed(0)} kW`}
-              sub={`${s.capacity_summary.nodes_with_known_capacity} known / ${s.capacity_summary.nodes_with_unknown_capacity} unknown`}
-            />
-            <Link to="/power">
-              <StatCard label="Overloaded Nodes" value={s.power_summary.overloaded_nodes} />
-            </Link>
-            <Link to="/power">
-              <StatCard label="Near-Capacity Nodes" value={s.power_summary.near_capacity_nodes} />
-            </Link>
-            <Link to="/power">
-              <StatCard label="Redundancy Degraded" value={s.power_summary.redundancy_degraded_equipment} />
-            </Link>
-          </div>
-        </>
-      )}
-
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Open alarms</h2>
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
-        {activeAlarmsQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
-        {activeAlarmsQuery.data?.length === 0 && <p className="text-sm text-slate-500">No active alarms.</p>}
-        <div className="space-y-2">{activeAlarmsQuery.data?.slice(0, 8).map((alarm) => <div key={alarm.id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-2 text-sm"><div><span className="mr-2 rounded bg-red-900 px-1.5 py-0.5 text-[10px] text-red-100">ACTIVE</span><span>{alarm.subject_key} · {alarm.last_value}</span><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></div>{alarm.managed_asset_id && <Link className="text-xs text-blue-400 hover:underline" to={`/equipment/${alarm.managed_asset_id}`}>Equipment →</Link>}</div>)}</div>
-      </div>
-
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Infrastructure Exceptions</h2>
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
-        {exceptionsQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-        {exceptionsQuery.data?.length === 0 && <p className="text-sm text-slate-500">No capacity or topology exceptions detected.</p>}
-        <div className="space-y-2">
-          {exceptionsQuery.data?.map((exc, i) => (
-            <div key={i} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-2 text-sm">
-              <div>
-                <span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] ${SEVERITY_COLORS[exc.severity] ?? "bg-slate-700"}`}>
-                  {exc.code}
-                </span>
-                <span className="text-slate-300">{exc.message}</span>
-              </div>
-              <Link to="/power" className="text-xs text-blue-400 hover:underline">
-                Inspect →
-              </Link>
-            </div>
-          ))}
         </div>
-      </div>
-    </div>
-  );
+        <div className="surface p-5">
+          <SectionTitle title="Open alarms" detail="Current conditions, not historical events" action={<Link to="/equipment" className="text-xs font-medium text-indigo-300 hover:text-indigo-200">Equipment</Link>} />
+          <div className="mt-4 space-y-2">
+            {activeAlarmsQuery.data?.slice(0, 6).map((alarm) => <div key={alarm.id} className="rounded-lg border border-slate-800 bg-slate-950/30 p-3"><div className="flex items-center justify-between gap-2"><StatusBadge label="Active" tone="critical" /><span className="truncate text-xs text-slate-500">{alarm.subject_key}</span></div><p className="mt-2 text-sm text-slate-200">{alarm.last_value ?? "No current value"}</p><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.managed_asset_id && <Link className="mt-2 inline-block text-xs text-indigo-300 hover:text-indigo-200" to={`/equipment/${alarm.managed_asset_id}`}>Open equipment</Link>}</div>)}
+            {activeAlarmsQuery.data?.length === 0 && <EmptyState title="No active alarms" detail="No current alarm condition has been reported." />}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
+        <div className="surface p-5"><SectionTitle title="Power capacity" detail="Topology-derived allocation; unknown stays unknown" action={<Link to="/power" className="text-xs font-medium text-indigo-300 hover:text-indigo-200">View topology</Link>} /><div className="mt-4 grid gap-3 sm:grid-cols-3"><MetricCard label="Configured" value={summary.capacity_summary.total_configured_kw === null ? "Unknown" : `${summary.capacity_summary.total_configured_kw.toFixed(1)} kW`} detail={`${summary.capacity_summary.nodes_with_known_capacity} nodes with known capacity`} /><MetricCard label="Near capacity" value={summary.power_summary.near_capacity_nodes} detail="Warning threshold" tone={summary.power_summary.near_capacity_nodes ? "warning" : "healthy"} /><MetricCard label="Overloaded" value={summary.power_summary.overloaded_nodes} detail="Critical threshold" tone={summary.power_summary.overloaded_nodes ? "critical" : "healthy"} /></div></div>
+        <div className="surface p-5"><SectionTitle title="Inventory at a glance" detail="Authoritative physical inventory" /><div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 text-sm"><Link to="/infrastructure" className="flex justify-between text-slate-300 hover:text-indigo-300"><span>Sites</span><strong>{summary.site_summary.sites}</strong></Link><Link to="/infrastructure" className="flex justify-between text-slate-300 hover:text-indigo-300"><span>Rooms</span><strong>{summary.site_summary.rooms}</strong></Link><Link to="/racks" className="flex justify-between text-slate-300 hover:text-indigo-300"><span>Racks</span><strong>{summary.site_summary.racks}</strong></Link><Link to="/equipment" className="flex justify-between text-slate-300 hover:text-indigo-300"><span>Equipment</span><strong>{summary.site_summary.equipment}</strong></Link><Link to="/power" className="flex justify-between text-slate-300 hover:text-indigo-300"><span>Power nodes</span><strong>{summary.site_summary.power_nodes}</strong></Link><Link to="/collectors" className="flex justify-between text-slate-300 hover:text-indigo-300"><span>Collectors</span><strong>Inspect</strong></Link></div></div>
+      </section>
+    </>}
+  </div>;
 }
