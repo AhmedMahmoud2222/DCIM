@@ -19,10 +19,24 @@ export function TopologyGraph({ nodes, connections, selectedId, onSelect }: { no
     const grouped = new Map<number, PowerNode[]>();
     nodes.forEach((node) => { const level = levels.get(node.id) ?? 0; grouped.set(level, [...(grouped.get(level) ?? []), node]); });
     const positions = new Map<string, { x: number; y: number }>();
-    [...grouped.entries()].forEach(([level, group]) => group.forEach((node, index) => positions.set(node.id, { x: 110 + level * 220, y: 74 + index * 112 })));
-    return { active, positions, width: Math.max(680, (Math.max(...levels.values(), 0) + 1) * 220 + 110), height: Math.max(260, Math.max(...[...grouped.values()].map((group) => group.length), 1) * 112 + 70) };
+    [...grouped.entries()].forEach(([level, group]) => group.forEach((node, index) => positions.set(node.id, { x: 136 + level * 280, y: 96 + index * 134 })));
+    return { active, positions, width: Math.max(840, (Math.max(...levels.values(), 0) + 1) * 280 + 136), height: Math.max(340, Math.max(...[...grouped.values()].map((group) => group.length), 1) * 134 + 92) };
   }, [connections, nodes]);
 
   if (nodes.length === 0) return <div className="empty-state"><div><p className="font-medium text-slate-200">No power topology yet</p><p className="mt-1 text-sm text-slate-500">Create power nodes and connections to see a directional topology here.</p></div></div>;
-  return <div className="overflow-auto rounded-xl border border-slate-800 bg-[#080d17] p-3"><svg width={layout.width} height={layout.height} className="min-w-full" role="img" aria-label="Power topology graph"><defs><marker id="power-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#475569" /></marker></defs>{layout.active.map((connection) => { const source = layout.positions.get(connection.source_node_id); const target = layout.positions.get(connection.target_node_id); if (!source || !target) return null; return <line key={connection.id} x1={source.x + 68} y1={source.y} x2={target.x - 68} y2={target.y} stroke="#475569" strokeWidth="2" markerEnd="url(#power-arrow)" />; })}{nodes.map((node) => { const position = layout.positions.get(node.id)!; const selected = node.id === selectedId; return <g key={node.id} transform={`translate(${position.x - 68} ${position.y - 32})`} onClick={() => onSelect(node.id)} className="cursor-pointer"><rect width="136" height="64" rx="10" fill={selected ? "#312e81" : "#111827"} stroke={selected ? "#a5b4fc" : typeColor[node.node_type] ?? "#64748b"} strokeWidth={selected ? "3" : "2"} /><text x="12" y="25" fill="#e2e8f0" fontSize="12" fontWeight="600">{node.label.slice(0, 19)}</text><text x="12" y="46" fill={typeColor[node.node_type] ?? "#94a3b8"} fontSize="10">{node.node_type.replace(/_/g, " ")}</text></g>; })}</svg></div>;
+  return <div className="power-topology-canvas">
+    <div className="power-topology-legend"><span><i />Active directional connection</span><span>Choose a node to inspect its existing capacity and path details below.</span></div>
+    <div className="overflow-auto">
+      <svg width={layout.width} height={layout.height} className="min-w-full" role="img" aria-label="Power topology graph">
+        <defs><marker id="power-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L0,7 L8,3.5 z" fill="#64748b" /></marker></defs>
+        {layout.active.map((connection) => { const source = layout.positions.get(connection.source_node_id); const target = layout.positions.get(connection.target_node_id); if (!source || !target) return null; const related = selectedId === connection.source_node_id || selectedId === connection.target_node_id; return <line key={connection.id} x1={source.x + 96} y1={source.y} x2={target.x - 96} y2={target.y} stroke={related ? "#a5b4fc" : "#475569"} strokeWidth={related ? "3" : "2"} markerEnd="url(#power-arrow)" />; })}
+        {nodes.map((node) => { const position = layout.positions.get(node.id)!; const selected = node.id === selectedId; return <g key={node.id} transform={`translate(${position.x - 96} ${position.y - 40})`} onClick={() => onSelect(node.id)} className="cursor-pointer" role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(node.id); } }} aria-label={`Inspect ${node.label}`}>
+          <rect width="192" height="80" rx="12" fill={selected ? "#312e81" : "#111827"} stroke={selected ? "#e0e7ff" : typeColor[node.node_type] ?? "#64748b"} strokeWidth={selected ? "3" : "2"} />
+          <text x="15" y="30" fill="#f8fafc" fontSize="14" fontWeight="600">{node.label.slice(0, 23)}</text>
+          <text x="15" y="54" fill={typeColor[node.node_type] ?? "#94a3b8"} fontSize="11" fontWeight="600">{node.node_type.replace(/_/g, " ").toUpperCase()}</text>
+          {selected && <text x="15" y="70" fill="#c7d2fe" fontSize="10">SELECTED · SEE DETAILS BELOW</text>}
+        </g>; })}
+      </svg>
+    </div>
+  </div>;
 }

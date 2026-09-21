@@ -115,9 +115,9 @@ export function EquipmentDetailPage() {
       </Link>
       <PageHeader eyebrow={equipment.asset_tag} title={equipment.hostname ?? equipment.asset_tag} description="Placement, modeled power context, current readings, and retained history for this equipment." actions={<StatusBadge label={equipment.lifecycle_status} tone={equipment.lifecycle_status === "active" ? "healthy" : "neutral"} />} />
 
-      <div className="grid grid-cols-2 gap-6">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-300">Placement</h2>
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_.9fr]">
+        <div className="surface p-5">
+          <div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold text-slate-100">Placement</h2>{equipment.placement?.rack_id && <Link to={`/racks/${equipment.placement.rack_id}`} className="text-sm font-medium text-indigo-300 hover:text-indigo-200">Open rack →</Link>}</div>
           {equipment.placement ? (
             <dl className="space-y-1 text-sm">
               <div className="flex justify-between">
@@ -254,8 +254,8 @@ export function EquipmentDetailPage() {
           )}
         </div>
 
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-300">Details</h2>
+        <div className="surface p-5">
+          <h2 className="mb-4 text-base font-semibold text-slate-100">Details</h2>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
               <dt className="text-slate-500">Owner</dt>
@@ -281,9 +281,9 @@ export function EquipmentDetailPage() {
         </div>
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="surface p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-300">Power</h2>
+          <div><h2 className="text-base font-semibold text-slate-100">Power</h2><p className="mt-1 text-sm text-slate-500">Modeled feed and path context</p></div>
           <div className="flex gap-2">
             <button
               onClick={() => addFeedMutation.mutate("Feed A")}
@@ -308,34 +308,28 @@ export function EquipmentDetailPage() {
           <>
             {(() => {
               const r = REDUNDANCY_LABELS[powerSummaryQuery.data.redundancy_classification];
-              return <span className={`mb-3 inline-block rounded px-2 py-0.5 text-xs ${r.color}`}>{r.text}</span>;
+              return <div className="mt-5 grid gap-3 sm:grid-cols-3"><div className={`power-kpi ${r.color}`}><span>Redundancy</span><strong>{r.text}</strong></div><div className="power-kpi"><span>Effective demand</span><strong>{powerSummaryQuery.data.effective_demand_kw === null ? "Unknown" : `${powerSummaryQuery.data.effective_demand_kw.toFixed(1)} kW`}</strong></div><div className="power-kpi"><span>Data quality</span><strong className="capitalize">{powerSummaryQuery.data.data_quality.replace(/_/g, " ")}</strong></div></div>;
             })()}
-            <div className="mt-2 space-y-1">
+            <div className="mt-4 space-y-2">
               {powerSummaryQuery.data.feed_nodes.map((feed) => (
-                <div key={feed.power_node_id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-1.5 text-xs">
-                  <span className="font-mono text-slate-400">{feed.power_node_id.slice(0, 8)}…</span>
-                  <span>{feed.feed_label ?? "unlabeled"}</span>
-                  <span className={feed.has_upstream_path ? "text-green-400" : "text-red-400"}>
+                <div key={feed.power_node_id} className="grid items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/35 px-4 py-3 text-sm sm:grid-cols-[1fr_auto_auto]">
+                  <span className="font-medium text-slate-200">{feed.feed_label ?? "Unlabeled feed"}</span>
+                  <span className={feed.has_upstream_path ? "font-medium text-emerald-300" : "font-medium text-rose-300"}>
                     {feed.has_upstream_path ? "path OK" : "no upstream path"}
                   </span>
-                  <span>{feed.effective_capacity_kw === null ? "capacity unknown" : `${feed.effective_capacity_kw.toFixed(1)} kW`}</span>
+                  <span className="text-slate-400">{feed.effective_capacity_kw === null ? "capacity unknown" : `${feed.effective_capacity_kw.toFixed(1)} kW`}</span>
                 </div>
               ))}
               {powerSummaryQuery.data.feed_nodes.length === 0 && (
                 <p className="text-xs italic text-slate-500">No power feeds modeled for this equipment yet.</p>
               )}
             </div>
-            {powerSummaryQuery.data.effective_demand_kw !== null && (
-              <p className="mt-2 text-xs text-slate-400">
-                Effective demand: {powerSummaryQuery.data.effective_demand_kw.toFixed(1)} kW
-              </p>
-            )}
           </>
         )}
       </div>
 
-      <div className="mt-6 rounded border border-slate-800 bg-slate-900 p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-300">Live metrics</h2>
+      <div className="surface p-5">
+        <div className="mb-4"><h2 className="text-base font-semibold text-slate-100">Live metrics</h2><p className="mt-1 text-sm text-slate-500">Latest authoritative readings; stale state is based on the source polling interval.</p></div>
         {latestTelemetryQuery.isLoading && <p className="text-sm text-slate-400">Loading telemetry…</p>}
         {latestTelemetryQuery.isError && <p className="text-sm text-red-400">Telemetry is currently unavailable.</p>}
         {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-500">No telemetry is associated with this equipment.</p>}
@@ -345,7 +339,7 @@ export function EquipmentDetailPage() {
             // Two configured acquisition cycles is the MVP stale threshold.  The
             // backend supplies the integration-specific cadence in the same query.
             const stale = reading.expected_poll_interval_seconds != null && ageMs > reading.expected_poll_interval_seconds * 2_000;
-            return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded bg-slate-800/60 p-3 text-left hover:bg-slate-800">
+            return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="surface-muted p-4 text-left transition hover:border-indigo-400/40 hover:bg-slate-800/70">
               <p className="text-xs uppercase tracking-wide text-slate-500">{reading.metric}</p>
               <p className="mt-1 text-xl font-semibold">{reading.value} <span className="text-sm text-slate-400">{reading.unit}</span></p>
               <p className={stale ? "mt-1 text-xs text-yellow-400" : "mt-1 text-xs text-green-400"}>{stale ? "Stale" : "Current"} · occurred {new Date(reading.occurred_at).toLocaleString()}</p>
@@ -355,9 +349,9 @@ export function EquipmentDetailPage() {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
-          <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-300">Metric history</h2>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="surface p-5">
+          <div className="mb-4 flex items-center justify-between"><h2 className="text-base font-semibold text-slate-100">Metric history</h2>
             <select value={historyRange} onChange={(e) => setHistoryRange(e.target.value)} className="field w-auto !py-1 text-xs">
               <option value="1">Last 1 hour</option><option value="24">Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option><option value="2160">Last 3 months</option><option value="4320">Last 6 months</option><option value="8760">Last 1 year</option><option value="custom">Custom range</option>
             </select></div>
@@ -369,7 +363,7 @@ export function EquipmentDetailPage() {
           {historyQuery.data && <TelemetryTrend points={historyQuery.data} />}
           <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.value} avg (${point.minimum_value}–${point.maximum_value}, n=${point.sample_count})` : point.value} {point.unit} <span className="text-slate-500">{point.resolution ?? "raw"}</span></span></div>)}</div>
         </div>
-        <div className="rounded border border-slate-800 bg-slate-900 p-4"><h2 className="mb-3 text-sm font-semibold text-slate-300">Alarm history</h2>
+        <div className="surface p-5"><h2 className="mb-4 text-base font-semibold text-slate-100">Alarm history</h2>
           {alarmHistoryQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
           {alarmHistoryQuery.data?.items.length === 0 && <p className="text-sm italic text-slate-500">No alarms for this equipment.</p>}
           <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.last_value}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-500">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-500">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>

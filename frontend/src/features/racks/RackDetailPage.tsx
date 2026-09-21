@@ -7,6 +7,7 @@ import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/fe
 import { RackElevationView } from "@/features/racks/RackElevationView";
 import { ApiError } from "@/lib/apiClient";
 import { PageHeader, SectionTitle, StatusBadge } from "@/components/ui/ProductUi";
+import { ElevationSlot } from "@/types";
 
 export function RackDetailPage() {
   const { rackId } = useParams<{ rackId: string }>();
@@ -15,6 +16,7 @@ export function RackDetailPage() {
   const [moveRoomId, setMoveRoomId] = useState("");
   const [moveX, setMoveX] = useState("");
   const [moveY, setMoveY] = useState("");
+  const [inspectedSlot, setInspectedSlot] = useState<ElevationSlot | null>(null);
 
   const rackQuery = useQuery({ queryKey: ["racks", rackId], queryFn: () => getRack(rackId!), enabled: !!rackId });
   const elevationQuery = useQuery({
@@ -61,6 +63,8 @@ export function RackDetailPage() {
   if (!rack) return null;
 
   const currentRoom = roomsQuery.data?.items.find((r) => r.id === rack.placement?.room_id);
+  const mountedUnits = new Set(elevationQuery.data?.slots.flatMap((slot) => Array.from({ length: slot.u_end - slot.u_start }, (_, index) => slot.u_start + index)) ?? []).size;
+  const selectedSlot = inspectedSlot ?? elevationQuery.data?.slots[0] ?? null;
 
   return (
     <div className="page">
@@ -180,7 +184,26 @@ export function RackDetailPage() {
       <div className="surface p-5">
         <SectionTitle title="Rack elevation" detail={`${elevationQuery.data?.height_u ?? "—"}U cabinet · select equipment for its operational view`} />
         {elevationQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-        {elevationQuery.data && <RackElevationView elevation={elevationQuery.data} />}
+        {elevationQuery.data && <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <RackElevationView elevation={elevationQuery.data} selectedEquipmentId={selectedSlot?.equipment_id} onInspect={setInspectedSlot} />
+          <aside className="surface-muted flex flex-col p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-300">Cabinet context</p>
+            <h3 className="mt-2 text-xl font-semibold text-slate-100">{rack.name}</h3>
+            <dl className="mt-5 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-4"><dt className="text-slate-500">Capacity</dt><dd className="font-medium text-slate-200">{elevationQuery.data.height_u}U</dd></div>
+              <div className="flex items-center justify-between gap-4"><dt className="text-slate-500">Occupied</dt><dd className="font-medium text-slate-200">{mountedUnits}U</dd></div>
+              <div className="flex items-center justify-between gap-4"><dt className="text-slate-500">Free</dt><dd className="font-medium text-emerald-300">{Math.max(elevationQuery.data.height_u - mountedUnits, 0)}U</dd></div>
+              <div className="flex items-center justify-between gap-4"><dt className="text-slate-500">Utilization</dt><dd className="font-medium text-slate-200">{elevationQuery.data.height_u ? `${Math.round((mountedUnits / elevationQuery.data.height_u) * 100)}%` : "—"}</dd></div>
+              <div className="flex items-center justify-between gap-4"><dt className="text-slate-500">Room</dt><dd className="truncate text-right text-slate-200">{currentRoom?.name ?? "Unplaced"}</dd></div>
+            </dl>
+            {selectedSlot ? <div className="mt-6 rounded-lg border border-indigo-400/25 bg-indigo-500/10 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-200">Inspected equipment</p>
+              <p className="mt-2 font-semibold text-slate-100">{selectedSlot.hostname ?? selectedSlot.asset_tag}</p>
+              <p className="mt-1 text-sm text-slate-400">{selectedSlot.asset_tag} · U{selectedSlot.u_start}–U{selectedSlot.u_end} · {selectedSlot.side}</p>
+              <Link to={`/equipment/${selectedSlot.equipment_id}`} className="mt-4 inline-flex text-sm font-medium text-indigo-300 hover:text-indigo-200">Open equipment view →</Link>
+            </div> : <p className="mt-6 text-sm text-slate-500">No mounted equipment is available to inspect.</p>}
+          </aside>
+        </div>}
       </div>
 
       <div className="surface p-5">

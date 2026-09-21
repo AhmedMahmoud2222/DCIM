@@ -11,31 +11,52 @@
 }
 
 @layer components {
-  .page { @apply mx-auto w-full max-w-[1600px] space-y-6; }
-  .page-header { @apply flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-end lg:justify-between; }
-  .page-header h1 { @apply text-2xl font-semibold tracking-tight text-slate-50; }
-  .page-eyebrow { @apply mb-1 text-xs font-medium text-indigo-300; }
-  .page-description { @apply mt-2 max-w-3xl text-sm leading-6 text-slate-400; }
+  .page { @apply mx-auto w-full max-w-[1760px] space-y-7; }
+  .page-header { @apply flex flex-col gap-4 border-b border-slate-800 pb-6 lg:flex-row lg:items-end lg:justify-between; }
+  .page-header h1 { @apply text-3xl font-semibold tracking-tight text-slate-50; }
+  .page-eyebrow { @apply mb-1 text-xs font-semibold tracking-wide text-indigo-300; }
+  .page-description { @apply mt-2 max-w-4xl text-[15px] leading-6 text-slate-400; }
   .page-actions { @apply flex shrink-0 flex-wrap items-center gap-2; }
   .surface { @apply rounded-xl border border-slate-800 bg-slate-900/70 shadow-[0_14px_38px_rgba(0,0,0,.16)]; }
   .surface-muted { @apply rounded-xl border border-slate-800/80 bg-slate-900/40; }
   .section-title { @apply flex items-end justify-between gap-4; }
-  .section-title h2 { @apply text-sm font-semibold text-slate-100; }
-  .section-title p { @apply mt-1 text-xs text-slate-500; }
-  .status-badge { @apply inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium capitalize; }
-  .metric-card { @apply relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-[0_10px_30px_rgba(0,0,0,.14)]; }
+  .section-title h2 { @apply text-base font-semibold text-slate-100; }
+  .section-title p { @apply mt-1 text-sm text-slate-500; }
+  .status-badge { @apply inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium capitalize; }
+  .metric-card { @apply relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-[0_10px_30px_rgba(0,0,0,.14)]; }
   .metric-card-accent { @apply absolute inset-x-0 top-0 h-0.5; }
-  .metric-card-label { @apply text-xs font-medium text-slate-400; }
-  .metric-card-value { @apply mt-2 text-2xl font-semibold tracking-tight text-slate-50; }
-  .metric-card-detail { @apply mt-1 text-xs text-slate-500; }
-  .action-primary { @apply inline-flex items-center justify-center rounded-lg bg-indigo-500 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50; }
-  .action-secondary { @apply inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50; }
-  .field { @apply w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600; }
+  .metric-card-label { @apply text-sm font-medium text-slate-400; }
+  .metric-card-value { @apply mt-2 text-3xl font-semibold tracking-tight text-slate-50; }
+  .metric-card-detail { @apply mt-1.5 text-xs text-slate-500; }
+  .action-primary { @apply inline-flex items-center justify-center rounded-lg bg-indigo-500 px-3.5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50; }
+  .action-secondary { @apply inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50; }
+  .field { @apply w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-600; }
   .empty-state { @apply flex min-h-32 items-center gap-4 rounded-lg border border-dashed border-slate-700 bg-slate-950/30 p-5; }
   .empty-state-mark { @apply flex h-9 w-9 items-center justify-center rounded-lg bg-slate-800 text-xl text-slate-500; }
   .data-table { @apply w-full min-w-[620px] text-left text-sm; }
   .data-table thead { @apply border-b border-slate-800 bg-slate-950/30 text-xs font-medium text-slate-400; }
   .data-table th { @apply px-4 py-3; }
-  .data-table td { @apply px-4 py-3; }
+  .data-table td { @apply px-4 py-3.5; }
   .data-table tbody tr { @apply border-b border-slate-800/70 transition hover:bg-slate-800/40; }
+  .rack-elevation-canvas { @apply rounded-xl border border-slate-800 bg-[#070c15] p-4; }
+  .rack-elevation-legend { @apply mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-medium text-slate-400; }
+  .rack-elevation-legend span { @apply inline-flex items-center gap-1.5; }
+  .rack-elevation-legend i { @apply inline-block h-2.5 w-2.5 rounded-sm; }
+  .rack-elevation-scroll { @apply max-h-[760px] overflow-auto rounded-lg border border-slate-800 bg-[#050912] p-3; }
+  .rack-elevation-svg { @apply block min-w-[690px]; }
+  .rack-elevation-face-label { @apply fill-slate-400 text-xs font-semibold tracking-[0.24em]; }
+  .rack-elevation-u-label { @apply fill-slate-500 text-[10px] font-medium; }
+  .rack-elevation-grid { @apply stroke-slate-800; stroke-width: 1; }
+  .rack-elevation-frame { @apply fill-slate-950 stroke-slate-600; stroke-width: 2; }
+  .rack-elevation-slot { @apply cursor-pointer transition-[opacity]; }
+  .rack-elevation-slot:hover { opacity: 1; }
+  .rack-elevation-slot-label { @apply pointer-events-none fill-slate-50 text-xs font-semibold; }
+  .power-topology-canvas { @apply overflow-hidden rounded-xl border border-slate-800 bg-[#070c15] p-4; }
+  .power-topology-legend { @apply mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-xs text-slate-400; }
+  .power-topology-legend span { @apply inline-flex items-center gap-2; }
+  .power-topology-legend i { @apply inline-block h-0.5 w-7 bg-indigo-300; }
+  .floor-rack { @apply cursor-pointer transition-[stroke-width,fill] duration-150; }
+  .power-kpi { @apply flex min-h-24 flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/35 p-4 text-slate-200; }
+  .power-kpi span { @apply text-xs font-medium text-slate-500; }
+  .power-kpi strong { @apply mt-2 text-sm font-semibold; }
 }
