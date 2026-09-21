@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 
 import { ElevationSlot, RackElevation } from "@/types";
 
-const U_HEIGHT_PX = 19;
+const U_HEIGHT_PX = 17;
 const COL_WIDTH_PX = 320;
 const LABEL_COL_WIDTH_PX = 44;
 
