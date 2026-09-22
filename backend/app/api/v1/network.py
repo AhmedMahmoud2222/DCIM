@@ -3,15 +3,18 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Request, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.application.audit_service import write_audit_log
 from app.application.network_graph import GraphInterface, trace_to_core
+from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.domain.identity.models import ManagedAsset
 from app.domain.network.models import NetworkConnection, NetworkDevice, NetworkInterface
 
@@ -56,6 +59,19 @@ class ConnectionOut(BaseModel):
     source: str
     is_authoritative: bool
     model_config = {"from_attributes": True}
+
+
+class ConnectionCreateIn(BaseModel):
+    """An operator-declared physical link.
+
+    Provenance and authority intentionally are not request fields: an operator mutation
+    is always authoritative and is never permitted to masquerade as collector/import
+    inventory.
+    """
+
+    interface_a_id: uuid.UUID
+    interface_b_id: uuid.UUID
+    cable_label: str | None = Field(default=None, max_length=128)
 
 
 class TopologyOut(BaseModel):
@@ -144,6 +160,163 @@ async def list_connections(
     if interface_id:
         stmt = stmt.where(or_(NetworkConnection.interface_a_id == interface_id, NetworkConnection.interface_b_id == interface_id))
     return [ConnectionOut.model_validate(row) for row in (await db.execute(stmt)).scalars()]
+
+
+def _request_ids(request: Request) -> tuple[str | None, str | None]:
+    return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
+
+
+async def _locked_interfaces_for_connection(
+    db: AsyncSession, interface_a_id: uuid.UUID, interface_b_id: uuid.UUID
+) -> tuple[NetworkInterface, NetworkInterface]:
+    """Lock endpoints in UUID order before checking occupancy.
+
+    Migration 0015's trigger remains the database backstop for races (including a
+    reversed endpoint order).  These locks make ordinary conflicts deterministic and
+    actionable before the insert reaches that trigger.
+    """
+    endpoint_ids = sorted((interface_a_id, interface_b_id), key=str)
+    locked = (
+        await db.execute(
+            select(NetworkInterface)
+            .where(NetworkInterface.id.in_(endpoint_ids))
+            .order_by(NetworkInterface.id)
+            .with_for_update()
+        )
+    ).scalars().all()
+    by_id = {interface.id: interface for interface in locked}
+    missing = [str(interface_id) for interface_id in endpoint_ids if interface_id not in by_id]
+    if missing:
+        raise NotFoundError(f"Network interface {missing[0]} not found.")
+    return by_id[interface_a_id], by_id[interface_b_id]
+
+
+async def _assert_interfaces_available(
+    db: AsyncSession, endpoint_ids: tuple[uuid.UUID, uuid.UUID]
+) -> None:
+    occupied = (
+        await db.execute(
+            select(NetworkConnection.id).where(
+                or_(
+                    NetworkConnection.interface_a_id.in_(endpoint_ids),
+                    NetworkConnection.interface_b_id.in_(endpoint_ids),
+                )
+            )
+        )
+    ).first()
+    if occupied is not None:
+        raise ConflictError("One or both selected interfaces are already connected. Disconnect the existing link first.")
+
+
+@router.post("/connections", response_model=ConnectionOut, status_code=201)
+async def create_connection(
+    body: ConnectionCreateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("network:manage")),
+) -> ConnectionOut:
+    """Create one authoritative physical link with audit/outbox in the same commit."""
+    if body.interface_a_id == body.interface_b_id:
+        raise ConflictError("A physical connection requires two distinct interfaces.")
+
+    request_id, correlation_id = _request_ids(request)
+    try:
+        interface_a, interface_b = await _locked_interfaces_for_connection(db, body.interface_a_id, body.interface_b_id)
+        if interface_a.device_id == interface_b.device_id:
+            await db.rollback()
+            raise ConflictError("A physical connection cannot join two interfaces on the same device.")
+        await _assert_interfaces_available(db, (body.interface_a_id, body.interface_b_id))
+
+        connection = NetworkConnection(
+            interface_a_id=body.interface_a_id,
+            interface_b_id=body.interface_b_id,
+            cable_label=body.cable_label,
+            source="operator",
+            is_authoritative=True,
+        )
+        db.add(connection)
+        await db.flush()
+        await write_audit_log(
+            db,
+            actor_user_id=ctx.user.id,
+            action="network.connection.create",
+            entity_type="network_connection",
+            entity_id=connection.id,
+            request_id=request_id,
+            correlation_id=correlation_id,
+            after={
+                "interface_a_id": str(connection.interface_a_id),
+                "interface_b_id": str(connection.interface_b_id),
+                "cable_label": connection.cable_label,
+                "source": connection.source,
+                "is_authoritative": connection.is_authoritative,
+            },
+        )
+        await write_outbox_event(
+            db,
+            event_type="NetworkConnectionCreated",
+            aggregate_type="network_connection",
+            aggregate_id=connection.id,
+            payload={"interface_a_id": str(connection.interface_a_id), "interface_b_id": str(connection.interface_b_id)},
+            correlation_id=correlation_id,
+        )
+        await db.commit()
+        return ConnectionOut.model_validate(connection)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError("One or both selected interfaces are already connected. Refresh topology and try again.") from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+async def disconnect_connection(
+    connection_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("network:manage")),
+) -> Response:
+    """Remove an operator-visible physical link atomically with its audit/outbox event."""
+    request_id, correlation_id = _request_ids(request)
+    try:
+        connection = (
+            await db.execute(select(NetworkConnection).where(NetworkConnection.id == connection_id).with_for_update())
+        ).scalar_one_or_none()
+        if connection is None:
+            raise NotFoundError(f"Network connection {connection_id} not found.")
+        before = {
+            "interface_a_id": str(connection.interface_a_id),
+            "interface_b_id": str(connection.interface_b_id),
+            "cable_label": connection.cable_label,
+            "source": connection.source,
+            "is_authoritative": connection.is_authoritative,
+        }
+        await db.delete(connection)
+        await db.flush()
+        await write_audit_log(
+            db,
+            actor_user_id=ctx.user.id,
+            action="network.connection.disconnect",
+            entity_type="network_connection",
+            entity_id=connection_id,
+            request_id=request_id,
+            correlation_id=correlation_id,
+            before=before,
+        )
+        await write_outbox_event(
+            db,
+            event_type="NetworkConnectionDisconnected",
+            aggregate_type="network_connection",
+            aggregate_id=connection_id,
+            payload=before,
+            correlation_id=correlation_id,
+        )
+        await db.commit()
+        return Response(status_code=204)
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.get("/topology", response_model=TopologyOut)

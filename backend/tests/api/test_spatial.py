@@ -22,9 +22,9 @@ async def test_room_spatial_view_includes_placed_racks_and_floor_standing_equipm
     assert body["active_floor_plan_id"] is None
 
 
-async def test_room_spatial_view_excludes_rack_mounted_equipment_from_the_equipment_list(client, auth_headers):
-    """Rack-mounted equipment belongs to the rack's elevation view (§8), not the 2D room
-    view — it must not appear twice across the two projections."""
+async def test_room_spatial_view_separates_rack_mounted_equipment_from_2d_equipment(client, auth_headers):
+    """The 2D layer remains free of rack-mounted equipment, while the same authoritative
+    placement facts are supplied separately for the interactive 3D projection."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
     rack = await create_rack(client, headers, room_id=room_id)
@@ -37,6 +37,10 @@ async def test_room_spatial_view_excludes_rack_mounted_equipment_from_the_equipm
 
     resp = await client.get(f"/api/v1/spatial/rooms/{room_id}/view", headers=headers)
     assert resp.json()["equipment"] == []
+    assert resp.json()["rack_equipment"] == [{
+        "id": mounted_eq["id"], "asset_tag": mounted_eq["asset_tag"], "hostname": mounted_eq["hostname"],
+        "rack_id": rack["id"], "u_start": 1, "u_end": 2,
+    }]
 
 
 async def test_room_spatial_view_reports_the_active_floor_plan(client, auth_headers):

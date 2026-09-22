@@ -231,6 +231,15 @@ export interface RoomEquipment {
   spatial_object_id: string | null;
 }
 
+export interface RackMountedEquipment {
+  id: string;
+  asset_tag: string;
+  hostname: string | null;
+  rack_id: string;
+  u_start: number;
+  u_end: number;
+}
+
 export interface RoomSpatialView {
   room_id: string;
   room_name: string;
@@ -241,6 +250,7 @@ export interface RoomSpatialView {
   generated_at: string;
   racks: RoomRack[];
   equipment: RoomEquipment[];
+  rack_equipment: RackMountedEquipment[];
   objects: SpatialObject[];
 }
 
