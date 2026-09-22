@@ -87,6 +87,11 @@ jobs:
           alembic downgrade 0010_mvp_alarms
           alembic upgrade head
           test "$(alembic heads | wc -l)" -eq 1
+      - name: Validate network runtime-defaults migration round trip
+        run: |
+          alembic downgrade 0015_network_topology
+          alembic upgrade head
+          test "$(alembic heads | wc -l)" -eq 1
       - name: Bootstrap privileged retention role
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
       - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
@@ -114,4 +119,5 @@ jobs:
       - run: npm install
       - run: npm run typecheck
       - run: npx eslint . --ext ts,tsx
+      - run: npm run test
       - run: npm run build
