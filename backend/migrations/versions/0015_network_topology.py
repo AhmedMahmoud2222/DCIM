@@ -90,15 +90,22 @@ def upgrade() -> None:
     op.execute(
         """CREATE FUNCTION enforce_network_port_single_connection() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
+          PERFORM id FROM network_interface
+          WHERE id IN (NEW.interface_a_id, NEW.interface_b_id)
+          ORDER BY id
+          FOR UPDATE;
+
           IF EXISTS (SELECT 1 FROM network_connection WHERE id <> NEW.id AND
             (interface_a_id IN (NEW.interface_a_id, NEW.interface_b_id) OR
              interface_b_id IN (NEW.interface_a_id, NEW.interface_b_id))) THEN
             RAISE EXCEPTION 'network interface already connected';
           END IF;
           RETURN NEW;
-        END $$;
-        CREATE TRIGGER trg_network_port_single_connection BEFORE INSERT OR UPDATE ON network_connection
-        FOR EACH ROW EXECUTE FUNCTION enforce_network_port_single_connection();"""
+        END $$;"""
+    )
+    op.execute(
+        """CREATE TRIGGER trg_network_port_single_connection BEFORE INSERT OR UPDATE ON network_connection
+        FOR EACH ROW EXECUTE FUNCTION enforce_network_port_single_connection()"""
     )
     op.execute(
         """INSERT INTO permission (id, resource, action, description) VALUES
@@ -120,10 +127,8 @@ def downgrade() -> None:
         WHERE role_permission.permission_id=permission.id AND permission.resource='network'"""
     )
     op.execute("DELETE FROM permission WHERE resource='network'")
-    op.execute(
-        """DROP TRIGGER trg_network_port_single_connection ON network_connection;
-        DROP FUNCTION enforce_network_port_single_connection()"""
-    )
+    op.execute("DROP TRIGGER trg_network_port_single_connection ON network_connection")
+    op.execute("DROP FUNCTION enforce_network_port_single_connection()")
     op.drop_index("ix_network_connection_endpoints", table_name="network_connection")
     op.drop_table("network_connection")
     op.drop_index("ix_network_interface_device_id", table_name="network_interface")
