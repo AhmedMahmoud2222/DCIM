@@ -13,6 +13,7 @@ from app.api.v1 import (
     integrations,
     locations,
     managed_assets,
+    network,
     power,
     racks,
     settings,
@@ -34,6 +35,7 @@ api_router.include_router(equipment.router)
 api_router.include_router(floor_plans.router)
 api_router.include_router(spatial.router)
 api_router.include_router(power.router)
+api_router.include_router(network.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(collectors.router)
 api_router.include_router(integrations.router)

@@ -18,6 +18,8 @@ import { InfrastructurePage } from "@/features/locations/InfrastructurePage";
 import { SiteDetailPage } from "@/features/locations/SiteDetailPage";
 import { ManagedAssetsPage } from "@/features/managed-assets/ManagedAssetsPage";
 import { PowerTopologyPage } from "@/features/power/PowerTopologyPage";
+import { NetworkPage } from "@/features/network/NetworkPage";
+import { Layout3DPage } from "@/features/spatial3d/Layout3DPage";
 import { RackDetailPage } from "@/features/racks/RackDetailPage";
 import { RacksPage } from "@/features/racks/RacksPage";
 
@@ -44,6 +46,8 @@ export function App() {
               <Route path="/floor-plans" element={<FloorPlansPage />} />
               <Route path="/floor-plans/room/:roomId" element={<RoomFloorPlanPage />} />
               <Route path="/power" element={<PowerTopologyPage />} />
+              <Route path="/network" element={<NetworkPage />} />
+              <Route path="/3d-layout" element={<Layout3DPage />} />
               <Route path="/collectors" element={<CollectorsPage />} />
               <Route path="/integrations" element={<IntegrationsPage />} />
               <Route path="/discovery" element={<DiscoveryPage />} />

@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { getEquipment, moveEquipment, retireEquipment } from "@/features/equipment/api";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
+import { getEquipmentNetworkContext } from "@/features/network/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import { acknowledgeAlarm, getAlarmHistory, getLatestTelemetry, getTelemetryHistory } from "@/features/telemetry/api";
 import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
@@ -45,6 +46,7 @@ export function EquipmentDetailPage() {
     queryFn: () => getEquipmentPowerSummary(equipmentId!),
     enabled: !!equipmentId,
   });
+  const networkContextQuery = useQuery({ queryKey: ["network", "equipment", equipmentId], queryFn: () => getEquipmentNetworkContext(equipmentId!), enabled: !!equipmentId, retry: false });
   const latestTelemetryQuery = useQuery({
     queryKey: ["telemetry", "latest", equipmentId], queryFn: () => getLatestTelemetry(equipmentId!), enabled: !!equipmentId,
   });
@@ -326,6 +328,14 @@ export function EquipmentDetailPage() {
             </div>
           </>
         )}
+      </div>
+
+      <div className="surface p-5">
+        <div className="mb-3 flex items-center justify-between"><div><h2 className="text-base font-semibold">Network traceability</h2><p className="mt-1 text-sm text-slate-500">Modeled physical path; not a live reachability test.</p></div><Link to="/network" className="action-secondary">Open topology →</Link></div>
+        {networkContextQuery.isLoading && <p className="text-sm text-slate-500">Resolving modeled path…</p>}
+        {networkContextQuery.isError && <p className="text-sm text-slate-500">No network endpoint is modeled for this equipment.</p>}
+        {networkContextQuery.data && <><StatusBadge label={networkContextQuery.data.state}/><p className="mt-2 text-xs text-slate-500">{networkContextQuery.data.statement}</p><ol className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{networkContextQuery.data.hops.map((hop,index)=><li key={`${hop.device_id}-${index}`} className="surface-muted p-3 text-sm"><b>{hop.device}</b><p className="text-xs text-slate-500">{hop.interface??"Interface unavailable"} · VLAN {hop.vlan??"Unknown"}</p></li>)}</ol></>}
+        <div className="mt-4 flex flex-wrap gap-2">{equipment.placement?.rack_id&&<Link className="action-secondary" to={`/racks/${equipment.placement.rack_id}`}>Rack</Link>}<Link className="action-secondary" to="/floor-plans">Floor plan</Link><Link className="action-secondary" to="/power">Power</Link><Link className="action-secondary" to="/network">Network</Link></div>
       </div>
 
       <div className="surface p-5">

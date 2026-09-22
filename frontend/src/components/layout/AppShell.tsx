@@ -3,8 +3,8 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/features/auth/useAuth";
 
 const NAV_GROUPS = [
-  { label: "Operate", items: [{ to: "/", label: "Dashboard", mark: "◈" }, { to: "/events", label: "Events", mark: "!" }, { to: "/power", label: "Power", mark: "↯" }] },
-  { label: "Infrastructure", items: [{ to: "/infrastructure", label: "Sites & rooms", mark: "⌂" }, { to: "/racks", label: "Racks", mark: "▥" }, { to: "/equipment", label: "Equipment", mark: "▣" }, { to: "/floor-plans", label: "Floor plans", mark: "⌘" }, { to: "/managed-assets", label: "Asset inventory", mark: "◇" }] },
+  { label: "Operate", items: [{ to: "/", label: "Dashboard", mark: "◈" }, { to: "/events", label: "Events", mark: "!" }, { to: "/power", label: "Power", mark: "↯" }, { to: "/network", label: "Network", mark: "⇆" }] },
+  { label: "Infrastructure", items: [{ to: "/infrastructure", label: "Sites & rooms", mark: "⌂" }, { to: "/racks", label: "Racks", mark: "▥" }, { to: "/equipment", label: "Equipment", mark: "▣" }, { to: "/floor-plans", label: "Floor plans", mark: "⌘" }, { to: "/3d-layout", label: "3D layout", mark: "◫" }, { to: "/managed-assets", label: "Asset inventory", mark: "◇" }] },
   { label: "Connectivity", items: [{ to: "/collectors", label: "Collectors", mark: "◌" }, { to: "/integrations", label: "Integrations", mark: "⇄" }, { to: "/discovery", label: "Discovery", mark: "◎" }] },
 ];
 
