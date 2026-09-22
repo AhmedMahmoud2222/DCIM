@@ -36,6 +36,37 @@ async def test_me_returns_current_user(client, auth_headers):
     assert "@example.com" in resp.json()["email"]
 
 
+async def test_me_exposes_effective_permission_codes_not_role_names(client, auth_headers):
+    """The permission-aware frontend contract (§39: never infer authorization from role
+    names client-side) — /me must expose the same resource:action codes
+    require_permission() checks, and never a bare role name a client would have to
+    reinterpret itself."""
+    headers = await auth_headers("Viewer")
+    resp = await client.get("/api/v1/auth/me", headers=headers)
+    body = resp.json()
+    assert "permissions" in body
+    assert "network:read" in body["permissions"]
+    assert "network:manage" not in body["permissions"]
+    assert "role" not in body
+    assert all(":" in code for code in body["permissions"])
+
+
+async def test_me_grants_manage_capability_to_writable_roles(client, auth_headers):
+    for role_name in ("Administrator", "DCIM Manager"):
+        headers = await auth_headers(role_name)
+        resp = await client.get("/api/v1/auth/me", headers=headers)
+        assert "network:manage" in resp.json()["permissions"], role_name
+
+
+async def test_me_withholds_manage_capability_from_read_only_roles(client, auth_headers):
+    for role_name in ("Operator", "Viewer"):
+        headers = await auth_headers(role_name)
+        resp = await client.get("/api/v1/auth/me", headers=headers)
+        permissions = resp.json()["permissions"]
+        assert "network:read" in permissions, role_name
+        assert "network:manage" not in permissions, role_name
+
+
 async def test_refresh_requires_csrf_header(client, make_user):
     await make_user("carol@example.com", "correct horse battery staple", "Viewer")
     await client.post("/api/v1/auth/login", json={"email": "carol@example.com", "password": "correct horse battery staple"})

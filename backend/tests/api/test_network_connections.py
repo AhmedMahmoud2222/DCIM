@@ -75,18 +75,36 @@ async def test_viewer_cannot_create_or_disconnect_connections(client, auth_heade
     assert (await client.delete(f"/api/v1/network/connections/{created.json()['id']}", headers=viewer)).status_code == 403
 
 
-async def test_connection_rejects_missing_same_device_and_same_interface(client, auth_headers, db_session):
+async def test_connection_rejects_missing_endpoint_and_true_self_connection(client, auth_headers, db_session):
     headers = await auth_headers("DCIM Manager")
     devices = await _topology_fixture(db_session, devices=2)
+    first_interface_id = str(devices[0][1].id)
+
+    assert (await _create(client, headers, first_interface_id, str(uuid.uuid4()))).status_code == 404
+    assert (await _create(client, headers, first_interface_id, first_interface_id)).status_code == 409
+
+
+async def test_connection_between_distinct_interfaces_on_the_same_device_is_allowed(client, auth_headers, db_session):
+    """Domain decision: only a literal self-connection (identical interface on both
+    ends) is prohibited. docs/NETWORK_3D_INCREMENT.md and migration 0015's own DB
+    constraints (`no_self_connection` on interface_a_id <> interface_b_id; the
+    single-connection trigger keyed on interface identity, not device identity) never
+    state or imply a same-device restriction, and realistic physical topologies
+    (a loopback test cable, a stacking link between two ports on one chassis) require
+    two distinct interfaces on the same device to be linkable."""
+    headers = await auth_headers("DCIM Manager")
+    devices = await _topology_fixture(db_session, devices=1)
     second_same_device = NetworkInterface(device_id=devices[0][0].id, name="Ethernet2", role="data")
     db_session.add(second_same_device)
     await db_session.commit()
     first_interface_id = str(devices[0][1].id)
     second_interface_id = str(second_same_device.id)
 
-    assert (await _create(client, headers, first_interface_id, str(uuid.uuid4()))).status_code == 404
-    assert (await _create(client, headers, first_interface_id, first_interface_id)).status_code == 409
-    assert (await _create(client, headers, first_interface_id, second_interface_id)).status_code == 409
+    response = await _create(client, headers, first_interface_id, second_interface_id)
+
+    assert response.status_code == 201, response.text
+    connection = response.json()
+    assert {connection["interface_a_id"], connection["interface_b_id"]} == {first_interface_id, second_interface_id}
 
 
 async def test_occupied_interface_and_reversed_duplicate_are_actionable_conflicts(client, auth_headers, db_session):
@@ -159,3 +177,52 @@ async def test_failed_audit_rolls_back_connection_and_outbox(client, auth_header
 
     assert (await db_session.execute(select(NetworkConnection))).scalars().all() == []
     assert (await db_session.execute(select(OutboxEvent))).scalars().all() == []
+
+
+async def _seed_observed_connection(db_session, devices, *, source: str) -> str:
+    connection = NetworkConnection(
+        interface_a_id=devices[0][1].id, interface_b_id=devices[1][1].id, source=source, is_authoritative=False
+    )
+    db_session.add(connection)
+    await db_session.commit()
+    await db_session.refresh(connection)
+    return str(connection.id)
+
+
+@pytest.mark.parametrize("source", ["demo", "collector", "import"])
+async def test_operator_disconnect_protects_non_authoritative_connections(client, auth_headers, db_session, source):
+    """Provenance policy: the operator disconnect workflow only removes connections an
+    operator created. A collector/import/demo observation is evidence of a real physical
+    link the inventory hasn't yet reconciled, not something an operator undid — deleting
+    it here would silently make that evidence disappear."""
+    headers = await auth_headers("DCIM Manager")
+    devices = await _topology_fixture(db_session, devices=2)
+    connection_id = await _seed_observed_connection(db_session, devices, source=source)
+
+    response = await client.delete(f"/api/v1/network/connections/{connection_id}", headers=headers)
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"].lower()
+    assert source in detail
+    assert "not an operator action" in detail or "protected" in detail
+    # The connection survives, untouched, and no disconnect audit/outbox event exists.
+    assert (await db_session.execute(select(NetworkConnection).where(NetworkConnection.id == uuid.UUID(connection_id)))).scalar_one()
+    disconnect_events = (
+        await db_session.execute(select(AuditLog).where(AuditLog.entity_id == uuid.UUID(connection_id), AuditLog.action == "network.connection.disconnect"))
+    ).scalars().all()
+    assert disconnect_events == []
+
+
+async def test_operator_disconnect_succeeds_for_operator_authoritative_connection(client, auth_headers, db_session):
+    """Contrast case for the provenance policy: an operator-created, authoritative
+    connection remains disconnectable — the protection is scoped to observed links, not
+    to every connection."""
+    headers = await auth_headers("DCIM Manager")
+    devices = await _topology_fixture(db_session, devices=2)
+    created = await _create(client, headers, str(devices[0][1].id), str(devices[1][1].id))
+    connection_id = created.json()["id"]
+
+    response = await client.delete(f"/api/v1/network/connections/{connection_id}", headers=headers)
+
+    assert response.status_code == 204
+    assert (await db_session.execute(select(NetworkConnection).where(NetworkConnection.id == uuid.UUID(connection_id)))).scalar_one_or_none() is None

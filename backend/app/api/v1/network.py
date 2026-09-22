@@ -221,10 +221,12 @@ async def create_connection(
 
     request_id, correlation_id = _request_ids(request)
     try:
-        interface_a, interface_b = await _locked_interfaces_for_connection(db, body.interface_a_id, body.interface_b_id)
-        if interface_a.device_id == interface_b.device_id:
-            await db.rollback()
-            raise ConflictError("A physical connection cannot join two interfaces on the same device.")
+        # Same-device links are allowed (e.g. a loopback test cable or a stacking link
+        # between two ports on one chassis) — only a literal self-connection (identical
+        # interface on both ends, rejected above) and port occupancy are prohibited.
+        # Nothing in docs/NETWORK_3D_INCREMENT.md or the migration 0015 domain rules
+        # restricts distinct interfaces on the same device from being physically linked.
+        await _locked_interfaces_for_connection(db, body.interface_a_id, body.interface_b_id)
         await _assert_interfaces_available(db, (body.interface_a_id, body.interface_b_id))
 
         connection = NetworkConnection(
@@ -277,7 +279,16 @@ async def disconnect_connection(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("network:manage")),
 ) -> Response:
-    """Remove an operator-visible physical link atomically with its audit/outbox event."""
+    """Remove an operator-authoritative physical link atomically with its audit/outbox
+    event.
+
+    Provenance policy: this endpoint is the operator disconnect workflow, not a general
+    delete. A connection recorded from collector, import, or demo observation is not
+    something an operator physically undid by removing a cable — it is evidence the
+    inventory does not yet match reality, and silently deleting that evidence here would
+    let a real physical link disappear from the record without anyone reconciling it.
+    Only `is_authoritative` (operator-created) connections may be removed through this
+    action; anything else is an actionable 409, never a silent no-op or a 404."""
     request_id, correlation_id = _request_ids(request)
     try:
         connection = (
@@ -285,6 +296,12 @@ async def disconnect_connection(
         ).scalar_one_or_none()
         if connection is None:
             raise NotFoundError(f"Network connection {connection_id} not found.")
+        if not connection.is_authoritative:
+            raise ConflictError(
+                f"This link was recorded from {connection.source} observation, not an operator action, and is "
+                "protected from the operator disconnect workflow. Reconciling or removing an observed link is not "
+                "yet supported here."
+            )
         before = {
             "interface_a_id": str(connection.interface_a_id),
             "interface_b_id": str(connection.interface_b_id),
