@@ -221,6 +221,9 @@ export interface RoomRack {
   y_mm: number | null;
   rotation_deg: number | null;
   spatial_object_id: string | null;
+  /** Authoritative rack capacity (rack_model_revision.height_u) — never fabricated
+   * client-side; every rack has a model revision, so this is always present. */
+  height_u: number;
 }
 
 export interface RoomEquipment {
@@ -238,6 +241,7 @@ export interface RackMountedEquipment {
   rack_id: string;
   u_start: number;
   u_end: number;
+  side: Side;
 }
 
 export interface RoomSpatialView {
