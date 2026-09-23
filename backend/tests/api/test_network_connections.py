@@ -179,9 +179,9 @@ async def test_failed_audit_rolls_back_connection_and_outbox(client, auth_header
     assert (await db_session.execute(select(OutboxEvent))).scalars().all() == []
 
 
-async def _seed_observed_connection(db_session, devices, *, source: str) -> str:
+async def _seed_connection(db_session, devices, *, source: str, is_authoritative: bool) -> str:
     connection = NetworkConnection(
-        interface_a_id=devices[0][1].id, interface_b_id=devices[1][1].id, source=source, is_authoritative=False
+        interface_a_id=devices[0][1].id, interface_b_id=devices[1][1].id, source=source, is_authoritative=is_authoritative
     )
     db_session.add(connection)
     await db_session.commit()
@@ -189,34 +189,71 @@ async def _seed_observed_connection(db_session, devices, *, source: str) -> str:
     return str(connection.id)
 
 
-@pytest.mark.parametrize("source", ["demo", "collector", "import"])
-async def test_operator_disconnect_protects_non_authoritative_connections(client, auth_headers, db_session, source):
-    """Provenance policy: the operator disconnect workflow only removes connections an
-    operator created. A collector/import/demo observation is evidence of a real physical
-    link the inventory hasn't yet reconciled, not something an operator undid — deleting
-    it here would silently make that evidence disappear."""
+# The full source/authority matrix: only source="operator" AND is_authoritative=True may
+# be disconnected through this endpoint. `is_authoritative` alone is not a sufficient
+# guard — it is a column independent of `source`, and nothing in the domain model
+# prevents a collector/import/demo row from carrying is_authoritative=True (e.g. a
+# discovery pipeline that promotes a confirmed observation). Every other combination,
+# including that one, must be protected.
+SOURCE_AUTHORITY_MATRIX = [
+    ("operator", True, "disconnect_succeeds"),
+    ("operator", False, "protected"),
+    ("collector", False, "protected"),
+    ("collector", True, "protected"),
+    ("import", False, "protected"),
+    ("import", True, "protected"),
+    ("demo", False, "protected"),
+    ("demo", True, "protected"),
+]
+
+
+@pytest.mark.parametrize("source,is_authoritative,expected", SOURCE_AUTHORITY_MATRIX)
+async def test_operator_disconnect_enforces_the_full_source_and_authority_predicate(
+    client, auth_headers, db_session, source, is_authoritative, expected
+):
+    """Provenance policy: the operator disconnect workflow only removes connections that
+    are both operator-sourced and authoritative. A collector/import/demo observation —
+    even one incorrectly or exceptionally flagged is_authoritative=True — is evidence of
+    a real physical link the inventory hasn't yet reconciled, not something an operator
+    physically undid; deleting it here would silently make that evidence disappear."""
     headers = await auth_headers("DCIM Manager")
     devices = await _topology_fixture(db_session, devices=2)
-    connection_id = await _seed_observed_connection(db_session, devices, source=source)
+    connection_id = await _seed_connection(db_session, devices, source=source, is_authoritative=is_authoritative)
 
     response = await client.delete(f"/api/v1/network/connections/{connection_id}", headers=headers)
 
+    if expected == "disconnect_succeeds":
+        assert response.status_code == 204, response.text
+        assert (
+            await db_session.execute(select(NetworkConnection).where(NetworkConnection.id == uuid.UUID(connection_id)))
+        ).scalar_one_or_none() is None
+        return
+
     assert response.status_code == 409, response.text
-    detail = response.json()["detail"].lower()
+    body = response.json()
+    detail = body["detail"].lower()
     assert source in detail
     assert "not an operator action" in detail or "protected" in detail
+    # No stack trace, exception type, or other internal detail leaks into the response.
+    assert "traceback" not in detail and "exception" not in detail
     # The connection survives, untouched, and no disconnect audit/outbox event exists.
-    assert (await db_session.execute(select(NetworkConnection).where(NetworkConnection.id == uuid.UUID(connection_id)))).scalar_one()
-    disconnect_events = (
+    assert (
+        await db_session.execute(select(NetworkConnection).where(NetworkConnection.id == uuid.UUID(connection_id)))
+    ).scalar_one()
+    disconnect_audit = (
         await db_session.execute(select(AuditLog).where(AuditLog.entity_id == uuid.UUID(connection_id), AuditLog.action == "network.connection.disconnect"))
     ).scalars().all()
-    assert disconnect_events == []
+    assert disconnect_audit == []
+    disconnect_outbox = (
+        await db_session.execute(select(OutboxEvent).where(OutboxEvent.aggregate_id == uuid.UUID(connection_id), OutboxEvent.event_type == "NetworkConnectionDisconnected"))
+    ).scalars().all()
+    assert disconnect_outbox == []
 
 
 async def test_operator_disconnect_succeeds_for_operator_authoritative_connection(client, auth_headers, db_session):
     """Contrast case for the provenance policy: an operator-created, authoritative
-    connection remains disconnectable — the protection is scoped to observed links, not
-    to every connection."""
+    connection remains disconnectable — the protection is scoped to non-operator or
+    non-authoritative links, not to every connection."""
     headers = await auth_headers("DCIM Manager")
     devices = await _topology_fixture(db_session, devices=2)
     created = await _create(client, headers, str(devices[0][1].id), str(devices[1][1].id))

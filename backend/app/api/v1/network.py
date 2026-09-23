@@ -287,8 +287,11 @@ async def disconnect_connection(
     something an operator physically undid by removing a cable — it is evidence the
     inventory does not yet match reality, and silently deleting that evidence here would
     let a real physical link disappear from the record without anyone reconciling it.
-    Only `is_authoritative` (operator-created) connections may be removed through this
-    action; anything else is an actionable 409, never a silent no-op or a 404."""
+    Only a connection that is BOTH `source == "operator"` AND `is_authoritative` may be
+    removed through this action — checking `is_authoritative` alone is not sufficient:
+    nothing in the domain model guarantees a collector/import/demo row can never carry
+    `is_authoritative=True` (that flag and `source` are independent columns), so both
+    are required. Anything else is an actionable 409, never a silent no-op or a 404."""
     request_id, correlation_id = _request_ids(request)
     try:
         connection = (
@@ -296,11 +299,11 @@ async def disconnect_connection(
         ).scalar_one_or_none()
         if connection is None:
             raise NotFoundError(f"Network connection {connection_id} not found.")
-        if not connection.is_authoritative:
+        if connection.source != "operator" or not connection.is_authoritative:
             raise ConflictError(
                 f"This link was recorded from {connection.source} observation, not an operator action, and is "
-                "protected from the operator disconnect workflow. Reconciling or removing an observed link is not "
-                "yet supported here."
+                "protected from the operator disconnect workflow. Reconciling or removing a non-operator or "
+                "non-authoritative link is not yet supported here."
             )
         before = {
             "interface_a_id": str(connection.interface_a_id),

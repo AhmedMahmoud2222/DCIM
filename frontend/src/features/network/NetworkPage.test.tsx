@@ -109,6 +109,23 @@ describe("NetworkPage observed-link protection", () => {
     expect(await screen.findByText(/recorded from collector observation/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Disconnect link" })).not.toBeInTheDocument();
   });
+
+  it("treats a non-operator link flagged is_authoritative=true as still protected (mirrors the backend predicate)", async () => {
+    // Regression for the gap the backend correction closed: is_authoritative alone is
+    // not sufficient. A collector/import/demo row can in principle carry
+    // is_authoritative=true, and the UI must not present it as operator-disconnectable.
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue({
+      ...topology,
+      connections: [{ id: "conn-flagged", interface_a_id: "if-a1", interface_b_id: "if-b1", cable_label: null, source: "collector", is_authoritative: true }],
+    });
+    const user = userEvent.setup();
+    const { container } = renderPage();
+    const line = await findTopologyLine(container);
+    await user.click(line);
+    expect(await screen.findByText(/recorded from collector observation/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect link" })).not.toBeInTheDocument();
+  });
 });
 
 describe("NetworkPage connection creation", () => {

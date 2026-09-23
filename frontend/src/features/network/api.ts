@@ -2,6 +2,13 @@ import { apiFetch } from "@/lib/apiClient";
 export interface NetworkDevice { id:string; asset_tag:string; lifecycle_status:string; name:string; device_type:string; source:string; last_observed_at:string|null }
 export interface NetworkInterface { id:string; device_id:string; name:string; interface_type:string; description:string|null; mac_address:string|null; role:string; admin_status:string; oper_status:string; speed_mbps:number|null; duplex:string|null; mtu:number|null; native_vlan:number|null; ip_address:string|null; source:string; last_observed_at:string|null }
 export interface NetworkConnection { id:string; interface_a_id:string; interface_b_id:string; cable_label:string|null; source:string; is_authoritative:boolean }
+/** Mirrors the backend's operator-disconnect predicate exactly (network.py
+ * disconnect_connection): `is_authoritative` alone is not sufficient — it is a column
+ * independent of `source`, and nothing in the domain model prevents a collector/import/
+ * demo row from carrying `is_authoritative=true`. Both must hold before the UI may offer
+ * a Disconnect control or present a link as operator-authoritative. */
+export const isOperatorAuthoritative = (connection: NetworkConnection): boolean =>
+  connection.source === "operator" && connection.is_authoritative;
 export interface NetworkTopology { devices:NetworkDevice[]; interfaces:NetworkInterface[]; connections:NetworkConnection[] }
 export interface NetworkTrace { state:"complete"|"incomplete"|"unknown"; statement:string; source_device_id:string; hops:Array<{device_id:string;device:string;device_type:string;interface_id:string|null;interface:string|null;vlan:number|null;operational_state:string|null}> }
 export interface CreateNetworkConnectionInput { interface_a_id:string; interface_b_id:string; cable_label?:string|null }
