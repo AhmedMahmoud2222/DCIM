@@ -12,16 +12,34 @@ inlined directly in `app/api/v1/catalog_designer.py`, matching this repo's exist
 module.
 
 Concurrency, by construction, not by retry loops:
-- Two concurrent `POST .../revisions` (or clone) calls computing the same
-  `max(revision_number) + 1` collide on `catalog_model_revision`'s own
-  `UNIQUE(catalog_model_id, revision_number)` constraint; the app-wide `IntegrityError`
-  handler (app/core/errors.py) already turns that into a clean 409, so no bespoke handling
-  is needed here.
-- Two concurrent publishes of the *same* revision serialize through `publish_revision`'s
-  own `SELECT ... FOR UPDATE` below: the second blocks until the first commits or rolls
-  back, then re-reads a `lifecycle_status` that is no longer `'draft'` and is rejected —
-  never a corrupted partial publish, matching PR-1's own `fn_guard_catalog_model_revision_
-  lifecycle()` discipline for child writes.
+- `allocate_revision_number()` locks the parent `catalog_model` row with `SELECT ... FOR
+  UPDATE` before computing `max(revision_number) + 1`, so two concurrent
+  create-draft/clone requests under the *same* model can never compute the same number —
+  each queues behind the lock and gets a distinct one. A request for a *different* model
+  is entirely unaffected (a different row, no shared lock). The app-wide `IntegrityError`
+  handler (app/core/errors.py) still stands as a defense-in-depth safety net turning any
+  residual constraint violation into a clean 409 rather than a raw 500, but is no longer
+  the primary mechanism.
+- `lock_draft_revision_for_edit()` is the single atomicity primitive behind both the
+  revision's own scalar `PATCH` and every child template create/edit/delete: it locks the
+  revision row with `SELECT ... FOR UPDATE` *before* comparing `If-Match` against the
+  current version. A plain load-then-compare is not atomic under two simultaneous
+  requests — both could read the same pre-mutation version, both pass the check, and the
+  second would silently overwrite the first's already-committed change, since its ORM
+  object never re-reads the row before computing its own new version. The lock forces the
+  second request to block until the first's transaction ends, then re-read the fresh,
+  post-commit version and correctly detect the conflict. Child template rows carry no
+  version column of their own (spec §4.3/§4.4/§4.6) — the request contract for every
+  child mutation is `If-Match` against the *parent revision's* version, which this
+  function also increments by one, atomically, as part of the same lock/check.
+- Two concurrent publishes of the *same* revision, or a publish racing a concurrent draft/
+  child edit, serialize through the same mechanism: `publish_revision`'s own `SELECT ...
+  FOR UPDATE` below locks the identical `catalog_model_revision` row
+  `lock_draft_revision_for_edit()` locks, so whichever transaction gets there first is
+  the one the other waits on and then correctly observes (a) published, if publish won —
+  the edit's own draft check rejects it, or (b) still draft with a bumped version, if the
+  edit won — publish re-validates against the edited content, never a corrupted partial
+  publish or a silently lost edit.
 - The legacy-model find-or-create (`_find_or_create_rack_model`/`_find_or_create_
   equipment_model`) uses `INSERT ... ON CONFLICT DO NOTHING RETURNING id` followed by a
   fallback `SELECT`, the same race-safe upsert pattern already used by
@@ -38,6 +56,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.concurrency import check_version_match
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
     CatalogGraphic,
@@ -153,6 +172,69 @@ class ValidationFailed(Exception):
     def __init__(self, summary: ValidationSummary):
         self.summary = summary
         super().__init__("Revision failed publish validation.")
+
+
+# --------------------------------------------------------------------------- Concurrency primitives
+
+
+async def lock_draft_revision_for_edit(
+    db: AsyncSession, *, revision_id: uuid.UUID, if_match_version: int
+) -> CatalogModelRevision:
+    """The single atomicity primitive behind the revision's own scalar `PATCH` and every
+    network-port/power-supply/monitoring-metric create/edit/delete. Request contract for
+    every one of these mutations: `If-Match` carries the *parent revision's* current
+    `version` (child rows have no version column of their own, spec §4.3/§4.4/§4.6) —
+    identical to how the revision's own PATCH already used `If-Match` (spec §5.1), just
+    extended to cover child writes too, since an admin editing a port and an admin editing
+    a PSU on the same draft are exactly the same race as two admins editing the same
+    revision's scalar fields.
+
+    `SELECT ... FOR UPDATE` locks the row *before* comparing versions — necessary for
+    atomicity under two simultaneous requests: a plain load-then-compare lets both read
+    the same pre-mutation version, both pass the check, and the second silently overwrite
+    the first (its ORM object never re-reads the row before computing its own new
+    version). The lock forces the second request to block until the first's transaction
+    ends, then re-read the fresh, post-commit version and correctly detect the conflict.
+
+    Raises NotFoundError / ConflictError (wrong version, or not a draft — mirrors
+    `app/api/v1/catalog_designer.py`'s prior `_require_draft` message exactly, so callers
+    changing over to this function are not a behavior change on that path). Increments
+    `.version` by one and returns the locked, still-open-transaction revision; the caller
+    performs its own specific mutation (revision scalar fields, or a child row's add/
+    edit/delete) and flushes once — both changes land in the same statement batch."""
+    revision = await db.get(CatalogModelRevision, revision_id, with_for_update=True)
+    if revision is None:
+        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
+    if revision.lifecycle_status != "draft":
+        raise ConflictError(detail="This revision is published and immutable.")
+    check_version_match(expected=if_match_version, actual=revision.version)
+    revision.version += 1
+    return revision
+
+
+async def allocate_revision_number(db: AsyncSession, *, catalog_model_id: uuid.UUID) -> int:
+    """Serializes `revision_number` allocation per `catalog_model_id` via a row lock on
+    the parent `CatalogModel` — spec §5.1/§5.5's `revision_number = max(existing) + 1`
+    computed and effectively reserved atomically, so two concurrent create-draft/clone
+    requests under the same model can never compute the same number and collide on
+    `catalog_model_revision`'s own `UNIQUE(catalog_model_id, revision_number)` constraint.
+    A concurrent request for a *different* model is entirely unaffected — a different
+    row, no shared lock. Callers still insert the new revision row themselves; this
+    function only reserves the number by holding the model-row lock across both the read
+    and the caller's subsequent insert, within the same transaction."""
+    locked = (
+        await db.execute(select(CatalogModel.id).where(CatalogModel.id == catalog_model_id).with_for_update())
+    ).scalar_one_or_none()
+    if locked is None:
+        raise NotFoundError(f"CatalogModel {catalog_model_id} not found.")
+    max_number = (
+        await db.execute(
+            select(func.max(CatalogModelRevision.revision_number)).where(
+                CatalogModelRevision.catalog_model_id == catalog_model_id
+            )
+        )
+    ).scalar_one()
+    return (max_number or 0) + 1
 
 
 # --------------------------------------------------------------------------- Unit conversion
@@ -344,17 +426,11 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
     if source.lifecycle_status not in ("published", "retired"):
         raise ConflictError(detail="Only a published or retired revision may be cloned.")
 
-    max_revision_number = (
-        await db.execute(
-            select(func.max(CatalogModelRevision.revision_number)).where(
-                CatalogModelRevision.catalog_model_id == source.catalog_model_id
-            )
-        )
-    ).scalar_one()
+    revision_number = await allocate_revision_number(db, catalog_model_id=source.catalog_model_id)
 
     clone = CatalogModelRevision(
         catalog_model_id=source.catalog_model_id,
-        revision_number=max_revision_number + 1,
+        revision_number=revision_number,
         lifecycle_status="draft",
         dimension_unit=source.dimension_unit,
         width_value=source.width_value,
