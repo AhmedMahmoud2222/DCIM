@@ -252,14 +252,25 @@ describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
     return event;
   }
 
+  // The native listener is attached from a useEffect keyed to the viewport element's own
+  // mount, which commits in the same render pass that "Room One" becomes visible — but
+  // effects still run as a separate, asynchronous phase after that commit. A slower CI
+  // runner can observe the text before the effect has flushed, so every test in this
+  // block confirms attachment (via a zero-magnitude, side-effect-free probe event) before
+  // asserting on real wheel behavior, rather than assuming one findByText resolution
+  // implies the effect already ran.
+  async function waitForWheelListenerAttached(viewport: HTMLElement) {
+    await waitFor(() => expect(dispatchWheel(viewport, 0).defaultPrevented).toBe(true));
+  }
+
   it("default-prevents a cancelable wheel event over the viewport", async () => {
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
     const { container } = renderPage();
     await screen.findByText("Room One");
     const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
 
-    const event = dispatchWheel(viewport, -100);
-    expect(event.defaultPrevented).toBe(true);
+    await waitForWheelListenerAttached(viewport);
+    expect(dispatchWheel(viewport, -100).defaultPrevented).toBe(true);
   });
 
   it("one wheel event changes the zoom scale exactly once", async () => {
@@ -269,6 +280,7 @@ describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
     const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
     const world = container.querySelector(".layout3d-world") as HTMLElement;
     const zoomSlider = screen.getByLabelText("Zoom") as HTMLInputElement;
+    await waitForWheelListenerAttached(viewport);
     const before = Number(zoomSlider.value);
 
     dispatchWheel(viewport, -100);
@@ -282,6 +294,7 @@ describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
     await screen.findByText("Room One");
     const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
     const zoomSlider = screen.getByLabelText("Zoom") as HTMLInputElement;
+    await waitForWheelListenerAttached(viewport);
 
     for (let i = 0; i < 30; i++) dispatchWheel(viewport, -1000);
     await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(1.45, 5));
@@ -296,6 +309,7 @@ describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
     await screen.findByText("Room One");
     const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
     const zoomSlider = screen.getByLabelText("Zoom") as HTMLInputElement;
+    await waitForWheelListenerAttached(viewport);
 
     for (let i = 0; i < 30; i++) dispatchWheel(viewport, 1000);
     await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(0.45, 5));
@@ -309,6 +323,7 @@ describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
     const { container, unmount } = renderPage();
     await screen.findByText("Room One");
     const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+    await waitForWheelListenerAttached(viewport);
     const removeSpy = vi.spyOn(viewport, "removeEventListener");
 
     unmount();
