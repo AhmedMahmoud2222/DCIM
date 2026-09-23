@@ -16,6 +16,11 @@ future implementation phase.
 | Alembic current head (verified by walking `down_revision` chain across all 17 files in `backend/migrations/versions/`) | `0016_network_runtime_defaults` |
 | Backend stack | FastAPI (async, Python 3.11) + PostgreSQL 16 + Redis/Celery — modular monolith |
 | Frontend stack | React 18 + TypeScript + Vite + Tailwind + TanStack Query v5, no form/dialog library |
+| Commit `13165d3aa595272234dae7edd3587c6f997da468` (the correction that produced this document at its
+  current path) | Accepted as a permanent, documentation-only unsigned exception — confirmed to carry no
+  `gpgsig` header, under a different author identity than this branch's other, signed commits. Not
+  amended, rebased, or force-pushed. Full evidence and reasoning in
+  `docs/superpowers/plans/2026-09-23-phase-10a-asset-catalog-designer-plan.md` §2, not duplicated here. |
 
 ---
 
@@ -155,7 +160,7 @@ structured (no shape-detection/ambiguity step is needed).
 | 5 | Changes require a new draft → publish | §5.1–§5.3 |
 | 6 | Installed assets stay pinned until explicit migration | §6, §5.9 |
 | 7 | Lifecycle: draft / published / retired | `catalog_model_revision.lifecycle_status`, §4.2 |
-| 8 | Only administrators mutate catalog definitions | New `catalog:*` permission family, admin-only; **existing** `rack:manage`/`equipment:manage` catalog-authoring capability is explicitly removed, §9.1 |
+| 8 | Only administrators mutate catalog definitions | New `catalog:*` permission family **plus Administrator role membership**, both required by `require_catalog_administrator()`, not permission alone; **existing** `rack:manage`/`equipment:manage` catalog-authoring capability is explicitly removed, §9.1 |
 | 9 | Read access may be broader | `catalog:read` granted to every existing role that already holds `rack:read`/`equipment:read` |
 | 10 | Audit + outbox for material actions | §8, §10 — closes an existing gap (§1.1) |
 | 11 | No credentials/secrets in catalog definitions | Nothing in the schema references `Integration`, `credential_ciphertext`, or any secret-bearing table; monitoring templates hold protocol/OID/unit only (§4.6) |
@@ -711,17 +716,195 @@ catalog:
 ### 6.1 Inheritance and override representation
 
 At installation, the pinned revision supplies defaults; a local override is an explicit field value
-associated with an installed asset and a template `stable_key`. Add a typed
-`CatalogComponentOverride` table (`managed_asset_id`, `catalog_model_revision_id`, `component_kind`,
-`stable_key`, `field_name`, `value_type`, one typed value column per allowed type) with a uniqueness
-constraint over asset/component/field. Validate each override against the pinned revision and an
-allowlist of fields. No row means inherited; an explicit row means overridden even when its value
-happens to equal the default. The API returns each effective value with `source: inherited|override`
-and the original template value; resetting deletes the override. This avoids guessing provenance by
-comparing values and preserves explicit choices during migration. A DB/service validation check rejects
-an override targeting a different revision or component. During migration, matching stable keys retain
-valid overrides under the new revision, incompatible fields block migration, and removed keys require
-an explicit keep-as-local or discard decision in the preview. Existing installed fields remain intact.
+associated with an installed asset and a template `stable_key`, held in a typed
+`CatalogComponentOverride` table. This is the authoritative schema and enforcement design (superseding
+an earlier, incomplete version of this section that described the table only as "a uniqueness constraint
+over asset/component/field... one typed value column per allowed type" — the concrete design below is
+what an implementation phase builds).
+
+```text
+CatalogComponentOverride  PK id, managed_asset_id FK→ManagedAsset CASCADE NOT NULL,
+                         catalog_model_revision_id FK→CatalogModelRevision RESTRICT NOT NULL,
+                         component_kind CHECK IN ('network_port','power_supply','monitoring_metric') NOT NULL,
+                         stable_key VARCHAR(64) NOT NULL,
+                         field_name VARCHAR(64) CHECK IN (<union of every allowlisted field_name below>) NOT NULL,
+                         value_type CHECK IN ('text','numeric','boolean') NOT NULL,
+                         value_text TEXT NULL, value_numeric NUMERIC(18,6) NULL, value_boolean BOOLEAN NULL,
+                         CHECK (exactly one of value_text/value_numeric/value_boolean is non-null,
+                                matching value_type — same NULL-pattern-CHECK style as CatalogGraphicMarker),
+                         status CHECK IN ('active','orphaned') NOT NULL DEFAULT 'active',
+                         orphaned_at TIMESTAMPTZ NULL, orphaned_reason VARCHAR(255) NULL,
+                         CHECK ((status = 'active') = (orphaned_at IS NULL)),
+                         created_by_user_id FK→User RESTRICT NOT NULL, created_at/updated_at
+-- Partial unique index, not a plain UNIQUE constraint — same pattern already used by Alarm's
+-- one-open-alarm-per-rule/subject index (app/domain/alarm/models.py):
+--   UNIQUE INDEX ON (managed_asset_id, component_kind, stable_key, field_name) WHERE status = 'active'
+-- At most one *active* override per field at a time; 'orphaned' rows from prior revisions persist as
+-- history alongside it without colliding.
+```
+
+**Field allowlist.** The `field_name` `CHECK` above is a flat, DB-level backstop (the union of every
+allowlisted name below, so no arbitrary string is ever stored); the *per-`component_kind`* pairing is
+enforced at the application layer, by a single shared validator every write path calls, since a `CHECK`
+cannot easily express a conditional set membership across a sibling column. Deliberately narrow — every
+field below is one the installed-asset UI's inherited/overridden badge and the migration-compatibility
+check (§5.9) already need to read, display, or reconcile; nothing is added speculatively:
+
+| `component_kind` | `field_name` | `value_type` | Validation rule |
+|---|---|---|---|
+| `network_port` | `display_name` | `text` | 1–128 characters |
+| `network_port` | `role` | `text` | one of `NetworkPortTemplate.role`'s own `CHECK` list (`uplink`/`access`/`management`/`stack`/`other`) |
+| `network_port` | `speed_mbps` | `numeric` | integer-valued, `> 0` |
+| `power_supply` | `label` | `text` | 1–128 characters |
+| `power_supply` | `rated_current_a` | `numeric` | `> 0` |
+| `monitoring_metric` | `default_collection_interval_seconds` | `numeric` | integer-valued, `> 0` |
+| `monitoring_metric` | `default_warning_threshold` | `numeric` | finite |
+| `monitoring_metric` | `default_critical_threshold` | `numeric` | finite |
+
+**Revision-pin and component-existence enforcement, and the `orphaned` bypass reviewed.** A plain `CHECK`
+cannot express either rule (both require reading other tables), so both are enforced by a
+`BEFORE INSERT OR UPDATE` trigger, in the same hand-written-raw-SQL-trigger tradition as §5.4's
+`fn_reject_write_on_non_draft_revision()`. An earlier version of this design let *any* write that set
+`status = 'orphaned'` skip the pin/component check unconditionally — reviewed and closed here, because
+that would have let an ordinary caller insert a brand-new row, pre-marked `orphaned`, referencing any
+`catalog_model_revision_id`/`stable_key` combination whatsoever, never validated against anything. The
+corrected trigger makes orphaning a one-way transition available only to a pre-existing, already-validated
+`active` row, and only inside a catalog migration's own transaction:
+
+```sql
+CREATE FUNCTION fn_validate_catalog_component_override() RETURNS trigger AS $$
+DECLARE
+  v_pinned_legacy_id UUID;
+  v_bridge_rack UUID;
+  v_bridge_equipment UUID;
+  v_component_exists BOOLEAN;
+BEGIN
+  -- Orphaned rows are terminal history — no further UPDATE is ever valid on one (only DELETE,
+  -- which this trigger does not fire for, since it is not a delete-time check). This keeps
+  -- "orphaned" a one-way, one-time transition with no reactivation code path to also validate.
+  IF TG_OP = 'UPDATE' AND OLD.status = 'orphaned' THEN
+    RAISE EXCEPTION 'orphaned catalog_component_override rows are immutable; delete (reset) instead';
+  END IF;
+
+  -- Closes the bypass: a brand-new row must always be created active. Orphaning is exclusively a
+  -- transition applied to a pre-existing, already-validated active row — never a status an INSERT
+  -- can request directly. There is therefore no way, through this trigger, for an orphaned row to
+  -- ever exist that was not first validated as active against the checks below.
+  IF TG_OP = 'INSERT' AND NEW.status <> 'active' THEN
+    RAISE EXCEPTION 'a new catalog_component_override row must be created with status=active';
+  END IF;
+
+  -- The one recognized active -> orphaned transition: permitted only inside a catalog migration's
+  -- own transaction. The migration service sets this transaction-local flag (SET LOCAL, so it can
+  -- never leak to an unrelated transaction on a pooled connection) immediately after taking its
+  -- per-asset lock, before issuing any orphaning UPDATE — see the transaction step list below.
+  IF TG_OP = 'UPDATE' AND OLD.status = 'active' AND NEW.status = 'orphaned' THEN
+    IF current_setting('app.catalog_migration_context', true) IS DISTINCT FROM 'on' THEN
+      RAISE EXCEPTION 'orphaning a catalog_component_override is only permitted inside a catalog migration transaction';
+    END IF;
+    RETURN NEW;  -- the pin no longer matching is exactly what this transition records; skip the
+                 -- pin/component check below for this one write, deliberately.
+  END IF;
+
+  -- Every other write (an INSERT, or an UPDATE that keeps status=active) must pass the pin and
+  -- component-existence checks, with the asset row locked first so a concurrent migration on the
+  -- same asset serializes against this write rather than racing it.
+  SELECT model_revision_id INTO v_pinned_legacy_id FROM rack WHERE id = NEW.managed_asset_id FOR UPDATE;
+  IF NOT FOUND THEN
+    SELECT model_revision_id INTO v_pinned_legacy_id FROM equipment WHERE id = NEW.managed_asset_id FOR UPDATE;
+  END IF;
+  IF v_pinned_legacy_id IS NULL THEN
+    RAISE EXCEPTION 'managed_asset % is not a Rack or Equipment instance', NEW.managed_asset_id;
+  END IF;
+
+  SELECT legacy_rack_model_revision_id, legacy_equipment_model_revision_id
+    INTO v_bridge_rack, v_bridge_equipment
+    FROM catalog_model_revision WHERE id = NEW.catalog_model_revision_id;
+  IF v_pinned_legacy_id NOT IN (v_bridge_rack, v_bridge_equipment) THEN
+    RAISE EXCEPTION 'override.catalog_model_revision_id % is not the revision managed_asset % is currently pinned to',
+      NEW.catalog_model_revision_id, NEW.managed_asset_id;
+  END IF;
+
+  v_component_exists := CASE NEW.component_kind
+    WHEN 'network_port' THEN EXISTS (SELECT 1 FROM network_port_template
+      WHERE catalog_model_revision_id = NEW.catalog_model_revision_id AND stable_key = NEW.stable_key)
+    WHEN 'power_supply' THEN EXISTS (SELECT 1 FROM power_supply_template
+      WHERE catalog_model_revision_id = NEW.catalog_model_revision_id AND stable_key = NEW.stable_key)
+    WHEN 'monitoring_metric' THEN EXISTS (SELECT 1 FROM monitoring_metric_template
+      WHERE catalog_model_revision_id = NEW.catalog_model_revision_id AND stable_key = NEW.stable_key)
+  END;
+  IF NOT v_component_exists THEN
+    RAISE EXCEPTION 'stable_key % does not exist for component_kind % on catalog_model_revision %',
+      NEW.stable_key, NEW.component_kind, NEW.catalog_model_revision_id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- BEFORE INSERT OR UPDATE ON catalog_component_override FOR EACH ROW
+--   EXECUTE FUNCTION fn_validate_catalog_component_override();
+```
+
+`current_setting()`/`SET LOCAL` has no prior use elsewhere in this codebase — disclosed here as a
+genuinely new mechanism, not silently introduced, chosen because it is the standard PostgreSQL idiom for
+"this transaction, and only this transaction, is authorized for one specific operation," and because it is
+transaction-scoped by construction (cleared automatically at commit or rollback, so it cannot leak across
+a pooled connection to an unrelated later transaction).
+
+**Who may create, reset, or trigger orphaning, and under what permission.** Creating or resetting an
+override — the normal, day-to-day path — lives on the asset's own existing router, not
+`catalog_designer.py`: `POST /racks/{id}/overrides`, `PATCH /racks/{id}/overrides/{override_id}`,
+`DELETE /racks/{id}/overrides/{override_id}` (and the `/equipment/{id}/overrides...` equivalents), gated by
+the *asset's own* existing edit permission (`equipment:manage` or `rack:manage`, matching the asset's
+category) — the same permission that already governs editing `hostname`/`custom_attributes`/other
+installed fields today. It is **never** gated by any `catalog:*` code and never requires Administrator role
+membership: authoring the reusable catalog definition is Administrator-only (product principle 8, §9.1);
+adjusting one installed asset's local field is ordinary asset editing, unchanged in its authorization model
+by this phase. Neither the `POST` nor the `PATCH` request schema accepts a `status` field at all — there is
+no directly callable operation that requests orphaning; **the only code path that ever issues the active →
+orphaned `UPDATE` is the migration service**, itself gated by `catalog:migrate` plus Administrator role
+membership (§9.1), running inside the per-asset migration transaction below. Reset (any status) is the
+`DELETE` endpoint (`DELETE FROM catalog_component_override WHERE id = ...`), always allowed under the same
+asset-edit permission, no trigger involvement (`DELETE` is exempt from the pin check by construction — the
+function above only fires `BEFORE INSERT OR UPDATE`).
+
+**No row means inherited; an explicit `active` row means overridden even if its value equals the template
+default; reset deletes the row.** No comparison-based provenance guessing anywhere — the API returns each
+effective value with `source: inherited|override` computed from row presence alone, plus the original
+template value for display.
+
+**Migration reconciliation — no override value is ever silently lost.** During migration (§5.9), for every
+`active` override belonging to the asset being migrated, the migration service checks whether
+`(component_kind, stable_key)` still exists on the **target** revision:
+
+- **Exists** → the service `UPDATE`s the override's `catalog_model_revision_id` to the target revision —
+  a normal write that passes the trigger's pin check cleanly, *provided* the asset's own
+  `model_revision_id` is repointed **first**, within the same transaction (see the step order below).
+- **Does not exist** (a removed `stable_key`, already required to surface as `compatible_with_warnings` in
+  the migration preview per §5.11) → the preview response includes this override and **requires an
+  explicit, admin-supplied disposition before apply**: `carry_as_orphaned` (the active → orphaned
+  transition above — value preserved, never deleted, visible in the UI as local-only history no longer
+  tied to the asset's current pin) or `discard` (an explicit, admin-confirmed reset/`DELETE`). **No
+  disposition supplied for an affected override blocks that asset's migration outright** — silence is
+  refused, never defaulted either direction.
+
+**Atomic per-asset transaction — revision repoint, override reconciliation, audit, and outbox commit or
+roll back together.** Extends, rather than replaces, §5.9's existing per-asset sub-transaction:
+
+1. `SELECT ... FOR UPDATE` the asset's `Rack`/`Equipment` row; check `if_match_version`.
+2. `SET LOCAL app.catalog_migration_context = 'on'` — authorizes any orphaning `UPDATE` that follows in
+   this same transaction; see the trigger above.
+3. `UPDATE rack/equipment SET model_revision_id = <target legacy id>, version = version + 1`.
+4. For every `active` `CatalogComponentOverride` on this asset, apply its resolved disposition from the
+   preview (carry-forward `UPDATE` — passes because step 3 already repointed the asset; `carry_as_orphaned`
+   `UPDATE` — passes because of step 2's flag; or `discard` `DELETE`).
+5. `write_audit_log(action="rack.migrate_revision"/"equipment.migrate_revision", ...)` — one row per asset,
+   its `after` payload summarizing both the revision change and every override disposition applied, not a
+   flood of one audit row per override.
+6. `write_outbox_event(...)`.
+7. Commit this asset's sub-transaction. A failure at any of steps 1–6 rolls back the entire
+   sub-transaction — the revision repoint and its override reconciliation never commit separately, and
+   neither commits without its audit/outbox pair.
 
 `NetworkInterface` belongs to `NetworkDevice`, and its present columns do **not** include
 `media_type` or `connector_type`. Consequently the catalog must not pretend it can copy these
@@ -887,9 +1070,10 @@ capability implicitly granted via `rack:manage`/`equipment:manage` (held by Admi
 *and* Engineer today, §1.1) is **removed** from the new catalog surface. The legacy `POST /rack-models`,
 `POST /rack-models/{id}/revisions`, `POST /equipment-models`, `POST /equipment-models/{id}/revisions`
 endpoints (§1.1) are deprecated in favor of this design's endpoints and, if kept at all during a transition
-window, have their required permission tightened to the new admin-only codes below — they must not remain a
-side door around product principle 8. This is a necessary, disclosed consequence of that principle, not an
-oversight: Engineer loses catalog-authoring rights it currently holds.
+window, have their required authorization tightened to the admin-only codes below, **plus the same
+Administrator-role-membership requirement as every other catalog-mutation endpoint** — they must not remain
+a side door around product principle 8. This is a necessary, disclosed consequence of that principle, not
+an oversight: Engineer loses catalog-authoring rights it currently holds.
 
 ```text
 catalog:read          — Manufacturer, CatalogModel, published/retired CatalogModelRevision + all child
@@ -909,14 +1093,113 @@ catalog:migrate        — installed-asset revision migration (preview + apply).
 
 Seeded (new migration, §12) into `DEFAULT_ROLE_PERMISSIONS`: `catalog:read` added to every role's existing
 list; `catalog:read_draft`/`catalog:manage`/`catalog:publish`/`catalog:retire`/`catalog:import`/
-`catalog:migrate` added **only** to `Administrator`. Every mutating endpoint depends on
-`Depends(require_permission("catalog:..."))` exactly like every other protected route in this codebase —
-no new enforcement mechanism, reusing `app/application/rbac.py` unchanged.
+`catalog:migrate` added **only** to `Administrator`. A migration seeds *permission grants* only —
+membership in the `Administrator` role is a separate, additional condition enforced in the application
+layer, described next, never something a migration can substitute for.
+
+**Enforcement is a permission check *and* an Administrator-role-membership check, for every catalog
+mutation — not permission alone.** The product's own instruction is explicit that catalog authoring is
+administrator-only, by role, not merely by whichever permission code a given deployment happens to grant.
+Read directly against `app/application/rbac.py`/`app/domain/auth/models.py`: this codebase's RBAC model is
+otherwise permission-code-only — `Role` is, per `rbac.py`'s own docstring, "a normal table," custom roles
+are fully supported, and nothing else in the system checks a role name. That general design is correct and
+untouched for every other permission family; it is deliberately *not* sufficient here, because a custom
+role holding only `catalog:manage` (created by any principal who holds `role:manage`, itself
+Administrator-only by default) would otherwise satisfy `require_permission("catalog:manage")` without ever
+being `Administrator` — exactly the gap this section closes, narrowly, for catalog mutations only:
+
+```python
+# app/application/rbac.py — additive, does not change require_permission()'s existing behavior or
+# any of its ~40 existing call sites elsewhere in the codebase.
+
+@dataclass(frozen=True)
+class AuthContext:
+    user: User
+    permission_codes: frozenset[str]
+    role_names: frozenset[str]  # NEW — every Role.name the user is assigned to, independent of
+                                # that role's current permission grants (see get_auth_context below;
+                                # this must NOT be derived by joining through RolePermission, since a
+                                # role stripped of every permission would then vanish from this set
+                                # even though the user is still formally assigned to it).
+
+    def has_permission(self, code: str) -> bool:
+        return code in self.permission_codes
+
+    def has_role(self, name: str) -> bool:  # NEW
+        return name in self.role_names
+
+
+async def get_auth_context(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> AuthContext:
+    # LEFT JOIN from role_assignment/role outward to role_permission/permission, not an INNER JOIN
+    # starting from permission — a role with zero permissions still produces a row (permission
+    # columns NULL), so role membership is captured correctly regardless of what that role currently
+    # grants.
+    stmt = (
+        select(Role.name, Permission.resource, Permission.action)
+        .select_from(RoleAssignment)
+        .join(Role, Role.id == RoleAssignment.role_id)
+        .outerjoin(RolePermission, RolePermission.role_id == Role.id)
+        .outerjoin(Permission, Permission.id == RolePermission.permission_id)
+        .where(RoleAssignment.user_id == user.id)
+    )
+    rows = (await db.execute(stmt)).all()
+    role_names = frozenset(name for name, _, _ in rows)
+    codes = frozenset(f"{resource}:{action}" for _, resource, action in rows if resource is not None)
+    return AuthContext(user=user, permission_codes=codes, role_names=role_names)
+
+
+def require_catalog_administrator(code: str):
+    """Every catalog-mutation route requires the given catalog:* permission code AND Administrator
+    role membership, combined into one dependency (rather than two separate Depends per route) so a
+    route cannot accidentally add the permission check while forgetting the role check, or vice versa
+    — the two are inseparable for this feature by product principle 8, unlike every other
+    require_permission()-gated route in this codebase, which remains permission-only. Scoped to
+    app/api/v1/catalog_designer.py and the four tightened legacy endpoints in app/api/v1/catalog.py
+    only — never a general RBAC mechanism, never used elsewhere."""
+    async def _dependency(ctx: AuthContext = Depends(get_auth_context)) -> AuthContext:
+        if not ctx.has_permission(code):
+            raise ForbiddenError(f"Missing required permission: {code}")
+        if not ctx.has_role("Administrator"):
+            raise ForbiddenError(f"'{code}' additionally requires Administrator role membership.")
+        return ctx
+    return _dependency
+```
+
+Matching `Role.name == "Administrator"` by string is deliberate, not an oversight: there is no other stable
+marker for "the Administrator role" in this schema (`Role.is_system` is `True` for all five seeded roles,
+not unique to Administrator; there is no `is_superuser`-style flag). `Role.name` carries a `UNIQUE`
+constraint, so at most one role can ever hold that exact name — collision is not a risk. The one caveat,
+disclosed rather than silently assumed: if a future feature ever allowed renaming a `Role` row, renaming the
+seeded Administrator role away from the literal string `"Administrator"` would silently stop this check from
+recognizing it. No such rename capability exists today (no `PATCH /roles/{id}` endpoint), so this is a
+documented, accepted constraint of the current design, not a live gap.
+
+Every route this check applies to depends on `Depends(require_catalog_administrator("catalog:..."))`
+instead of the plain `Depends(require_permission("catalog:..."))` every other route in this codebase uses
+— an intentional, narrowly-scoped exception, not the new default. **Reads remain permission-only**:
+`catalog:read` and `catalog:read_draft` still use plain `require_permission()`, with no Administrator-role
+requirement, so read access stays available to every role already granted those codes (product principle
+9) — only the seven `catalog:manage`/`catalog:publish`/`catalog:retire`/`catalog:import`/`catalog:migrate`
+mutation paths (§10's table) require both checks. `CatalogComponentOverride` create/reset (§6.1) is a
+distinct case, gated by the asset's own `equipment:manage`/`rack:manage` permission with no Administrator
+requirement at all — only the migration service's own `catalog:migrate`-gated orphaning transition (§6.1)
+falls under this section.
+
+**Concrete effect on the three cases product principle 8 exists to cover:**
+
+- A custom role holding only `catalog:manage` (no `Administrator` membership) → `has_permission` succeeds,
+  `has_role("Administrator")` fails → **403**.
+- A user assigned the `Administrator` role with `catalog:manage` specifically revoked (its `role_permission`
+  row removed) → `has_permission` fails → **403**, regardless of role membership.
+- A user assigned the `Administrator` role holding `catalog:manage` → both checks pass → **200**.
 
 Frontend: a new `RequireCatalogAdmin` wrapper (same UX-convenience-only posture as `ProtectedRoute`,
 `frontend/src/components/layout/ProtectedRoute.tsx`) gates the `/admin/catalog/*` route tree on
 `useHasPermission("catalog:manage")`, redirecting non-admins with a clear message — never the enforcement
-boundary, since the backend `require_permission` dependency is.
+boundary, since the backend `require_catalog_administrator` dependency is. (The frontend has no equivalent
+role-membership signal today — `/auth/me`'s `permissions` array does not carry role names — so the
+UX-only gate stays permission-based; this is a cosmetic gap only, since the backend enforces both
+conditions regardless of what the frontend shows.)
 
 ### 9.2 File upload validation and storage safety
 
@@ -982,6 +1265,22 @@ a redaction step that removes one if present.
 - A test that a `DCIM Manager`/`Engineer`/`Operator` role **cannot** create a `Manufacturer`/`CatalogModel`/
   draft revision, publish, retire, import, or migrate — the concrete regression test for §9.1's behavior
   change.
+- **The Administrator-role-membership dimension (§9.1), covering both the legacy `catalog.py` endpoints and
+  every new `catalog_designer.py` mutation path, not permission possession alone:**
+  - A synthetic custom role holding **only** `catalog:manage` (deliberately not named `"Administrator"`,
+    holding no other permission) is **rejected (403)** at every catalog-mutation endpoint, including the
+    four tightened legacy endpoints (`POST /rack-models`, `POST /rack-models/{id}/revisions`,
+    `POST /equipment-models`, `POST /equipment-models/{id}/revisions`) — proving the permission code alone
+    is insufficient and the Administrator-role check is genuinely enforced, not merely documented.
+  - A user assigned the `Administrator` role with the relevant `catalog:*` permission's `role_permission`
+    row explicitly deleted for the test is **rejected (403)** at the corresponding endpoint — proving
+    revoking a specific grant revokes the specific capability even while role membership is unchanged, and
+    that there is no special-case bypass for the `Administrator` role name itself.
+  - A user assigned the `Administrator` role holding the relevant `catalog:*` permission **succeeds** —
+    the positive case, for every mutation path.
+  - `catalog:read`/`catalog:read_draft` remain reachable by every role already granted those codes, with
+    **no** Administrator-role requirement — the negative-space test proving reads were not accidentally
+    tightened alongside mutations.
 - A test that mutating any child row of a `published`/`retired` revision returns 409 both through the
   service layer and via a raw SQL `UPDATE` against the trigger directly (integration test, real Postgres —
   matching this repo's existing "DB constraints tested against a real database, not mocked" convention,
@@ -991,6 +1290,17 @@ a redaction step that removes one if present.
   file, wrong magic bytes vs. declared type, oversized pixel dimensions, SVG rejected, PNG/JPEG accepted.
 - A migration-workflow test: stale `version` on one asset in a bulk migration does not roll back the others
   (§5.9's per-asset-atomic, not all-or-nothing, semantics).
+- **`CatalogComponentOverride` integrity (§6.1):** the pin-check trigger rejects an override whose
+  `catalog_model_revision_id` does not match the asset's current `model_revision_id`; rejects a
+  `stable_key` absent from that revision's templates for the given `component_kind`; **a direct `INSERT`
+  with `status='orphaned'` is rejected outright** (the closed bypass); an `UPDATE` attempting the
+  active → orphaned transition **outside** a transaction that has set
+  `app.catalog_migration_context = 'on'` is rejected; the same transition **inside** such a transaction
+  succeeds; any `UPDATE` on an already-`orphaned` row is rejected (terminal-history invariant); the partial
+  unique index allows an `orphaned` row and an `active` row for the same
+  `(managed_asset_id, component_kind, stable_key, field_name)` to coexist but rejects two simultaneous
+  `active` rows; a concurrency test proving an override write and a migration on the same asset serialize
+  via the shared `FOR UPDATE` lock rather than racing.
 - Import: oversized document, over-limit counts, malformed JSON, valid-but-duplicate manufacturer/model
   (should report as a preview-time conflict, never a 500).
 
@@ -1005,7 +1315,14 @@ the deprecation of the legacy endpoints per §9.1 is a distinct, explicitly-call
 `{Entity}In`/`{Entity}Out`, `Page[T]` for lists — same conventions as every other router in this codebase
 (§1.5).
 
-| Method & path | Purpose | Permission |
+Every row below whose Authorization column reads `catalog:manage`/`catalog:publish`/`catalog:retire`/
+`catalog:import`/`catalog:migrate` requires **both** that permission code **and** Administrator role
+membership (§9.1's `require_catalog_administrator()`) — not permission alone. Rows reading `catalog:read`/
+`catalog:read_draft` require only the permission, exactly as `require_permission()` enforces everywhere
+else in this codebase; they carry no Administrator-role requirement, keeping read access available to
+every role already granted those codes.
+
+| Method & path | Purpose | Authorization |
 |---|---|---|
 | `POST /catalog/manufacturers` | Create manufacturer | `catalog:manage` |
 | `GET /catalog/manufacturers` | List/search manufacturers | `catalog:read` |
@@ -1132,13 +1449,19 @@ shipped multiple sequential migrations rather than one large one):
    that must already exist — ordering matters and is called out explicitly).
 5. `0021_catalog_rbac_seed` — new `catalog:*` permissions, `catalog:read` added to every existing role,
    the rest to Administrator only (§9.1) — same `sa.table`/`op.bulk_insert` pattern as migration
-   `0002_audit_partitions_retention_and_rbac_seed.py`.
+   `0002_audit_partitions_retention_and_rbac_seed.py`. This migration seeds *permission grants* only; the
+   additional Administrator-role-membership check §9.1 requires for every catalog mutation is
+   application-layer code (`require_catalog_administrator()`), not something any migration creates or
+   could substitute for.
 6. `0022_catalog_import_job` — `catalog_import_job` (§13.2).
-7. `0023_catalog_instance_provenance` — `catalog_component_override` and nullable
-   `network_interface.port_template_id` and `integration_metric_mapping.metric_template_id`; no backfill of existing assets. Install-time
-   eligibility gates and legacy endpoint RBAC updates ship with the API increment before any new
-   catalog publishing route is enabled. New revisions must use the current migration head at the time
-   implementation begins; these numbered names are illustrative, not reserved identifiers.
+7. `0023_catalog_instance_provenance` — `catalog_component_override` (§6.1's schema, including the
+   `status`/`orphaned_at`/`orphaned_reason` columns and the partial unique index),
+   `fn_validate_catalog_component_override()` and its `BEFORE INSERT OR UPDATE` trigger (§6.1), and
+   nullable `network_interface.port_template_id` and `integration_metric_mapping.metric_template_id`; no
+   backfill of existing assets. Install-time eligibility gates and legacy endpoint RBAC updates ship with
+   the API increment before any new catalog publishing route is enabled. New revisions must use the
+   current migration head at the time implementation begins; these numbered names are illustrative, not
+   reserved identifiers.
 
 Each carries a module docstring in this codebase's established style (cites this design document + the
 specific `ARCHITECTURE_REVIEW.md`/product-principle section it implements), `revision`/`down_revision` as
@@ -1324,7 +1647,7 @@ Each increment is a separate reviewable PR, merged in order. None implements Pha
 
 ## 18. Validation, compatibility, and acceptance
 
-The API returns field-path errors (`models[0].revisions[0].network_ports[2].stable_key`) for invalid imports and draft validation, 403 for missing permissions, 409 for lifecycle or optimistic-concurrency conflicts, 413 for oversized input, and 422 for semantic validation failures. List endpoints are paginated with stable ordering. A published revision cannot be edited through either new or legacy routes, SQL child writes, mutable identity rows, or a graphic replacement. Publication revalidates while holding the parent lock. No unreviewed legacy create path remains available to a non-administrator at rollout.
+The API returns field-path errors (`models[0].revisions[0].network_ports[2].stable_key`) for invalid imports and draft validation, 403 for a missing permission or, on a catalog-mutation route, missing Administrator role membership even while the permission is held (§9.1), 409 for lifecycle or optimistic-concurrency conflicts, 413 for oversized input, and 422 for semantic validation failures. List endpoints are paginated with stable ordering. A published revision cannot be edited through either new or legacy routes, SQL child writes, mutable identity rows, or a graphic replacement. Publication revalidates while holding the parent lock. No unreviewed legacy create path remains available to a non-administrator at rollout.
 
 Acceptance is demonstrated when an administrator can create and publish a rack or equipment revision, install an asset pinned to that revision, clone and publish a newer one, see an accurate impact and compatibility preview, and deliberately migrate one asset while another stays pinned. Retiring an in-use revision leaves existing assets readable and blocks new selection unless the explicit retired-installation flag is set. Failed per-asset migration rolls back its model update, provenance changes, audit and outbox together; successful earlier assets in a bulk call are reported as committed. Inherited values and explicit overrides are distinguishable without destroying local values. An accessible table permits all marker operations without a mouse or an image. JSON export/import round trips supported typed fields and rejects unknown keys, future schema versions, credentials, oversized documents and embedded binaries. PNG/JPEG files are verified by decoded content and bounded dimensions; SVG is refused. Existing rack, equipment, network, power, integration and 3D workflows pass regression tests.
 
@@ -1333,7 +1656,7 @@ Acceptance is demonstrated when an administrator can create and publish a rack o
 | Risk | Mitigation and release check |
 |---|---|
 | The bridge duplicates physical fields in legacy revisions | Create both rows atomically, check unit conversion and equality in tests, never permit a bridged legacy row to be edited. |
-| Current legacy endpoints permit wider authoring access | Tighten backend authorization and inventory inline-create behavior in the same release that exposes publishing; verify Engineer and other non-admin roles receive 403. |
+| Current legacy endpoints permit wider authoring access | Tighten backend authorization (permission **and** Administrator role membership, §9.1) and inventory inline-create behavior in the same release that exposes publishing; verify Engineer, other non-admin roles, and a custom role holding only `catalog:manage` without Administrator membership all receive 403. |
 | Multiple administrators publish or edit a draft concurrently | Parent row locks for publication and child edits, optimistic version checks for draft scalar edits, unique revision numbers with retry after uniqueness conflict. |
 | Local instance fields no longer match a new template | Preview stable-key removals and placement/size compatibility, preserve manual rows, and require an explicit migration decision. |
 | Graphics can become orphaned or hostile | Transactional metadata with content-addressed storage, deferred garbage collection after references disappear, decoded-content checks, immutable object keys and authorization on reads. |
