@@ -52,12 +52,21 @@ PR will fail to work at all.
 
 1. **`backend/app/db/models.py` is the single import point that registers every ORM model on
    `Base.metadata` before Alembic autogenerate or `create_all` runs** (its own module docstring says so
-   verbatim). Every new table in §4 (`Manufacturer`, `CatalogModel`, `CatalogModelRevision`,
-   `NetworkPortTemplate`, `PowerSupplyTemplate`, `CatalogGraphic`, `CatalogGraphicMarker`,
-   `MonitoringMetricTemplate`, `CatalogComponentOverride`, `CatalogImportJob`) must be added to this
-   file's import list or Alembic will silently fail to see them. The specification never mentions this
-   file. **Action:** every schema PR below includes a `backend/app/db/models.py` diff as an explicit
-   checklist item.
+   verbatim). Every new table needs an entry here, added in the **same PR that creates its migration** —
+   not all bundled into PR-1. Corrected in this update: an earlier version of this list named all ten new
+   tables together and said "every schema PR below includes a diff," which read as though
+   `CatalogComponentOverride` and `CatalogImportJob` belonged to PR-1's scope; they do not, and PR-1's own
+   migration list (§3.1) never created them. The actual split, matching where each table's migration
+   actually lands:
+   - **PR-1** registers the eight §4 tables (`Manufacturer`, `CatalogModel`, `CatalogModelRevision`,
+     `NetworkPortTemplate`, `PowerSupplyTemplate`, `CatalogGraphic`, `CatalogGraphicMarker`,
+     `MonitoringMetricTemplate`).
+   - **PR-6** registers `CatalogImportJob` (§13.2).
+   - **PR-7** registers `CatalogComponentOverride` (§6.1, approved design in §1.3a below).
+
+   The specification never mentions this file at all. **Action:** PR-1, PR-6, and PR-7 each carry their
+   own explicit `backend/app/db/models.py` checklist item in their own Backend files list below — not a
+   single blanket instruction covering all three.
 2. **`backend/app/api/v1/router.py` is the single composition point for every router** (`api_router.include_router(...)`, one line per module). The specification names the new router file
    (`app/api/v1/catalog_designer.py`, §10) but never mentions registering it here. **Action:** the PR that
    introduces the new router includes this one-line registration explicitly.
@@ -88,32 +97,9 @@ PR will fail to work at all.
 
 ### 1.3 Decisions flagged for review — not silently resolved
 
-1. **`CatalogComponentOverride` (§6.1) is the one table in the specification without a concrete column
-   list.** Every other table in §4 gets an exact `PK id, col type NOT NULL/NULL, CHECK(...)` block; this
-   one is described only as *"a uniqueness constraint over asset/component/field... one typed value column
-   per allowed type."* This is a real gap between "approved architecture" and "buildable schema." This
-   plan does **not** invent a resolution and ship it — it proposes one below for review, and the PR that
-   creates this table must not proceed until the exact column list is confirmed:
-
-   ```text
-   -- PROPOSED, FOR REVIEW — not yet part of the approved design.
-   CatalogComponentOverride  PK id, managed_asset_id FK→ManagedAsset CASCADE NOT NULL,
-                            catalog_model_revision_id FK→CatalogModelRevision RESTRICT NOT NULL,
-                            component_kind CHECK IN ('network_port','power_supply','monitoring_metric') NOT NULL,
-                            stable_key VARCHAR(64) NOT NULL,
-                            field_name VARCHAR(64) NOT NULL,
-                            value_type CHECK IN ('text','numeric','boolean') NOT NULL,
-                            value_text TEXT NULL, value_numeric NUMERIC(18,6) NULL, value_boolean BOOLEAN NULL,
-                            CHECK (exactly one of value_text/value_numeric/value_boolean is non-null,
-                                   matching value_type — same NULL-pattern-CHECK style as CatalogGraphicMarker),
-                            CHECK (field_name IS an allowlisted value per component_kind, enforced at the
-                                   application layer since the allowlist differs per component_kind and a
-                                   DB CHECK cannot easily express a conditional set membership here),
-                            UNIQUE(managed_asset_id, catalog_model_revision_id, component_kind, stable_key, field_name),
-                            created_by_user_id FK→User RESTRICT NOT NULL, created_at/updated_at
-   ```
-   This must be confirmed (or replaced) by the design owner before PR-7 (§3.7) starts, not discovered
-   mid-implementation.
+1. **`CatalogComponentOverride` (§6.1) — RESOLVED this update, see §1.3a below.** Was the one table in the
+   specification without a concrete column list; is now an approved design, subject to four requirements
+   recorded verbatim in §1.3a, not silently resolved by this plan on its own authority.
 2. **§12 item 4's stated rationale for deferring the legacy bridge columns to their own migration is
    slightly broader than necessary, though the sequencing itself is sound.** `legacy_rack_model_revision_id`/
    `legacy_equipment_model_revision_id` (the columns **on** `catalog_model_revision`, pointing **at** the
@@ -140,10 +126,176 @@ PR will fail to work at all.
    migration lands, per §3 below) must write this trigger from the stated *behavior*, and its SQL should be
    reviewed with the same scrutiny as §5.4's trigger before merge, since it is new, unwritten logic.
 
-None of the above 1.3 items are contradictions that block planning — they are exactly the kind of
-"needs review before implementation" items the specification's own thoroughness elsewhere makes
-conspicuous by their absence here. This plan proceeds using the proposals above as **placeholders**, each
-marked in the PR breakdown as blocked on confirmation, not silently treated as approved.
+### 1.3a `CatalogComponentOverride` — approved design (resolves item 1 above)
+
+**Approved for PR-7**, subject to the four requirements below, recorded here verbatim against each. This
+content belongs in the specification's §6.1 as the authoritative design source — an exact proposed
+specification edit is provided separately (not applied to the design branch by this plan; see the
+accompanying report).
+
+```text
+CatalogComponentOverride  PK id, managed_asset_id FK→ManagedAsset CASCADE NOT NULL,
+                         catalog_model_revision_id FK→CatalogModelRevision RESTRICT NOT NULL,
+                         component_kind CHECK IN ('network_port','power_supply','monitoring_metric') NOT NULL,
+                         stable_key VARCHAR(64) NOT NULL,
+                         field_name VARCHAR(64) CHECK IN (<union of every allowlisted field_name below>) NOT NULL,
+                         value_type CHECK IN ('text','numeric','boolean') NOT NULL,
+                         value_text TEXT NULL, value_numeric NUMERIC(18,6) NULL, value_boolean BOOLEAN NULL,
+                         CHECK (exactly one of value_text/value_numeric/value_boolean is non-null,
+                                matching value_type — same NULL-pattern-CHECK style as CatalogGraphicMarker),
+                         status CHECK IN ('active','orphaned') NOT NULL DEFAULT 'active',
+                         orphaned_at TIMESTAMPTZ NULL, orphaned_reason VARCHAR(255) NULL,
+                         CHECK ((status = 'active') = (orphaned_at IS NULL)),
+                         created_by_user_id FK→User RESTRICT NOT NULL, created_at/updated_at
+-- Partial unique index, not a plain UNIQUE constraint — same pattern already used by Alarm's
+-- one-open-alarm-per-rule/subject index (app/domain/alarm/models.py):
+--   UNIQUE INDEX ON (managed_asset_id, component_kind, stable_key, field_name) WHERE status = 'active'
+-- At most one *active* override per field at a time; 'orphaned' rows from prior revisions persist as
+-- history alongside it without colliding.
+```
+
+**Requirement — DB enforcement that the asset is pinned to the override's revision, and that `stable_key`
+exists in that revision for its `component_kind`; lock behavior during concurrent migration.** A plain
+`CHECK` cannot express either rule (both require reading other tables), so both are enforced by a
+`BEFORE INSERT OR UPDATE` trigger, in the same hand-written-raw-SQL-trigger tradition as §5.4's
+`fn_reject_write_on_non_draft_revision()`:
+
+```sql
+CREATE FUNCTION fn_validate_catalog_component_override() RETURNS trigger AS $$
+DECLARE
+  v_pinned_legacy_id UUID;
+  v_bridge_rack UUID;
+  v_bridge_equipment UUID;
+  v_component_exists BOOLEAN;
+BEGIN
+  -- A row being set to (or already) 'orphaned' is explicitly exempt: 'orphaned' exists precisely to
+  -- represent "this override's catalog_model_revision_id no longer matches what the asset is pinned to,
+  -- and that is known and accepted" — see the migration-reconciliation requirement below.
+  IF NEW.status = 'orphaned' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Lock the asset's Rack/Equipment row FIRST. This is the concurrency-safety requirement: the
+  -- per-asset migration transaction (§5.9) takes the same FOR UPDATE lock on this row before it
+  -- repoints model_revision_id, so an override write racing a migration on the same asset serializes
+  -- on this row rather than reading a value the migration is mid-way through changing.
+  SELECT model_revision_id INTO v_pinned_legacy_id FROM rack WHERE id = NEW.managed_asset_id FOR UPDATE;
+  IF NOT FOUND THEN
+    SELECT model_revision_id INTO v_pinned_legacy_id FROM equipment WHERE id = NEW.managed_asset_id FOR UPDATE;
+  END IF;
+  IF v_pinned_legacy_id IS NULL THEN
+    RAISE EXCEPTION 'managed_asset % is not a Rack or Equipment instance', NEW.managed_asset_id;
+  END IF;
+
+  SELECT legacy_rack_model_revision_id, legacy_equipment_model_revision_id
+    INTO v_bridge_rack, v_bridge_equipment
+    FROM catalog_model_revision WHERE id = NEW.catalog_model_revision_id;
+  IF v_pinned_legacy_id NOT IN (v_bridge_rack, v_bridge_equipment) THEN
+    RAISE EXCEPTION 'override.catalog_model_revision_id % is not the revision managed_asset % is currently pinned to',
+      NEW.catalog_model_revision_id, NEW.managed_asset_id;
+  END IF;
+
+  v_component_exists := CASE NEW.component_kind
+    WHEN 'network_port' THEN EXISTS (SELECT 1 FROM network_port_template
+      WHERE catalog_model_revision_id = NEW.catalog_model_revision_id AND stable_key = NEW.stable_key)
+    WHEN 'power_supply' THEN EXISTS (SELECT 1 FROM power_supply_template
+      WHERE catalog_model_revision_id = NEW.catalog_model_revision_id AND stable_key = NEW.stable_key)
+    WHEN 'monitoring_metric' THEN EXISTS (SELECT 1 FROM monitoring_metric_template
+      WHERE catalog_model_revision_id = NEW.catalog_model_revision_id AND stable_key = NEW.stable_key)
+  END;
+  IF NOT v_component_exists THEN
+    RAISE EXCEPTION 'stable_key % does not exist for component_kind % on catalog_model_revision %',
+      NEW.stable_key, NEW.component_kind, NEW.catalog_model_revision_id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- BEFORE INSERT OR UPDATE ON catalog_component_override FOR EACH ROW
+--   EXECUTE FUNCTION fn_validate_catalog_component_override();
+```
+
+Unlike §5.4's draft-only immutability trigger, this table is mutable throughout an installed asset's
+operational life — this trigger governs *which* writes are valid, not *whether* writes are allowed at all.
+
+**Requirement — explicit allowlist mapping each `(component_kind, field_name)` to its value type and
+validation rule, narrow to what the installed-asset UI and migration workflow can actually support.** The
+`field_name` `CHECK` above is a flat, DB-level backstop (the union of every allowlisted name, so no
+arbitrary string is ever stored) — the *per-`component_kind`* pairing is application-layer only, same
+reasoning the original proposal already gave (a `CHECK` cannot easily express a conditional set membership
+per sibling column), now made concrete and narrow rather than left as an open-ended "allowlisted value":
+
+| `component_kind` | `field_name` | `value_type` | Validation rule |
+|---|---|---|---|
+| `network_port` | `display_name` | `text` | 1–128 characters |
+| `network_port` | `role` | `text` | one of `NetworkPortTemplate.role`'s own `CHECK` list (`uplink`/`access`/`management`/`stack`/`other`) |
+| `network_port` | `speed_mbps` | `numeric` | integer-valued, `> 0` |
+| `power_supply` | `label` | `text` | 1–128 characters |
+| `power_supply` | `rated_current_a` | `numeric` | `> 0` |
+| `monitoring_metric` | `default_collection_interval_seconds` | `numeric` | integer-valued, `> 0` |
+| `monitoring_metric` | `default_warning_threshold` | `numeric` | finite |
+| `monitoring_metric` | `default_critical_threshold` | `numeric` | finite |
+
+Deliberately narrow: every field here is one the installed-asset UI (badge + reset control, §6.1) and the
+migration-compatibility check (§5.9) already need to read/display/reconcile per the specification's own
+text — no field is added speculatively. `backend/app/application/catalog_component_overrides.py` (new,
+PR-7) is the single place this table lives as Python constants plus a `validate(component_kind, field_name,
+value_type, value) -> None` function every write path calls before insert/update.
+
+**Requirement — no row means inherited; an explicit row means overridden even if its value equals the
+template default; reset deletes the row; handling of invalid/removed component keys during migration
+without silently losing local values.** No row → inherited, computed by the API from the current template.
+An `active` row → overridden, unconditionally (no value-equality comparison anywhere — matching the
+original design's own stated reasoning). Reset (any status) → `DELETE FROM catalog_component_override
+WHERE id = ...`, always allowed, no trigger involvement (delete is exempt from the pin-check by
+construction — the function above only fires `BEFORE INSERT OR UPDATE`).
+
+During migration (§5.9), for every `active` override belonging to the asset being migrated, the migration
+service checks whether `(component_kind, stable_key)` still exists on the **target** revision:
+
+- **Exists** → the service `UPDATE`s the override row's `catalog_model_revision_id` to the target revision
+  — a normal write that passes the trigger cleanly, *provided* the asset's own `model_revision_id` is
+  repointed **first**, within the same transaction (ordering requirement, stated explicitly in the
+  per-asset transaction step list below).
+- **Does not exist** (a removed `stable_key` — already required to surface as `compatible_with_warnings` in
+  the migration preview per §5.11) → the preview response includes this override and **requires an
+  explicit, admin-supplied disposition before apply**, generalizing the specification's own already-stated
+  `NetworkInterface` disposition ("removed keys require an explicit keep-as-local or discard decision") to
+  every `CatalogComponentOverride` row:
+  - `carry_as_orphaned` → `UPDATE ... SET status = 'orphaned', orphaned_at = now(), orphaned_reason =
+    'stable_key removed in target revision <id>'` — the **value is never deleted**; it becomes visible in
+    the UI as local-only history no longer tied to the asset's current pinned revision.
+  - `discard` → an explicit, admin-confirmed `DELETE` (the reset path, applied deliberately rather than as
+    a migration side effect).
+  - **No disposition supplied for an affected override blocks that asset's migration outright** — silence
+    is refused, never defaulted either direction, which is the literal requirement ("without silently
+    losing local values") applied to the ambiguous case, not just the unambiguous ones.
+
+**Requirement — revision-pointer changes, override reconciliation, audit, and outbox writes commit or roll
+back together per asset.** This extends, rather than replaces, §5.9's existing per-asset sub-transaction.
+Final step order for each asset in a migration request:
+
+1. `SELECT ... FOR UPDATE` the asset's `Rack`/`Equipment` row; check `if_match_version`.
+2. `UPDATE rack/equipment SET model_revision_id = <target legacy id>, version = version + 1`.
+3. For every `active` `CatalogComponentOverride` on this asset, apply its resolved disposition from step 1
+   of §5.9 (carry-forward `UPDATE`, `carry_as_orphaned` `UPDATE`, or `discard` `DELETE`) — only reachable
+   *after* step 2, so the pin-check trigger validates each carry-forward `UPDATE` against the asset's
+   **already-updated** `model_revision_id`.
+4. `write_audit_log(action="rack.migrate_revision"/"equipment.migrate_revision", ...)` — one row per asset,
+   its `after` payload summarizing both the revision change and every override disposition applied, not a
+   flood of one audit row per override.
+5. `write_outbox_event(...)`.
+6. Commit this asset's sub-transaction. A failure at any of steps 1–5 rolls back the entire sub-transaction
+   — the revision repoint and its override reconciliation never commit separately, and neither commits
+   without its audit/outbox pair, exactly as §5.9 already requires for the revision pointer alone, now
+   explicitly spanning the override reconciliation too.
+
+None of the above 1.3 items — 2, 3, and 4, item 1 now resolved above — are contradictions that block
+planning; they are exactly the kind of "needs review before implementation" items the specification's own
+thoroughness elsewhere makes conspicuous by their absence here. This plan proceeds using the item 2–4
+proposals as **placeholders**, each marked in the PR breakdown as flagged for review, not silently treated
+as approved. Item 1 (`CatalogComponentOverride`) is no longer a placeholder — it is an approved design per
+the decision recorded above.
 
 ---
 
@@ -179,20 +331,24 @@ confirmed by `mcp__github__get_commit` (GitHub API `author.login: "AhmedMahmoud2
 does not carry this session's harness-managed signer — most plausibly a different tool or environment than
 this Claude Code Remote session.
 
-**What is needed to remedy it, and why this plan does not do so on its own authority:** the only way to
-turn `13165d3` into a signed commit is to replace it with a re-signed equivalent — either `git commit
---amend` from a session with working signing, or an interactive rebase that re-creates it — both of which
-**rewrite published history on a branch already pushed to `origin`**, exactly the action the task
-explicitly forbids without the user's explicit authorization. This plan therefore:
+**Remedy path, for the record, and why this plan does not take it:** the only way to turn `13165d3` into a
+signed commit would be to replace it with a re-signed equivalent — either `git commit --amend` from a
+session with working signing, or an interactive rebase that re-creates it — both of which **rewrite
+published history on a branch already pushed to `origin`**, exactly the action the task explicitly forbids
+without the user's explicit authorization.
 
-- Leaves `13165d3` untouched.
-- Does not describe it as signed or verified anywhere in this plan or its own commit.
-- Builds the new planning branch as an additive commit on top of `13165d3` (a normal, non-rewriting
-  branch-from-tip operation, not a history rewrite).
-- Reports this as a blocker requiring your explicit decision: (a) accept `13165d3` as unsigned, permanent
-  history (the common, low-risk choice for a docs-only commit that has already been read and verified
-  content-wise in §0 above), or (b) explicitly authorize a rebase/force-push to replace it with a signed
-  equivalent, understanding that rewrites a branch other sessions may already have fetched.
+**Decision recorded (this update): `13165d3` is accepted as permanent, documentation-only unsigned
+history.** It is not amended, rebased, or force-pushed over — by this update or any future one, absent a
+separate, explicit instruction to do so. This is scoped narrowly to this one commit; it is not a general
+relaxation of the signing expectation — every other commit on this branch, including the one recording this
+decision, continues to use the repository's verified signing workflow, re-confirmed signed before push at
+the end of this document. Concretely, this plan:
+
+- Leaves `13165d3` untouched — no amend, no rebase, no force-push.
+- Does not describe it, or any future re-derivation of its content, as signed or verified anywhere in this
+  plan or its own commits.
+- Continues building the planning branch as ordinary additive commits on top of `13165d3` (a normal,
+  non-rewriting branch-from-tip operation).
 
 ---
 
@@ -321,10 +477,13 @@ to mint catalog rows today.
   `createEquipment` with a selected `model_revision_id` instead of newly-minted identity fields.
 
 **Acceptance (this is the explicit rollout gate the task required):** at the end of this PR, no
-authenticated user without the `Administrator` role can create a new `RackModel`/`RackModelRevision`/
+authenticated user without a role holding `catalog:manage` can create a new `RackModel`/`RackModelRevision`/
 `EquipmentModel`/`EquipmentModelRevision` row through any reachable path, frontend or API — verified by the
-new `test_catalog_rbac_closure.py` suite. This must be true and merged **before PR-3 opens the first new
-catalog-mutation endpoint.**
+new `test_catalog_rbac_closure.py` suite. Stated as a permission-code claim, not a role-name claim
+(`"without the Administrator role"` was this plan's own earlier, imprecise phrasing) — see §5's
+authorization-boundary analysis for why: this codebase enforces every route by permission code alone, and
+`catalog:manage` is held by `Administrator` at seed time but is not structurally tied to that role name.
+This must be true and merged **before PR-3 opens the first new catalog-mutation endpoint.**
 
 ### 3.3 PR-3 — Catalog lifecycle backend
 
@@ -416,6 +575,7 @@ survives a revision clone (§5.5) with markers re-pointed at the cloned componen
   preview/apply logic, deterministic export ordering).
 - `backend/migrations/versions/0022_catalog_import_job.py` — `catalog_import_job` (including the
   `canonical_document JSONB` column the correction commit added, §13.2).
+- `backend/app/db/models.py` — register `CatalogImportJob` (finding §1.2 item 1, corrected).
 
 **Tests:** `backend/tests/api/test_catalog_import_export.py` — oversized document (413), over-limit counts
 (422), malformed JSON, duplicate-name conflict reporting (never silently merged), idempotent re-apply of an
@@ -427,38 +587,63 @@ export schema, not just "no field named `password`").
 
 ### 3.7 PR-7 — Installed-asset migration and instance provenance
 
-**Blocked on:** confirming the `CatalogComponentOverride` column design in §1.3 item 1 above. This PR does
-not start implementation until that is resolved.
+**No longer blocked:** `CatalogComponentOverride`'s design is approved (§1.3a) — this PR implements it as
+specified there, including its trigger, allowlist, orphan/reconciliation semantics, and the atomic
+per-asset transaction step order.
 
-**Scope:** §5.8/§5.9 (impact preview, migration workflow) + §6.1 (inheritance/override, seeding).
+**Scope:** §5.8/§5.9 (impact preview, migration workflow) + §6.1/§1.3a (inheritance/override, seeding).
 
 **Migrations:**
-- `0023_catalog_instance_provenance` — `catalog_component_override` (per the confirmed design),
-  nullable `network_interface.port_template_id`, nullable `integration_metric_mapping.metric_template_id`.
-  No backfill of existing rows (both new columns default `NULL` for every pre-existing row, exactly
-  matching the specification's explicit "no backfill" instruction).
+- `0023_catalog_instance_provenance` — `catalog_component_override` (§1.3a's schema, including the
+  partial unique index and the `status`/`orphaned_at`/`orphaned_reason` columns), the flat `field_name`
+  `CHECK` covering §1.3a's allowlist union, `fn_validate_catalog_component_override()` and its
+  `BEFORE INSERT OR UPDATE` trigger, nullable `network_interface.port_template_id`, nullable
+  `integration_metric_mapping.metric_template_id`. No backfill of existing rows (all three new columns
+  default `NULL`/absent for every pre-existing row, matching the specification's explicit "no backfill"
+  instruction).
 
 **Backend files:**
-- `backend/app/api/v1/catalog_designer.py` — impact preview, migration-preview, migrate endpoints.
-- `backend/app/application/catalog_migration_service.py` (new) — compatibility checking, per-asset
-  atomic migration with the bulk-tolerant result-list semantics §5.9 describes, override
-  resolution/reset.
+- `backend/app/api/v1/catalog_designer.py` — impact preview, migration-preview, migrate endpoints; the
+  migration-preview response includes, per affected override, the required-disposition field from §1.3a
+  (`carry_as_orphaned` / `discard`) for the admin to fill in before apply.
+- `backend/app/application/catalog_migration_service.py` (new) — compatibility checking; per-asset atomic
+  migration implementing §1.3a's exact six-step transaction (lock → repoint → reconcile overrides per
+  confirmed disposition → one audit row → one outbox event → commit), with the bulk-tolerant
+  per-asset-result-list semantics §5.9 describes across the whole request.
+- `backend/app/application/catalog_component_overrides.py` (new) — the §1.3a allowlist table as Python
+  constants, `validate(component_kind, field_name, value_type, value) -> None`, and the reset (`DELETE`)
+  helper. Both `catalog_designer.py` (override CRUD on an installed asset) and
+  `catalog_migration_service.py` (reconciliation during migration) import from here rather than
+  duplicating the allowlist.
 - `backend/app/domain/network/models.py`, `backend/app/domain/telemetry/models.py` — add the two nullable
   provenance FKs.
+- `backend/app/db/models.py` — register `CatalogComponentOverride` (finding §1.2 item 1, corrected).
 
 **Frontend files:** `frontend/src/features/catalog-designer/InstalledAssetsImpactPanel.tsx`,
-`MigrationWizard.tsx`; an "Inherited"/"Overridden" badge added to the existing equipment detail view
-(`frontend/src/features/equipment/EquipmentDetailPage.tsx`) wherever a seeded field is rendered.
+`MigrationWizard.tsx` (including the per-override disposition picker for removed `stable_key`s);
+an "Inherited"/"Overridden"/"Orphaned" badge (three states now, not two, per §1.3a's `status` column)
+added to the existing equipment detail view (`frontend/src/features/equipment/EquipmentDetailPage.tsx`)
+wherever a seeded field is rendered, with a reset control that calls the `DELETE` helper above.
 
 **Tests:** `backend/tests/api/test_catalog_migration.py` — per-asset-atomic bulk migration where one asset
 has a stale `version` and the others still succeed (the concrete regression test §9.10 names); a removed
-`stable_key` surfaces as `compatible_with_warnings` and orphans (not deletes) the installed override;
+`stable_key` blocks migration until an explicit `carry_as_orphaned`/`discard` disposition is supplied, and
+`carry_as_orphaned` preserves the value (never deletes it) while `discard` genuinely removes the row;
 `reason` required and enforced; idempotent retry behavior per §5.9's correction-commit addition.
+`backend/tests/integration/test_catalog_component_override_constraints.py` (new) — the pin-check trigger
+rejects an override whose `catalog_model_revision_id` does not match the asset's current
+`model_revision_id`; rejects a `stable_key` absent from that revision's templates for the given
+`component_kind`; an `orphaned`-status write bypasses the pin check; the partial unique index allows an
+`orphaned` row and an `active` row for the same `(managed_asset_id, component_kind, stable_key,
+field_name)` to coexist but rejects two simultaneous `active` rows; a concurrency test proving an override
+write and a migration on the same asset serialize via the shared `FOR UPDATE` lock rather than racing.
 
 **Acceptance:** matches specification §18's second paragraph in full — install, clone+publish a newer
 revision, accurate impact/compatibility preview, deliberate single-asset migration while a sibling asset
 stays pinned, retiring an in-use revision leaves existing assets readable and blocks new selection unless
-explicitly overridden.
+explicitly overridden. Additionally: no override value is ever silently lost during a migration — every
+affected override is either carried forward, explicitly orphaned (value retained, visibly marked), or
+explicitly discarded by an admin action, never defaulted.
 
 ### 3.8 PR-8 — Monitoring-template seeding, regression, and documentation
 
@@ -498,12 +683,89 @@ end-to-end script or documented manual walkthrough); no existing test regressed.
 
 ---
 
-## 5. Open items requiring your decision before implementation begins
+## 5. Authorization boundary check: does "administrator-only" hold under custom permission grants?
 
-1. **Signing of `13165d3`** (§2): accept as permanent unsigned history, or explicitly authorize a
-   rebase/force-push to replace it. This plan takes no action either way without your instruction.
-2. **`CatalogComponentOverride` column design** (§1.3 item 1): confirm, amend, or replace the proposal
-   above before PR-7 starts.
-3. **Migration filename numbers** (`0017`–`0023`) are illustrative, matching the specification's own
-   disclaimer — they will be re-derived from whatever the actual Alembic head is at the time each PR
-   starts, not reserved now.
+Checked directly against `backend/app/domain/auth/models.py` and `backend/app/application/rbac.py` (the
+same files verified in §1.1/§1.2), not assumed from the seeded default grants alone, per the explicit
+instruction not to treat the seed as the entire authorization boundary.
+
+**This codebase has no first-class "Administrator" role concept anywhere in enforcement code.** No
+`is_superuser` flag on `User`, no hardcoded role-name check, no special-casing in `get_auth_context()`/
+`require_permission()`. Every protected route — every existing one, and every one this plan proposes — is
+gated by an exact permission-code match against the `permission`/`role_permission`/`role`/
+`role_assignment` join. `Role` is, per `rbac.py`'s own module docstring, "a normal table," and custom roles
+are explicitly, fully supported. This is true of every sensitive permission in the system today
+(`user:manage`, `role:manage`, `organization:manage`, `audit:view`) — not something Phase 10A introduces or
+could opt out of by adding a `catalog:*` family that behaves differently from every other permission
+family already in the codebase.
+
+**Concrete answer:** `catalog:*` permissions alone genuinely could authorize a principal that does not
+hold the literal `Administrator` role — but only through one specific, pre-existing path: a principal
+holding `role:manage` (itself `Administrator`-only by default seed) can create a new custom role and grant
+it any `permission` row, including any `catalog:*` code, through the existing, general-purpose role/
+permission management surface. None of that is new, and none of it is specific to this feature —
+`role_permission` rows can only ever be inserted by code gated on `role:manage`, or by a trusted migration
+script run outside the request path. So the true transitive boundary for "who can ultimately author
+catalog definitions" is **"whoever holds `role:manage`, plus whoever such a holder chooses to delegate
+to"** — exactly the boundary that already governs `user:manage`, `audit:view`, and every other
+Administrator-only-by-default permission, unaffected by Phase 10A's own RBAC seed migration (§3.2).
+
+**Decision: this plan does not add a hardcoded role-name check** (e.g. `require_role("Administrator")`
+alongside or instead of `require_permission("catalog:manage")`), for two concrete reasons:
+
+1. **No such pattern exists anywhere else in this codebase.** Adding one here, and only here, would be a
+   second, inconsistent enforcement mechanism sitting next to the permission-code system every other route
+   trusts exclusively — a real reasoning hazard for anyone auditing which routes are governed by which
+   rule.
+2. **It would remove a legitimate, currently-available least-privilege capability, not close a gap.** An
+   organization's `Administrator` may deliberately delegate catalog authoring to a narrower custom role
+   (e.g. "Catalog Editor," holding only the seven `catalog:*` codes and nothing else — not `user:manage`,
+   not `role:manage`, not `organization:manage`) without granting full `Administrator` privileges. A
+   hardcoded role-name check would make that impossible, forcing every catalog author to hold full
+   `Administrator` — a *worse* security posture than the one already available, and inconsistent with how
+   every other permission in this system supports exactly this kind of scoped delegation today.
+
+**What this plan does instead**, since assuming the seeded grants are the entire boundary was explicitly
+ruled out:
+
+- States the boundary precisely, as above, rather than leaving "administrator-only" resting on an unstated
+  assumption about the seed migration's specific defaults.
+- Corrects PR-2's acceptance criterion (§3.2) from an earlier, imprecise role-name framing to the accurate,
+  tested claim — permission-code possession, not role identity (done above).
+- Adds two tests to PR-2's suite (`backend/tests/api/test_catalog_rbac_closure.py`), making the boundary
+  explicit and regression-proof rather than implicit in the seed data:
+  1. A synthetic role holding **only** `catalog:manage` (deliberately not named `"Administrator"`, holding
+     no other permission) **succeeds** at a catalog-mutation endpoint — proving enforcement is genuinely
+     permission-code-based, not accidentally dependent on a role-name string anywhere in the
+     implementation.
+  2. A user assigned the real `Administrator` role, with that role's `catalog:manage` grant explicitly
+     revoked for the test (its `role_permission` row deleted), **fails** (403) at the same endpoint —
+     proving no special case exists for the `Administrator` role name itself, and that revoking a specific
+     grant genuinely revokes the specific capability, independent of role identity.
+- Notes, for operational awareness rather than as a code change: what actually keeps "administrator-only"
+  true for catalog authoring in practice is `role:manage` and `organization:manage` staying tightly held —
+  exactly as it already is for every other Administrator-only capability in this product. This plan does
+  not change, weaken, or need to change that existing boundary.
+
+---
+
+## 6. Decisions recorded and remaining status
+
+| # | Decision | Resolution | Where recorded |
+|---|---|---|---|
+| 1 | Signing of `13165d3` | **Resolved.** Accepted as permanent, documentation-only unsigned history. Not amended, rebased, or force-pushed. New commits continue using the verified signing workflow. | §2 |
+| 2 | `CatalogComponentOverride` schema | **Resolved.** Approved for PR-7, with the pin/component-existence trigger, the narrow field allowlist, the `active`/`orphaned` reconciliation semantics, and the six-step atomic per-asset transaction all specified. | §1.3a, §3.7 |
+| 3 | PR-1/PR-7 migration-scope inconsistency | **Resolved.** `app/db/models.py` registration is now stated per-table, in the PR that actually creates each table's migration — PR-1 for the eight §4 tables, PR-6 for `CatalogImportJob`, PR-7 for `CatalogComponentOverride`. | §1.2 item 1, §3.6, §3.7 |
+| 4 | "Administrator-only" under custom permission grants | **Resolved.** No hardcoded role-name check added (would be inconsistent with this codebase's exclusively permission-code-based RBAC and would block legitimate least-privilege delegation); the true boundary (`role:manage`) is stated explicitly, PR-2's acceptance criterion is restated in permission-code terms, and two new regression tests make the boundary explicit rather than implicit. | §5, §3.2 |
+
+**Outstanding, not part of this plan's own scope:** decision 2's design (§1.3a) is now approved for
+implementation in this plan, but it is specification-shaped content that belongs in the design
+specification itself (`docs/superpowers/specs/2026-09-23-phase-10a-asset-catalog-designer-design.md`
+§6.1), which this plan does not edit — per the task's own instruction, the exact proposed specification
+edit is reported separately, alongside this update, for your decision on whether to apply it to the design
+branch. The same applies, more lightly, to decision 4's finding, which is a clarification the
+specification's own RBAC section (§9.1) could usefully state explicitly.
+
+**Migration filename numbers** (`0017`–`0023`) remain illustrative, matching the specification's own
+disclaimer — they will be re-derived from whatever the actual Alembic head is at the time each PR starts,
+not reserved now.
