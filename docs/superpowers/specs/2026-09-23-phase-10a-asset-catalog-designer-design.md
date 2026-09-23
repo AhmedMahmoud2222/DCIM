@@ -387,8 +387,14 @@ Marker position lives **only** here, normalized 0..1 against the graphic's own `
 port/PSU template row never stores its own x/y, avoiding two coordinate stores that could drift. A marker
 that targets a component removed from a later draft is handled in §5.11.
 
+The marker trigger resolves its parent revision through `catalog_graphic_id`, locks that revision, and
+rejects a target port/PSU belonging to a different revision. Deleting a component removes its marker
+inside the same draft transaction and is reflected in the validation summary. A clone copies markers
+with new child-row identifiers mapped by stable keys. Cross-revision component references are invalid
+even when individual foreign keys exist.
+
 Non-graphical fallback: every `NetworkPortTemplate`/`PowerSupplyTemplate` is independently readable,
-labeled, and fully editable through the structured designer sections (§11.4) with no dependency on a
+labeled, and fully editable through the structured designer sections (§11) with no dependency on a
 graphic existing — a model with zero uploaded images is complete and usable, satisfying the "accessible
 non-graphical fallback" requirement by construction (markers are an optional annotation layer on top of
 already-complete structured data, never the only place a component's identity/spec lives).
@@ -503,7 +509,7 @@ consistency check for the revision's `category` and returns a structured summary
   "valid": false,
   "errors": [
     {"field": "width_value", "code": "required_for_category", "message": "Width is required for rack models."},
-    {"field": "network_ports[2].oid", "code": "missing_oid_for_snmp", "message": "..."}
+    {"field": "monitoring_metrics[2].oid", "code": "missing_oid_for_snmp", "message": "SNMP metric requires an OID."}
   ],
   "warnings": [
     {"field": "monitoring[3].oid", "code": "duplicate_oid", "message": "Same OID as 'Outlet 4 Load' (different stable_key)."}
@@ -550,14 +556,20 @@ existing one-function/many-`CREATE TRIGGER` style, e.g. `trg_managed_asset_repla
 CREATE FUNCTION fn_reject_write_on_non_draft_revision() RETURNS trigger AS $$
 DECLARE
   v_status TEXT;
-  v_revision_id UUID := COALESCE(NEW.catalog_model_revision_id, OLD.catalog_model_revision_id);
+  v_revision_id UUID;
 BEGIN
-  SELECT lifecycle_status INTO v_status FROM catalog_model_revision WHERE id = v_revision_id;
+  v_revision_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.catalog_model_revision_id ELSE NEW.catalog_model_revision_id END;
+  IF TG_OP = 'UPDATE' AND NEW.catalog_model_revision_id <> OLD.catalog_model_revision_id THEN
+    RAISE EXCEPTION 'moving a catalog child between revisions is forbidden';
+  END IF;
+  SELECT lifecycle_status INTO v_status FROM catalog_model_revision WHERE id = v_revision_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'parent revision missing'; END IF;
   IF v_status <> 'draft' THEN
     RAISE EXCEPTION 'catalog_model_revision % is not a draft (status=%): child rows are immutable', v_revision_id, v_status
       USING ERRCODE = 'integrity_constraint_violation';
   END IF;
-  RETURN COALESCE(NEW, OLD);
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -565,19 +577,30 @@ $$ LANGUAGE plpgsql;
 -- catalog_graphic_marker, monitoring_metric_template — each: EXECUTE FUNCTION fn_reject_write_on_non_draft_revision()
 ```
 
-`catalog_model_revision` itself gets a second, narrower trigger allowing only the specific columns a
-lifecycle transition is permitted to touch after leaving `draft` (`lifecycle_status` draft→published→
-retired, `published_at`/`published_by_user_id`, `retired_at`/`retired_by_user_id`/`retirement_reason`,
-`allow_installation_when_retired`, and the two `legacy_*_revision_id` bridge columns, exactly once each) —
-any other column changing on a non-draft row raises the same exception. This closes the literal DB-level
+`catalog_model_revision` itself gets a second, narrower trigger: draft→published may set publication
+metadata and its one category-matched bridge id; published→retired may set retirement metadata; only
+`allow_installation_when_retired` may subsequently toggle on a retired row. The trigger rejects every
+other column change, any reversal of status, and any later bridge change. Publication must serialize with
+child edits by locking the parent row with `SELECT ... FOR UPDATE` before validation; each child-write
+trigger obtains the same parent row lock before checking draft status. This closes the write race where
+a child could be inserted during validation or immediately after publication. This closes the literal DB-level
 enforcement gap called out as a hard requirement, without touching the ORM's declarative mapping (raw SQL
 in the Alembic migration, matching every other cross-cutting DB invariant in this codebase).
+
+`CatalogModel` identity fields used by published revisions (manufacturer, category, model name and model
+number) cannot be edited after first publication; description/tags are draft-only editorial metadata or
+must be moved into a new revision if their history matters. Manufacturer name cannot change while any
+published revision references it. Database triggers enforce these identity locks, so mutable identity
+rows cannot rewrite the meaning of an immutable publication. Existing legacy revision write endpoints
+must also be tightened: direct mutation of either legacy revision table's bridged rows is rejected by a
+database trigger, while preexisting unbridged rows retain their present behavior.
 
 ### 5.5 Cloning a published revision into a new draft
 
 `POST /catalog/models/{model_id}/revisions/clone?from_revision_id={id}` — deep-copies every field and
-every child row (ports/PSUs/monitoring templates keep their exact `stable_key`s; graphics are copied by
-reference, §7.4) from a published (or retired) revision into a brand-new `draft` row with
+every child row (ports/PSUs/monitoring templates keep their exact `stable_key`s; cloned graphic rows
+reference the same stored image bytes and cloned markers point to cloned components, §7.5) from a
+published (or retired) revision into a brand-new `draft` row with
 `revision_number = max(existing) + 1` and `cloned_from_revision_id` set for provenance. This is the
 expected day-to-day path for "the vendor issued a corrected spec" — an admin never hand-re-enters an
 entire port map to fix one column.
@@ -637,7 +660,9 @@ must not be silently repointed to a newer revision"*).
    outbox share one sub-transaction and either all commit or all roll back together) — never a partial
    write on a single asset. This mirrors the existing bulk-tolerant pattern already used for reconciliation
    decisions (`ReconciliationDiff`, processed one at a time with individual outcomes) rather than inventing
-   a new bulk-transaction shape.
+   a new bulk-transaction shape. The response explicitly marks earlier successful commits when a later
+   item fails; retrying the request is safe only with an idempotency key and the server's recorded
+   per-asset outcomes. Without one, the operator must preview again before retrying.
 
 ### 5.10 Stable component identities across revisions
 
@@ -685,28 +710,27 @@ catalog:
 
 ### 6.1 Inheritance and override representation
 
-At **installation time** (creating a `Rack`/`Equipment` against a published `CatalogModelRevision`, or
-migrating one — §5.9), the service layer **seeds** `NetworkInterface` rows from
-`NetworkPortTemplate`s:
+At installation, the pinned revision supplies defaults; a local override is an explicit field value
+associated with an installed asset and a template `stable_key`. Add a typed
+`CatalogComponentOverride` table (`managed_asset_id`, `catalog_model_revision_id`, `component_kind`,
+`stable_key`, `field_name`, `value_type`, one typed value column per allowed type) with a uniqueness
+constraint over asset/component/field. Validate each override against the pinned revision and an
+allowlist of fields. No row means inherited; an explicit row means overridden even when its value
+happens to equal the default. The API returns each effective value with `source: inherited|override`
+and the original template value; resetting deletes the override. This avoids guessing provenance by
+comparing values and preserves explicit choices during migration. A DB/service validation check rejects
+an override targeting a different revision or component. During migration, matching stable keys retain
+valid overrides under the new revision, incompatible fields block migration, and removed keys require
+an explicit keep-as-local or discard decision in the preview. Existing installed fields remain intact.
 
-```text
-NetworkInterface gains one new nullable column: port_template_id FK→NetworkPortTemplate SET NULL
-```
-
-Each seeded `NetworkInterface` copies `display_name → name`, `media_type`, `connector_type`,
-`supported_speeds_mbps[0] (or explicit choice) → speed_mbps`, and sets `port_template_id` to the source
-template's id. Every field remains a normal, independently-editable column on `NetworkInterface` exactly as
-today — "inherited" only describes *where the initial value came from*, never a live read-through: editing
-the template later (impossible post-publish anyway) or migrating the asset to a new revision (§5.11) never
-retroactively changes an already-seeded `NetworkInterface` row.
-
-**Distinguishing inherited vs. overridden in the UI:** a `NetworkInterface` whose current field values still
-exactly match its `port_template_id`'s current template values renders with an "Inherited" badge; any field
-the operator has since changed renders with an "Overridden" badge and a "reset to template default" action.
-This is computed at read time by the API (a diff between the instance row and its `port_template_id` join),
-never stored as a separate boolean-per-field — avoiding a second source of truth for "is this overridden."
-An `NetworkInterface` with `port_template_id IS NULL` (manually created, or orphaned per §5.11) renders with
-no inheritance badge at all — it is unambiguously fully local data.
+`NetworkInterface` belongs to `NetworkDevice`, and its present columns do **not** include
+`media_type` or `connector_type`. Consequently the catalog must not pretend it can copy these
+fields into an interface. Where an installation has an actual `NetworkDevice` projection, an explicit
+seed action may create interface rows for supported fields (`name`, `speed_mbps`, `role` only after
+mapping to allowed roles) and link each via a nullable `port_template_id`. On installations without
+that projection, port templates remain visible defaults and typed overrides; no interface is
+manufactured. Name collisions and existing manually configured interfaces are surfaced for review.
+Port media and connector details stay in the catalog plus the typed local override table.
 
 The same seed-then-diverge pattern applies to a `MonitoringMetricTemplate` → `IntegrationMetricMapping` at
 the moment an operator wires up an `Integration` for the asset (an explicit, operator-initiated action —
@@ -716,9 +740,9 @@ SET NULL` for the same provenance/badge purpose, pre-filling `source_identifier 
 mapping guidance, `unit`, and `scale` from the template as a starting point the operator can freely edit or
 delete.
 
-`PowerSupplyTemplate` seeds informational-only `PowerNode` rows of type `equipment_power_input` (already an
-existing `POWER_NODE_TYPES` value, §1) at install time, matching `quantity` — actual `PowerConnection` wiring
-to a PDU/UPS remains a fully separate, manual, installed-asset-only action exactly as it is today.
+`PowerSupplyTemplate` provides displayed installation defaults. Creating a `PowerNode` requires an
+explicit installation action and its existing topology validation; catalog publication or asset migration
+never creates or rewires a power node. Actual `PowerConnection` wiring remains a separate manual action.
 
 ### 6.2 What Phase 10A explicitly does not do here
 
@@ -1096,19 +1120,25 @@ several small, single-concern migrations, matching this repo's own established g
 shipped multiple sequential migrations rather than one large one):
 
 1. `0017_catalog_manufacturer_and_model` — `manufacturer`, `catalog_model`, `catalog_model_revision` +
-   `fn_reject_write_on_non_draft_revision()` + the narrower `catalog_model_revision`-specific trigger (§5.4).
+   `fn_reject_write_on_non_draft_revision()`, the narrower revision trigger, and identity-lock triggers (§5.4).
 2. `0018_catalog_component_templates` — `network_port_template`, `power_supply_template`,
    `monitoring_metric_template`, plus their `BEFORE INSERT/UPDATE/DELETE` triggers.
-3. `0019_catalog_graphics` — `catalog_graphic`, `catalog_graphic_marker` + triggers;
+3. `0019_catalog_graphics` — `catalog_graphic`, `catalog_graphic_marker` + parent-resolution and
+   same-revision target triggers;
    `Settings.catalog_image_storage_dir`.
 4. `0020_catalog_legacy_bridge` — additive `bridged_from_catalog_revision_id` on `rack_model_revision`/
    `equipment_model_revision`; `legacy_rack_model_revision_id`/`legacy_equipment_model_revision_id` +
-   their XOR CHECK on `catalog_model_revision` (added here, not in migration 1, since they reference tables
+   their XOR CHECK on `catalog_model_revision`, plus bridged legacy-row immutability triggers (added here, not in migration 1, since they reference tables
    that must already exist — ordering matters and is called out explicitly).
 5. `0021_catalog_rbac_seed` — new `catalog:*` permissions, `catalog:read` added to every existing role,
    the rest to Administrator only (§9.1) — same `sa.table`/`op.bulk_insert` pattern as migration
    `0002_audit_partitions_retention_and_rbac_seed.py`.
 6. `0022_catalog_import_job` — `catalog_import_job` (§13.2).
+7. `0023_catalog_instance_provenance` — `catalog_component_override` and nullable
+   `network_interface.port_template_id` and `integration_metric_mapping.metric_template_id`; no backfill of existing assets. Install-time
+   eligibility gates and legacy endpoint RBAC updates ship with the API increment before any new
+   catalog publishing route is enabled. New revisions must use the current migration head at the time
+   implementation begins; these numbered names are illustrative, not reserved identifiers.
 
 Each carries a module docstring in this codebase's established style (cites this design document + the
 specific `ARCHITECTURE_REVIEW.md`/product-principle section it implements), `revision`/`down_revision` as
@@ -1133,6 +1163,7 @@ throughout (no free-form blob), explicitly excluding credentials, secrets, and e
 CatalogImportJob   PK id, uploaded_by_user_id FK→User RESTRICT, status CHECK IN
                    ('queued','validating','validated','applying','applied','failed','rejected'),
                    source_filename, file_hash, file_size_bytes, schema_version,
+                   canonical_document JSONB NOT NULL,  -- validated metadata, never secret fields
                    preview_result JSONB NULL,   -- per-item validation status, populated by /preview
                    rejection_reason NULL, finished_at NULL, created_at/updated_at
 ```
@@ -1150,9 +1181,10 @@ CatalogImportJob   PK id, uploaded_by_user_id FK→User RESTRICT, status CHECK I
    an imported revision always lands as `lifecycle_status='draft'`, requiring the normal validate→publish
    flow, so bulk-importing a spec sheet can never bypass publication review) in one transaction, writes one
    audit row + one `CatalogImportApplied` outbox event summarizing counts, sets `status='applied'`.
-   `conflict`-marked items are always skipped, never overwritten — re-importing the same document twice is
-   safe and idempotent (mirrors `ARCHITECTURE_REVIEW.md` §21's "re-uploading an identical file... is a
-   no-op" idempotency principle).
+   `conflict`-marked items are always skipped, never overwritten. Repeating `apply` on an already-applied
+   job returns its recorded outcome without mutations. A repeated preview of identical content reports
+   existing identities as conflicts; it does not recreate rows. Store the bounded canonical document in
+   the job so apply consumes exactly the validated bytes, and compare its hash before applying.
 
 ### 13.3 Document schema (`CatalogImportDocumentV1`)
 
@@ -1265,7 +1297,7 @@ begin with.
 
 **New:** `manufacturer`, `catalog_model`, `catalog_model_revision`, `network_port_template`,
 `power_supply_template`, `catalog_graphic`, `catalog_graphic_marker`, `monitoring_metric_template`,
-`catalog_import_job`.
+`catalog_component_override`, `catalog_import_job`.
 
 **Additively altered (nullable columns only, zero risk to existing rows/FKs):** `rack_model_revision`
 (+`bridged_from_catalog_revision_id`), `equipment_model_revision` (+`bridged_from_catalog_revision_id`),
@@ -1276,3 +1308,35 @@ begin with.
 instance table, `integration`, `collector`, every telemetry/alarm table — the entire installed-asset and
 acquisition domain keeps working exactly as it does today, unaware this feature exists until an operator
 chooses to use it.
+
+## 17. Delivery plan and dependencies
+
+Each increment is a separate reviewable PR, merged in order. None implements Phase 10B network operations or Phase 10C spatial editing.
+
+1. **Schema and guards:** typed aggregate tables, bridge columns, immutability/identity/marker triggers, provenance columns, RBAC seed, migration upgrade/downgrade tests. Keep new routes unavailable until authorization is installed. Existing installed rows and foreign keys remain unchanged.
+2. **Lifecycle and existing-path closure:** typed manufacturer/model/draft/publish/retire endpoints, backend administrator enforcement, atomic audit/outbox, and removal or authorization tightening of old catalog-authoring endpoints and inline catalog creation in rack/equipment forms. This is the required release gate before administrators can publish new definitions.
+3. **Portable JSON:** typed preview/apply/export, bounded persisted job payload, deterministic ordering, explicit conflict handling and idempotent apply. Depends on lifecycle and authorization.
+4. **Core administrator UI:** bounded list, detail, draft section editors, validation, comparison and published view; read-only model picker for inventory. Depends on lifecycle endpoints.
+5. **Graphics:** protected raster storage, upload/replace/remove, marker API, accessible keyboard and tabular editor. Depends on aggregate and core UI; may be developed alongside import/export after increment 2.
+6. **Installed-asset migration:** compatibility preview, explicit per-asset and bounded bulk apply with atomic per-asset audit/outbox, stable-key reconciliation and conflict results. Depends on bridge, instance provenance and inventory picker.
+7. **Monitoring templates:** typed SNMP definitions and explicit seed guidance in the existing integration workflow. Depends on catalog lifecycle; collector execution and discovery remain outside scope.
+8. **End-to-end verification and operator documentation:** regression checks, migration round trips, permission matrix and acceptance walkthrough. This PR can follow increments 3–7; critical security and invariance tests ship with their respective feature increments.
+
+## 18. Validation, compatibility, and acceptance
+
+The API returns field-path errors (`models[0].revisions[0].network_ports[2].stable_key`) for invalid imports and draft validation, 403 for missing permissions, 409 for lifecycle or optimistic-concurrency conflicts, 413 for oversized input, and 422 for semantic validation failures. List endpoints are paginated with stable ordering. A published revision cannot be edited through either new or legacy routes, SQL child writes, mutable identity rows, or a graphic replacement. Publication revalidates while holding the parent lock. No unreviewed legacy create path remains available to a non-administrator at rollout.
+
+Acceptance is demonstrated when an administrator can create and publish a rack or equipment revision, install an asset pinned to that revision, clone and publish a newer one, see an accurate impact and compatibility preview, and deliberately migrate one asset while another stays pinned. Retiring an in-use revision leaves existing assets readable and blocks new selection unless the explicit retired-installation flag is set. Failed per-asset migration rolls back its model update, provenance changes, audit and outbox together; successful earlier assets in a bulk call are reported as committed. Inherited values and explicit overrides are distinguishable without destroying local values. An accessible table permits all marker operations without a mouse or an image. JSON export/import round trips supported typed fields and rejects unknown keys, future schema versions, credentials, oversized documents and embedded binaries. PNG/JPEG files are verified by decoded content and bounded dimensions; SVG is refused. Existing rack, equipment, network, power, integration and 3D workflows pass regression tests.
+
+## 19. Risks and mitigations
+
+| Risk | Mitigation and release check |
+|---|---|
+| The bridge duplicates physical fields in legacy revisions | Create both rows atomically, check unit conversion and equality in tests, never permit a bridged legacy row to be edited. |
+| Current legacy endpoints permit wider authoring access | Tighten backend authorization and inventory inline-create behavior in the same release that exposes publishing; verify Engineer and other non-admin roles receive 403. |
+| Multiple administrators publish or edit a draft concurrently | Parent row locks for publication and child edits, optimistic version checks for draft scalar edits, unique revision numbers with retry after uniqueness conflict. |
+| Local instance fields no longer match a new template | Preview stable-key removals and placement/size compatibility, preserve manual rows, and require an explicit migration decision. |
+| Graphics can become orphaned or hostile | Transactional metadata with content-addressed storage, deferred garbage collection after references disappear, decoded-content checks, immutable object keys and authorization on reads. |
+| Future Alembic head changes before implementation | Rebase migration identifiers and dependencies on the then-current head without changing this design's invariants. |
+
+**Design decision:** Initial release supports rack and equipment definitions because those are the existing installed-asset revision references. Other named categories require a later typed installed-asset binding before creation is enabled. No automatic collector work, topology changes, or spatial 3D editing are implied by this roadmap.
