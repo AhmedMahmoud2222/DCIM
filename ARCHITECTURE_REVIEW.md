@@ -8,6 +8,14 @@
 
 Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCHITECTURE_RED_TEAM_REPORT.md` (adversarial findings against v1.1), `ARCHITECTURE_CHANGE_MATRIX.md` (v1.1→v1.2 before/after trace), `ARCHITECTURE_TARGETED_REVISION_REPORT.md` (v1.2 summary), `FINAL_ARCHITECTURE_VALIDATION_REPORT.md` (the gate that found F1 and confirmed H7 open — superseded by its v2 addendum recording this fix).
 
+> **Reader's note, added later, not part of v1.3 itself:** this document is the architecture record as of
+> 2026-09-16 (v1.3) and its Phase Sequencing table (§47) is the original Phase 0–14 roadmap this document
+> was written against — it is preserved here unchanged, including phases still unbuilt. It does **not**
+> describe Phase 10A (the Asset Catalog Designer) or the network/3D work on `codex/commercial-ui-uplift-v1`,
+> neither of which existed when this was written and neither of which is a renumbering of anything below.
+> For what is actually implemented today, on which branch, see
+> [`docs/2026-09-23-current-state-and-roadmap.md`](docs/2026-09-23-current-state-and-roadmap.md).
+
 ---
 
 ## 0. Document Control

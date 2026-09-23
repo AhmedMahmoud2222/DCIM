@@ -1,13 +1,21 @@
 # DCIM Platform
 
-In-house Data Center Infrastructure Management platform. This repository currently
-implements **Phase 1 — Foundation** only: authentication, RBAC, audit, the location
-hierarchy, the bare `ManagedAsset` identity/lifecycle anchor, the transactional Outbox,
-and the surrounding cross-cutting infrastructure (observability, configuration,
-migrations, Docker, CI). Rack/equipment/power/network/telemetry/alarm/spatial/AI
-functionality is later-phase work and is intentionally not present — see
-`PHASE1_IMPLEMENTATION.md` for exact scope and `ARCHITECTURE_REVIEW.md` for the full
-platform design this phase implements a foundation of.
+In-house Data Center Infrastructure Management platform.
+
+**Current status, in one paragraph — see
+[`docs/2026-09-23-current-state-and-roadmap.md`](docs/2026-09-23-current-state-and-roadmap.md) for the
+full, dated breakdown.** The `main` branch implements authentication/RBAC/audit, the location hierarchy,
+`ManagedAsset`, rack/equipment inventory with legacy catalog authoring, floor plan import and 2D spatial
+layout, power topology, integrations/collectors (ICMP/SNMP/REST) with discovery, an isolated Edge Collector
+feeding telemetry and threshold/availability alarms, and an operational dashboard — this is the historical
+Phase 1–10 roadmap from `ARCHITECTURE_REVIEW.md` §47, fully implemented and tested. Network topology and a
+3D room layout exist **only** on `codex/commercial-ui-uplift-v1` (not yet on `main`). A structured,
+versioned Asset Catalog Designer ("Phase 10A") exists **only** as a stack of draft, unmerged pull requests
+(`claude/phase10a-*` branches, [#14](https://github.com/AhmedMahmoud2222/DCIM/pull/14),
+[#15](https://github.com/AhmedMahmoud2222/DCIM/pull/15),
+[#16](https://github.com/AhmedMahmoud2222/DCIM/pull/16)) — backend only so far, no UI, none of it merged
+or ready for review. See the addendum linked above before assuming any capability is present on a branch
+you haven't checked.
 
 ## Architecture Summary
 
@@ -16,6 +24,18 @@ Redis (Celery broker/cache) + Celery (background jobs) on the backend; React 18 
 TypeScript + Vite + Tailwind + TanStack Query on the frontend. Full rationale for every
 decision is in `ARCHITECTURE_REVIEW.md` (canonical spec) and its companion revision/
 red-team/validation documents.
+
+## Authoritative Branches
+
+| Branch | What it is |
+|---|---|
+| `main` | The merged, deployable baseline — the historical Phase 1–10 roadmap only (§2 of the addendum). No network topology, no 3D layout, no catalog designer. |
+| `codex/commercial-ui-uplift-v1` | `main` plus network topology and the 3D room layout. Not yet merged back into `main`. |
+| `claude/phase10a-*` | The in-progress Asset Catalog Designer, as a stack of draft PRs ([#14](https://github.com/AhmedMahmoud2222/DCIM/pull/14) → [#15](https://github.com/AhmedMahmoud2222/DCIM/pull/15) → [#16](https://github.com/AhmedMahmoud2222/DCIM/pull/16)) on top of the same base `codex/commercial-ui-uplift-v1` branched from. Backend only; none of it is merged or marked ready for review. |
+
+See [`docs/2026-09-23-current-state-and-roadmap.md`](docs/2026-09-23-current-state-and-roadmap.md) for the
+full capability breakdown per branch, the Phase 10A PR chain and its known open design issue, and precise
+language on what the network/3D and telemetry features do and do not claim.
 
 ## Prerequisites
 
@@ -131,13 +151,23 @@ Requires a running `dcim_test` database (extensions enabled, same as `dcim`) and
 ```bash
 cd backend && source .venv/bin/activate
 alembic upgrade head   # against dcim_test — see conftest.py for the DATABASE_URL default
-pytest -q
+PYTHONPATH=.. pytest -q   # PYTHONPATH is the repo root — see the note below
 ```
 
-59 tests: unit (pure logic — lifecycle rules, concurrency helpers, JWT, idempotency
-hashing), integration (real PostgreSQL — DB constraints, outbox atomicity, audit
-append-only enforcement), and API (real HTTP contract through FastAPI's ASGI transport —
-auth, RBAC, concurrency, security).
+Hundreds of tests and growing every phase — run the command above for the current count rather than
+trusting a number in this file, which will always be stale by the time you read it. Categories: unit (pure
+logic — lifecycle rules, concurrency helpers, JWT, idempotency hashing), integration (real PostgreSQL — DB
+constraints, outbox atomicity, audit append-only enforcement, genuine two-connection concurrency races),
+and API (real HTTP contract through FastAPI's ASGI transport — auth, RBAC, concurrency, security).
+
+**`PYTHONPATH` must include the repository root**, not just `backend/`.
+`tests/unit/test_monitoring_policy_contract.py` imports the sibling `edge_collector/` package directly
+(deliberately not installed into the backend's own distribution — it is developed and validated as an
+independent package, per its isolation boundary in
+`docs/superpowers/specs/2026-09-18-dcim-mvp-v0.1-design.md`). Omitting `PYTHONPATH` fails that one file's
+collection with `ModuleNotFoundError: No module named 'edge_collector'` — not a code defect, just an
+invocation gap; `.github/workflows/ci.yml` sets `PYTHONPATH: ${{ github.workspace }}` for exactly this
+reason on every CI run.
 
 **ICMP driver tests require `CAP_NET_RAW`.** `app/application/drivers/icmp.py` opens a
 genuine `SOCK_RAW`/`IPPROTO_ICMP` socket (not a shell-out to `ping`), which the kernel
@@ -187,8 +217,18 @@ npx eslint . --ext ts,tsx
 
 ## Further Reading
 
-`ARCHITECTURE_REVIEW.md` (canonical architecture, v1.3), `PHASE1_BASELINE.md` (repository
-assessment before this phase began), `PHASE1_IMPLEMENTATION.md` (what Phase 1 actually
-built, mapped to architecture sections), `PHASE1_TRACEABILITY_MATRIX.md`,
-`PHASE1_DEVIATIONS.md`, `PHASE1_IMPLEMENTATION_REPORT.md` (full Phase 1 completion report
-and gate verdict).
+**Start with [`docs/2026-09-23-current-state-and-roadmap.md`](docs/2026-09-23-current-state-and-roadmap.md)**
+— the dated, maintained answer to "what actually works, on which branch, right now," including the Phase
+10A draft-PR chain and its one known open design issue. Everything below it is historical record, correct
+for its own point in time but not maintained as a current-status reference:
+
+- `ARCHITECTURE_REVIEW.md` (canonical architecture, v1.3) — the full platform design, historical Phase
+  0–14 roadmap (§47), including phases not yet built.
+- `PHASE1_BASELINE.md`, `PHASE1_IMPLEMENTATION.md`, `PHASE1_TRACEABILITY_MATRIX.md`, `PHASE1_DEVIATIONS.md`,
+  `PHASE1_IMPLEMENTATION_REPORT.md` — Phase 1's own completion record.
+- The root-level `PHASE2_*.md` through `PHASE8_*.md`, `PRE_MVP_CONSOLIDATION_REPORT.md`,
+  `BRANCH_RECONCILIATION_REPORT.md`, `MVP_*.md` — each later phase's and consolidation gate's own dated
+  record, in the same historical-not-current spirit.
+- `docs/superpowers/specs/2026-09-23-phase-10a-asset-catalog-designer-design.md` and
+  `docs/superpowers/plans/2026-09-23-phase-10a-asset-catalog-designer-plan.md` — Phase 10A's authoritative
+  specification and implementation plan.
