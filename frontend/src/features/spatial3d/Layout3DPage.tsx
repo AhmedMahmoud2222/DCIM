@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties, type KeyboardEvent, type PointerEvent, type WheelEvent, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/ui/ProductUi";
@@ -101,7 +101,24 @@ export function Layout3DPage() {
   };
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => { event.currentTarget.setPointerCapture(event.pointerId); setDrag({ mode: event.shiftKey ? "pan" : "orbit", x: event.clientX, y: event.clientY }); };
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => { if (!drag) return; const dx = event.clientX - drag.x; const dy = event.clientY - drag.y; if (drag.mode === "pan") setPan((current) => ({ x: current.x + dx, y: current.y + dy })); else { setYaw((value) => Math.max(-85, Math.min(85, value + dx * 0.35))); setPitch((value) => Math.max(28, Math.min(78, value - dy * 0.25))); } setDrag({ ...drag, x: event.clientX, y: event.clientY }); };
-  const onWheel = (event: WheelEvent<HTMLDivElement>) => { event.preventDefault(); setZoom((value) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value - event.deltaY * 0.001))); };
+  // React delegates onWheel as a passive listener, so calling preventDefault() inside it
+  // is silently dropped by the browser (logged as a console warning) and the page
+  // scrolls underneath the scene while the camera also zooms. A native listener
+  // attached directly to the viewport with { passive: false } is the only way to
+  // actually stop that scroll. Re-attached whenever the viewport element itself
+  // mounts/unmounts (loading <-> loaded), never on every zoom change, via the
+  // functional setZoom updater below.
+  const viewportRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node) return;
+    const handleWheel = (event: globalThis.WheelEvent) => {
+      event.preventDefault();
+      setZoom((value) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value - event.deltaY * 0.001)));
+    };
+    node.addEventListener("wheel", handleWheel, { passive: false });
+    return () => node.removeEventListener("wheel", handleWheel);
+  }, [view.isLoading, view.isError]);
   // Direct keyboard camera control on the scene itself (arrow keys pan, +/- zoom, 0
   // resets) — a keyboard-only user is never limited to only what the range sliders
   // cover. Scoped to the viewport's own focus (not a bubbled event from a rack/equipment
@@ -124,7 +141,7 @@ export function Layout3DPage() {
 
   return <div className="page"><PageHeader eyebrow="Infrastructure" title="3D layout" description="Interactive room scene projected from authoritative room, rack, and equipment placements — a schematic CSS projection for orientation, not a dimensionally accurate digital twin." actions={<div className="flex gap-2"><Link to={activeRoom ? `/floor-plans/room/${activeRoom}` : "/floor-plans"} className="action-secondary">2D floor plan</Link><button className="action-secondary" onClick={reset}>Reset / fit</button></div>} />
     <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end"><label className="text-sm"><span className="mb-1 block text-slate-400">Room</span><select className="field min-w-64" value={activeRoom} onChange={(event) => { setRoomId(event.target.value); setSelectedRack(null); reset(); }}>{rooms.data?.items.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}</select></label><div className="text-xs text-slate-500">Drag to orbit · Shift + drag to pan · scroll to zoom · focus the scene and use arrow keys to pan, +/− to zoom, 0 to reset.</div></div>
-    {view.isLoading ? <div className="surface p-8 text-sm text-slate-500">Loading authoritative spatial data…</div> : view.isError ? <div className="surface p-8 text-sm text-rose-300">Unable to load this room's spatial data.</div> : <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><section className="layout3d-viewport surface" tabIndex={0} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag} onWheel={onWheel} onKeyDown={onViewportKeyDown} aria-label={`Interactive 3D layout of ${view.data?.room_name ?? "room"}. Use arrow keys to pan, plus and minus to zoom, zero to reset.`}>
+    {view.isLoading ? <div className="surface p-8 text-sm text-slate-500">Loading authoritative spatial data…</div> : view.isError ? <div className="surface p-8 text-sm text-rose-300">Unable to load this room's spatial data.</div> : <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><section ref={viewportRef} className="layout3d-viewport surface" tabIndex={0} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag} onKeyDown={onViewportKeyDown} aria-label={`Interactive 3D layout of ${view.data?.room_name ?? "room"}. Use arrow keys to pan, plus and minus to zoom, zero to reset.`}>
       <div className="layout3d-world" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) rotateX(${pitch}deg) rotateZ(${yaw}deg) scale(${zoom})` }}><div className="layout3d-floor"><span className="layout3d-floor-label">{view.data?.room_name}</span>{view.data?.racks.map((rack, index) => <RackCuboid key={rack.id} rack={rack} index={index} roomWidth={roomWidth} roomHeight={roomHeight} selected={selectedRack?.id === rack.id} onSelect={() => setSelectedRack(rack)} equipment={equipment} />)}</div></div>
       <div className="layout3d-controls" aria-label="3D view controls"><label>Orbit <input type="range" min="-85" max="85" value={yaw} onChange={(event) => setYaw(+event.target.value)} /></label><label>Tilt <input type="range" min="28" max="78" value={pitch} onChange={(event) => setPitch(+event.target.value)} /></label><label>Zoom <input type="range" min={ZOOM_MIN} max={ZOOM_MAX} step={ZOOM_STEP} value={zoom} onChange={(event) => setZoom(+event.target.value)} /></label><div className="layout3d-pan-pad" role="group" aria-label="Pan camera"><button type="button" aria-label="Pan up" onClick={() => setPan((current) => ({ ...current, y: current.y + PAN_STEP_PX }))}>▲</button><button type="button" aria-label="Pan left" onClick={() => setPan((current) => ({ ...current, x: current.x + PAN_STEP_PX }))}>◀</button><button type="button" aria-label="Pan right" onClick={() => setPan((current) => ({ ...current, x: current.x - PAN_STEP_PX }))}>▶</button><button type="button" aria-label="Pan down" onClick={() => setPan((current) => ({ ...current, y: current.y - PAN_STEP_PX }))}>▼</button></div></div>
       <p className="layout3d-provenance">Schematic projection only — rack footprints are standardized, not to scale. Vertical placement and height use each rack's own authoritative U capacity and equipment U range. No floor position is inferred: a rack with no recorded x/y still renders (marked ≈) at a standardized fallback grid position, and genuinely unplaced racks are listed separately, never guessed onto the floor.</p>

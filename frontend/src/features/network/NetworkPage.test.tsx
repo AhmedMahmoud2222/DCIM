@@ -154,6 +154,129 @@ describe("NetworkPage connection creation", () => {
   });
 });
 
+describe("NetworkPage same-device connections", () => {
+  // The backend explicitly permits a physical link between two distinct ports on one
+  // device (app/api/v1/network.py: only interface_a_id == interface_b_id is rejected);
+  // the UI must offer that pairing, not silently exclude it.
+  function twoFreePortsOnDeviceA(): NetworkTopology {
+    return {
+      ...topology,
+      interfaces: [
+        ...topology.interfaces,
+        { id: "if-a2", device_id: "dev-a", name: "Gi0/2", interface_type: "physical", description: null, mac_address: null, role: "data", admin_status: "up", oper_status: "up", speed_mbps: 1000, duplex: null, mtu: null, native_vlan: null, ip_address: null, source: "operator", last_observed_at: null },
+      ],
+      connections: [],
+    };
+  }
+
+  it("keeps the selected source device available as a destination device", async () => {
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue(twoFreePortsOnDeviceA());
+    const user = userEvent.setup();
+    renderPage();
+
+    await within(screen.getByLabelText("Source device")).findByRole("option", { name: "Switch A" });
+    await user.selectOptions(screen.getByLabelText("Source device"), "dev-a");
+
+    expect(within(screen.getByLabelText("Destination device")).getByRole("option", { name: "Switch A" })).toBeInTheDocument();
+  });
+
+  it("creates a connection between two distinct free interfaces on the same device", async () => {
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue(twoFreePortsOnDeviceA());
+    mockedApi.createNetworkConnection.mockResolvedValue({ id: "new-conn", interface_a_id: "if-a1", interface_b_id: "if-a2", cable_label: null, source: "operator", is_authoritative: true });
+    const user = userEvent.setup();
+    renderPage();
+
+    await within(screen.getByLabelText("Source device")).findByRole("option", { name: "Switch A" });
+    await user.selectOptions(screen.getByLabelText("Source device"), "dev-a");
+    await user.selectOptions(screen.getByLabelText("Source interface"), "if-a1");
+    await user.selectOptions(screen.getByLabelText("Destination device"), "dev-a");
+    await within(screen.getByLabelText("Destination interface")).findByRole("option", { name: /Gi0\/2/ });
+    await user.selectOptions(screen.getByLabelText("Destination interface"), "if-a2");
+
+    expect(screen.getByRole("button", { name: "Create connection" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Create connection" }));
+
+    await waitFor(() => expect(mockedApi.createNetworkConnection.mock.calls[0]?.[0]).toEqual({ interface_a_id: "if-a1", interface_b_id: "if-a2", cable_label: null }));
+  });
+
+  it("never offers the selected source interface as a destination-interface option", async () => {
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue(twoFreePortsOnDeviceA());
+    const user = userEvent.setup();
+    renderPage();
+
+    await within(screen.getByLabelText("Source device")).findByRole("option", { name: "Switch A" });
+    await user.selectOptions(screen.getByLabelText("Source device"), "dev-a");
+    await user.selectOptions(screen.getByLabelText("Source interface"), "if-a1");
+    await user.selectOptions(screen.getByLabelText("Destination device"), "dev-a");
+
+    await within(screen.getByLabelText("Destination interface")).findByRole("option", { name: /Gi0\/2/ });
+    expect(within(screen.getByLabelText("Destination interface")).queryByRole("option", { name: /^Gi0\/1/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps an occupied interface unavailable on both ends, even on the same device", async () => {
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue({
+      ...twoFreePortsOnDeviceA(),
+      // if-a1 is already wired to if-b1 — it must not appear as a selectable port.
+      connections: [{ id: "conn-existing", interface_a_id: "if-a1", interface_b_id: "if-b1", cable_label: null, source: "operator", is_authoritative: true }],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await within(screen.getByLabelText("Source device")).findByRole("option", { name: "Switch A" });
+    await user.selectOptions(screen.getByLabelText("Source device"), "dev-a");
+    expect(within(screen.getByLabelText("Source interface")).queryByRole("option", { name: /Gi0\/1 /i })).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Source interface")).getByRole("option", { name: /Gi0\/2/ })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Source interface"), "if-a2");
+    await user.selectOptions(screen.getByLabelText("Destination device"), "dev-a");
+    expect(within(screen.getByLabelText("Destination interface")).queryByRole("option", { name: /Gi0\/1 /i })).not.toBeInTheDocument();
+  });
+
+  it("clears an invalid destination-interface selection when the source interface changes to match it", async () => {
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue(twoFreePortsOnDeviceA());
+    const user = userEvent.setup();
+    renderPage();
+
+    await within(screen.getByLabelText("Source device")).findByRole("option", { name: "Switch A" });
+    await user.selectOptions(screen.getByLabelText("Source device"), "dev-a");
+    await user.selectOptions(screen.getByLabelText("Source interface"), "if-a1");
+    await user.selectOptions(screen.getByLabelText("Destination device"), "dev-a");
+    await user.selectOptions(screen.getByLabelText("Destination interface"), "if-a2");
+    expect(screen.getByLabelText("Destination interface")).toHaveValue("if-a2");
+
+    // Re-pointing the source interface at the port currently selected as the
+    // destination must clear that now-invalid destination choice, never leave the same
+    // interface selected at both ends.
+    await user.selectOptions(screen.getByLabelText("Source interface"), "if-a2");
+
+    expect(screen.getByLabelText("Destination interface")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Create connection" })).toBeDisabled();
+  });
+
+  it("still supports cross-device connections unchanged", async () => {
+    setSession(["network:read", "network:manage"]);
+    mockedApi.getNetworkTopology.mockResolvedValue({ ...topology, connections: [] });
+    mockedApi.createNetworkConnection.mockResolvedValue({ id: "new-conn", interface_a_id: "if-a1", interface_b_id: "if-c1", cable_label: null, source: "operator", is_authoritative: true });
+    const user = userEvent.setup();
+    renderPage();
+
+    await within(screen.getByLabelText("Source device")).findByRole("option", { name: "Switch A" });
+    await user.selectOptions(screen.getByLabelText("Source device"), "dev-a");
+    await user.selectOptions(screen.getByLabelText("Source interface"), "if-a1");
+    await user.selectOptions(screen.getByLabelText("Destination device"), "dev-c");
+    await within(screen.getByLabelText("Destination interface")).findByRole("option", { name: /eth0/ });
+    await user.selectOptions(screen.getByLabelText("Destination interface"), "if-c1");
+    await user.click(screen.getByRole("button", { name: "Create connection" }));
+
+    await waitFor(() => expect(mockedApi.createNetworkConnection.mock.calls[0]?.[0]).toEqual({ interface_a_id: "if-a1", interface_b_id: "if-c1", cable_label: null }));
+  });
+});
+
 describe("NetworkPage disconnect confirmation", () => {
   async function selectAuthoritativeLink() {
     const user = userEvent.setup();

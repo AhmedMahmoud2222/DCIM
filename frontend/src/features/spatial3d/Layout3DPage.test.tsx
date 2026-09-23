@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -238,6 +238,111 @@ describe("Layout3DPage equipment link keyboard activation", () => {
     // shows the unselected prompt, not "Open rack elevation".
     expect(screen.getByText("Select a rack in the scene.")).toBeInTheDocument();
     expect(screen.queryByText("Open rack elevation")).not.toBeInTheDocument();
+  });
+});
+
+describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
+  // React's delegated onWheel is passive by default, so a synthetic wheel event never
+  // exercises the bug (preventDefault() on it never throws). These tests dispatch a
+  // real DOM WheelEvent directly, exactly as the browser does, to prove the native
+  // listener attached to the viewport actually calls preventDefault() and zooms.
+  function dispatchWheel(target: Element, deltaY: number) {
+    const event = new WheelEvent("wheel", { deltaY, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  it("default-prevents a cancelable wheel event over the viewport", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const { container } = renderPage();
+    await screen.findByText("Room One");
+    const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+
+    const event = dispatchWheel(viewport, -100);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("one wheel event changes the zoom scale exactly once", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const { container } = renderPage();
+    await screen.findByText("Room One");
+    const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+    const world = container.querySelector(".layout3d-world") as HTMLElement;
+    const zoomSlider = screen.getByLabelText("Zoom") as HTMLInputElement;
+    const before = Number(zoomSlider.value);
+
+    dispatchWheel(viewport, -100);
+    await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(before + 0.1, 5));
+    expect(world.style.transform).toContain(`scale(${Number(zoomSlider.value)})`);
+  });
+
+  it("clamps zoom at the maximum after repeated zoom-in wheel events", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const { container } = renderPage();
+    await screen.findByText("Room One");
+    const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+    const zoomSlider = screen.getByLabelText("Zoom") as HTMLInputElement;
+
+    for (let i = 0; i < 30; i++) dispatchWheel(viewport, -1000);
+    await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(1.45, 5));
+
+    dispatchWheel(viewport, -1000);
+    await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(1.45, 5));
+  });
+
+  it("clamps zoom at the minimum after repeated zoom-out wheel events", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const { container } = renderPage();
+    await screen.findByText("Room One");
+    const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+    const zoomSlider = screen.getByLabelText("Zoom") as HTMLInputElement;
+
+    for (let i = 0; i < 30; i++) dispatchWheel(viewport, 1000);
+    await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(0.45, 5));
+
+    dispatchWheel(viewport, 1000);
+    await waitFor(() => expect(Number(zoomSlider.value)).toBeCloseTo(0.45, 5));
+  });
+
+  it("removes the native wheel listener when the viewport unmounts", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const { container, unmount } = renderPage();
+    await screen.findByText("Room One");
+    const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+    const removeSpy = vi.spyOn(viewport, "removeEventListener");
+
+    unmount();
+
+    expect(removeSpy).toHaveBeenCalledWith("wheel", expect.any(Function));
+  });
+
+  it("the zoom slider still changes the scene transform independently of the wheel listener", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const { container } = renderPage();
+    await screen.findByText("Room One");
+    const world = container.querySelector(".layout3d-world") as HTMLElement;
+    const before = world.style.transform;
+
+    fireEvent.change(screen.getByLabelText("Zoom"), { target: { value: "1.2" } });
+
+    await waitFor(() => expect(world.style.transform).not.toBe(before));
+    expect(world.style.transform).toContain("scale(1.2)");
+  });
+
+  it("Reset / fit still restores the default transform after wheel-zooming", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const user = userEvent.setup();
+    const { container } = renderPage();
+    await screen.findByText("Room One");
+    const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
+    const world = container.querySelector(".layout3d-world") as HTMLElement;
+    const original = world.style.transform;
+
+    dispatchWheel(viewport, -300);
+    await waitFor(() => expect(world.style.transform).not.toBe(original));
+
+    await user.click(screen.getByRole("button", { name: "Reset / fit" }));
+    await waitFor(() => expect(world.style.transform).toBe(original));
   });
 });
 
