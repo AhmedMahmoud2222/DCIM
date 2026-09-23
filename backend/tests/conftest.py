@@ -69,6 +69,18 @@ _APP_TRUNCATE_TABLES = [
     "rack_model",
     "equipment_model_revision",
     "equipment_model",
+    # Phase 10A catalog designer aggregate (PR-1) — no FK back to managed_asset/room
+    # either, same reasoning as the legacy catalog tables just above. Listed leaf-first
+    # is not required (one combined TRUNCATE ... CASCADE statement), but kept in FK
+    # dependency order for readability.
+    "catalog_graphic_marker",
+    "catalog_graphic",
+    "monitoring_metric_template",
+    "power_supply_template",
+    "network_port_template",
+    "catalog_model_revision",
+    "catalog_model",
+    "manufacturer",
 ]
 
 

@@ -11,6 +11,16 @@ from app.domain.auth.models import (  # noqa: F401
     RolePermission,
     User,
 )
+from app.domain.catalog.designer_models import (  # noqa: F401
+    CatalogGraphic,
+    CatalogGraphicMarker,
+    CatalogModel,
+    CatalogModelRevision,
+    Manufacturer,
+    MonitoringMetricTemplate,
+    NetworkPortTemplate,
+    PowerSupplyTemplate,
+)
 from app.domain.catalog.models import (  # noqa: F401
     EquipmentModel,
     EquipmentModelRevision,
