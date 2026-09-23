@@ -352,6 +352,7 @@ describe("Layout3DPage wheel-zoom (native, non-passive listener)", () => {
     const viewport = container.querySelector(".layout3d-viewport") as HTMLElement;
     const world = container.querySelector(".layout3d-world") as HTMLElement;
     const original = world.style.transform;
+    await waitForWheelListenerAttached(viewport);
 
     dispatchWheel(viewport, -300);
     await waitFor(() => expect(world.style.transform).not.toBe(original));
