@@ -125,6 +125,9 @@ PR will fail to work at all.
    design-level document and not treated as a defect, but PR-1/PR-5 (wherever `catalog_graphic_marker`'s
    migration lands, per §3 below) must write this trigger from the stated *behavior*, and its SQL should be
    reviewed with the same scrutiny as §5.4's trigger before merge, since it is new, unwritten logic.
+5. **`CatalogModel.description`/`.tags`/`.status` vs. §5.4 — RESOLVED this update, see §1.3b below.** Was a
+   genuinely ambiguous paragraph (found and reported during PR-1's own follow-up review, not resolved
+   unilaterally there); now a documented decision, not silently changed.
 
 ### 1.3a `CatalogComponentOverride` — approved design, now authoritative in the specification
 
@@ -154,6 +157,38 @@ kind of "needs review before implementation" items the specification's own thoro
 conspicuous by their absence. This plan proceeds using the item 2–4 proposals as **placeholders**, each
 marked in the PR breakdown as flagged for review, not silently treated as approved. Item 1
 (`CatalogComponentOverride`) is no longer a placeholder and no longer lives here — it is spec §6.1.
+
+### 1.3b `CatalogModel.description`/`.tags`/`.status` — resolved, now authoritative in the specification
+
+**Resolved and moved.** The full rule and its rationale are no longer duplicated here — they are now the
+specification's own §4.1/§5.4, which this plan implements exactly as written there. This subsection
+records only what changed and why, so the review trail stays intact.
+
+**What was ambiguous:** §5.4's paragraph on `CatalogModel` identity locking listed `description`/`tags` as
+"draft-only editorial metadata" in the same breath as saying they "must be moved into a new revision if
+their history matters" — two different rules stated as one. §9's UI table separately filed
+`description`/`tags` under the revision editor's own "draft only" section, even though both columns live on
+`CatalogModel` (§4.1), which has no draft/published/retired state of its own — only `CatalogModelRevision`
+does. `status` was not mentioned in that paragraph at all, leaving its relationship to the identity lock
+unstated.
+
+**What was found, and by whom:** flagged during the PR-1 schema-and-guards follow-up review, not resolved
+there — that PR's own trigger already treated `description`/`tags`/`status` as never locked (the only
+reading consistent with §5.4's explicit four-field enumeration: manufacturer, category, model name, model
+number), but the ambiguous prose itself was left for an explicit design decision rather than silently
+edited alongside a schema PR.
+
+**Decision:** `description`, `tags`, and `status` are mutable model metadata, describing the `CatalogModel`
+row itself, not any one revision's frozen content — editable at any time, independent of publication state,
+with no database lock. `manufacturer_id`/`category`/`model_name`/`model_number` remain locked after first
+publication, unchanged. This requires **no** change to PR-1's database triggers —
+`fn_reject_catalog_model_identity_change()` already checks only the four locked columns — so this is a
+specification correction, not a schema change. When PR-3 introduces `PATCH /catalog/models/{id}` (spec §10)
+to expose editing these three columns, that endpoint is gated by
+`require_catalog_administrator("catalog:manage")` (§5/§9.1) like every other catalog mutation, and writes
+`catalog.model.update_metadata`/`CatalogModelMetadataUpdated` audit/outbox records atomically in the same
+transaction (§8) — both already reflected in the endpoint and audit/outbox tables PR-3 (§3.3) implements
+against.
 
 ---
 
@@ -657,6 +692,7 @@ PR-2's acceptance criterion (§3.2) and every mutation-route description in §3'
 | 3 | PR-1/PR-7 migration-scope inconsistency | **Resolved.** `app/db/models.py` registration is stated per-table, in the PR that actually creates each table's migration — PR-1 for the eight §4 tables, PR-6 for `CatalogImportJob`, PR-7 for `CatalogComponentOverride`. | §1.2 item 1, §3.6, §3.7 |
 | 4 | "Administrator-only" under custom permission grants | **Corrected.** This plan's earlier conclusion (no role-name check) was wrong for this feature — the original product instruction specifically names administrators, not "whoever holds a `catalog:*` code." A narrowly-scoped `require_catalog_administrator()` dependency now requires both the permission and `Administrator` role membership on every catalog-mutation route, including the four tightened legacy endpoints; reads stay permission-only. | §5, spec §9.1, §10; plan §3.2, §3.3, §3.7 |
 | 5 | `orphaned`-status bypass in the override trigger | **Found and closed during this update.** The version of the trigger recorded in decision 2's first pass let any write setting `status='orphaned'` skip the pin/component-existence check unconditionally — an ordinary caller could have inserted an arbitrary, never-validated "orphaned" row. Spec §6.1's corrected trigger requires every row to be created `active`, restricts the active → orphaned transition to a `SET LOCAL`-flagged migration transaction, and makes `orphaned` rows immutable thereafter. | Spec §6.1 |
+| 6 | `CatalogModel.description`/`.tags`/`.status` vs. the identity lock | **Resolved during PR-2.** Flagged, not silently changed, by PR-1's own follow-up review. These three columns are mutable model metadata, editable at any time with no database lock; `manufacturer_id`/`category`/`model_name`/`model_number` remain locked after first publication, unchanged. No change to PR-1's triggers — `fn_reject_catalog_model_identity_change()` already checked only the four locked columns. PR-3's future `PATCH /catalog/models/{id}` requires `require_catalog_administrator("catalog:manage")` plus atomic audit/outbox records when it ships. | §1.3b; spec §4.1, §5.4, §8, §10 |
 
 **Now fully in the specification, not outstanding:** this update applies decision 2's schema, decision 4's
 RBAC correction, and decision 5's trigger fix directly to

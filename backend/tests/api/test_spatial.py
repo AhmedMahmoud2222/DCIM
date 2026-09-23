@@ -6,8 +6,8 @@ from tests.api._phase2_helpers import create_equipment, create_rack, create_rack
 async def test_room_spatial_view_includes_placed_racks_and_floor_standing_equipment(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id, x_mm=10, y_mm=20)
-    floor_eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id, x_mm=10, y_mm=20)
+    floor_eq = await create_equipment(client, headers, auth_headers)
     await client.post(
         f"/api/v1/equipment/{floor_eq['id']}/move", json={"placement_type": "floor_standing", "room_id": room_id}, headers=headers
     )
@@ -27,8 +27,8 @@ async def test_room_spatial_view_separates_rack_mounted_equipment_from_2d_equipm
     placement facts are supplied separately for the interactive 3D projection."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    mounted_eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    mounted_eq = await create_equipment(client, headers, auth_headers)
     await client.post(
         f"/api/v1/equipment/{mounted_eq['id']}/move",
         json={"placement_type": "rack_mounted", "room_id": room_id, "rack_id": rack["id"], "u_start": 1, "u_end": 2, "side": "front"},
@@ -49,8 +49,8 @@ async def test_room_spatial_view_reports_authoritative_rack_capacity(client, aut
     occupiable U range from real inventory data."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    revision_id = await create_rack_model_revision(client, headers, height_u=30)
-    rack = await create_rack(client, headers, room_id=room_id, model_revision_id=revision_id)
+    revision_id = await create_rack_model_revision(client, auth_headers, height_u=30)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id, model_revision_id=revision_id)
 
     resp = await client.get(f"/api/v1/spatial/rooms/{room_id}/view", headers=headers)
     assert resp.json()["racks"][0]["height_u"] == 30
@@ -63,8 +63,8 @@ async def test_room_spatial_view_returns_every_placed_equipment_item_with_author
     (the first and last U of the rack)."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    revision_id = await create_rack_model_revision(client, headers, height_u=12)
-    rack = await create_rack(client, headers, room_id=room_id, model_revision_id=revision_id)
+    revision_id = await create_rack_model_revision(client, auth_headers, height_u=12)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id, model_revision_id=revision_id)
 
     placements = [
         (1, 2, "front"),  # lower boundary
@@ -77,7 +77,7 @@ async def test_room_spatial_view_returns_every_placed_equipment_item_with_author
     ]
     created_ids = []
     for u_start, u_end, side in placements:
-        eq = await create_equipment(client, headers)
+        eq = await create_equipment(client, headers, auth_headers)
         created_ids.append(eq["id"])
         move = await client.post(
             f"/api/v1/equipment/{eq['id']}/move",

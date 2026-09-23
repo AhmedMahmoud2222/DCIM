@@ -5,7 +5,7 @@ from tests.api._phase2_helpers import create_equipment, create_rack, create_rack
 
 async def test_create_rack_without_placement(client, auth_headers):
     headers = await auth_headers("Engineer")
-    rack = await create_rack(client, headers)
+    rack = await create_rack(client, headers, auth_headers)
     assert rack["placement"] is None
     assert rack["version"] == 1
 
@@ -14,7 +14,7 @@ async def test_duplicate_idempotency_key_for_rack_create_replays_the_same_result
     """Mirrors the Phase 1 managed-assets idempotency test — Phase 2 reuses the exact
     same mechanism (app.application.idempotency), never a second one."""
     headers = await auth_headers("Engineer")
-    revision_id = await create_rack_model_revision(client, headers)
+    revision_id = await create_rack_model_revision(client, auth_headers)
     key = str(uuid.uuid4())
     body = {"asset_tag": f"RACK-IDEM-{uuid.uuid4().hex[:8]}", "model_revision_id": revision_id, "name": "Idempotent Rack"}
 
@@ -32,7 +32,7 @@ async def test_duplicate_idempotency_key_for_rack_create_replays_the_same_result
 async def test_viewer_cannot_move_or_retire_a_rack(client, auth_headers):
     engineer_headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, engineer_headers, room_id=room_id)
+    rack = await create_rack(client, engineer_headers, auth_headers, room_id=room_id)
 
     viewer_headers = await auth_headers("Viewer")
     move_attempt = await client.post(
@@ -47,7 +47,7 @@ async def test_viewer_cannot_move_or_retire_a_rack(client, auth_headers):
 async def test_create_rack_with_initial_placement(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id, x_mm=100, y_mm=200, rotation_deg=90)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id, x_mm=100, y_mm=200, rotation_deg=90)
     assert rack["placement"]["room_id"] == room_id
     assert rack["placement"]["x_mm"] == 100
     assert rack["placement"]["rotation_deg"] == 90
@@ -56,7 +56,7 @@ async def test_create_rack_with_initial_placement(client, auth_headers):
 async def test_create_rack_rejects_out_of_range_coordinate(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    revision_id = await create_rack_model_revision(client, headers)
+    revision_id = await create_rack_model_revision(client, auth_headers)
     resp = await client.post(
         "/api/v1/racks",
         json={
@@ -71,7 +71,7 @@ async def test_create_rack_rejects_out_of_range_coordinate(client, auth_headers)
 async def test_create_rack_rejects_invalid_rotation(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    revision_id = await create_rack_model_revision(client, headers)
+    revision_id = await create_rack_model_revision(client, auth_headers)
     resp = await client.post(
         "/api/v1/racks",
         json={
@@ -95,8 +95,7 @@ async def test_create_rack_with_nonexistent_model_revision_is_404(client, auth_h
 
 async def test_viewer_cannot_create_rack(client, auth_headers):
     headers = await auth_headers("Viewer")
-    revision_id_headers = await auth_headers("Engineer")
-    revision_id = await create_rack_model_revision(client, revision_id_headers)
+    revision_id = await create_rack_model_revision(client, auth_headers)
     resp = await client.post(
         "/api/v1/racks", json={"asset_tag": "RACK-VIEW", "model_revision_id": revision_id, "name": "X"}, headers=headers
     )
@@ -106,7 +105,7 @@ async def test_viewer_cannot_create_rack(client, auth_headers):
 async def test_operator_can_move_rack_but_not_create(client, auth_headers):
     engineer_headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, engineer_headers)
+    rack = await create_rack(client, engineer_headers, auth_headers)
 
     operator_headers = await auth_headers("Operator")
     create_attempt = await client.post(
@@ -126,7 +125,7 @@ async def test_rack_move_then_move_again_creates_new_current_placement(client, a
     headers = await auth_headers("Engineer")
     room_a = await create_room(client, auth_headers)
     room_b = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_a)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_a)
 
     resp = await client.post(f"/api/v1/racks/{rack['id']}/move", json={"room_id": room_b, "x_mm": 5, "y_mm": 5}, headers=headers)
     assert resp.status_code == 200
@@ -142,7 +141,7 @@ async def test_rack_move_with_wrong_if_match_version_is_409(client, auth_headers
     headers = await auth_headers("Engineer")
     room_a = await create_room(client, auth_headers)
     room_b = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_a)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_a)
 
     resp = await client.post(
         f"/api/v1/racks/{rack['id']}/move", json={"room_id": room_b}, headers={**headers, "If-Match": "2"}
@@ -171,7 +170,7 @@ async def test_rack_move_concurrent_movers_only_one_wins_the_other_gets_409(clie
     room_a = await create_room(client, auth_headers)
     room_b = await create_room(client, auth_headers)
     room_c = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_a)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_a)
 
     engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=5)
     session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
@@ -199,7 +198,7 @@ async def test_rack_move_concurrent_movers_only_one_wins_the_other_gets_409(clie
 async def test_rack_retire_then_retire_again_is_idempotent_not_409(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
 
     first = await client.post(f"/api/v1/racks/{rack['id']}/retire", headers=headers)
     assert first.status_code == 200
@@ -212,14 +211,14 @@ async def test_rack_retire_then_retire_again_is_idempotent_not_409(client, auth_
 
 async def test_rack_update_requires_if_match(client, auth_headers):
     headers = await auth_headers("Engineer")
-    rack = await create_rack(client, headers)
+    rack = await create_rack(client, headers, auth_headers)
     resp = await client.patch(f"/api/v1/racks/{rack['id']}", json={"name": "Renamed"}, headers=headers)
     assert resp.status_code == 428
 
 
 async def test_rack_update_with_stale_version_is_409(client, auth_headers):
     headers = await auth_headers("Engineer")
-    rack = await create_rack(client, headers)
+    rack = await create_rack(client, headers, auth_headers)
     first = await client.patch(f"/api/v1/racks/{rack['id']}", json={"name": "First"}, headers={**headers, "If-Match": "1"})
     assert first.status_code == 200
     second = await client.patch(f"/api/v1/racks/{rack['id']}", json={"name": "Second"}, headers={**headers, "If-Match": "1"})
@@ -229,10 +228,10 @@ async def test_rack_update_with_stale_version_is_409(client, auth_headers):
 async def test_rack_elevation_reflects_mounted_equipment_sorted_by_u_position(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
 
-    eq_top = await create_equipment(client, headers)
-    eq_bottom = await create_equipment(client, headers)
+    eq_top = await create_equipment(client, headers, auth_headers)
+    eq_bottom = await create_equipment(client, headers, auth_headers)
 
     await client.post(
         f"/api/v1/equipment/{eq_top['id']}/move",
@@ -256,8 +255,8 @@ async def test_rack_elevation_reflects_mounted_equipment_sorted_by_u_position(cl
 async def test_rack_elevation_excludes_retired_equipment(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    eq = await create_equipment(client, headers, auth_headers)
 
     await client.post(
         f"/api/v1/equipment/{eq['id']}/move",
@@ -273,8 +272,8 @@ async def test_rack_elevation_excludes_retired_equipment(client, auth_headers):
 async def test_equipment_move_rejects_u_range_exceeding_rack_capacity(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    eq = await create_equipment(client, headers, auth_headers)
 
     resp = await client.post(
         f"/api/v1/equipment/{eq['id']}/move",

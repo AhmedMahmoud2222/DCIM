@@ -333,7 +333,7 @@ async def test_equipment_missing_upstream_path(client, auth_headers):
     from tests.api._phase2_helpers import create_equipment
 
     headers = await auth_headers("DCIM Manager")
-    equip = await create_equipment(client, headers)
+    equip = await create_equipment(client, headers, auth_headers)
     await client.post(
         "/api/v1/power/equipment-feeds", json={"equipment_asset_id": equip["id"], "label": "Feed A"}, headers=headers
     )
@@ -672,7 +672,7 @@ async def test_retired_intermediate_node_produces_power_path_missing_for_equipme
     headers = await auth_headers("DCIM Manager")
     utility = await create_utility(client, headers, "F-H2 Utility")
     pdu = await create_pdu(client, headers, tag="F-H2-PDU")
-    equipment = await create_equipment(client, headers)
+    equipment = await create_equipment(client, headers, auth_headers)
     equipment_asset_id = equipment["id"]
 
     r = await client.post("/api/v1/power/connections", json=connection_body(utility["id"], pdu["id"]), headers=headers)

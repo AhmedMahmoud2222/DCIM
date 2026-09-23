@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
   createEquipment,
-  createEquipmentModel,
-  createEquipmentModelRevision,
   listEquipment,
+  listEquipmentModelRevisions,
+  listEquipmentModels,
 } from "@/features/equipment/api";
 import { listRacks } from "@/features/racks/api";
 
@@ -25,24 +25,35 @@ export function EquipmentPage() {
 
   const equipmentQuery = useQuery({ queryKey: ["equipment"], queryFn: listEquipment });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
+  const equipmentModelsQuery = useQuery({ queryKey: ["equipment-models"], queryFn: listEquipmentModels });
 
   const [assetTag, setAssetTag] = useState("");
   const [hostname, setHostname] = useState("");
-  const [manufacturer, setManufacturer] = useState("");
-  const [modelName, setModelName] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [revisionId, setRevisionId] = useState("");
+
+  const equipmentModelRevisionsQuery = useQuery({
+    queryKey: ["equipment-model-revisions", modelId],
+    queryFn: () => listEquipmentModelRevisions(modelId),
+    enabled: modelId !== "",
+  });
+
+  // Picking a different model invalidates whatever revision was selected for the
+  // previous one — a revision id only makes sense scoped to its own model.
+  useEffect(() => {
+    setRevisionId("");
+  }, [modelId]);
 
   const createMutation = useMutation({
-    mutationFn: async () => {
-      const model = await createEquipmentModel(manufacturer.trim(), modelName.trim());
-      const revision = await createEquipmentModelRevision(model.id);
-      return createEquipment(
-        { asset_tag: assetTag.trim(), model_revision_id: revision.id, hostname: hostname.trim() || undefined },
+    mutationFn: () =>
+      createEquipment(
+        { asset_tag: assetTag.trim(), model_revision_id: revisionId, hostname: hostname.trim() || undefined },
         crypto.randomUUID(),
-      );
-    },
+      ),
     onSuccess: () => {
       setAssetTag("");
       setHostname("");
+      setModelId("");
       setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["equipment"] });
     },
@@ -50,7 +61,7 @@ export function EquipmentPage() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (assetTag.trim() && manufacturer.trim() && modelName.trim()) createMutation.mutate();
+    if (assetTag.trim() && revisionId) createMutation.mutate();
   }
 
   return (
@@ -79,18 +90,46 @@ export function EquipmentPage() {
             placeholder="Hostname (optional)"
             className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
           />
-          <input
-            value={manufacturer}
-            onChange={(e) => setManufacturer(e.target.value)}
-            placeholder="Manufacturer"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
-          />
-          <input
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value)}
-            placeholder="Model name"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
-          />
+          <div className="col-span-2 mt-2 text-xs uppercase tracking-wide text-slate-500">
+            Equipment model — select an existing catalog model and revision (new catalog models are created by an
+            administrator through the catalog)
+          </div>
+          <label className="col-span-2 flex flex-col gap-1 text-xs text-slate-400">
+            Model
+            <select
+              aria-label="Equipment model"
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">Choose a model</option>
+              {equipmentModelsQuery.data?.items.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.manufacturer} {model.model_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-2 flex flex-col gap-1 text-xs text-slate-400">
+            Revision
+            <select
+              aria-label="Equipment model revision"
+              value={revisionId}
+              onChange={(e) => setRevisionId(e.target.value)}
+              disabled={!modelId}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            >
+              <option value="">{modelId ? "Choose a revision" : "Choose a model first"}</option>
+              {equipmentModelRevisionsQuery.data?.items.map((revision) => (
+                <option key={revision.id} value={revision.id}>
+                  {revision.height_u != null ? `${revision.height_u}U` : "unspecified size"}
+                  {revision.width_mm != null && revision.depth_mm != null
+                    ? ` · ${revision.width_mm}×${revision.depth_mm}mm`
+                    : ""}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="col-span-2">
             <button
               type="submit"

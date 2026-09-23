@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
+import { createRack, listRackModelRevisions, listRackModels, listRacks, listRooms } from "@/features/racks/api";
 
 const LIFECYCLE_COLORS: Record<string, string> = {
   planned: "bg-slate-700 text-slate-200",
@@ -19,37 +19,41 @@ export function RacksPage() {
 
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
+  const rackModelsQuery = useQuery({ queryKey: ["rack-models"], queryFn: listRackModels });
 
   const [assetTag, setAssetTag] = useState("");
   const [name, setName] = useState("");
   const [roomId, setRoomId] = useState("");
-  const [manufacturer, setManufacturer] = useState("");
-  const [modelName, setModelName] = useState("");
-  const [heightU, setHeightU] = useState("42");
-  const [widthMm, setWidthMm] = useState("600");
-  const [depthMm, setDepthMm] = useState("1000");
+  const [modelId, setModelId] = useState("");
+  const [revisionId, setRevisionId] = useState("");
+
+  const rackModelRevisionsQuery = useQuery({
+    queryKey: ["rack-model-revisions", modelId],
+    queryFn: () => listRackModelRevisions(modelId),
+    enabled: modelId !== "",
+  });
+
+  // Picking a different model invalidates whatever revision was selected for the
+  // previous one — a revision id only makes sense scoped to its own model.
+  useEffect(() => {
+    setRevisionId("");
+  }, [modelId]);
 
   const createMutation = useMutation({
-    mutationFn: async () => {
-      const model = await createRackModel(manufacturer.trim(), modelName.trim());
-      const revision = await createRackModelRevision(model.id, {
-        height_u: Number(heightU),
-        width_mm: Number(widthMm),
-        depth_mm: Number(depthMm),
-      });
-      return createRack(
+    mutationFn: () =>
+      createRack(
         {
           asset_tag: assetTag.trim(),
-          model_revision_id: revision.id,
+          model_revision_id: revisionId,
           name: name.trim(),
           room_id: roomId || undefined,
         },
         crypto.randomUUID(),
-      );
-    },
+      ),
     onSuccess: () => {
       setAssetTag("");
       setName("");
+      setModelId("");
       setShowForm(false);
       queryClient.invalidateQueries({ queryKey: ["racks"] });
     },
@@ -57,7 +61,7 @@ export function RacksPage() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (assetTag.trim() && name.trim() && manufacturer.trim() && modelName.trim()) createMutation.mutate();
+    if (assetTag.trim() && name.trim() && revisionId) createMutation.mutate();
   }
 
   return (
@@ -101,52 +105,42 @@ export function RacksPage() {
           </select>
 
           <div className="col-span-2 mt-2 text-xs uppercase tracking-wide text-slate-500">
-            Rack model (a new catalog model + revision is created together — see the Rack Model catalog via the API for
-            reusing an existing one)
+            Rack model — select an existing catalog model and revision (new catalog models are created by an
+            administrator through the catalog)
           </div>
-          <input
-            value={manufacturer}
-            onChange={(e) => setManufacturer(e.target.value)}
-            placeholder="Manufacturer"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
-          />
-          <input
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value)}
-            placeholder="Model name"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
-          />
-          <label className="flex items-center gap-2 text-xs text-slate-400">
-            Height (U)
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={heightU}
-              onChange={(e) => setHeightU(e.target.value)}
-              className="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
-            />
+          <label className="col-span-2 flex flex-col gap-1 text-xs text-slate-400">
+            Model
+            <select
+              aria-label="Rack model"
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="">Choose a model</option>
+              {rackModelsQuery.data?.items.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.manufacturer} {model.model_name}
+                </option>
+              ))}
+            </select>
           </label>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-xs text-slate-400">
-              Width (mm)
-              <input
-                type="number"
-                value={widthMm}
-                onChange={(e) => setWidthMm(e.target.value)}
-                className="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-xs text-slate-400">
-              Depth (mm)
-              <input
-                type="number"
-                value={depthMm}
-                onChange={(e) => setDepthMm(e.target.value)}
-                className="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
-              />
-            </label>
-          </div>
+          <label className="col-span-2 flex flex-col gap-1 text-xs text-slate-400">
+            Revision
+            <select
+              aria-label="Rack model revision"
+              value={revisionId}
+              onChange={(e) => setRevisionId(e.target.value)}
+              disabled={!modelId}
+              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            >
+              <option value="">{modelId ? "Choose a revision" : "Choose a model first"}</option>
+              {rackModelRevisionsQuery.data?.items.map((revision) => (
+                <option key={revision.id} value={revision.id}>
+                  {revision.height_u}U · {revision.width_mm}×{revision.depth_mm}mm
+                </option>
+              ))}
+            </select>
+          </label>
 
           <div className="col-span-2 mt-2">
             <button

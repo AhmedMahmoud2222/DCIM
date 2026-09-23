@@ -39,36 +39,49 @@ async def create_room(client, auth_headers) -> str:
     return room["id"]
 
 
-async def create_rack_model_revision(client, headers, *, height_u: int = 42) -> str:
+async def create_rack_model_revision(client, auth_headers, *, height_u: int = 42) -> str:
+    """Mints the catalog model/revision using an Administrator token regardless of which
+    role the calling test is actually exercising — same rationale as `create_room` above:
+    Phase 10A PR-2 (spec §9.1) makes `POST /rack-models`/`POST /rack-models/{id}/revisions`
+    Administrator-only, and minting a catalog row is prerequisite scaffolding here, not the
+    behavior under test. Installing a rack against the resulting revision id is a separate,
+    still-broadly-permissioned step handled by `create_rack` below."""
+    admin_headers = await auth_headers("Administrator")
     model = (
         await client.post(
-            "/api/v1/rack-models", json={"manufacturer": "Acme", "model_name": f"RM-{uuid.uuid4().hex[:8]}"}, headers=headers
+            "/api/v1/rack-models",
+            json={"manufacturer": "Acme", "model_name": f"RM-{uuid.uuid4().hex[:8]}"},
+            headers=admin_headers,
         )
     ).json()
     revision = (
         await client.post(
             f"/api/v1/rack-models/{model['id']}/revisions",
             json={"height_u": height_u, "width_mm": 600, "depth_mm": 1000},
-            headers=headers,
+            headers=admin_headers,
         )
     ).json()
     return revision["id"]
 
 
-async def create_equipment_model_revision(client, headers) -> str:
+async def create_equipment_model_revision(client, auth_headers) -> str:
+    """Same Administrator-token rationale as `create_rack_model_revision` above."""
+    admin_headers = await auth_headers("Administrator")
     model = (
         await client.post(
-            "/api/v1/equipment-models", json={"manufacturer": "Acme", "model_name": f"EM-{uuid.uuid4().hex[:8]}"}, headers=headers
+            "/api/v1/equipment-models",
+            json={"manufacturer": "Acme", "model_name": f"EM-{uuid.uuid4().hex[:8]}"},
+            headers=admin_headers,
         )
     ).json()
     revision = (
-        await client.post(f"/api/v1/equipment-models/{model['id']}/revisions", json={}, headers=headers)
+        await client.post(f"/api/v1/equipment-models/{model['id']}/revisions", json={}, headers=admin_headers)
     ).json()
     return revision["id"]
 
 
-async def create_rack(client, headers, *, room_id: str | None = None, **extra) -> dict:
-    revision_id = await create_rack_model_revision(client, headers)
+async def create_rack(client, headers, auth_headers, *, room_id: str | None = None, **extra) -> dict:
+    revision_id = await create_rack_model_revision(client, auth_headers)
     body = {"asset_tag": f"RACK-{uuid.uuid4().hex[:8]}", "model_revision_id": revision_id, "name": "Test Rack"}
     if room_id is not None:
         body["room_id"] = room_id
@@ -78,8 +91,8 @@ async def create_rack(client, headers, *, room_id: str | None = None, **extra) -
     return resp.json()
 
 
-async def create_equipment(client, headers, **extra) -> dict:
-    revision_id = await create_equipment_model_revision(client, headers)
+async def create_equipment(client, headers, auth_headers, **extra) -> dict:
+    revision_id = await create_equipment_model_revision(client, auth_headers)
     body = {"asset_tag": f"EQ-{uuid.uuid4().hex[:8]}", "model_revision_id": revision_id, "hostname": "test-host"}
     body.update(extra)
     resp = await client.post("/api/v1/equipment", json=body, headers=headers)

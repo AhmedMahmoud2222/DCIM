@@ -14,9 +14,9 @@ async def test_unplaced_racks_returns_genuinely_unplaced_only(client, auth_heade
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
 
-    unplaced = await create_rack(client, headers)
-    placed = await create_rack(client, headers, room_id=room_id, x_mm=10, y_mm=20)
-    retired = await create_rack(client, headers, room_id=room_id, x_mm=5, y_mm=5)
+    unplaced = await create_rack(client, headers, auth_headers)
+    placed = await create_rack(client, headers, auth_headers, room_id=room_id, x_mm=10, y_mm=20)
+    retired = await create_rack(client, headers, auth_headers, room_id=room_id, x_mm=5, y_mm=5)
     retire_resp = await client.post(f"/api/v1/racks/{retired['id']}/retire", headers=headers)
     assert retire_resp.status_code == 200
     assert retire_resp.json()["placement"] is None
@@ -39,7 +39,7 @@ async def test_unplaced_racks_excludes_coordinate_incomplete_active_placement(cl
     "no placement" is exactly the bug this endpoint must not reproduce."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers)
+    rack = await create_rack(client, headers, auth_headers)
 
     move = await client.post(f"/api/v1/racks/{rack['id']}/move", json={"room_id": room_id}, headers=headers)
     assert move.status_code == 200
@@ -52,11 +52,11 @@ async def test_unplaced_racks_excludes_coordinate_incomplete_active_placement(cl
 
 async def test_unplaced_racks_deterministic_ordering(client, auth_headers):
     headers = await auth_headers("Engineer")
-    revision_id = await create_rack_model_revision(client, headers)
+    revision_id = await create_rack_model_revision(client, auth_headers)
     names = [f"Z-Unplaced-{uuid.uuid4().hex[:6]}", f"A-Unplaced-{uuid.uuid4().hex[:6]}", f"M-Unplaced-{uuid.uuid4().hex[:6]}"]
     created_ids = set()
     for name in names:
-        rack = await create_rack(client, headers, model_revision_id=revision_id, name=name)
+        rack = await create_rack(client, headers, auth_headers, model_revision_id=revision_id, name=name)
         created_ids.add(rack["id"])
 
     first = await client.get("/api/v1/racks/unplaced?limit=200", headers=headers)
@@ -74,7 +74,7 @@ async def test_unplaced_racks_pagination_beyond_200_reports_total_and_no_duplica
     for test speed) to prove the endpoint's pagination and total count hold beyond the
     old GET /racks?limit=200 ceiling that the client-side approach silently truncated at."""
     headers = await auth_headers("Engineer")
-    revision_id = await create_rack_model_revision(client, headers)
+    revision_id = await create_rack_model_revision(client, auth_headers)
 
     seeded_ids = []
     for index in range(205):
@@ -126,7 +126,7 @@ async def test_unplaced_racks_route_is_not_swallowed_by_the_rack_id_path_paramet
 
 async def test_unplaced_racks_response_matches_rack_schema(client, auth_headers):
     headers = await auth_headers("Engineer")
-    rack = await create_rack(client, headers)
+    rack = await create_rack(client, headers, auth_headers)
     resp = await client.get("/api/v1/racks/unplaced", headers=headers)
     match = next(item for item in resp.json()["items"] if item["id"] == rack["id"])
     assert set(match.keys()) == {

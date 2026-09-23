@@ -244,6 +244,14 @@ phase can lift that guard for `network_device`/`pdu`/`ups`/`power_panel`/`sensor
 recommended for new drafts") distinct from a revision's `lifecycle_status` — it never blocks reading
 existing published revisions or installed assets.
 
+**`description`, `tags`, and `status` are mutable model metadata, not immutable revision content — resolved
+decision, PR-2** (this column list previously read as ambiguous between two candidate rules; see §5.4 for
+the full resolution and its rationale). They describe the `CatalogModel` row itself — informational and
+classification data an administrator may revise at any time, independent of how many revisions under that
+model have published — and are never locked by a database trigger. This is distinct from, and does not
+weaken, the separate `manufacturer_id`/`category`/`model_name`/`model_number` identity lock (§5.4), which
+remains unconditional once any revision under the model has published.
+
 ### 4.2 `CatalogModelRevision` — the immutable-once-published aggregate root
 
 ```text
@@ -592,13 +600,31 @@ a child could be inserted during validation or immediately after publication. Th
 enforcement gap called out as a hard requirement, without touching the ORM's declarative mapping (raw SQL
 in the Alembic migration, matching every other cross-cutting DB invariant in this codebase).
 
-`CatalogModel` identity fields used by published revisions (manufacturer, category, model name and model
-number) cannot be edited after first publication; description/tags are draft-only editorial metadata or
-must be moved into a new revision if their history matters. Manufacturer name cannot change while any
-published revision references it. Database triggers enforce these identity locks, so mutable identity
-rows cannot rewrite the meaning of an immutable publication. Existing legacy revision write endpoints
-must also be tightened: direct mutation of either legacy revision table's bridged rows is rejected by a
-database trigger, while preexisting unbridged rows retain their present behavior.
+`CatalogModel` identity fields used by published revisions — manufacturer, category, model name, and model
+number — cannot be edited after first publication. Manufacturer name cannot change while any published
+revision references it. Database triggers enforce these two identity locks, so mutable identity rows
+cannot rewrite the meaning of an immutable publication. Existing legacy revision write endpoints must also
+be tightened: direct mutation of either legacy revision table's bridged rows is rejected by a database
+trigger, while preexisting unbridged rows retain their present behavior.
+
+**Resolved decision, PR-2:** `CatalogModel.description`, `.tags`, and `.status` are mutable model
+metadata, not immutable revision content — an earlier version of this paragraph left this ambiguous (it
+called them "draft-only editorial metadata" while also saying they "must be moved into a new revision if
+their history matters," and §9's UI table separately filed them under the revision editor's own "draft
+only" section, even though they live on `CatalogModel`, which has no draft state of its own). That
+ambiguity is closed: these three columns describe the model line itself, not any one revision's frozen
+content, and may be edited at any time — before or after any revision under that model has published —
+with no database trigger locking them, exactly like the pre-PR-1 baseline `CatalogModel` behaved before
+this feature's identity locks were introduced. `manufacturer_id`, `category`, `model_name`, and
+`model_number` remain locked after first publication as stated above; this decision changes nothing about
+that lock. This is a specification correction only — PR-1's database triggers already implement exactly
+this rule (`fn_reject_catalog_model_identity_change()` checks only the four locked columns) and are not
+changed by this decision. When PR-3 introduces `PATCH /catalog/models/{id}` (§10) to let an administrator
+edit these three columns, that endpoint requires `require_catalog_administrator("catalog:manage")` (§9.1)
+— the same permission-and-role check as every other catalog mutation, even though the database itself
+places no lock on the columns it touches — and writes `write_audit_log(action="catalog.model.
+update_metadata", ...)`/`write_outbox_event(event_type="CatalogModelMetadataUpdated", ...)` atomically in
+the same transaction as the update (§8), matching every other catalog mutation's audit/outbox discipline.
 
 ### 5.5 Cloning a published revision into a new draft
 
@@ -1043,6 +1069,7 @@ both, synchronously, in the same transaction as its domain mutation, following `
 |---|---|---|---|
 | Create manufacturer | `catalog.manufacturer.create` | `ManufacturerCreated` | no |
 | Create model (identity) | `catalog.model.create` | `CatalogModelCreated` | no |
+| Edit mutable model metadata (`description`/`tags`/`status`) | `catalog.model.update_metadata` | `CatalogModelMetadataUpdated` | no |
 | Create draft revision | `catalog.revision.create_draft` | `CatalogModelRevisionDraftCreated` | no |
 | Edit draft revision / child rows | `catalog.revision.update_draft` | `CatalogModelRevisionDraftUpdated` | no |
 | Upload/replace graphic | `catalog.graphic.upload` | `CatalogGraphicUploaded` | no |
@@ -1330,6 +1357,7 @@ every role already granted those codes.
 | `POST /catalog/models` | Create model identity | `catalog:manage` |
 | `GET /catalog/models` | List models (filter: category, status, manufacturer_id, text search) | `catalog:read` |
 | `GET /catalog/models/{id}` | Model detail + revision list | `catalog:read` |
+| `PATCH /catalog/models/{id}` | Edit mutable model metadata (`description`/`tags`/`status`) — never the locked identity fields (§4.1/§5.4 resolved decision, PR-2) | `catalog:manage` |
 | `POST /catalog/models/{id}/revisions` | Create new draft | `catalog:manage` |
 | `POST /catalog/models/{id}/revisions/clone?from_revision_id=` | Clone published/retired → new draft | `catalog:manage` |
 | `GET /catalog/revisions/{id}` | Revision detail (draft: `catalog:read_draft`; published/retired: `catalog:read`) | see note |

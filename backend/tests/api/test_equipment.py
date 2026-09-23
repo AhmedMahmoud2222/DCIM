@@ -5,14 +5,14 @@ from tests.api._phase2_helpers import create_equipment, create_rack, create_room
 
 async def test_create_equipment_without_placement(client, auth_headers):
     headers = await auth_headers("Engineer")
-    eq = await create_equipment(client, headers)
+    eq = await create_equipment(client, headers, auth_headers)
     assert eq["placement"] is None
 
 
 async def test_duplicate_idempotency_key_for_equipment_create_replays_the_same_result(client, auth_headers):
     headers = await auth_headers("Engineer")
     tag = f"EQ-IDEM-{uuid.uuid4().hex[:8]}"
-    eq = await create_equipment(client, headers, asset_tag=tag)
+    eq = await create_equipment(client, headers, auth_headers, asset_tag=tag)
     revision_id = eq["model_revision_id"]
     key = str(uuid.uuid4())
     body = {"asset_tag": f"EQ-IDEM2-{uuid.uuid4().hex[:8]}", "model_revision_id": revision_id, "hostname": "idem-host"}
@@ -27,7 +27,7 @@ async def test_duplicate_idempotency_key_for_equipment_create_replays_the_same_r
 async def test_viewer_cannot_move_or_retire_equipment(client, auth_headers):
     engineer_headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    eq = await create_equipment(client, engineer_headers)
+    eq = await create_equipment(client, engineer_headers, auth_headers)
 
     viewer_headers = await auth_headers("Viewer")
     move_attempt = await client.post(
@@ -44,7 +44,7 @@ async def test_viewer_cannot_move_or_retire_equipment(client, auth_headers):
 async def test_move_equipment_floor_standing_requires_no_rack(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    eq = await create_equipment(client, headers)
+    eq = await create_equipment(client, headers, auth_headers)
 
     resp = await client.post(
         f"/api/v1/equipment/{eq['id']}/move", json={"placement_type": "floor_standing", "room_id": room_id}, headers=headers
@@ -59,7 +59,7 @@ async def test_move_equipment_rack_mounted_requires_rack_u_range_and_side(client
     — must reject with a clean 422 before ever reaching the database."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    eq = await create_equipment(client, headers)
+    eq = await create_equipment(client, headers, auth_headers)
 
     resp = await client.post(
         f"/api/v1/equipment/{eq['id']}/move", json={"placement_type": "rack_mounted", "room_id": room_id}, headers=headers
@@ -70,8 +70,8 @@ async def test_move_equipment_rack_mounted_requires_rack_u_range_and_side(client
 async def test_move_equipment_rejects_invalid_side(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    eq = await create_equipment(client, headers, auth_headers)
 
     resp = await client.post(
         f"/api/v1/equipment/{eq['id']}/move",
@@ -87,7 +87,7 @@ async def test_move_equipment_rejects_invalid_side(client, auth_headers):
 async def test_move_equipment_rejects_invalid_placement_type(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    eq = await create_equipment(client, headers)
+    eq = await create_equipment(client, headers, auth_headers)
     resp = await client.post(
         f"/api/v1/equipment/{eq['id']}/move", json={"placement_type": "orbiting", "room_id": room_id}, headers=headers
     )
@@ -99,9 +99,9 @@ async def test_same_side_overlap_in_same_rack_is_rejected(client, auth_headers):
     clean conflict rather than a raw 500."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    eq_1 = await create_equipment(client, headers)
-    eq_2 = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    eq_1 = await create_equipment(client, headers, auth_headers)
+    eq_2 = await create_equipment(client, headers, auth_headers)
 
     first = await client.post(
         f"/api/v1/equipment/{eq_1['id']}/move",
@@ -125,9 +125,9 @@ async def test_opposite_sides_same_u_range_both_succeed(client, auth_headers):
     point of the front/rear-scoped partial exclusion constraints."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    eq_front = await create_equipment(client, headers)
-    eq_rear = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    eq_front = await create_equipment(client, headers, auth_headers)
+    eq_rear = await create_equipment(client, headers, auth_headers)
 
     front = await client.post(
         f"/api/v1/equipment/{eq_front['id']}/move",
@@ -146,9 +146,9 @@ async def test_opposite_sides_same_u_range_both_succeed(client, auth_headers):
 async def test_adjacent_non_overlapping_u_ranges_both_succeed(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    eq_a = await create_equipment(client, headers)
-    eq_b = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    eq_a = await create_equipment(client, headers, auth_headers)
+    eq_b = await create_equipment(client, headers, auth_headers)
 
     a = await client.post(
         f"/api/v1/equipment/{eq_a['id']}/move",
@@ -167,7 +167,7 @@ async def test_adjacent_non_overlapping_u_ranges_both_succeed(client, auth_heade
 async def test_equipment_retire_then_retire_again_is_idempotent(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    eq = await create_equipment(client, headers)
+    eq = await create_equipment(client, headers, auth_headers)
     await client.post(
         f"/api/v1/equipment/{eq['id']}/move", json={"placement_type": "floor_standing", "room_id": room_id}, headers=headers
     )
@@ -181,10 +181,10 @@ async def test_equipment_retire_then_retire_again_is_idempotent(client, auth_hea
 async def test_list_equipment_filtered_by_rack(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    other_rack = await create_rack(client, headers, room_id=room_id)
-    mounted = await create_equipment(client, headers)
-    elsewhere = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    other_rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    mounted = await create_equipment(client, headers, auth_headers)
+    elsewhere = await create_equipment(client, headers, auth_headers)
 
     await client.post(
         f"/api/v1/equipment/{mounted['id']}/move",
