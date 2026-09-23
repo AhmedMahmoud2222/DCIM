@@ -26,6 +26,22 @@ outside the bridge) are untouched by this trigger and keep their present behavio
 `DELETE` needs no new guard: the existing `ondelete="RESTRICT"` FK from
 `catalog_model_revision.legacy_*_revision_id` already prevents deleting a referenced row.
 
+PR-1 follow-up: `fn_guard_catalog_model_revision_lifecycle()` (defined in migration 0017)
+is `CREATE OR REPLACE`d here to extend its `draft -> published` branch: now that the bridge
+columns exist, that branch also requires exactly the bridge column matching
+`catalog_model.category` (looked up with a plain, non-locking `SELECT` — see 0017's module
+docstring's "Revision-lock discipline" note for why no explicit lock is needed there) to be
+set, and the other left NULL; a category outside `('rack', 'equipment')` cannot publish in
+this phase at all (matching spec §4.1's stated API-layer scope guard, enforced here too as
+defense in depth). A service can still create the legacy revision row and publish in one
+transaction: it inserts the new `rack_model_revision`/`equipment_model_revision` row first,
+then issues the single `catalog_model_revision` `UPDATE` that sets `lifecycle_status =
+'published'` together with the matching `legacy_*_revision_id` — the trigger sees both new
+values in the same `NEW` row, so this does not force a second statement or a different
+transaction shape than §5.3/§4.7 already describe. `downgrade()` restores the 0017-only
+function body (without the bridge check) before dropping the bridge columns, so a partial
+downgrade never leaves the trigger referencing a column that no longer exists.
+
 Revision ID: 0020_catalog_legacy_bridge
 Revises: 0019_catalog_graphics
 Create Date: 2026-09-23
@@ -93,6 +109,76 @@ def upgrade() -> None:
 
     op.execute(
         """
+        CREATE OR REPLACE FUNCTION fn_guard_catalog_model_revision_lifecycle() RETURNS trigger AS $$
+        DECLARE
+          allowed_change_keys TEXT[];
+          v_category TEXT;
+        BEGIN
+          IF OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status = 'draft' THEN
+            RETURN NEW;
+          END IF;
+
+          IF OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status = 'published' THEN
+            IF NEW.published_at IS NULL OR NEW.published_by_user_id IS NULL THEN
+              RAISE EXCEPTION 'catalog_model_revision % cannot publish without published_at and published_by_user_id', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
+            IF NEW.retired_at IS NOT NULL OR NEW.retired_by_user_id IS NOT NULL OR NEW.retirement_reason IS NOT NULL THEN
+              RAISE EXCEPTION 'catalog_model_revision % cannot set retirement fields while publishing', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
+
+            SELECT category INTO v_category FROM catalog_model WHERE id = NEW.catalog_model_id;
+            IF v_category = 'rack' THEN
+              IF NEW.legacy_rack_model_revision_id IS NULL OR NEW.legacy_equipment_model_revision_id IS NOT NULL THEN
+                RAISE EXCEPTION
+                  'catalog_model_revision % must set exactly legacy_rack_model_revision_id to publish a rack model',
+                  OLD.id
+                  USING ERRCODE = 'integrity_constraint_violation';
+              END IF;
+            ELSIF v_category = 'equipment' THEN
+              IF NEW.legacy_equipment_model_revision_id IS NULL OR NEW.legacy_rack_model_revision_id IS NOT NULL THEN
+                RAISE EXCEPTION
+                  'catalog_model_revision % must set exactly legacy_equipment_model_revision_id to publish an equipment model',
+                  OLD.id
+                  USING ERRCODE = 'integrity_constraint_violation';
+              END IF;
+            ELSE
+              RAISE EXCEPTION
+                'catalog_model_revision % cannot publish: category % has no legacy bridge in this phase',
+                OLD.id, v_category
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
+
+            RETURN NEW;
+          END IF;
+
+          IF OLD.lifecycle_status = 'published' AND NEW.lifecycle_status = 'published' THEN
+            allowed_change_keys := ARRAY['updated_at'];
+          ELSIF OLD.lifecycle_status = 'published' AND NEW.lifecycle_status = 'retired' THEN
+            allowed_change_keys := ARRAY['lifecycle_status', 'retired_at', 'retired_by_user_id',
+                                          'retirement_reason', 'allow_installation_when_retired', 'updated_at'];
+          ELSIF OLD.lifecycle_status = 'retired' AND NEW.lifecycle_status = 'retired' THEN
+            allowed_change_keys := ARRAY['allow_installation_when_retired', 'updated_at'];
+          ELSE
+            RAISE EXCEPTION 'catalog_model_revision % cannot transition from % to %',
+              OLD.id, OLD.lifecycle_status, NEW.lifecycle_status
+              USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+
+          IF (to_jsonb(NEW) - allowed_change_keys) IS DISTINCT FROM (to_jsonb(OLD) - allowed_change_keys) THEN
+            RAISE EXCEPTION 'catalog_model_revision % (status=%) rejects this column change', OLD.id, OLD.lifecycle_status
+              USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        """
+    )
+
+    op.execute(
+        """
         CREATE OR REPLACE FUNCTION fn_reject_bridged_legacy_revision_update() RETURNS trigger AS $$
         BEGIN
           IF OLD.bridged_from_catalog_revision_id IS NOT NULL THEN
@@ -118,6 +204,55 @@ def downgrade() -> None:
     for table_name in _LEGACY_TABLES:
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table_name}_bridged_immutable ON {table_name}")
     op.execute("DROP FUNCTION IF EXISTS fn_reject_bridged_legacy_revision_update()")
+
+    # Restore the 0017-only body (no bridge-column reference) before the columns it reads
+    # are dropped below — otherwise a subsequent draft -> published UPDATE would error at
+    # runtime trying to read a column that no longer exists.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION fn_guard_catalog_model_revision_lifecycle() RETURNS trigger AS $$
+        DECLARE
+          allowed_change_keys TEXT[];
+        BEGIN
+          IF OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status = 'draft' THEN
+            RETURN NEW;
+          END IF;
+
+          IF OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status = 'published' THEN
+            IF NEW.published_at IS NULL OR NEW.published_by_user_id IS NULL THEN
+              RAISE EXCEPTION 'catalog_model_revision % cannot publish without published_at and published_by_user_id', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
+            IF NEW.retired_at IS NOT NULL OR NEW.retired_by_user_id IS NOT NULL OR NEW.retirement_reason IS NOT NULL THEN
+              RAISE EXCEPTION 'catalog_model_revision % cannot set retirement fields while publishing', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
+            RETURN NEW;
+          END IF;
+
+          IF OLD.lifecycle_status = 'published' AND NEW.lifecycle_status = 'published' THEN
+            allowed_change_keys := ARRAY['updated_at'];
+          ELSIF OLD.lifecycle_status = 'published' AND NEW.lifecycle_status = 'retired' THEN
+            allowed_change_keys := ARRAY['lifecycle_status', 'retired_at', 'retired_by_user_id',
+                                          'retirement_reason', 'allow_installation_when_retired', 'updated_at'];
+          ELSIF OLD.lifecycle_status = 'retired' AND NEW.lifecycle_status = 'retired' THEN
+            allowed_change_keys := ARRAY['allow_installation_when_retired', 'updated_at'];
+          ELSE
+            RAISE EXCEPTION 'catalog_model_revision % cannot transition from % to %',
+              OLD.id, OLD.lifecycle_status, NEW.lifecycle_status
+              USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+
+          IF (to_jsonb(NEW) - allowed_change_keys) IS DISTINCT FROM (to_jsonb(OLD) - allowed_change_keys) THEN
+            RAISE EXCEPTION 'catalog_model_revision % (status=%) rejects this column change', OLD.id, OLD.lifecycle_status
+              USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        """
+    )
 
     op.drop_constraint(
         op.f("ck_catalog_model_revision_legacy_bridge_exclusive"), "catalog_model_revision", type_="check"
