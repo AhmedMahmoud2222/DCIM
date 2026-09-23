@@ -42,19 +42,10 @@ export function occupiesFace(side: RackMountedEquipment["side"], face: "front" |
   return side === "both" || side === face;
 }
 
-/** Racks with no active placement anywhere — the genuinely unplaced set. Scope:
- * organization-wide, not site/room-scoped, because a rack with no RackPlacement row has
- * no room (and therefore no site) to scope it to at all; a rack placed in a *different*
- * room already has a placement and is correctly excluded here (it is elsewhere, not
- * unplaced). Never confuses "no coordinates yet" (a valid placement with x_mm/y_mm
- * still null) with "no placement at all" — only the latter is unplaced inventory. */
-export function computeUnplacedRacks<T extends { placement: unknown }>(inventory: T[]): T[] {
-  return inventory.filter((rack) => rack.placement === null);
-}
-
 /** Racks in the active room's spatial view that have a placement but no drawn x/y yet —
- * distinct from `computeUnplacedRacks`: these racks ARE placed in this room (a valid,
- * non-coordinate placement state), just not yet positioned on the floor plan. */
+ * distinct from genuinely unplaced inventory (GET /racks/unplaced, computed server-side):
+ * these racks ARE placed in this room (a valid, non-coordinate placement state), just
+ * not yet positioned on the floor plan. */
 export function racksMissingCoordinates(racks: RoomRack[]): RoomRack[] {
   return racks.filter((rack) => rack.x_mm === null || rack.y_mm === null);
 }

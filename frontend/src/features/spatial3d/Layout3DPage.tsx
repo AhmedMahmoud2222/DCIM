@@ -4,8 +4,8 @@ import { Link } from "react-router-dom";
 
 import { PageHeader } from "@/components/ui/ProductUi";
 import { getRoomSpatialView } from "@/features/floor-plans/api";
-import { listRacks, listRooms } from "@/features/racks/api";
-import { computeUnplacedRacks, occupiesFace, racksMissingCoordinates, uRangeToPlacement } from "./layout3dMath";
+import { listRooms, listUnplacedRacks } from "@/features/racks/api";
+import { occupiesFace, racksMissingCoordinates, uRangeToPlacement } from "./layout3dMath";
 import type { RackMountedEquipment, RoomRack } from "@/types";
 
 const FALLBACK_ROOM_MM = 10_000;
@@ -13,6 +13,7 @@ const PAN_STEP_PX = 40;
 const ZOOM_STEP = 0.05;
 const ZOOM_MIN = 0.45;
 const ZOOM_MAX = 1.45;
+const UNPLACED_PAGE_SIZE = 10;
 
 function rackTransform(rack: RoomRack, index: number, width: number, height: number): CSSProperties {
   const x = rack.x_mm ?? 900 + (index % 4) * 1800;
@@ -72,16 +73,21 @@ export function Layout3DPage() {
   const view = useQuery({ queryKey: ["spatial", activeRoom, "3d"], queryFn: () => getRoomSpatialView(activeRoom), enabled: !!activeRoom, staleTime: 15_000 });
   // The spatial view only returns racks with an active placement *in this room* — a
   // rack with no placement anywhere can never appear there. Genuinely unplaced
-  // inventory is a separate, organization-wide question answered by the existing racks
-  // inventory endpoint (see layout3dMath.computeUnplacedRacks), not by filtering the
-  // room view for missing coordinates (that conflates "unplaced" with "placed here but
-  // not yet drawn on the floor plan").
-  const inventory = useQuery({ queryKey: ["racks", "inventory"], queryFn: listRacks, staleTime: 30_000 });
+  // inventory is a separate, organization-wide question, computed and paginated
+  // server-side by GET /racks/unplaced — never by loading the full rack inventory and
+  // diffing it client-side (which silently truncated past 200 racks), and never by
+  // filtering the room view for missing coordinates (that conflates "unplaced" with
+  // "placed here but not yet drawn on the floor plan").
+  const [unplacedOffset, setUnplacedOffset] = useState(0);
+  const unplacedQuery = useQuery({
+    queryKey: ["racks", "unplaced", unplacedOffset],
+    queryFn: () => listUnplacedRacks(UNPLACED_PAGE_SIZE, unplacedOffset),
+    staleTime: 30_000,
+  });
   const [selectedRack, setSelectedRack] = useState<RoomRack | null>(null);
   const [yaw, setYaw] = useState(-28); const [pitch, setPitch] = useState(56); const [zoom, setZoom] = useState(0.82); const [pan, setPan] = useState({ x: 0, y: 0 });
   const [drag, setDrag] = useState<{ mode: "orbit" | "pan"; x: number; y: number } | null>(null);
   const roomWidth = view.data?.room_width_mm ?? FALLBACK_ROOM_MM; const roomHeight = view.data?.room_height_mm ?? FALLBACK_ROOM_MM;
-  const unplaced = useMemo(() => computeUnplacedRacks(inventory.data?.items ?? []), [inventory.data]);
   const coordinateIncomplete = useMemo(() => racksMissingCoordinates(view.data?.racks ?? []), [view.data]);
   const reset = () => { setYaw(-28); setPitch(56); setZoom(0.82); setPan({ x: 0, y: 0 }); };
 
@@ -122,5 +128,8 @@ export function Layout3DPage() {
       <div className="layout3d-world" style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) rotateX(${pitch}deg) rotateZ(${yaw}deg) scale(${zoom})` }}><div className="layout3d-floor"><span className="layout3d-floor-label">{view.data?.room_name}</span>{view.data?.racks.map((rack, index) => <RackCuboid key={rack.id} rack={rack} index={index} roomWidth={roomWidth} roomHeight={roomHeight} selected={selectedRack?.id === rack.id} onSelect={() => setSelectedRack(rack)} equipment={equipment} />)}</div></div>
       <div className="layout3d-controls" aria-label="3D view controls"><label>Orbit <input type="range" min="-85" max="85" value={yaw} onChange={(event) => setYaw(+event.target.value)} /></label><label>Tilt <input type="range" min="28" max="78" value={pitch} onChange={(event) => setPitch(+event.target.value)} /></label><label>Zoom <input type="range" min={ZOOM_MIN} max={ZOOM_MAX} step={ZOOM_STEP} value={zoom} onChange={(event) => setZoom(+event.target.value)} /></label><div className="layout3d-pan-pad" role="group" aria-label="Pan camera"><button type="button" aria-label="Pan up" onClick={() => setPan((current) => ({ ...current, y: current.y + PAN_STEP_PX }))}>▲</button><button type="button" aria-label="Pan left" onClick={() => setPan((current) => ({ ...current, x: current.x + PAN_STEP_PX }))}>◀</button><button type="button" aria-label="Pan right" onClick={() => setPan((current) => ({ ...current, x: current.x - PAN_STEP_PX }))}>▶</button><button type="button" aria-label="Pan down" onClick={() => setPan((current) => ({ ...current, y: current.y - PAN_STEP_PX }))}>▼</button></div></div>
       <p className="layout3d-provenance">Schematic projection only — rack footprints are standardized, not to scale. Vertical placement and height use each rack's own authoritative U capacity and equipment U range. No floor position is inferred: a rack with no recorded x/y still renders (marked ≈) at a standardized fallback grid position, and genuinely unplaced racks are listed separately, never guessed onto the floor.</p>
-    </section><aside className="surface p-4"><h2 className="font-semibold">Rack context</h2>{selectedRack ? <><h3 className="mt-3 text-lg font-semibold">{selectedRack.name}</h3><p className="text-xs text-slate-500">{selectedRack.asset_tag}</p><dl className="mt-4 space-y-2 text-sm"><div><dt className="text-slate-500">Room position</dt><dd>{selectedRack.x_mm ?? "Unavailable (estimated in scene)"}, {selectedRack.y_mm ?? "Unavailable (estimated in scene)"} mm</dd></div><div><dt className="text-slate-500">Rotation</dt><dd>{selectedRack.rotation_deg ?? "Unavailable"}°</dd></div><div><dt className="text-slate-500">Capacity</dt><dd>{selectedRack.height_u}U</dd></div><div><dt className="text-slate-500">Placed equipment</dt><dd>{equipment.filter((item) => item.rack_id === selectedRack.id).length || "None recorded"}</dd></div></dl><Link to={`/racks/${selectedRack.id}`} className="action-primary mt-5 inline-block">Open rack elevation</Link></> : <p className="mt-3 text-sm text-slate-500">Select a rack in the scene.</p>}<div className="mt-6 border-t border-slate-800 pt-3"><h3 className="text-xs font-semibold uppercase text-slate-500">Unplaced inventory</h3>{inventory.isLoading ? <p className="mt-2 text-sm text-slate-500">Loading rack inventory…</p> : inventory.isError ? <p className="mt-2 text-sm text-rose-300">Unable to load rack inventory.</p> : unplaced.length ? <ul className="mt-2 space-y-1 text-sm">{unplaced.map((rack) => <li key={rack.id}><Link className="text-indigo-300 hover:text-indigo-200" to={`/racks/${rack.id}`}>{rack.name}</Link> <span className="text-slate-500">— not placed in any room</span></li>)}</ul> : <p className="mt-2 text-sm text-slate-500">Every inventory rack has an active room placement.</p>}{coordinateIncomplete.length > 0 && <p className="mt-3 text-xs text-amber-200">{coordinateIncomplete.length} rack{coordinateIncomplete.length === 1 ? "" : "s"} placed in this room {coordinateIncomplete.length === 1 ? "has" : "have"} no recorded floor position yet (marked ≈ above), which is different from being unplaced.</p>}<p className="mt-4 text-xs text-slate-600">Layers: room · racks · placed equipment. Power, network, cooling, and environment overlays are intentionally not represented until those authoritative spatial relationships exist.</p></div></aside></div>}</div>;
+    </section><aside className="surface p-4"><h2 className="font-semibold">Rack context</h2>{selectedRack ? <><h3 className="mt-3 text-lg font-semibold">{selectedRack.name}</h3><p className="text-xs text-slate-500">{selectedRack.asset_tag}</p><dl className="mt-4 space-y-2 text-sm"><div><dt className="text-slate-500">Room position</dt><dd>{selectedRack.x_mm ?? "Unavailable (estimated in scene)"}, {selectedRack.y_mm ?? "Unavailable (estimated in scene)"} mm</dd></div><div><dt className="text-slate-500">Rotation</dt><dd>{selectedRack.rotation_deg ?? "Unavailable"}°</dd></div><div><dt className="text-slate-500">Capacity</dt><dd>{selectedRack.height_u}U</dd></div><div><dt className="text-slate-500">Placed equipment</dt><dd>{equipment.filter((item) => item.rack_id === selectedRack.id).length || "None recorded"}</dd></div></dl><Link to={`/racks/${selectedRack.id}`} className="action-primary mt-5 inline-block">Open rack elevation</Link></> : <p className="mt-3 text-sm text-slate-500">Select a rack in the scene.</p>}<div className="mt-6 border-t border-slate-800 pt-3"><h3 className="text-xs font-semibold uppercase text-slate-500">Unplaced inventory</h3>{unplacedQuery.isLoading ? <p className="mt-2 text-sm text-slate-500">Loading unplaced racks…</p> : unplacedQuery.isError ? <p className="mt-2 text-sm text-rose-300">Unable to load unplaced racks.</p> : unplacedQuery.data && unplacedQuery.data.total > 0 ? <>
+        <ul className="mt-2 space-y-1 text-sm">{unplacedQuery.data.items.map((rack) => <li key={rack.id}><Link className="text-indigo-300 hover:text-indigo-200" to={`/racks/${rack.id}`}>{rack.name}</Link> <span className="text-slate-500">— not placed in any room</span></li>)}</ul>
+        {unplacedQuery.data.total > UNPLACED_PAGE_SIZE && <div className="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500"><span>Showing {unplacedOffset + 1}–{Math.min(unplacedOffset + UNPLACED_PAGE_SIZE, unplacedQuery.data.total)} of {unplacedQuery.data.total}</span><div className="flex gap-1"><button type="button" className="action-secondary px-2 py-0.5 text-xs" disabled={unplacedOffset === 0} onClick={() => setUnplacedOffset((offset) => Math.max(0, offset - UNPLACED_PAGE_SIZE))}>Prev</button><button type="button" className="action-secondary px-2 py-0.5 text-xs" disabled={unplacedOffset + UNPLACED_PAGE_SIZE >= unplacedQuery.data.total} onClick={() => setUnplacedOffset((offset) => offset + UNPLACED_PAGE_SIZE)}>Next</button></div></div>}
+      </> : <p className="mt-2 text-sm text-slate-500">Every inventory rack has an active room placement.</p>}{coordinateIncomplete.length > 0 && <p className="mt-3 text-xs text-amber-200">{coordinateIncomplete.length} rack{coordinateIncomplete.length === 1 ? "" : "s"} placed in this room {coordinateIncomplete.length === 1 ? "has" : "have"} no recorded floor position yet (marked ≈ above), which is different from being unplaced.</p>}<p className="mt-4 text-xs text-slate-600">Layers: room · racks · placed equipment. Power, network, cooling, and environment overlays are intentionally not represented until those authoritative spatial relationships exist.</p></div></aside></div>}</div>;
 }

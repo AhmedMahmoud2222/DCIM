@@ -16,8 +16,11 @@ vi.mock("@/features/floor-plans/api", async () => {
 });
 vi.mock("@/features/racks/api", async () => {
   const actual = await vi.importActual<typeof racksApi>("@/features/racks/api");
-  return { ...actual, listRooms: vi.fn(), listRacks: vi.fn() };
+  return { ...actual, listRooms: vi.fn(), listUnplacedRacks: vi.fn() };
 });
+
+const UNPLACED_PAGE_SIZE = 10;
+const emptyUnplacedPage: Page<Rack> = { items: [], total: 0, limit: UNPLACED_PAGE_SIZE, offset: 0 };
 
 const mockedFloorPlans = vi.mocked(floorPlansApi);
 const mockedRacks = vi.mocked(racksApi);
@@ -64,6 +67,7 @@ function renderPage() {
 
 beforeEach(() => {
   mockedRacks.listRooms.mockResolvedValue(rooms);
+  mockedRacks.listUnplacedRacks.mockResolvedValue(emptyUnplacedPage);
 });
 
 afterEach(() => {
@@ -73,21 +77,19 @@ afterEach(() => {
 describe("Layout3DPage loading/empty/error states", () => {
   it("shows a loading state before spatial data resolves", async () => {
     mockedFloorPlans.getRoomSpatialView.mockReturnValue(new Promise(() => {}));
-    mockedRacks.listRacks.mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(await screen.findByText(/Loading authoritative spatial data/)).toBeInTheDocument();
   });
 
   it("shows an error state when the spatial view fails to load", async () => {
     mockedFloorPlans.getRoomSpatialView.mockRejectedValue(new Error("boom"));
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     renderPage();
     expect(await screen.findByText(/Unable to load this room's spatial data/)).toBeInTheDocument();
   });
 
-  it("shows an empty-inventory message when nothing is unplaced", async () => {
+  it("shows an empty-inventory message when nothing is unplaced (total: 0)", async () => {
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
-    mockedRacks.listRacks.mockResolvedValue({ items: [invRack({ id: "rack-1", placement: { room_id: "room-1", x_mm: 1, y_mm: 1, rotation_deg: 0, effective_from: "2026-01-01" } })], total: 1, limit: 200, offset: 0 });
+    mockedRacks.listUnplacedRacks.mockResolvedValue(emptyUnplacedPage);
     renderPage();
     expect(await screen.findByText("Every inventory rack has an active room placement.")).toBeInTheDocument();
   });
@@ -105,7 +107,6 @@ describe("Layout3DPage U-based equipment rendering", () => {
       equipmentItem({ id: "bottom", hostname: "bottom-host", u_start: 1, u_end: 2 }), // bottom U
     ];
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView({ rack_equipment: equipment }));
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     renderPage();
 
     const topLink = await screen.findByTitle(/Open top-host · U12–U12/);
@@ -123,7 +124,6 @@ describe("Layout3DPage U-based equipment rendering", () => {
       equipmentItem({ id: `eq-${index}`, asset_tag: `EQ-${index}`, hostname: `host-${index}`, u_start: index + 1, u_end: index + 2 }),
     );
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView({ racks: [{ id: "rack-1", asset_tag: "RACK-1", name: "Rack 1", x_mm: 1000, y_mm: 1000, rotation_deg: 0, spatial_object_id: null, height_u: 42 }], rack_equipment: equipment }));
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     renderPage();
 
     for (const item of equipment) {
@@ -134,7 +134,6 @@ describe("Layout3DPage U-based equipment rendering", () => {
   it("respects front/rear side — a rear item does not appear on the front face", async () => {
     const equipment = [equipmentItem({ id: "rear-item", hostname: "rear-host", side: "rear", u_start: 5, u_end: 6 })];
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView({ rack_equipment: equipment }));
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     const { container } = renderPage();
 
     await screen.findByTitle(/Open rear-host/);
@@ -145,37 +144,78 @@ describe("Layout3DPage U-based equipment rendering", () => {
   });
 });
 
-describe("Layout3DPage unplaced inventory", () => {
-  it("lists a genuinely unplaced rack (no placement anywhere), separate from coordinate-incomplete ones", async () => {
+describe("Layout3DPage unplaced inventory (GET /racks/unplaced)", () => {
+  it("shows only what GET /racks/unplaced returns — coordinate-incomplete and elsewhere-placed racks never appear (the backend already excluded them)", async () => {
+    // This endpoint is the sole authority for what's unplaced; the page renders exactly
+    // its `items`, never re-deriving the set from a separately-fetched full inventory.
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView({
       racks: [
         { id: "rack-1", asset_tag: "RACK-1", name: "Placed rack", x_mm: 1000, y_mm: 1000, rotation_deg: 0, spatial_object_id: null, height_u: 12 },
         { id: "rack-2", asset_tag: "RACK-2", name: "Coordinate-incomplete rack", x_mm: null, y_mm: null, rotation_deg: null, spatial_object_id: null, height_u: 12 },
       ],
     }));
-    mockedRacks.listRacks.mockResolvedValue({
-      items: [
-        invRack({ id: "rack-1", name: "Placed rack", placement: { room_id: "room-1", x_mm: 1000, y_mm: 1000, rotation_deg: 0, effective_from: "2026-01-01" } }),
-        invRack({ id: "rack-2", name: "Coordinate-incomplete rack", placement: { room_id: "room-1", x_mm: null, y_mm: null, rotation_deg: null, effective_from: "2026-01-01" } }),
-        invRack({ id: "rack-3", name: "Genuinely unplaced rack", placement: null }),
-        invRack({ id: "rack-4", name: "Rack in another room", placement: { room_id: "room-other", x_mm: 5, y_mm: 5, rotation_deg: 0, effective_from: "2026-01-01" } }),
-      ],
-      total: 4,
-      limit: 200,
+    mockedRacks.listUnplacedRacks.mockResolvedValue({
+      items: [invRack({ id: "rack-3", name: "Genuinely unplaced rack", placement: null })],
+      total: 1,
+      limit: UNPLACED_PAGE_SIZE,
       offset: 0,
     });
     renderPage();
 
-    // The "Unplaced inventory" heading renders immediately; wait for its actual content
-    // (the racks-inventory query resolving) rather than the heading itself.
     await screen.findByText("Genuinely unplaced rack");
     const unplacedHeading = screen.getByText("Unplaced inventory");
     const unplacedSection = unplacedHeading.closest("div") as HTMLElement;
     expect(within(unplacedSection).getByText("Genuinely unplaced rack")).toBeInTheDocument();
     expect(within(unplacedSection).queryByText("Placed rack")).not.toBeInTheDocument();
     expect(within(unplacedSection).queryByText("Coordinate-incomplete rack")).not.toBeInTheDocument();
-    expect(within(unplacedSection).queryByText("Rack in another room")).not.toBeInTheDocument();
     expect(screen.getByText(/no recorded floor position yet/)).toBeInTheDocument();
+  });
+
+  it("shows an API-failure message distinct from the empty-result message", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    mockedRacks.listUnplacedRacks.mockRejectedValue(new Error("network down"));
+    renderPage();
+
+    expect(await screen.findByText("Unable to load unplaced racks.")).toBeInTheDocument();
+    expect(screen.queryByText("Every inventory rack has an active room placement.")).not.toBeInTheDocument();
+  });
+
+  it("shows the full set with no pagination controls when everything fits on one page", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    mockedRacks.listUnplacedRacks.mockResolvedValue({
+      items: [invRack({ id: "only-one", name: "Only Unplaced Rack", placement: null })],
+      total: 1,
+      limit: UNPLACED_PAGE_SIZE,
+      offset: 0,
+    });
+    renderPage();
+
+    await screen.findByText("Only Unplaced Rack");
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
+  it("shows a total count and Prev/Next controls, and pages correctly, when results span multiple pages", async () => {
+    mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
+    const page1 = { items: Array.from({ length: UNPLACED_PAGE_SIZE }, (_, i) => invRack({ id: `p1-${i}`, name: `Rack P1-${i}`, placement: null })), total: 25, limit: UNPLACED_PAGE_SIZE, offset: 0 };
+    const page2 = { items: Array.from({ length: UNPLACED_PAGE_SIZE }, (_, i) => invRack({ id: `p2-${i}`, name: `Rack P2-${i}`, placement: null })), total: 25, limit: UNPLACED_PAGE_SIZE, offset: UNPLACED_PAGE_SIZE };
+    mockedRacks.listUnplacedRacks.mockImplementation((_limit, offset) => Promise.resolve(offset === 0 ? page1 : page2));
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText("Showing 1–10 of 25")).toBeInTheDocument();
+    expect(screen.getByText("Rack P1-0")).toBeInTheDocument();
+    const prevButton = screen.getByRole("button", { name: "Prev" });
+    const nextButton = screen.getByRole("button", { name: "Next" });
+    expect(prevButton).toBeDisabled();
+    expect(nextButton).not.toBeDisabled();
+
+    await user.click(nextButton);
+
+    expect(await screen.findByText("Showing 11–20 of 25")).toBeInTheDocument();
+    expect(screen.getByText("Rack P2-0")).toBeInTheDocument();
+    expect(screen.queryByText("Rack P1-0")).not.toBeInTheDocument();
+    expect(mockedRacks.listUnplacedRacks).toHaveBeenCalledWith(UNPLACED_PAGE_SIZE, UNPLACED_PAGE_SIZE);
   });
 });
 
@@ -187,7 +227,6 @@ describe("Layout3DPage equipment link keyboard activation", () => {
     // activation.
     const equipment = [equipmentItem({ id: "eq-1", hostname: "kbd-host" })];
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView({ rack_equipment: equipment }));
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     const user = userEvent.setup();
     renderPage();
 
@@ -205,7 +244,6 @@ describe("Layout3DPage equipment link keyboard activation", () => {
 describe("Layout3DPage keyboard camera controls", () => {
   it("pans the scene from the keyboard when the viewport itself is focused", async () => {
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     const user = userEvent.setup();
     const { container } = renderPage();
 
@@ -220,7 +258,6 @@ describe("Layout3DPage keyboard camera controls", () => {
 
   it("does not pan when arrow keys are pressed on a nested control (e.g. a focused rack)", async () => {
     mockedFloorPlans.getRoomSpatialView.mockResolvedValue(baseView());
-    mockedRacks.listRacks.mockResolvedValue({ items: [], total: 0, limit: 200, offset: 0 });
     const user = userEvent.setup();
     const { container } = renderPage();
 

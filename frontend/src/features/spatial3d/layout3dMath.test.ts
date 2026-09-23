@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeUnplacedRacks, occupiesFace, racksMissingCoordinates, uRangeToPlacement } from "./layout3dMath";
+import { occupiesFace, racksMissingCoordinates, uRangeToPlacement } from "./layout3dMath";
 import type { RoomRack } from "@/types";
 
 describe("uRangeToPlacement", () => {
@@ -67,22 +67,6 @@ describe("occupiesFace", () => {
   it("'both' equipment renders on both faces", () => {
     expect(occupiesFace("both", "front")).toBe(true);
     expect(occupiesFace("both", "rear")).toBe(true);
-  });
-});
-
-describe("computeUnplacedRacks", () => {
-  it("returns only racks with no placement at all", () => {
-    const inventory = [
-      { id: "a", placement: null },
-      { id: "b", placement: { room_id: "room-1", x_mm: 10, y_mm: 20, rotation_deg: 0, effective_from: "2026-01-01" } },
-      { id: "c", placement: { room_id: "room-2", x_mm: null, y_mm: null, rotation_deg: null, effective_from: "2026-01-01" } },
-    ];
-    expect(computeUnplacedRacks(inventory).map((rack) => rack.id)).toEqual(["a"]);
-  });
-
-  it("does not report a rack placed in a different room as unplaced", () => {
-    const inventory = [{ id: "elsewhere", placement: { room_id: "some-other-room", x_mm: 1, y_mm: 1, rotation_deg: 0, effective_from: "2026-01-01" } }];
-    expect(computeUnplacedRacks(inventory)).toEqual([]);
   });
 });
 
