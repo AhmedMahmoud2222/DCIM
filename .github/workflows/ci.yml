@@ -111,7 +111,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install
+      - run: npm ci
+      - name: Audit for high/critical vulnerabilities (fails build)
+        run: npm audit --audit-level=high
+      - name: Full audit report (moderate and above, non-blocking)
+        if: always()
+        run: npm audit --audit-level=moderate || true
       - run: npm run typecheck
       - run: npx eslint . --ext ts,tsx
       - run: npm run build
