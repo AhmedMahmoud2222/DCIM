@@ -12,12 +12,12 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db
 from app.application import auth_service
 from app.application.audit_service import write_audit_log
+from app.application.rbac import AuthContext, get_auth_context
 from app.core.config import get_settings
 from app.core.errors import ApiError
-from app.domain.auth.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -131,8 +131,19 @@ class MeResponse(BaseModel):
     id: uuid.UUID
     email: str
     full_name: str
+    # The frontend's sole source of authorization truth for what to render (never a role
+    # name — §39 of v1.0: "every protected route depends on require_permission(), never
+    # on frontend hiding", which requires the frontend to know the same permission codes
+    # the backend checks). The backend remains authoritative: this list only controls
+    # what the UI offers, every mutation is still independently enforced server-side.
+    permissions: list[str]
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user)) -> MeResponse:
-    return MeResponse(id=user.id, email=user.email, full_name=user.full_name)
+async def me(ctx: AuthContext = Depends(get_auth_context)) -> MeResponse:
+    return MeResponse(
+        id=ctx.user.id,
+        email=ctx.user.email,
+        full_name=ctx.user.full_name,
+        permissions=sorted(ctx.permission_codes),
+    )

@@ -2,6 +2,11 @@ import { apiFetch } from "@/lib/apiClient";
 import { Page, Rack, RackElevation, RackModel, RackModelRevision, Room } from "@/types";
 
 export const listRacks = () => apiFetch<Page<Rack>>("/racks?limit=200");
+/** Racks with no active placement anywhere, organization-wide — computed and paginated
+ * server-side (GET /racks/unplaced) rather than by loading the full rack inventory and
+ * diffing it client-side, which silently truncated past 200 racks. */
+export const listUnplacedRacks = (limit: number, offset: number) =>
+  apiFetch<Page<Rack>>(`/racks/unplaced?limit=${limit}&offset=${offset}`);
 export const getRack = (id: string) => apiFetch<Rack>(`/racks/${id}`);
 export const getRackElevation = (id: string) => apiFetch<RackElevation>(`/racks/${id}/elevation`);
 export const listRooms = () => apiFetch<Page<Room>>("/rooms?limit=200");

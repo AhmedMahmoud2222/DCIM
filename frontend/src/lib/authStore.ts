@@ -4,6 +4,11 @@ export interface CurrentUser {
   id: string;
   email: string;
   full_name: string;
+  /** Effective permission codes from /auth/me (e.g. "network:manage") — the frontend's
+   * only source of truth for which mutation controls to render. Never inferred from a
+   * role name: the backend remains authoritative and independently re-checks every
+   * mutation regardless of what this list says. */
+  permissions: string[];
 }
 
 interface AuthState {

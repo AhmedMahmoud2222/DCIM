@@ -8,7 +8,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -31,6 +31,7 @@ from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Rack
+from app.domain.placement.models import RackPlacement
 
 router = APIRouter(prefix="/racks", tags=["racks"])
 
@@ -204,6 +205,49 @@ async def list_racks(
         )
     ).all()
     items = [await _serialize_rack(db, rack, asset) for rack, asset in rows]
+    return Page(items=items, total=total, limit=pagination.limit, offset=pagination.offset)
+
+
+@router.get("/unplaced", response_model=Page[RackOut])
+async def list_unplaced_racks(
+    db: AsyncSession = Depends(get_db),
+    pagination: Pagination = Depends(pagination_params),
+    ctx=Depends(require_permission("rack:read")),
+) -> Page:
+    """Racks with no active RackPlacement row anywhere — organization-wide, not scoped to
+    a site or room, because a rack with no current placement has no room (and therefore
+    no site) to scope it to. This is a rack with either no placement ever, or only
+    historical/retired placement rows (RackPlacement.effective_to is not null for all of
+    them); a rack with an active placement whose x_mm/y_mm are merely null is placed, not
+    unplaced (see spatial.py's RoomSpatialViewOut, which is where that distinction
+    matters). Registered before GET /{rack_id} so "unplaced" is never swallowed by that
+    route's UUID path parameter.
+
+    Computed here, server-side and paginated, instead of requiring every caller to page
+    through the full rack inventory (GET /racks) and diff it client-side — that approach
+    silently truncates past whatever page size the caller happened to request."""
+    unplaced_filter = ~exists(
+        select(1).where(RackPlacement.rack_id == Rack.id, RackPlacement.effective_to.is_(None))
+    )
+    total = (await db.execute(select(func.count()).select_from(Rack).where(unplaced_filter))).scalar_one()
+    rows = (
+        await db.execute(
+            select(Rack, ManagedAsset)
+            .join(ManagedAsset, ManagedAsset.id == Rack.id)
+            .where(unplaced_filter)
+            .order_by(Rack.name, Rack.id)
+            .offset(pagination.offset)
+            .limit(pagination.limit)
+        )
+    ).all()
+    items = [
+        RackOut(
+            id=rack.id, asset_tag=asset.asset_tag, lifecycle_status=asset.lifecycle_status,
+            model_revision_id=rack.model_revision_id, name=rack.name, owner=rack.owner, notes=rack.notes,
+            version=rack.version, created_at=rack.created_at, placement=None,
+        )
+        for rack, asset in rows
+    ]
     return Page(items=items, total=total, limit=pagination.limit, offset=pagination.offset)
 
 

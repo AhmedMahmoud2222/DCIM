@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
+from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.location.models import Room
 from app.domain.physical.models import Equipment, Rack
@@ -33,19 +34,38 @@ class RoomRackOut(BaseModel):
     y_mm: int | None
     rotation_deg: int | None
     spatial_object_id: uuid.UUID | None
+    # Authoritative rack capacity (rack_model_revision.height_u), so a 3D/elevation
+    # renderer can size a rack's occupiable U range from real inventory data instead of
+    # guessing or fabricating a fixed height client-side.
+    height_u: int
 
     model_config = {"from_attributes": True}
 
 
 class RoomEquipmentOut(BaseModel):
-    """Only equipment placed directly in the room (not rack-mounted) — rack-mounted
-    equipment is part of its rack's elevation, not the 2D room view (§8)."""
+    """Equipment placed directly in a room, as consumed by the 2D room canvas."""
 
     id: uuid.UUID
     asset_tag: str
     hostname: str | None
     placement_type: str
     spatial_object_id: uuid.UUID | None
+
+    model_config = {"from_attributes": True}
+
+
+class RackMountedEquipmentOut(BaseModel):
+    """Rack elevation facts for the 3D projection, kept distinct from the 2D room layer."""
+
+    id: uuid.UUID
+    asset_tag: str
+    hostname: str | None
+    rack_id: uuid.UUID
+    u_start: int
+    u_end: int
+    # front/rear/both, straight from EquipmentPlacement.side — the only writable source
+    # of truth (see placement/models.py); never inferred client-side.
+    side: str
 
     model_config = {"from_attributes": True}
 
@@ -76,6 +96,7 @@ class RoomSpatialViewOut(BaseModel):
     generated_at: datetime
     racks: list[RoomRackOut]
     equipment: list[RoomEquipmentOut]
+    rack_equipment: list[RackMountedEquipmentOut]
     objects: list[SpatialObjectOut]
 
 
@@ -98,9 +119,10 @@ async def get_room_spatial_view(
 
     rack_rows = (
         await db.execute(
-            select(RackPlacement, Rack, ManagedAsset)
+            select(RackPlacement, Rack, ManagedAsset, RackModelRevision)
             .join(Rack, Rack.id == RackPlacement.rack_id)
             .join(ManagedAsset, ManagedAsset.id == RackPlacement.rack_id)
+            .join(RackModelRevision, RackModelRevision.id == Rack.model_revision_id)
             .where(RackPlacement.room_id == room_id, RackPlacement.effective_to.is_(None))
         )
     ).all()
@@ -108,8 +130,9 @@ async def get_room_spatial_view(
         RoomRackOut(
             id=rack.id, asset_tag=asset.asset_tag, name=rack.name, x_mm=placement.x_mm, y_mm=placement.y_mm,
             rotation_deg=placement.rotation_deg, spatial_object_id=placement.spatial_object_id,
+            height_u=revision.height_u,
         )
-        for placement, rack, asset in rack_rows
+        for placement, rack, asset, revision in rack_rows
     ]
 
     equipment_rows = (
@@ -131,6 +154,32 @@ async def get_room_spatial_view(
         )
         for placement, equipment, asset in equipment_rows
     ]
+    rack_equipment_rows = (
+        await db.execute(
+            select(EquipmentPlacement, Equipment, ManagedAsset)
+            .join(Equipment, Equipment.id == EquipmentPlacement.equipment_id)
+            .join(ManagedAsset, ManagedAsset.id == EquipmentPlacement.equipment_id)
+            .where(
+                EquipmentPlacement.room_id == room_id,
+                EquipmentPlacement.effective_to.is_(None),
+                EquipmentPlacement.placement_type == "rack_mounted",
+            )
+        )
+    ).all()
+    rack_equipment: list[RackMountedEquipmentOut] = []
+    for placement, rack_equipment_item, asset in rack_equipment_rows:
+        # The database CHECK requires these values for rack-mounted equipment. Keep a
+        # defensive guard at this API boundary so a corrupt legacy row cannot make an
+        # otherwise readable room view fail.
+        if placement.rack_id is None or placement.u_range is None or placement.side is None:
+            continue
+        rack_equipment.append(
+            RackMountedEquipmentOut(
+                id=rack_equipment_item.id, asset_tag=asset.asset_tag, hostname=rack_equipment_item.hostname,
+                rack_id=placement.rack_id, u_start=placement.u_range.lower, u_end=placement.u_range.upper,
+                side=placement.side,
+            )
+        )
 
     objects: list[SpatialObjectOut] = []
     if active_floor_plan is not None:
@@ -155,5 +204,6 @@ async def get_room_spatial_view(
         generated_at=datetime.now(UTC),
         racks=racks,
         equipment=equipment,
+        rack_equipment=rack_equipment,
         objects=objects,
     )
