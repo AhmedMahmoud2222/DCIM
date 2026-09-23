@@ -596,11 +596,6 @@ async def _load_children(
     return ports, psus, metrics
 
 
-def _require_draft(revision: CatalogModelRevision) -> None:
-    if revision.lifecycle_status != "draft":
-        raise ConflictError(detail="This revision is published and immutable.")
-
-
 @router.post("/models/{model_id}/revisions", response_model=CatalogModelRevisionOut, status_code=201)
 async def create_draft_revision(
     model_id: uuid.UUID,
@@ -827,12 +822,23 @@ async def delete_draft_revision(
     revision_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> None:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+    """PR-3 correction pass, round 2: this used to load the row unlocked and check only
+    `lifecycle_status`, with no If-Match at all — two concurrent deletes of the same draft
+    both passed that check and both committed a `DELETE` (the second a silent zero-row
+    no-op that PostgreSQL does not error on), so both reported 204 and both wrote a full
+    audit/outbox pair for an entity already gone. Routing through
+    `lock_draft_revision_for_edit` closes this the same way every other mutation in this
+    router is closed: the `SELECT ... FOR UPDATE` forces the second request to block behind
+    the first's transaction, then re-read row state *after* the first has committed — by
+    which point the row no longer exists, so the second gets a clean 404 (via
+    `NotFoundError`) instead of a duplicate success. The version bump `lock_draft_revision_
+    for_edit` applies is a harmless no-op here (the row is deleted in the same flush, so the
+    UPDATE it implies is never actually emitted), but the *lock* and the *If-Match
+    precondition* are exactly the discipline this endpoint was missing."""
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(

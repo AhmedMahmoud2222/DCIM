@@ -19,7 +19,11 @@ has already committed):
 - `allocate_revision_number`'s model-row lock: two concurrent allocations under the same
   model never collide, both succeed with distinct numbers.
 - Publication staying serialized against a concurrent draft edit of the same revision
-  (`lock_draft_revision_for_edit` and `publish_revision` lock the same row)."""
+  (`lock_draft_revision_for_edit` and `publish_revision` lock the same row).
+
+PR-3 correction pass, round 2 addition:
+- DELETE /catalog/revisions/{id} racing itself: two concurrent deletes of the same draft
+  must never both report success or write a duplicate audit/outbox pair."""
 
 import asyncio
 import uuid
@@ -29,7 +33,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.application.catalog_designer_service import allocate_revision_number, lock_draft_revision_for_edit, publish_revision
-from app.core.errors import ConflictError
+from app.core.errors import ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.domain.auth.models import User
 from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision, Manufacturer, NetworkPortTemplate
@@ -450,3 +454,60 @@ async def test_concurrent_publish_and_draft_edit_of_the_same_revision_stays_seri
     async with session_factory() as verify:
         reread = await verify.get(CatalogModelRevision, revision_id)
         assert reread.lifecycle_status == "published"
+
+
+# ------------------------------------------------------------------------ PR-3 correction pass, round 2
+
+
+async def test_two_independent_sessions_racing_revision_delete_only_one_succeeds(db_engine):
+    """DELETE /catalog/revisions/{id} correction: previously loaded the row unlocked and
+    checked only lifecycle_status, with no If-Match at all — two concurrent deletes of the
+    same draft both passed that check and both committed a DELETE (the second a silent
+    zero-row no-op Postgres does not error on), so both reported success and both wrote a
+    full, duplicate audit/outbox pair for an entity already gone. Routing through
+    lock_draft_revision_for_edit closes this exactly like every other mutation in this
+    router: B blocks on A's FOR UPDATE lock, and once A commits (deleting the row), B's own
+    re-read of the now-nonexistent row raises NotFoundError — one clean failure, never a
+    duplicate success."""
+    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with session_factory() as setup:
+        manufacturer = Manufacturer(name="Two-Session Delete Co")
+        setup.add(manufacturer)
+        await setup.flush()
+        model = CatalogModel(manufacturer_id=manufacturer.id, category="rack", model_name="Two-Session Delete Model")
+        setup.add(model)
+        await setup.flush()
+        user = await _make_user(setup)
+        revision = CatalogModelRevision(**_rack_ready_revision_kwargs(model.id, user.id))
+        setup.add(revision)
+        await setup.commit()
+        revision_id = revision.id
+        starting_version = revision.version
+
+    session_a = session_factory()
+    session_b = session_factory()
+    try:
+        # Both A and B carry the identical starting If-Match — exactly the "two admins
+        # click delete on the same draft" scenario, neither aware of the other.
+        locked_a = await lock_draft_revision_for_edit(session_a, revision_id=revision_id, if_match_version=starting_version)
+        await session_a.delete(locked_a)
+        await session_a.flush()
+
+        task_b = asyncio.create_task(
+            lock_draft_revision_for_edit(session_b, revision_id=revision_id, if_match_version=starting_version)
+        )
+        await asyncio.sleep(0.3)
+        assert not task_b.done(), "B should still be blocked on A's FOR UPDATE lock"
+
+        await session_a.commit()
+
+        with pytest.raises(NotFoundError):
+            await task_b
+        await session_b.rollback()
+    finally:
+        await session_a.close()
+        await session_b.close()
+
+    async with session_factory() as verify:
+        reread = await verify.get(CatalogModelRevision, revision_id)
+        assert reread is None, "the row must be deleted exactly once — B must never re-create or duplicate it"
