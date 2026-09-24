@@ -225,7 +225,9 @@ async def test_delete_draft_revision_cascades_and_is_audited(client, auth_header
     model_id = await _make_model(client, headers, manufacturer_id)
     revision = await _make_draft(client, headers, model_id)
 
-    delete_resp = await client.delete(f"/api/v1/catalog/revisions/{revision['id']}", headers=headers)
+    delete_resp = await client.delete(
+        f"/api/v1/catalog/revisions/{revision['id']}", headers={**headers, "If-Match": str(revision["version"])}
+    )
     assert delete_resp.status_code == 204
 
     get_resp = await client.get(f"/api/v1/catalog/revisions/{revision['id']}", headers=headers)
