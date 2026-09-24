@@ -4,6 +4,8 @@ export interface CurrentUser {
   id: string;
   email: string;
   full_name: string;
+  role_names: string[];
+  permission_codes: string[];
 }
 
 interface AuthState {
