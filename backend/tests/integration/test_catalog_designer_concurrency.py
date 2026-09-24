@@ -32,12 +32,16 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.application.audit_service import write_audit_log
 from app.application.catalog_designer_service import allocate_revision_number, lock_draft_revision_for_edit, publish_revision
+from app.application.outbox_service import write_outbox_event
 from app.core.errors import ConflictError, NotFoundError
 from app.core.security import hash_password
+from app.domain.audit.models import AuditLog
 from app.domain.auth.models import User
 from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision, Manufacturer, NetworkPortTemplate
 from app.domain.catalog.models import RackModel, RackModelRevision
+from app.domain.outbox.models import OutboxEvent
 
 
 async def _make_user(db_session) -> User:
@@ -468,7 +472,15 @@ async def test_two_independent_sessions_racing_revision_delete_only_one_succeeds
     lock_draft_revision_for_edit closes this exactly like every other mutation in this
     router: B blocks on A's FOR UPDATE lock, and once A commits (deleting the row), B's own
     re-read of the now-nonexistent row raises NotFoundError — one clean failure, never a
-    duplicate success."""
+    duplicate success.
+
+    A performs the identical write_audit_log/write_outbox_event calls, in the identical
+    order, `delete_draft_revision` (app/api/v1/catalog_designer.py) itself makes — not
+    just the bare row delete the rest of this file's concurrency tests use as a proxy for
+    the router's DB effect — so this test directly proves the invariant its own docstring
+    above already claimed but never checked: exactly one audit_log row and exactly one
+    outbox_event row for this delete, never two, since B's blocked lock_draft_revision_
+    for_edit call raises before it ever reaches its own would-be audit/outbox write."""
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
     async with session_factory() as setup:
         manufacturer = Manufacturer(name="Two-Session Delete Co")
@@ -482,6 +494,7 @@ async def test_two_independent_sessions_racing_revision_delete_only_one_succeeds
         setup.add(revision)
         await setup.commit()
         revision_id = revision.id
+        user_id = user.id
         starting_version = revision.version
 
     session_a = session_factory()
@@ -490,6 +503,17 @@ async def test_two_independent_sessions_racing_revision_delete_only_one_succeeds
         # Both A and B carry the identical starting If-Match — exactly the "two admins
         # click delete on the same draft" scenario, neither aware of the other.
         locked_a = await lock_draft_revision_for_edit(session_a, revision_id=revision_id, if_match_version=starting_version)
+        # Mirrors delete_draft_revision's own call order exactly: audit + outbox writes
+        # before the row delete, all in the one transaction A's commit below closes.
+        await write_audit_log(
+            session_a, actor_user_id=user_id, action="catalog.revision.delete_draft", entity_type="catalog_model_revision",
+            entity_id=locked_a.id, request_id=None, correlation_id=None,
+            before={"catalog_model_id": str(locked_a.catalog_model_id), "revision_number": locked_a.revision_number},
+        )
+        await write_outbox_event(
+            session_a, event_type="CatalogModelRevisionDraftDeleted", aggregate_type="catalog_model_revision",
+            aggregate_id=locked_a.id, payload={"catalog_model_id": str(locked_a.catalog_model_id)}, correlation_id=None,
+        )
         await session_a.delete(locked_a)
         await session_a.flush()
 
@@ -511,3 +535,21 @@ async def test_two_independent_sessions_racing_revision_delete_only_one_succeeds
     async with session_factory() as verify:
         reread = await verify.get(CatalogModelRevision, revision_id)
         assert reread is None, "the row must be deleted exactly once — B must never re-create or duplicate it"
+
+        audit_count = (
+            await verify.execute(
+                select(func.count())
+                .select_from(AuditLog)
+                .where(AuditLog.entity_id == revision_id, AuditLog.action == "catalog.revision.delete_draft")
+            )
+        ).scalar_one()
+        assert audit_count == 1, f"expected exactly one audit_log row for this delete, got {audit_count}"
+
+        outbox_count = (
+            await verify.execute(
+                select(func.count())
+                .select_from(OutboxEvent)
+                .where(OutboxEvent.aggregate_id == revision_id, OutboxEvent.event_type == "CatalogModelRevisionDraftDeleted")
+            )
+        ).scalar_one()
+        assert outbox_count == 1, f"expected exactly one outbox_event row for this delete, got {outbox_count}"
