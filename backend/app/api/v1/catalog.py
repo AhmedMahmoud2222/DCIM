@@ -10,23 +10,43 @@ design.md §9.1, aligned plan §3.2): the four mutating endpoints below now requ
 new catalog model or revision is Administrator-only, by role, not merely by whichever
 permission code a deployment happens to grant. The two list (`read`) endpoints per model
 keep their existing `rack:read`/`equipment:read` gate unchanged; read access stays broad,
-only authoring is tightened."""
+only authoring is tightened.
+
+Phase 10A PR-3 (aligned plan §3.3, product principle 10): the same four endpoints now
+also write `write_audit_log`/`write_outbox_event`, synchronously in the same transaction
+as their domain mutation, closing the gap noted in spec §1.1 ("No audit or outbox writes
+on any existing catalog endpoint... unlike every other domain module"). These four
+endpoints are kept, not closed, even though `catalog_designer.py`'s
+draft->publish flow is now the complete, structured equivalent: `_phase2_helpers.py` and
+every rack/equipment test built on it (dozens of tests across this suite) mint a legacy
+model/revision through exactly this path as prerequisite scaffolding, and the frontend
+picker built in PR-2 still reads the legacy list endpoints directly — the plan's own
+§1.2 item 4 defers repointing that picker at the new `GET /catalog/models` family to
+PR-4, not PR-3. Closing these four routes now would break both of those, for no closed
+gap (product principle 10 is satisfied by adding audit/outbox, not by removing the
+routes) and no scope PR-3 actually claims."""
 
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.application.audit_service import write_audit_log
+from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_catalog_administrator, require_permission
 from app.core.errors import NotFoundError
 from app.domain.catalog.models import EquipmentModel, EquipmentModelRevision, RackModel, RackModelRevision
 
 router = APIRouter(tags=["catalog"])
+
+
+def _request_ids(request: Request) -> tuple[str | None, str | None]:
+    return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
 
 
 # ---------------------------------------------------------------- RackModel
@@ -65,10 +85,25 @@ class RackModelRevisionOut(BaseModel):
 
 @router.post("/rack-models", response_model=RackModelOut, status_code=201)
 async def create_rack_model(
-    body: RackModelIn, db: AsyncSession = Depends(get_db), ctx=Depends(require_catalog_administrator("catalog:manage"))
+    body: RackModelIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> RackModel:
     model = RackModel(**body.model_dump())
     db.add(model)
+    await db.flush()
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="rack_model.create", entity_type="rack_model", entity_id=model.id,
+        request_id=request_id, correlation_id=correlation_id,
+        after={"manufacturer": model.manufacturer, "model_name": model.model_name},
+    )
+    await write_outbox_event(
+        db, event_type="RackModelCreated", aggregate_type="rack_model", aggregate_id=model.id,
+        payload={"manufacturer": model.manufacturer, "model_name": model.model_name}, correlation_id=correlation_id,
+    )
     await db.commit()
     await db.refresh(model)
     return model
@@ -91,6 +126,7 @@ async def list_rack_models(
 async def create_rack_model_revision(
     rack_model_id: uuid.UUID,
     body: RackModelRevisionIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> RackModelRevision:
@@ -98,6 +134,18 @@ async def create_rack_model_revision(
         raise NotFoundError(f"RackModel {rack_model_id} not found.")
     revision = RackModelRevision(rack_model_id=rack_model_id, **body.model_dump())
     db.add(revision)
+    await db.flush()
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="rack_model_revision.create", entity_type="rack_model_revision",
+        entity_id=revision.id, request_id=request_id, correlation_id=correlation_id,
+        after={"rack_model_id": str(rack_model_id), "height_u": revision.height_u},
+    )
+    await write_outbox_event(
+        db, event_type="RackModelRevisionCreated", aggregate_type="rack_model_revision", aggregate_id=revision.id,
+        payload={"rack_model_id": str(rack_model_id)}, correlation_id=correlation_id,
+    )
     await db.commit()
     await db.refresh(revision)
     return revision
@@ -163,11 +211,24 @@ class EquipmentModelRevisionOut(BaseModel):
 @router.post("/equipment-models", response_model=EquipmentModelOut, status_code=201)
 async def create_equipment_model(
     body: EquipmentModelIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> EquipmentModel:
     model = EquipmentModel(**body.model_dump())
     db.add(model)
+    await db.flush()
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="equipment_model.create", entity_type="equipment_model", entity_id=model.id,
+        request_id=request_id, correlation_id=correlation_id,
+        after={"manufacturer": model.manufacturer, "model_name": model.model_name},
+    )
+    await write_outbox_event(
+        db, event_type="EquipmentModelCreated", aggregate_type="equipment_model", aggregate_id=model.id,
+        payload={"manufacturer": model.manufacturer, "model_name": model.model_name}, correlation_id=correlation_id,
+    )
     await db.commit()
     await db.refresh(model)
     return model
@@ -192,6 +253,7 @@ async def list_equipment_models(
 async def create_equipment_model_revision(
     equipment_model_id: uuid.UUID,
     body: EquipmentModelRevisionIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> EquipmentModelRevision:
@@ -199,6 +261,18 @@ async def create_equipment_model_revision(
         raise NotFoundError(f"EquipmentModel {equipment_model_id} not found.")
     revision = EquipmentModelRevision(equipment_model_id=equipment_model_id, **body.model_dump())
     db.add(revision)
+    await db.flush()
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="equipment_model_revision.create", entity_type="equipment_model_revision",
+        entity_id=revision.id, request_id=request_id, correlation_id=correlation_id,
+        after={"equipment_model_id": str(equipment_model_id)},
+    )
+    await write_outbox_event(
+        db, event_type="EquipmentModelRevisionCreated", aggregate_type="equipment_model_revision",
+        aggregate_id=revision.id, payload={"equipment_model_id": str(equipment_model_id)}, correlation_id=correlation_id,
+    )
     await db.commit()
     await db.refresh(revision)
     return revision
