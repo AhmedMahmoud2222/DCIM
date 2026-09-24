@@ -3,11 +3,39 @@ import { render } from "@testing-library/react";
 import { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-export function renderWithProviders(ui: ReactElement, { route = "/", path }: { route?: string; path?: string } = {}) {
+import { CurrentUser, useAuthStore } from "@/lib/authStore";
+
+export const ADMINISTRATOR_TEST_USER: CurrentUser = {
+  id: "user-admin",
+  email: "admin@example.com",
+  full_name: "Test Administrator",
+  role_names: ["Administrator"],
+  permission_codes: [
+    "catalog:read",
+    "catalog:read_draft",
+    "catalog:manage",
+    "catalog:publish",
+    "catalog:retire",
+  ],
+};
+
+export const VIEWER_TEST_USER: CurrentUser = {
+  id: "user-viewer",
+  email: "viewer@example.com",
+  full_name: "Test Viewer",
+  role_names: ["Viewer"],
+  permission_codes: ["catalog:read"],
+};
+
+export function renderWithProviders(
+  ui: ReactElement,
+  { route = "/", path, user = ADMINISTRATOR_TEST_USER }: { route?: string; path?: string; user?: CurrentUser | null } = {},
+) {
+  useAuthStore.getState().setSession("test-access-token", user);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[route]}>
         {path ? (
@@ -20,4 +48,5 @@ export function renderWithProviders(ui: ReactElement, { route = "/", path }: { r
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
 }

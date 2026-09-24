@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogHomePage } from "@/features/catalog-designer/CatalogHomePage";
 import * as api from "@/features/catalog-designer/api";
-import { renderWithProviders } from "@/test/renderWithProviders";
+import { renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
 import { CatalogModel, Manufacturer, Page } from "@/types";
 
 vi.mock("@/features/catalog-designer/api");
@@ -64,5 +64,13 @@ describe("CatalogHomePage", () => {
     await waitFor(() =>
       expect(api.listCatalogModels).toHaveBeenCalledWith(expect.objectContaining({ q: "R42" })),
     );
+  });
+
+  it("hides New Manufacturer and New Model controls for a non-administrator", async () => {
+    renderWithProviders(<CatalogHomePage />, { user: VIEWER_TEST_USER });
+
+    expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New Manufacturer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New Model" })).not.toBeInTheDocument();
   });
 });

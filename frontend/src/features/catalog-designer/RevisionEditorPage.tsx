@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 import {
   createNetworkPort,
   createMonitoringMetric,
@@ -30,6 +31,7 @@ export function RevisionEditorPage() {
   const { revisionId } = useParams<{ revisionId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isCatalogAdministrator = useIsCatalogAdministrator();
 
   const revisionQuery = useQuery({
     queryKey: ["catalog", "revisions", revisionId],
@@ -37,13 +39,27 @@ export function RevisionEditorPage() {
     enabled: !!revisionId,
   });
 
+  // Every mutation below changes fields that are also cached under the parent model's own
+  // query key (ModelDetailPage's revision-history table shows lifecycle_status/published_at/
+  // retired_at) — invalidating only the revision-level key would leave that table stale for
+  // up to the query client's staleTime after navigating back, and would leave a subsequent
+  // mutation on this page racing a stale `revision.version` read from an un-refetched cache,
+  // which is exactly the source of an avoidable If-Match 409 this invalidation prevents.
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ["catalog", "revisions", revisionId] });
+    if (revisionQuery.data) {
+      queryClient.invalidateQueries({ queryKey: ["catalog", "models", revisionQuery.data.catalog_model_id] });
+    }
   }
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteDraftRevision(revisionId!, revisionQuery.data!.version),
-    onSuccess: () => navigate(`/admin/catalog/models/${revisionQuery.data!.catalog_model_id}`),
+    onSuccess: () => {
+      const catalogModelId = revisionQuery.data!.catalog_model_id;
+      queryClient.invalidateQueries({ queryKey: ["catalog", "revisions", revisionId] });
+      queryClient.invalidateQueries({ queryKey: ["catalog", "models", catalogModelId] });
+      navigate(`/admin/catalog/models/${catalogModelId}`);
+    },
   });
 
   if (revisionQuery.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
@@ -52,6 +68,7 @@ export function RevisionEditorPage() {
   if (!revision) return null;
 
   const isDraft = revision.lifecycle_status === "draft";
+  const canEditDraft = isDraft && isCatalogAdministrator;
 
   return (
     <div>
@@ -64,7 +81,7 @@ export function RevisionEditorPage() {
           <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[revision.lifecycle_status] ?? "bg-slate-700"}`}>
             {revision.lifecycle_status}
           </span>
-          {isDraft && (
+          {canEditDraft && (
             <button
               onClick={() => deleteMutation.mutate()}
               disabled={deleteMutation.isPending}
@@ -77,13 +94,15 @@ export function RevisionEditorPage() {
       </div>
       {deleteMutation.isError && <p className="mb-4 text-sm text-red-400">{(deleteMutation.error as Error).message}</p>}
 
-      <ScalarFieldsSection revision={revision} readOnly={!isDraft} onSaved={invalidate} />
+      <ScalarFieldsSection revision={revision} readOnly={!canEditDraft} onSaved={invalidate} />
 
-      <TemplateEditors revision={revision} readOnly={!isDraft} onChanged={invalidate} />
+      <TemplateEditors revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
 
-      {isDraft && <PublishPanel revision={revision} onPublished={invalidate} />}
-      {revision.lifecycle_status === "published" && <RetirePanel revision={revision} onRetired={invalidate} />}
-      {revision.lifecycle_status === "retired" && <RetireOverridePanel revision={revision} onChanged={invalidate} />}
+      {canEditDraft && <PublishPanel revision={revision} onPublished={invalidate} />}
+      {revision.lifecycle_status === "published" && isCatalogAdministrator && <RetirePanel revision={revision} onRetired={invalidate} />}
+      {revision.lifecycle_status === "retired" && isCatalogAdministrator && (
+        <RetireOverridePanel revision={revision} onChanged={invalidate} />
+      )}
     </div>
   );
 }

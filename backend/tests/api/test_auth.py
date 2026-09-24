@@ -36,6 +36,23 @@ async def test_me_returns_current_user(client, auth_headers):
     assert "@example.com" in resp.json()["email"]
 
 
+async def test_me_returns_role_names_and_permission_codes(client, auth_headers):
+    headers = await auth_headers("Administrator")
+    resp = await client.get("/api/v1/auth/me", headers=headers)
+    body = resp.json()
+    assert body["role_names"] == ["Administrator"]
+    assert "catalog:manage" in body["permission_codes"]
+    assert "catalog:read" in body["permission_codes"]
+
+
+async def test_me_role_names_reflect_the_caller_not_just_permissions(client, auth_headers):
+    headers = await auth_headers("Viewer")
+    resp = await client.get("/api/v1/auth/me", headers=headers)
+    body = resp.json()
+    assert body["role_names"] == ["Viewer"]
+    assert "catalog:manage" not in body["permission_codes"]
+
+
 async def test_refresh_requires_csrf_header(client, make_user):
     await make_user("carol@example.com", "correct horse battery staple", "Viewer")
     await client.post("/api/v1/auth/login", json={"email": "carol@example.com", "password": "correct horse battery staple"})

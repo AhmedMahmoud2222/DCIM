@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ModelDetailPage } from "@/features/catalog-designer/ModelDetailPage";
 import * as api from "@/features/catalog-designer/api";
-import { renderWithProviders } from "@/test/renderWithProviders";
+import { renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
 import { CatalogModelDetail, CatalogModelRevision } from "@/types";
 
 vi.mock("@/features/catalog-designer/api");
@@ -90,5 +90,36 @@ describe("ModelDetailPage", () => {
     await user.click(screen.getByRole("button", { name: "New Draft" }));
 
     await waitFor(() => expect(api.createDraftRevision).toHaveBeenCalledWith("model-1"));
+  });
+
+  it("re-fetches the model after creating a draft, so the revision list isn't left stale", async () => {
+    const user = userEvent.setup();
+    const newDraft = { ...modelDetail.revisions[0], id: "rev-3", revision_number: 3, lifecycle_status: "draft" } as CatalogModelRevision;
+    vi.mocked(api.createDraftRevision).mockResolvedValue(newDraft);
+
+    renderWithProviders(<ModelDetailPage />, { route: "/admin/catalog/models/model-1", path: "/admin/catalog/models/:modelId" });
+    await screen.findByRole("heading", { name: "R4200" });
+
+    const callsBefore = vi.mocked(api.getCatalogModel).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "New Draft" }));
+
+    // Cache invalidation triggers a refetch of the model-detail query, not just a
+    // client-side merge — the source of truth after a mutation is the server, since a
+    // stale merge here is exactly what causes a subsequent If-Match write to race a
+    // version the client never actually re-confirmed.
+    await waitFor(() => expect(vi.mocked(api.getCatalogModel).mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it("hides Edit/New Draft/Clone controls for a non-administrator", async () => {
+    renderWithProviders(<ModelDetailPage />, {
+      route: "/admin/catalog/models/model-1",
+      path: "/admin/catalog/models/:modelId",
+      user: VIEWER_TEST_USER,
+    });
+    await screen.findByRole("heading", { name: "R4200" });
+
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New Draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clone" })).not.toBeInTheDocument();
   });
 });

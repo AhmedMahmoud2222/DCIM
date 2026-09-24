@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 import { cloneRevision, createDraftRevision, getCatalogModel, updateCatalogModelMetadata } from "@/features/catalog-designer/api";
 
 const LIFECYCLE_COLORS: Record<string, string> = {
@@ -14,6 +15,7 @@ export function ModelDetailPage() {
   const { modelId } = useParams<{ modelId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isCatalogAdministrator = useIsCatalogAdministrator();
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [description, setDescription] = useState("");
   const [tagsInput, setTagsInput] = useState("");
@@ -41,12 +43,18 @@ export function ModelDetailPage() {
 
   const createDraftMutation = useMutation({
     mutationFn: () => createDraftRevision(modelId!),
-    onSuccess: (revision) => navigate(`/admin/catalog/revisions/${revision.id}`),
+    onSuccess: (revision) => {
+      queryClient.invalidateQueries({ queryKey: ["catalog", "models", modelId] });
+      navigate(`/admin/catalog/revisions/${revision.id}`);
+    },
   });
 
   const cloneMutation = useMutation({
     mutationFn: (fromRevisionId: string) => cloneRevision(modelId!, fromRevisionId),
-    onSuccess: (revision) => navigate(`/admin/catalog/revisions/${revision.id}`),
+    onSuccess: (revision) => {
+      queryClient.invalidateQueries({ queryKey: ["catalog", "models", modelId] });
+      navigate(`/admin/catalog/revisions/${revision.id}`);
+    },
   });
 
   function startEditingMetadata() {
@@ -86,13 +94,13 @@ export function ModelDetailPage() {
       <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Metadata</h2>
-          {!editingMetadata && (
+          {isCatalogAdministrator && !editingMetadata && (
             <button onClick={startEditingMetadata} className="rounded bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700">
               Edit
             </button>
           )}
         </div>
-        {editingMetadata ? (
+        {isCatalogAdministrator && editingMetadata ? (
           <form onSubmit={handleMetadataSubmit} className="space-y-2">
             <textarea
               value={description}
@@ -142,13 +150,15 @@ export function ModelDetailPage() {
       <div className="rounded border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Revisions</h2>
-          <button
-            onClick={() => createDraftMutation.mutate()}
-            disabled={createDraftMutation.isPending}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-          >
-            {createDraftMutation.isPending ? "Creating…" : "New Draft"}
-          </button>
+          {isCatalogAdministrator && (
+            <button
+              onClick={() => createDraftMutation.mutate()}
+              disabled={createDraftMutation.isPending}
+              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {createDraftMutation.isPending ? "Creating…" : "New Draft"}
+            </button>
+          )}
         </div>
         {createDraftMutation.isError && <p className="mb-3 text-sm text-red-400">{(createDraftMutation.error as Error).message}</p>}
         {cloneMutation.isError && <p className="mb-3 text-sm text-red-400">{(cloneMutation.error as Error).message}</p>}
@@ -179,7 +189,7 @@ export function ModelDetailPage() {
                 <td className="py-2 text-slate-400">{revision.published_at ? new Date(revision.published_at).toLocaleDateString() : "—"}</td>
                 <td className="py-2 text-slate-400">{revision.retired_at ? new Date(revision.retired_at).toLocaleDateString() : "—"}</td>
                 <td className="py-2 text-right">
-                  {revision.lifecycle_status !== "draft" && (
+                  {isCatalogAdministrator && revision.lifecycle_status !== "draft" && (
                     <button
                       onClick={() => cloneMutation.mutate(revision.id)}
                       disabled={cloneMutation.isPending}

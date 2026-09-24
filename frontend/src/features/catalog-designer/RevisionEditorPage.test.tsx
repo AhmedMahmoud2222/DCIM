@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "@/features/catalog-designer/api";
 import { RevisionEditorPage } from "@/features/catalog-designer/RevisionEditorPage";
-import { renderWithProviders } from "@/test/renderWithProviders";
+import { renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
 import { CatalogModelRevisionDetail } from "@/types";
 
 vi.mock("@/features/catalog-designer/api");
@@ -122,5 +122,46 @@ describe("RevisionEditorPage", () => {
     await user.click(screen.getByRole("button", { name: "Delete draft" }));
 
     await waitFor(() => expect(api.deleteDraftRevision).toHaveBeenCalledWith("rev-1", 1));
+  });
+
+  it("invalidates the parent model's cache on delete, not just the revision's own", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.deleteDraftRevision).mockResolvedValue(undefined);
+
+    const { queryClient } = renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+    // Seed the cache the way ModelDetailPage would have left it, so we can observe whether
+    // deleting a draft here actually invalidates it too -- the gap this fix closes.
+    queryClient.setQueryData(["catalog", "models", "model-1"], { id: "model-1" });
+
+    await user.click(screen.getByRole("button", { name: "Delete draft" }));
+
+    await waitFor(() => expect(api.deleteDraftRevision).toHaveBeenCalled());
+    expect(queryClient.getQueryState(["catalog", "models", "model-1"])?.isInvalidated).toBe(true);
+  });
+
+  it("invalidates the parent model's cache on publish, not just the revision's own", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.publishRevision).mockResolvedValue(makeRevision({ lifecycle_status: "published", version: 2 }));
+
+    const { queryClient } = renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+    queryClient.setQueryData(["catalog", "models", "model-1"], { id: "model-1" });
+
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(api.publishRevision).toHaveBeenCalled());
+    await waitFor(() => expect(queryClient.getQueryState(["catalog", "models", "model-1"])?.isInvalidated).toBe(true));
+  });
+
+  it("hides Delete/Publish controls for a non-administrator, and Retire on a published revision", async () => {
+    vi.mocked(api.getRevision).mockResolvedValue(
+      makeRevision({ lifecycle_status: "published", published_at: "2026-01-05T00:00:00Z" }),
+    );
+
+    renderWithProviders(<RevisionEditorPage />, { ...routeOptions, user: VIEWER_TEST_USER });
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    expect(screen.queryByRole("button", { name: "Retire this revision" })).not.toBeInTheDocument();
   });
 });

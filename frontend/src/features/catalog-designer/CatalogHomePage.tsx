@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 import { createCatalogModel, createManufacturer, listCatalogModels, listManufacturers } from "@/features/catalog-designer/api";
 import { CATALOG_CATEGORIES } from "@/types";
 
@@ -13,6 +14,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function CatalogHomePage() {
   const queryClient = useQueryClient();
+  const isCatalogAdministrator = useIsCatalogAdministrator();
   const [manufacturerQuery, setManufacturerQuery] = useState("");
   const [modelQuery, setModelQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -87,15 +89,17 @@ export function CatalogHomePage() {
       <section className="mb-8 rounded border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Manufacturers</h2>
-          <button
-            onClick={() => setShowManufacturerForm((v) => !v)}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-          >
-            {showManufacturerForm ? "Cancel" : "New Manufacturer"}
-          </button>
+          {isCatalogAdministrator && (
+            <button
+              onClick={() => setShowManufacturerForm((v) => !v)}
+              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+            >
+              {showManufacturerForm ? "Cancel" : "New Manufacturer"}
+            </button>
+          )}
         </div>
 
-        {showManufacturerForm && (
+        {isCatalogAdministrator && showManufacturerForm && (
           <form onSubmit={handleManufacturerSubmit} className="mb-4 flex gap-2">
             <input
               value={newManufacturerName}
@@ -145,15 +149,17 @@ export function CatalogHomePage() {
       <section className="rounded border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Models</h2>
-          <button
-            onClick={() => setShowModelForm((v) => !v)}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-          >
-            {showModelForm ? "Cancel" : "New Model"}
-          </button>
+          {isCatalogAdministrator && (
+            <button
+              onClick={() => setShowModelForm((v) => !v)}
+              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+            >
+              {showModelForm ? "Cancel" : "New Model"}
+            </button>
+          )}
         </div>
 
-        {showModelForm && (
+        {isCatalogAdministrator && showModelForm && (
           <form onSubmit={handleModelSubmit} className="mb-4 grid max-w-2xl grid-cols-2 gap-3 rounded border border-slate-800 bg-slate-950 p-4">
             <select
               value={newModelManufacturerId}
