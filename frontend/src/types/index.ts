@@ -548,10 +548,38 @@ export interface MonitoringMetricTemplate {
   sort_order: number;
 }
 
+export interface CatalogGraphicMarker {
+  id: string;
+  catalog_graphic_id: string;
+  revision_version: number;
+  marker_type: "network_port" | "power_supply" | "module" | "other";
+  network_port_template_id: string | null;
+  power_supply_template_id: string | null;
+  label: string | null;
+  marker_x: number;
+  marker_y: number;
+  sort_order: number;
+}
+
+export interface CatalogGraphic {
+  id: string;
+  catalog_model_revision_id: string;
+  revision_version: number;
+  side: "front" | "rear";
+  original_filename: string;
+  mime_type: string;
+  file_size_bytes: number;
+  width_px: number;
+  height_px: number;
+  uploaded_at: string;
+  markers: CatalogGraphicMarker[];
+}
+
 export interface CatalogModelRevisionDetail extends CatalogModelRevision {
   network_ports: NetworkPortTemplate[];
   power_supplies: PowerSupplyTemplate[];
   monitoring_metrics: MonitoringMetricTemplate[];
+  graphics: CatalogGraphic[];
 }
 
 export interface ValidationIssue {

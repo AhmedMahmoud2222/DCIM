@@ -88,4 +88,17 @@ export async function apiFetch<T>(
   return (await res.json()) as T;
 }
 
+/** For endpoints that return raw bytes (an image), not JSON — apiFetch always calls
+ * res.json(), which would fail on these. A plain `<img src="...">` can't carry the
+ * Authorization bearer header this API requires, so callers fetch the bytes here and
+ * turn them into an object URL themselves (see GraphicsEditorPage.tsx). */
+export async function authenticatedFetchBlob(path: string): Promise<Blob> {
+  const token = useAuthStore.getState().accessToken;
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(`${API_BASE}${path}`, { headers, credentials: "include" });
+  if (!res.ok) await parseProblemResponse(res);
+  return res.blob();
+}
+
 export { refreshAccessToken };

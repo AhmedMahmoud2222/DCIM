@@ -52,6 +52,13 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Phase 10A PR-5: local-filesystem-backed storage for catalog revision graphics
+    # (front/rear equipment photos). Relative paths resolve against the process's
+    # working directory (matching how `.env`/`alembic.ini` are already located there);
+    # an absolute path is used as-is. See app/infrastructure/storage/.
+    catalog_graphics_storage_root: str = "media/catalog/graphics"
+    catalog_graphics_max_upload_bytes: int = 10 * 1024 * 1024
+
     @field_validator("database_url")
     @classmethod
     def _validate_db_url(cls, v: str) -> str:

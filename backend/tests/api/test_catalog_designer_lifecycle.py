@@ -78,7 +78,13 @@ async def test_full_rack_lifecycle_create_edit_validate_publish_clone_retire(cli
 
     valid = await client.post(f"/api/v1/catalog/revisions/{revision['id']}/validate", headers=headers)
     assert valid.status_code == 200, valid.text
-    assert valid.json() == {"valid": True, "errors": [], "warnings": []}
+    valid_summary = valid.json()
+    assert valid_summary["valid"] is True
+    assert valid_summary["errors"] == []
+    # Phase 10A PR-5: missing front/rear graphics are non-blocking warnings, never
+    # errors — this revision never uploads either, so both are expected here.
+    warning_codes = {(w["field"], w["code"]) for w in valid_summary["warnings"]}
+    assert warning_codes == {("graphics.front", "graphic_missing"), ("graphics.rear", "graphic_missing")}
 
     # Publish re-runs validation and succeeds; verify audit + outbox committed atomically.
     publish_resp = await client.post(f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
