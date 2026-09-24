@@ -16,19 +16,41 @@ Three trigger functions, per spec §5.4:
   first exists) but not yet attached to any table — migrations 0018/0019 attach it to each
   new child table `BEFORE INSERT OR UPDATE OR DELETE`.
 - `fn_guard_catalog_model_revision_lifecycle()` — the narrower trigger on
-  `catalog_model_revision` itself: `draft` rows are fully mutable; `published`/`retired`
-  rows reject any column change outside a small per-transition allowlist, compared via
-  `to_jsonb(NEW) - allowed_keys IS DISTINCT FROM to_jsonb(OLD) - allowed_keys` rather than
-  an explicit column-by-column comparison, so a later migration (0020) can add new nullable
-  columns (the legacy bridge FKs) without this function needing to change — an added column
-  defaults to protected (compared, not exempted) unless explicitly added to an allowed-keys
-  list, which is the safe default.
+  `catalog_model_revision` itself. `draft -> draft` stays fully mutable. `draft ->
+  published` requires coherent publication metadata (`published_at`/`published_by_user_id`
+  set, no retirement fields set) and — once migration 0020 adds the bridge columns and
+  replaces this function to also check them — the category-appropriate legacy bridge FK
+  set and the other one left NULL; every other column may still change in this same
+  UPDATE, so a service can finalize remaining draft fields and publish in one statement.
+  `draft -> retired` is rejected outright (the only way out of a draft is `-> published` or
+  deletion, per spec §5.1/§5.6). `published`/`retired` rows otherwise reject any column
+  change outside a small per-transition allowlist, compared via `to_jsonb(NEW) -
+  allowed_keys IS DISTINCT FROM to_jsonb(OLD) - allowed_keys` rather than an explicit
+  column-by-column comparison, so migration 0020's new nullable bridge columns don't
+  require touching that comparison — an added column defaults to protected (compared, not
+  exempted) unless explicitly added to an allowed-keys list, which is the safe default.
 - `fn_reject_catalog_model_identity_change()` — `CatalogModel.manufacturer_id`/`category`/
   `model_name`/`model_number` become immutable once any of its revisions has been
-  published; `description`/`tags`/`status` are never locked (spec §5.4: "draft-only
-  editorial metadata").
+  published. Locks every `catalog_model_revision` row for this model with `FOR UPDATE`
+  (unfiltered by status — filtering first would let a lock candidate that is still
+  `'draft'` in this transaction's own snapshot skip the lock entirely) before checking, so
+  an identity edit that races a concurrent `draft -> published` transition on one of this
+  model's revisions is forced to wait for that transition to finish and then observes its
+  committed outcome, rather than the pre-race `'draft'` snapshot. `description`/`tags`/
+  `status` are never locked by this trigger (see the note on spec §5.4's own ambiguity on
+  this point in the accompanying PR report).
 - `fn_reject_manufacturer_name_change()` — `Manufacturer.name` becomes immutable once any
-  of its models has a published revision (spec §5.4's same paragraph).
+  of its models has a published revision (spec §5.4's same paragraph). Uses the same
+  unfiltered-then-`FOR UPDATE OF cmr` locking pattern as the identity trigger above, for
+  the same race-closing reason.
+
+Revision-lock discipline: the only row ever explicitly locked across tables by these
+identity triggers is `catalog_model_revision` (via `FOR UPDATE`/`FOR UPDATE OF cmr`); a
+revision's own `UPDATE` (the publish transition) never takes an explicit lock on
+`catalog_model`/`manufacturer` in return — it only reads `catalog_model.category` with a
+plain `SELECT`. Every cross-table wait is therefore funneled through the same lock
+(`catalog_model_revision` rows) in the same direction, so there is no lock-order cycle
+between the identity triggers and the lifecycle trigger to deadlock on.
 
 Revision ID: 0017_catalog_model
 Revises: 0016_network_runtime_defaults
@@ -217,7 +239,19 @@ def upgrade() -> None:
         DECLARE
           allowed_change_keys TEXT[];
         BEGIN
-          IF OLD.lifecycle_status = 'draft' THEN
+          IF OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status = 'draft' THEN
+            RETURN NEW;
+          END IF;
+
+          IF OLD.lifecycle_status = 'draft' AND NEW.lifecycle_status = 'published' THEN
+            IF NEW.published_at IS NULL OR NEW.published_by_user_id IS NULL THEN
+              RAISE EXCEPTION 'catalog_model_revision % cannot publish without published_at and published_by_user_id', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
+            IF NEW.retired_at IS NOT NULL OR NEW.retired_by_user_id IS NOT NULL OR NEW.retirement_reason IS NOT NULL THEN
+              RAISE EXCEPTION 'catalog_model_revision % cannot set retirement fields while publishing', OLD.id
+                USING ERRCODE = 'integrity_constraint_violation';
+            END IF;
             RETURN NEW;
           END IF;
 
@@ -262,10 +296,23 @@ def upgrade() -> None:
              OR NEW.category IS DISTINCT FROM OLD.category
              OR NEW.model_name IS DISTINCT FROM OLD.model_name
              OR NEW.model_number IS DISTINCT FROM OLD.model_number THEN
-            SELECT EXISTS (
-              SELECT 1 FROM catalog_model_revision
-              WHERE catalog_model_id = OLD.id AND lifecycle_status IN ('published', 'retired')
-            ) INTO v_published_exists;
+            -- Lock every revision row for this model *unfiltered* by status, then check
+            -- status afterward: filtering by status in the same WHERE clause as FOR UPDATE
+            -- would exclude a row that is still 'draft' in this transaction's snapshot from
+            -- the lock attempt entirely, letting a concurrent draft -> published transition
+            -- on that exact row commit unobserved. Locking unconditionally forces this
+            -- transaction to wait for any such in-flight transition to finish, then reads
+            -- its committed outcome.
+            -- FOR UPDATE cannot appear directly in an aggregate query, so the lock is taken
+            -- in a non-aggregate subquery and bool_or() is applied to its result afterward.
+            SELECT COALESCE(bool_or(is_published), false)
+              INTO v_published_exists
+              FROM (
+                SELECT lifecycle_status IN ('published', 'retired') AS is_published
+                FROM catalog_model_revision
+                WHERE catalog_model_id = OLD.id
+                FOR UPDATE
+              ) locked_revisions;
             IF v_published_exists THEN
               RAISE EXCEPTION 'catalog_model % identity fields are immutable once any revision has been published', OLD.id
                 USING ERRCODE = 'integrity_constraint_violation';
@@ -291,11 +338,22 @@ def upgrade() -> None:
           v_published_exists BOOLEAN;
         BEGIN
           IF NEW.name IS DISTINCT FROM OLD.name THEN
-            SELECT EXISTS (
-              SELECT 1 FROM catalog_model_revision cmr
-              JOIN catalog_model cm ON cm.id = cmr.catalog_model_id
-              WHERE cm.manufacturer_id = OLD.id AND cmr.lifecycle_status IN ('published', 'retired')
-            ) INTO v_published_exists;
+            -- Same unfiltered-then-lock pattern as fn_reject_catalog_model_identity_change(),
+            -- and for the same reason: FOR UPDATE OF cmr locks every catalog_model_revision
+            -- row for this manufacturer's models regardless of its current status, so a
+            -- concurrent draft -> published transition on one of them is waited out rather
+            -- than missed.  Only cmr rows are locked, never cm — see the module docstring's
+            -- "Revision-lock discipline" note.
+            -- Same aggregate/FOR UPDATE split as fn_reject_catalog_model_identity_change().
+            SELECT COALESCE(bool_or(is_published), false)
+              INTO v_published_exists
+              FROM (
+                SELECT cmr.lifecycle_status IN ('published', 'retired') AS is_published
+                FROM catalog_model_revision cmr
+                JOIN catalog_model cm ON cm.id = cmr.catalog_model_id
+                WHERE cm.manufacturer_id = OLD.id
+                FOR UPDATE OF cmr
+              ) locked_revisions;
             IF v_published_exists THEN
               RAISE EXCEPTION 'manufacturer % name is immutable while any of its models has a published revision', OLD.id
                 USING ERRCODE = 'integrity_constraint_violation';

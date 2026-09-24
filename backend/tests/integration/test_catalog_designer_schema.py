@@ -65,16 +65,38 @@ async def _make_draft(db_session, catalog_model_id, user_id, revision_number: in
     return revision
 
 
-async def _publish(db_session, revision: CatalogModelRevision, user_id) -> None:
+async def _publish(db_session, revision: CatalogModelRevision, user_id, category: str = "equipment") -> None:
     """Simulates the future PR-3 publish service's minimal write — this PR does not
-    implement the legacy-bridge creation (that is application code, out of PR-1's scope),
-    only sets the columns the DB trigger allows a draft -> published transition to set."""
+    implement the full legacy-bridge-creation service (find-or-create, unit conversion,
+    §4.7), only enough of it, by hand via raw SQL, to satisfy what the draft -> published
+    trigger branch now requires: coherent publication metadata plus the category-
+    appropriate legacy bridge column set. `category` must match the revision's own
+    `CatalogModel.category` (default 'equipment', matching `_make_model`'s own default)."""
+    if category == "rack":
+        legacy_model = RackModel(manufacturer=f"Bridge Co {uuid.uuid4().hex[:8]}", model_name=f"Bridge Rack {uuid.uuid4().hex[:8]}")
+        db_session.add(legacy_model)
+        await db_session.flush()
+        legacy_revision = RackModelRevision(rack_model_id=legacy_model.id, height_u=1, width_mm=1, depth_mm=1)
+        db_session.add(legacy_revision)
+        await db_session.flush()
+        bridge_column = "legacy_rack_model_revision_id"
+    elif category == "equipment":
+        legacy_model = EquipmentModel(manufacturer=f"Bridge Co {uuid.uuid4().hex[:8]}", model_name=f"Bridge Equip {uuid.uuid4().hex[:8]}")
+        db_session.add(legacy_model)
+        await db_session.flush()
+        legacy_revision = EquipmentModelRevision(equipment_model_id=legacy_model.id)
+        db_session.add(legacy_revision)
+        await db_session.flush()
+        bridge_column = "legacy_equipment_model_revision_id"
+    else:
+        raise ValueError(f"_publish() helper only supports rack/equipment categories, got {category!r}")
+
     await db_session.execute(
         text(
-            "UPDATE catalog_model_revision SET lifecycle_status = 'published', "
-            "published_at = now(), published_by_user_id = :uid WHERE id = :id"
+            f"UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+            f"published_by_user_id = :uid, {bridge_column} = :legacy WHERE id = :id"
         ),
-        {"uid": str(user_id), "id": str(revision.id)},
+        {"uid": str(user_id), "legacy": str(legacy_revision.id), "id": str(revision.id)},
     )
     await db_session.commit()
 
@@ -474,6 +496,186 @@ async def test_draft_revision_scalar_fields_remain_mutable(db_session):
     assert revision.rated_power_w == pytest.approx(123.45)
 
 
+# ------------------------- Lifecycle trigger follow-up: explicit transition table (PR-1 follow-up finding #1)
+
+
+async def test_draft_to_retired_transition_is_rejected(db_session):
+    """The only way out of 'draft' is '-> published' (or outright deletion, §5.1); a draft
+    can never become 'retired' directly. Before this fix, `OLD.lifecycle_status = 'draft'`
+    alone returned NEW unconditionally, so this transition — and any other column change
+    smuggled in alongside it — silently succeeded."""
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id)
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="cannot transition"):
+        await db_session.execute(
+            text(
+                "UPDATE catalog_model_revision SET lifecycle_status = 'retired', retired_at = now(), "
+                "retired_by_user_id = :uid, retirement_reason = 'skip draft' WHERE id = :id"
+            ),
+            {"uid": str(user.id), "id": str(revision.id)},
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_draft_to_published_without_publication_metadata_is_rejected(db_session):
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id)
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="cannot publish without published_at"):
+        await db_session.execute(
+            text("UPDATE catalog_model_revision SET lifecycle_status = 'published' WHERE id = :id"),
+            {"id": str(revision.id)},
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_draft_to_published_with_retirement_fields_set_is_rejected(db_session):
+    """A draft->published UPDATE that also sneaks in retirement metadata (which should only
+    ever be set on a later published->retired transition) is rejected, even though
+    published_at/published_by_user_id are both present."""
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id)
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+    legacy_model = EquipmentModel(manufacturer="Retire Fields Co", model_name="Retire Fields Bridge")
+    db_session.add(legacy_model)
+    await db_session.flush()
+    legacy_revision = EquipmentModelRevision(equipment_model_id=legacy_model.id)
+    db_session.add(legacy_revision)
+    await db_session.flush()
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="cannot set retirement fields while publishing"):
+        await db_session.execute(
+            text(
+                "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+                "published_by_user_id = :uid, legacy_equipment_model_revision_id = :legacy, retired_at = now() "
+                "WHERE id = :id"
+            ),
+            {"uid": str(user.id), "legacy": str(legacy_revision.id), "id": str(revision.id)},
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_draft_to_published_without_bridge_is_rejected(db_session):
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id)
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="must set exactly legacy_equipment_model_revision_id"):
+        await db_session.execute(
+            text(
+                "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+                "published_by_user_id = :uid WHERE id = :id"
+            ),
+            {"uid": str(user.id), "id": str(revision.id)},
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_draft_to_published_with_mismatched_bridge_category_is_rejected(db_session):
+    """A rack-category model publishing with an equipment bridge (or vice versa) is
+    rejected — 'category-appropriate' means specifically the matching one, not just any."""
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id, category="rack", model_name="Mismatched Bridge Rack")
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+    legacy_model = EquipmentModel(manufacturer="Mismatch Co", model_name="Mismatch Bridge")
+    db_session.add(legacy_model)
+    await db_session.flush()
+    legacy_revision = EquipmentModelRevision(equipment_model_id=legacy_model.id)
+    db_session.add(legacy_revision)
+    await db_session.flush()
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="must set exactly legacy_rack_model_revision_id"):
+        await db_session.execute(
+            text(
+                "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+                "published_by_user_id = :uid, legacy_equipment_model_revision_id = :legacy WHERE id = :id"
+            ),
+            {"uid": str(user.id), "legacy": str(legacy_revision.id), "id": str(revision.id)},
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_draft_to_published_for_unsupported_category_is_rejected(db_session):
+    """Spec §4.1: Phase 10A implements the legacy-bridge workflow only for category IN
+    ('rack', 'equipment'); every other category is rejected at the API layer today, and —
+    since no bridge column could ever apply to them — this trigger rejects it too, as
+    defense in depth."""
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id, category="network_device", model_name="Unsupported Category")
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="has no legacy bridge in this phase"):
+        await db_session.execute(
+            text(
+                "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+                "published_by_user_id = :uid WHERE id = :id"
+            ),
+            {"uid": str(user.id), "id": str(revision.id)},
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_draft_to_published_valid_sequence_succeeds(db_session):
+    """The positive case: coherent metadata plus the correct bridge column, in the same
+    UPDATE that also finalizes a remaining draft field — proving the trigger does not
+    force a separate statement or block PR-3's planned one-transaction publish flow
+    (insert the legacy revision row, then a single UPDATE setting lifecycle_status,
+    publication metadata, and the bridge FK together)."""
+    manufacturer = await _make_manufacturer(db_session)
+    model = await _make_model(db_session, manufacturer.id, category="rack", model_name="Valid Publish Rack")
+    user = await _make_user(db_session)
+    revision = await _make_draft(db_session, model.id, user.id)
+    legacy_model = RackModel(manufacturer="Valid Publish Co", model_name="Valid Publish Bridge")
+    db_session.add(legacy_model)
+    await db_session.flush()
+    legacy_revision = RackModelRevision(rack_model_id=legacy_model.id, height_u=1, width_mm=1, depth_mm=1)
+    db_session.add(legacy_revision)
+    await db_session.flush()
+
+    await db_session.execute(
+        text(
+            "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+            "published_by_user_id = :uid, legacy_rack_model_revision_id = :legacy, rack_unit_height = 4 "
+            "WHERE id = :id"
+        ),
+        {"uid": str(user.id), "legacy": str(legacy_revision.id), "id": str(revision.id)},
+    )
+    # The other half of §4.7's two-way bridge pair, in the same transaction (a real
+    # publish service would do both writes before committing).
+    await db_session.execute(
+        text("UPDATE rack_model_revision SET bridged_from_catalog_revision_id = :rev WHERE id = :id"),
+        {"rev": str(revision.id), "id": str(legacy_revision.id)},
+    )
+    await db_session.commit()
+    await db_session.refresh(revision)
+    assert revision.lifecycle_status == "published"
+    assert revision.legacy_rack_model_revision_id == legacy_revision.id
+    assert revision.rack_unit_height == 4
+
+    # And the bridge is now locked at the DB level too (§4.7/§5.4).
+    with pytest.raises(sqlalchemy.exc.DBAPIError, match="immutable"):
+        await db_session.execute(
+            text("UPDATE rack_model_revision SET height_u = 43 WHERE id = :id"), {"id": str(legacy_revision.id)}
+        )
+        await db_session.commit()
+    await db_session.rollback()
+
+
 # --------------------------------------------------------------------- Identity-lock triggers
 
 
@@ -652,9 +854,18 @@ async def test_concurrent_publish_and_child_insert_serialize_via_parent_lock(db_
         model = await _make_model(setup_session, manufacturer.id)
         user = await _make_user(setup_session)
         revision = await _make_draft(setup_session, model.id, user.id)
+        # The draft -> published trigger branch now requires the category-appropriate
+        # legacy bridge to be set (finding #1 of the PR-1 follow-up) — create it here, out
+        # of band, exactly as the earlier legacy-bridge tests do.
+        legacy_model = EquipmentModel(manufacturer="Concurrency Co", model_name="Concurrency Bridge Target")
+        setup_session.add(legacy_model)
+        await setup_session.flush()
+        legacy_revision = EquipmentModelRevision(equipment_model_id=legacy_model.id)
+        setup_session.add(legacy_revision)
         await setup_session.commit()
         revision_id = revision.id
         user_id = user.id
+        legacy_revision_id = legacy_revision.id
 
     conn_a = await db_engine.connect()
     conn_b = await db_engine.connect()
@@ -668,9 +879,9 @@ async def test_concurrent_publish_and_child_insert_serialize_via_parent_lock(db_
         await conn_a.execute(
             text(
                 "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
-                "published_by_user_id = :uid WHERE id = :id"
+                "published_by_user_id = :uid, legacy_equipment_model_revision_id = :legacy WHERE id = :id"
             ),
-            {"uid": str(user_id), "id": str(revision_id)},
+            {"uid": str(user_id), "legacy": str(legacy_revision_id), "id": str(revision_id)},
         )
 
         # Transaction B: attempt a concurrent child INSERT under the same (not-yet-
@@ -702,6 +913,85 @@ async def test_concurrent_publish_and_child_insert_serialize_via_parent_lock(db_
         # the immutability check B's own trigger performs once it acquires the lock.
         with pytest.raises(sqlalchemy.exc.DBAPIError, match="not a draft"):
             await child_insert
+            await trans_b.commit()
+        await trans_b.rollback()
+    finally:
+        await conn_a.close()
+        await conn_b.close()
+
+
+async def test_identity_edit_blocks_on_concurrent_publish(db_engine):
+    """PR-1 follow-up finding #3: before this fix,
+    `fn_reject_catalog_model_identity_change()` read `catalog_model_revision` with a plain,
+    non-locking `SELECT ... WHERE ... AND lifecycle_status IN ('published', 'retired')`. A
+    row that is still `'draft'` as of the identity-edit transaction's own snapshot would
+    never even be considered for a lock, regardless of a concurrent, not-yet-committed
+    `draft -> published` transition racing it on that same row — so the identity edit could
+    read a stale 'draft' snapshot and proceed, even though the revision was published a
+    moment later. Verified here with two genuinely separate connections/transactions (not
+    two ORM sessions sharing one connection): connection B's identity-edit UPDATE must block
+    on connection A's in-flight, uncommitted publish, and once A commits, B's own check must
+    observe the now-published row and reject the identity edit — not the pre-race snapshot."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with session_factory() as setup_session:
+        manufacturer = await _make_manufacturer(setup_session)
+        model = await _make_model(setup_session, manufacturer.id)  # category="equipment"
+        user = await _make_user(setup_session)
+        revision = await _make_draft(setup_session, model.id, user.id)
+        legacy_model = EquipmentModel(manufacturer="Identity Race Co", model_name="Identity Race Bridge")
+        setup_session.add(legacy_model)
+        await setup_session.flush()
+        legacy_revision = EquipmentModelRevision(equipment_model_id=legacy_model.id)
+        setup_session.add(legacy_revision)
+        await setup_session.commit()
+        model_id = model.id
+        revision_id = revision.id
+        legacy_revision_id = legacy_revision.id
+        user_id = user.id
+
+    conn_a = await db_engine.connect()
+    conn_b = await db_engine.connect()
+    try:
+        await conn_a.execution_options(isolation_level="READ COMMITTED")
+        await conn_b.execution_options(isolation_level="READ COMMITTED")
+
+        # Transaction A: begin publishing the draft revision — takes the row lock on it
+        # (inherent to the UPDATE) but does not commit yet. As of any snapshot taken right
+        # now by another transaction, this revision is still 'draft'.
+        trans_a = await conn_a.begin()
+        await conn_a.execute(
+            text(
+                "UPDATE catalog_model_revision SET lifecycle_status = 'published', published_at = now(), "
+                "published_by_user_id = :uid, legacy_equipment_model_revision_id = :legacy WHERE id = :id"
+            ),
+            {"uid": str(user_id), "legacy": str(legacy_revision_id), "id": str(revision_id)},
+        )
+
+        # Transaction B: attempt a concurrent identity edit on the parent model. Its
+        # trigger's unfiltered `SELECT ... FOR UPDATE` over this model's revision rows
+        # collides with A's held lock on that same row and must block A's own UPDATE
+        # statement doesn't even return until this resolves.
+        trans_b = await conn_b.begin()
+        identity_edit = asyncio.create_task(
+            conn_b.execute(
+                text("UPDATE catalog_model SET model_name = 'raced rename' WHERE id = :id"),
+                {"id": str(model_id)},
+            )
+        )
+        await asyncio.sleep(0.3)
+        assert not identity_edit.done(), "identity edit should still be blocked on the revision row lock"
+
+        await trans_a.commit()
+
+        # Now that A has committed (the revision is published), B's blocked identity edit
+        # proceeds — and must itself be rejected, because its trigger's lock now re-reads
+        # the freshly-committed 'published' status rather than the pre-race 'draft' one.
+        with pytest.raises(sqlalchemy.exc.DBAPIError, match="identity fields are immutable"):
+            await identity_edit
             await trans_b.commit()
         await trans_b.rollback()
     finally:
