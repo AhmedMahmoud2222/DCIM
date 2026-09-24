@@ -425,3 +425,164 @@ export interface DashboardExceptionItem {
   object_id: string;
   message: string;
 }
+
+// ------------------------------------------------------ Catalog Designer (Phase 10A)
+
+export const CATALOG_CATEGORIES = ["rack", "equipment", "network_device", "pdu", "ups", "power_panel", "sensor"] as const;
+export type CatalogCategory = (typeof CATALOG_CATEGORIES)[number];
+
+export interface Manufacturer {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+}
+
+export interface CatalogModelRevisionSummary {
+  id: string;
+  revision_number: number;
+  lifecycle_status: string;
+  published_at: string | null;
+  retired_at: string | null;
+}
+
+export interface CatalogModel {
+  id: string;
+  manufacturer_id: string;
+  category: string;
+  subtype: string | null;
+  model_name: string;
+  model_number: string | null;
+  description: string | null;
+  tags: string[];
+  status: string;
+  created_at: string;
+}
+
+export interface CatalogModelDetail extends CatalogModel {
+  revisions: CatalogModelRevisionSummary[];
+}
+
+export interface CatalogModelRevision {
+  id: string;
+  catalog_model_id: string;
+  revision_number: number;
+  lifecycle_status: string;
+  dimension_unit: string | null;
+  width_value: number | null;
+  height_value: number | null;
+  depth_value: number | null;
+  rack_unit_height: number | null;
+  weight_unit: string | null;
+  weight_value: number | null;
+  mounting_orientation: string | null;
+  supported_placement_types: string[] | null;
+  airflow_direction: string | null;
+  rated_power_w: number | null;
+  typical_power_w: number | null;
+  max_power_w: number | null;
+  heat_dissipation_btu_hr: number | null;
+  power_redundancy_mode: string | null;
+  cloned_from_revision_id: string | null;
+  created_by_user_id: string;
+  published_at: string | null;
+  published_by_user_id: string | null;
+  retired_at: string | null;
+  retired_by_user_id: string | null;
+  retirement_reason: string | null;
+  allow_installation_when_retired: boolean;
+  version: number;
+  created_at: string;
+}
+
+export interface NetworkPortTemplate {
+  id: string;
+  catalog_model_revision_id: string;
+  revision_version: number;
+  stable_key: string;
+  display_name: string;
+  numbering_pattern: string | null;
+  media_type: string;
+  supported_speeds_mbps: number[];
+  connector_type: string;
+  role: string;
+  side: string;
+  module_group: string | null;
+  sort_order: number;
+}
+
+export interface PowerSupplyTemplate {
+  id: string;
+  catalog_model_revision_id: string;
+  revision_version: number;
+  stable_key: string;
+  label: string;
+  quantity: number;
+  redundancy_mode: string;
+  connector_type: string;
+  rated_voltage_min: number | null;
+  rated_voltage_max: number | null;
+  rated_frequency_hz: number | null;
+  rated_current_a: number | null;
+  hot_swappable: boolean | null;
+  sort_order: number;
+}
+
+export interface MonitoringMetricTemplate {
+  id: string;
+  catalog_model_revision_id: string;
+  revision_version: number;
+  stable_key: string;
+  protocol: string;
+  protocol_other_label: string | null;
+  metric_name: string;
+  oid: string | null;
+  value_type: string;
+  unit: string | null;
+  scale: number;
+  transform: string;
+  offset: number | null;
+  default_collection_interval_seconds: number | null;
+  default_warning_threshold: number | null;
+  default_critical_threshold: number | null;
+  sort_order: number;
+}
+
+export interface CatalogModelRevisionDetail extends CatalogModelRevision {
+  network_ports: NetworkPortTemplate[];
+  power_supplies: PowerSupplyTemplate[];
+  monitoring_metrics: MonitoringMetricTemplate[];
+}
+
+export interface ValidationIssue {
+  field: string;
+  code: string;
+  message: string;
+}
+
+export interface ValidationSummary {
+  valid: boolean;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
+}
+
+export interface CatalogFieldDiff {
+  field: string;
+  left: unknown;
+  right: unknown;
+}
+
+export interface CatalogChildDiff {
+  collection: string;
+  stable_key: string;
+  change: "added" | "removed" | "changed";
+  left: Record<string, unknown> | null;
+  right: Record<string, unknown> | null;
+}
+
+export interface CatalogCompare {
+  left_revision_id: string;
+  right_revision_id: string;
+  field_diffs: CatalogFieldDiff[];
+  child_diffs: CatalogChildDiff[];
+}

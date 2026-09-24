@@ -3,6 +3,11 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
+import { CatalogHomePage } from "@/features/catalog-designer/CatalogHomePage";
+import { ManufacturerDetailPage } from "@/features/catalog-designer/ManufacturerDetailPage";
+import { ModelDetailPage } from "@/features/catalog-designer/ModelDetailPage";
+import { RevisionCompareView } from "@/features/catalog-designer/RevisionCompareView";
+import { RevisionEditorPage } from "@/features/catalog-designer/RevisionEditorPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { EquipmentDetailPage } from "@/features/equipment/EquipmentDetailPage";
 import { EquipmentPage } from "@/features/equipment/EquipmentPage";
@@ -45,6 +50,11 @@ export function App() {
               <Route path="/collectors" element={<CollectorsPage />} />
               <Route path="/integrations" element={<IntegrationsPage />} />
               <Route path="/discovery" element={<DiscoveryPage />} />
+              <Route path="/admin/catalog" element={<CatalogHomePage />} />
+              <Route path="/admin/catalog/manufacturers/:manufacturerId" element={<ManufacturerDetailPage />} />
+              <Route path="/admin/catalog/models/:modelId" element={<ModelDetailPage />} />
+              <Route path="/admin/catalog/revisions/compare" element={<RevisionCompareView />} />
+              <Route path="/admin/catalog/revisions/:revisionId" element={<RevisionEditorPage />} />
             </Route>
           </Route>
         </Routes>
