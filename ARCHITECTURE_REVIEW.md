@@ -1,10 +1,10 @@
 # ARCHITECTURE_REVIEW.md
 
 **Project:** In-House DCIM Platform
-**Version:** 1.3 (closes the two Phase 1 blockers from the final architecture validation gate)
-**Phase:** 0 — Architecture (pre-implementation)
-**Status:** PHASE 1 BLOCKERS CLOSED — SEE RE-VALIDATION GATE
-**Date:** 2026-09-16
+**Version:** 1.4 (records Phase 10A — Catalog Designer — as implemented and merged to `main`, §4d)
+**Phase:** 0 — Architecture (pre-implementation) for the rack/power/spatial/telemetry subsystem this document covers; Phase 10A (Catalog Designer) is a separate, already-implemented module, tracked here in §4d as an addendum
+**Status:** PHASE 1 BLOCKERS CLOSED — SEE RE-VALIDATION GATE; PHASE 10A (CATALOG DESIGNER) IMPLEMENTED / MERGED TO MAIN — SEE §4d
+**Date:** 2026-09-24 (§4d added; all other sections dated 2026-09-16)
 
 Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCHITECTURE_RED_TEAM_REPORT.md` (adversarial findings against v1.1), `ARCHITECTURE_CHANGE_MATRIX.md` (v1.1→v1.2 before/after trace), `ARCHITECTURE_TARGETED_REVISION_REPORT.md` (v1.2 summary), `FINAL_ARCHITECTURE_VALIDATION_REPORT.md` (the gate that found F1 and confirmed H7 open — superseded by its v2 addendum recording this fix).
 
@@ -18,8 +18,9 @@ Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCH
 | 1.1 | 2026-09-16 | Revision closing identity, placement, spatial-authority, power-topology, telemetry-identity, collector, event/outbox, and security gaps identified in the v1.1 review pass. |
 | 1.2 | 2026-09-16 | Targeted revision resolving red-team findings C1–C5 (asset replacement, U-range exclusion semantics, exactly-one-current-placement enforcement, placement/power concurrency control, floor-plan import security boundary), H1 (complete ManagedAsset subtype matrix), H6 (AuditLog partitioning/retention), H7 (site-scoped RBAC decision status), and M1 (identity-reference naming reconciliation). Scope was strictly limited to these findings — see `ARCHITECTURE_CHANGE_MATRIX.md` for the full before/after trace and the explicit list of findings intentionally left deferred. |
 | 1.3 | 2026-09-16 | Closes the two Phase 1 blockers found at the final architecture validation gate: **F1** — `EquipmentPlacement`'s rack-mounted `CHECK` now also requires `side IS NOT NULL`, closing a residual gap where a NULL `side` silently escaped both of §7a's exclusion constraints; **H7** — the architecture owner recorded Option B (§32a): Phase 1 ships with global authorization, site-scoped RBAC enforcement is built additively when the stated trigger condition is met. No other section changed. |
+| 1.4 | 2026-09-24 | Adds §4d, recording Phase 10A ("Asset Catalog Designer") as **IMPLEMENTED / MERGED TO MAIN** — the manufacturer/model/revision authoring aggregate, lifecycle backend, admin UI, equipment-photo storage backend, and marker editor anticipated narratively by §4b's `RackModelRevision`/`EquipmentModelRevision` references. This is a status addendum documenting a module implemented and merged outside this document's own Phase 0→Phase 1 sequencing (it shipped ahead of Phase 2+ per the product owner's prioritization); no rack/power/spatial/telemetry section, constraint, or open decision (§49) is altered or resolved by it. |
 
-This document supersedes v1.2 in place. §7 (F1's `CHECK` constraint) and §32a (H7's recorded decision), plus their references in §47a and §49, carry v1.3 changes; every other section is unchanged from v1.2. Nothing in this revision reverses ManagedAsset, PowerNode, EquipmentPlacement/RackPlacement, the integration layering, or the Outbox pattern.
+This document supersedes v1.2 in place for §1–§49 (unchanged since v1.3: §7's F1 `CHECK` constraint and §32a's H7 decision, per the v1.3 row above). v1.4 adds §4d as new content; it does not modify or supersede any other section. Nothing in this revision reverses ManagedAsset, PowerNode, EquipmentPlacement/RackPlacement, the integration layering, or the Outbox pattern.
 
 ---
 
@@ -259,6 +260,26 @@ No new identity mechanism, no change to `ManagedAsset`'s columns, no change to a
 ### 4c. Naming Note (LOW, tracked — not fixed in this revision)
 
 `EquipmentPlacement.equipment_id` and `EquipmentInterface.equipment_id` retain that column name from v1.1 for continuity even though both now explicitly scope to any placeable/networkable `ManagedAsset` (Equipment, PDU, Sensor), not only the `Equipment` subtype narrowly. Renaming both to `asset_id` would be clearer but is a cosmetic change outside this revision's scope (it fixes no confirmed defect on its own). **Recorded under OUT-OF-SCOPE / FUTURE REVISION** (§ARCHITECTURE_CHANGE_MATRIX.md) rather than done silently.
+
+### 4d. Phase 10A — Catalog Designer: Model-Authoring Aggregate & Legacy Bridge (v1.4)
+
+**Relationship to §4b:** §4b defines `Rack.model_revision_id FK→RackModelRevision` and `Equipment.model_revision_id FK→EquipmentModelRevision` but never specifies how those revision rows themselves get authored, versioned, or media-documented — that gap is what Phase 10A ("Asset Catalog Designer") closes. Rather than altering `RackModelRevision`/`EquipmentModelRevision` in place, it builds a **separate, richer authoring aggregate** — `Manufacturer` → `CatalogModel` → `CatalogModelRevision`, plus `NetworkPortTemplate`/`PowerSupplyTemplate`/`MonitoringMetricTemplate`/`CatalogGraphic`/`CatalogGraphicMarker` — with its own draft/published/retired lifecycle, identity-lock and immutability triggers, and RBAC. `CatalogModelRevision.legacy_rack_model_revision_id`/`legacy_equipment_model_revision_id` (mutually exclusive via `CHECK legacy_bridge_exclusive`) optionally link a catalog revision to an existing legacy row for backward reference; `Rack`/`Equipment` continue to reference the legacy tables directly and are **unchanged in shape** by this work. All of the below is implemented and merged to `main`.
+
+**Status: IMPLEMENTED / MERGED TO MAIN**
+
+| Deliverable | Implementation | Status | Merged via |
+|---|---|---|---|
+| Lifecycle backend & schemas | `catalog_model` / `catalog_model_revision` tables (draft→published→retired, identity-lock trigger `fn_reject_catalog_model_identity_change`, immutability trigger `fn_guard_catalog_model_revision_lifecycle`), `manufacturer`; draft-allocation limits and RBAC closure (`require_catalog_administrator`) in `backend/app/application/catalog_designer_service.py` and `backend/app/api/v1/catalog_designer.py` | IMPLEMENTED / MERGED TO MAIN | PR #16 |
+| Core administrator catalog UI | `frontend/src/features/catalog-designer/` — manufacturer/model/revision list and editor pages, `useIsCatalogAdministrator()` RBAC gating, multi-level TanStack Query cache invalidation (a mutation invalidates both the active revision query and the parent model's list query) | IMPLEMENTED / MERGED TO MAIN | PR #20 |
+| Equipment media & marker storage | `backend/app/infrastructure/storage/` (`StorageBackend` protocol, `LocalFileSystemStorageBackend` — atomic write-then-`os.replace()`, content-addressed sha256 keys), synchronous Pillow thumbnail pipeline (10MB upload cap), `POST`/`GET`/`DELETE` routes for `graphics/{side}` (upload/file/thumbnail) and `graphics/{graphic_id}/markers[/{marker_id}]` | IMPLEMENTED / MERGED TO MAIN | PR #21 |
+| Interactive canvas | `GraphicsEditorPage.tsx` / `FrontRearImageCanvas.tsx` — fractional (0.0–1.0) SVG-overlay marker coordinates, click-to-place, drag-to-reposition (commits on pointer-up), full WCAG 2.1 keyboard operability (arrow-key nudge, Enter to edit, Delete to remove) | IMPLEMENTED / MERGED TO MAIN | PR #21 |
+| Database migrations & triggers | Migrations `0002`–`0010` frozen as historical RBAC-seed snapshots; new schema `catalog_graphic` / `catalog_graphic_marker` (migration `0019_catalog_graphics`); trigger correction `0022_graphic_marker_delete_fix` — `fn_validate_catalog_graphic_marker` now returns immediately on `TG_OP = 'DELETE'`, fixing a cascade-delete failure where the trigger re-looked-up an already-gone parent `catalog_graphic` row | IMPLEMENTED / MERGED TO MAIN | PR #18 (freeze), PR #16 (`0019`), PR #21 (`0022`) |
+
+**Verification on `main`:** backend suite 638/638 passing against Postgres + Redis; frontend suite passing; authenticated Playwright E2E covering upload → FK-linked and freestanding marker placement → keyboard nudge/delete → SPA-navigation persistence check, with zero page errors and zero unexpected rejections observed.
+
+**Security posture, distinguished from §10a:** the magic-byte/content-sniff validation above applies to **catalog equipment-photo uploads** (PNG/JPEG only, ≤10MB, Pillow-verified dimensions) — a narrower pipeline unrelated to §10a's floor-plan import security boundary (SVG/DXF/VSDX/PDF, isolated-parse subprocess, XXE/zip-bomb defenses). §10a's own open items are untouched by Phase 10A and remain exactly as stated there.
+
+**§49 note:** the Remaining Open Decisions table (§49) tracks the rack/power/spatial/telemetry subsystem this document otherwise covers; no entry there corresponds to Phase 10A's scope, so none is marked resolved by this addendum.
 
 ---
 
