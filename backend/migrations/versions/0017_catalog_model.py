@@ -53,8 +53,13 @@ plain `SELECT`. Every cross-table wait is therefore funneled through the same lo
 between the identity triggers and the lifecycle trigger to deadlock on.
 
 Revision ID: 0017_catalog_model
-Revises: 0016_network_runtime_defaults
+Revises: 0013_metric_asset
 Create Date: 2026-09-23
+
+Re-pointed to chain from 0013_metric_asset (this branch's actual migration head) rather
+than 0016_network_runtime_defaults: migrations 0014-0016 belong to the separate network-
+topology/3D-layout feature (PR #9), which is out of scope for this branch and was never
+part of main's own migration history.
 """
 
 import sqlalchemy as sa
@@ -62,7 +67,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0017_catalog_model"
-down_revision = "0016_network_runtime_defaults"
+down_revision = "0013_metric_asset"
 branch_labels = None
 depends_on = None
 
