@@ -6,8 +6,8 @@ from tests.api._phase2_helpers import create_equipment, create_rack, create_room
 async def test_room_spatial_view_includes_placed_racks_and_floor_standing_equipment(client, auth_headers):
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id, x_mm=10, y_mm=20)
-    floor_eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id, x_mm=10, y_mm=20)
+    floor_eq = await create_equipment(client, headers, auth_headers)
     await client.post(
         f"/api/v1/equipment/{floor_eq['id']}/move", json={"placement_type": "floor_standing", "room_id": room_id}, headers=headers
     )
@@ -27,8 +27,8 @@ async def test_room_spatial_view_excludes_rack_mounted_equipment_from_the_equipm
     view — it must not appear twice across the two projections."""
     headers = await auth_headers("Engineer")
     room_id = await create_room(client, auth_headers)
-    rack = await create_rack(client, headers, room_id=room_id)
-    mounted_eq = await create_equipment(client, headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    mounted_eq = await create_equipment(client, headers, auth_headers)
     await client.post(
         f"/api/v1/equipment/{mounted_eq['id']}/move",
         json={"placement_type": "rack_mounted", "room_id": room_id, "rack_id": rack["id"], "u_start": 1, "u_end": 2, "side": "front"},

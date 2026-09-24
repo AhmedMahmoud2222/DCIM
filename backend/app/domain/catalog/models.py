@@ -29,7 +29,17 @@ class RackModel(Base, UUIDPkMixin, TimestampMixin):
 class RackModelRevision(Base, UUIDPkMixin, TimestampMixin):
     """Immutable once created — a corrected/updated spec from the manufacturer is a new
     revision row, never an edit to an existing one, so `Rack` rows that already reference
-    a revision are never silently reinterpreted under different physical dimensions."""
+    a revision are never silently reinterpreted under different physical dimensions.
+
+    `bridged_from_catalog_revision_id` (Phase 10A, docs/superpowers/specs/
+    2026-09-23-phase-10a-asset-catalog-designer-design.md §4.7): purely additive,
+    nullable, unique — set exactly once, at INSERT time, when this row is created as the
+    legacy counterpart of a newly-published `CatalogModelRevision`. Existing rows (every
+    row created before Phase 10A) keep this `NULL` forever and are entirely unaffected;
+    once set, `fn_reject_bridged_legacy_revision_update` (migration
+    `0020_catalog_legacy_bridge`) makes the row immutable at the DB level, closing the
+    literal enforcement gap this table's own docstring above only ever stated as
+    convention."""
 
     __tablename__ = "rack_model_revision"
 
@@ -40,6 +50,9 @@ class RackModelRevision(Base, UUIDPkMixin, TimestampMixin):
     width_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     depth_mm: Mapped[int] = mapped_column(Integer, nullable=False)
     weight_capacity_kg: Mapped[int | None] = mapped_column(Integer)
+    bridged_from_catalog_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT"), unique=True
+    )
 
     rack_model: Mapped[RackModel] = relationship(back_populates="revisions")
 
@@ -70,5 +83,10 @@ class EquipmentModelRevision(Base, UUIDPkMixin, TimestampMixin):
     width_mm: Mapped[int | None] = mapped_column(Integer)
     depth_mm: Mapped[int | None] = mapped_column(Integer)
     weight_kg: Mapped[int | None] = mapped_column(Integer)
+    # See RackModelRevision.bridged_from_catalog_revision_id's docstring — identical
+    # purpose and immutability guard, applied to the equipment-side legacy table.
+    bridged_from_catalog_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT"), unique=True
+    )
 
     equipment_model: Mapped[EquipmentModel] = relationship(back_populates="revisions")
