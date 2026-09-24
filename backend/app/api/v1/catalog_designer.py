@@ -20,31 +20,40 @@ triggers re-enforce at the database layer regardless of whether this check is by
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
 from app.application.catalog_designer_service import (
+    GraphicRejected,
     ValidationFailed,
     ValidationSummary,
     allocate_revision_number,
     clone_revision,
     lock_draft_revision_for_edit,
     publish_revision,
+    thumbnail_storage_key,
+    upload_catalog_graphic,
     validate_revision_for_publish,
 )
 from app.application.concurrency import require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import AuthContext, get_auth_context, require_catalog_administrator, require_permission
+from app.core.config import get_settings
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
     CATEGORIES,
+    MARKER_TYPES,
+    CatalogGraphic,
+    CatalogGraphicMarker,
     CatalogModel,
     CatalogModelRevision,
     Manufacturer,
@@ -52,6 +61,7 @@ from app.domain.catalog.designer_models import (
     NetworkPortTemplate,
     PowerSupplyTemplate,
 )
+from app.infrastructure.storage import get_storage_backend
 
 router = APIRouter(prefix="/catalog", tags=["catalog-designer"])
 
@@ -567,10 +577,109 @@ def _monitoring_metric_out(metric: MonitoringMetricTemplate, revision_version: i
     )
 
 
+class CatalogGraphicMarkerIn(BaseModel):
+    marker_type: str
+    network_port_template_id: uuid.UUID | None = None
+    power_supply_template_id: uuid.UUID | None = None
+    label: str | None = Field(default=None, max_length=128)
+    marker_x: float = Field(ge=0.0, le=1.0)
+    marker_y: float = Field(ge=0.0, le=1.0)
+    sort_order: int = 0
+
+    @field_validator("marker_type")
+    @classmethod
+    def _marker_type_allowed(cls, value: str) -> str:
+        # Mirrors CatalogGraphicMarker's own marker_type_allowed CHECK constraint at the
+        # API boundary — a clean 422 for a bad value, not a raw IntegrityError mapped to
+        # a generic 409 by the global handler (same reasoning as floor_plans.py's
+        # AcceptCandidateIn._object_type_allowed).
+        if value not in MARKER_TYPES:
+            raise ValueError(f"marker_type must be one of {MARKER_TYPES}")
+        return value
+
+    @model_validator(mode="after")
+    def _target_matches_type(self) -> "CatalogGraphicMarkerIn":
+        # Mirrors marker_target_matches_type (migration 0019_catalog_graphics) — same
+        # reasoning as _marker_type_allowed above.
+        if self.marker_type == "network_port":
+            if self.network_port_template_id is None or self.power_supply_template_id is not None:
+                raise ValueError("network_port markers require network_port_template_id and no power_supply_template_id")
+        elif self.marker_type == "power_supply":
+            if self.power_supply_template_id is None or self.network_port_template_id is not None:
+                raise ValueError("power_supply markers require power_supply_template_id and no network_port_template_id")
+        elif self.network_port_template_id is not None or self.power_supply_template_id is not None:
+            raise ValueError(f"{self.marker_type} markers must not link a network port or power supply")
+        return self
+
+
+class CatalogGraphicMarkerUpdateIn(BaseModel):
+    """Partial update — the hybrid marker_type/target rule is re-checked against the
+    *merged* result in the route handler (create_marker's model-level validator can't see
+    the row's existing state, only the fields this request actually sent)."""
+
+    marker_type: str | None = None
+    network_port_template_id: uuid.UUID | None = None
+    power_supply_template_id: uuid.UUID | None = None
+    label: str | None = Field(default=None, max_length=128)
+    marker_x: float | None = Field(default=None, ge=0.0, le=1.0)
+    marker_y: float | None = Field(default=None, ge=0.0, le=1.0)
+    sort_order: int | None = None
+
+
+class CatalogGraphicMarkerOut(BaseModel):
+    id: uuid.UUID
+    catalog_graphic_id: uuid.UUID
+    revision_version: int
+    marker_type: str
+    network_port_template_id: uuid.UUID | None
+    power_supply_template_id: uuid.UUID | None
+    label: str | None
+    marker_x: float
+    marker_y: float
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+def _marker_out(marker: CatalogGraphicMarker, revision_version: int) -> CatalogGraphicMarkerOut:
+    return CatalogGraphicMarkerOut(
+        id=marker.id, catalog_graphic_id=marker.catalog_graphic_id, revision_version=revision_version,
+        marker_type=marker.marker_type, network_port_template_id=marker.network_port_template_id,
+        power_supply_template_id=marker.power_supply_template_id, label=marker.label,
+        marker_x=float(marker.marker_x), marker_y=float(marker.marker_y), sort_order=marker.sort_order,
+    )
+
+
+class CatalogGraphicOut(BaseModel):
+    id: uuid.UUID
+    catalog_model_revision_id: uuid.UUID
+    revision_version: int
+    side: str
+    original_filename: str
+    mime_type: str
+    file_size_bytes: int
+    width_px: int
+    height_px: int
+    uploaded_at: datetime
+    markers: list[CatalogGraphicMarkerOut]
+
+    model_config = {"from_attributes": True}
+
+
+def _graphic_out(graphic: CatalogGraphic, revision_version: int) -> CatalogGraphicOut:
+    return CatalogGraphicOut(
+        id=graphic.id, catalog_model_revision_id=graphic.catalog_model_revision_id, revision_version=revision_version,
+        side=graphic.side, original_filename=graphic.original_filename, mime_type=graphic.mime_type,
+        file_size_bytes=graphic.file_size_bytes, width_px=graphic.width_px, height_px=graphic.height_px,
+        uploaded_at=graphic.uploaded_at, markers=[_marker_out(m, revision_version) for m in graphic.markers],
+    )
+
+
 class CatalogModelRevisionDetailOut(CatalogModelRevisionOut):
     network_ports: list[NetworkPortTemplateOut]
     power_supplies: list[PowerSupplyTemplateOut]
     monitoring_metrics: list[MonitoringMetricTemplateOut]
+    graphics: list[CatalogGraphicOut]
 
 
 async def _load_children(
@@ -594,6 +703,21 @@ async def _load_children(
         ).scalars()
     )
     return ports, psus, metrics
+
+
+async def _load_graphics(db: AsyncSession, revision_id: uuid.UUID) -> list[CatalogGraphic]:
+    """`selectinload` eager-loads `markers` — an async session has no implicit lazy
+    loading, and every caller of this helper (get_revision, validate_revision_endpoint,
+    publish_revision) needs each graphic's markers, not just the graphic rows."""
+    return list(
+        (
+            await db.execute(
+                select(CatalogGraphic)
+                .options(selectinload(CatalogGraphic.markers))
+                .where(CatalogGraphic.catalog_model_revision_id == revision_id)
+            )
+        ).scalars()
+    )
 
 
 @router.post("/models/{model_id}/revisions", response_model=CatalogModelRevisionOut, status_code=201)
@@ -777,11 +901,13 @@ async def get_revision(
 ) -> CatalogModelRevisionDetailOut:
     revision, _ctx = loaded
     ports, psus, metrics = await _load_children(db, revision_id)
+    graphics = await _load_graphics(db, revision_id)
     return CatalogModelRevisionDetailOut(
         **CatalogModelRevisionOut.model_validate(revision).model_dump(),
         network_ports=[_network_port_out(p, revision.version) for p in ports],
         power_supplies=[_power_supply_out(p, revision.version) for p in psus],
         monitoring_metrics=[_monitoring_metric_out(m, revision.version) for m in metrics],
+        graphics=[_graphic_out(g, revision.version) for g in graphics],
     )
 
 
@@ -1076,6 +1202,226 @@ async def delete_monitoring_metric(
     response.headers["X-Revision-Version"] = str(revision.version)
 
 
+# ---------------------------------------------------------------- Graphics (Phase 10A PR-5)
+
+
+async def _get_graphic_or_404(db: AsyncSession, *, revision_id: uuid.UUID, graphic_id: uuid.UUID) -> CatalogGraphic:
+    graphic = await db.get(CatalogGraphic, graphic_id, options=[selectinload(CatalogGraphic.markers)])
+    if graphic is None or graphic.catalog_model_revision_id != revision_id:
+        raise NotFoundError(f"CatalogGraphic {graphic_id} not found under revision {revision_id}.")
+    return graphic
+
+
+async def _validate_marker_target_revision(
+    db: AsyncSession, *, revision_id: uuid.UUID, network_port_template_id: uuid.UUID | None,
+    power_supply_template_id: uuid.UUID | None,
+) -> None:
+    """Same defense-in-depth reasoning as every other check in this module (module
+    docstring): `fn_validate_catalog_graphic_marker` (migration 0019_catalog_graphics)
+    enforces this at the database layer regardless, but a clean 422 here is a better
+    caller experience than a raw trigger exception surfacing as a generic error."""
+    if network_port_template_id is not None:
+        port = await db.get(NetworkPortTemplate, network_port_template_id)
+        if port is None or port.catalog_model_revision_id != revision_id:
+            raise ApiError(
+                status_code=422, title="Unprocessable Entity",
+                detail=f"network_port_template_id {network_port_template_id} does not belong to this revision.",
+            )
+    if power_supply_template_id is not None:
+        psu = await db.get(PowerSupplyTemplate, power_supply_template_id)
+        if psu is None or psu.catalog_model_revision_id != revision_id:
+            raise ApiError(
+                status_code=422, title="Unprocessable Entity",
+                detail=f"power_supply_template_id {power_supply_template_id} does not belong to this revision.",
+            )
+
+
+@router.post("/revisions/{revision_id}/graphics/{side}", response_model=CatalogGraphicOut, status_code=201)
+async def upload_graphic(
+    revision_id: uuid.UUID,
+    side: Literal["front", "rear"],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+    if_match_version: int = Depends(require_if_match),
+    ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
+) -> CatalogGraphicOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
+
+    content = await file.read()
+    settings = get_settings()
+    storage = get_storage_backend()
+    try:
+        graphic = await upload_catalog_graphic(
+            db, revision=revision, side=side, content=content, original_filename=file.filename or "upload",
+            uploaded_by_user_id=ctx.user.id, storage=storage, max_upload_bytes=settings.catalog_graphics_max_upload_bytes,
+        )
+    except GraphicRejected as exc:
+        raise ApiError(status_code=422, title="Unprocessable Entity", detail=exc.reason) from exc
+
+    await _write_child_audit(
+        db, request, ctx, revision_id, action="catalog.revision.update_draft",
+        after={"graphic_id": str(graphic.id), "side": side, "original_filename": graphic.original_filename},
+    )
+    await db.commit()
+    # A freshly-uploaded graphic can have no markers yet — even a same-side re-upload
+    # went through upload_catalog_graphic's delete-then-recreate, so `graphic` here is
+    # always a brand-new row. Building the response with markers=[] directly, rather
+    # than calling _graphic_out (which reads `graphic.markers`), avoids an implicit
+    # lazy-load: this ORM object's `markers` relationship was never eagerly loaded, and
+    # async SQLAlchemy has no implicit lazy loading (unlike the sync ORM).
+    return CatalogGraphicOut(
+        id=graphic.id, catalog_model_revision_id=graphic.catalog_model_revision_id, revision_version=revision.version,
+        side=graphic.side, original_filename=graphic.original_filename, mime_type=graphic.mime_type,
+        file_size_bytes=graphic.file_size_bytes, width_px=graphic.width_px, height_px=graphic.height_px,
+        uploaded_at=graphic.uploaded_at, markers=[],
+    )
+
+
+@router.get("/revisions/{revision_id}/graphics/{side}/file")
+async def get_graphic_file(
+    revision_id: uuid.UUID, side: Literal["front", "rear"], db: AsyncSession = Depends(get_db),
+    loaded=Depends(_revision_read_dependency),
+) -> Response:
+    _revision, _ctx = loaded
+    graphic = (
+        await db.execute(
+            select(CatalogGraphic).where(
+                CatalogGraphic.catalog_model_revision_id == revision_id, CatalogGraphic.side == side
+            )
+        )
+    ).scalar_one_or_none()
+    if graphic is None:
+        raise NotFoundError(f"No {side} graphic uploaded for revision {revision_id}.")
+    content = get_storage_backend().read(graphic.storage_key)
+    return Response(content=content, media_type=graphic.mime_type)
+
+
+@router.get("/revisions/{revision_id}/graphics/{side}/thumbnail")
+async def get_graphic_thumbnail(
+    revision_id: uuid.UUID, side: Literal["front", "rear"], db: AsyncSession = Depends(get_db),
+    loaded=Depends(_revision_read_dependency),
+) -> Response:
+    _revision, _ctx = loaded
+    graphic = (
+        await db.execute(
+            select(CatalogGraphic).where(
+                CatalogGraphic.catalog_model_revision_id == revision_id, CatalogGraphic.side == side
+            )
+        )
+    ).scalar_one_or_none()
+    if graphic is None:
+        raise NotFoundError(f"No {side} graphic uploaded for revision {revision_id}.")
+    content = get_storage_backend().read(thumbnail_storage_key(graphic.storage_key))
+    return Response(content=content, media_type="image/jpeg")
+
+
+@router.post("/revisions/{revision_id}/graphics/{graphic_id}/markers", response_model=CatalogGraphicMarkerOut, status_code=201)
+async def create_marker(
+    revision_id: uuid.UUID,
+    graphic_id: uuid.UUID,
+    body: CatalogGraphicMarkerIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
+    ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
+) -> CatalogGraphicMarkerOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
+    graphic = await _get_graphic_or_404(db, revision_id=revision_id, graphic_id=graphic_id)
+    await _validate_marker_target_revision(
+        db, revision_id=revision_id, network_port_template_id=body.network_port_template_id,
+        power_supply_template_id=body.power_supply_template_id,
+    )
+
+    marker = CatalogGraphicMarker(catalog_graphic_id=graphic.id, **body.model_dump())
+    db.add(marker)
+    await db.flush()
+    await _write_child_audit(
+        db, request, ctx, revision_id, action="catalog.revision.update_draft",
+        after={"marker_id": str(marker.id), "graphic_id": str(graphic.id), "marker_type": marker.marker_type},
+    )
+    await db.commit()
+    return _marker_out(marker, revision.version)
+
+
+@router.patch("/revisions/{revision_id}/graphics/{graphic_id}/markers/{marker_id}", response_model=CatalogGraphicMarkerOut)
+async def update_marker(
+    revision_id: uuid.UUID,
+    graphic_id: uuid.UUID,
+    marker_id: uuid.UUID,
+    body: CatalogGraphicMarkerUpdateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
+    ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
+) -> CatalogGraphicMarkerOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
+    await _get_graphic_or_404(db, revision_id=revision_id, graphic_id=graphic_id)
+    marker = await db.get(CatalogGraphicMarker, marker_id)
+    if marker is None or marker.catalog_graphic_id != graphic_id:
+        raise NotFoundError(f"CatalogGraphicMarker {marker_id} not found under graphic {graphic_id}.")
+
+    updates = body.model_dump(exclude_unset=True)
+    merged_type = updates.get("marker_type", marker.marker_type)
+    merged_port_id = updates.get("network_port_template_id", marker.network_port_template_id)
+    merged_psu_id = updates.get("power_supply_template_id", marker.power_supply_template_id)
+    if merged_type not in MARKER_TYPES:
+        raise ApiError(status_code=422, title="Unprocessable Entity", detail=f"marker_type must be one of {MARKER_TYPES}")
+    if merged_type == "network_port" and (merged_port_id is None or merged_psu_id is not None):
+        raise ApiError(
+            status_code=422, title="Unprocessable Entity",
+            detail="network_port markers require network_port_template_id and no power_supply_template_id",
+        )
+    if merged_type == "power_supply" and (merged_psu_id is None or merged_port_id is not None):
+        raise ApiError(
+            status_code=422, title="Unprocessable Entity",
+            detail="power_supply markers require power_supply_template_id and no network_port_template_id",
+        )
+    if merged_type in ("module", "other") and (merged_port_id is not None or merged_psu_id is not None):
+        raise ApiError(
+            status_code=422, title="Unprocessable Entity",
+            detail=f"{merged_type} markers must not link a network port or power supply",
+        )
+    await _validate_marker_target_revision(
+        db, revision_id=revision_id, network_port_template_id=merged_port_id, power_supply_template_id=merged_psu_id,
+    )
+
+    for field_name, value in updates.items():
+        setattr(marker, field_name, value)
+    await db.flush()
+    await _write_child_audit(
+        db, request, ctx, revision_id, action="catalog.revision.update_draft", after={"marker_id": str(marker.id)},
+    )
+    await db.commit()
+    return _marker_out(marker, revision.version)
+
+
+@router.delete("/revisions/{revision_id}/graphics/{graphic_id}/markers/{marker_id}", status_code=204)
+async def delete_marker(
+    revision_id: uuid.UUID,
+    graphic_id: uuid.UUID,
+    marker_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
+    ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
+) -> None:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
+    await _get_graphic_or_404(db, revision_id=revision_id, graphic_id=graphic_id)
+    marker = await db.get(CatalogGraphicMarker, marker_id)
+    if marker is None or marker.catalog_graphic_id != graphic_id:
+        raise NotFoundError(f"CatalogGraphicMarker {marker_id} not found under graphic {graphic_id}.")
+
+    await _write_child_audit(
+        db, request, ctx, revision_id, action="catalog.revision.component_remove",
+        before={"marker_id": str(marker.id), "graphic_id": str(graphic_id)},
+    )
+    await db.delete(marker)
+    await db.commit()
+    response.headers["X-Revision-Version"] = str(revision.version)
+
+
 async def _write_child_audit(
     db: AsyncSession, request: Request, ctx: AuthContext, revision_id: uuid.UUID, *, action: str,
     before: dict | None = None, after: dict | None = None,
@@ -1111,7 +1457,8 @@ async def validate_revision_endpoint(
     model = await db.get(CatalogModel, revision.catalog_model_id)
     assert model is not None
     ports, psus, metrics = await _load_children(db, revision_id)
-    return validate_revision_for_publish(revision, model.category, ports, psus, metrics)
+    graphics = await _load_graphics(db, revision_id)
+    return validate_revision_for_publish(revision, model.category, ports, psus, metrics, graphics)
 
 
 @router.post("/revisions/{revision_id}/publish")

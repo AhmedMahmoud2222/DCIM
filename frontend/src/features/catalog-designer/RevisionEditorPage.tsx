@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { GraphicsEditorPage } from "@/features/catalog-designer/GraphicsEditorPage";
 import {
   createNetworkPort,
   createMonitoringMetric,
@@ -97,6 +98,8 @@ export function RevisionEditorPage() {
       <ScalarFieldsSection revision={revision} readOnly={!canEditDraft} onSaved={invalidate} />
 
       <TemplateEditors revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
+
+      <GraphicsEditorPage revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
 
       {canEditDraft && <PublishPanel revision={revision} onPublished={invalidate} />}
       {revision.lifecycle_status === "published" && isCatalogAdministrator && <RetirePanel revision={revision} onRetired={invalidate} />}
@@ -301,7 +304,7 @@ function NetworkPortTemplateEditor({
   const [showForm, setShowForm] = useState(false);
   const [stableKey, setStableKey] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [mediaType, setMediaType] = useState("ethernet");
+  const [mediaType, setMediaType] = useState("copper");
   const [connectorType, setConnectorType] = useState("RJ45");
   const [side, setSide] = useState("rear");
   const [speeds, setSpeeds] = useState("1000");
@@ -378,7 +381,7 @@ function NetworkPortTemplateEditor({
             </select>
           </div>
           <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
-            <option value="ethernet">ethernet</option>
+            <option value="copper">copper</option>
             <option value="fiber">fiber</option>
             <option value="other">other</option>
           </select>

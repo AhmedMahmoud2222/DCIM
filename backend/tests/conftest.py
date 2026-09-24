@@ -1,4 +1,5 @@
 import os
+import tempfile
 import uuid
 
 import pytest_asyncio
@@ -22,6 +23,11 @@ os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", "eHTZ8u6qF3v2N1oQwL9pR7sT4yU6
 os.environ.setdefault(
     "TEST_ADMIN_DATABASE_URL", "postgresql+asyncpg://postgres:postgres_test_admin_password@localhost:5432/dcim_test"
 )
+# Phase 10A PR-5: a fresh temp directory per test-session run, not the app's real
+# media/catalog/graphics/ default — keeps uploaded test fixtures out of the repo
+# checkout entirely, same reasoning TEST_ADMIN_DATABASE_URL above already applies to
+# not touching real application state.
+os.environ.setdefault("CATALOG_GRAPHICS_STORAGE_ROOT", tempfile.mkdtemp(prefix="dcim-test-graphics-"))
 
 from app.core.security import hash_password  # noqa: E402
 from app.db.session import get_db  # noqa: E402

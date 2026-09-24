@@ -1,6 +1,8 @@
-import { apiFetch } from "@/lib/apiClient";
+import { apiFetch, authenticatedFetchBlob } from "@/lib/apiClient";
 import {
   CatalogCompare,
+  CatalogGraphic,
+  CatalogGraphicMarker,
   CatalogModel,
   CatalogModelDetail,
   CatalogModelRevision,
@@ -208,3 +210,50 @@ export const createMonitoringMetric = (revisionId: string, body: MonitoringMetri
 
 export const deleteMonitoringMetric = (revisionId: string, metricId: string, ifMatch: number) =>
   apiFetch<void>(`/catalog/revisions/${revisionId}/monitoring-metrics/${metricId}`, { method: "DELETE", ifMatch });
+
+// ----------------------------------------------------------------------- Graphics
+
+export const uploadGraphic = (revisionId: string, side: "front" | "rear", file: File, ifMatch: number) => {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<CatalogGraphic>(`/catalog/revisions/${revisionId}/graphics/${side}`, { method: "POST", body, ifMatch });
+};
+
+export const fetchGraphicImage = (revisionId: string, side: "front" | "rear") =>
+  authenticatedFetchBlob(`/catalog/revisions/${revisionId}/graphics/${side}/file`);
+
+export const fetchGraphicThumbnail = (revisionId: string, side: "front" | "rear") =>
+  authenticatedFetchBlob(`/catalog/revisions/${revisionId}/graphics/${side}/thumbnail`);
+
+export interface CatalogGraphicMarkerInput {
+  marker_type: "network_port" | "power_supply" | "module" | "other";
+  network_port_template_id?: string | null;
+  power_supply_template_id?: string | null;
+  label?: string | null;
+  marker_x: number;
+  marker_y: number;
+  sort_order?: number;
+}
+
+export const createGraphicMarker = (revisionId: string, graphicId: string, body: CatalogGraphicMarkerInput, ifMatch: number) =>
+  apiFetch<CatalogGraphicMarker>(`/catalog/revisions/${revisionId}/graphics/${graphicId}/markers`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    ifMatch,
+  });
+
+export const updateGraphicMarker = (
+  revisionId: string,
+  graphicId: string,
+  markerId: string,
+  body: Partial<CatalogGraphicMarkerInput>,
+  ifMatch: number,
+) =>
+  apiFetch<CatalogGraphicMarker>(`/catalog/revisions/${revisionId}/graphics/${graphicId}/markers/${markerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+    ifMatch,
+  });
+
+export const deleteGraphicMarker = (revisionId: string, graphicId: string, markerId: string, ifMatch: number) =>
+  apiFetch<void>(`/catalog/revisions/${revisionId}/graphics/${graphicId}/markers/${markerId}`, { method: "DELETE", ifMatch });

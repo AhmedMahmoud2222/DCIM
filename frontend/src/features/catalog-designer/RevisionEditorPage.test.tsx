@@ -43,6 +43,7 @@ function makeRevision(overrides: Partial<CatalogModelRevisionDetail> = {}): Cata
     network_ports: [],
     power_supplies: [],
     monitoring_metrics: [],
+    graphics: [],
     ...overrides,
   };
 }
@@ -152,6 +153,33 @@ describe("RevisionEditorPage", () => {
 
     await waitFor(() => expect(api.publishRevision).toHaveBeenCalled());
     await waitFor(() => expect(queryClient.getQueryState(["catalog", "models", "model-1"])?.isInvalidated).toBe(true));
+  });
+
+  it("invalidates both the revision's and the parent model's cache on a graphic upload", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.uploadGraphic).mockResolvedValue({
+      id: "graphic-1", catalog_model_revision_id: "rev-1", revision_version: 1, side: "front",
+      original_filename: "front.png", mime_type: "image/png", file_size_bytes: 10, width_px: 8, height_px: 8,
+      uploaded_at: "2026-01-01T00:00:00Z", markers: [],
+    });
+
+    const { queryClient } = renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+    queryClient.setQueryData(["catalog", "models", "model-1"], { id: "model-1" });
+
+    const file = new File(["fake-png-bytes"], "front.png", { type: "image/png" });
+    const [frontInput] = document.querySelectorAll('input[type="file"]');
+    await user.upload(frontInput as HTMLInputElement, file);
+
+    await waitFor(() => expect(api.uploadGraphic).toHaveBeenCalledWith("rev-1", "front", file, 1));
+    // The revision query is actively rendered on this page, so invalidating it triggers
+    // an immediate refetch (a stronger proof of invalidation than checking isInvalidated,
+    // which clears the instant that refetch — using the same mocked getRevision — settles).
+    await waitFor(() => expect(api.getRevision).toHaveBeenCalledTimes(2));
+    // The models query has no active observer on this page, so it stays marked
+    // invalidated rather than being refetched — the same signal the existing
+    // delete/publish invalidation tests above already check.
+    expect(queryClient.getQueryState(["catalog", "models", "model-1"])?.isInvalidated).toBe(true);
   });
 
   it("hides Delete/Publish controls for a non-administrator, and Retire on a published revision", async () => {

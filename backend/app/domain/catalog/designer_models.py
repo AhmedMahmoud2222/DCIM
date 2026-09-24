@@ -247,7 +247,20 @@ class CatalogGraphic(Base, UUIDPkMixin, TimestampMixin):
     uploaded_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
-    markers: Mapped[list["CatalogGraphicMarker"]] = relationship(back_populates="catalog_graphic")
+    # passive_deletes=True: trust the database's ON DELETE CASCADE (migration
+    # 0019_catalog_graphics) instead of letting SQLAlchemy manage this relationship on
+    # delete. Without it, deleting a CatalogGraphic whose `markers` happen to be loaded
+    # in the session (e.g. from an earlier request in the same session, or after
+    # accessing the collection) makes the ORM try to UPDATE each marker's
+    # catalog_graphic_id to NULL before the parent DELETE — which
+    # fn_validate_catalog_graphic_marker (migration 0019) rejects outright, and which
+    # the column's own NOT NULL constraint would reject regardless. Every other
+    # parent/child relationship in this module (CatalogModelRevision's ports/PSUs/
+    # metrics/graphics) avoids this class of bug by simply not declaring an ORM
+    # relationship at all and trusting the database cascade directly — this one needs a
+    # relationship (so app/api/v1/catalog_designer.py can read `graphic.markers`
+    # conveniently), so it opts into the same DB-cascade trust explicitly instead.
+    markers: Mapped[list["CatalogGraphicMarker"]] = relationship(back_populates="catalog_graphic", passive_deletes=True)
 
 
 class CatalogGraphicMarker(Base, UUIDPkMixin, TimestampMixin):

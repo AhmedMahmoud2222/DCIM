@@ -48,18 +48,24 @@ Concurrency, by construction, not by retry loops:
   now-existing row.
 """
 
+import hashlib
+import io
 import uuid
 from datetime import UTC, datetime
 
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.application.concurrency import check_version_match
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
+    SIDES,
     CatalogGraphic,
+    CatalogGraphicMarker,
     CatalogModel,
     CatalogModelRevision,
     Manufacturer,
@@ -68,6 +74,9 @@ from app.domain.catalog.designer_models import (
     PowerSupplyTemplate,
 )
 from app.domain.catalog.models import EquipmentModel, EquipmentModelRevision, RackModel, RackModelRevision
+from app.infrastructure.storage import StorageBackend
+
+_THUMBNAIL_MAX_DIMENSION_PX = 320
 
 _MM_PER_INCH = 25.4
 _KG_PER_LB = 0.45359237
@@ -94,6 +103,7 @@ def validate_revision_for_publish(
     ports: list[NetworkPortTemplate],
     psus: list[PowerSupplyTemplate],
     metrics: list[MonitoringMetricTemplate],
+    graphics: list[CatalogGraphic] | None = None,
 ) -> ValidationSummary:
     """Spec §5.2's rule list, representative-not-exhaustive per the spec's own wording.
     Every numeric/enum column here is nullable at the DB level by design (§4.2) so a draft
@@ -159,6 +169,27 @@ def validate_revision_for_publish(
             )
         else:
             oid_first_index[metric.oid] = index
+
+    # Phase 10A PR-5 architectural directive: missing graphics/markers are advisory,
+    # never publish-blocking — a revision publishable today under PR-3/PR-4 must stay
+    # publishable after PR-5 ships, so these are warnings only, and never flip `valid`.
+    graphics = graphics or []
+    sides_present = {g.side for g in graphics}
+    for side in ("front", "rear"):
+        if side not in sides_present:
+            warnings.append(
+                ValidationIssue(
+                    field=f"graphics.{side}", code="graphic_missing", message=f"No {side} image has been uploaded."
+                )
+            )
+    for graphic in graphics:
+        if not graphic.markers:
+            warnings.append(
+                ValidationIssue(
+                    field=f"graphics.{graphic.side}", code="graphic_has_no_markers",
+                    message=f"The {graphic.side} image has no markers placed on it.",
+                )
+            )
 
     return ValidationSummary(valid=not errors, errors=errors, warnings=warnings)
 
@@ -361,8 +392,17 @@ async def publish_revision(
             )
         ).scalars()
     )
+    graphics = list(
+        (
+            await db.execute(
+                select(CatalogGraphic)
+                .options(selectinload(CatalogGraphic.markers))
+                .where(CatalogGraphic.catalog_model_revision_id == revision_id)
+            )
+        ).scalars()
+    )
 
-    summary = validate_revision_for_publish(revision, model.category, ports, psus, metrics)
+    summary = validate_revision_for_publish(revision, model.category, ports, psus, metrics, graphics)
     if not summary.valid:
         raise ValidationFailed(summary)
 
@@ -402,6 +442,117 @@ async def publish_revision(
     revision.published_by_user_id = user_id
     await db.flush()
     return revision
+
+
+# --------------------------------------------------------------------------- Graphics
+
+
+class GraphicRejected(Exception):
+    """Raised for untrusted-input problems (bad content, wrong side, too large) — the
+    router maps this to a 422, mirroring how app/application/svg_sanitizer.py's
+    SvgRejected is handled for floor-plan uploads."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+def _sniff_raster_mime_type(content: bytes) -> str | None:
+    """Content-sniffed (magic bytes), never filename/declared-type — the same discipline
+    app/api/v1/floor_plans.py already applies to its own raster uploads."""
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if content[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    return None
+
+
+def thumbnail_storage_key(storage_key: str) -> str:
+    """Deliberately derived from `storage_key` rather than stored as its own column —
+    `catalog_graphic` (migration `0019_catalog_graphics`) has no `thumbnail_storage_key`
+    field, and a suffix scheme needs no schema change to add one."""
+    return f"{storage_key}.thumb.jpg"
+
+
+async def upload_catalog_graphic(
+    db: AsyncSession,
+    *,
+    revision: CatalogModelRevision,
+    side: str,
+    content: bytes,
+    original_filename: str,
+    uploaded_by_user_id: uuid.UUID,
+    storage: StorageBackend,
+    max_upload_bytes: int,
+) -> CatalogGraphic:
+    """Content-sniff + size cap (mirrors svg_sanitizer.py's raster path), a
+    Pillow-verified re-read of the dimensions (defense in depth beyond the magic-byte
+    check — a file with valid magic bytes but a corrupt body is rejected here instead of
+    being written to storage with `width_px`/`height_px` this function never actually
+    measured), a synchronous thumbnail (PR-5 architectural directive: sync processing —
+    bounded, small images at this 10MB cap don't need the async Celery-job machinery
+    app/infrastructure/tasks/floorplan_import.py uses for potentially large SVG parsing),
+    and content-addressed storage (sha256 of the original bytes is the storage key, so
+    re-uploading identical bytes never writes a duplicate object, and a clone of this
+    revision — see clone_revision below — can safely reuse the same key rather than
+    duplicating bytes on disk).
+
+    Replaces any existing graphic for the same (revision, side): the unique index
+    (migration 0019) allows only one row per side, and a new image invalidates the old
+    one's markers by construction — marker coordinates only make sense relative to a
+    specific image — so replacing it cascades to deleting them
+    (`catalog_graphic_marker.catalog_graphic_id` is `ON DELETE CASCADE`).
+
+    Raises GraphicRejected for untrusted-input problems; NotFoundError/ConflictError are
+    the caller's responsibility (loading/locking the revision happens before this is
+    called, via lock_draft_revision_for_edit, exactly like every other child mutation)."""
+    if side not in SIDES:
+        raise GraphicRejected(f"side must be one of {SIDES}")
+    if len(content) > max_upload_bytes:
+        raise GraphicRejected(f"file exceeds the {max_upload_bytes} byte size limit")
+    mime_type = _sniff_raster_mime_type(content)
+    if mime_type is None:
+        raise GraphicRejected("file content is not recognized as PNG or JPEG (checked by content, not filename)")
+
+    try:
+        with Image.open(io.BytesIO(content)) as probe:
+            probe.verify()
+        with Image.open(io.BytesIO(content)) as img:
+            width_px, height_px = img.size
+            thumbnail = img.convert("RGB")
+            thumbnail.thumbnail((_THUMBNAIL_MAX_DIMENSION_PX, _THUMBNAIL_MAX_DIMENSION_PX))
+            thumbnail_buffer = io.BytesIO()
+            thumbnail.save(thumbnail_buffer, format="JPEG", quality=80)
+            thumbnail_bytes = thumbnail_buffer.getvalue()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise GraphicRejected(f"unparseable image: {exc}") from exc
+
+    file_hash = hashlib.sha256(content).hexdigest()
+    extension = "png" if mime_type == "image/png" else "jpg"
+    storage_key = f"{file_hash}.{extension}"
+    storage.save(storage_key, content)
+    storage.save(thumbnail_storage_key(storage_key), thumbnail_bytes)
+
+    existing = (
+        await db.execute(
+            select(CatalogGraphic).where(
+                CatalogGraphic.catalog_model_revision_id == revision.id, CatalogGraphic.side == side
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        await db.delete(existing)
+        await db.flush()  # the DELETE must land before the new row's INSERT re-uses the (revision_id, side) unique key
+
+    graphic = CatalogGraphic(
+        catalog_model_revision_id=revision.id, side=side, storage_key=storage_key,
+        original_filename=original_filename[:255], mime_type=mime_type, file_size_bytes=len(content),
+        width_px=width_px, height_px=height_px, uploaded_by_user_id=uploaded_by_user_id,
+        uploaded_at=datetime.now(UTC),
+    )
+    db.add(graphic)
+    await db.flush()
+    return graphic
 
 
 # --------------------------------------------------------------------------- Clone
@@ -453,9 +604,11 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
     db.add(clone)
     await db.flush()
 
-    ports = (
-        await db.execute(select(NetworkPortTemplate).where(NetworkPortTemplate.catalog_model_revision_id == source.id))
-    ).scalars()
+    ports = list(
+        (
+            await db.execute(select(NetworkPortTemplate).where(NetworkPortTemplate.catalog_model_revision_id == source.id))
+        ).scalars()
+    )
     for port in ports:
         db.add(
             NetworkPortTemplate(
@@ -466,9 +619,11 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
             )
         )
 
-    psus = (
-        await db.execute(select(PowerSupplyTemplate).where(PowerSupplyTemplate.catalog_model_revision_id == source.id))
-    ).scalars()
+    psus = list(
+        (
+            await db.execute(select(PowerSupplyTemplate).where(PowerSupplyTemplate.catalog_model_revision_id == source.id))
+        ).scalars()
+    )
     for psu in psus:
         db.add(
             PowerSupplyTemplate(
@@ -497,11 +652,70 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
             )
         )
 
-    has_graphics = (
-        await db.execute(select(CatalogGraphic.id).where(CatalogGraphic.catalog_model_revision_id == source.id).limit(1))
-    ).scalar_one_or_none()
-    if has_graphics is not None:
-        raise ConflictError(detail="Cloning a revision with graphics is not yet supported (implemented in PR-5).")
+    # Phase 10A PR-5: extending the clone right after the child-template copy and before
+    # the final flush, exactly as this function's own docstring anticipated. Storage
+    # objects are content-addressed and immutable (app/infrastructure/storage/), so the
+    # clone's CatalogGraphic row reuses the source's `storage_key` unchanged — no bytes
+    # are duplicated on disk. Markers are re-pointed at the *clone's* own port/PSU rows
+    # (matched by `stable_key`, which clone preserves exactly, per the loops above),
+    # never the source's: `fn_validate_catalog_graphic_marker` (migration
+    # `0019_catalog_graphics`) rejects a marker whose port/PSU belongs to a different
+    # revision than its graphic, so re-pointing is not an optional nicety — an unmapped
+    # marker insert would be rejected by the database outright.
+    graphics = list(
+        (await db.execute(select(CatalogGraphic).where(CatalogGraphic.catalog_model_revision_id == source.id))).scalars()
+    )
+    if graphics:
+        await db.flush()  # populate clone's port/PSU ids before building the id maps below
+        new_port_id_by_stable_key = {
+            p.stable_key: p.id
+            for p in (
+                await db.execute(select(NetworkPortTemplate).where(NetworkPortTemplate.catalog_model_revision_id == clone.id))
+            ).scalars()
+        }
+        new_psu_id_by_stable_key = {
+            p.stable_key: p.id
+            for p in (
+                await db.execute(select(PowerSupplyTemplate).where(PowerSupplyTemplate.catalog_model_revision_id == clone.id))
+            ).scalars()
+        }
+        old_port_stable_key_by_id = {p.id: p.stable_key for p in ports}
+        old_psu_stable_key_by_id = {p.id: p.stable_key for p in psus}
+
+        for graphic in graphics:
+            markers = list(
+                (
+                    await db.execute(select(CatalogGraphicMarker).where(CatalogGraphicMarker.catalog_graphic_id == graphic.id))
+                ).scalars()
+            )
+            new_graphic = CatalogGraphic(
+                catalog_model_revision_id=clone.id, side=graphic.side, storage_key=graphic.storage_key,
+                original_filename=graphic.original_filename, mime_type=graphic.mime_type,
+                file_size_bytes=graphic.file_size_bytes, width_px=graphic.width_px, height_px=graphic.height_px,
+                uploaded_by_user_id=user_id, uploaded_at=datetime.now(UTC),
+            )
+            db.add(new_graphic)
+            await db.flush()  # need new_graphic.id for the markers' FK below
+
+            for marker in markers:
+                new_port_id = (
+                    new_port_id_by_stable_key[old_port_stable_key_by_id[marker.network_port_template_id]]
+                    if marker.network_port_template_id is not None
+                    else None
+                )
+                new_psu_id = (
+                    new_psu_id_by_stable_key[old_psu_stable_key_by_id[marker.power_supply_template_id]]
+                    if marker.power_supply_template_id is not None
+                    else None
+                )
+                db.add(
+                    CatalogGraphicMarker(
+                        catalog_graphic_id=new_graphic.id, marker_type=marker.marker_type,
+                        network_port_template_id=new_port_id, power_supply_template_id=new_psu_id,
+                        label=marker.label, marker_x=marker.marker_x, marker_y=marker.marker_y,
+                        sort_order=marker.sort_order,
+                    )
+                )
 
     await db.flush()
     return clone
