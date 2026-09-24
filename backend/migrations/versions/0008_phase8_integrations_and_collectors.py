@@ -22,6 +22,138 @@ revision = "0008_phase8"
 down_revision = "0007_correction"
 branch_labels = None
 depends_on = None
+# Frozen snapshot of app.application.rbac.DEFAULT_ROLE_PERMISSIONS exactly as it read
+# at commit fc5fd57e59f71836828decb66dcdfb669f44b47c (the commit that introduced this file,
+# unchanged from what is still on disk here today). See 0002_seed's own
+# frozen-snapshot comment for why this must be a frozen record, not a live import.
+_ROLE_PERMISSIONS_AT_0008: dict[str, list[str]] = {
+    "Administrator": [
+        "organization:read",
+        "organization:manage",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "user:manage",
+        "role:manage",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
+        "integration:read",
+        "integration:manage",
+        "collector:read",
+        "collector:manage",
+        "collector:assign",
+        "discovery:read",
+        "discovery:reconcile",
+    ],
+    "DCIM Manager": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
+        "integration:read",
+        "integration:manage",
+        "collector:read",
+        "collector:manage",
+        "collector:assign",
+        "discovery:read",
+        "discovery:reconcile",
+    ],
+    "Engineer": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "dashboard:read",
+        "integration:read",
+        "collector:read",
+        "discovery:read",
+        "discovery:reconcile",
+    ],
+    "Operator": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:place",
+        "equipment:read",
+        "equipment:place",
+        "floor_plan:read",
+        "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
+        "integration:read",
+        "collector:read",
+        "discovery:read",
+    ],
+    "Viewer": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "rack:read",
+        "equipment:read",
+        "floor_plan:read",
+        "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
+        "integration:read",
+        "collector:read",
+        "discovery:read",
+    ],
+}
+
 
 
 def upgrade() -> None:
@@ -231,12 +363,11 @@ def _seed_new_permissions() -> None:
     """Adds the Phase 8 permission codes (integration:*/collector:*/discovery:*) to the
     existing RBAC tables without touching any Phase 1/2/3 permission/role/role_permission
     row — the exact same idempotent mechanism migrations 0004/0006 already established,
-    reading from the same `DEFAULT_ROLE_PERMISSIONS` single source of truth."""
-    from app.application.rbac import DEFAULT_ROLE_PERMISSIONS
-
+    reading from this file's own frozen-at-introduction `_ROLE_PERMISSIONS_AT_0008`
+    snapshot."""
     bind = op.get_bind()
 
-    all_codes = sorted({code for codes in DEFAULT_ROLE_PERMISSIONS.values() for code in codes})
+    all_codes = sorted({code for codes in _ROLE_PERMISSIONS_AT_0008.values() for code in codes})
     existing_permissions = {
         (row.resource, row.action): row.id
         for row in bind.execute(sa.text("SELECT id, resource, action FROM permission")).fetchall()
@@ -262,7 +393,7 @@ def _seed_new_permissions() -> None:
             {"id": new_id, "resource": resource, "action": action, "description": f"{action} on {resource}"},
         )
 
-    for role_name, codes in DEFAULT_ROLE_PERMISSIONS.items():
+    for role_name, codes in _ROLE_PERMISSIONS_AT_0008.items():
         role_id = existing_roles.get(role_name)
         if role_id is None:
             continue
