@@ -15,6 +15,16 @@ from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import check_version_match, require_if_match
+from app.application.equipment_instantiation_service import (
+    InstantiationRejected,
+    InvalidPortTarget,
+    PortNotFound,
+    connect_port,
+    instantiate_equipment,
+    list_equipment_ports,
+    list_equipment_power_inlets,
+    list_port_connections,
+)
 from app.application.idempotency import (
     IdempotencyConflict,
     IdempotencyStillProcessing,
@@ -36,6 +46,7 @@ from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.catalog.models import EquipmentModelRevision, RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Equipment, Rack
+from app.domain.physical.ports import PORT_CONNECTION_STATUSES, EquipmentPort
 from app.domain.placement.models import PLACEMENT_TYPES, SIDES
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
@@ -81,6 +92,9 @@ class EquipmentOut(BaseModel):
     asset_tag: str
     lifecycle_status: str
     model_revision_id: uuid.UUID
+    # Phase 10B: NULL for equipment created via the legacy path below (a direct
+    # model_revision_id, never instantiated from a published catalog revision).
+    catalog_model_revision_id: uuid.UUID | None
     hostname: str | None
     owner: str | None
     service: str | None
@@ -136,6 +150,7 @@ async def _serialize_equipment(db: AsyncSession, equipment: Equipment, asset: Ma
         asset_tag=asset.asset_tag,
         lifecycle_status=asset.lifecycle_status,
         model_revision_id=equipment.model_revision_id,
+        catalog_model_revision_id=equipment.catalog_model_revision_id,
         hostname=equipment.hostname,
         owner=equipment.owner,
         service=equipment.service,
@@ -379,3 +394,302 @@ async def retire_equipment_endpoint(
     asset = await db.get(ManagedAsset, equipment_id)
     assert asset is not None
     return await _serialize_equipment(db, equipment, asset)
+
+
+# ------------------------------------------------------------- Phase 10B: instantiation
+
+
+class EquipmentInstantiateIn(BaseModel):
+    asset_tag: str = Field(max_length=64)
+    catalog_model_revision_id: uuid.UUID
+    hostname: str | None = Field(default=None, max_length=255)
+    ip_address: str | None = None
+    owner: str | None = Field(default=None, max_length=128)
+    service: str | None = Field(default=None, max_length=128)
+    environment: str | None = Field(default=None, max_length=64)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    # Optional inline placement — identical shape/semantics to EquipmentMoveIn, so a
+    # caller can instantiate directly into a rack slot in one request instead of a
+    # separate POST /equipment/instantiate then POST /equipment/{id}/move round trip.
+    placement_type: str | None = None
+    room_id: uuid.UUID | None = None
+    rack_id: uuid.UUID | None = None
+    u_start: int | None = None
+    u_end: int | None = None
+    side: str | None = None
+    rotation_deg: int | None = None
+    mounting_method: str | None = Field(default=None, max_length=64)
+    orientation: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def _check_placement_shape(self) -> "EquipmentInstantiateIn":
+        if self.placement_type is None:
+            return self
+        if self.placement_type not in PLACEMENT_TYPES:
+            raise ValueError(f"placement_type must be one of {PLACEMENT_TYPES}")
+        if self.room_id is None:
+            raise ValueError("room_id is required when placement_type is given.")
+        if self.side is not None and self.side not in SIDES:
+            raise ValueError(f"side must be one of {SIDES}")
+        if self.placement_type == "rack_mounted":
+            if self.rack_id is None or self.u_start is None or self.u_end is None or self.side is None:
+                raise ValueError("rack_mounted placement requires rack_id, u_start, u_end, and side.")
+        return self
+
+
+class EquipmentPortOut(BaseModel):
+    id: uuid.UUID
+    equipment_id: uuid.UUID
+    network_port_template_id: uuid.UUID | None
+    stable_key: str
+    display_name: str
+    media_type: str
+    supported_speeds_mbps: list
+    connector_type: str
+    role: str
+    side: str
+    module_group: str | None
+    sort_order: int
+    connection: "PortConnectionOut | None" = None
+
+    model_config = {"from_attributes": True}
+
+
+class EquipmentPowerInletOut(BaseModel):
+    id: uuid.UUID
+    equipment_id: uuid.UUID
+    power_supply_template_id: uuid.UUID | None
+    power_node_id: uuid.UUID
+    stable_key: str
+    label: str
+    connector_type: str
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+class PortConnectionOut(BaseModel):
+    id: uuid.UUID
+    source_port_id: uuid.UUID
+    target_port_id: uuid.UUID | None
+    target_power_node_id: uuid.UUID | None
+    cable_id: str | None
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
+class EquipmentInstantiateOut(EquipmentOut):
+    ports: list[EquipmentPortOut]
+    power_inlets: list[EquipmentPowerInletOut]
+
+
+async def _serialize_ports(db: AsyncSession, equipment_id: uuid.UUID) -> list[EquipmentPortOut]:
+    ports = await list_equipment_ports(db, equipment_id=equipment_id)
+    connections = await list_port_connections(db, port_ids=[p.id for p in ports])
+    out = []
+    for port in ports:
+        connection = connections.get(port.id)
+        out.append(
+            EquipmentPortOut(
+                id=port.id, equipment_id=port.equipment_id, network_port_template_id=port.network_port_template_id,
+                stable_key=port.stable_key, display_name=port.display_name, media_type=port.media_type,
+                supported_speeds_mbps=port.supported_speeds_mbps, connector_type=port.connector_type, role=port.role,
+                side=port.side, module_group=port.module_group, sort_order=port.sort_order,
+                connection=PortConnectionOut.model_validate(connection) if connection else None,
+            )
+        )
+    return out
+
+
+@router.post("/instantiate", response_model=EquipmentInstantiateOut, status_code=201)
+async def instantiate_equipment_endpoint(
+    body: EquipmentInstantiateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ctx=Depends(require_permission("equipment:manage")),
+) -> EquipmentInstantiateOut:
+    """Phase 10B: instantiate a physical Equipment (plus its EquipmentPort/
+    EquipmentPowerInlet children) from a published, category='equipment'
+    CatalogModelRevision — see app/application/equipment_instantiation_service.py for the
+    full contract. Draft/retired/non-equipment revisions are rejected with 409, matching
+    catalog_designer_service.py's own ConflictError convention for lifecycle violations."""
+    request_hash = hash_request_body(body.model_dump(mode="json"))
+    claim = None
+    if idempotency_key is not None:
+        try:
+            outcome = await get_or_claim(
+                db, key=idempotency_key, endpoint="POST:/equipment/instantiate", request_hash=request_hash
+            )
+        except IdempotencyConflict as exc:
+            raise ApiError(
+                status_code=422, title="Idempotency Key Reused",
+                detail="This Idempotency-Key was already used with a different request body.",
+            ) from exc
+        except IdempotencyStillProcessing as exc:
+            raise ApiError(
+                status_code=503, title="Request Still Processing",
+                detail="An identical request with this Idempotency-Key is still being processed. Retry shortly.",
+            ) from exc
+        if outcome.cached is not None:
+            assert outcome.cached.response_body is not None
+            return EquipmentInstantiateOut(**outcome.cached.response_body)
+        claim = outcome.claim
+    claim_id = claim.id if claim is not None else None
+
+    try:
+        if body.placement_type == "rack_mounted":
+            assert body.rack_id is not None and body.u_start is not None and body.u_end is not None
+            validate_rotation_degrees(body.rotation_deg)
+            rack = await db.get(Rack, body.rack_id)
+            if rack is None:
+                raise NotFoundError(f"Rack {body.rack_id} not found.")
+            rack_model_revision = await db.get(RackModelRevision, rack.model_revision_id)
+            assert rack_model_revision is not None
+            validate_u_range_against_rack_capacity(
+                u_start=body.u_start, u_end=body.u_end, rack_height_u=rack_model_revision.height_u
+            )
+
+        try:
+            equipment = await instantiate_equipment(
+                db, asset_tag=body.asset_tag, catalog_model_revision_id=body.catalog_model_revision_id,
+                hostname=body.hostname, ip_address=body.ip_address, owner=body.owner, service=body.service,
+                environment=body.environment, notes=body.notes,
+            )
+        except InstantiationRejected as exc:
+            raise ApiError(
+                status_code=409, title="Instantiation Rejected", detail=exc.detail,
+                type_="https://dcim.internal/errors/conflict",
+            ) from exc
+
+        if body.placement_type is not None:
+            assert body.room_id is not None
+            await move_equipment(
+                db, equipment_id=equipment.id, placement_type=body.placement_type, room_id=body.room_id,
+                rack_id=body.rack_id, u_start=body.u_start, u_end=body.u_end, side=body.side,
+                rotation_deg=body.rotation_deg, mounting_method=body.mounting_method, orientation=body.orientation,
+                if_match_version=None,
+            )
+
+        request_id, correlation_id = _request_ids(request)
+        await write_audit_log(
+            db, actor_user_id=ctx.user.id, action="equipment.instantiate", entity_type="equipment", entity_id=equipment.id,
+            request_id=request_id, correlation_id=correlation_id,
+            after={"asset_tag": equipment.hostname, "catalog_model_revision_id": str(body.catalog_model_revision_id)},
+        )
+        await write_outbox_event(
+            db, event_type="EquipmentInstantiated", aggregate_type="equipment", aggregate_id=equipment.id,
+            payload={"catalog_model_revision_id": str(body.catalog_model_revision_id)}, correlation_id=correlation_id,
+        )
+
+        asset = await db.get(ManagedAsset, equipment.id)
+        assert asset is not None
+        base = await _serialize_equipment(db, equipment, asset)
+        ports = await _serialize_ports(db, equipment.id)
+        power_inlets = await list_equipment_power_inlets(db, equipment_id=equipment.id)
+        inlets = [EquipmentPowerInletOut.model_validate(inlet) for inlet in power_inlets]
+        out = EquipmentInstantiateOut(**base.model_dump(), ports=ports, power_inlets=inlets)
+
+        if claim is not None:
+            await complete_claim(db, claim, response_status=201, response_body=out.model_dump(mode="json"))
+        await db.commit()
+        return out
+    except PlacementConflict as exc:
+        current = exc.current
+        current_version = current.version if current is not None else None
+        await db.rollback()
+        if claim_id is not None:
+            await release_claim(db, claim_id)
+        detail = (
+            f"Requested placement conflicts with existing equipment; current version={current_version}."
+            if current is not None
+            else "Requested placement conflicts with existing equipment."
+        )
+        raise ConflictError(detail=detail) from exc
+    except Exception:
+        await db.rollback()
+        if claim_id is not None:
+            await release_claim(db, claim_id)
+        raise
+
+
+class PortsListOut(BaseModel):
+    ports: list[EquipmentPortOut]
+    power_inlets: list[EquipmentPowerInletOut]
+
+
+@router.get("/{equipment_id}/ports", response_model=PortsListOut)
+async def list_equipment_ports_endpoint(
+    equipment_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("equipment:read"))
+) -> PortsListOut:
+    equipment = await db.get(Equipment, equipment_id)
+    if equipment is None:
+        raise NotFoundError(f"Equipment {equipment_id} not found.")
+    ports = await _serialize_ports(db, equipment_id)
+    power_inlets = await list_equipment_power_inlets(db, equipment_id=equipment_id)
+    inlets = [EquipmentPowerInletOut.model_validate(inlet) for inlet in power_inlets]
+    return PortsListOut(ports=ports, power_inlets=inlets)
+
+
+class PortConnectIn(BaseModel):
+    port_id: uuid.UUID
+    target_port_id: uuid.UUID | None = None
+    target_power_node_id: uuid.UUID | None = None
+    cable_id: str | None = Field(default=None, max_length=64)
+    status: str = "active"
+
+    @model_validator(mode="after")
+    def _check_target_shape(self) -> "PortConnectIn":
+        if self.status not in PORT_CONNECTION_STATUSES:
+            raise ValueError(f"status must be one of {PORT_CONNECTION_STATUSES}")
+        if (self.target_port_id is None) == (self.target_power_node_id is None):
+            raise ValueError("Exactly one of target_port_id or target_power_node_id must be set.")
+        return self
+
+
+@router.post("/{equipment_id}/ports/connect", response_model=PortConnectionOut, status_code=201)
+async def connect_port_endpoint(
+    equipment_id: uuid.UUID,
+    body: PortConnectIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("equipment:manage")),
+) -> PortConnectionOut:
+    """Cabling mutation — gated by `equipment:manage`, the same permission
+    `POST /equipment` and `PATCH /equipment/{id}` already require, so the Operator role
+    (which holds `equipment:place`/`equipment:read` but not `equipment:manage` —
+    app/application/rbac.py's DEFAULT_ROLE_PERMISSIONS) cannot cable equipment, only view
+    it — the "operator permission gate for cabling mutations" this phase asks for,
+    without introducing a new permission code."""
+    port = await db.get(EquipmentPort, body.port_id)
+    if port is None or port.equipment_id != equipment_id:
+        raise NotFoundError(f"EquipmentPort {body.port_id} not found on equipment {equipment_id}.")
+
+    try:
+        connection = await connect_port(
+            db, source_port_id=body.port_id, target_port_id=body.target_port_id,
+            target_power_node_id=body.target_power_node_id, cable_id=body.cable_id, status=body.status,
+        )
+    except PortNotFound as exc:
+        await db.rollback()
+        raise NotFoundError(str(exc)) from exc
+    except InvalidPortTarget as exc:
+        await db.rollback()
+        raise ApiError(status_code=422, title="Invalid Port Target", detail=exc.detail) from exc
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="equipment.port.connect", entity_type="equipment_port", entity_id=port.id,
+        request_id=request_id, correlation_id=correlation_id,
+        after={"target_port_id": str(body.target_port_id) if body.target_port_id else None,
+               "target_power_node_id": str(body.target_power_node_id) if body.target_power_node_id else None,
+               "status": body.status},
+    )
+    await write_outbox_event(
+        db, event_type="PortConnected", aggregate_type="equipment_port", aggregate_id=port.id,
+        payload={"connection_id": str(connection.id)}, correlation_id=correlation_id,
+    )
+    await db.commit()
+    return PortConnectionOut.model_validate(connection)

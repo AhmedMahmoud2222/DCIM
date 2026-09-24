@@ -11,5 +11,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     globals: false,
+    // frontend/e2e/ holds Playwright specs (`npm run test:e2e`), not Vitest ones — both
+    // tools default to matching `*.spec.ts`, so they must be excluded here explicitly.
+    exclude: ["**/node_modules/**", "**/e2e/**"],
   },
 });

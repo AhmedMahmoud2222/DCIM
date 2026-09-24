@@ -104,6 +104,9 @@ export interface ElevationSlot {
   u_end: number;
   side: string;
   mounting_method: string | null;
+  // Phase 10B: null unless this equipment was instantiated from a published catalog
+  // revision — the rack view falls back to the plain colored box whenever this is null.
+  catalog_model_revision_id: string | null;
 }
 
 export interface RackElevation {
@@ -136,6 +139,9 @@ export interface Equipment {
   asset_tag: string;
   lifecycle_status: string;
   model_revision_id: string;
+  // Phase 10B: null unless this equipment was instantiated from a published catalog
+  // revision (POST /equipment/instantiate) rather than created via the legacy path.
+  catalog_model_revision_id: string | null;
   hostname: string | null;
   owner: string | null;
   service: string | null;
@@ -144,6 +150,57 @@ export interface Equipment {
   version: number;
   created_at: string;
   placement: EquipmentPlacement | null;
+}
+
+// -------------------------------------------------------- Phase 10B: ports & cabling
+
+export const PORT_CONNECTION_STATUSES = ["active", "planned", "faulted"] as const;
+export type PortConnectionStatus = (typeof PORT_CONNECTION_STATUSES)[number];
+
+export interface PortConnection {
+  id: string;
+  source_port_id: string;
+  target_port_id: string | null;
+  target_power_node_id: string | null;
+  cable_id: string | null;
+  status: PortConnectionStatus;
+}
+
+export interface EquipmentPort {
+  id: string;
+  equipment_id: string;
+  network_port_template_id: string | null;
+  stable_key: string;
+  display_name: string;
+  media_type: string;
+  supported_speeds_mbps: number[];
+  connector_type: string;
+  role: string;
+  side: "front" | "rear";
+  module_group: string | null;
+  sort_order: number;
+  connection: PortConnection | null;
+}
+
+export interface EquipmentPowerInlet {
+  id: string;
+  equipment_id: string;
+  power_supply_template_id: string | null;
+  power_node_id: string;
+  stable_key: string;
+  label: string;
+  connector_type: string;
+  sort_order: number;
+}
+
+export interface EquipmentPortsList {
+  ports: EquipmentPort[];
+  power_inlets: EquipmentPowerInlet[];
+}
+
+export interface EquipmentInstantiateResult extends Equipment {
+  ports: EquipmentPort[];
+  power_inlets: EquipmentPowerInlet[];
 }
 
 // ------------------------------------------------------------------- Floor plans / spatial

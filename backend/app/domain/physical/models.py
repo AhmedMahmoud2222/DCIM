@@ -44,6 +44,17 @@ class Equipment(Base, TimestampMixin):
     model_revision_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("equipment_model_revision.id", ondelete="RESTRICT"), nullable=False
     )
+    # Phase 10B: nullable, additive snapshot of the published CatalogModelRevision this
+    # instance was instantiated from (app/application/equipment_instantiation_service.py)
+    # — set once, at instantiation, and never updated afterward, so a later draft edit to
+    # the same catalog model can never retroactively change what an already-deployed
+    # instance is considered to be (the phase's own immutability/decoupling requirement).
+    # Equipment created through the pre-Phase-10B path (POST /equipment against a legacy
+    # EquipmentModelRevision id directly) leaves this NULL — model_revision_id alone
+    # already fully describes those rows, exactly as before this column existed.
+    catalog_model_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT")
+    )
     hostname: Mapped[str | None] = mapped_column(String(255))
     ip_address: Mapped[str | None] = mapped_column(INET)
     mac_address: Mapped[str | None] = mapped_column(String(17))
