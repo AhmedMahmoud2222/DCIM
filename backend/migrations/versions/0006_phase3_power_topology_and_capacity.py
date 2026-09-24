@@ -24,6 +24,115 @@ down_revision = "0005_correction"
 branch_labels = None
 depends_on = None
 
+# Frozen snapshot of app.application.rbac.DEFAULT_ROLE_PERMISSIONS exactly as it read at
+# commit 4606810586084511a6b3992050baca63c5aedbf6 (the commit that introduced this file,
+# unchanged from what is still on disk here today). See 0002_seed's own frozen-snapshot
+# comment for why this must be a frozen record, not a live import.
+_ROLE_PERMISSIONS_AT_0006: dict[str, list[str]] = {
+    "Administrator": [
+        "organization:read",
+        "organization:manage",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "user:manage",
+        "role:manage",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
+    ],
+    "DCIM Manager": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
+    ],
+    "Engineer": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "dashboard:read",
+    ],
+    "Operator": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:place",
+        "equipment:read",
+        "equipment:place",
+        "floor_plan:read",
+        "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
+    ],
+    "Viewer": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "rack:read",
+        "equipment:read",
+        "floor_plan:read",
+        "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
+    ],
+}
+
+
 
 def upgrade() -> None:
     # ---------------------------------------------------------------- ManagedAsset subtypes
@@ -256,12 +365,10 @@ def _seed_new_permissions() -> None:
     """Adds the Phase 3 permission codes (power:*/capacity:*/dashboard:read) to the
     existing RBAC tables without touching any Phase 1/2 permission/role/role_permission
     row — the exact same idempotent mechanism migration 0004 established, reading from
-    the same `DEFAULT_ROLE_PERMISSIONS` single source of truth."""
-    from app.application.rbac import DEFAULT_ROLE_PERMISSIONS
-
+    this file's own frozen-at-introduction `_ROLE_PERMISSIONS_AT_0006` snapshot."""
     bind = op.get_bind()
 
-    all_codes = sorted({code for codes in DEFAULT_ROLE_PERMISSIONS.values() for code in codes})
+    all_codes = sorted({code for codes in _ROLE_PERMISSIONS_AT_0006.values() for code in codes})
     existing_permissions = {
         (row.resource, row.action): row.id
         for row in bind.execute(sa.text("SELECT id, resource, action FROM permission")).fetchall()
@@ -287,7 +394,7 @@ def _seed_new_permissions() -> None:
             {"id": new_id, "resource": resource, "action": action, "description": f"{action} on {resource}"},
         )
 
-    for role_name, codes in DEFAULT_ROLE_PERMISSIONS.items():
+    for role_name, codes in _ROLE_PERMISSIONS_AT_0006.items():
         role_id = existing_roles.get(role_name)
         if role_id is None:
             continue

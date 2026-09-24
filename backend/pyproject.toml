@@ -56,6 +56,18 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Repo-root, resolved relative to this file's directory (backend/) -- so
+# tests/unit/test_monitoring_policy_contract.py's `from edge_collector.scheduler import
+# ...` resolves without requiring a PYTHONPATH export. edge_collector/ is a sibling
+# package to backend/ at the repo root, deliberately not installed into the backend
+# distribution (it is developed and validated as an independent package -- see
+# docs/superpowers/specs/2026-09-18-dcim-mvp-v0.1-design.md's isolation boundary), so
+# this is the one thing plain `pytest` needs beyond `pip install -e ".[dev]"` to collect
+# cleanly. Previously only CI's own workflow env (PYTHONPATH: ${{ github.workspace }})
+# supplied this, so a plain local `pytest` invocation (this repo's own documented
+# command) failed to collect that one file -- fixed at the config source instead of
+# requiring every invocation to remember an extra env var.
+pythonpath = [".."]
 
 [build-system]
 requires = ["setuptools>=68.0"]
