@@ -50,8 +50,13 @@ Against `ARCHITECTURE_REVIEW.md` §47's original phase table, the following is *
   grid/snap, an importer with a review queue and a quarantine/isolated-parse security boundary for
   untrusted uploads (SVG/raster).
 - **Phase 7 — Power:** `PowerNode`, `PowerConnection`, `PowerCapacity`, topology, concurrency-safe edits.
-- **Phase 8 — Integrations + Collectors:** protocol/driver/vendor-profile framework, ICMP/SNMP/REST
-  drivers, `Collector` identity and heartbeat, discovery.
+- **Phase 8 — Integrations + Collectors:** the protocol/driver framework — a `ProtocolDriver` interface
+  (`connect`/`poll`/`disconnect`/`normalize`) with ICMP/SNMP/REST drivers dispatched by a registry, zero
+  vendor-conditional branching outside `app/application/drivers/` — plus `Collector` identity/heartbeat and
+  discovery. **`VendorProfile`, `DeviceProfile`, and a persistent `MetricMapping` table are not
+  implemented** — deferred by Phase 8's own scope to Phase 9/MVP, per
+  `PHASE8_ARCHITECTURE_CLARIFICATION.md`; the only `MetricMapping` in the codebase today is a driver-local,
+  in-memory dataclass, never backed by a database table.
 - **Phase 9 — Telemetry (DCIM MVP v0.1):** an isolated `edge_collector/` package (SQLite-buffered,
   HMAC-signed, bounded retry/backoff) forwards normalized readings to central PostgreSQL
   (`TelemetryReading`, occurred-at/received-at split, dedup key); raw readings retained 365 days, then
