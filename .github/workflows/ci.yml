@@ -81,6 +81,24 @@ jobs:
         run: mypy app
       - name: Run migrations
         run: alembic upgrade head
+      - name: Validate full migration chain round trip on a fresh database
+        # PR-15 correction: this is the exact class of bug the existing narrower
+        # round-trip steps below did not catch -- migrations 0002/0004/0006/0008/0009/
+        # 0010 used to import app.application.rbac.DEFAULT_ROLE_PERMISSIONS live, at
+        # migration-run-time, instead of a frozen historical snapshot, so a from-scratch
+        # `alembic upgrade head` on a fresh database (exactly what this CI job's own
+        # "Provision" step above just created) collided migration 0002's dynamic
+        # catalog:* seed with migration 0021's own hardcoded one. The two steps above
+        # already exercised "upgrade head against a fresh database" once; this step adds
+        # the full down-to-nothing-and-back cycle the previous two narrower round-trip
+        # steps (0010, 0015) never covered, so a frozen-snapshot regression anywhere in
+        # the chain -- not just at 0021's boundary -- fails CI immediately rather than
+        # silently reproducing only on some other from-scratch database no test here
+        # happens to create.
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+          test "$(alembic heads | wc -l)" -eq 1
       - name: Validate retention migration round trip
         run: |
           test "$(alembic heads | wc -l)" -eq 1

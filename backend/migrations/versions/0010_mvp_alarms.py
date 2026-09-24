@@ -14,6 +14,152 @@ revision = "0010_mvp_alarms"
 down_revision = "0009_mvp_telemetry"
 branch_labels = None
 depends_on = None
+# Frozen snapshot of app.application.rbac.DEFAULT_ROLE_PERMISSIONS exactly as it read
+# at commit 8afad936be614a87955a5e09cd7eb7aad72363a1 (the commit that introduced this file,
+# unchanged from what is still on disk here today). See 0002_seed's own
+# frozen-snapshot comment for why this must be a frozen record, not a live import.
+_ROLE_PERMISSIONS_AT_0010: dict[str, list[str]] = {
+    "Administrator": [
+        "organization:read",
+        "organization:manage",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "user:manage",
+        "role:manage",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
+        "integration:read",
+        "integration:manage",
+        "collector:read",
+        "collector:manage",
+        "collector:assign",
+        "discovery:read",
+        "discovery:reconcile",
+        "telemetry:read",
+        "telemetry:manage",
+        "alarm:read",
+        "alarm:manage",
+    ],
+    "DCIM Manager": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "capacity:manage",
+        "dashboard:read",
+        "integration:read",
+        "integration:manage",
+        "collector:read",
+        "collector:manage",
+        "collector:assign",
+        "discovery:read",
+        "discovery:reconcile",
+        "telemetry:read",
+        "telemetry:manage",
+        "alarm:read",
+        "alarm:manage",
+    ],
+    "Engineer": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "spatial:read",
+        "power:read",
+        "power:manage",
+        "capacity:read",
+        "dashboard:read",
+        "integration:read",
+        "collector:read",
+        "discovery:read",
+        "discovery:reconcile",
+        "telemetry:read",
+        "alarm:read",
+    ],
+    "Operator": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:place",
+        "equipment:read",
+        "equipment:place",
+        "floor_plan:read",
+        "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
+        "integration:read",
+        "collector:read",
+        "discovery:read",
+        "telemetry:read",
+        "alarm:read",
+    ],
+    "Viewer": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "rack:read",
+        "equipment:read",
+        "floor_plan:read",
+        "spatial:read",
+        "power:read",
+        "capacity:read",
+        "dashboard:read",
+        "integration:read",
+        "collector:read",
+        "discovery:read",
+        "telemetry:read",
+        "alarm:read",
+    ],
+}
+
 
 
 def upgrade() -> None:
@@ -58,12 +204,11 @@ def upgrade() -> None:
 
 
 def _seed_permissions() -> None:
-    from app.application.rbac import DEFAULT_ROLE_PERMISSIONS
     bind = op.get_bind()
     permissions = {(r.resource, r.action): r.id for r in bind.execute(sa.text("SELECT id, resource, action FROM permission"))}
     roles = {r.name: r.id for r in bind.execute(sa.text("SELECT id, name FROM role"))}
     existing = {(r.role_id, r.permission_id) for r in bind.execute(sa.text("SELECT role_id, permission_id FROM role_permission"))}
-    for codes in DEFAULT_ROLE_PERMISSIONS.values():
+    for codes in _ROLE_PERMISSIONS_AT_0010.values():
         for code in codes:
             resource, action = code.split(":")
             if (resource, action) not in permissions:
@@ -73,7 +218,7 @@ def _seed_permissions() -> None:
                     {"id": pid, "r": resource, "a": action, "d": f"{action} on {resource}"},
                 )
                 permissions[(resource, action)] = pid
-    for role_name, codes in DEFAULT_ROLE_PERMISSIONS.items():
+    for role_name, codes in _ROLE_PERMISSIONS_AT_0010.items():
         if role_name in roles:
             for code in codes:
                 resource, action = code.split(":")
