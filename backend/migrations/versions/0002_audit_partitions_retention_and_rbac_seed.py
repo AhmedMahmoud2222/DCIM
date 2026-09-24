@@ -15,6 +15,103 @@ down_revision = "e9fd19228f19"
 branch_labels = None
 depends_on = None
 
+# Frozen snapshot of app.application.rbac.DEFAULT_ROLE_PERMISSIONS exactly as it read at
+# commit 51a7562dfbdf65610a4e5fcbebe4d19547774576 ("feat: Phase 2 frontend — rack/equipment
+# inventory and floor-plan viewer"), the commit that introduced this migration file
+# unchanged from what is still on disk here today (git diff 51a7562..HEAD -- this file is
+# empty). This migration used to import DEFAULT_ROLE_PERMISSIONS from the live application
+# module at migration-run-time instead of embedding a snapshot — so every later addition to
+# that dict (e.g. Phase 10A PR-2's catalog:* codes) silently changed what a from-scratch
+# `alembic upgrade head` seeds here too, colliding with migration 0021's own, separately
+# hardcoded catalog:* seed on any fresh database (UniqueViolationError on
+# uq_permission_resource_action). A migration must be a frozen historical record of what it
+# did the day it ran, not a live view of mutable application code — every later addition to
+# DEFAULT_ROLE_PERMISSIONS belongs in its own new migration (as 0021 already correctly does
+# for catalog:*), never by changing what an old migration seeds.
+_ROLE_PERMISSIONS_AT_0002: dict[str, list[str]] = {
+    "Administrator": [
+        "organization:read",
+        "organization:manage",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "user:manage",
+        "role:manage",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+    ],
+    "DCIM Manager": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+    ],
+    "Engineer": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "spatial:read",
+    ],
+    "Operator": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:place",
+        "equipment:read",
+        "equipment:place",
+        "floor_plan:read",
+        "spatial:read",
+    ],
+    "Viewer": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "rack:read",
+        "equipment:read",
+        "floor_plan:read",
+        "spatial:read",
+    ],
+}
+
 
 def _month_bounds(base: date, offset_months: int) -> tuple[date, date]:
     year = base.year + (base.month - 1 + offset_months) // 12
@@ -92,9 +189,7 @@ def upgrade() -> None:
 
     import uuid as _uuid
 
-    from app.application.rbac import DEFAULT_ROLE_PERMISSIONS
-
-    role_permission_codes = DEFAULT_ROLE_PERMISSIONS
+    role_permission_codes = _ROLE_PERMISSIONS_AT_0002
     permission_specs = sorted(
         {tuple(code.split(":")) for codes in role_permission_codes.values() for code in codes}
     )
