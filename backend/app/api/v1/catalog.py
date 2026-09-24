@@ -1,7 +1,16 @@
 """Rack/Equipment model catalog (ARCHITECTURE_REVIEW.md §4b). Create + list only —
 a `*ModelRevision` is immutable once created (a corrected spec is a new revision, never
 an edit), so there is no update endpoint for a revision; a `*Model`'s manufacturer/name
-identity is likewise not editable here (create a new catalog entry instead)."""
+identity is likewise not editable here (create a new catalog entry instead).
+
+Phase 10A PR-2 (docs/superpowers/specs/2026-09-23-phase-10a-asset-catalog-designer-
+design.md §9.1, aligned plan §3.2): the four mutating endpoints below now require
+`require_catalog_administrator("catalog:manage")` instead of plain
+`require_permission("rack:manage")`/`require_permission("equipment:manage")` — creating a
+new catalog model or revision is Administrator-only, by role, not merely by whichever
+permission code a deployment happens to grant. The two list (`read`) endpoints per model
+keep their existing `rack:read`/`equipment:read` gate unchanged; read access stays broad,
+only authoring is tightened."""
 
 import uuid
 from datetime import datetime
@@ -13,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.rbac import require_permission
+from app.application.rbac import require_catalog_administrator, require_permission
 from app.core.errors import NotFoundError
 from app.domain.catalog.models import EquipmentModel, EquipmentModelRevision, RackModel, RackModelRevision
 
@@ -56,7 +65,7 @@ class RackModelRevisionOut(BaseModel):
 
 @router.post("/rack-models", response_model=RackModelOut, status_code=201)
 async def create_rack_model(
-    body: RackModelIn, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("rack:manage"))
+    body: RackModelIn, db: AsyncSession = Depends(get_db), ctx=Depends(require_catalog_administrator("catalog:manage"))
 ) -> RackModel:
     model = RackModel(**body.model_dump())
     db.add(model)
@@ -83,7 +92,7 @@ async def create_rack_model_revision(
     rack_model_id: uuid.UUID,
     body: RackModelRevisionIn,
     db: AsyncSession = Depends(get_db),
-    ctx=Depends(require_permission("rack:manage")),
+    ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> RackModelRevision:
     if await db.get(RackModel, rack_model_id) is None:
         raise NotFoundError(f"RackModel {rack_model_id} not found.")
@@ -153,7 +162,9 @@ class EquipmentModelRevisionOut(BaseModel):
 
 @router.post("/equipment-models", response_model=EquipmentModelOut, status_code=201)
 async def create_equipment_model(
-    body: EquipmentModelIn, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("equipment:manage"))
+    body: EquipmentModelIn,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> EquipmentModel:
     model = EquipmentModel(**body.model_dump())
     db.add(model)
@@ -182,7 +193,7 @@ async def create_equipment_model_revision(
     equipment_model_id: uuid.UUID,
     body: EquipmentModelRevisionIn,
     db: AsyncSession = Depends(get_db),
-    ctx=Depends(require_permission("equipment:manage")),
+    ctx=Depends(require_catalog_administrator("catalog:manage")),
 ) -> EquipmentModelRevision:
     if await db.get(EquipmentModel, equipment_model_id) is None:
         raise NotFoundError(f"EquipmentModel {equipment_model_id} not found.")
