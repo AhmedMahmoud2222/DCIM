@@ -11,6 +11,16 @@ from app.domain.auth.models import (  # noqa: F401
     RolePermission,
     User,
 )
+from app.domain.catalog.designer_models import (  # noqa: F401
+    CatalogGraphic,
+    CatalogGraphicMarker,
+    CatalogModel,
+    CatalogModelRevision,
+    Manufacturer,
+    MonitoringMetricTemplate,
+    NetworkPortTemplate,
+    PowerSupplyTemplate,
+)
 from app.domain.catalog.models import (  # noqa: F401
     EquipmentModel,
     EquipmentModelRevision,
@@ -34,6 +44,7 @@ from app.domain.location.models import (  # noqa: F401
     Room,
     Site,
 )
+from app.domain.network.models import NetworkConnection, NetworkDevice, NetworkInterface  # noqa: F401
 from app.domain.outbox.models import OutboxEvent  # noqa: F401
 from app.domain.physical.models import Equipment, Rack  # noqa: F401
 from app.domain.placement.models import EquipmentPlacement, RackPlacement  # noqa: F401
