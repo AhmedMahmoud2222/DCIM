@@ -24,6 +24,100 @@ down_revision = "0003_correction"
 branch_labels = None
 depends_on = None
 
+# Frozen snapshot of app.application.rbac.DEFAULT_ROLE_PERMISSIONS exactly as it read at
+# commit 51a7562dfbdf65610a4e5fcbebe4d19547774576, the commit that introduced this file
+# unchanged from what is still on disk here today (git diff 51a7562..HEAD -- this file is
+# empty) -- identical to 0002_seed's own frozen snapshot, since both migrations were
+# introduced in that same commit. `_seed_new_permissions()` below is existence-check-based
+# (only inserts a (resource, action)/role_permission row that isn't already there), so
+# against a correctly-frozen 0002_seed this is now, as its own docstring already
+# anticipated, a safe no-op on a fresh database -- not a behavior change, just no longer a
+# live read of mutable application code. See 0002_seed's own frozen-snapshot comment for
+# why this matters.
+_ROLE_PERMISSIONS_AT_0004: dict[str, list[str]] = {
+    "Administrator": [
+        "organization:read",
+        "organization:manage",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "user:manage",
+        "role:manage",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+    ],
+    "DCIM Manager": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "location:manage",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "audit:view",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "floor_plan:manage",
+        "spatial:read",
+    ],
+    "Engineer": [
+        "organization:read",
+        "location:read",
+        "location:update",
+        "managed_asset:read",
+        "managed_asset:manage",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:manage",
+        "rack:place",
+        "equipment:read",
+        "equipment:manage",
+        "equipment:place",
+        "floor_plan:read",
+        "floor_plan:import",
+        "spatial:read",
+    ],
+    "Operator": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "managed_asset:update_lifecycle",
+        "rack:read",
+        "rack:place",
+        "equipment:read",
+        "equipment:place",
+        "floor_plan:read",
+        "spatial:read",
+    ],
+    "Viewer": [
+        "organization:read",
+        "location:read",
+        "managed_asset:read",
+        "rack:read",
+        "equipment:read",
+        "floor_plan:read",
+        "spatial:read",
+    ],
+}
+
 
 def upgrade() -> None:
     # ---------------------------------------------------------------- catalog
@@ -440,15 +534,14 @@ def upgrade() -> None:
 def _seed_new_permissions() -> None:
     """Adds the Phase 2 permission codes (rack:*/equipment:*/floor_plan:*/spatial:*) to
     the existing RBAC tables without touching any Phase 1 permission/role/role_permission
-    row. `DEFAULT_ROLE_PERMISSIONS` is the same single source of truth migration 0002
-    imported from; this only inserts what's missing, exactly like 0002 does for a fresh
-    database, so re-running Phase 2 on top of a database that somehow already has these
-    codes (e.g. a repeated partial apply) is a safe no-op."""
-    from app.application.rbac import DEFAULT_ROLE_PERMISSIONS
-
+    row. `_ROLE_PERMISSIONS_AT_0004` is the same frozen-at-introduction snapshot
+    0002_seed's own `_ROLE_PERMISSIONS_AT_0002` is (see that module-level comment); this
+    only inserts what's missing, exactly like 0002 does for a fresh database, so
+    re-running Phase 2 on top of a database that somehow already has these codes (e.g. a
+    repeated partial apply) is a safe no-op."""
     bind = op.get_bind()
 
-    all_codes = sorted({code for codes in DEFAULT_ROLE_PERMISSIONS.values() for code in codes})
+    all_codes = sorted({code for codes in _ROLE_PERMISSIONS_AT_0004.values() for code in codes})
     existing_permissions = {
         (row.resource, row.action): row.id
         for row in bind.execute(sa.text("SELECT id, resource, action FROM permission")).fetchall()
@@ -476,7 +569,7 @@ def _seed_new_permissions() -> None:
             {"id": new_id, "resource": resource, "action": action, "description": f"{action} on {resource}"},
         )
 
-    for role_name, codes in DEFAULT_ROLE_PERMISSIONS.items():
+    for role_name, codes in _ROLE_PERMISSIONS_AT_0004.items():
         role_id = existing_roles.get(role_name)
         if role_id is None:
             # A custom deployment renamed/removed a default role — nothing to seed for it.
