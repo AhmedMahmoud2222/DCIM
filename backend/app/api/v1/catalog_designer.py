@@ -21,7 +21,7 @@ triggers re-enforce at the database layer regardless of whether this check is by
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
@@ -33,11 +33,13 @@ from app.application.audit_service import write_audit_log
 from app.application.catalog_designer_service import (
     ValidationFailed,
     ValidationSummary,
+    allocate_revision_number,
     clone_revision,
+    lock_draft_revision_for_edit,
     publish_revision,
     validate_revision_for_publish,
 )
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import AuthContext, get_auth_context, require_catalog_administrator, require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
@@ -238,6 +240,11 @@ async def list_catalog_models(
     q: str | None = None,
     ctx: AuthContext = Depends(require_permission("catalog:read")),
 ) -> Page:
+    """Draft-read audit note: `CatalogModelOut` carries no revision-derived field at all
+    (no revision count, no "latest status" summary), so there is nothing here for a
+    `catalog:read`-only caller to leak — unlike `GET /models/{id}` (below), which does
+    embed a revision list and is filtered accordingly. If a future PR adds any
+    revision-derived field to this response, it must be filtered the same way."""
     stmt = select(CatalogModel)
     count_stmt = select(func.count()).select_from(CatalogModel)
     filters = []
@@ -263,16 +270,18 @@ async def list_catalog_models(
 async def get_catalog_model(
     model_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("catalog:read"))
 ) -> CatalogModelDetailOut:
+    """The revision summary list is filtered for a caller who lacks `catalog:read_draft`
+    (spec §10: drafts are working material, not general-inventory-readable) — a plain
+    `catalog:read` holder must not learn a draft revision exists at all here, matching
+    `GET /catalog/revisions/{id}`'s own conditional gate below. Published/retired
+    revisions remain listed for every `catalog:read` holder, unchanged."""
     model = await db.get(CatalogModel, model_id)
     if model is None:
         raise NotFoundError(f"CatalogModel {model_id} not found.")
-    revisions = (
-        await db.execute(
-            select(CatalogModelRevision)
-            .where(CatalogModelRevision.catalog_model_id == model_id)
-            .order_by(CatalogModelRevision.revision_number)
-        )
-    ).scalars().all()
+    stmt = select(CatalogModelRevision).where(CatalogModelRevision.catalog_model_id == model_id)
+    if not ctx.has_permission("catalog:read_draft"):
+        stmt = stmt.where(CatalogModelRevision.lifecycle_status != "draft")
+    revisions = (await db.execute(stmt.order_by(CatalogModelRevision.revision_number))).scalars().all()
     return CatalogModelDetailOut(
         **CatalogModelOut.model_validate(model).model_dump(),
         revisions=[RevisionSummaryOut.model_validate(r) for r in revisions],
@@ -407,6 +416,11 @@ class NetworkPortTemplateUpdateIn(BaseModel):
 class NetworkPortTemplateOut(BaseModel):
     id: uuid.UUID
     catalog_model_revision_id: uuid.UUID
+    revision_version: int
+    """The parent revision's version *after* this mutation — the request contract for
+    child mutations (spec-extended §5.1: child rows carry no version of their own) is
+    `If-Match` against the parent revision's version; this is the value to send as
+    `If-Match` on the next mutation to this revision or any of its other child rows."""
     stable_key: str
     display_name: str
     numbering_pattern: str | None
@@ -419,6 +433,15 @@ class NetworkPortTemplateOut(BaseModel):
     sort_order: int
 
     model_config = {"from_attributes": True}
+
+
+def _network_port_out(port: NetworkPortTemplate, revision_version: int) -> NetworkPortTemplateOut:
+    return NetworkPortTemplateOut(
+        id=port.id, catalog_model_revision_id=port.catalog_model_revision_id, revision_version=revision_version,
+        stable_key=port.stable_key, display_name=port.display_name, numbering_pattern=port.numbering_pattern,
+        media_type=port.media_type, supported_speeds_mbps=port.supported_speeds_mbps, connector_type=port.connector_type,
+        role=port.role, side=port.side, module_group=port.module_group, sort_order=port.sort_order,
+    )
 
 
 class PowerSupplyTemplateIn(BaseModel):
@@ -451,6 +474,7 @@ class PowerSupplyTemplateUpdateIn(BaseModel):
 class PowerSupplyTemplateOut(BaseModel):
     id: uuid.UUID
     catalog_model_revision_id: uuid.UUID
+    revision_version: int
     stable_key: str
     label: str
     quantity: int
@@ -464,6 +488,16 @@ class PowerSupplyTemplateOut(BaseModel):
     sort_order: int
 
     model_config = {"from_attributes": True}
+
+
+def _power_supply_out(psu: PowerSupplyTemplate, revision_version: int) -> PowerSupplyTemplateOut:
+    return PowerSupplyTemplateOut(
+        id=psu.id, catalog_model_revision_id=psu.catalog_model_revision_id, revision_version=revision_version,
+        stable_key=psu.stable_key, label=psu.label, quantity=psu.quantity, redundancy_mode=psu.redundancy_mode,
+        connector_type=psu.connector_type, rated_voltage_min=psu.rated_voltage_min,
+        rated_voltage_max=psu.rated_voltage_max, rated_frequency_hz=psu.rated_frequency_hz,
+        rated_current_a=psu.rated_current_a, hot_swappable=psu.hot_swappable, sort_order=psu.sort_order,
+    )
 
 
 class MonitoringMetricTemplateIn(BaseModel):
@@ -502,6 +536,7 @@ class MonitoringMetricTemplateUpdateIn(BaseModel):
 class MonitoringMetricTemplateOut(BaseModel):
     id: uuid.UUID
     catalog_model_revision_id: uuid.UUID
+    revision_version: int
     stable_key: str
     protocol: str
     protocol_other_label: str | None
@@ -518,6 +553,18 @@ class MonitoringMetricTemplateOut(BaseModel):
     sort_order: int
 
     model_config = {"from_attributes": True}
+
+
+def _monitoring_metric_out(metric: MonitoringMetricTemplate, revision_version: int) -> MonitoringMetricTemplateOut:
+    return MonitoringMetricTemplateOut(
+        id=metric.id, catalog_model_revision_id=metric.catalog_model_revision_id, revision_version=revision_version,
+        stable_key=metric.stable_key, protocol=metric.protocol, protocol_other_label=metric.protocol_other_label,
+        metric_name=metric.metric_name, oid=metric.oid, value_type=metric.value_type, unit=metric.unit,
+        scale=metric.scale, transform=metric.transform, offset=metric.offset,
+        default_collection_interval_seconds=metric.default_collection_interval_seconds,
+        default_warning_threshold=metric.default_warning_threshold,
+        default_critical_threshold=metric.default_critical_threshold, sort_order=metric.sort_order,
+    )
 
 
 class CatalogModelRevisionDetailOut(CatalogModelRevisionOut):
@@ -561,15 +608,9 @@ async def create_draft_revision(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> CatalogModelRevision:
-    if await db.get(CatalogModel, model_id) is None:
-        raise NotFoundError(f"CatalogModel {model_id} not found.")
-    max_number = (
-        await db.execute(
-            select(func.max(CatalogModelRevision.revision_number)).where(CatalogModelRevision.catalog_model_id == model_id)
-        )
-    ).scalar_one()
+    revision_number = await allocate_revision_number(db, catalog_model_id=model_id)
     revision = CatalogModelRevision(
-        catalog_model_id=model_id, revision_number=(max_number or 0) + 1, created_by_user_id=ctx.user.id
+        catalog_model_id=model_id, revision_number=revision_number, created_by_user_id=ctx.user.id
     )
     db.add(revision)
     await db.flush()
@@ -646,8 +687,18 @@ async def compare_revisions(
     left: uuid.UUID,
     right: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_permission("catalog:read")),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> CompareOut:
+    """Conditional permission, loaded first since which permission applies depends on
+    data only the database has (same shape as `GET /revisions/{id}`'s own gate): plain
+    `catalog:read` suffices when both sides are published/retired; `catalog:read_draft`
+    is additionally required the moment either side is a draft, closing the leak where a
+    caller without draft access could otherwise read a draft's full field/child diff
+    through this endpoint even though direct `GET /revisions/{draft_id}` correctly
+    rejects them."""
+    if not ctx.has_permission("catalog:read"):
+        raise ApiError(status_code=403, title="Forbidden", detail="Missing required permission: catalog:read")
+
     left_revision = await db.get(CatalogModelRevision, left)
     right_revision = await db.get(CatalogModelRevision, right)
     if left_revision is None or right_revision is None:
@@ -657,6 +708,10 @@ async def compare_revisions(
             status_code=422, title="Invalid Comparison",
             detail="Both revisions must belong to the same catalog_model_id.",
         )
+    if "draft" in (left_revision.lifecycle_status, right_revision.lifecycle_status) and not ctx.has_permission(
+        "catalog:read_draft"
+    ):
+        raise ApiError(status_code=403, title="Forbidden", detail="Missing required permission: catalog:read_draft")
 
     field_diffs = []
     for field_name in _REVISION_SCALAR_FIELDS:
@@ -729,9 +784,9 @@ async def get_revision(
     ports, psus, metrics = await _load_children(db, revision_id)
     return CatalogModelRevisionDetailOut(
         **CatalogModelRevisionOut.model_validate(revision).model_dump(),
-        network_ports=[NetworkPortTemplateOut.model_validate(p) for p in ports],
-        power_supplies=[PowerSupplyTemplateOut.model_validate(p) for p in psus],
-        monitoring_metrics=[MonitoringMetricTemplateOut.model_validate(m) for m in metrics],
+        network_ports=[_network_port_out(p, revision.version) for p in ports],
+        power_supplies=[_power_supply_out(p, revision.version) for p in psus],
+        monitoring_metrics=[_monitoring_metric_out(m, revision.version) for m in metrics],
     )
 
 
@@ -744,17 +799,12 @@ async def update_revision(
     if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> CatalogModelRevision:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
-    check_version_match(expected=if_match_version, actual=revision.version)
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
 
     before = {f: getattr(revision, f) for f in _REVISION_SCALAR_FIELDS}
     updates = body.model_dump(exclude_unset=True)
     for field_name, value in updates.items():
         setattr(revision, field_name, value)
-    revision.version += 1
     await db.flush()
 
     request_id, correlation_id = _request_ids(request)
@@ -807,12 +857,10 @@ async def create_network_port(
     body: NetworkPortTemplateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-) -> NetworkPortTemplate:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+) -> NetworkPortTemplateOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
 
     port = NetworkPortTemplate(catalog_model_revision_id=revision_id, **body.model_dump())
     db.add(port)
@@ -822,7 +870,7 @@ async def create_network_port(
         after={"port_id": str(port.id), "stable_key": port.stable_key},
     )
     await db.commit()
-    return port
+    return _network_port_out(port, revision.version)
 
 
 @router.patch("/revisions/{revision_id}/network-ports/{port_id}", response_model=NetworkPortTemplateOut)
@@ -832,12 +880,10 @@ async def update_network_port(
     body: NetworkPortTemplateUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-) -> NetworkPortTemplate:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+) -> NetworkPortTemplateOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     port = await db.get(NetworkPortTemplate, port_id)
     if port is None or port.catalog_model_revision_id != revision_id:
         raise NotFoundError(f"NetworkPortTemplate {port_id} not found under revision {revision_id}.")
@@ -849,7 +895,7 @@ async def update_network_port(
         db, request, ctx, revision_id, action="catalog.revision.update_draft", after={"port_id": str(port.id)},
     )
     await db.commit()
-    return port
+    return _network_port_out(port, revision.version)
 
 
 @router.delete("/revisions/{revision_id}/network-ports/{port_id}", status_code=204)
@@ -857,13 +903,12 @@ async def delete_network_port(
     revision_id: uuid.UUID,
     port_id: uuid.UUID,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> None:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     port = await db.get(NetworkPortTemplate, port_id)
     if port is None or port.catalog_model_revision_id != revision_id:
         raise NotFoundError(f"NetworkPortTemplate {port_id} not found under revision {revision_id}.")
@@ -874,6 +919,7 @@ async def delete_network_port(
     )
     await db.delete(port)
     await db.commit()
+    response.headers["X-Revision-Version"] = str(revision.version)
 
 
 # ---------------------------------------------------------------- Power supplies
@@ -885,12 +931,10 @@ async def create_power_supply(
     body: PowerSupplyTemplateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-) -> PowerSupplyTemplate:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+) -> PowerSupplyTemplateOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
 
     psu = PowerSupplyTemplate(catalog_model_revision_id=revision_id, **body.model_dump())
     db.add(psu)
@@ -900,7 +944,7 @@ async def create_power_supply(
         after={"power_supply_id": str(psu.id), "stable_key": psu.stable_key},
     )
     await db.commit()
-    return psu
+    return _power_supply_out(psu, revision.version)
 
 
 @router.patch("/revisions/{revision_id}/power-supplies/{psu_id}", response_model=PowerSupplyTemplateOut)
@@ -910,12 +954,10 @@ async def update_power_supply(
     body: PowerSupplyTemplateUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-) -> PowerSupplyTemplate:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+) -> PowerSupplyTemplateOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     psu = await db.get(PowerSupplyTemplate, psu_id)
     if psu is None or psu.catalog_model_revision_id != revision_id:
         raise NotFoundError(f"PowerSupplyTemplate {psu_id} not found under revision {revision_id}.")
@@ -927,7 +969,7 @@ async def update_power_supply(
         db, request, ctx, revision_id, action="catalog.revision.update_draft", after={"power_supply_id": str(psu.id)},
     )
     await db.commit()
-    return psu
+    return _power_supply_out(psu, revision.version)
 
 
 @router.delete("/revisions/{revision_id}/power-supplies/{psu_id}", status_code=204)
@@ -935,13 +977,12 @@ async def delete_power_supply(
     revision_id: uuid.UUID,
     psu_id: uuid.UUID,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> None:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     psu = await db.get(PowerSupplyTemplate, psu_id)
     if psu is None or psu.catalog_model_revision_id != revision_id:
         raise NotFoundError(f"PowerSupplyTemplate {psu_id} not found under revision {revision_id}.")
@@ -952,6 +993,7 @@ async def delete_power_supply(
     )
     await db.delete(psu)
     await db.commit()
+    response.headers["X-Revision-Version"] = str(revision.version)
 
 
 # ---------------------------------------------------------------- Monitoring metrics
@@ -963,12 +1005,10 @@ async def create_monitoring_metric(
     body: MonitoringMetricTemplateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-) -> MonitoringMetricTemplate:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+) -> MonitoringMetricTemplateOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
 
     metric = MonitoringMetricTemplate(catalog_model_revision_id=revision_id, **body.model_dump())
     db.add(metric)
@@ -978,7 +1018,7 @@ async def create_monitoring_metric(
         after={"metric_id": str(metric.id), "stable_key": metric.stable_key},
     )
     await db.commit()
-    return metric
+    return _monitoring_metric_out(metric, revision.version)
 
 
 @router.patch("/revisions/{revision_id}/monitoring-metrics/{metric_id}", response_model=MonitoringMetricTemplateOut)
@@ -988,12 +1028,10 @@ async def update_monitoring_metric(
     body: MonitoringMetricTemplateUpdateIn,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-) -> MonitoringMetricTemplate:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+) -> MonitoringMetricTemplateOut:
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     metric = await db.get(MonitoringMetricTemplate, metric_id)
     if metric is None or metric.catalog_model_revision_id != revision_id:
         raise NotFoundError(f"MonitoringMetricTemplate {metric_id} not found under revision {revision_id}.")
@@ -1005,7 +1043,7 @@ async def update_monitoring_metric(
         db, request, ctx, revision_id, action="catalog.revision.update_draft", after={"metric_id": str(metric.id)},
     )
     await db.commit()
-    return metric
+    return _monitoring_metric_out(metric, revision.version)
 
 
 @router.delete("/revisions/{revision_id}/monitoring-metrics/{metric_id}", status_code=204)
@@ -1013,13 +1051,12 @@ async def delete_monitoring_metric(
     revision_id: uuid.UUID,
     metric_id: uuid.UUID,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> None:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
-    _require_draft(revision)
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     metric = await db.get(MonitoringMetricTemplate, metric_id)
     if metric is None or metric.catalog_model_revision_id != revision_id:
         raise NotFoundError(f"MonitoringMetricTemplate {metric_id} not found under revision {revision_id}.")
@@ -1030,6 +1067,7 @@ async def delete_monitoring_metric(
     )
     await db.delete(metric)
     await db.commit()
+    response.headers["X-Revision-Version"] = str(revision.version)
 
 
 async def _write_child_audit(

@@ -107,11 +107,13 @@ async def test_full_rack_lifecycle_create_edit_validate_publish_clone_retire(cli
     assert legacy.depth_mm == round(39.4 * 25.4)
     assert legacy.weight_capacity_kg == round(220.0 * 0.45359237)
 
-    # Immutability: any further child write or scalar edit on the published revision is 409.
+    # Immutability: any further child write or scalar edit on the published revision is 409
+    # (the draft check in lock_draft_revision_for_edit runs before the version comparison,
+    # so this is a 409, not a 428, even though If-Match must still be present).
     port_attempt = await client.post(
         f"/api/v1/catalog/revisions/{revision['id']}/network-ports",
         json={"stable_key": "eth0", "display_name": "eth0", "media_type": "copper", "supported_speeds_mbps": [1000], "connector_type": "rj45", "side": "front"},
-        headers=headers,
+        headers={**headers, "If-Match": str(published["version"])},
     )
     assert port_attempt.status_code == 409, port_attempt.text
     assert "immutable" in port_attempt.json()["detail"]
@@ -180,11 +182,12 @@ async def test_equipment_nameplate_power_requires_a_power_supply_and_snmp_metric
         f"/api/v1/catalog/revisions/{revision['id']}", json=body, headers={**headers, "If-Match": str(revision["version"])}
     )
     assert resp.status_code == 200, resp.text
+    revision = resp.json()
 
     metric_resp = await client.post(
         f"/api/v1/catalog/revisions/{revision['id']}/monitoring-metrics",
         json={"stable_key": "temp", "protocol": "snmp", "metric_name": "Inlet Temp", "value_type": "float"},
-        headers=headers,
+        headers={**headers, "If-Match": str(revision["version"])},
     )
     assert metric_resp.status_code == 201, metric_resp.text
 
@@ -196,17 +199,19 @@ async def test_equipment_nameplate_power_requires_a_power_supply_and_snmp_metric
     assert codes_by_field.get("power_supplies") == "power_supply_required"
     assert codes_by_field.get("monitoring_metrics[0].oid") == "missing_oid_for_snmp"
 
-    # Fix both: add a PSU, set the OID.
+    # Fix both: add a PSU, set the OID. Each child mutation bumps the parent revision's
+    # version (spec-extended §5.1: child rows have no version of their own), so the next
+    # request's If-Match must carry the version the previous response returned.
     psu_resp = await client.post(
         f"/api/v1/catalog/revisions/{revision['id']}/power-supplies",
         json={"stable_key": "psu1", "label": "PSU 1", "connector_type": "C14"},
-        headers=headers,
+        headers={**headers, "If-Match": str(metric_resp.json()["revision_version"])},
     )
     assert psu_resp.status_code == 201, psu_resp.text
     metric_id = metric_resp.json()["id"]
     patch_metric = await client.patch(
         f"/api/v1/catalog/revisions/{revision['id']}/monitoring-metrics/{metric_id}", json={"oid": "1.3.6.1.4.1.9.9.13.1.3.1.3"},
-        headers=headers,
+        headers={**headers, "If-Match": str(psu_resp.json()["revision_version"])},
     )
     assert patch_metric.status_code == 200, patch_metric.text
 
@@ -376,6 +381,86 @@ async def test_read_draft_permission_gates_draft_detail_but_not_published(client
 
     published_read = await client.get(f"/api/v1/catalog/revisions/{revision['id']}", headers=viewer_headers)
     assert published_read.status_code == 200
+
+
+# ------------------------------------------------------------------------ Draft-read leak closure (PR-3 correction pass)
+
+
+async def test_model_detail_hides_draft_revisions_from_viewer_but_not_administrator(client, auth_headers):
+    """Issue 1: GET /catalog/models/{id}'s embedded revision list must not expose a draft
+    revision (or any of its metadata) to a caller who lacks catalog:read_draft — matching
+    GET /catalog/revisions/{id}'s own gate. A caller who holds catalog:read_draft
+    (Administrator) continues to see every revision, draft included."""
+    headers = await _admin(auth_headers)
+    manufacturer_id = await _make_manufacturer(client, headers)
+    model_id = await _make_model(client, headers, manufacturer_id)
+    draft = await _make_draft(client, headers, model_id)
+
+    viewer_headers = await auth_headers("Viewer")
+    viewer_view = await client.get(f"/api/v1/catalog/models/{model_id}", headers=viewer_headers)
+    assert viewer_view.status_code == 200, viewer_view.text
+    assert viewer_view.json()["revisions"] == [], "a catalog:read-only caller must not learn a draft revision exists"
+
+    admin_view = await client.get(f"/api/v1/catalog/models/{model_id}", headers=headers)
+    assert admin_view.status_code == 200, admin_view.text
+    assert {r["id"] for r in admin_view.json()["revisions"]} == {draft["id"]}
+
+    revision = await _fill_required_rack_fields(client, headers, draft)
+    publish_resp = await client.post(f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
+    assert publish_resp.status_code == 200, publish_resp.text
+
+    # Once published, the same revision is visible to the Viewer too — only draft status
+    # is gated, not the revision's existence once it stops being a draft.
+    viewer_view_after_publish = await client.get(f"/api/v1/catalog/models/{model_id}", headers=viewer_headers)
+    assert viewer_view_after_publish.status_code == 200, viewer_view_after_publish.text
+    assert {r["id"] for r in viewer_view_after_publish.json()["revisions"]} == {draft["id"]}
+
+
+async def test_compare_requires_read_draft_only_when_either_side_is_a_draft(client, auth_headers):
+    """Issue 1: GET /catalog/revisions/compare must require catalog:read_draft the moment
+    either side being compared is a draft; a published-vs-published comparison stays
+    reachable on plain catalog:read alone, both for a Viewer and an Administrator."""
+    headers = await _admin(auth_headers)
+    manufacturer_id = await _make_manufacturer(client, headers)
+    model_id = await _make_model(client, headers, manufacturer_id)
+    revision = await _make_draft(client, headers, model_id)
+    revision = await _fill_required_rack_fields(client, headers, revision)
+    publish_resp = await client.post(f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
+    assert publish_resp.status_code == 200, publish_resp.text
+    published = publish_resp.json()
+
+    clone_resp = await client.post(
+        f"/api/v1/catalog/models/{model_id}/revisions/clone?from_revision_id={published['id']}", headers=headers
+    )
+    assert clone_resp.status_code == 201, clone_resp.text
+    draft_clone = clone_resp.json()
+
+    viewer_headers = await auth_headers("Viewer")
+
+    # Negative: the right side is still a draft — a Viewer (catalog:read, no
+    # catalog:read_draft) is rejected, even though they could read `published` alone.
+    mixed_as_viewer = await client.get(
+        f"/api/v1/catalog/revisions/compare?left={published['id']}&right={draft_clone['id']}", headers=viewer_headers
+    )
+    assert mixed_as_viewer.status_code == 403, mixed_as_viewer.text
+
+    # Positive: an Administrator holds catalog:read_draft, so the identical mixed compare
+    # succeeds for them.
+    mixed_as_admin = await client.get(
+        f"/api/v1/catalog/revisions/compare?left={published['id']}&right={draft_clone['id']}", headers=headers
+    )
+    assert mixed_as_admin.status_code == 200, mixed_as_admin.text
+
+    # Publish the clone too; a published-vs-published compare no longer needs
+    # catalog:read_draft at all, so it now succeeds for the Viewer as well.
+    published_clone_resp = await client.post(f"/api/v1/catalog/revisions/{draft_clone['id']}/publish", headers=headers)
+    assert published_clone_resp.status_code == 200, published_clone_resp.text
+    published_clone = published_clone_resp.json()
+
+    both_published_as_viewer = await client.get(
+        f"/api/v1/catalog/revisions/compare?left={published['id']}&right={published_clone['id']}", headers=viewer_headers
+    )
+    assert both_published_as_viewer.status_code == 200, both_published_as_viewer.text
 
 
 # ------------------------------------------------------------------------ Legacy catalog.py audit/outbox gap (closed in PR-3)
