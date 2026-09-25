@@ -121,5 +121,4 @@ jobs:
         run: npm test
       - run: npm run typecheck
       - run: npx eslint . --ext ts,tsx
-      - run: npm test
       - run: npm run build
