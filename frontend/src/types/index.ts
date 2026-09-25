@@ -375,6 +375,63 @@ export interface EquipmentPowerSummary {
   data_quality: string;
 }
 
+// ------------------------------------------------ Phase 10C: telemetry bindings + impact
+
+export const LINK_STATES = ["UP", "DOWN", "DEGRADED"] as const;
+export type LinkState = (typeof LINK_STATES)[number];
+export const THRESHOLD_STATUS_LEVELS = ["NORMAL", "WARNING", "CRITICAL"] as const;
+export type ThresholdStatusLevel = (typeof THRESHOLD_STATUS_LEVELS)[number];
+export type PortStatusLevel = LinkState | ThresholdStatusLevel;
+
+export interface NetworkPortStatusPayload {
+  link_state: LinkState;
+  bandwidth_util_pct: number;
+  error_rate_pct: number;
+}
+
+export interface PowerInletStatusPayload {
+  current_amps: number;
+  active_power_watts: number;
+  voltage: number;
+}
+
+export interface EnvironmentalStatusPayload {
+  temperature_celsius: number;
+  humidity_pct: number;
+}
+
+export interface LatestPortStatus {
+  binding_id: string;
+  equipment_id: string;
+  target_type: "network_port" | "power_inlet" | "environmental";
+  equipment_port_id: string | null;
+  equipment_power_inlet_id: string | null;
+  label: string | null;
+  status_level: PortStatusLevel | null;
+  payload: NetworkPortStatusPayload | PowerInletStatusPayload | EnvironmentalStatusPayload | null;
+  sampled_at: string | null;
+  received_at: string | null;
+}
+
+export interface ImpactedEquipmentItem {
+  equipment_id: string;
+  asset_tag: string;
+  hostname: string | null;
+  service: string | null;
+  hop: number;
+  impact_type: "power_loss" | "degraded_redundancy" | "network_isolated" | "network_degraded";
+  message: string;
+}
+
+export interface ImpactSimulationResult {
+  target_type: "power_node" | "network_port";
+  target_id: string;
+  directly_impacted: ImpactedEquipmentItem[];
+  indirectly_impacted: ImpactedEquipmentItem[];
+  lost_redundancy_paths: string[];
+  affected_services: string[];
+}
+
 // --------------------------------------------------------- Integrations / Collectors (Phase 8)
 
 export interface Collector {
