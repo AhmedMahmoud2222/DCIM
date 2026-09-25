@@ -1,7 +1,7 @@
 [project]
 name = "dcim-backend"
 version = "0.1.0"
-description = "In-house DCIM platform — backend (Phase 1 foundation)"
+description = "In-house DCIM platform — operations, catalog, physical infrastructure and telemetry backend"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
