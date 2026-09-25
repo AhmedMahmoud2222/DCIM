@@ -1,6 +1,6 @@
 # Phase 10 Post-Audit Remediation and Integration Report
 
-**Version:** 1.1
+**Version:** 1.2
 **Date:** 2026-09-25
 **Branch:** `claude/intelligent-edison-94mvbo`
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
@@ -112,6 +112,15 @@ A read-then-write in Python cannot provide this. Two sessions both read the same
 The signature and return type are unchanged. `record_latest_status()` returns the row that is authoritative after the call: this call's row when applied, the retained newer row when not.
 
 A declined sample is still `200` with the same `PortStatusOut` body. It is not an error. A poller retrying a delayed batch has done nothing wrong and must not be driven into a retry loop by a `409`.
+
+### Blast radius
+
+`record_latest_status()` is the only writer to `telemetry_latest_status` anywhere in the
+backend, and it has exactly one production caller, `POST /api/v1/telemetry/port-status/ingest`.
+No Celery task, collector path or migration writes that table. The guard therefore cannot
+be bypassed by a second writer, and the semantics change reaches exactly one endpoint.
+
+Verified by searching for both the function name and the model across `backend/app/`.
 
 ### Test evidence
 
