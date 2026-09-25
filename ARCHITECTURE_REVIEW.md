@@ -1629,3 +1629,16 @@ Sections 1–50 include Phase 0 architecture and historical statements, includin
 | 10C port and power inlet telemetry status, live overlay and bounded failure impact simulation | PR #23, merge commit `d96676c0534397c7320f09ca3fb4c5c3d72f86ba` | Source merged into `main`; no deployment or independent security assurance assertion. |
 
 The source and tracker references should distinguish design completion, merge, CI execution, independent audit and production operation. Issue [#25](https://github.com/AhmedMahmoud2222/DCIM/issues/25) tracks CI/runtime/documentation evidence. Issue [#24](https://github.com/AhmedMahmoud2222/DCIM/issues/24) tracks Jules's separate independent audit; its request and historical audit summaries are not a completed post-merge audit artifact. Frontend Vitest was absent from CI at the baseline SHA, and Playwright remains outside CI until its isolated service fixture is implemented and validated (issue [#26](https://github.com/AhmedMahmoud2222/DCIM/issues/26)). Python 3.11 is the current CI runtime; local use of Python 3.14 does not by itself establish dependency or full-suite compatibility.
+
+
+---
+
+## 52. Current-source guide and Phase 10 post-audit integration — 2026-09-26
+
+This dated addendum preserves §§1–51 as historical architecture and source-status records. In particular, §51 described the baseline *before* PR #29; its statements that browser E2E was outside CI and Python 3.14 was unverified must not be read as the status of PR #29.
+
+At the documented integration snapshot, [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) (reviewed HEAD `c2d60b34f0ccc546c809a1d3ff15c11befb79a26`, based on `main` `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`) reconciles Codex PR #27 and Jules PR #28 and adds the Phase 10C strictly timestamp-ordered latest-status cache, structural BER test parsing, outermost SNMP datagram validation, a single frontend Vitest CI step, dedicated Edge Collector and isolated PostgreSQL/Redis-backed browser E2E jobs, and blocking Python 3.12–3.14 migrated-suite jobs. All seven CI jobs succeeded at this exact PR HEAD in [run #80](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654). **PR #29 was open/unmerged when this addendum was written.** Its green branch checks do not assert deployment, independent GitHub review approval or an already-successful post-merge `main` workflow.
+
+For maintainable, phase-neutral onboarding, use [README.md](README.md), [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md), [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md), [docs/ARCHITECTURE_OVERVIEW.md](docs/ARCHITECTURE_OVERVIEW.md), [docs/DEVELOPMENT_AND_TESTING.md](docs/DEVELOPMENT_AND_TESTING.md), [docs/OPERATIONS.md](docs/OPERATIONS.md) and [docs/AUDIT_STATUS.md](docs/AUDIT_STATUS.md). Original design sections retain their original intent and unresolved decisions, including the separate policy choice for unexpected collector-batch transaction failures.
+
+Upon merge, update the current-status guide with the **actual new `main` SHA and post-merge CI URL** rather than rewriting the original historical sections.
