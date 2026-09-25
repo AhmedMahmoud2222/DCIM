@@ -352,6 +352,11 @@ class ElevationSlotOut(BaseModel):
     u_end: int
     side: str
     mounting_method: str | None
+    # Phase 10B: NULL for equipment created through the legacy POST /equipment path
+    # (never instantiated from a published catalog revision) — the frontend falls back
+    # to the plain colored-box rendering (RackElevationView.tsx) whenever this is NULL,
+    # exactly as it always has.
+    catalog_model_revision_id: uuid.UUID | None
 
 
 class RackElevationOut(BaseModel):
@@ -400,6 +405,7 @@ async def get_rack_elevation(
                 u_end=u_range.upper,
                 side=placement.side,
                 mounting_method=placement.mounting_method,
+                catalog_model_revision_id=equipment.catalog_model_revision_id,
             )
         )
     slots.sort(key=lambda s: s.u_start)

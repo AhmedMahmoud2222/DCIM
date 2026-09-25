@@ -11,6 +11,7 @@ import { RevisionEditorPage } from "@/features/catalog-designer/RevisionEditorPa
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { EquipmentDetailPage } from "@/features/equipment/EquipmentDetailPage";
 import { EquipmentPage } from "@/features/equipment/EquipmentPage";
+import { InstantiatePage } from "@/features/equipment/InstantiatePage";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { RoomFloorPlanPage } from "@/features/floor-plans/RoomFloorPlanPage";
 import { FloorPlansPage } from "@/features/floor-plans/FloorPlansPage";
@@ -43,6 +44,7 @@ export function App() {
               <Route path="/racks" element={<RacksPage />} />
               <Route path="/racks/:rackId" element={<RackDetailPage />} />
               <Route path="/equipment" element={<EquipmentPage />} />
+              <Route path="/equipment/instantiate" element={<InstantiatePage />} />
               <Route path="/equipment/:equipmentId" element={<EquipmentDetailPage />} />
               <Route path="/floor-plans" element={<FloorPlansPage />} />
               <Route path="/floor-plans/room/:roomId" element={<RoomFloorPlanPage />} />

@@ -57,12 +57,20 @@ export function EquipmentPage() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold">Equipment</h1>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-        >
-          {showForm ? "Cancel" : "New Equipment"}
-        </button>
+        <div className="flex gap-2">
+          <Link
+            to="/equipment/instantiate"
+            className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+          >
+            Instantiate from catalog
+          </Link>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+          >
+            {showForm ? "Cancel" : "New Equipment"}
+          </button>
+        </div>
       </div>
 
       {showForm && (

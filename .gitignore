@@ -12,6 +12,11 @@ dcim_backend.egg-info/
 node_modules/
 dist/
 
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+
 # Env / secrets — never commit real values, only .env.example
 .env
 .env.*

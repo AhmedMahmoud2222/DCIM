@@ -2,13 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { getEquipment, moveEquipment, retireEquipment } from "@/features/equipment/api";
+import { useHasPermission } from "@/features/auth/useAuthorization";
+import { connectEquipmentPort, getEquipment, getEquipmentPorts, moveEquipment, retireEquipment } from "@/features/equipment/api";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import { acknowledgeAlarm, getAlarmHistory, getLatestTelemetry, getTelemetryHistory } from "@/features/telemetry/api";
 import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { ApiError } from "@/lib/apiClient";
-import { PLACEMENT_TYPES, PlacementType, SIDES, Side } from "@/types";
+import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
 
 const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
   dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
@@ -57,6 +58,10 @@ export function EquipmentDetailPage() {
   const alarmHistoryQuery = useQuery({
     queryKey: ["alarms", "equipment", equipmentId], queryFn: () => getAlarmHistory(equipmentId!), enabled: !!equipmentId,
   });
+  const portsQuery = useQuery({
+    queryKey: ["equipment", equipmentId, "ports"], queryFn: () => getEquipmentPorts(equipmentId!), enabled: !!equipmentId,
+  });
+  const canManageCabling = useHasPermission("equipment:manage");
   const metric = selectedMetric ?? latestTelemetryQuery.data?.[0]?.metric ?? null;
   const historyQuery = useQuery({
     queryKey: ["telemetry", "history", equipmentId, metric, historyHours],
@@ -71,6 +76,19 @@ export function EquipmentDetailPage() {
   const addFeedMutation = useMutation({
     mutationFn: (label: string) => createEquipmentFeed(equipmentId!, label),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["power", "equipment-summary", equipmentId] }),
+  });
+
+  const [connectingPortId, setConnectingPortId] = useState<string | null>(null);
+  const connectMutation = useMutation({
+    mutationFn: (vars: { portId: string; targetPortId?: string; targetPowerNodeId?: string; cableId?: string; status: PortConnectionStatus }) =>
+      connectEquipmentPort(equipmentId!, {
+        port_id: vars.portId, target_port_id: vars.targetPortId || null, target_power_node_id: vars.targetPowerNodeId || null,
+        cable_id: vars.cableId || null, status: vars.status,
+      }),
+    onSuccess: () => {
+      setConnectingPortId(null);
+      queryClient.invalidateQueries({ queryKey: ["equipment", equipmentId, "ports"] });
+    },
   });
 
   const moveMutation = useMutation({
@@ -343,6 +361,63 @@ export function EquipmentDetailPage() {
         )}
       </div>
 
+      {equipment.catalog_model_revision_id && (
+        <div className="mt-6 rounded border border-slate-800 bg-slate-900 p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-300">Ports &amp; cabling</h2>
+          {portsQuery.isLoading && <p className="text-sm text-slate-400">Loading ports…</p>}
+          {portsQuery.data?.ports.length === 0 && (
+            <p className="text-sm italic text-slate-500">This catalog model has no network ports defined.</p>
+          )}
+          <div className="space-y-2">
+            {portsQuery.data?.ports.map((port) => (
+              <div key={port.id} data-testid="equipment-port-row" className="rounded bg-slate-800/50 p-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-slate-200">
+                    {port.display_name} <span className="text-slate-500">({port.connector_type}, {port.media_type}, {port.side})</span>
+                  </span>
+                  {canManageCabling && (
+                    <button
+                      onClick={() => setConnectingPortId((id) => (id === port.id ? null : port.id))}
+                      className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
+                    >
+                      {port.connection ? "Re-patch" : "Connect"}
+                    </button>
+                  )}
+                </div>
+                {port.connection ? (
+                  <p className="mt-1 text-slate-400">
+                    {port.connection.status} → {port.connection.target_port_id ? `port ${port.connection.target_port_id.slice(0, 8)}…` : `PDU outlet ${port.connection.target_power_node_id?.slice(0, 8)}…`}
+                    {port.connection.cable_id && <> · cable {port.connection.cable_id}</>}
+                  </p>
+                ) : (
+                  <p className="mt-1 italic text-slate-500">Unassigned</p>
+                )}
+                {connectingPortId === port.id && (
+                  <ConnectPortForm
+                    isPending={connectMutation.isPending}
+                    error={connectMutation.error instanceof ApiError ? connectMutation.error.detail : null}
+                    onCancel={() => setConnectingPortId(null)}
+                    onSubmit={(vars) => connectMutation.mutate({ portId: port.id, ...vars })}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          {portsQuery.data && portsQuery.data.power_inlets.length > 0 && (
+            <>
+              <h3 className="mb-2 mt-4 text-xs font-semibold text-slate-400">Power inlets</h3>
+              <div className="space-y-1">
+                {portsQuery.data.power_inlets.map((inlet) => (
+                  <div key={inlet.id} className="rounded bg-slate-800/50 px-2 py-1 text-xs text-slate-300">
+                    {inlet.label} ({inlet.connector_type})
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="mt-6 rounded border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Live metrics</h2>
         {latestTelemetryQuery.isLoading && <p className="text-sm text-slate-400">Loading telemetry…</p>}
@@ -384,5 +459,70 @@ export function EquipmentDetailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function ConnectPortForm({
+  isPending,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  isPending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onSubmit: (vars: { targetPortId?: string; targetPowerNodeId?: string; cableId?: string; status: PortConnectionStatus }) => void;
+}) {
+  const [targetKind, setTargetKind] = useState<"port" | "power_node">("port");
+  const [targetId, setTargetId] = useState("");
+  const [cableId, setCableId] = useState("");
+  const [status, setStatus] = useState<PortConnectionStatus>("active");
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!targetId.trim()) return;
+    onSubmit({
+      targetPortId: targetKind === "port" ? targetId.trim() : undefined,
+      targetPowerNodeId: targetKind === "power_node" ? targetId.trim() : undefined,
+      cableId: cableId.trim() || undefined,
+      status,
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-2 space-y-1.5 rounded border border-slate-700 bg-slate-950 p-2">
+      <div className="flex gap-2">
+        <select value={targetKind} onChange={(e) => setTargetKind(e.target.value as "port" | "power_node")} className="rounded bg-slate-800 px-2 py-1 text-xs">
+          <option value="port">Patch panel / switch port ID</option>
+          <option value="power_node">PDU outlet (power node) ID</option>
+        </select>
+        <select value={status} onChange={(e) => setStatus(e.target.value as PortConnectionStatus)} className="rounded bg-slate-800 px-2 py-1 text-xs">
+          {PORT_CONNECTION_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+      <input
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+        placeholder={targetKind === "port" ? "Target EquipmentPort ID" : "Target PowerNode ID"}
+        className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+      />
+      <input
+        value={cableId}
+        onChange={(e) => setCableId(e.target.value)}
+        placeholder="Cable ID (optional)"
+        className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+      />
+      <div className="flex gap-2">
+        <button type="submit" disabled={isPending} className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+          {isPending ? "Connecting…" : "Save"}
+        </button>
+        <button type="button" onClick={onCancel} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">
+          Cancel
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </form>
   );
 }

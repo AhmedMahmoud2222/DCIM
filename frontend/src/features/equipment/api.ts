@@ -1,5 +1,15 @@
 import { apiFetch } from "@/lib/apiClient";
-import { Equipment, EquipmentModel, EquipmentModelRevision, Page, PlacementType, Side } from "@/types";
+import {
+  Equipment,
+  EquipmentInstantiateResult,
+  EquipmentModel,
+  EquipmentModelRevision,
+  EquipmentPortsList,
+  Page,
+  PlacementType,
+  PortConnectionStatus,
+  Side,
+} from "@/types";
 
 export const listEquipment = () => apiFetch<Page<Equipment>>("/equipment?limit=200");
 export const getEquipment = (id: string) => apiFetch<Equipment>(`/equipment/${id}`);
@@ -38,3 +48,41 @@ export const moveEquipment = (id: string, body: MoveEquipmentInput, ifMatch?: nu
   apiFetch<Equipment>(`/equipment/${id}/move`, { method: "POST", body: JSON.stringify(body), ifMatch });
 
 export const retireEquipment = (id: string) => apiFetch<Equipment>(`/equipment/${id}/retire`, { method: "POST" });
+
+// -------------------------------------------------------- Phase 10B: instantiation
+
+export interface InstantiateEquipmentInput {
+  asset_tag: string;
+  catalog_model_revision_id: string;
+  hostname?: string;
+  owner?: string;
+  service?: string;
+  environment?: string;
+  notes?: string;
+  placement_type?: PlacementType;
+  room_id?: string;
+  rack_id?: string;
+  u_start?: number;
+  u_end?: number;
+  side?: Side;
+}
+
+export const instantiateEquipment = (body: InstantiateEquipmentInput, idempotencyKey: string) =>
+  apiFetch<EquipmentInstantiateResult>("/equipment/instantiate", {
+    method: "POST",
+    body: JSON.stringify(body),
+    idempotencyKey,
+  });
+
+export const getEquipmentPorts = (equipmentId: string) => apiFetch<EquipmentPortsList>(`/equipment/${equipmentId}/ports`);
+
+export interface ConnectPortInput {
+  port_id: string;
+  target_port_id?: string | null;
+  target_power_node_id?: string | null;
+  cable_id?: string | null;
+  status?: PortConnectionStatus;
+}
+
+export const connectEquipmentPort = (equipmentId: string, body: ConnectPortInput) =>
+  apiFetch(`/equipment/${equipmentId}/ports/connect`, { method: "POST", body: JSON.stringify(body) });
