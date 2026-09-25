@@ -1,194 +1,121 @@
 # DCIM Platform
 
-In-house Data Center Infrastructure Management platform. The repository contains the Phase 1 foundation and subsequent Phase 2/3/8 and Phase 10A/10B/10C code merged to `main`. A merge records source integration; it does not establish production deployment or an independent security audit. See `ARCHITECTURE_REVIEW.md` for the architecture and its dated current-state addendum.
+**In-house Data Center Infrastructure Management (DCIM)** — FastAPI/PostgreSQL backend, React/TypeScript frontend and an independently packaged Edge Collector. The repository has progressed beyond Phase 1: the foundation, operational rack/power/telemetry modules, driver/collector functionality and Phase 10A–10C catalog, equipment/cabling and live overlay/failure-impact features are present in source.
 
-## Architecture Summary
+> **Status at this documentation baseline (2026-09-26):** Phase 10A, 10B and 10C feature PRs (#16, #20–#23) are merged to `main`. The subsequent CI/security/integration corrections are in [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29), which was **open and unmerged** when this documentation branch was created. This documentation branch is based on PR #29's reviewed source at `c2d60b34f0ccc546c809a1d3ff15c11befb79a26`. Until #29 and this documentation are merged into `main`, the public/default-branch README can still show the old Phase 1 description. Source merge and green CI do **not** establish production deployment or a completed independent security certification.
 
-Modular monolith: FastAPI (async, CI-validated Python 3.11) + PostgreSQL 16 (system of record) +
-Redis (Celery broker/cache) + Celery (background jobs) on the backend; React 18 +
-TypeScript + Vite + Tailwind + TanStack Query on the frontend. Full rationale for every
-decision is in `ARCHITECTURE_REVIEW.md` (canonical spec) and its companion revision/
-red-team/validation documents.
+[Current implementation status](docs/PROJECT_STATUS.md) · [Architecture overview](docs/ARCHITECTURE_OVERVIEW.md) · [Development and testing](docs/DEVELOPMENT_AND_TESTING.md) · [Operations and deployment](docs/OPERATIONS.md) · [Documentation index](docs/DOCUMENTATION_INDEX.md)
 
-## Prerequisites
+## Implemented capabilities
 
-- Python 3.11 for the reproducible CI/local setup — the runtime the `backend` CI job pins
-  and the one to use if you want the same results it reports.
-- Python 3.12, 3.13 and 3.14 also run the complete migrated database, Redis and
-  raw-socket suite. CI gates all three on every pull request, as
-  `backend suite (Python 3.12|3.13|3.14)` in `.github/workflows/ci.yml`.
-- Node.js 22+
-- PostgreSQL 16 (server + client)
-- Redis 7
-- Docker + Docker Compose (for the containerized path; optional for local dev)
+| Area | Present in repository | Primary code / evidence |
+|---|---|---|
+| Phase 1 foundation | JWT authentication, roles and permissions, audit/retention protection, transactional outbox, locations and managed-asset identity | `backend/app/domain/`, `backend/app/api/v1/`; [Phase 1 implementation](PHASE1_IMPLEMENTATION.md) |
+| Operational DCIM modules | Rack and equipment management, room floor plans and placement, power topology, alarms, dashboard, collectors, integrations, discovery, metric mappings and telemetry | [API router](backend/app/api/v1/router.py), `frontend/src/app/App.tsx` |
+| Driver and Edge Collector | Central collector/driver integration, Edge Collector scheduler and SNMP v2c implementation; separately packaged collector tests | `backend/app/application/drivers/`, `edge_collector/`; [Phase 8 clarification](PHASE8_ARCHITECTURE_CLARIFICATION.md) |
+| Phase 10A — Asset Catalog | Versioned manufacturer/model/revision lifecycle, Administrator authoring UI, graphics and marker editor, template management, draft/publish/retire controls | [PR #16](https://github.com/AhmedMahmoud2222/DCIM/pull/16), [#20](https://github.com/AhmedMahmoud2222/DCIM/pull/20), [#21](https://github.com/AhmedMahmoud2222/DCIM/pull/21) |
+| Phase 10B — Physical instantiation | Published-catalog equipment instantiation, port/power-inlet snapshots, cabling and rack-elevation faceplates | [PR #22](https://github.com/AhmedMahmoud2222/DCIM/pull/22) |
+| Phase 10C — Live status and impact | Port/inlet telemetry bindings, cached latest status, rack marker overlays, bounded power/network failure-impact simulation | [PR #23](https://github.com/AhmedMahmoud2222/DCIM/pull/23) |
+| Post-Phase-10 integration | Strictly timestamp-ordered latest-status upsert, SNMP BER test hardening and outer-datagram validation, expanded CI | [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) — pending merge |
 
-`requires-python = ">=3.11"` is an installation floor. What is supported is what the
-Python matrix above gates, and adding a runtime to that matrix is what makes it a
-support claim.
+The code and documentation describe **implemented source**, not a production SLA, live industrial integration, complete vendor coverage or autonomous/self-healing operation. Phase 0 sections in `ARCHITECTURE_REVIEW.md` are retained as dated historical design material; use the current-state addenda and the documents linked above to interpret the actual repository.
 
-## Local Setup (without Docker)
+## Technology and repository layout
 
-### 1. Database
+- **Backend:** Python 3.11–3.14 (CI matrix on PR #29), FastAPI, SQLAlchemy async, PostgreSQL 16, Alembic, Redis 7 and Celery.
+- **Frontend:** React 18, TypeScript, Vite, Tailwind, TanStack Query; Vitest unit tests and Playwright browser tests.
+- **Edge Collector:** separate `edge_collector/` source and tests, including real loopback UDP SNMP protocol tests.
+- **Top-level layout:** `backend/`, `frontend/`, `edge_collector/`, `.github/workflows/ci.yml`, historical phase reports and `docs/` for current guidance.
+
+## Start a development environment
+
+Use a dedicated **development database**. Never use the sample passwords or CI fixture credentials in a deployed environment. PostgreSQL must own the database as `postgres`; the ordinary `dcim_app` role must **not** be database owner, because privileged audit-retention ownership depends on that separation.
+
+### Prerequisites
+
+Python 3.11 is the baseline used by the primary backend CI job. On PR #29, full migrated suites also passed on Python 3.12, 3.13 and final 3.14, all configured as blocking jobs. Install Node.js 22+, PostgreSQL 16 and Redis 7. Docker Compose is an alternative to installing services locally.
+
+### Local backend
 
 ```bash
+# From the repository root; provision PostgreSQL 16 and Redis 7 first.
 sudo -u postgres psql -c "CREATE USER dcim_app WITH PASSWORD 'dcim_dev_password';"
 sudo -u postgres psql -c "CREATE DATABASE dcim;"
 sudo -u postgres psql -d dcim -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
 sudo -u postgres psql -d dcim -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
-```
 
-**Do not use `CREATE DATABASE dcim OWNER dcim_app`.** PostgreSQL grants the *database
-owner* an implicit right to `DROP TABLE` any table in that database, regardless of who
-owns the individual table or what has been REVOKEd — empirically confirmed during the
-Finding C1 correction (`PHASE1_CORRECTION_REPORT.md`): with `dcim_app` as the database
-owner, it could still `DROP TABLE` `audit_log`'s partitions even after `audit_log` itself
-was transferred to `dcim_retention_admin` and every ordinary privilege was revoked. Only
-the superuser (`postgres`) owns the database; `dcim_app` gets exactly `CREATE, USAGE` on
-the `public` schema, which is enough to run migrations and create/own its own tables, but
-not enough to bypass another role's table ownership.
-
-Repeat for a `dcim_test` database if you'll run the test suite (see Testing below).
-
-### 2. Backend
-
-```bash
 cd backend
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # then edit DATABASE_URL/JWT_SECRET_KEY for your environment
-
+cp .env.example .env       # Set unique local DATABASE_URL / JWT_SECRET_KEY etc.
 alembic upgrade head
-sudo -u postgres psql -d dcim -f scripts/bootstrap_privileged_roles.sql   # one-time, superuser
+sudo -u postgres psql -d dcim -f scripts/bootstrap_privileged_roles.sql
 python scripts/create_admin.py --email admin@example.com --name "Admin User"
-
 uvicorn app.main:app --reload
 ```
 
-API docs: `http://localhost:8000/docs`. Health: `http://localhost:8000/api/v1/health/ready`.
+API: `http://localhost:8000/docs`. Liveness: `/api/v1/health/live`; readiness (PostgreSQL **and** Redis): `/api/v1/health/ready`. The latter returns HTTP 503 if a dependency is unavailable.
 
-### 3. Background workers
-
-```bash
-cd backend && source .venv/bin/activate
-celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance
-celery -A app.infrastructure.celery_app beat --loglevel=info   # separate terminal
-```
-
-### 4. Frontend
+### Frontend and workers
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
+# Browse http://localhost:5173; Vite proxies /api to localhost:8000.
 ```
 
-Open `http://localhost:5173`. The Vite dev server proxies `/api` to `http://localhost:8000`.
-
-## Local Setup (Docker Compose)
+For asynchronous jobs, run the Celery worker and beat as **separate processes** from `backend/`:
 
 ```bash
-cp .env.example .env   # fill in POSTGRES_PASSWORD, DCIM_APP_PASSWORD, and JWT_SECRET_KEY
+celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance
+celery -A app.infrastructure.celery_app beat --loglevel=info
+```
+
+### Docker Compose
+
+```bash
+cp .env.example .env        # Set strong POSTGRES_PASSWORD, DCIM_APP_PASSWORD, JWT_SECRET_KEY, etc.
 docker compose up --build
-```
-
-This starts Postgres (bootstrapping the `dcim_app` application role as an ordinary,
-non-superuser role — see `backend/scripts/docker-initdb/01-create-app-role.sh` and
-`PHASE1_CORRECTION_REPORT.md` Finding C1), Redis, runs migrations (`migrate` service),
-runs the one-time privileged `bootstrap-privileges` service (audit_log ownership/grants,
-as the real Postgres superuser), then starts the API, Celery worker, Celery beat, and the
-built frontend (served by nginx on `:8080`, proxying `/api` to the backend). **Not
-executed in this development session** (no Docker daemon available in this sandbox) —
-verified by config review and by every container's Dockerfile/compose definition matching
-the independently-verified local setup, but not by an actual `docker compose up` run.
-Treat as requiring a real environment's validation before being relied upon for a first
-deployment.
-
-After first startup, run once:
-
-```bash
 docker compose exec backend python scripts/create_admin.py --email admin@example.com --name "Admin User"
 ```
 
-(The privileged audit-log bootstrap step above already runs automatically as part of
-`docker compose up`, via the `bootstrap-privileges` service — no manual superuser step is
-needed in the Docker path, unlike the non-Docker local setup.)
+The Compose path provisions PostgreSQL, Redis, migration/privileged bootstrap services, API, worker, beat and the frontend. **A passing CI run is not validation of a first real Compose deployment**; complete the [operations checklist](docs/OPERATIONS.md) in the target environment.
 
-## Database Migrations
+## Test and quality gates
 
-```bash
-cd backend && source .venv/bin/activate
-alembic upgrade head           # apply
-alembic downgrade -1           # roll back one revision
-alembic revision --autogenerate -m "description"   # generate a new migration
-```
-
-Migrations never run automatically at application startup — see `PHASE1_IMPLEMENTATION.md`
-for the migration/startup safety rationale.
-
-## Tests
-
-Requires a running `dcim_test` database (extensions enabled, same as `dcim`) and Redis.
+The PR #29 workflow has **seven** jobs: primary backend on 3.11, full migrated backend suites on 3.12/3.13/3.14, frontend (dependency audit, Vitest, TypeScript, ESLint and build), Edge Collector and isolated PostgreSQL/Redis-backed Playwright E2E. All seven passed on the reviewed PR head `c2d60b3` in [Actions run #80](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654). These checks are branch evidence until PR #29 is merged.
 
 ```bash
-cd backend && source .venv/bin/activate
-alembic upgrade head   # against dcim_test — see conftest.py for the DATABASE_URL default
+# Against a migrated, dedicated dcim_test PostgreSQL database + Redis:
+cd backend
 pytest -q
-```
-
-The suite contains unit, PostgreSQL integration and API tests. Run it against a fresh test database and Redis; the count changes as features are added. Frontend unit tests: `cd frontend && npm ci && npm test`. Edge Collector tests: `pytest -q edge_collector/tests` (standard library plus httpx; no database).
-
-Browser tests: `npm run test:e2e` require a separately migrated backend, Redis, an Administrator fixture and Chromium; see `frontend/playwright.config.ts`. All three suites are CI gates — the `browser-e2e` job in `.github/workflows/ci.yml` runs the browser suite against its own PostgreSQL 16 and Redis 7 and is the worked example to copy for a local run: it provisions an isolated database, seeds the Administrator through `scripts/create_admin.py --password-from-env`, and waits on `/api/v1/health/ready` before starting Playwright.
-
-**ICMP driver tests require `CAP_NET_RAW`.** `app/application/drivers/icmp.py` opens a
-genuine `SOCK_RAW`/`IPPROTO_ICMP` socket (not a shell-out to `ping`), which the kernel
-only permits to `root` or a process holding `CAP_NET_RAW`. Running `pytest` as an
-unprivileged, non-root user without that capability fails `tests/unit/test_drivers.py`'s
-ICMP tests and two of `test_collectors.py`'s poll-now tests with `PermissionError`. Grant
-it once before running tests, rather than running the whole test process as root:
-
-```bash
-sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
-```
-
-CI (`.github/workflows/ci.yml`) does this on every run, since GitHub-hosted runners are
-non-root by default. This is a real operational requirement for wherever this driver
-actually runs (the central collector process today, or a future Edge Collector), not
-something to silently work around.
-
-## Lint / Type Checking
-
-```bash
-# backend
-cd backend && source .venv/bin/activate
 ruff check app tests
 mypy app
 
-# frontend
+# From repository root:
+PYTHONPATH=. pytest -q edge_collector/tests
+ruff check edge_collector
+
+# Frontend:
 cd frontend
+npm ci
+npm test
 npm run typecheck
-npx eslint . --ext ts,tsx
+npm run lint
+npm run build
+npm run test:e2e      # Requires a live migrated backend, seeded test admin and Chromium.
 ```
 
-## Troubleshooting
+The real ICMP raw-socket tests require `CAP_NET_RAW` on Linux; the CI workflow grants it for the testing interpreter. See [development and testing](docs/DEVELOPMENT_AND_TESTING.md) for isolation, setup, fixtures, migrations and Playwright details.
 
-- **`alembic upgrade head` fails with "permission denied to create role"** — this is
-  expected if you're running it as the application's own `dcim_app` role (deliberately
-  not granted `CREATEROLE`, §33/§40 of the Phase 1 scope — least privilege). Run
-  `scripts/bootstrap_privileged_roles.sql` separately, as a superuser, once per
-  environment; it is not part of the Alembic migration chain on purpose.
-- **`/api/v1/health/ready` reports `"redis": "down"`** — confirm `redis-server` is
-  running and `REDIS_URL` in `.env` points at it.
-- **A `409 Conflict` on `PATCH /api/v1/rooms/{id}`** — this is the optimistic-concurrency
-  mechanism working as designed (§17 of the Phase 1 prompt): your `If-Match` header
-  carried a stale `version`. Re-fetch the resource and retry with its current version.
-- **`428 Precondition Required` on `PATCH /api/v1/rooms/{id}`** — that endpoint requires
-  an `If-Match` header; there is no unconditional update path for a concurrency-tracked
-  resource.
+## Security and operating boundaries
 
-## Further Reading
+Authentication and authorization are enforced by the backend, not frontend menu visibility. Catalog mutation uses Administrator-specific permission checks; telemetry and impact routes require their documented permissions. The Phase 10C latest-status cache accepts a sample only when its `sampled_at` is **strictly newer** than the stored row; equal timestamps retain the first writer. This is distinct from the historical series-based `/telemetry/latest` API.
 
-`ARCHITECTURE_REVIEW.md` (historical architecture with dated implementation addenda), `PHASE1_BASELINE.md` (repository
-assessment before this phase began), `PHASE1_IMPLEMENTATION.md` (what Phase 1 actually
-built, mapped to architecture sections), `PHASE1_TRACEABILITY_MATRIX.md`,
-`PHASE1_DEVIATIONS.md`, `PHASE1_IMPLEMENTATION_REPORT.md` (full Phase 1 completion report
-and gate verdict).
+The collector batch endpoint emits per-record ACKs for handled rejections/duplicates and commits accepted records at the end of a successful request. An **unexpected** exception aborts the whole transaction; per-record savepoints are not implemented. See [audit status](docs/AUDIT_STATUS.md) for the remaining contract decision and documentation discrepancies.
+
+## Documentation
+
+Begin with the [documentation index](docs/DOCUMENTATION_INDEX.md) rather than assuming a historical Phase 1 file describes the whole current repository. [Architecture overview](docs/ARCHITECTURE_OVERVIEW.md) explains component boundaries, [project status](docs/PROJECT_STATUS.md) distinguishes merged code from pending integration, [operations](docs/OPERATIONS.md) addresses runtime checks, and [audit status](docs/AUDIT_STATUS.md) distinguishes baseline findings from subsequent fixes. Historical reports remain unchanged unless a clearly dated addendum is required.
