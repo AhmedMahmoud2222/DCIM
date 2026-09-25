@@ -129,6 +129,14 @@ jobs:
   # It is pure standard library plus httpx, which is why this job is this short.
   edge-collector:
     runs-on: ubuntu-latest
+    env:
+      # edge_collector/tests/ has no __init__.py, so pytest's rootdir insertion puts that
+      # directory on sys.path rather than the repository root, and `from edge_collector...`
+      # fails to import. (`python -m pytest` happens to paper over this by adding the
+      # working directory; the console script does not.) Same reason the backend job
+      # exports it: expose the repository root without installing the Edge runtime into
+      # any distribution.
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
