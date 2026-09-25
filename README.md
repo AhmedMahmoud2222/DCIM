@@ -127,7 +127,7 @@ alembic upgrade head   # against dcim_test — see conftest.py for the DATABASE_
 pytest -q
 ```
 
-The suite contains unit, PostgreSQL integration and API tests. Run it against a fresh test database and Redis; the count changes as features are added. Frontend unit tests: `cd frontend && npm ci && npm test`. Browser tests: `npm run test:e2e` require a separately migrated backend, Redis, an Administrator fixture and Chromium; see `frontend/playwright.config.ts`. The browser suite is not yet a CI gate (tracked in issue #25 follow-up).
+The suite contains unit, PostgreSQL integration and API tests. Run it against a fresh test database and Redis; the count changes as features are added. Frontend unit tests: `cd frontend && npm ci && npm test`. Browser tests: `npm run test:e2e` require a separately migrated backend, Redis, an Administrator fixture and Chromium; see `frontend/playwright.config.ts`. The browser suite is not yet a CI gate (tracked in issue [#26](https://github.com/AhmedMahmoud2222/DCIM/issues/26)).
 
 **ICMP driver tests require `CAP_NET_RAW`.** `app/application/drivers/icmp.py` opens a
 genuine `SOCK_RAW`/`IPPROTO_ICMP` socket (not a shell-out to `ping`), which the kernel
