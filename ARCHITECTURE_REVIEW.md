@@ -1,10 +1,10 @@
 # ARCHITECTURE_REVIEW.md
 
 **Project:** In-House DCIM Platform
-**Version:** 1.4 (records Phase 10A — Catalog Designer — as implemented and merged to `main`, §4d)
+**Version:** 1.5 (dated current-state addendum for Phase 10B/10C; historical sections preserved)
 **Phase:** 0 — Architecture (pre-implementation) for the rack/power/spatial/telemetry subsystem this document covers; Phase 10A (Catalog Designer) is a separate, already-implemented module, tracked here in §4d as an addendum
 **Status:** PHASE 1 BLOCKERS CLOSED — SEE RE-VALIDATION GATE; PHASE 10A (CATALOG DESIGNER) IMPLEMENTED / MERGED TO MAIN — SEE §4d
-**Date:** 2026-09-24 (§4d added; all other sections dated 2026-09-16)
+**Date:** 2026-09-25 (§51 added; §4d dated 2026-09-24; original Phase 0 sections dated 2026-09-16)
 
 Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCHITECTURE_RED_TEAM_REPORT.md` (adversarial findings against v1.1), `ARCHITECTURE_CHANGE_MATRIX.md` (v1.1→v1.2 before/after trace), `ARCHITECTURE_TARGETED_REVISION_REPORT.md` (v1.2 summary), `FINAL_ARCHITECTURE_VALIDATION_REPORT.md` (the gate that found F1 and confirmed H7 open — superseded by its v2 addendum recording this fix).
 
@@ -18,6 +18,7 @@ Companion documents: `ARCHITECTURE_REVISION_REPORT.md` (v1.0→v1.1 diff), `ARCH
 | 1.1 | 2026-09-16 | Revision closing identity, placement, spatial-authority, power-topology, telemetry-identity, collector, event/outbox, and security gaps identified in the v1.1 review pass. |
 | 1.2 | 2026-09-16 | Targeted revision resolving red-team findings C1–C5 (asset replacement, U-range exclusion semantics, exactly-one-current-placement enforcement, placement/power concurrency control, floor-plan import security boundary), H1 (complete ManagedAsset subtype matrix), H6 (AuditLog partitioning/retention), H7 (site-scoped RBAC decision status), and M1 (identity-reference naming reconciliation). Scope was strictly limited to these findings — see `ARCHITECTURE_CHANGE_MATRIX.md` for the full before/after trace and the explicit list of findings intentionally left deferred. |
 | 1.3 | 2026-09-16 | Closes the two Phase 1 blockers found at the final architecture validation gate: **F1** — `EquipmentPlacement`'s rack-mounted `CHECK` now also requires `side IS NOT NULL`, closing a residual gap where a NULL `side` silently escaped both of §7a's exclusion constraints; **H7** — the architecture owner recorded Option B (§32a): Phase 1 ships with global authorization, site-scoped RBAC enforcement is built additively when the stated trigger condition is met. No other section changed. |
+| 1.5 | 2026-09-25 | Adds §51 to distinguish historical design text from the Phase 10B/10C source merged to `main`. Source integration is not proof of deployment or independent audit. |
 | 1.4 | 2026-09-24 | Adds §4d, recording Phase 10A ("Asset Catalog Designer") as **IMPLEMENTED / MERGED TO MAIN** — the manufacturer/model/revision authoring aggregate, lifecycle backend, admin UI, equipment-photo storage backend, and marker editor anticipated narratively by §4b's `RackModelRevision`/`EquipmentModelRevision` references. This is a status addendum documenting a module implemented and merged outside this document's own Phase 0→Phase 1 sequencing (it shipped ahead of Phase 2+ per the product owner's prioritization); no rack/power/spatial/telemetry section, constraint, or open decision (§49) is altered or resolved by it. |
 
 This document supersedes v1.2 in place for §1–§49 (unchanged since v1.3: §7's F1 `CHECK` constraint and §32a's H7 decision, per the v1.3 row above). v1.4 adds §4d as new content; it does not modify or supersede any other section. Nothing in this revision reverses ManagedAsset, PowerNode, EquipmentPlacement/RackPlacement, the integration layering, or the Outbox pattern.
@@ -1614,3 +1615,17 @@ These are organizational/operational decisions this document does not make on th
 **Architecture status (v1.3): BOTH PHASE 1 BLOCKERS CLOSED — SEE RE-VALIDATION GATE FOR VERDICT**
 
 This document, together with `ARCHITECTURE_CHANGE_MATRIX.md`, `ARCHITECTURE_TARGETED_REVISION_REPORT.md`, and `FINAL_ARCHITECTURE_VALIDATION_REPORT.md` (and its v1.3 addendum), is the complete revision chain. C1–C5, H1, H6, and M1 are resolved (§4a, §4b, §7a, §7b, §7c/§13a, §10a, §30a, §4/§16/§25 reconciliation). F1 (the residual C2 gap found at the final validation gate) is closed in §7. H7 is now a recorded decision, not an open question (§32a: Option B). Whether this is sufficient to authorize Phase 1 is the re-validation gate's call, not this document's own — see `FINAL_ARCHITECTURE_VALIDATION_REPORT.md`'s v1.3 addendum for the actual verdict.
+
+---
+
+## 51. Current-state addendum — 2026-09-25
+
+Sections 1–50 include Phase 0 architecture and historical statements, including “Nothing here is implemented”. Read such statements as descriptions of the 2026-09-16 design baseline, not as assertions about today's repository. This addendum records source integration only and does not retroactively change architectural decisions or close open decisions in §49.
+
+| Component | Repository evidence | Status and limit |
+|---|---|---|
+| 10A catalog and marker authoring | PRs #16, #20, #21 | Merged into `main`; implementation status in §4d. |
+| 10B equipment instantiation, snapshot isolation, cabling and rack elevation faceplates | PR #22, merge commit `e50314e` | Source merged into `main`; no deployment assertion. |
+| 10C port and power inlet telemetry status, live overlay and bounded failure impact simulation | PR #23, merge commit `d96676c0534397c7320f09ca3fb4c5c3d72f86ba` | Source merged into `main`; no deployment or independent security assurance assertion. |
+
+The source and tracker references should distinguish design completion, merge, CI execution, independent audit and production operation. Issue [#25](https://github.com/AhmedMahmoud2222/DCIM/issues/25) tracks CI/runtime/documentation evidence. Issue [#24](https://github.com/AhmedMahmoud2222/DCIM/issues/24) tracks Jules's separate independent audit; its request and historical audit summaries are not a completed post-merge audit artifact. Frontend Vitest was absent from CI at the baseline SHA, and Playwright remains outside CI until its isolated service fixture is implemented and validated. Python 3.11 is the current CI runtime; local use of Python 3.14 does not by itself establish dependency or full-suite compatibility.
