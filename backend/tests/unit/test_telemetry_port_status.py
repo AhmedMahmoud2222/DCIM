@@ -274,3 +274,133 @@ async def test_get_latest_status_for_rack_scopes_to_rack_mounted_equipment(db_se
     items = await get_latest_status_for_rack(db_session, rack_id=rack.id)
     assert len(items) == 1
     assert items[0].binding.id == binding.id
+
+
+# ------------------------------------------------- Latest-status ordering (out-of-order
+# telemetry). `record_latest_status`'s own docstring states the contract these lock in:
+# strictly-newer applies, strictly-older is rejected, equal is a first-writer-wins no-op.
+
+
+async def _network_binding(db_session):
+    equipment = await _make_equipment(db_session, port_count=1, psu_quantity=0)
+    [port] = await list_equipment_ports(db_session, equipment_id=equipment.id)
+    binding = await create_port_telemetry_binding(
+        db_session, equipment_id=equipment.id, target_type="network_port", equipment_port_id=port.id,
+        equipment_power_inlet_id=None, protocol="snmp", external_ref="oid", label=None,
+    )
+    await db_session.commit()
+    return equipment, binding
+
+
+def _link_payload(state: str, error_rate_pct: float = 0.0) -> dict:
+    return {"link_state": state, "bandwidth_util_pct": 10.0, "error_rate_pct": error_rate_pct}
+
+
+async def test_stale_sample_does_not_overwrite_a_newer_cached_status(db_session):
+    """The regression this guard exists for: a poller's DOWN reading from T0 arriving
+    *after* the recovery reading from T0+60s (a delayed retry, a re-queued batch) must
+    not resurrect the old state. Without the ordering guard the cached row would read
+    DOWN and the rack-elevation overlay would show a healthy link as failed."""
+    equipment, binding = await _network_binding(db_session)
+    t0 = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)
+    newer = datetime(2026, 9, 25, 12, 1, 0, tzinfo=UTC)
+
+    await record_latest_status(db_session, binding_id=binding.id, payload=_link_payload("UP"), sampled_at=newer)
+    await db_session.commit()
+
+    retained = await record_latest_status(
+        db_session, binding_id=binding.id, payload=_link_payload("DOWN"), sampled_at=t0
+    )
+    await db_session.commit()
+
+    assert retained.status_level == "UP"
+    assert retained.sampled_at == newer
+    assert retained.payload["link_state"] == "UP"
+    [item] = await get_latest_status_for_equipment(db_session, equipment_id=equipment.id)
+    assert item.status.status_level == "UP"
+    assert item.status.sampled_at == newer
+
+
+async def test_newer_sample_replaces_the_cached_status(db_session):
+    equipment, binding = await _network_binding(db_session)
+    older = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)
+    newer = datetime(2026, 9, 25, 12, 0, 30, tzinfo=UTC)
+
+    await record_latest_status(db_session, binding_id=binding.id, payload=_link_payload("UP"), sampled_at=older)
+    await db_session.commit()
+    applied = await record_latest_status(
+        db_session, binding_id=binding.id, payload=_link_payload("DOWN"), sampled_at=newer
+    )
+    await db_session.commit()
+
+    assert applied.status_level == "DOWN"
+    assert applied.sampled_at == newer
+    [item] = await get_latest_status_for_equipment(db_session, equipment_id=equipment.id)
+    assert item.status.status_level == "DOWN"
+
+
+async def test_duplicate_sample_at_an_equal_timestamp_is_a_no_op(db_session):
+    """Equal `sampled_at` is a re-delivery of one sample, not new information. First
+    writer wins, so the stored row is byte-identical whichever copy arrives second —
+    the property that makes concurrent re-delivery deterministic."""
+    equipment, binding = await _network_binding(db_session)
+    sampled_at = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)
+
+    first = await record_latest_status(
+        db_session, binding_id=binding.id, payload=_link_payload("UP"), sampled_at=sampled_at
+    )
+    await db_session.commit()
+    first_received_at = first.received_at
+
+    second = await record_latest_status(
+        db_session, binding_id=binding.id, payload=_link_payload("DOWN"), sampled_at=sampled_at
+    )
+    await db_session.commit()
+
+    assert second.status_level == "UP"
+    assert second.payload["link_state"] == "UP"
+    assert second.received_at == first_received_at, "a declined write must not touch received_at"
+
+
+async def test_first_sample_for_a_binding_is_always_applied(db_session):
+    """No stored row means nothing to be stale against — the insert path is untouched by
+    the guard, which only ever runs on conflict."""
+    equipment, binding = await _network_binding(db_session)
+    old = datetime(2020, 1, 1, tzinfo=UTC)
+    status = await record_latest_status(
+        db_session, binding_id=binding.id, payload=_link_payload("DEGRADED", error_rate_pct=5.0), sampled_at=old
+    )
+    await db_session.commit()
+    assert status.status_level == "DEGRADED"
+    assert status.sampled_at == old
+
+
+async def test_ordering_guard_is_scoped_per_binding(db_session):
+    """A newer sample on one binding must not block an older-but-first sample on a
+    different binding — the guard keys on the conflicting row, never globally."""
+    equipment = await _make_equipment(db_session, port_count=2, psu_quantity=0)
+    ports = await list_equipment_ports(db_session, equipment_id=equipment.id)
+    bindings = []
+    for index, port in enumerate(ports):
+        bindings.append(
+            await create_port_telemetry_binding(
+                db_session, equipment_id=equipment.id, target_type="network_port", equipment_port_id=port.id,
+                equipment_power_inlet_id=None, protocol="snmp", external_ref=f"oid-{index}", label=None,
+            )
+        )
+    await db_session.commit()
+
+    await record_latest_status(
+        db_session, binding_id=bindings[0].id, payload=_link_payload("UP"),
+        sampled_at=datetime(2026, 9, 25, 12, 5, 0, tzinfo=UTC),
+    )
+    second = await record_latest_status(
+        db_session, binding_id=bindings[1].id, payload=_link_payload("DOWN"),
+        sampled_at=datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC),
+    )
+    await db_session.commit()
+    assert second.status_level == "DOWN"
+    assert {i.status.status_level for i in await get_latest_status_for_equipment(db_session, equipment_id=equipment.id)} == {
+        "UP",
+        "DOWN",
+    }
