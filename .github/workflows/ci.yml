@@ -342,20 +342,18 @@ jobs:
   # job produces the evidence, running the same migrations, privileged bootstrap, lint,
   # typecheck and full suite against a real PostgreSQL 16 and Redis 7 per version.
   #
-  # 3.12 and 3.13 are blocking: both were validated green locally (693 passed in the
-  # migrated suite, 6 in the retention hostile suite, 55 in the Edge Collector suite) so a
-  # regression on either is a real failure, not an unknown.
+  # All three block. 3.12 and 3.13 were validated green locally (693 passed in the migrated
+  # suite, 6 in the retention hostile suite, 55 in the Edge Collector suite).
   #
-  # 3.14 is continue-on-error because its status is genuinely unresolved rather than known
-  # bad. The only 3.14 build obtainable in the validation environment was 3.14.0rc2, where
-  # pydantic 2.13.5 raises
+  # 3.14 shipped non-blocking and was promoted once this job reported green, which is the
+  # criterion it shipped with. Worth recording why it was ever in doubt: the only 3.14
+  # build obtainable in the local validation environment was 3.14.0rc2, where pydantic
+  # 2.13.5 raises
   #   TypeError: _eval_type() got an unexpected keyword argument 'prefer_fwd_module'
-  # importing pydantic.root_model. That is a pre-final typing API gap: rc2's
-  # typing._eval_type takes `parent_fwdref` and not `prefer_fwd_module`, which pydantic
-  # 2.13.5 passes, so the mismatch is against the release candidate rather than against
-  # 3.14 as shipped. This job is what settles it — actions/setup-python installs a final
-  # 3.14.x — without a pre-release blocking every pull request in the meantime. Promote it
-  # to blocking once it reports green, or pin the fixed dependency once it reports red.
+  # importing pydantic.root_model, because rc2's typing._eval_type takes `parent_fwdref`
+  # and not `prefer_fwd_module`. That was a release-candidate gap rather than a property of
+  # 3.14 as shipped: against the final 3.14.x actions/setup-python installs, every step of
+  # this job passes, migrations, full suite and Edge Collector suite included.
   backend-runtime-matrix:
     name: backend suite (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -369,7 +367,7 @@ jobs:
           - python-version: "3.13"
             experimental: false
           - python-version: "3.14"
-            experimental: true
+            experimental: false
     services:
       postgres:
         image: postgres:16

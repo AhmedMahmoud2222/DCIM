@@ -1,6 +1,6 @@
 # Phase 10 Post-Audit Remediation and Integration Report
 
-**Version:** 1.2
+**Version:** 1.3
 **Date:** 2026-09-25
 **Branch:** `claude/intelligent-edison-94mvbo`
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
@@ -298,7 +298,7 @@ Reporting 3.14 as unsupported on this evidence would be wrong. The matrix job se
 |---|---|---|---|
 | F3 | Jules | LOW | Open. `ingest_collector_telemetry` has no per-record savepoints, so an unexpected exception rolls back preceding valid records in a batch. Outside the assigned scope. Not attempted. |
 | F4 | Jules | INFORMATIONAL | Open. Starlette `HTTP_422_UNPROCESSABLE_ENTITY` and SQLAlchemy `.distinct()` deprecation warnings. 32 warnings still reported. |
-| F5 | Jules | INFORMATIONAL | Partly closed. A CI matrix now exists. 3.14 remains unestablished. |
+| F5 | Jules | INFORMATIONAL | Closed. The CI matrix exists and gates 3.12, 3.13 and 3.14, all verified green on GitHub's runners. |
 
 ### Corrections owed to the independent audit report
 
@@ -324,7 +324,7 @@ One further item is a matter of precision rather than correctness. F2 is describ
 | Successful migration upgrade | Met. |
 | Supported downgrade validation | Met. Downgrade to `0010_mvp_alarms` and re-upgrade, single head after. |
 | Clean lint and typecheck | Met. ruff and mypy clean on backend and `edge_collector`. ESLint and tsc clean. |
-| Passing GitHub Actions | See section 10. |
+| Passing GitHub Actions | Met. All seven checks green, confirmed on two heads. |
 | Existing security and least-privilege validation preserved | Met. The `backend` job is unchanged. The new `browser-e2e` job reproduces its non-owner `dcim_app` pattern. |
 
 ---
@@ -362,18 +362,48 @@ This is a defect in work delivered here, not in the merged branches. It is recor
 
 ### Second run, head `09328a6456e29804baa412cf88c739cdc9f978bf`
 
-<!-- CI_RESULTS -->
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36139361294
+
+All seven checks passed, and again on heads `56d3541` and `22cde68`, which differ from it only by this report:
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36139623080
+
+| Job | Result |
+|---|---|
+| `backend` (Python 3.11) | success |
+| `backend suite (Python 3.12)` | success |
+| `backend suite (Python 3.13)` | success |
+| `backend suite (Python 3.14)` | success |
+| `browser-e2e` | success |
+| `edge-collector` | success |
+| `frontend` | success |
+
+### Python 3.14 passes on a final release
+
+The 3.14 job reported success, and a job-level conclusion alone would not have been
+evidence: `continue-on-error: true` makes GitHub report a job as successful even when its
+steps fail. The step-level conclusions were read instead. Every step succeeded, including
+`Run migrations`, `Validate retention migration round trip`, `Run PostgreSQL retention
+hostile validation`, `Run regression tests` and `Run Edge Collector tests on this runtime`.
+
+The 3.14.0rc2 failure in section 7 was therefore a release-candidate artefact, exactly as
+the evidence there suggested. Against the final 3.14.x that `actions/setup-python`
+installs, the complete migrated backend suite passes. The job's `Report the resolved
+interpreter` step records the exact patch version for anyone who needs it.
+
+3.14 is promoted to blocking on this branch, which is the criterion it shipped with. All
+three matrix entries now gate.
 
 ---
 
 ## 11. Outstanding risks
 
-1. **Python 3.14 is unresolved.** Section 7. The matrix job reports it; the answer is not in hand yet.
+1. **Closed.** Python 3.14 passes the full migrated suite on a final release, verified at step level, and now blocks. The local 3.14.0rc2 result stands as a record of why it was in doubt, not as an open question.
 2. **F3 is unfixed.** A batch ingest that raises an unexpected exception still rolls back preceding valid records.
 3. **The independent audit report is uncorrected.** Section 8. It currently reads as though F1 and F2 are closed and the telemetry pillar was adversarially verified.
 4. **The equal-timestamp rule is a decision, not a deduction.** First-writer-wins at an identical `sampled_at` was chosen because it makes concurrent re-delivery deterministic. A deployment that intends last-writer-wins at equal timestamps would need this changed. It is documented in the function's docstring and covered by tests, so a future change is a visible one.
 5. **Closed.** `browser-e2e` passed on a hosted runner in the first CI run. Its failure-artifact path remains verified only locally, since the job has not yet failed on a runner.
-6. **The 3.14 job is non-blocking.** If it later fails for a real reason, nothing stops a merge. It needs promoting or pinning once its first result is known.
+6. **Closed** by the promotion above. The residual risk is ordinary: a future 3.14 patch or dependency release could break the gate, which is what the gate is for.
 
 ---
 
@@ -382,8 +412,8 @@ This is a defect in work delivered here, not in the merged branches. It is recor
 1. **Close PR #27 and PR #28 without merging.** Both are fully contained in PR #29, with authorship preserved through `--no-ff` merges. Merging either first would leave a duplicate Vitest step on `main` until PR #29 lands.
 2. **Obtain independent validation of `4d1bbbf42f03acca2f19c27a64a6b4e29ecf1ee2`.** Section 13.
 3. **Merge PR #29 into `main`** once CI is green and independent validation reports.
-4. **Close issue #26** once `browser-e2e` and the runtime matrix have passed on `main`, recording the 3.14 outcome there.
-5. **Open a follow-up for F3** and for promoting or pinning the 3.14 matrix entry.
+4. **Close issue #26** once `browser-e2e` and the runtime matrix have passed on `main`. Both passed on this branch; the 3.14 outcome to record there is that it is supported and gated.
+5. **Open a follow-up for F3**, which is the only substantive item this work leaves open.
 
 ---
 

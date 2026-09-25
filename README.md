@@ -14,16 +14,17 @@ red-team/validation documents.
 
 - Python 3.11 for the reproducible CI/local setup — the runtime the `backend` CI job pins
   and the one to use if you want the same results it reports.
-- Python 3.12 and 3.13 also run the complete migrated database, Redis and raw-socket
-  suite, and CI gates both on every pull request (`backend suite (Python 3.12|3.13)`).
-- Python 3.14 is not yet established. `requires-python = ">=3.11"` is an installation
-  floor, not a support claim. CI runs 3.14 non-blocking so its status is reported rather
-  than assumed; see the `backend-runtime-matrix` job in `.github/workflows/ci.yml` for
-  what is known and what promotes it to a gate.
+- Python 3.12, 3.13 and 3.14 also run the complete migrated database, Redis and
+  raw-socket suite. CI gates all three on every pull request, as
+  `backend suite (Python 3.12|3.13|3.14)` in `.github/workflows/ci.yml`.
 - Node.js 22+
 - PostgreSQL 16 (server + client)
 - Redis 7
 - Docker + Docker Compose (for the containerized path; optional for local dev)
+
+`requires-python = ">=3.11"` is an installation floor. What is supported is what the
+Python matrix above gates, and adding a runtime to that matrix is what makes it a
+support claim.
 
 ## Local Setup (without Docker)
 
