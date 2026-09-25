@@ -141,7 +141,8 @@ def _build_get_request(request_id: int, community: bytes, oid: str) -> bytes:
 
 
 def _parse_response(response: bytes, *, request_id: int, expected_community: bytes, expected_oid: str) -> tuple[int, bytes]:
-    message = _BERReader(response).read_constructed(0x30)
+    datagram = _BERReader(response)
+    message = datagram.read_constructed(0x30)
     if message.read_integer() != 1:
         raise SNMPError("SNMP response is not v2c")
     if message.read_tlv(0x04) != expected_community:
@@ -158,7 +159,16 @@ def _parse_response(response: bytes, *, request_id: int, expected_community: byt
     if _decode_oid(binding.read_tlv(0x06)) != expected_oid:
         raise SNMPError("SNMP response OID did not match request")
     tag, value = binding.read_any_tlv()
-    if not binding.exhausted or not bindings.exhausted or not pdu.exhausted or not message.exhausted:
+    # `datagram` is checked alongside the four nested readers: without it a well-formed
+    # message followed by arbitrary padding was accepted, since read_constructed() stops
+    # at the outer SEQUENCE's declared end and never looks past it.
+    if (
+        not binding.exhausted
+        or not bindings.exhausted
+        or not pdu.exhausted
+        or not message.exhausted
+        or not datagram.exhausted
+    ):
         raise SNMPError("SNMP response has trailing data")
     return tag, value
 
