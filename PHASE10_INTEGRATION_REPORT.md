@@ -1,6 +1,6 @@
 # Phase 10 Post-Audit Remediation and Integration Report
 
-**Version:** 1.3
+**Version:** 1.4
 **Date:** 2026-09-25
 **Branch:** `claude/intelligent-edison-94mvbo`
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
@@ -15,7 +15,7 @@
 | Baseline (`main`) | `d96676c0534397c7320f09ca3fb4c5c3d72f86ba` |
 | PR #27 head (Codex) | `c430f8445f1e82f941a6fb0192df4b7440335b15` |
 | PR #28 head (Jules) | `c710309ea437b5273c7be5453fc65599696df8dd` |
-| Integration head | `09328a6456e29804baa412cf88c739cdc9f978bf` |
+| Integration head | `16f9255cfc0c81a2f5afa66ecde217ff14801936` |
 
 Both PR heads were verified against GitHub before merging. Each matched the head its pull request reported.
 
@@ -393,6 +393,33 @@ interpreter` step records the exact patch version for anyone who needs it.
 
 3.14 is promoted to blocking on this branch, which is the criterion it shipped with. All
 three matrix entries now gate.
+
+### Confirmation with 3.14 blocking
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36140273816
+
+Head `16f9255cfc0c81a2f5afa66ecde217ff14801936`, the first run with `continue-on-error`
+removed from the 3.14 entry. All seven checks green:
+
+| Job | Result |
+|---|---|
+| `backend` (Python 3.11) | success |
+| `backend suite (Python 3.12)` | success |
+| `backend suite (Python 3.13)` | success |
+| `backend suite (Python 3.14)` | success |
+| `browser-e2e` | success |
+| `edge-collector` | success |
+| `frontend` | success |
+
+This run is the one that settles 3.14 beyond argument. With the entry blocking, no
+step failure can be reported as a successful job, so the green conclusion needs no
+step-level corroboration to stand.
+
+Four runs total, on four heads, all seven checks green on each. `browser-e2e` has now
+passed on a hosted runner four consecutive times.
+
+Later commits to this branch change only this report, so their runs exercise identical
+code.
 
 ---
 
