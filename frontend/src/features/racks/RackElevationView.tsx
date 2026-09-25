@@ -1,11 +1,20 @@
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Fragment, useMemo, useState } from "react";
 
+import { ImpactAnalysisModal, ImpactTarget } from "@/features/impact/ImpactAnalysisModal";
 import { FaceplateOverlay, SelectedMarker, STATUS_COLORS } from "@/features/racks/FaceplateOverlay";
-import { ElevationSlot, RackElevation } from "@/types";
+import { getLatestPortStatusForRack } from "@/features/telemetry/api";
+import { ElevationSlot, ImpactSimulationResult, LatestPortStatus, RackElevation } from "@/types";
 
 const U_HEIGHT_PX = 22;
 const COL_WIDTH_PX = 160;
 const LABEL_COL_WIDTH_PX = 36;
+// Phase 10C: how often the rack-wide telemetry cache is repolled for the faceplate
+// overlays — a plain refetch on this interval (react-query only re-renders the markers
+// whose data actually changed) rather than a WebSocket/SSE channel, matching every other
+// live-ish view in this codebase (TelemetryTrend, alarm history) and needing no new
+// transport/infra for a control-plane-cadence status feed.
+const TELEMETRY_POLL_MS = 5_000;
 
 const SIDE_COLOR: Record<string, string> = {
   front: "#2563eb",
@@ -13,10 +22,23 @@ const SIDE_COLOR: Record<string, string> = {
   both: "#0d9488",
 };
 
+const IMPACT_HIGHLIGHT_COLOR: Record<"direct" | "indirect", string> = {
+  direct: "#ef4444",
+  indirect: "#eab308",
+};
+
 interface Box {
   x: number;
   width: number;
   side: "front" | "rear";
+}
+
+function impactHighlightsFrom(result: ImpactSimulationResult | null): Record<string, "direct" | "indirect"> {
+  if (!result) return {};
+  const highlights: Record<string, "direct" | "indirect"> = {};
+  for (const item of result.indirectly_impacted) highlights[item.equipment_id] = "indirect";
+  for (const item of result.directly_impacted) highlights[item.equipment_id] = "direct"; // direct wins if both
+  return highlights;
 }
 
 /** A pure projection of RackElevation data — never an independently editable model.
@@ -27,9 +49,37 @@ interface Box {
  * faceplate image + connectivity-colored port/PSU markers (FaceplateOverlay) on top of
  * the plain colored box every slot already draws — that box stays as the fallback
  * background, visible through the overlay wherever no graphic exists for that side, so
- * equipment created via the pre-Phase-10B legacy path renders exactly as it always has. */
+ * equipment created via the pre-Phase-10B legacy path renders exactly as it always has.
+ *
+ * Phase 10C: one bulk, polled `GET /telemetry/port-status/latest?rack_id=` query feeds
+ * live link/power/thermal status into every marker in the rack (rather than each
+ * FaceplateOverlay instance polling its own equipment), and a "Simulate Failure" action
+ * on any marker opens ImpactAnalysisModal, which highlights the returned blast radius's
+ * slots directly on this elevation (red = directly impacted, amber = indirectly). */
 export function RackElevationView({ elevation }: { elevation: RackElevation }) {
   const [selection, setSelection] = useState<{ slot: ElevationSlot; selected: SelectedMarker } | null>(null);
+  const [impactTarget, setImpactTarget] = useState<ImpactTarget | null>(null);
+  const [impactResult, setImpactResult] = useState<ImpactSimulationResult | null>(null);
+
+  const telemetryQuery = useQuery({
+    queryKey: ["telemetry", "port-status", "rack", elevation.rack_id],
+    queryFn: () => getLatestPortStatusForRack(elevation.rack_id),
+    enabled: elevation.slots.length > 0,
+    refetchInterval: TELEMETRY_POLL_MS,
+  });
+
+  const { portStatusByPortId, portStatusByInletId } = useMemo(() => {
+    const byPort: Record<string, LatestPortStatus> = {};
+    const byInlet: Record<string, LatestPortStatus> = {};
+    for (const item of telemetryQuery.data ?? []) {
+      if (item.equipment_port_id) byPort[item.equipment_port_id] = item;
+      if (item.equipment_power_inlet_id) byInlet[item.equipment_power_inlet_id] = item;
+    }
+    return { portStatusByPortId: byPort, portStatusByInletId: byInlet };
+  }, [telemetryQuery.data]);
+
+  const impactHighlights = useMemo(() => impactHighlightsFrom(impactResult), [impactResult]);
+
   const totalHeight = elevation.height_u * U_HEIGHT_PX;
   const svgWidth = LABEL_COL_WIDTH_PX + COL_WIDTH_PX * 2 + 8;
 
@@ -88,6 +138,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
           const y = uToY(slot.u_end - 1);
           const height = (slot.u_end - slot.u_start) * U_HEIGHT_PX;
           const color = SIDE_COLOR[slot.side] ?? "#475569";
+          const highlight = impactHighlights[slot.equipment_id];
           const boxes: Box[] =
             slot.side === "both"
               ? [
@@ -118,38 +169,107 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
                     equipmentId={slot.equipment_id}
                     side={box.side}
                     onSelect={(selected) => setSelection({ slot, selected })}
+                    portStatusByPortId={portStatusByPortId}
+                    portStatusByInletId={portStatusByInletId}
                   />
                 </foreignObject>
+              )}
+              {highlight && (
+                <rect
+                  data-testid="impact-highlight"
+                  data-impact-severity={highlight}
+                  x={box.x}
+                  y={y}
+                  width={box.width}
+                  height={height}
+                  fill="none"
+                  stroke={IMPACT_HIGHLIGHT_COLOR[highlight]}
+                  strokeWidth={2.5}
+                  strokeDasharray={highlight === "indirect" ? "4 3" : undefined}
+                  rx={2}
+                  pointerEvents="none"
+                />
               )}
             </g>
           ));
         })}
       </svg>
       {elevation.slots.length === 0 && <p className="mt-2 text-sm text-slate-500">No equipment mounted in this rack.</p>}
-      {selection && <MarkerDetailPanel slot={selection.slot} selected={selection.selected} onClose={() => setSelection(null)} />}
+      {selection && (
+        <MarkerDetailPanel
+          slot={selection.slot}
+          selected={selection.selected}
+          onClose={() => setSelection(null)}
+          onSimulateFailure={setImpactTarget}
+        />
+      )}
+      <ImpactAnalysisModal target={impactTarget} onClose={() => setImpactTarget(null)} onResult={setImpactResult} />
     </div>
   );
+}
+
+function telemetryDetail(selected: SelectedMarker): { label: string; value: string }[] {
+  const { telemetry } = selected;
+  if (!telemetry?.status_level || !telemetry.payload) return [];
+  if (telemetry.target_type === "network_port" && "link_state" in telemetry.payload) {
+    const p = telemetry.payload;
+    return [
+      { label: "Link state", value: telemetry.status_level },
+      { label: "Utilization", value: `${p.bandwidth_util_pct.toFixed(1)}%` },
+      { label: "Error rate", value: `${p.error_rate_pct.toFixed(2)}%` },
+    ];
+  }
+  if (telemetry.target_type === "power_inlet" && "active_power_watts" in telemetry.payload) {
+    const p = telemetry.payload;
+    return [
+      { label: "Power status", value: telemetry.status_level },
+      { label: "Load", value: `${p.active_power_watts.toFixed(0)} W | ${p.current_amps.toFixed(1)} A` },
+      { label: "Voltage", value: `${p.voltage.toFixed(0)} V` },
+    ];
+  }
+  return [];
 }
 
 function MarkerDetailPanel({
   slot,
   selected,
   onClose,
+  onSimulateFailure,
 }: {
   slot: ElevationSlot;
   selected: SelectedMarker;
   onClose: () => void;
+  onSimulateFailure: (target: ImpactTarget) => void;
 }) {
   const { marker, port, powerInlet, status } = selected;
+  const equipmentLabel = slot.hostname ?? slot.asset_tag;
+  const telemetryRows = telemetryDetail(selected);
+  const simulateTarget: ImpactTarget | null = port
+    ? { type: "network_port", id: port.id, label: `${equipmentLabel} — ${port.display_name}` }
+    : powerInlet
+      ? { type: "power_node", id: powerInlet.power_node_id, label: `${equipmentLabel} — ${powerInlet.label}` }
+      : null;
+
   return (
     <div data-testid="marker-detail-panel" className="mt-3 rounded border border-slate-700 bg-slate-900 p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
         <p className="font-semibold text-slate-200">
-          {slot.hostname ?? slot.asset_tag} — {marker.label ?? (port?.display_name ?? powerInlet?.label ?? "marker")}
+          {equipmentLabel} — {marker.label ?? (port?.display_name ?? powerInlet?.label ?? "marker")}
         </p>
-        <button onClick={onClose} className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-700">
-          Close
-        </button>
+        <div className="flex gap-2">
+          {simulateTarget && (
+            <button
+              data-testid="simulate-failure-button"
+              onClick={() => onSimulateFailure(simulateTarget)}
+              className="rounded bg-red-900/60 px-2 py-0.5 text-xs text-red-200 hover:bg-red-900"
+            >
+              Simulate failure
+            </button>
+          )}
+          <button onClick={onClose} className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-700">
+            Close
+          </button>
+        </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         <dt className="text-slate-500">Type</dt>
@@ -180,7 +300,16 @@ function MarkerDetailPanel({
             <dd>{powerInlet.label} ({powerInlet.connector_type})</dd>
           </>
         )}
+        {telemetryRows.map((row) => (
+          <Fragment key={row.label}>
+            <dt className="text-slate-500">{row.label}</dt>
+            <dd data-testid="marker-telemetry-value">{row.value}</dd>
+          </Fragment>
+        ))}
       </dl>
+      {!selected.telemetry && (
+        <p className="mt-2 text-xs italic text-slate-500">No live telemetry binding for this marker.</p>
+      )}
       <a href={`/equipment/${slot.equipment_id}`} className="mt-2 inline-block text-xs text-blue-400 hover:underline">
         Open equipment for full telemetry →
       </a>

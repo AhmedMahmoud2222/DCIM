@@ -1,4 +1,5 @@
 import { apiFetch } from "@/lib/apiClient";
+import { LatestPortStatus } from "@/types";
 
 export interface TelemetryReading {
   id: string;
@@ -51,3 +52,11 @@ export const getAlarmHistory = (assetId: string, start?: Date, end?: Date, curso
 export const acknowledgeAlarm = (id: string) => apiFetch<Alarm>(`/alarms/${id}/acknowledge`, { method: "POST" });
 export const getOpenAlarms = (status?: "ACTIVE" | "ACKNOWLEDGED") =>
   apiFetch<Alarm[]>(`/alarms${status ? `?status=${status}` : ""}`);
+
+// -------------------------------------------------------- Phase 10C: port/inlet status
+
+export const getLatestPortStatusForEquipment = (equipmentId: string) =>
+  apiFetch<LatestPortStatus[]>(`/telemetry/port-status/latest?equipment_id=${encodeURIComponent(equipmentId)}`);
+
+export const getLatestPortStatusForRack = (rackId: string) =>
+  apiFetch<LatestPortStatus[]>(`/telemetry/port-status/latest?rack_id=${encodeURIComponent(rackId)}`);

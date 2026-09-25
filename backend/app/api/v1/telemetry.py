@@ -1,4 +1,14 @@
-"""Bounded read APIs and collector-authenticated telemetry ingestion."""
+"""Bounded read APIs and collector-authenticated telemetry ingestion.
+
+Phase 10C additions (below the MVP `/mappings`/`/latest`/`/history` routes): port/power-
+inlet telemetry bindings and their cached latest status, under `/telemetry/bindings` and
+`/telemetry/port-status/*`. Deliberately not layered onto the existing `/telemetry/latest`
+path above — that route's `TelemetryOut` shape and `integration_id`/`managed_asset_id`
+query contract are the MVP acquisition pipeline's own, unrelated to Phase 10B's
+instantiated port/inlet identity, and overloading one path with two unrelated response
+shapes would be worse than the small amount of namespacing added here (the same
+"documented, explicit deviation" this codebase already prefers — see e.g.
+power/models.py's `utility_intake` node-type addition)."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -12,10 +22,22 @@ from app.api.deps import get_db
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
-from app.application.telemetry_service import MetricMappingNotFound, ingest_reading
+from app.application.telemetry_service import (
+    BindingNotFound,
+    InvalidBindingTarget,
+    LatestPortStatus,
+    MetricMappingNotFound,
+    create_port_telemetry_binding,
+    get_latest_status_for_equipment,
+    get_latest_status_for_rack,
+    ingest_reading,
+    list_port_telemetry_bindings,
+    record_latest_status,
+)
 from app.core.errors import ApiError
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
+from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.models import CANONICAL_METRICS, DailyTelemetryAggregate, IntegrationMetricMapping, TelemetryReading
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
@@ -289,3 +311,183 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         maximum_value=float(row.maximum_value),
         sample_count=row.sample_count,
     )
+
+
+# --------------------------------------------------------------------------------------
+# Phase 10C: port/power-inlet telemetry bindings + cached latest status
+# --------------------------------------------------------------------------------------
+
+
+class TelemetryBindingIn(BaseModel):
+    equipment_id: uuid.UUID
+    target_type: str
+    equipment_port_id: uuid.UUID | None = None
+    equipment_power_inlet_id: uuid.UUID | None = None
+    protocol: str
+    external_ref: str = Field(max_length=255)
+    label: str | None = Field(default=None, max_length=128)
+
+
+class TelemetryBindingOut(TelemetryBindingIn):
+    id: uuid.UUID
+
+
+class PortStatusIngestIn(BaseModel):
+    binding_id: uuid.UUID
+    payload: dict
+    sampled_at: datetime
+
+
+class PortStatusOut(BaseModel):
+    binding_id: uuid.UUID
+    equipment_id: uuid.UUID
+    target_type: str
+    equipment_port_id: uuid.UUID | None
+    equipment_power_inlet_id: uuid.UUID | None
+    label: str | None
+    status_level: str | None = None
+    payload: dict | None = None
+    sampled_at: datetime | None = None
+    received_at: datetime | None = None
+
+
+def _binding_out(binding: PortTelemetryBinding) -> TelemetryBindingOut:
+    return TelemetryBindingOut(
+        id=binding.id,
+        equipment_id=binding.equipment_id,
+        target_type=binding.target_type,
+        equipment_port_id=binding.equipment_port_id,
+        equipment_power_inlet_id=binding.equipment_power_inlet_id,
+        protocol=binding.protocol,
+        external_ref=binding.external_ref,
+        label=binding.label,
+    )
+
+
+def _port_status_out(item: LatestPortStatus) -> PortStatusOut:
+    binding = item.binding
+    status = item.status
+    return PortStatusOut(
+        binding_id=binding.id,
+        equipment_id=binding.equipment_id,
+        target_type=binding.target_type,
+        equipment_port_id=binding.equipment_port_id,
+        equipment_power_inlet_id=binding.equipment_power_inlet_id,
+        label=binding.label,
+        status_level=status.status_level if status else None,
+        payload=status.payload if status else None,
+        sampled_at=status.sampled_at if status else None,
+        received_at=status.received_at if status else None,
+    )
+
+
+@router.post("/bindings", response_model=TelemetryBindingOut, status_code=201)
+async def create_telemetry_binding(
+    body: TelemetryBindingIn,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:manage")),
+) -> TelemetryBindingOut:
+    if body.target_type not in TELEMETRY_TARGET_TYPES:
+        raise ApiError(
+            status_code=422, title="Invalid target type", detail=f"target_type must be one of {TELEMETRY_TARGET_TYPES}."
+        )
+    if body.protocol not in TELEMETRY_PROTOCOLS:
+        raise ApiError(status_code=422, title="Invalid protocol", detail=f"protocol must be one of {TELEMETRY_PROTOCOLS}.")
+    if await db.get(ManagedAsset, body.equipment_id) is None:
+        raise ApiError(status_code=422, title="Invalid equipment", detail="equipment_id does not exist.")
+    try:
+        binding = await create_port_telemetry_binding(
+            db,
+            equipment_id=body.equipment_id,
+            target_type=body.target_type,
+            equipment_port_id=body.equipment_port_id,
+            equipment_power_inlet_id=body.equipment_power_inlet_id,
+            protocol=body.protocol,
+            external_ref=body.external_ref,
+            label=body.label,
+        )
+    except BindingNotFound as exc:
+        raise ApiError(status_code=422, title="Invalid binding target", detail=str(exc)) from exc
+    except InvalidBindingTarget as exc:
+        raise ApiError(status_code=422, title="Invalid binding target", detail=str(exc)) from exc
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="telemetry.binding.create",
+        entity_type="port_telemetry_binding",
+        entity_id=binding.id,
+        request_id=None,
+        correlation_id=None,
+        after={"equipment_id": str(binding.equipment_id), "target_type": binding.target_type},
+    )
+    await write_outbox_event(
+        db,
+        event_type="TelemetryBindingCreated",
+        aggregate_type="port_telemetry_binding",
+        aggregate_id=binding.id,
+        payload={"equipment_id": str(binding.equipment_id), "target_type": binding.target_type},
+    )
+    await db.commit()
+    return _binding_out(binding)
+
+
+@router.get("/bindings", response_model=list[TelemetryBindingOut])
+async def list_telemetry_bindings(
+    equipment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:read")),
+) -> list[TelemetryBindingOut]:
+    bindings = await list_port_telemetry_bindings(db, equipment_id=equipment_id)
+    return [_binding_out(b) for b in bindings]
+
+
+@router.post("/port-status/ingest", response_model=PortStatusOut)
+async def ingest_port_status(
+    body: PortStatusIngestIn,
+    db: AsyncSession = Depends(get_db),
+    # A caller with telemetry:manage — a poller/collector service account or, for a
+    # synthetic/demo feed, an operator — never a raw device: unlike the MVP pipeline's
+    # collector-signed batch endpoint (ingest_collector_telemetry, above), Phase 10C
+    # introduces no new machine-trust boundary of its own.
+    ctx=Depends(require_permission("telemetry:manage")),
+) -> PortStatusOut:
+    try:
+        await record_latest_status(db, binding_id=body.binding_id, payload=body.payload, sampled_at=body.sampled_at)
+    except BindingNotFound as exc:
+        raise ApiError(status_code=404, title="Binding not found", detail=str(exc)) from exc
+    except KeyError as exc:
+        raise ApiError(
+            status_code=422, title="Missing telemetry field", detail=f"payload is missing required field {exc}."
+        ) from exc
+    except ValueError as exc:
+        raise ApiError(status_code=422, title="Invalid telemetry payload", detail=str(exc)) from exc
+    await db.commit()
+    binding = await db.get(PortTelemetryBinding, body.binding_id)
+    assert binding is not None
+    items = await get_latest_status_for_equipment(db, equipment_id=binding.equipment_id)
+    (item,) = [i for i in items if i.binding.id == binding.id]
+    return _port_status_out(item)
+
+
+@router.get("/port-status/latest", response_model=list[PortStatusOut])
+async def latest_port_status(
+    equipment_id: uuid.UUID | None = None,
+    rack_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:read")),
+) -> list[PortStatusOut]:
+    """The rack-elevation overlay's own bulk read: pass `rack_id` to fetch every binding
+    for every currently rack-mounted equipment in one bounded call, or `equipment_id` for
+    a single equipment's own bindings (`EquipmentDetailPage`'s "Simulate Outage" and live-
+    status panels). Exactly one of the two is required — this is never an unfiltered scan
+    of the whole telemetry_latest_status table."""
+    if (equipment_id is None) == (rack_id is None):
+        raise ApiError(
+            status_code=422, title="Filter required", detail="Exactly one of equipment_id or rack_id is required."
+        )
+    if equipment_id is not None:
+        items = await get_latest_status_for_equipment(db, equipment_id=equipment_id)
+    else:
+        assert rack_id is not None
+        items = await get_latest_status_for_rack(db, rack_id=rack_id)
+    return [_port_status_out(item) for item in items]

@@ -11,6 +11,7 @@ from app.api.v1 import (
     equipment,
     floor_plans,
     health,
+    impact,
     integrations,
     locations,
     managed_assets,
@@ -41,4 +42,5 @@ api_router.include_router(collectors.router)
 api_router.include_router(integrations.router)
 api_router.include_router(discovery.router)
 api_router.include_router(telemetry.router)
+api_router.include_router(impact.router)
 api_router.include_router(settings.router)

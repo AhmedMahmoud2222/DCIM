@@ -4,9 +4,16 @@ import { Link, useParams } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { connectEquipmentPort, getEquipment, getEquipmentPorts, moveEquipment, retireEquipment } from "@/features/equipment/api";
+import { ImpactAnalysisModal, ImpactTarget } from "@/features/impact/ImpactAnalysisModal";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
-import { acknowledgeAlarm, getAlarmHistory, getLatestTelemetry, getTelemetryHistory } from "@/features/telemetry/api";
+import {
+  acknowledgeAlarm,
+  getAlarmHistory,
+  getLatestPortStatusForEquipment,
+  getLatestTelemetry,
+  getTelemetryHistory,
+} from "@/features/telemetry/api";
 import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
@@ -39,6 +46,7 @@ export function EquipmentDetailPage() {
   const [side, setSide] = useState<Side>("front");
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [historyHours, setHistoryHours] = useState(24);
+  const [impactTarget, setImpactTarget] = useState<ImpactTarget | null>(null);
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -61,6 +69,15 @@ export function EquipmentDetailPage() {
   const portsQuery = useQuery({
     queryKey: ["equipment", equipmentId, "ports"], queryFn: () => getEquipmentPorts(equipmentId!), enabled: !!equipmentId,
   });
+  const portStatusQuery = useQuery({
+    queryKey: ["telemetry", "port-status", "equipment", equipmentId],
+    queryFn: () => getLatestPortStatusForEquipment(equipmentId!),
+    enabled: !!equipmentId,
+    refetchInterval: 5_000,
+  });
+  const portStatusByPortId = new Map(
+    (portStatusQuery.data ?? []).filter((s) => s.equipment_port_id).map((s) => [s.equipment_port_id, s]),
+  );
   const canManageCabling = useHasPermission("equipment:manage");
   const metric = selectedMetric ?? latestTelemetryQuery.data?.[0]?.metric ?? null;
   const historyQuery = useQuery({
@@ -346,6 +363,18 @@ export function EquipmentDetailPage() {
                     {feed.has_upstream_path ? "path OK" : "no upstream path"}
                   </span>
                   <span>{feed.effective_capacity_kw === null ? "capacity unknown" : `${feed.effective_capacity_kw.toFixed(1)} kW`}</span>
+                  <button
+                    data-testid="simulate-outage-button"
+                    onClick={() =>
+                      setImpactTarget({
+                        type: "power_node", id: feed.power_node_id,
+                        label: `${equipment.hostname ?? equipment.asset_tag} — ${feed.feed_label ?? "power feed"}`,
+                      })
+                    }
+                    className="rounded bg-red-900/60 px-2 py-0.5 text-xs text-red-200 hover:bg-red-900"
+                  >
+                    Simulate outage
+                  </button>
                 </div>
               ))}
               {powerSummaryQuery.data.feed_nodes.length === 0 && (
@@ -369,20 +398,52 @@ export function EquipmentDetailPage() {
             <p className="text-sm italic text-slate-500">This catalog model has no network ports defined.</p>
           )}
           <div className="space-y-2">
-            {portsQuery.data?.ports.map((port) => (
+            {portsQuery.data?.ports.map((port) => {
+              const liveStatus = portStatusByPortId.get(port.id);
+              return (
               <div key={port.id} data-testid="equipment-port-row" className="rounded bg-slate-800/50 p-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-slate-200">
                     {port.display_name} <span className="text-slate-500">({port.connector_type}, {port.media_type}, {port.side})</span>
+                    {liveStatus?.status_level && (
+                      <span
+                        data-testid="port-live-link-state"
+                        className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                          liveStatus.status_level === "UP"
+                            ? "bg-green-900 text-green-200"
+                            : liveStatus.status_level === "DEGRADED"
+                              ? "bg-yellow-800 text-yellow-100"
+                              : "bg-red-900 text-red-200"
+                        }`}
+                      >
+                        {liveStatus.status_level}
+                      </span>
+                    )}
                   </span>
-                  {canManageCabling && (
-                    <button
-                      onClick={() => setConnectingPortId((id) => (id === port.id ? null : port.id))}
-                      className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
-                    >
-                      {port.connection ? "Re-patch" : "Connect"}
-                    </button>
-                  )}
+                  <div className="flex gap-2">
+                    {port.connection && (
+                      <button
+                        data-testid="simulate-failure-button"
+                        onClick={() =>
+                          setImpactTarget({
+                            type: "network_port", id: port.id,
+                            label: `${equipment.hostname ?? equipment.asset_tag} — ${port.display_name}`,
+                          })
+                        }
+                        className="rounded bg-red-900/60 px-2 py-0.5 text-xs text-red-200 hover:bg-red-900"
+                      >
+                        Simulate failure
+                      </button>
+                    )}
+                    {canManageCabling && (
+                      <button
+                        onClick={() => setConnectingPortId((id) => (id === port.id ? null : port.id))}
+                        className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-600"
+                      >
+                        {port.connection ? "Re-patch" : "Connect"}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {port.connection ? (
                   <p className="mt-1 text-slate-400">
@@ -401,7 +462,8 @@ export function EquipmentDetailPage() {
                   />
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
           {portsQuery.data && portsQuery.data.power_inlets.length > 0 && (
             <>
@@ -458,6 +520,7 @@ export function EquipmentDetailPage() {
           <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.last_value}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-500">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-500">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
         </div>
       </div>
+      <ImpactAnalysisModal target={impactTarget} onClose={() => setImpactTarget(null)} />
     </div>
   );
 }
