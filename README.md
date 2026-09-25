@@ -1,17 +1,10 @@
 # DCIM Platform
 
-In-house Data Center Infrastructure Management platform. This repository currently
-implements **Phase 1 — Foundation** only: authentication, RBAC, audit, the location
-hierarchy, the bare `ManagedAsset` identity/lifecycle anchor, the transactional Outbox,
-and the surrounding cross-cutting infrastructure (observability, configuration,
-migrations, Docker, CI). Rack/equipment/power/network/telemetry/alarm/spatial/AI
-functionality is later-phase work and is intentionally not present — see
-`PHASE1_IMPLEMENTATION.md` for exact scope and `ARCHITECTURE_REVIEW.md` for the full
-platform design this phase implements a foundation of.
+In-house Data Center Infrastructure Management platform. The repository contains the Phase 1 foundation and subsequent Phase 2/3/8 and Phase 10A/10B/10C code merged to `main`. A merge records source integration; it does not establish production deployment or an independent security audit. See `ARCHITECTURE_REVIEW.md` for the architecture and its dated current-state addendum.
 
 ## Architecture Summary
 
-Modular monolith: FastAPI (async, Python 3.11) + PostgreSQL 16 (system of record) +
+Modular monolith: FastAPI (async, CI-validated Python 3.11) + PostgreSQL 16 (system of record) +
 Redis (Celery broker/cache) + Celery (background jobs) on the backend; React 18 +
 TypeScript + Vite + Tailwind + TanStack Query on the frontend. Full rationale for every
 decision is in `ARCHITECTURE_REVIEW.md` (canonical spec) and its companion revision/
@@ -19,7 +12,7 @@ red-team/validation documents.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11 for the reproducible CI/local setup. The backend metadata permits 3.11+ as an installation floor, but this repository does not yet establish a full test matrix for 3.12–3.14; validate the complete migrated database, Redis and raw-socket suite before treating another runtime as supported.
 - Node.js 22+
 - PostgreSQL 16 (server + client)
 - Redis 7
@@ -134,10 +127,7 @@ alembic upgrade head   # against dcim_test — see conftest.py for the DATABASE_
 pytest -q
 ```
 
-59 tests: unit (pure logic — lifecycle rules, concurrency helpers, JWT, idempotency
-hashing), integration (real PostgreSQL — DB constraints, outbox atomicity, audit
-append-only enforcement), and API (real HTTP contract through FastAPI's ASGI transport —
-auth, RBAC, concurrency, security).
+The suite contains unit, PostgreSQL integration and API tests. Run it against a fresh test database and Redis; the count changes as features are added. Frontend unit tests: `cd frontend && npm ci && npm test`. Browser tests: `npm run test:e2e` require a separately migrated backend, Redis, an Administrator fixture and Chromium; see `frontend/playwright.config.ts`. The browser suite is not yet a CI gate (tracked in issue [#26](https://github.com/AhmedMahmoud2222/DCIM/issues/26)).
 
 **ICMP driver tests require `CAP_NET_RAW`.** `app/application/drivers/icmp.py` opens a
 genuine `SOCK_RAW`/`IPPROTO_ICMP` socket (not a shell-out to `ping`), which the kernel
@@ -187,7 +177,7 @@ npx eslint . --ext ts,tsx
 
 ## Further Reading
 
-`ARCHITECTURE_REVIEW.md` (canonical architecture, v1.3), `PHASE1_BASELINE.md` (repository
+`ARCHITECTURE_REVIEW.md` (historical architecture with dated implementation addenda), `PHASE1_BASELINE.md` (repository
 assessment before this phase began), `PHASE1_IMPLEMENTATION.md` (what Phase 1 actually
 built, mapped to architecture sections), `PHASE1_TRACEABILITY_MATRIX.md`,
 `PHASE1_DEVIATIONS.md`, `PHASE1_IMPLEMENTATION_REPORT.md` (full Phase 1 completion report

@@ -117,6 +117,8 @@ jobs:
       - name: Full audit report (moderate and above, non-blocking)
         if: always()
         run: npm audit --audit-level=moderate || true
+      - name: Run frontend unit tests (Vitest)
+        run: npm test
       - run: npm run typecheck
       - run: npx eslint . --ext ts,tsx
       - run: npm run build
