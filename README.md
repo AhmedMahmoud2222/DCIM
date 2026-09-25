@@ -12,7 +12,14 @@ red-team/validation documents.
 
 ## Prerequisites
 
-- Python 3.11 for the reproducible CI/local setup. The backend metadata permits 3.11+ as an installation floor, but this repository does not yet establish a full test matrix for 3.12–3.14; validate the complete migrated database, Redis and raw-socket suite before treating another runtime as supported.
+- Python 3.11 for the reproducible CI/local setup — the runtime the `backend` CI job pins
+  and the one to use if you want the same results it reports.
+- Python 3.12 and 3.13 also run the complete migrated database, Redis and raw-socket
+  suite, and CI gates both on every pull request (`backend suite (Python 3.12|3.13)`).
+- Python 3.14 is not yet established. `requires-python = ">=3.11"` is an installation
+  floor, not a support claim. CI runs 3.14 non-blocking so its status is reported rather
+  than assumed; see the `backend-runtime-matrix` job in `.github/workflows/ci.yml` for
+  what is known and what promotes it to a gate.
 - Node.js 22+
 - PostgreSQL 16 (server + client)
 - Redis 7
@@ -127,7 +134,9 @@ alembic upgrade head   # against dcim_test — see conftest.py for the DATABASE_
 pytest -q
 ```
 
-The suite contains unit, PostgreSQL integration and API tests. Run it against a fresh test database and Redis; the count changes as features are added. Frontend unit tests: `cd frontend && npm ci && npm test`. Browser tests: `npm run test:e2e` require a separately migrated backend, Redis, an Administrator fixture and Chromium; see `frontend/playwright.config.ts`. The browser suite is not yet a CI gate (tracked in issue [#26](https://github.com/AhmedMahmoud2222/DCIM/issues/26)).
+The suite contains unit, PostgreSQL integration and API tests. Run it against a fresh test database and Redis; the count changes as features are added. Frontend unit tests: `cd frontend && npm ci && npm test`. Edge Collector tests: `pytest -q edge_collector/tests` (standard library plus httpx; no database).
+
+Browser tests: `npm run test:e2e` require a separately migrated backend, Redis, an Administrator fixture and Chromium; see `frontend/playwright.config.ts`. All three suites are CI gates — the `browser-e2e` job in `.github/workflows/ci.yml` runs the browser suite against its own PostgreSQL 16 and Redis 7 and is the worked example to copy for a local run: it provisions an isolated database, seeds the Administrator through `scripts/create_admin.py --password-from-env`, and waits on `/api/v1/health/ready` before starting Playwright.
 
 **ICMP driver tests require `CAP_NET_RAW`.** `app/application/drivers/icmp.py` opens a
 genuine `SOCK_RAW`/`IPPROTO_ICMP` socket (not a shell-out to `ping`), which the kernel
