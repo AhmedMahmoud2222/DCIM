@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, Computed, ForeignKey, Index, Integer, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import INT4RANGE, TIMESTAMP
+from sqlalchemy.dialects.postgresql import INT4RANGE, TIMESTAMP, Range
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UUIDPkMixin
@@ -75,7 +75,13 @@ class EquipmentPlacement(Base, UUIDPkMixin):
     placement_type: Mapped[str] = mapped_column(String(32), nullable=False)
     room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("room.id", ondelete="RESTRICT"), nullable=False)
     rack_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="RESTRICT"))
-    u_range: Mapped[str | None] = mapped_column(INT4RANGE)
+    # Typed as the real runtime value (app/application/placement_service.py already
+    # constructs it as `Range(...)`, never a str) -- previously mistyped as `str | None`,
+    # which left every `.lower`/`.upper` read below resolving to `str.lower`/`str.upper`
+    # instead of the range's integer bounds (a latent mypy gap `get_rack_elevation`'s
+    # explicitly-typed row unpacking exposed, since `app/api/v1/equipment.py`'s own
+    # equivalent read happens on an untyped local and was never checked against this).
+    u_range: Mapped[Range[int] | None] = mapped_column(INT4RANGE)
     side: Mapped[str | None] = mapped_column(String(8))
 
     # Generated, never independently written — §7a: "side remains the single,

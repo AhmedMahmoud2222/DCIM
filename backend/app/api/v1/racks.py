@@ -396,6 +396,13 @@ async def get_rack_elevation(
     slots = []
     for placement, asset, equipment in rows:
         u_range = placement.u_range
+        # Guaranteed by rack_mounted_requires_rack_u_range_and_side (models.py) -- this
+        # query already filters placement_type == "rack_mounted", so both are non-NULL
+        # here even though the column itself is nullable for other placement types, and
+        # placement_service.py always constructs this range with both bounds set (never
+        # unbounded), even though Range.lower/.upper are typed Optional in general.
+        assert u_range is not None and u_range.lower is not None and u_range.upper is not None
+        assert placement.side is not None
         slots.append(
             ElevationSlotOut(
                 equipment_id=equipment.id,
