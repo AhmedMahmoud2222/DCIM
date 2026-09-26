@@ -65,33 +65,19 @@ acquire_deployment_lock() {
     local lock_dir="$(dirname "$DEPLOYMENT_LOCK_FILE")"
     mkdir -p "$lock_dir"
 
-    # Use flock for atomic lock acquisition (requires flock available)
+    # Require flock for atomic lock acquisition - fail if unavailable
     if ! command -v flock &> /dev/null; then
-        log_error "flock command not found; using fallback file lock (not atomic)"
-        # Fallback: wait for manual lock file removal
-        local timeout=300
-        local start_time=$(date +%s)
-        while [ -f "$DEPLOYMENT_LOCK_FILE" ]; do
-            local elapsed=$(($(date +%s) - start_time))
-            if [ $elapsed -ge $timeout ]; then
-                die "Deployment lock held for more than ${timeout}s (remove manually: rm $DEPLOYMENT_LOCK_FILE)"
-            fi
-            log "Waiting for previous deployment... ($elapsed/${timeout}s)"
-            sleep 5
-        done
-        echo "$$" > "$DEPLOYMENT_LOCK_FILE"
-        DEPLOYMENT_LOCK_TYPE="fallback"
-        log "Acquired fallback file lock (PID: $$)"
-        return
+        die "flock command not found. Atomic deployment locking is required. Cannot proceed."
     fi
 
     # Atomic lock using flock (300s timeout)
     exec 200>"$DEPLOYMENT_LOCK_FILE"
     DEPLOYMENT_LOCK_FD=200
+
     if ! flock -n 200; then
-        log "Deployment lock in use; waiting (timeout: 300s)..."
+        log "Deployment lock in use; waiting for existing deployment to complete (timeout: 300s)..."
         if ! timeout 300 flock 200; then
-            die "Deployment lock timeout; previous deployment may have failed"
+            die "Deployment lock timeout; previous deployment may have failed (manual intervention required)"
         fi
     fi
 
@@ -105,23 +91,11 @@ release_deployment_lock() {
         return  # Lock was never acquired
     fi
 
-    case "$DEPLOYMENT_LOCK_TYPE" in
-        flock)
-            if [ -n "$DEPLOYMENT_LOCK_FD" ]; then
-                eval "exec $DEPLOYMENT_LOCK_FD>&-" 2>/dev/null || true  # Close the file descriptor
-                log "Released flock deployment lock"
-            fi
-            ;;
-        fallback)
-            # Only remove fallback lock file if we created it
-            if [ -f "$DEPLOYMENT_LOCK_FILE" ] && grep -q "^$$\$" "$DEPLOYMENT_LOCK_FILE" 2>/dev/null; then
-                rm -f "$DEPLOYMENT_LOCK_FILE"
-                log "Released fallback file lock"
-            else
-                log "Fallback lock file not owned by this process (PID: $$), not removing"
-            fi
-            ;;
-    esac
+    if [ "$DEPLOYMENT_LOCK_TYPE" = "flock" ] && [ -n "$DEPLOYMENT_LOCK_FD" ]; then
+        # flock is released when FD is closed
+        eval "exec $DEPLOYMENT_LOCK_FD>&-" 2>/dev/null || true
+        log "Released atomic deployment lock"
+    fi
 }
 
 backup_current_deployment() {

@@ -29,14 +29,16 @@ jobs:
     steps:
       - name: Validate release SHA format
         id: validate
+        env:
+          INPUT_SHA: ${{ inputs.release_sha }}
         run: |
-          INPUT_SHA="${{ inputs.release_sha }}"
           if ! [[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: Invalid SHA format. Must be exactly 40 hexadecimal characters."
-            echo "Received: $INPUT_SHA"
+            echo "Received (length ${#INPUT_SHA}): ${INPUT_SHA:0:50}..." >&2
             exit 1
           fi
           echo "sha=$INPUT_SHA" >> $GITHUB_OUTPUT
+          echo "✓ SHA format validated: ${INPUT_SHA:0:12}..."
 
   verify-release:
     name: Verify release SHA
