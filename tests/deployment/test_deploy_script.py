@@ -51,7 +51,7 @@ class ScriptTests(unittest.TestCase):
  if [[ "$1" == inspect ]]; then
    case "$3" in
      *.State.Status*) if [[ "$4" == migrate || "$4" == bootstrap-privileges ]]; then echo exited; else echo running; fi ;;
-     *.State.ExitCode*) echo 0 ;;
+     *.State.ExitCode*) if [[ "$4" == migrate && "$(git rev-parse HEAD)" == "$MOCK_MIGRATION_SHA" ]]; then echo 1; else echo 0; fi ;;
      *.State.Health.Status*) echo healthy ;;
    esac
    exit 0
@@ -74,7 +74,7 @@ class ScriptTests(unittest.TestCase):
                         POSTGRES_PASSWORD='disposable', DCIM_APP_PASSWORD='disposable',
                         JWT_SECRET_KEY='disposable', CREDENTIAL_ENCRYPTION_KEY=KEY,
                         MOCK_CALLS=str(self.calls), MOCK_FAIL_SHA='none',
-                        MOCK_UNHEALTHY_SHA='none', HEALTH_CHECK_TIMEOUT='2', LOCK_TIMEOUT='1')
+                        MOCK_UNHEALTHY_SHA='none', MOCK_MIGRATION_SHA='none', HEALTH_CHECK_TIMEOUT='2', LOCK_TIMEOUT='1')
         (self.repo/'.env').write_text('PREVIOUS_CONFIG=preserved\n')
         (self.repo/'.deployment-sha').write_text(self.old+'\n')
 
@@ -99,6 +99,14 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual((self.repo/'.env').read_text(),'PREVIOUS_CONFIG=preserved\n')
         self.assertIn('down --remove-orphans',self.calls.read_text())
         self.assertNotIn('down -v',self.calls.read_text())
+
+    def test_migration_failure_reaches_rollback(self):
+        env = dict(self.env, MOCK_MIGRATION_SHA=self.new)
+        result = self.run_script(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Rollback recovered', result.stderr)
+        self.assertEqual(git(self.repo, 'rev-parse', 'HEAD'), self.old)
+        self.assertEqual((self.repo/'.deployment-sha').read_text().strip(), self.old)
 
     def test_unhealthy_rollback_fails_closed(self):
         env = dict(self.env, MOCK_FAIL_SHA=self.new, MOCK_UNHEALTHY_SHA=self.old)
