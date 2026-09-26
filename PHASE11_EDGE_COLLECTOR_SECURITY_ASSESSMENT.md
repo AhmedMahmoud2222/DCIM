@@ -168,7 +168,7 @@ This addendum is written by the documentation-only PR publishing this file onto 
 
 **Baseline transition**: This assessment's original baseline was `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`, and its header read "Hold until PR #29 merges." [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) has since merged; current `main` HEAD is ``39151d872e1fe8f6b64f5c14b5d29c4900fac913``.
 
-**What was checked**: PR #29's full 27-file diff (`telemetry_service.py`, `edge_collector/snmp.py`, `edge_collector/scheduler.py`, ci/deployment-validation workflows, docs, `create_admin.py`, `check_compose_settings.py`, tests, and Compose/env files) was checked against every file and function SEC-01 through SEC-07 cite. **None of them were touched.** Every finding's technical evidence still describes current `main` verbatim, not merely "probably still true":
+**What was checked**: PR #29's full 27-file diff (`telemetry_service.py`, `edge_collector/snmp.py`, `edge_collector/scheduler.py`, ci/deployment-validation workflows, docs, `create_admin.py`, `check_compose_settings.py`, tests, and Compose/env files) was checked against every file and function SEC-01 through SEC-07 cite. **Six of the seven were untouched. `edge_collector/snmp.py` (SEC-04's affected component) was modified, but only to add an outermost-datagram-exhaustion parsing check — not SNMPv3 support or any change to the cleartext-transmission behavior SEC-04 describes.** Every finding's technical evidence still describes current `main` verbatim, not merely "probably still true" (SEC-04 included, per the row below):
 
 | Finding | Original classification | Status against current `main` | Note |
 |---|---|---|---|
