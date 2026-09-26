@@ -8,7 +8,17 @@ on:
       - '.github/workflows/deploy.yml'
       - '.github/workflows/deploy-tools-test.yml'
       - 'scripts/deploy-docker-compose.sh'
+      - 'docker-compose.yml'
       - 'docker-compose.production.yml'
+      - '.github/workflows/deployment-validation.yml'
+      - 'backend/Dockerfile'
+      - 'backend/pyproject.toml'
+      - 'backend/alembic.ini'
+      - 'backend/migrations/**'
+      - 'backend/scripts/bootstrap_privileged_roles.sql'
+      - 'frontend/Dockerfile'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
       - 'tests/deployment/**'
   pull_request:
     paths:
@@ -16,7 +26,17 @@ on:
       - '.github/workflows/deploy.yml'
       - '.github/workflows/deploy-tools-test.yml'
       - 'scripts/deploy-docker-compose.sh'
+      - 'docker-compose.yml'
       - 'docker-compose.production.yml'
+      - '.github/workflows/deployment-validation.yml'
+      - 'backend/Dockerfile'
+      - 'backend/pyproject.toml'
+      - 'backend/alembic.ini'
+      - 'backend/migrations/**'
+      - 'backend/scripts/bootstrap_privileged_roles.sql'
+      - 'frontend/Dockerfile'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
       - 'tests/deployment/**'
 
 permissions:
@@ -56,3 +76,21 @@ jobs:
           set -euo pipefail
           docker compose -f docker-compose.yml -f docker-compose.production.yml config --quiet
           python3 tests/deployment/check_compose.py
+
+  combined-staging:
+    name: Disposable combined-stack startup and rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require real Docker Engine and Compose
+        run: |
+          set -euo pipefail
+          docker info >/dev/null
+          docker compose version
+      - name: Run isolated combined-stack and recovery cases
+        run: |
+          set -euo pipefail
+          python3 tests/deployment/real_compose_validation.py
