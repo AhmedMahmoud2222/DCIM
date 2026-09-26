@@ -11,11 +11,15 @@
 | Redis | 7 | Used by Celery and readiness checks |
 | Node.js | 22+ | Frontend CI uses Node 22 |
 | Chromium | Installed through Playwright | Required only for browser E2E |
-| Docker Compose | Reference only pending repair | Required encryption-key forwarding is missing; see [operations](OPERATIONS.md) |
+| Docker Compose | Optional reference deployment | Required-key forwarding corrected; configuration checked, full container startup still requires runtime validation |
 
 ## Environment isolation and secure bootstrap
 
 Create `dcim` for development and `dcim_test` for test execution. Use distinct credentials for actual deployments and set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET_KEY` and `CREDENTIAL_ENCRYPTION_KEY` appropriately in a **local, untracked** environment file. See `backend/.env.example` for authoritative required fields.
+
+Generate the credential-encryption key once per environment with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` after installing backend dependencies. This produces URL-safe base64 for 32 random bytes (normally 44 characters). Settings checks presence/minimum length; actual encryption/decryption constructs a Fernet key, which enforces the format. Share the identical value across migration, API, worker and beat, and retain it across restarts. Local processes read `backend/.env`; Compose reads the root `.env` and explicitly forwards the value. Keep both untracked and access-restricted. Preserve a protected key backup and follow [operations](OPERATIONS.md) for coordinated rotation/recovery; regenerating the key strands existing ciphertext.
+
+The fresh test-database commands below generate a disposable test key. Do not use that generation step to restart an environment containing encrypted credentials.
 
 ```bash
 sudo -u postgres psql -c "CREATE USER dcim_app WITH PASSWORD 'dcim_dev_password';"
@@ -105,6 +109,17 @@ To seed non-interactively on the PR #29 branch, export both `E2E_ADMIN_EMAIL` an
 On a **disposable migrated database only**, confirm the single Alembic head and the documented retention round trip: `alembic downgrade 0010_mvp_alarms` followed by `alembic upgrade head`. Validate the privileged retention bootstrap and permissions afterwards. This round trip does not guarantee that destructive rollback is safe on production data.
 
 ## Seven-job CI matrix on PR #29
+
+The primary `backend` job also runs `python scripts/check_compose_settings.py`. This daemon-free regression check invokes `docker compose config --format json` with ephemeral fixture values and an explicit empty env file, checks every required `Settings.model_fields` entry in all four Python service environments, validates Settings/Fernet, verifies the shared key, and requires missing/empty keys to fail Compose interpolation. It never prints resolved secrets. Run from the installed backend environment with Docker Compose available:
+
+```bash
+cd backend
+python scripts/check_compose_settings.py
+# Negative control: use an absolute path to the previous Compose configuration.
+python scripts/check_compose_settings.py --compose-file /tmp/compose-before.yml
+```
+
+The negative control was run against the configuration at `2626acbd6fdb0fce301bc22c36930f2bd914e797` and failed for all four missing key mappings. Standalone Compose can be selected with `--compose-command /absolute/path/to/docker-compose`; no daemon is needed for these configuration checks. They are not container-startup tests.
 
 | Job | What it executes |
 |---|---|

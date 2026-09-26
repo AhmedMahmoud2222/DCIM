@@ -75,7 +75,22 @@ celery -A app.infrastructure.celery_app beat --loglevel=info
 
 ### Docker Compose
 
-**Known deployment blocker at the reviewed integration source:** `docker-compose.yml` does not forward the required `CREDENTIAL_ENCRYPTION_KEY` to `migrate`, `backend`, `celery-worker` or `celery-beat`. Merely setting it in the root `.env` does not inject it into those containers. The settings constructor rejects the resulting configuration before service startup. Use the local setup above; treat Compose as a reference requiring configuration repair and a clean startup test, not a working quick-start. See the [operations guide](docs/OPERATIONS.md) for the reproducible finding and deployment requirements.
+The Compose encryption-key omission identified at `2626acb` is corrected on this branch. From the repository root, copy `.env.example` to an untracked `.env`, restrict its permissions (`chmod 600 .env` on Linux), and replace the password/JWT placeholders. In the installed backend Python environment, generate **one key per environment**:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Store the output as `CREDENTIAL_ENCRYPTION_KEY` in your private root `.env`. Compose forwards that **same** value to `migrate`, `backend`, `celery-worker` and `celery-beat`; a missing or empty value stops configuration with a named error. Fernet requires URL-safe base64 encoding of 32 random bytes (normally 44 characters). A long arbitrary password is not a Fernet key. Never commit the generated value, regenerate it per service/restart, or publish resolved Compose output containing secrets.
+
+```bash
+docker compose config --quiet
+docker compose up --build
+# In another terminal, after startup:
+docker compose exec backend python scripts/create_admin.py --email admin@example.com --name "Admin User"
+```
+
+Keep a protected recovery copy of the key: database ciphertext alone is insufficient for recovery. Rotation requires coordinated re-encryption, not just editing `.env`; see [operations](docs/OPERATIONS.md). Configuration validation passed; **fresh container startup and readiness remain unverified in the review workspace because no Docker daemon is available**. Complete the operations checks before deployment.
 
 ## Test and quality gates
 

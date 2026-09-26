@@ -33,7 +33,7 @@ The existing test inventory in `PHASE10_INTEGRATION_REPORT.md` reports 693 main 
 2. **Audit report currency:** the original `PHASE10_INDEPENDENT_AUDIT_REPORT.md` is a **historical audit of `d96676c`**, not an accurate complete report of the PR #29 integration. Use [AUDIT_STATUS.md](AUDIT_STATUS.md) and the [integration report](../PHASE10_INTEGRATION_REPORT.md) for corrected status. No GitHub review submission was visible at the last verification.
 3. **Collector F3:** batch rollback for unexpected failures requires the product owner to confirm whether all-or-nothing is intentional. Do not silently adopt per-record savepoints.
 4. **Production validation:** production secrets, backup/restore, monitored queues, external device interoperability, capacity tests, high availability and disaster recovery have not been established solely by green CI.
-   **Reproduced Compose blocker:** required `CREDENTIAL_ENCRYPTION_KEY` is absent from all four Python service environments. See [OPERATIONS.md](OPERATIONS.md); the documented local setup is the current alternative.
+   **Compose blocker corrected on the integration branch:** all four Python services now receive the same required `CREDENTIAL_ENCRYPTION_KEY`; regression and missing/empty-variable configuration checks cover it. Fresh container startup remains unverified in the review workspace; see [OPERATIONS.md](OPERATIONS.md).
 5. **Future capability:** AI-assisted orchestration, autonomous remediation/self-healing, comprehensive vendor integrations and full CFD/3D capabilities are roadmap goals unless a specific implemented module and release gate proves otherwise.
 
 ## What to update when a PR merges

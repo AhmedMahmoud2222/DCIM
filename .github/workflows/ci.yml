@@ -57,6 +57,10 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Validate Compose required backend settings
+        run: |
+          ruff check scripts/check_compose_settings.py
+          python scripts/check_compose_settings.py
       - name: Provision least-privilege dcim_app role and database
         # dcim_app is deliberately NOT the database owner — see the note on the postgres
         # service above. PostgreSQL grants the database owner an implicit DROP TABLE right
