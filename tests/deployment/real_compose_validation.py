@@ -237,6 +237,9 @@ exec /usr/bin/docker "$@"
         self.marker(create=True)
         print('PASS: initial empty-database migrations and privilege bootstrap')
 
+        # The deployment checkout is detached. Move only the disposable local main
+        # back to its verified baseline before creating and pushing release B.
+        git(self.repo,'checkout','-q','-B','main',self.baseline)
         # New harmless release B, concurrent attempts with real flock and Docker.
         (self.repo/'validation_revision.txt').write_text('safe version B\n')
         git(self.repo,'add','validation_revision.txt')
