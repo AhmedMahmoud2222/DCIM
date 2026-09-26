@@ -35,6 +35,26 @@ Fresh Docker startup of migrate/API/worker/beat and HTTP 200 readiness remain **
 
 ## Deployment checklist
 
+### Mandatory Compose smoke validation before a deployment decision
+
+The [Deployment validation workflow](../.github/workflows/deployment-validation.yml) uses an actual Docker Engine on an ephemeral GitHub runner. It generates separate random database passwords, a JWT secret and one shared Fernet key; starts all eight Compose services under a unique project with an isolated PostgreSQL volume; checks negative key configuration, migrations, privileged bootstrap, healthy PostgreSQL/Redis, backend and frontend-proxied HTTP 200 readiness, and persistent Celery worker/beat processes. Its cleanup step runs even on failure and verifies that only the isolated project's containers and volumes were removed. The separate [required-settings regression](../backend/scripts/check_compose_settings.py) remains in CI and also runs in this workflow. Diagnostic output is filtered and redacted; no raw resolved Compose configuration or secret-bearing logs are uploaded.
+
+**Gate setup required of the repository owner:** add `Deployment validation gate` as a required successful status check in the branch rule for the PR #29 integration branch, and later `main`; require branches to be up to date and prevent bypass by deploy identities. If deployment uses GitHub environments, require reviewed deployment approvals and reference the successful run and exact SHA in the release record. There is currently no repository deployment job that provisions production resources, so CI alone cannot prevent a person from running `docker compose up` outside GitHub. Do not treat the gate as enforced until the owner verifies the branch rules and actual deployment process. A skipped, pending or failed smoke job makes the dependent gate fail or remain incomplete; only an observed successful gate for the release SHA qualifies.
+
+For local rehearsal on a host with Docker Engine and Compose, from the repository root run the following. `prepare` prints disposable environment paths for local use; keep them private, do not turn on shell tracing, and always run `cleanup` in a shell `trap`:
+
+```bash
+eval "$(python3 .github/scripts/compose_smoke.py prepare | grep '^export DCIM_SMOKE_')"
+trap 'python3 .github/scripts/compose_smoke.py cleanup' EXIT
+python3 .github/scripts/compose_smoke.py config
+python3 -m pip install -e ./backend
+python3 backend/scripts/check_compose_settings.py
+python3 .github/scripts/compose_smoke.py start
+python3 .github/scripts/compose_smoke.py verify
+```
+
+On failure, run `python3 .github/scripts/compose_smoke.py diagnose` before cleanup. Diagnose the failing container's sanitized status and selected startup lines, correct the configuration or application in a new reviewed commit, and rerun the complete workflow at that SHA. If a local command exits before the trap is set, use the printed `DCIM_SMOKE_PROJECT` with the matching disposable environment file to clean **only** that project; never use an unscoped Compose `down --volumes`. Maintain matching key backups for real environments as described above; generated smoke credentials and volumes are disposable.
+
 1. **Environment and security:** create strong, unique credentials; set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, allowed CORS origins and permitted device egress. Apply network segmentation, TLS, secret rotation, authentication and monitoring required by your environment. Never use example CI/E2E credentials outside isolated disposable tests.
 2. **Database ownership:** create the database under a privileged administrative owner, not `dcim_app`. Grant the application only its documented schema and table privileges; preserve audit/retention separation.
 3. **Backups:** take and test a PostgreSQL backup and catalog-media backup before migration. Define RPO/RTO, retention, restore-test frequency and the service account that can perform restore.

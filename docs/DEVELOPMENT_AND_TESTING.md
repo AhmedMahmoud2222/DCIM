@@ -110,6 +110,24 @@ On a **disposable migrated database only**, confirm the single Alembic head and 
 
 ## Seven-job CI matrix on PR #29
 
+### Actual Docker Compose startup check
+
+The independent [Deployment validation workflow](../.github/workflows/deployment-validation.yml) runs on PRs to the integration branch or `main`, pushes to `main`, and manual dispatch after it is on the default branch. It contains a `Compose smoke` job and a dependent `Deployment validation gate` job. A runner creates one project-specific disposable volume and fresh credentials, builds and starts the complete stack, verifies one-shot migration/bootstrap exit codes, service health and HTTP 200 through both backend and frontend, checks worker/beat remain running, then tears down its project on either success or failure. The existing daemon-free `backend/scripts/check_compose_settings.py` check remains in the backend CI job and also runs in the smoke workflow.
+
+Reproduce with Docker Engine and Compose from the repository root. Keep shell tracing disabled and copy the printed `export DCIM_SMOKE_...` lines only into your own shell:
+
+```bash
+eval "$(python3 .github/scripts/compose_smoke.py prepare | grep '^export DCIM_SMOKE_')"
+trap 'python3 .github/scripts/compose_smoke.py cleanup' EXIT
+python3 .github/scripts/compose_smoke.py config
+python3 -m pip install -e ./backend
+python3 backend/scripts/check_compose_settings.py
+python3 .github/scripts/compose_smoke.py start
+python3 .github/scripts/compose_smoke.py verify
+```
+
+Missing and empty `CREDENTIAL_ENCRYPTION_KEY` are explicitly rejected by `config`. If startup fails, run `python3 .github/scripts/compose_smoke.py diagnose` before the trap cleans up; inspect the sanitized health state and startup errors, fix the cause, and rerun from a fresh project. This checks disposable Compose runtime behavior, not production TLS, external devices, backup/restore, or deployment authorization. The owner must configure `Deployment validation gate` as a required passing check on the actual protected deployment branch and prevent bypass; until verified, this is evidence rather than an enforced production gate.
+
 The primary `backend` job also runs `python scripts/check_compose_settings.py`. This daemon-free regression check invokes `docker compose config --format json` with ephemeral fixture values and an explicit empty env file, checks every required `Settings.model_fields` entry in all four Python service environments, validates Settings/Fernet, verifies the shared key, and requires missing/empty keys to fail Compose interpolation. It never prints resolved secrets. Run from the installed backend environment with Docker Compose available:
 
 ```bash
