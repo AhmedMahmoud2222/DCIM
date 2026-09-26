@@ -624,18 +624,18 @@ Run [#36221516436](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/3622151
 | Migration job (`migrate` service) | ✓ Exited 0 |
 | Privileged bootstrap job (`bootstrap-privileges` service) | ✓ Exited 0 |
 | Backend service | ✓ HTTP 200 on `/api/v1/health/ready` |
-| Celery worker (`celery-worker` service) | ✓ Running and healthy after 10-second stability check |
-| Celery beat (`celery-beat` service) | ✓ Running and healthy after 10-second stability check (previously failing) |
-| Frontend service | ✓ HTTP 200 on `/` (API proxy forwarding `/api/v1` to backend) |
+| Celery worker (`celery-worker` service) | ✓ Still running after 10-second stability check; no Compose healthcheck asserted |
+| Celery beat (`celery-beat` service) | ✓ Still running after 10-second stability check (previously failing); no Compose healthcheck asserted |
+| Frontend service | ✓ HTTP 200 on `/` and HTTP 200 for frontend-proxied `/api/v1/health/ready` |
 | Full stack cleanup | ✓ All isolated containers and volumes removed; no leaked resources |
 
-All verification steps passed. The smoke test successfully demonstrated that a clean Compose startup with the corrected configuration produces a running system with all services healthy and responsive.
+All verification steps passed: PostgreSQL, Redis and backend were healthy; migrate and bootstrap exited 0; worker, beat and frontend were running; and backend and frontend-proxied readiness returned HTTP 200.
 
 ### Deployment validation gate
 
 Two new files implement the gate:
 
-1. **`.github/scripts/compose_smoke.py` (191 lines):** Daemon-free Docker Compose startup validation script with functions for:
+1. **`.github/scripts/compose_smoke.py` (191 lines):** Docker Engine-backed Compose startup validation script with functions for:
    - `prepare()`: Generate disposable project name and isolated `.env` with test credentials (PostgreSQL password, DCIM app password, JWT secret, Fernet key via `os.urandom(32)` base64-encoded), with secrets masked from logs
    - `config()`: Validate Compose configuration with `docker compose config --quiet`, test negative cases (missing/empty encryption key)
    - `start()`: Build and start the complete stack with 1500-second timeout
@@ -646,9 +646,9 @@ Two new files implement the gate:
 2. **`.github/workflows/deployment-validation.yml` (62 lines):** GitHub Actions workflow with:
    - Trigger: pull requests to integration branch or main, pushes to main, manual dispatch
    - `compose-smoke` job: Runs the nine steps above (prepare, config, regression check, start, verify, diagnostics, cleanup) with 35-minute timeout
-   - `deployment-validation-gate` job: Depends on `compose-smoke` success; blocks deployments if smoke test fails, is cancelled, or is skipped
+   - `deployment-validation` job (display name `Deployment validation gate`): Depends on successful `compose-smoke`; fails if smoke fails or is skipped. It does not block a production deployment without an enforced required check or a deployment workflow that depends on it
 
-The gate **cannot succeed** if the Compose smoke test fails or is not executed. The gate enforces this contract via GitHub Actions job dependencies.
+The dependent gate job cannot succeed if the Compose smoke job fails or is skipped. That job dependency alone does not enforce a deployment policy outside this workflow.
 
 ### Regular CI validation
 
@@ -688,15 +688,15 @@ Three documentation locations were updated:
 
 ### Enforcement limitation
 
-The `deployment-validation-gate` job exists in the workflow, but **it is not yet enforced** on real deployments. Enforcement requires the repository owner to:
+The `deployment-validation` job (display name `Deployment validation gate`) exists in the workflow, but **it is not yet enforced** on real deployments. Enforcement requires the repository owner to:
 
-1. Configure the `deployment-validation` workflow as a required status check in branch protection rules for the target deployment branch (typically `main`)
+1. Require the successful `Deployment validation gate` job for the exact release commit on the protected integration and deployment branches (typically `main`), or add a protected deployment workflow explicitly dependent on the smoke result
 2. Enable "Require branches to be up to date before merging" to ensure no stale CI results
 3. Disable "Bypass branch protections" capabilities for non-owners
 
-Without this owner configuration, the gate exists as evidence and proof-of-concept but cannot prevent a merge. The workflow runs on pull requests and manual dispatch, and it logs its result, but it does not block CI unless configured as a required status check.
+Without an enforced rule or protected deployment workflow, the gate runs and records evidence but cannot prevent merging or a manual deployment. The current repository has no production deployment job. GitHub returned 403 for branch-protection reads through this integration, so enforcement could not be verified; its rulesets endpoint also reported that this private repository needs an upgraded plan or public visibility for rulesets.
 
-**This is a configuration decision, not a code limitation.** The gate mechanism is implemented, tested and documented. A deployment that requires this gate enforced must configure it explicitly.
+The owner must confirm an available protection mechanism for this repository plan and verify it against a failing or pending smoke check before calling the gate mandatory.
 
 ### CI status on merged head
 
@@ -705,8 +705,8 @@ Merge commit `9f78a9e869841220c2fc1c240802c08765c3bb99` (PR #32 integrated into 
 1. **Deployment validation (run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072)):** ✓ **SUCCESS** (2026-09-26 05:59:54Z)
    - Compose configuration validation passed
    - All 8 services initialized successfully (postgres, redis, migrate, bootstrap-privileges, backend, celery-worker, celery-beat, frontend)
-   - All health checks passed
-   - HTTP readiness endpoints verified (backend `/api/v1/health/ready`, frontend `/`)
+   - PostgreSQL, Redis and backend health checks passed; worker and beat remained running
+   - HTTP 200 verified on backend `/api/v1/health/ready`, frontend-proxied `/api/v1/health/ready`, and frontend `/`
    - Isolated containers and volumes cleaned up
    - Smoke test gate ready to enforce (when configured by owner)
 
@@ -728,12 +728,12 @@ PR #32 successfully integrated into PR #29's integration branch. All regular CI 
 
 | Validation | Result | Evidence |
 |---|---|---|
-| **Deployment validation gate on merged HEAD** | ✓ SUCCESS | Run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072): All 8 services healthy, smoke test passed |
+| **Deployment validation gate on merged HEAD** | ✓ SUCCESS | Run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072): database/Redis/backend healthy, one-shot jobs exited 0, worker/beat running, smoke test passed |
 | **All seven regular CI jobs on merged HEAD** | ✓ SUCCESS | Run [36222319073](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319073): backend, backend suite (3.12/3.13/3.14), browser-e2e, edge-collector, frontend all passing |
 | **No regressions from Celery beat fix** | ✓ VERIFIED | Fix in place (schedule to /tmp), smoke test validates startup, no CI failures |
 | **No regressions from new deployment gate workflow** | ✓ VERIFIED | New workflows and scripts do not affect existing CI jobs; all 7 jobs unchanged |
 | **Authorship and history preservation** | ✓ CONFIRMED | Merge commit `9f78a9e` preserves PR #32 authorship and all commits through `--no-ff` |
 
-No additional changes were made to application code, deployment configuration or main branch. The final PR #29 HEAD on integration branch is `446e92ac0cf55c10bec277323cbb9ecc7b67c300` (includes documentation updates).
+At the time of this earlier integration report, the documentation HEAD was `446e92ac0cf55c10bec277323cbb9ecc7b67c300`. A subsequent documentation commit advanced PR #29 to `3ed637307cd6e711e25c82c78cb8b79e635d0af3`; `main` was unchanged. On that later SHA, [deployment validation run 36222766582](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222766582) passed both smoke and dependent gate jobs, and [CI run 36222766579](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222766579) passed all seven jobs. Any later report correction or integration commit needs its own checks on its exact SHA.
 
-**Remaining enforcement limitation:** Owner must configure the deployment validation gate as a required status check in branch protection rules to enforce it on production deployments. Until configured, the gate runs and logs results but does not prevent merge. See section 18 "Enforcement limitation" for configuration steps.
+**Remaining enforcement limitation:** The owner must verify a required successful check or a protected deployment workflow that depends on this smoke result for the exact release SHA. Until then, the gate runs and logs results but cannot prevent merge or a manual deployment. See section 18 "Enforcement limitation" for configuration steps.
