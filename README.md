@@ -75,26 +75,23 @@ celery -A app.infrastructure.celery_app beat --loglevel=info
 
 ### Docker Compose
 
-```bash
-cp .env.example .env        # Set strong POSTGRES_PASSWORD, DCIM_APP_PASSWORD, JWT_SECRET_KEY, etc.
-docker compose up --build
-docker compose exec backend python scripts/create_admin.py --email admin@example.com --name "Admin User"
-```
-
-The Compose path provisions PostgreSQL, Redis, migration/privileged bootstrap services, API, worker, beat and the frontend. **A passing CI run is not validation of a first real Compose deployment**; complete the [operations checklist](docs/OPERATIONS.md) in the target environment.
+**Known deployment blocker at the reviewed integration source:** `docker-compose.yml` does not forward the required `CREDENTIAL_ENCRYPTION_KEY` to `migrate`, `backend`, `celery-worker` or `celery-beat`. Merely setting it in the root `.env` does not inject it into those containers. The settings constructor rejects the resulting configuration before service startup. Use the local setup above; treat Compose as a reference requiring configuration repair and a clean startup test, not a working quick-start. See the [operations guide](docs/OPERATIONS.md) for the reproducible finding and deployment requirements.
 
 ## Test and quality gates
 
 The PR #29 workflow has **seven** jobs: primary backend on 3.11, full migrated backend suites on 3.12/3.13/3.14, frontend (dependency audit, Vitest, TypeScript, ESLint and build), Edge Collector and isolated PostgreSQL/Redis-backed Playwright E2E. All seven passed on the reviewed PR head `c2d60b3` in [Actions run #80](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654). These checks are branch evidence until PR #29 is merged.
 
 ```bash
-# Against a migrated, dedicated dcim_test PostgreSQL database + Redis:
+# First export the test environment and bootstrap dcim_test as described in
+# docs/DEVELOPMENT_AND_TESTING.md (including TEST_ADMIN_DATABASE_URL).
+# From the repository root:
 cd backend
-pytest -q
+PYTHONPATH=.. pytest -q
 ruff check app tests
 mypy app
 
-# From repository root:
+# Return to repository root:
+cd ..
 PYTHONPATH=. pytest -q edge_collector/tests
 ruff check edge_collector
 
@@ -114,7 +111,7 @@ The real ICMP raw-socket tests require `CAP_NET_RAW` on Linux; the CI workflow g
 
 Authentication and authorization are enforced by the backend, not frontend menu visibility. Catalog mutation uses Administrator-specific permission checks; telemetry and impact routes require their documented permissions. The Phase 10C latest-status cache accepts a sample only when its `sampled_at` is **strictly newer** than the stored row; equal timestamps retain the first writer. This is distinct from the historical series-based `/telemetry/latest` API.
 
-The collector batch endpoint emits per-record ACKs for handled rejections/duplicates and commits accepted records at the end of a successful request. An **unexpected** exception aborts the whole transaction; per-record savepoints are not implemented. See [audit status](docs/AUDIT_STATUS.md) for the remaining contract decision and documentation discrepancies.
+The **telemetry** batch endpoint (`POST /api/v1/collectors/{collector_id}/telemetry`) emits per-record ACKs for handled rejections/duplicates and commits accepted records at the end of a successful request. An **unexpected** exception aborts the whole transaction and no successful ACK body is returned. The separate discovery `/collectors/{collector_id}/ingest` endpoint already uses per-record savepoints. See [audit status](docs/AUDIT_STATUS.md) for this contract distinction and the remaining owner decision.
 
 ## Documentation
 

@@ -11,7 +11,7 @@
 | Redis | 7 | Used by Celery and readiness checks |
 | Node.js | 22+ | Frontend CI uses Node 22 |
 | Chromium | Installed through Playwright | Required only for browser E2E |
-| Docker Compose | Optional | Development services and full-stack alternative |
+| Docker Compose | Reference only pending repair | Required encryption-key forwarding is missing; see [operations](OPERATIONS.md) |
 
 ## Environment isolation and secure bootstrap
 
@@ -45,14 +45,22 @@ Never use production data for fixture seeding, destructive migration tests or ho
 
 ## Local validation commands
 
-Backend (use the test database and Redis before executing):
+Backend (from the repository root, in a separate test shell). The test fixtures use environment variables before `.env` values and require a superuser connection to reset protected audit tables. Replace the test-admin password placeholder with the actual password for your dedicated local test PostgreSQL instance; do not point these variables at development or production data:
 
 ```bash
 cd backend
 source .venv/bin/activate
+export DATABASE_URL='postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test'
+export TEST_ADMIN_DATABASE_URL='postgresql+asyncpg://postgres:<test-superuser-password>@localhost:5432/dcim_test'
+export REDIS_URL='redis://localhost:6379/1'
+export ENVIRONMENT=test
+export JWT_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export CREDENTIAL_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+export PYTHONPATH=..
 ruff check app tests
 mypy app
 alembic upgrade head
+sudo -u postgres psql -d dcim_test -f scripts/bootstrap_privileged_roles.sql
 pytest -q tests/integration/test_mvp_retention_hostile.py
 pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
 ```
@@ -90,7 +98,7 @@ E2E_ADMIN_EMAIL=e2e-admin@example.com E2E_ADMIN_PASSWORD='<local-test-password>'
   npm run test:e2e
 ```
 
-To seed non-interactively on the PR #29 branch, set `E2E_ADMIN_PASSWORD` in the **environment** and execute `backend/scripts/create_admin.py --email "$E2E_ADMIN_EMAIL" --name "E2E Administrator" --password-from-env E2E_ADMIN_PASSWORD --if-exists skip`. Do not put passwords directly in CLI arguments. Before launching Playwright, verify that `GET /api/v1/health/ready` is HTTP 200 and Vite serves its application. The [workflow](../.github/workflows/ci.yml) is the executable reference for its exact ephemeral PostgreSQL/Redis provisioning and readiness loops.
+To seed non-interactively on the PR #29 branch, export both `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` in the fixture-seeding shell, activate the backend environment, and from `backend/` execute `python scripts/create_admin.py --email "$E2E_ADMIN_EMAIL" --name "E2E Administrator" --password-from-env E2E_ADMIN_PASSWORD --if-exists skip`. Use the same isolated database configuration as the E2E API process. Do not put passwords directly in CLI arguments. Before launching Playwright, verify that `GET /api/v1/health/ready` is HTTP 200 and Vite serves its application. The [workflow](../.github/workflows/ci.yml) is the executable reference for its exact ephemeral PostgreSQL/Redis provisioning and readiness loops.
 
 ### Migration smoke test
 

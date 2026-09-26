@@ -16,13 +16,21 @@
 
 Check `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile` and your environment configuration for actual service names, volume mappings and ports. The repository's Compose path is a development/reference deployment; do not assume it supplies an external TLS terminator, HA database, centralized secret manager or disaster-recovery solution.
 
+### Reproduced Compose configuration blocker — 2026-09-26
+
+At source `5235f6c2866b4831b5ef30db11d5d74028072359`, `migrate`, `backend`, `celery-worker` and `celery-beat` omit `CREDENTIAL_ENCRYPTION_KEY` from their container environments. `backend/app/core/config.py::Settings` requires it; `backend/migrations/env.py`, the API and Celery load those settings. The runtime Docker image does not copy a `.env` file. A root Compose `.env` provides interpolation values only, so adding a key there alone does not fix the omission.
+
+Reproduction without Docker: load the committed `Settings` class with `_env_file=None`, provide valid `database_url`, `redis_url` and a 32-character-or-longer `jwt_secret_key`, and omit `credential_encryption_key`. Pydantic raises `ValidationError` with `credential_encryption_key: Field required`, matching each of those four service configurations. This was executed during final integration review; a complete Compose startup was not available in that environment.
+
+**Disposition:** high severity for the advertised Compose startup path, pre-existing in the base configuration; documented here without changing deployment code. Before using Compose, explicitly forward a securely generated key to all four services through a reviewed configuration change, then validate clean migrations and startup. Also configure writable, persistent catalog graphic storage: the current Compose file declares only the PostgreSQL data volume, while the backend runs as non-root under `/app`. No production deployment approval is implied. The local non-Compose setup remains available.
+
 ## Deployment checklist
 
 1. **Environment and security:** create strong, unique credentials; set `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, allowed CORS origins and permitted device egress. Apply network segmentation, TLS, secret rotation, authentication and monitoring required by your environment. Never use example CI/E2E credentials outside isolated disposable tests.
 2. **Database ownership:** create the database under a privileged administrative owner, not `dcim_app`. Grant the application only its documented schema and table privileges; preserve audit/retention separation.
 3. **Backups:** take and test a PostgreSQL backup and catalog-media backup before migration. Define RPO/RTO, retention, restore-test frequency and the service account that can perform restore.
 4. **Migrations:** confirm one Alembic head; run `alembic upgrade head` as a controlled deployment step. Run `backend/scripts/bootstrap_privileged_roles.sql` with the appropriate privileged identity. Do not run destructive downgrade on production data as a casual rollback mechanism.
-5. **Service startup:** start PostgreSQL and Redis, migrate/bootstrap, then API, Celery worker, Celery beat and web frontend. Complete Administrator provisioning through an approved secure procedure. For development, `docker compose up --build` and `docker compose exec backend python scripts/create_admin.py ...` show the reference flow.
+5. **Service startup:** start PostgreSQL and Redis, migrate/bootstrap, then API, Celery worker, Celery beat and web frontend. Complete Administrator provisioning through an approved secure procedure. Repair and validate the Compose configuration blocker above before using `docker compose up --build`; otherwise follow the local setup in the README.
 6. **Health and smoke tests:** `GET /api/v1/health/live` checks the API process; `GET /api/v1/health/ready` checks both PostgreSQL and Redis and returns 503 when degraded. Exercise login, catalog read, rack elevation and a permission-denied case before admitting operator traffic.
 7. **Collector enablement:** verify every target's configured IP/network and port policy, secret handling, mapping ownership, assignment and ingest ACK behavior. Do not assume a laboratory SNMP v2c test establishes enterprise SNMPv3, Modbus or arbitrary vendor support.
 8. **Observability:** monitor API health, error rates, outbox dispatcher backlog, Celery retries and queue depth, device poll failures, telemetry age per binding, audit-retention execution, backup failures and disk utilization.
@@ -34,7 +42,7 @@ The Phase 10C latest-status cache has one current row for each `binding_id`. Str
 
 Modeled power/network impact simulation is an **analysis** feature. A graph response alone must not automatically trigger live switching, customer notifications or physical remediation. Confirm the installed topology, redundancy, out-of-band source of truth and customer-impact procedure before acting on simulation output.
 
-For the collector batch endpoint, known mapping/assignment failures yield individual rejected ACKs while other accepted readings commit at the end of a successful request. Unexpected failures abort the transaction. Document the expected retry behavior for an HTTP failure; a proposed switch to per-record savepoints is a **protocol decision** requiring a testable contract.
+For `POST /api/v1/collectors/{collector_id}/telemetry`, known mapping/assignment failures yield individual rejected ACKs while other accepted readings commit at the end of a successful request. Unexpected failures abort the transaction and prevent a successful ACK response; clients must retain unacknowledged records for retry. This differs from the discovery `/collectors/{collector_id}/ingest` endpoint, which already uses per-record savepoints and is the endpoint used by `edge_collector/client.py`. A proposed switch to savepoints in telemetry is a **protocol decision** requiring a testable contract; the discovery contract does not by itself establish that requirement for telemetry.
 
 ## Testing deployment changes
 

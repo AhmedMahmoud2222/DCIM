@@ -1,5 +1,7 @@
 # Phase 10 Post-Merge Independent Adversarial Audit Report
 
+> Historical report: sections 1–8 below preserve the original baseline findings and conclusions. Read the dated section 9 addendum for later defects, corrections and validation. This artifact is not a submitted approval of PR #29.
+
 **This is an independent post-merge audit performed against Phase 10A, 10B, and 10C on `main` at baseline SHA `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`.** Verification was conducted by direct source inspection, database migration round-trip execution against clean PostgreSQL 16 and Redis 7 instances, and full test suite execution across backend Python, edge collector, and frontend React TypeScript components.
 
 ---
@@ -187,3 +189,24 @@ All test suites were executed and verified against clean PostgreSQL 16 and Redis
 The architectural design, domain models, database constraints, RBAC security, failure-impact graph algorithms, and cabling integrity across Phase 10A, 10B, and 10C are **fundamentally sound, high-quality, and robust**. All 690 backend tests and 35 frontend unit tests pass cleanly.
 
 The two identified test/CI coverage gaps (F1: missing frontend `npm test` step in CI, and F2: SNMP mock helper BER parsing flaw in `edge_collector/tests/test_snmp.py`) have been resolved via narrowly-scoped changes included in this branch.
+
+---
+
+## 9. Subsequent integration-review addendum — 2026-09-26
+
+**Reviewed source:** PR #29 at `5235f6c2866b4831b5ef30db11d5d74028072359`, after merging documentation PR #30. **Original audit baseline remains:** `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. This addendum is the later integration reviewer's clarification, not a rewritten Jules audit or an assertion that Jules reviewed the newer fixes.
+
+| Historical finding / claim | Later evidence and disposition |
+|---|---|
+| F1, marked fixed above | PR #28 added Vitest only. PR #29 reconciles it with PR #27 to retain one Vitest step and adds isolated PostgreSQL/Redis-backed Playwright. The earlier status did not close the browser-CI gap. |
+| F2 / 25 Edge Collector tests | PR #28's byte-search heuristic was superseded by a structural BER decoder in the test responder. The production parser now checks outermost `datagram.exhausted`. The complete current suite has **55 tests**, independently run in this review: `PYTHONPATH=. python -m pytest -q edge_collector/tests` — **55 passed in 3.66s**, Python 3.12.14. This does not retroactively change the original 25-test result. |
+| Telemetry pillar conclusion | Atomicity of the baseline upsert did not prevent out-of-order samples overwriting newer readings. PR #29 adds the strict `binding_id` conflict guard `stored.sampled_at < excluded.sampled_at`, retained-row SELECT and ORM refresh. Older/equal writes are no-ops; equal timestamps retain the first successful writer. Competing unequal payloads at an equal timestamp are not order-independent. Five ordering unit tests, three independent-session concurrency tests and one API regression were added. No additional reproducible race was established by this review. |
+| F3 | `POST /api/v1/collectors/{collector_id}/telemetry` handles assignment/mapping rejections individually, commits once before returning ACKs, and rolls back on unexpected exceptions through `get_db()`. No successful partial ACK is emitted on that failure. Discovery `/collectors/{collector_id}/ingest` is a different endpoint and already uses savepoints. Existing behavior is intentionally unchanged in this integration; a product contract requiring partial persistence after unexpected telemetry failure was not established. |
+| F5 / runtime support | The committed workflow contains Python 3.11 plus 3.12/3.13/3.14 matrix jobs; every matrix entry sets `experimental: false`, making `continue-on-error` false. Final 3.14 support has hosted-suite evidence; the old recommendation and local prerelease failure are historical observations. |
+| Deployment | Source/CI do not prove production deployment. The final review reproduced missing required encryption-key forwarding in the pre-existing Compose configuration; see [operations](docs/OPERATIONS.md). |
+
+Hosted evidence for this reviewed source is [Actions run #82](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36202967189); use its actual seven job and step conclusions and the final PR review for completion status. Prior seven-job evidence on `c2d60b34f0ccc546c809a1d3ff15c11befb79a26` remains [run #80](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654), not evidence for arbitrary later commits. Any documentation correction commit also requires its own current-HEAD CI verification.
+
+Backend execution was unavailable in this review workspace (no PostgreSQL client/server or Docker); backend ordering/concurrency/API validation relies on the hosted migrated regression suites, not a claimed independent local run. The source-defined focused command, from `backend/` with the documented test environment, is `PYTHONPATH=.. pytest -q tests/unit/test_telemetry_port_status.py tests/integration/test_telemetry_ordering_concurrency.py tests/api/test_telemetry_port_status.py`.
+
+At review start GitHub listed no submitted reviews or review threads on PR #29. This historical report and PR #28 are audit artifacts, not evidence of a submitted Jules review on PR #29. Owner merge approval, post-merge CI and deployment validation remain separate gates.

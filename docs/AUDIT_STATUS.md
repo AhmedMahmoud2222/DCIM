@@ -35,7 +35,13 @@ ON CONFLICT (binding_id) DO UPDATE SET ...
 WHERE telemetry_latest_status.sampled_at < EXCLUDED.sampled_at
 ```
 
-This is **not** `ON CONFLICT (managed_asset_id, canonical_metric)`, and the comparison is **not** `>=`. A review describing those different fields and semantics is reviewing a different implementation. The series-based `GET /telemetry/latest` window function likewise does **not** prove the Phase 10C cache's ordering behavior.
+This is **not** `ON CONFLICT (managed_asset_id, canonical_metric)`, and the comparison is **not** `>=`. A review describing those different fields and semantics is reviewing a different implementation. `GET /telemetry/latest` orders readings by `occurred_at DESC` and limits the result; it has no window function and does not prove the Phase 10C cache's ordering behavior.
+
+Equal timestamps retain the first successful writer. If competing writers supply different payloads at the same timestamp, the winner depends on which write succeeds first; this is not order-independent arbitration. Re-delivery after that winner is stored is a no-op. No reproducible remaining telemetry race was established in this review.
+
+F3 applies to `POST /api/v1/collectors/{collector_id}/telemetry`, through `ingest_collector_telemetry()`. The function commits before returning its ACK body. `get_db()` rolls back unexpected exceptions, so the caller receives no successful partial ACK after such a failure. The separate discovery `/collectors/{collector_id}/ingest` handler already uses savepoints and is the destination of the packaged Edge client. Whole-transaction failure is the current telemetry implementation, deliberately preserved by PR #29; repository evidence does not establish a product-owner decision requiring or approving partial persistence after unexpected telemetry errors. This remains a contract decision, not a demonstrated data-loss defect or a reason to add savepoints automatically.
+
+The final integration review also reproduced a pre-existing Compose settings failure (missing encryption-key forwarding); see [OPERATIONS.md](OPERATIONS.md). Passing service-backed CI does not exercise that Compose configuration.
 
 The PR #29 integration report documents nine added ordering tests, including three independent-session concurrency cases and one API-contract regression. Six are reported to fail against the old implementation. Source and CI have been inspected; individual local reproductions are separately documented by the implementation author.
 

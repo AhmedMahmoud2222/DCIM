@@ -6,6 +6,9 @@
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
 **Status:** AT THE REVIEW GATE. NOT MERGED. Merge requires explicit approval.
 
+> **2026-09-26 integration clarification:** sections 1–14 retain the implementation author's historical report and earlier review requests. The current-source clarification in section 15 supersedes obsolete review SHAs, the proposed PR-closure sequence and claims that the audit still has no addendum. Do not apply the historical merge sequence without owner approval.
+
+
 ---
 
 ## 1. Exact SHAs
@@ -429,10 +432,10 @@ The repository owner merged documentation PR #30 into this branch after the runs
 README rewrite, a `backend/pyproject.toml` package-description correction, and six new
 files under `docs/`. All seven checks pass on the resulting head as well.
 
-https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36202967189
 
 Checked rather than assumed, since a merge into a reviewed branch can silently undo work:
-the ordering guard, the `datagram.exhausted` check, all five CI jobs with 3.12, 3.13 and
+the ordering guard, the `datagram.exhausted` check, all five job definitions (seven expanded jobs) with 3.12, 3.13 and
 3.14 blocking, both reports and `requires-python = ">=3.11"` are unchanged, and the
 rewritten README keeps the runtime statement accurate.
 
@@ -479,3 +482,24 @@ Every finding should carry severity, file references, reproducible evidence and 
 ## 14. Gate
 
 This work stops here. PR #29 is open for review and is not merged. Merging into `main` requires explicit approval.
+
+---
+
+## 15. Final integration documentation correction — 2026-09-26
+
+**Source reviewed:** `5235f6c2866b4831b5ef30db11d5d74028072359`, incorporating PR #30 into PR #29; subsequent report-only HEAD `b1373b11431267c69ec320438fe047d90b6cb0a9` was inspected and preserved before this correction; base `main` is `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. GitHub comparisons confirm the exact PR #27, #28 and #30 heads are ancestors with no missing commits. PR #30's head has the same tree as this merge. The workflow contains exactly one frontend `npm test` step. [Run #82](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36202967189) is the corresponding CI evidence; a later documentation commit needs its own seven-job result.
+
+### Before and after this documentation-only correction
+
+| Before | Corrected guidance |
+|---|---|
+| Original audit's broad telemetry conclusion and F1/F2 statuses could be read as current assurance | Original sections remain unchanged; a dated reviewer addendum records the missed ordering defect, superseded BER heuristic, 55 tests, browser CI and blocking runtime matrix. |
+| Equal-timestamp behavior described as independent of arrival order | First successful writer is retained; competing different payloads at one timestamp can have different winners under different schedules. The implemented first-writer-wins contract is unchanged. |
+| F3 described simply as an unfixed missing-savepoint defect | Telemetry commits once before ACK and rolls back unexpected failures; discovery ingestion already has savepoints. A stronger partial-persistence requirement is not established. No savepoints or application-code edits were made. |
+| Current guides referred to a `/telemetry/latest` window function | Actual endpoint sorts by `occurred_at DESC` and limits rows; it does not use a window function or prove the Phase 10C cache's behavior. |
+| Test setup omitted test-admin credentials, test-database privileged bootstrap and the backend suite's root import path; E2E seed instruction omitted `python` | Developer guide now names the isolated test environment, privileged bootstrap, `PYTHONPATH` and exact seed invocation. |
+| README advertised an immediately usable Compose quick-start | A reproduced pre-existing required-key omission blocks Compose startup. README and operations guide disclose it and direct contributors to local setup. Deployment configuration is not silently changed by this documentation review. |
+| The v1.5 documentation-merge paragraph linked run #80 to `5235f6c` | Corrected to run #82, whose API `head_sha` is `5235f6c2866b4831b5ef30db11d5d74028072359`. |
+| Earlier section 12 proposed closing constituent PRs and reviewing an obsolete SHA | Review the live final HEAD and obtain owner approval. Do not merge #29, close #27/#28 or modify `main` as part of this review. #30 is already merged into the integration branch. |
+
+The independent review executed all 55 Edge Collector tests locally and reproduced the Compose settings error described in [operations](docs/OPERATIONS.md). Backend database suites cannot run in that workspace; their evidence comes from the actual GitHub Actions job logs. This correction changes documentation only and makes no new production or external-security certification claim. GitHub had no submitted Jules review on PR #29 at review start; the baseline audit artifact remains separately attributable to PR #28.
