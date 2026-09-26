@@ -211,6 +211,7 @@ export function EquipmentDetailPage() {
           {showMoveForm && (
             <form onSubmit={handleMoveSubmit} className="mt-4 space-y-2 border-t border-slate-800 pt-4">
               <select
+                aria-label="Placement type"
                 value={placementType}
                 onChange={(e) => setPlacementType(e.target.value as PlacementType)}
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -222,6 +223,7 @@ export function EquipmentDetailPage() {
                 ))}
               </select>
               <select
+                aria-label="Placement room"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -237,6 +239,7 @@ export function EquipmentDetailPage() {
               {placementType === "rack_mounted" && (
                 <>
                   <select
+                    aria-label="Placement rack"
                     value={rackId}
                     onChange={(e) => setRackId(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -250,6 +253,7 @@ export function EquipmentDetailPage() {
                   </select>
                   <div className="flex gap-2">
                     <input
+                      aria-label="Rack starting unit"
                       type="number"
                       min={1}
                       value={uStart}
@@ -258,6 +262,7 @@ export function EquipmentDetailPage() {
                       className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                     />
                     <input
+                      aria-label="Rack ending unit, exclusive"
                       type="number"
                       min={2}
                       value={uEnd}
@@ -266,6 +271,7 @@ export function EquipmentDetailPage() {
                       className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                     />
                     <select
+                      aria-label="Rack side"
                       value={side}
                       onChange={(e) => setSide(e.target.value as Side)}
                       className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -555,23 +561,25 @@ function ConnectPortForm({
   return (
     <form onSubmit={handleSubmit} className="mt-2 space-y-1.5 rounded border border-slate-700 bg-slate-950 p-2">
       <div className="flex gap-2">
-        <select value={targetKind} onChange={(e) => setTargetKind(e.target.value as "port" | "power_node")} className="rounded bg-slate-800 px-2 py-1 text-xs">
+        <select aria-label="Connection target type" value={targetKind} onChange={(e) => setTargetKind(e.target.value as "port" | "power_node")} className="rounded bg-slate-800 px-2 py-1 text-xs">
           <option value="port">Patch panel / switch port ID</option>
           <option value="power_node">PDU outlet (power node) ID</option>
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value as PortConnectionStatus)} className="rounded bg-slate-800 px-2 py-1 text-xs">
+        <select aria-label="Connection status" value={status} onChange={(e) => setStatus(e.target.value as PortConnectionStatus)} className="rounded bg-slate-800 px-2 py-1 text-xs">
           {PORT_CONNECTION_STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
       </div>
       <input
+        aria-label="Connection target ID"
         value={targetId}
         onChange={(e) => setTargetId(e.target.value)}
         placeholder={targetKind === "port" ? "Target EquipmentPort ID" : "Target PowerNode ID"}
         className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
       />
       <input
+        aria-label="Cable ID"
         value={cableId}
         onChange={(e) => setCableId(e.target.value)}
         placeholder="Cable ID (optional)"
@@ -585,7 +593,7 @@ function ConnectPortForm({
           Cancel
         </button>
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
     </form>
   );
 }

@@ -38,6 +38,10 @@ describe("CatalogHomePage", () => {
 
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /R4200/ })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search manufacturers" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search models" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Filter by category" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Catalog models" })).toBeInTheDocument();
   });
 
   it("creates a manufacturer and refreshes the list", async () => {
@@ -48,7 +52,7 @@ describe("CatalogHomePage", () => {
     await screen.findByRole("link", { name: "Acme" });
 
     await user.click(screen.getByRole("button", { name: "New Manufacturer" }));
-    await user.type(screen.getByPlaceholderText("Manufacturer name"), "Globex");
+    await user.type(screen.getByRole("textbox", { name: "Manufacturer name" }), "Globex");
     await user.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() => expect(api.createManufacturer).toHaveBeenCalledWith("Globex"));

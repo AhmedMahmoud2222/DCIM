@@ -33,8 +33,11 @@ export function LoginPage() {
         <h1 className="mb-1 text-xl font-semibold text-slate-100">DCIM Platform</h1>
         <p className="mb-6 text-sm text-slate-400">Sign in to continue</p>
 
-        <label className="mb-1 block text-xs font-medium text-slate-400">Email</label>
+        <label htmlFor="login-email" className="mb-1 block text-xs font-medium text-slate-400">Email</label>
         <input
+          id="login-email"
+          name="email"
+          autoComplete="username"
           type="email"
           required
           value={email}
@@ -42,8 +45,13 @@ export function LoginPage() {
           className="mb-4 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
         />
 
-        <label className="mb-1 block text-xs font-medium text-slate-400">Password</label>
+        <label htmlFor="login-password" className="mb-1 block text-xs font-medium text-slate-400">Password</label>
         <input
+          id="login-password"
+          name="password"
+          autoComplete="current-password"
+          aria-describedby={error ? "login-error" : undefined}
+          aria-invalid={Boolean(error)}
           type="password"
           required
           value={password}
@@ -51,7 +59,7 @@ export function LoginPage() {
           className="mb-4 w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
         />
 
-        {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+        {error && <p id="login-error" role="alert" className="mb-4 text-sm text-red-400">{error}</p>}
 
         <button
           type="submit"

@@ -109,7 +109,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
           </span>
         </span>
       </div>
-      <svg width={svgWidth} height={totalHeight + 4} className="rounded border border-slate-800 bg-slate-950">
+      <svg aria-label={`Rack elevation, ${elevation.height_u} units; equipment links and faceplate controls follow`} width={svgWidth} height={totalHeight + 4} className="rounded border border-slate-800 bg-slate-950">
         {Array.from({ length: elevation.height_u }, (_, i) => i + 1).map((u) => (
           <g key={u}>
             <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="#64748b">

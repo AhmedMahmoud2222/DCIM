@@ -102,6 +102,7 @@ export function CatalogHomePage() {
         {isCatalogAdministrator && showManufacturerForm && (
           <form onSubmit={handleManufacturerSubmit} className="mb-4 flex gap-2">
             <input
+              aria-label="Manufacturer name"
               value={newManufacturerName}
               onChange={(e) => setNewManufacturerName(e.target.value)}
               placeholder="Manufacturer name"
@@ -117,10 +118,11 @@ export function CatalogHomePage() {
           </form>
         )}
         {createManufacturerMutation.isError && (
-          <p className="mb-3 text-sm text-red-400">{(createManufacturerMutation.error as Error).message}</p>
+          <p role="alert" className="mb-3 text-sm text-red-400">{(createManufacturerMutation.error as Error).message}</p>
         )}
 
         <input
+          aria-label="Search manufacturers"
           value={manufacturerQuery}
           onChange={(e) => setManufacturerQuery(e.target.value)}
           placeholder="Search manufacturers…"
@@ -162,6 +164,7 @@ export function CatalogHomePage() {
         {isCatalogAdministrator && showModelForm && (
           <form onSubmit={handleModelSubmit} className="mb-4 grid max-w-2xl grid-cols-2 gap-3 rounded border border-slate-800 bg-slate-950 p-4">
             <select
+              aria-label="Model manufacturer"
               value={newModelManufacturerId}
               onChange={(e) => setNewModelManufacturerId(e.target.value)}
               className="col-span-2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
@@ -174,6 +177,7 @@ export function CatalogHomePage() {
               ))}
             </select>
             <select
+              aria-label="Model category"
               value={newModelCategory}
               onChange={(e) => setNewModelCategory(e.target.value)}
               className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
@@ -185,12 +189,14 @@ export function CatalogHomePage() {
               ))}
             </select>
             <input
+              aria-label="Model number"
               value={newModelNumber}
               onChange={(e) => setNewModelNumber(e.target.value)}
               placeholder="Model number (optional)"
               className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
             />
             <input
+              aria-label="Model name"
               value={newModelName}
               onChange={(e) => setNewModelName(e.target.value)}
               placeholder="Model name"
@@ -204,19 +210,21 @@ export function CatalogHomePage() {
               >
                 {createModelMutation.isPending ? "Creating…" : "Create Model"}
               </button>
-              {createModelMutation.isError && <p className="mt-2 text-sm text-red-400">{(createModelMutation.error as Error).message}</p>}
+              {createModelMutation.isError && <p role="alert" className="mt-2 text-sm text-red-400">{(createModelMutation.error as Error).message}</p>}
             </div>
           </form>
         )}
 
         <div className="mb-3 flex flex-wrap gap-2">
           <input
+            aria-label="Search models"
             value={modelQuery}
             onChange={(e) => setModelQuery(e.target.value)}
             placeholder="Search models…"
             className="flex-1 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
           />
           <select
+            aria-label="Filter by category"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
             className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
@@ -229,6 +237,7 @@ export function CatalogHomePage() {
             ))}
           </select>
           <select
+            aria-label="Filter by manufacturer"
             value={manufacturerFilter}
             onChange={(e) => setManufacturerFilter(e.target.value)}
             className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
@@ -246,23 +255,24 @@ export function CatalogHomePage() {
         {modelsQuery.error && <p className="text-sm text-red-400">{(modelsQuery.error as Error).message}</p>}
         {modelsQuery.data && (
           <table className="w-full border-collapse text-sm">
+            <caption className="sr-only">Catalog models</caption>
             <thead>
               <tr className="border-b border-slate-800 text-left text-slate-400">
-                <th className="pb-2">Model</th>
-                <th className="pb-2">Manufacturer</th>
-                <th className="pb-2">Category</th>
-                <th className="pb-2">Status</th>
+                <th scope="col" className="pb-2">Model</th>
+                <th scope="col" className="pb-2">Manufacturer</th>
+                <th scope="col" className="pb-2">Category</th>
+                <th scope="col" className="pb-2">Status</th>
               </tr>
             </thead>
             <tbody>
               {modelsQuery.data.items.map((model) => (
                 <tr key={model.id} className="border-b border-slate-900 hover:bg-slate-900/50">
-                  <td className="py-2">
+                  <th scope="row" className="py-2 text-left font-normal">
                     <Link to={`/admin/catalog/models/${model.id}`} className="font-medium text-blue-400 hover:underline">
                       {model.model_name}
                     </Link>
                     {model.model_number && <span className="ml-2 font-mono text-xs text-slate-500">{model.model_number}</span>}
-                  </td>
+                  </th>
                   <td className="py-2 text-slate-300">{manufacturerNameById.get(model.manufacturer_id) ?? model.manufacturer_id}</td>
                   <td className="py-2 text-slate-400">{model.category}</td>
                   <td className="py-2">

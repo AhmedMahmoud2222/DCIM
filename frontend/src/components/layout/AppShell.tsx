@@ -30,9 +30,12 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-white">
+        Skip to main content
+      </a>
       <aside className="w-56 shrink-0 border-r border-slate-800 bg-slate-900 p-4">
         <div className="mb-6 text-sm font-semibold tracking-wide text-slate-300">DCIM PLATFORM</div>
-        <nav className="space-y-1">
+        <nav aria-label="Primary" className="space-y-1">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
@@ -70,7 +73,7 @@ export function AppShell() {
             Sign out
           </button>
         </header>
-        <main className="flex-1 p-6">
+        <main id="main-content" className="flex-1 p-6">
           <Outlet />
         </main>
       </div>

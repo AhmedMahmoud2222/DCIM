@@ -130,6 +130,7 @@ export function RackDetailPage() {
           {showMoveForm && (
             <form onSubmit={handleMoveSubmit} className="mt-4 space-y-2 border-t border-slate-800 pt-4">
               <select
+                aria-label="Placement room"
                 value={moveRoomId}
                 onChange={(e) => setMoveRoomId(e.target.value)}
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -143,6 +144,7 @@ export function RackDetailPage() {
               </select>
               <div className="flex gap-2">
                 <input
+                  aria-label="Horizontal position in millimeters"
                   type="number"
                   value={moveX}
                   onChange={(e) => setMoveX(e.target.value)}
@@ -150,6 +152,7 @@ export function RackDetailPage() {
                   className="w-1/2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                 />
                 <input
+                  aria-label="Vertical position in millimeters"
                   type="number"
                   value={moveY}
                   onChange={(e) => setMoveY(e.target.value)}
@@ -165,7 +168,7 @@ export function RackDetailPage() {
                 Confirm
               </button>
               {moveMutation.isError && (
-                <p className="text-sm text-red-400">
+                <p role="alert" className="text-sm text-red-400">
                   {moveMutation.error instanceof ApiError && moveMutation.error.status === 409
                     ? "Someone else moved this rack in the meantime — reload and try again."
                     : (moveMutation.error as Error).message}
