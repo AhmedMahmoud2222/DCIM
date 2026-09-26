@@ -1,351 +1,134 @@
 #!/usr/bin/env python3
-"""
-Verify that a release SHA meets all deployment gate requirements.
-
-This script ensures that a commit:
-1. Exists in the repository
-2. Is reachable from the authorized main branch
-3. Has a successful standard CI run
-4. Has a successful Compose smoke validation
-5. Has a successful Deployment validation gate
-6. Has no cancelled, skipped or superseded runs
-
-Requires GITHUB_TOKEN environment variable with API access (public_repo scope minimum).
-"""
-
-import sys
-import os
+"""Fail-closed verification of a release commit against trusted GitHub Actions runs."""
 import json
+import os
 import re
-import urllib.request
+import sys
 import urllib.error
-from typing import Optional, Dict, List, Tuple
+import urllib.parse
+import urllib.request
 
-# GitHub API configuration
-GITHUB_API_URL = "https://api.github.com"
-OWNER = "AhmedMahmoud2222"
-REPO = "DCIM"
-MAIN_BRANCH = "main"
-
-# Required checks that must pass
-REQUIRED_CHECKS = {
-    "Deployment validation gate",
-    "Compose smoke",
-    "backend suite (Python 3.12)",
-    "backend suite (Python 3.13)",
-    "backend suite (Python 3.14)",
-    "backend",
-    "frontend",
-    "browser-e2e",
-    "edge-collector",
+REPOSITORY = "AhmedMahmoud2222/DCIM"
+API = "https://api.github.com/repos/" + REPOSITORY
+WORKFLOWS = {
+    "ci": (359845224, ".github/workflows/ci.yml", {
+        "backend", "backend suite (Python 3.12)", "backend suite (Python 3.13)",
+        "backend suite (Python 3.14)", "frontend", "browser-e2e", "edge-collector",
+    }),
+    "deployment-validation": (367510888, ".github/workflows/deployment-validation.yml", {
+        "Compose smoke", "Deployment validation gate",
+    }),
 }
 
-# Expected workflow path for CI checks
-CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 
-def get_github_token() -> str:
-    """Get GitHub token from environment."""
+class VerificationError(Exception):
+    pass
+
+
+def api(path):
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
-        print("ERROR: GITHUB_TOKEN environment variable not set")
-        sys.exit(1)
-    return token
-
-def github_api_request(endpoint: str, method: str = "GET", data: Optional[Dict] = None) -> Dict:
-    """Make an authenticated GitHub API request."""
-    token = get_github_token()
-    url = f"{GITHUB_API_URL}{endpoint}"
-
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "dcim-deploy-verifier/1.0"
-    }
-
-    req = urllib.request.Request(url, headers=headers, method=method)
-    if data:
-        req.data = json.dumps(data).encode('utf-8')
-        headers["Content-Type"] = "application/json"
-
+        raise VerificationError("GITHUB_TOKEN is required")
+    request = urllib.request.Request(API + path, headers={
+        "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "dcim-release-verifier",
+    })
     try:
-        with urllib.request.urlopen(req) as response:
-            return json.loads(response.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8')
-        print(f"ERROR: GitHub API request failed: {e.code}")
-        print(f"Response: {error_body}")
-        sys.exit(1)
-
-def verify_sha_format(sha: str) -> bool:
-    """Verify SHA is exactly 40 hexadecimal characters."""
-    if not re.match(r'^[0-9a-f]{40}$', sha):
-        print(f"ERROR: SHA must be exactly 40 hexadecimal characters (provided: {sha})")
-        return False
-    print(f"✓ SHA format valid: {sha}")
-    return True
-
-def verify_sha_exists(sha: str) -> bool:
-    """Verify that the SHA exists in the repository as canonical commit."""
-    try:
-        result = github_api_request(f"/repos/{OWNER}/{REPO}/commits/{sha}")
-        if "sha" in result:
-            canonical_sha = result["sha"]
-            if canonical_sha != sha:
-                print(f"ERROR: Provided SHA {sha} does not match canonical commit {canonical_sha}")
-                return False
-            print(f"✓ Commit {sha[:12]} exists with canonical identity")
-            return True
-    except Exception as e:
-        print(f"ERROR: Could not verify commit: {e}")
-    return False
-
-def verify_sha_on_main_branch(sha: str) -> bool:
-    """Verify that SHA is reachable from main branch."""
-    try:
-        # Get compare between main and the SHA
-        result = github_api_request(f"/repos/{OWNER}/{REPO}/compare/{MAIN_BRANCH}...{sha}")
-
-        # If merge_base_commit sha matches our sha, it's an ancestor
-        if "merge_base_commit" in result:
-            if result["merge_base_commit"]["sha"].startswith(sha[:12]) or sha.startswith(result["merge_base_commit"]["sha"][:12]):
-                print(f"✓ Commit {sha[:12]} is on main branch")
-                return True
-            # Also check if status is 'behind' (sha is ahead of main)
-            if result.get("status") in ["behind", "identical"]:
-                print(f"✓ Commit {sha[:12]} is reachable from main")
-                return True
-    except:
-        pass
-
-    # Fallback: check if commit is in main's history
-    try:
-        result = github_api_request(f"/repos/{OWNER}/{REPO}/commits?sha={MAIN_BRANCH}&per_page=100")
-        if isinstance(result, list):
-            for commit in result:
-                if commit["sha"].startswith(sha[:12]) or sha.startswith(commit["sha"][:12]):
-                    print(f"✓ Commit {sha[:12]} is on main branch (found in history)")
-                    return True
-    except:
-        pass
-
-    return False
-
-def get_workflow_runs_for_sha(sha: str) -> List[Dict]:
-    """Get all workflow runs for a given SHA."""
-    runs = []
-    page = 1
-    per_page = 100
-
-    try:
-        while True:
-            result = github_api_request(
-                f"/repos/{OWNER}/{REPO}/actions/runs?head_sha={sha}&per_page={per_page}&page={page}"
-            )
-
-            if "workflow_runs" in result:
-                page_runs = result["workflow_runs"]
-                if not page_runs:
-                    break
-                runs.extend(page_runs)
-                if len(page_runs) < per_page:
-                    break
-                page += 1
-            else:
-                break
-    except Exception as e:
-        print(f"Warning: Could not fetch workflow runs: {e}")
-
-    return runs
-
-def get_check_runs_for_sha(sha: str) -> List[Dict]:
-    """Get all check runs for a given SHA with pagination."""
-    checks = []
-    page = 1
-    per_page = 100
-
-    try:
-        while True:
-            result = github_api_request(
-                f"/repos/{OWNER}/{REPO}/commits/{sha}/check-runs?per_page={per_page}&page={page}"
-            )
-
-            if "check_runs" in result:
-                page_checks = result["check_runs"]
-                if not page_checks:
-                    break
-                checks.extend(page_checks)
-                if len(page_checks) < per_page:
-                    break
-                page += 1
-            else:
-                break
-    except Exception as e:
-        print(f"Warning: Could not fetch check runs: {e}")
-
-    return checks
-
-def verify_workflow_runs(sha: str) -> Tuple[bool, set]:
-    """Verify workflow runs exist and extract valid check names."""
-    runs = get_workflow_runs_for_sha(sha)
-
-    if not runs:
-        print(f"ERROR: No workflow runs found for {sha[:12]}")
-        return False, set()
-
-    valid_check_ids = set()
-    ci_workflow_found = False
-
-    for run in runs:
-        workflow_path = run.get("path", "")
-        run_id = run.get("id")
-        conclusion = run.get("conclusion")
-
-        if workflow_path == CI_WORKFLOW_PATH:
-            ci_workflow_found = True
-            if conclusion not in ["success", "neutral"]:
-                print(f"✗ Workflow run {run_id}: status={run.get('status')} conclusion={conclusion}")
-                return False, set()
-            valid_check_ids.add(run_id)
-
-    if not ci_workflow_found:
-        print(f"ERROR: CI workflow ({CI_WORKFLOW_PATH}) not found for this SHA")
-        return False, set()
-
-    return True, valid_check_ids
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status != 200:
+                raise VerificationError("unexpected API status")
+            return json.load(response)
+    except (urllib.error.URLError, ValueError, TimeoutError) as exc:
+        raise VerificationError("GitHub API request failed: " + path) from exc
 
 
-def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
-    """Verify all required checks have passed from the CI workflow."""
-    # 1. Verify workflow runs exist and get valid run IDs
-    runs_valid, valid_run_ids = verify_workflow_runs(sha)
-    if not runs_valid:
-        return False, {}
+def pages(path, key):
+    """Fetch every page; reject missing totals, malformed pages and early truncation."""
+    page, values, total = 1, [], None
+    while True:
+        data = api(path + ("&" if "?" in path else "?") + f"per_page=100&page={page}")
+        if not isinstance(data, dict) or not isinstance(data.get("total_count"), int) or not isinstance(data.get(key), list):
+            raise VerificationError("incomplete paginated response")
+        if total is None:
+            total = data["total_count"]
+        if data["total_count"] != total or len(data[key]) != min(100, total - len(values)):
+            raise VerificationError("truncated or changing paginated response")
+        values.extend(data[key])
+        if len(values) == total:
+            return values
+        page += 1
+        if page > 100:
+            raise VerificationError("pagination exceeded limit")
 
-    # 2. Get check runs for this SHA
-    all_checks = get_check_runs_for_sha(sha)
 
-    if not all_checks:
-        print(f"ERROR: No check runs found for {sha[:12]}")
-        return False, {}
+def verify(sha):
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise VerificationError("release SHA must be 40 lowercase hexadecimal characters")
+    commit = api("/commits/" + sha)
+    if commit.get("sha") != sha:
+        raise VerificationError("noncanonical commit")
+    compare = api("/compare/" + sha + "...main")
+    if compare.get("status") not in ("ahead", "identical") or compare.get("merge_base_commit", {}).get("sha") != sha:
+        raise VerificationError("release commit is not an ancestor of authorized main")
 
-    # 3. Filter to latest, non-superseded runs (by name)
-    # Group checks by name, keep only the most recent completed one
-    checks_by_name: Dict[str, Dict] = {}
-    for check in all_checks:
-        name = check.get("name")
-        if not name:
-            continue
+    runs = pages("/actions/runs?head_sha=" + sha, "workflow_runs")
+    checks = pages("/commits/" + sha + "/check-runs", "check_runs")
+    checks_by_id = {check.get("id"): check for check in checks}
+    if len(checks_by_id) != len(checks):
+        raise VerificationError("duplicate check identifiers")
+    evidence = {}
+    for label, (workflow_id, path, required) in WORKFLOWS.items():
+        candidates = [r for r in runs if r.get("workflow_id") == workflow_id]
+        if not candidates:
+            raise VerificationError("missing workflow: " + label)
+        if any(r.get("path") != path or r.get("head_sha") != sha or
+               r.get("repository", {}).get("full_name") != REPOSITORY or
+               r.get("head_repository", {}).get("full_name") != REPOSITORY or
+               r.get("event") != "push" or r.get("head_branch") != "main" for r in candidates):
+            raise VerificationError("untrusted workflow identity: " + label)
+        # The newest run is authoritative. Never fall back to an older passing run.
+        newest = max(candidates, key=lambda r: (r.get("run_number", 0), r.get("id", 0)))
+        if newest.get("status") != "completed" or newest.get("conclusion") != "success":
+            raise VerificationError("latest workflow not successful: " + label)
+        run_id, attempt, suite = newest.get("id"), newest.get("run_attempt"), newest.get("check_suite_id")
+        if not all(isinstance(v, int) and v > 0 for v in (run_id, attempt, suite)):
+            raise VerificationError("missing workflow attempt or suite: " + label)
+        jobs = pages(f"/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+        names = {}
+        for job in jobs:
+            name = job.get("name")
+            if name not in required:
+                continue
+            if name in names:
+                raise VerificationError("duplicate required job: " + name)
+            names[name] = job
+            url = job.get("check_run_url", "")
+            match = re.fullmatch(re.escape(API) + r"/check-runs/(\d+)", url)
+            check = checks_by_id.get(int(match.group(1))) if match else None
+            if (job.get("run_id") != run_id or job.get("run_attempt") != attempt or
+                job.get("head_sha") != sha or job.get("status") != "completed" or
+                job.get("conclusion") != "success" or not check or check.get("name") != name or
+                check.get("head_sha") != sha or check.get("status") != "completed" or
+                check.get("conclusion") != "success" or check.get("check_suite", {}).get("id") != suite or
+                check.get("app", {}).get("slug") != "github-actions"):
+                raise VerificationError("untrusted or failed job/check: " + name)
+        if names.keys() != required:
+            raise VerificationError("missing required jobs: " + ", ".join(sorted(required - names.keys())))
+        evidence[label] = {"run_id": run_id, "attempt": attempt, "jobs": sorted(names)}
+    return evidence
 
-        # Verify check came from a valid workflow run
-        run_id = check.get("check_suite", {}).get("id") if isinstance(check.get("check_suite"), dict) else None
-        if run_id and run_id not in valid_run_ids:
-            print(f"⚠ Check '{name}' from different workflow (run {run_id}), skipping")
-            continue
-
-        # Keep the most recent one by ID
-        if name not in checks_by_name:
-            checks_by_name[name] = check
-        else:
-            existing_id = checks_by_name[name].get("id", 0)
-            current_id = check.get("id", 0)
-            if current_id > existing_id:
-                checks_by_name[name] = check
-
-    checks = list(checks_by_name.values())
-
-    check_status = {}
-    failed_checks = []
-
-    for check in checks:
-        name = check.get("name", "unknown")
-        status = check.get("status", "unknown")
-        conclusion = check.get("conclusion", "unknown")
-        check_id = check.get("id", "unknown")
-
-        check_status[name] = f"{status}/{conclusion} (id: {check_id})"
-
-        if name in REQUIRED_CHECKS:
-            if status == "completed" and conclusion == "success":
-                print(f"✓ {name}: SUCCESS")
-            elif status in ["queued", "in_progress", "pending"]:
-                print(f"✗ {name}: NOT COMPLETED (status: {status})")
-                failed_checks.append(name)
-            elif conclusion in ["cancelled", "skipped", "stale"]:
-                print(f"✗ {name}: {conclusion.upper()} (cannot deploy)")
-                failed_checks.append(name)
-            elif conclusion == "failure":
-                print(f"✗ {name}: FAILED")
-                failed_checks.append(name)
-            else:
-                print(f"✗ {name}: {conclusion.upper()}")
-                failed_checks.append(name)
-
-    # Check for missing required checks
-    found_checks = set(checks_by_name.keys())
-    for required in REQUIRED_CHECKS:
-        if required not in found_checks:
-            print(f"✗ {required}: NOT FOUND")
-            failed_checks.append(required)
-
-    if failed_checks:
-        print(f"\nERROR: {len(failed_checks)} required check(s) failed or not completed:")
-        for check in failed_checks:
-            print(f"  - {check}")
-        return False, check_status
-
-    return True, check_status
-
-def verify_release_sha(sha: str) -> bool:
-    """Verify all deployment requirements for a given SHA."""
-    print(f"\n=== Verifying release SHA ===\n")
-
-    # 1. Verify SHA format (must be exactly 40 hex chars)
-    if not verify_sha_format(sha):
-        return False
-
-    # 2. Verify SHA exists as canonical commit
-    if not verify_sha_exists(sha):
-        print(f"ERROR: Commit {sha} does not exist in repository")
-        return False
-
-    # 3. Verify SHA is on main branch (reachable from main HEAD)
-    if not verify_sha_on_main_branch(sha):
-        print(f"ERROR: Commit {sha} is not on {MAIN_BRANCH} branch")
-        return False
-
-    # 4. Verify all required checks passed (non-superseded, completed successfully)
-    checks_passed, check_status = verify_required_checks(sha)
-    if not checks_passed:
-        return False
-
-    print(f"\n✓ All deployment gates verified for {sha}\n")
-    print(f"Deployment evidence:")
-    print(json.dumps({"sha": sha, "checks": check_status}, indent=2))
-
-    return True
 
 def main():
-    """Main entry point."""
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <release-sha>")
-        print(f"\nVerifies that a commit meets all deployment requirements:")
-        print(f"  - SHA must be exactly 40 hexadecimal characters")
-        print(f"  - Commit exists in repository with canonical identity")
-        print(f"  - Commit is reachable from {MAIN_BRANCH} branch HEAD")
-        print(f"  - All required CI checks passed (non-superseded)")
-        print(f"  - Compose smoke test passed")
-        print(f"  - Deployment validation gate passed")
-        print(f"\nNo cancelled, skipped, stale, or failed checks allowed.")
-        sys.exit(1)
+    try:
+        if len(sys.argv) != 2:
+            raise VerificationError("usage: verify_release_sha.py <full-release-sha>")
+        evidence = verify(sys.argv[1])
+        print(json.dumps({"sha": sys.argv[1], "verified": evidence}, sort_keys=True))
+    except (VerificationError, KeyError, TypeError, AttributeError) as exc:
+        print("Release verification failed: " + str(exc), file=sys.stderr)
+        return 1
+    return 0
 
-    sha = sys.argv[1].strip()
-
-    if verify_release_sha(sha):
-        print("✓ SUCCESS: Release SHA is approved for deployment")
-        sys.exit(0)
-    else:
-        print("✗ FAILURE: Release SHA does not meet deployment requirements")
-        sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

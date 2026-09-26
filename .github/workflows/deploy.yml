@@ -1,354 +1,94 @@
-name: Deploy DCIM
+name: Deploy DCIM (validation only)
 
 on:
   workflow_dispatch:
     inputs:
       release_sha:
-        description: "Release SHA to deploy (must have passed all validation gates)"
+        description: Full main-branch release SHA
         required: true
         type: string
       environment:
-        description: "Target environment"
+        description: Target (production deployment disabled)
         required: true
         type: choice
-        options:
-          - staging
-          - production
+        options: [staging, production]
         default: staging
 
 permissions:
   contents: read
-  statuses: read
+  actions: read
+  checks: read
 
 jobs:
-  validate-input:
-    name: Validate dispatch input
-    runs-on: ubuntu-latest
-    outputs:
-      release_sha: ${{ steps.validate.outputs.sha }}
-    steps:
-      - name: Validate release SHA format
-        id: validate
-        env:
-          INPUT_SHA: ${{ inputs.release_sha }}
-        run: |
-          if ! [[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "ERROR: Invalid SHA format. Must be exactly 40 hexadecimal characters."
-            echo "Received (length ${#INPUT_SHA}): ${INPUT_SHA:0:50}..." >&2
-            exit 1
-          fi
-          echo "sha=$INPUT_SHA" >> $GITHUB_OUTPUT
-          echo "✓ SHA format validated: ${INPUT_SHA:0:12}..."
-
   verify-release:
-    name: Verify release SHA
+    name: Verify trusted release evidence
     runs-on: ubuntu-latest
-    needs: validate-input
     outputs:
-      verified: ${{ steps.verify.outputs.verified }}
-      check-status: ${{ steps.verify.outputs.check-status }}
+      sha: ${{ steps.verify.outputs.sha }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Verify release SHA
+          persist-credentials: false
+      - name: Verify exact SHA
         id: verify
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python .github/scripts/verify_release_sha.py "$RELEASE_SHA"
-          echo "verified=true" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          [[ "$TARGET_ENVIRONMENT" == staging || "$TARGET_ENVIRONMENT" == production ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          python3 .github/scripts/verify_release_sha.py "$RELEASE_SHA"
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Check verification result
-        if: failure()
-        env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
-        run: |
-          echo "ERROR: Release SHA verification failed"
-          echo "SHA: $RELEASE_SHA"
-          echo "This release does not meet deployment requirements"
-          exit 1
-
-  request-approval:
-    name: Request deployment approval
+  validate-staging:
+    name: Validate staging configuration (no deployment)
     runs-on: ubuntu-latest
-    needs: [validate-input, verify-release]
-    if: inputs.environment == 'production'
-    environment:
-      name: production-deployment
-      deployment-branch: main
-    steps:
-      - name: Confirm approval
-        env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
-        run: |
-          echo "Deployment approval required for production"
-          echo "Release: $RELEASE_SHA"
-          echo "Environment: production"
-          echo "This approval is tracked in GitHub Actions audit log"
-
-  validate-environment:
-    name: Validate deployment environment
-    runs-on: ubuntu-latest
-    needs: [validate-input, verify-release]
+    needs: verify-release
     if: inputs.environment == 'staging'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Checkout release SHA
+          ref: ${{ needs.verify-release.outputs.sha }}
+          persist-credentials: false
+      - name: Validate effective production Compose configuration
         env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
+          POSTGRES_PASSWORD: disposable-ci-password
+          DCIM_APP_PASSWORD: disposable-ci-app-password
+          JWT_SECRET_KEY: disposable-ci-jwt-key-only
+          CREDENTIAL_ENCRYPTION_KEY: dGVzdC1vbmx5LWRpc3Bvc2FibGUtMzItYnl0ZS1rZXkhISE=
+          POSTGRES_DATA_PATH: /tmp/dcim-validation-postgres
         run: |
-          git fetch origin "$RELEASE_SHA"
-          git checkout "$RELEASE_SHA"
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.production.yml config --quiet
+          bash -n scripts/deploy-docker-compose.sh
+          echo 'Staging configuration validated; no Docker services were started.'
 
-      - name: Validate Docker Compose configuration
+  verification-record:
+    name: Record validation outcome
+    runs-on: ubuntu-latest
+    needs: [verify-release, validate-staging]
+    if: always()
+    steps:
+      - name: Write accurate run summary
+        env:
+          RELEASE_SHA: ${{ needs.verify-release.outputs.sha }}
+          VERIFY_RESULT: ${{ needs.verify-release.result }}
+          STAGING_RESULT: ${{ needs.validate-staging.result }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          echo "Validating Docker Compose configuration for ${{ inputs.environment }}"
-          # Check config is valid (without Docker daemon)
-          python3 .github/scripts/compose_smoke.py config \
-            --compose-file docker-compose.production.yml 2>&1 | tee /tmp/compose-check.log
-
-          if grep -q "ERROR" /tmp/compose-check.log; then
-            echo "Docker Compose configuration validation failed"
+          set -euo pipefail
+          {
+            echo '# Release validation (no deployment)'
+            echo "Release: $RELEASE_SHA"
+            echo "Target: $TARGET_ENVIRONMENT"
+            echo "Release verification: $VERIFY_RESULT"
+            echo "Staging configuration: $STAGING_RESULT"
+            echo 'No Docker deployment or production approval occurred.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$TARGET_ENVIRONMENT" != staging || "$VERIFY_RESULT" != success || "$STAGING_RESULT" != success ]]; then
+            echo 'Release validation incomplete or failed; no passing record.' >&2
             exit 1
           fi
-
-      - name: Validate deployment scripts
-        run: |
-          echo "Validating deployment scripts"
-          bash -n scripts/deploy-docker-compose.sh
-          echo "Deployment script syntax OK"
-
-      - name: Check deployment directory permissions
-        run: |
-          echo "Simulating deployment directory checks"
-          echo "Would verify:"
-          echo "  - Deploy directory exists and is writable"
-          echo "  - Backup directory is writable"
-          echo "  - Log directory is writable"
-          echo "  - Docker daemon is accessible"
-
-  staging-deployment:
-    name: Validate staging deployment readiness
-    runs-on: ubuntu-latest
-    needs: [validate-input, verify-release, validate-environment]
-    if: inputs.environment == 'staging'
-    outputs:
-      deployment-result: ${{ steps.validate.outputs.result }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Checkout release SHA
-        env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
-        run: |
-          git fetch origin "$RELEASE_SHA"
-          git checkout "$RELEASE_SHA"
-
-      - name: Validate deployment prerequisites
-        id: validate
-        run: |
-          echo "VALIDATION ONLY: This workflow does not execute actual Docker Compose deployment."
-          echo "Actual staging deployment requires manual trigger on staging infrastructure."
-          echo ""
-          echo "Validating prerequisites for staging deployment:"
-          echo "  ✓ Release SHA verified against all CI gates"
-          echo "  ✓ Docker Compose configuration syntax valid"
-          echo "  ✓ Deployment script syntax valid"
-          echo ""
-          echo "Manual deployment would execute:"
-          echo "  1. Validate Docker Compose configuration"
-          echo "  2. Build/pull Docker images"
-          echo "  3. Start services (postgres, redis, backend, workers)"
-          echo "  4. Run database migrations"
-          echo "  5. Wait for health checks (60s timeout)"
-          echo "  6. Verify all services responding"
-          echo ""
-          echo "Health checks would verify:"
-          echo "  - PostgreSQL readiness"
-          echo "  - Redis availability"
-          echo "  - Backend API health (/api/v1/health/ready)"
-          echo "  - All Celery services running"
-          echo "  - Frontend accessibility"
-          echo ""
-          echo "result=validation-passed" >> $GITHUB_OUTPUT
-
-      - name: Report validation status
-        run: |
-          echo "✓ Staging deployment validation passed"
-          echo ""
-          echo "To deploy to staging, run on staging infrastructure:"
-          echo "  cd /opt/dcim"
-          echo "  bash scripts/deploy-docker-compose.sh ${{ inputs.release_sha }} staging"
-          echo ""
-          echo "This workflow provides release verification and deployment readiness validation only."
-          echo "Actual Docker Compose operations must run in the target environment with Docker daemon access."
-
-  record-deployment:
-    name: Record verification evidence
-    runs-on: ubuntu-latest
-    needs: [validate-input, verify-release, staging-deployment]
-    if: always()
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Record release verification evidence
-        env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
-        run: |
-          echo "Recording release verification evidence"
-          cat > /tmp/verification-record.md <<'EOF'
-          # Release Verification Record
-
-          **Date/Time:** $(date -Iseconds)
-          **Release SHA:** $RELEASE_SHA
-          **Target Environment:** ${{ inputs.environment }}
-          **Verification By:** GitHub Actions workflow_dispatch (actor: ${{ github.actor }})
-
-          ## Verification Status: PASSED
-
-          All deployment gates verified:
-          - Release SHA verification: PASSED
-          - Docker Compose configuration validation: PASSED
-          - Deployment script syntax validation: PASSED
-          - All CI checks verified: PASSED
-          - Deployment validation gate verified: PASSED
-          - Compose smoke test verified: PASSED
-
-          ## Important Note
-
-          **This workflow performs verification and validation only.**
-          **No actual Docker Compose deployment was executed.**
-
-          Actual deployment operations must run on the target infrastructure with:
-          - Docker daemon access
-          - Production secrets provisioned
-          - Proper deployment user identity
-          - Network access to registries
-
-          ## Deployment Instructions
-
-          To deploy this release to production infrastructure:
-
-          1. Provision deployment environment:
-             - Linux server with Docker and Docker Compose installed
-             - Directories: /opt/dcim, /var/backups/dcim, /var/log/dcim
-             - Deployment user: dcim-deploy (unprivileged)
-             - Firewall rules: restrict ports to localhost
-
-          2. Provision secrets:
-             export POSTGRES_PASSWORD="..."
-             export DCIM_APP_PASSWORD="..."
-             export JWT_SECRET_KEY="..."
-             export CREDENTIAL_ENCRYPTION_KEY="..."
-
-          3. Execute deployment:
-             cd /opt/dcim
-             bash scripts/deploy-docker-compose.sh $RELEASE_SHA production
-
-          4. Monitor deployment:
-             - Check health: curl http://localhost:8000/api/v1/health/ready
-             - Review logs: docker compose -f docker-compose.production.yml logs -f
-             - Verify services: docker compose -f docker-compose.production.yml ps
-
-          5. If needed, rollback:
-             bash scripts/deploy-docker-compose.sh --rollback
-
-          ## Audit Trail
-
-          - GitHub workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          - Release commit: https://github.com/${{ github.repository }}/commit/$RELEASE_SHA
-          - Workflow: https://github.com/${{ github.repository }}/blob/main/.github/workflows/deploy.yml
-
-          ## Production Requirements
-
-          Before production deployment, ensure:
-          - GitHub environment approval gate configured (production-deployment)
-          - Required reviewers assigned for approval
-          - Production server provisioned and tested
-          - Secrets securely provisioned (not in Git)
-          - Backup strategy verified
-          - Rollback procedure tested
-          - Monitoring and alerting configured
-
-          EOF
-
-          cat /tmp/verification-record.md
-
-      - name: Upload verification record
-        env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
-        uses: actions/upload-artifact@v3
-        with:
-          name: verification-record-${{ env.RELEASE_SHA }}
-          path: /tmp/verification-record.md
-          retention-days: 90
-
-  deployment-summary:
-    name: Workflow Summary
-    runs-on: ubuntu-latest
-    needs: [validate-input, verify-release, staging-deployment, record-deployment]
-    if: always()
-    steps:
-      - name: Summarize release verification and deployment readiness
-        env:
-          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
-        run: |
-          echo "## Release Verification and Deployment Readiness Summary"
-          echo ""
-          echo "**Release SHA:** $RELEASE_SHA"
-          echo "**Target Environment:** ${{ inputs.environment }}"
-          echo "**Verification Status:** PASSED"
-          echo ""
-          echo "### Verification Results"
-          echo "- ✓ Exact SHA verified against GitHub API"
-          echo "- ✓ All CI gates verified PASSED"
-          echo "- ✓ Deployment validation gate verified PASSED"
-          echo "- ✓ Compose smoke test verified PASSED"
-          echo "- ✓ Docker Compose configuration syntax valid"
-          echo "- ✓ Deployment script syntax valid"
-          echo ""
-          echo "### Important: This Workflow is Validation-Only"
-          echo "This GitHub Actions workflow performs verification and validation only."
-          echo "It does NOT execute actual Docker Compose deployment operations."
-          echo ""
-          if [ "${{ inputs.environment }}" = "staging" ]; then
-            echo "### Next Steps for Staging"
-            echo "To deploy to staging infrastructure:"
-            echo "1. SSH to staging server"
-            echo "2. Export secrets (POSTGRES_PASSWORD, DCIM_APP_PASSWORD, JWT_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY)"
-            echo "3. Run: bash /opt/dcim/scripts/deploy-docker-compose.sh $RELEASE_SHA staging"
-            echo "4. Monitor health checks (60-second timeout)"
-            echo "5. Verify services responding at http://localhost:8000/api/v1/health/ready"
-            echo ""
-            echo "### Rollback (If Needed)"
-            echo "If deployment fails or issues found:"
-            echo "1. Run: bash /opt/dcim/scripts/deploy-docker-compose.sh --rollback"
-            echo "2. Verify previous version restored and services healthy"
-          fi
-
-      - name: Report workflow status
-        if: |
-          needs.verify-release.result != 'success' ||
-          needs.staging-deployment.result != 'success'
-        run: |
-          echo "Workflow did not complete successfully"
-          exit 1
+          echo 'Validation status: PASSED' >> "$GITHUB_STEP_SUMMARY"

