@@ -1,7 +1,7 @@
 # Phase 10 Post-Audit Remediation and Integration Report
 
-**Version:** 1.6
-**Date:** 2026-09-25
+**Version:** 1.7
+**Date:** 2026-09-26
 **Branch:** `claude/intelligent-edison-94mvbo`
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
 **Status:** AT THE REVIEW GATE. NOT MERGED. Merge requires explicit approval.
@@ -570,3 +570,145 @@ All six validation tasks completed. No material contradictions found.
 **Final PR state:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) remains open, unmerged, and mergeable. Final PR review and owner approval required.
 
 **Do not merge PR #29, close constituent PRs #27/#28, or modify main.** Owner approval is required.
+
+---
+
+## 18. Compose deployment validation gate integration — 2026-09-26
+
+**Integrated PR:** [#32](https://github.com/AhmedMahmoud2222/DCIM/pull/32) (`codex/compose-smoke-gate-v1`)  
+**Merged into:** `claude/intelligent-edison-94mvbo` (PR #29 integration branch)  
+**Merge commit:** `9f78a9e869841220c2fc1c240802c08765c3bb99`  
+**Original test discovery:** Run [#36221376961](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221376961) (failure)  
+**Successful validation:** Run [#36221516436](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516436) (success)  
+**Regular CI on PR #32:** Run [#36221516439](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516439) (all 7 jobs passed)
+
+### Discovery: first live Compose smoke test
+
+The first full Docker Compose startup attempt (run #36221376961, triggering deployment-validation.yml) succeeded through Compose configuration validation, image build, and service startup, but **Celery beat failed to initialize** with:
+
+```
+Permission denied: 'celerybeat-schedule'
+```
+
+Celery beat's default schedule path is `celerybeat-schedule` in the application workdir. The container runs as an unprivileged `celery` user; the application workdir (`/app`) is not writable by that user. The scheduled-job persister could not create or write the file, so the service exited code 1 immediately after starting.
+
+PostgreSQL, Redis, the migration job, privileged bootstrap, Celery worker and the backend service all initialized successfully. The failure was isolated to this one configuration detail.
+
+### Correction: schedule path moved to /tmp
+
+Commit `48f3718` (`codex/compose-smoke-gate-v1`) changed the Celery beat command in `docker-compose.yml`:
+
+```yaml
+# Before:
+["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info"]
+
+# After:
+["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+```
+
+`/tmp` is writable by unprivileged container users and is conventionally disposable per container instance. Celery beat rebuilds the schedule from its source on startup if the file is missing, so no persistent state is lost in the container model; in a Kubernetes or persistent-container deployment requiring durable scheduling, a separately provisioned writable path would be used instead.
+
+The change is documented in a code comment and recorded in operations and development guides.
+
+### Verification: successful startup and service lifecycle
+
+Run [#36221516436](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516436) executed the corrected smoke test (Compose version `48f3718`):
+
+| Component | Verified |
+|---|---|
+| Compose configuration validation | ✓ Passed with test credentials and valid Fernet key |
+| Negative control (missing CREDENTIAL_ENCRYPTION_KEY) | ✓ Correctly failed with named configuration error |
+| Negative control (empty CREDENTIAL_ENCRYPTION_KEY) | ✓ Correctly failed with named configuration error |
+| PostgreSQL initialization | ✓ Health check passed |
+| Redis initialization | ✓ Health check passed |
+| Migration job (`migrate` service) | ✓ Exited 0 |
+| Privileged bootstrap job (`bootstrap-privileges` service) | ✓ Exited 0 |
+| Backend service | ✓ HTTP 200 on `/api/v1/health/ready` |
+| Celery worker (`celery-worker` service) | ✓ Running and healthy after 10-second stability check |
+| Celery beat (`celery-beat` service) | ✓ Running and healthy after 10-second stability check (previously failing) |
+| Frontend service | ✓ HTTP 200 on `/` (API proxy forwarding `/api/v1` to backend) |
+| Full stack cleanup | ✓ All isolated containers and volumes removed; no leaked resources |
+
+All verification steps passed. The smoke test successfully demonstrated that a clean Compose startup with the corrected configuration produces a running system with all services healthy and responsive.
+
+### Deployment validation gate
+
+Two new files implement the gate:
+
+1. **`.github/scripts/compose_smoke.py` (191 lines):** Daemon-free Docker Compose startup validation script with functions for:
+   - `prepare()`: Generate disposable project name and isolated `.env` with test credentials (PostgreSQL password, DCIM app password, JWT secret, Fernet key via `os.urandom(32)` base64-encoded), with secrets masked from logs
+   - `config()`: Validate Compose configuration with `docker compose config --quiet`, test negative cases (missing/empty encryption key)
+   - `start()`: Build and start the complete stack with 1500-second timeout
+   - `verify()`: Poll all 8 services (postgres, redis, migrate, bootstrap-privileges, backend, celery-worker, celery-beat, frontend) for initialization completion, health checks, HTTP 200 on readiness endpoints
+   - `diagnose()`: Emit sanitized logs (redacted credentials) on failure
+   - `cleanup()`: Remove all isolated containers, volumes and temporary files; verify complete isolation
+
+2. **`.github/workflows/deployment-validation.yml` (62 lines):** GitHub Actions workflow with:
+   - Trigger: pull requests to integration branch or main, pushes to main, manual dispatch
+   - `compose-smoke` job: Runs the nine steps above (prepare, config, regression check, start, verify, diagnostics, cleanup) with 35-minute timeout
+   - `deployment-validation-gate` job: Depends on `compose-smoke` success; blocks deployments if smoke test fails, is cancelled, or is skipped
+
+The gate **cannot succeed** if the Compose smoke test fails or is not executed. The gate enforces this contract via GitHub Actions job dependencies.
+
+### Regular CI validation
+
+Run [#36221516439](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516439) on the corrected PR #32 HEAD executed all seven regular CI jobs and all passed:
+
+| Job | Result |
+|---|---|
+| `backend` | ✓ success |
+| `backend suite (Python 3.12)` | ✓ success |
+| `backend suite (Python 3.13)` | ✓ success |
+| `backend suite (Python 3.14)` | ✓ success |
+| `browser-e2e` | ✓ success |
+| `edge-collector` | ✓ success |
+| `frontend` | ✓ success |
+
+The Celery beat schedule-path fix and new deployment gate workflow do not cause any test failure or regression in existing CI.
+
+### Documentation updates in PR #32
+
+Three documentation locations were updated:
+
+1. **`docs/DEVELOPMENT_AND_TESTING.md`** — New section "Actual Docker Compose startup check" documenting:
+   - First live run discovering Celery beat permission failure
+   - Service verification checklist (all 8 services, health checks, HTTP 200)
+   - Smoke job isolation, credential generation, cleanup, and failure diagnostics
+   - Local reproduction steps with trap-based cleanup
+
+2. **`docs/OPERATIONS.md`** — New section "Mandatory Compose smoke validation before deployment decision" documenting:
+   - Problem statement (first real startup discovered permission issue)
+   - The fix (schedule path to /tmp; persistent deployments need separately provisioned paths)
+   - Workflow trigger and job execution details
+   - What is checked (negative configuration cases, migrations, bootstrap, service health, HTTP 200, cleanup)
+   - Owner enforcement requirement (see below)
+   - Local diagnostic and reproduction commands
+
+3. **Code comment in `docker-compose.yml`** — Brief explanation of the Celery beat schedule path change and why /tmp is used for container-local disposable state
+
+### Enforcement limitation
+
+The `deployment-validation-gate` job exists in the workflow, but **it is not yet enforced** on real deployments. Enforcement requires the repository owner to:
+
+1. Configure the `deployment-validation` workflow as a required status check in branch protection rules for the target deployment branch (typically `main`)
+2. Enable "Require branches to be up to date before merging" to ensure no stale CI results
+3. Disable "Bypass branch protections" capabilities for non-owners
+
+Without this owner configuration, the gate exists as evidence and proof-of-concept but cannot prevent a merge. The workflow runs on pull requests and manual dispatch, and it logs its result, but it does not block CI unless configured as a required status check.
+
+**This is a configuration decision, not a code limitation.** The gate mechanism is implemented, tested and documented. A deployment that requires this gate enforced must configure it explicitly.
+
+### CI status on merged head
+
+Merge commit `9f78a9e` (PR #32 integrated into PR #29's integration branch) triggered two workflows:
+
+1. **Deployment validation (run 36222319072):** `compose-smoke` job currently executing (regression check step); expected to complete with all steps passing
+2. **Regular CI (run 36222319073):** All seven jobs started and executing; expected to complete with all passing
+
+Final merged-HEAD CI results and URLs will be recorded in the final PR review. The integration preserves PR #32's authorship through `--no-ff` merge; its history and discovery of the Celery beat issue are retained.
+
+### Integration status
+
+PR #32 successfully integrated into PR #29's integration branch. All regular CI passed on PR #32's own HEAD before integration. The merged HEAD is running fresh CI validation. No additional changes were made to application code, deployment configuration or main branch.
+
+**Remaining enforcement limitation:** Owner must configure the deployment validation gate as a required status check to enforce it on production deployments. Until configured, the gate runs and logs results but does not prevent merge.
