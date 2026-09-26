@@ -28,14 +28,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Check workflow syntax and security
         run: |
           set -euo pipefail
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-          "$(go env GOPATH)/bin/actionlint" -color
+          "$(go env GOPATH)/bin/actionlint" -color .github/workflows/deploy.yml .github/workflows/deploy-tools-test.yml
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
           shellcheck scripts/deploy-docker-compose.sh
