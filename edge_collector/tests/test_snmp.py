@@ -47,23 +47,12 @@ def wire_agent(*, community: bytes = b"private", value_tag: int = 0x43, value: b
 
 
 def _response_for(request: bytes, *, community: bytes, value_tag: int, value: bytes) -> bytes:
-    pdu_idx = request.find(b"\xa0")
-    if pdu_idx != -1:
-        idx = pdu_idx + 1
-        if request[idx] < 0x80:
-            idx += 1
-        else:
-            idx += 1 + (request[idx] & 0x7F)
-        int_len = request[idx + 1]
-        request_id_tlv = request[idx : idx + 2 + int_len]
-    else:
-        request_id_tlv = b"\x02\x04" + request[18:22]
-
+    request_id = request[18:22]  # fixed-size request ID emitted by the edge collector
     oid = bytes.fromhex("2b06010201010300")
     varbind = b"\x30" + _length(len(b"\x06" + _length(len(oid)) + oid + bytes([value_tag]) + _length(len(value)) + value))
     varbind += b"\x06" + _length(len(oid)) + oid + bytes([value_tag]) + _length(len(value)) + value
     varbinds = b"\x30" + _length(len(varbind)) + varbind
-    pdu_body = request_id_tlv + b"\x02\x01\x00\x02\x01\x00" + varbinds
+    pdu_body = b"\x02\x04" + request_id + b"\x02\x01\x00\x02\x01\x00" + varbinds
     message = b"\x02\x01\x01\x04" + _length(len(community)) + community + b"\xa2" + _length(len(pdu_body)) + pdu_body
     return b"\x30" + _length(len(message)) + message
 
