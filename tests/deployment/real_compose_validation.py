@@ -203,7 +203,7 @@ exec /usr/bin/docker "$@"
         assert baseline.count(anchor)==1, 'failure fixture no longer matches production Compose'
         path.write_text(baseline.replace(anchor,changed))
         git(self.repo,'add','docker-compose.production.yml')
-        git(self.repo,'commit','-qm','test-only '+kind+' failure fixture')
+        git(self.repo,'commit','--allow-empty','-qm','test-only '+kind+' failure fixture')
         self.latest=git(self.repo,'rev-parse','HEAD')
         git(self.repo,'push','-q','origin','main')
         return self.latest
