@@ -1,1 +1,187 @@
-IyBQaGFzZSAxMSBFZGdlIENvbGxlY3RvciBTZWN1cml0eSBUaHJlYXQgTW9kZWwgJiBSaXNrIEFzc2Vzc21lbnQKCj4gKipTdGF0dXM6KiogUmVjb25jaWxlZCBhbmQgcHVibGlzaGVkIGFnYWluc3QgY3VycmVudCBgbWFpbmAgcG9zdC1QUiAjMjkuIFNlY3Rpb25zIDEtNCBiZWxvdyBhcmUgSnVsZXMnIG9yaWdpbmFsIFBoYXNlIDExIGFzc2Vzc21lbnQsIHVuY2hhbmdlZCBmcm9tIFBSICMyOCBhdCBjb21taXQgYDRmOWU2NDZiYTdkMzY3ZTNlMmRiNTI1ZmZiZmE0YTdkZDY3NTBmMmJgLiBSZWFkIHRoZSBkYXRlZCDCpzUgYWRkZW5kdW0gZm9yIHdoYXQgaGFzIGFuZCBoYXMgbm90IGJlZW4gcmUtdmVyaWZpZWQgc2luY2UuIFRoaXMgYWRkZW5kdW0gZG9lcyBub3QgcmV3cml0ZSBKdWxlcycgdGVjaG5pY2FsIGNvbmNsdXNpb25zLgoKKipPcmlnaW5hbCBCYXNlbGluZSBDb21taXQgU0hBKio6IGBkOTY2NzZjMDUzNDM5N2M3MzIwZjA5Y2EzZmI0YzVjM2Q3MmY4NmJhYAoqKlJlcG9zaXRvcnkqKjogYEFobWVkTWFobW91ZDIyMjIvRENJTWAKKipUYXJnZXQgQnJhbmNoKio6IGBtYWluYAoqKkRvY3VtZW50IFNjb3BlKio6IFJlZnJlc2hlZCwgZXZpZGVuY2UtYmFzZWQgc2VjdXJpdHkgdGhyZWF0IG1vZGVsIGFuZCByaXNrIGFzc2Vzc21lbnQgb2YgdGhlIEVkZ2UgQ29sbGVjdG9yIHJ1bnRpbWUgKGBlZGdlX2NvbGxlY3Rvci9gKSBhbmQgQ2VudHJhbCBEQ0lNIGNvbGxlY3RvciB0cnVzdCBib3VuZGFyeSAoYGFwcC9hcHBsaWNhdGlvbi9jb2xsZWN0b3JfYXV0aC5weWAsIGBhcHAvYXBpL3YxL2NvbGxlY3RvcnMucHlgLCBgYXBwL2NvcmUvc2VjcmV0cy5weWAsIGBhcHAvYXBwbGljYXRpb24vZHJpdmVycy9yZXN0LnB5YCkuCgpUaGlzIGlzIGEgc2VwYXJhdGUgUGhhc2UgMTEgKEVkZ2UgQ29sbGVjdG9yIC8gdHJ1c3QtYm91bmRhcnkpIHNlY3VyaXR5IGFzc2Vzc21lbnQsIGRpc3RpbmN0IGZyb20gdGhlIFBoYXNlIDEwIGZ1bmN0aW9uYWwvYXVkaXQgd29yayB0cmFja2VkIGluIGlzc3VlcyBbIzI0XShodHRwczovL2dpdGh1Yi5jb20vQWhtZWRNYWhtb3VkMjIyMi9EQ0lNL2lzc3Vlcy8yNCksIFsjMjVdKGh0dHBzOi8vZ2l0aHViLmNvbS9BaG1lZE1haG1vdWQyMjIyL0RDSU0vaXNzdWVzLzI1KSBhbmQgWyMyNl0oaHR0cHM6Ly9naXRodWIuY29tL0FobWVkTWFobW91ZDIyMjIvRENJTS9pc3N1ZXMvMjYpIChhbGwgY2xvc2VkKSBhbmQgZG9jdW1lbnRlZCBpbiBgUEhBU0UxMF9JTkRFUEVOREVOVF9BVURJVF9SRVBPUlQubWRgIC8gYGRvY3MvQVVESVRfU1RBVFVTLm1kYC4gRG8gbm90IGNvbmZsYXRlIHRoZSB0d28uCgotLS0KCiMjIEV4ZWN1dGl2ZSBTdW1tYXJ5CgpUaGlzIGRvY3VtZW50IHByZXNlbnRzIGFuIHVwZGF0ZWQgc2VjdXJpdHkgdGhyZWF0IG1vZGVsIGV2YWx1YXRpbmcgdGhlIEVkZ2UgQ29sbGVjdG9yIHJ1bnRpbWUsIHByb3RvY29sIGRyaXZlcnMsIGxvY2FsIFNRTGl0ZSBzdG9yYWdlLCBITUFDLVNIQTI1NiBtYWNoaW5lIGF1dGhlbnRpY2F0aW9uLCBjcmVkZW50aWFsIGVuY3J5cHRpb24sIGFuZCBtdWx0aS1zaXRlIGlzb2xhdGlvbiBib3VuZGFyaWVzIGFnYWluc3QgYG1haW5gIGF0IGJhc2VsaW5lIGNvbW1pdCBgZDk2Njc2YzA1MzQzOTdjNzMyMGYwOWNhM2ZiNGM1YzNkNzJmODZiYWAuCgpBbGwgZmluZGluZ3Mgc3RyaWN0bHkgZGlzdGluZ3Vpc2ggKipjb25maXJtZWQgY29kZSBmYWN0cyBpbiBgbWFpbmAqKiwgKipkZXBsb3ltZW50LWRlcGVuZGVudCByaXNrcyoqLCAqKmFyY2hpdGVjdHVyYWwgbGltaXRhdGlvbnMqKiwgYW5kICoqaGFyZGVuaW5nIHJlY29tbWVuZGF0aW9ucyoqLiBGaW5kaW5ncyBmcm9tIGVhcmxpZXIgZHJhZnRzIGhhdmUgYmVlbiByZS1ldmFsdWF0ZWQgYW5kIGNvcnJlY3RlZCBvciB3aXRoZHJhd24gd2hlcmUgc291cmNlIGNvZGUgaW5zcGVjdGlvbiBwcm92ZWQgZWZmZWN0aXZlIGV4aXN0aW5nIG1pdGlnYXRpb25zLgoKLS0tCgojIyAxLiBUaHJlYXQgVGF4b25vbXkgJiBBc3Nlc3NtZW50IE1ldGhvZG9sb2d5CgpUaGUgc2VjdXJpdHkgYXNzZXNzbWVudCBjbGFzc2lmaWVzIGZpbmRpbmdzIGludG8gZm91ciBkaXN0aW5jdCBjYXRlZ29yaWVzOgoxLiAqKkNvbmZpcm1lZCBWdWxuZXJhYmlsaXR5Kio6IEEgcmVwcm9kdWNpYmxlIGNvZGUgZGVmZWN0IHRoYXQgdmlvbGF0ZXMgYSBzdGF0ZWQgc2VjdXJpdHkgaW52YXJpYW50IG9yIGF1dGhvcml6YXRpb24gYm91bmRhcnkuCjIuICoqRGVwbG95bWVudC1EZXBlbmRlbnQgUmlzayoqOiBBIHNlY3VyaXR5IHBvc3R1cmUgZmFjdG9yIHRoYXQgcmVsaWVzIG9uIGVudmlyb25tZW50IGNvbmZpZ3VyYXRpb24gKGUuZy4gaG9zdCBPUyBwZXJtaXNzaW9ucywgS01TIGludGVncmF0aW9uLCBuZXR3b3JrIHNlZ21lbnRhdGlvbikuCjMuICoqQXJjaGl0ZWN0dXJhbCBMaW1pdGF0aW9uKio6IEFuIGluaGVyZW50IGNvbnN0cmFpbnQgb2YgYSBzdXBwb3J0ZWQgcHJvdG9jb2wgb3Igc3RhbmRhcmQgKGUuZy4gU05NUCB2MmMgY2xlYXJ0ZXh0IHRyYW5zbWlzc2lvbikuCjQuICoqSGFyZGVuaW5nIFJlY29tbWVuZGF0aW9uKio6IEFuIG9wdGlvbmFsIHBlcmZvcm1hbmNlLCBoeWdpZW5lLCBvciBkZWZlbnNlLWluLWRlcHRoIGVuaGFuY2VtZW50LgoKLS0tCgojIyAyLiBSZS1ldmFsdWF0ZWQgRmluZGluZ3MgJiBTZWN1cml0eSBBbmFseXNpcwoKIyMjIDIuMSBTRUMtMDE6IFRlbGVtZXRyeSBCYXRjaCBUcmFuc2FjdGlvbiBCb3VuZGFyeSBCZWhhdmlvcgotICoqQ2xhc3NpZmljYXRpb24qKjogKipIYXJkZW5pbmcgUmVjb21tZW5kYXRpb24qKiAoUmVjbGFzc2lmaWVkIGZyb20gU2VjdXJpdHkgRGVmZWN0KQotICoqQWZmZWN0ZWQgQ29tcG9uZW50Kio6IGBiYWNrZW5kL2FwcC9hcGkvdjEvdGVsZW1ldHJ5LnB5YCwgYGluZ2VzdF9jb2xsZWN0b3JfdGVsZW1ldHJ5KClgCi0gKipTZXZlcml0eSoqOiAqKkxPVyoqCi0gKipBdHRhY2sgUHJlY29uZGl0aW9ucyoqOiBOL0EgKEZ1bmN0aW9uYWwgZXJyb3IgaGFuZGxpbmcgYmVoYXZpb3IpLgotICoqVGVjaG5pY2FsIEV2aWRlbmNlKio6CiAgU291cmNlIGNvZGUgcmV2aWV3IG9mIGBpbmdlc3RfY29sbGVjdG9yX3RlbGVtZXRyeSgpYCBjb25maXJtcyB0aGF0IGhhbmRsZWQgcGVyLXJlY29yZCByZWplY3Rpb25zIChgYXNzaWdubWVudC5jb2xsZWN0b3JfaWQgIT0gY29sbGVjdG9yLmlkYCBhbmQgYE1ldHJpY01hcHBpbmdOb3RGb3VuZGApIHByb2R1Y2Ugc3RydWN0dXJlZCBBQ0sgcmVzdWx0cyAoYE5PVF9BU1NJR05FRGAgYW5kIGBVTktOT1dOX01FVFJJQ19NQVBQSU5HYCkgd2l0aG91dCByYWlzaW5nIGV4Y2VwdGlvbnMuIEFuIHVuaGFuZGxlZCBleGNlcHRpb24gKGUuZy4gREIgY29ubmVjdGlvbiBsb3NzKSB0cmlnZ2VycyBhIHN0YW5kYXJkIEZhc3RBUEkgZW5kcG9pbnQgdHJhbnNhY3Rpb24gcm9sbGJhY2suCi0gKipFeGlzdGluZyBNaXRpZ2F0aW9uKio6CiAgSGFuZGxlZCBkb21haW4gZXJyb3JzIHByb2R1Y2Ugc3RydWN0dXJlZCBwZXItcmVjb3JkIEFDSyByZWplY3Rpb25zLCBhbGxvd2luZyB0aGUgZWRnZSBjbGllbnQgdG8gcHJvY2VzcyBwYXJ0aWFsIGFja25vd2xlZGdlbWVudHMuCi0gKipSZXNpZHVhbCBSaXNrKio6CiAgVW5leHBlY3RlZCBkYXRhYmFzZSBmYWlsdXJlcyBvbiBhbiBpbnRlcm1lZGlhdGUgcmVjb3JkIGNhdXNlIHRoZSBmdWxsIGVuZHBvaW50IHRyYW5zYWN0aW9uIHRvIGFib3J0LCBwcm9tcHRpbmcgZWRnZSBjbGllbnQgcmV0cnkuCi0gKipUZXN0YWJsZSBSZW1lZGlhdGlvbiBSZWNvbW1lbmRhdGlvbioqOgogIE9wdGlvbmFsbHkgd3JhcCBlYWNoIHJlYWRpbmcgaW5nZXN0aW9uIGluIGBpbmdlc3RfY29sbGVjdG9yX3RlbGVtZXRyeSgpYCB3aXRoaW4gYW4gYGFzeW5jIHdpdGggZGIuYmVnaW5fbmVzdGVkKCk6YCBzYXZlcG9pbnQgZm9yIGV4dHJhIGdyYW51bGFyaXR5IGR1cmluZyBEQi1sZXZlbCBjb25zdHJhaW50cy4KCi0tLQoKIyMjIDIuMiBTRUMtMDI6IFN0YXRpYyBGZXJuZXQgRW5jcnlwdGlvbiBLZXkgJiBLTVMgTGlmZWN5Y2xlCi0gKipDbGFzc2lmaWNhdGlvbioqOiAqKkRlcGxveW1lbnQtRGVwZW5kZW50IFJpc2sgLyBBcmNoaXRlY3R1cmFsIExpbWl0YXRpb24qKiAoUmVjbGFzc2lmaWVkIGZyb20gSGlnaCBTZWN1cml0eSBEZWZlY3QpCi0gKipBZmZlY3RlZCBDb21wb25lbnQqKjogYGJhY2tlbmQvYXBwL2NvcmUvc2VjcmV0cy5weWAgKGBlbmNyeXB0X3NlY3JldCgpYCwgYGRlY3J5cHRfc2VjcmV0KClgKQotICoqU2V2ZXJpdHkqKjogKipNRURJVU0qKgotICoqQXR0YWNrIFByZWNvbmRpdGlvbnMqKjogQXR0YWNrZXIgYWNjZXNzZXMgdGhlIGhvc3QgZW52aXJvbm1lbnQgZmlsZSAoYC5lbnZgKSBvciBwcm9jZXNzIGVudmlyb25tZW50IHZhcmlhYmxlcyBjb250YWluaW5nIGBDUkVERU5USUFMX0VOQ1JZUFRJT05fS0VZYC4KLSAqKlRlY2huaWNhbCBFdmlkZW5jZSoqOgogIGBzZWNyZXRzLnB5YCB1c2VzIGBGZXJuZXRgIChBRVMtMTI4LUNCQyArIEhNQUMtU0hBMjU2KSB0byByZXZlcnNpYmx5IGVuY3J5cHQgY3JlZGVudGlhbHMgKGBJbnRlZ3JhdGlvbi5jcmVkZW50aWFsX2NpcGhlcnRleHRgIGFuZCBgQ29sbGVjdG9yLnNlY3JldF9jaXBoZXJ0ZXh0YCkuIEtleSBsb2FkaW5nIHJlbGllcyBvbiBgc2V0dGluZ3MuY3JlZGVudGlhbF9lbmNyeXB0aW9uX2tleWAuIEFzIGRvY3VtZW50ZWQgaW4gYHNlY3JldHMucHlgIG1vZHVsZSBkb2NzdHJpbmdzLCB0aGlzIGlzIGFuIGludGVudGlvbmFsIGZvdW5kYXRpb24gYXJjaGl0ZWN0dXJlIHByaW1pdGl2ZSwgd2l0aCBLTVMgaW50ZWdyYXRpb24gZXhwbGljaXRseSBwbGFubmVkIGZvciBwcm9kdWN0aW9uIGRlcGxveW1lbnQuCi0gKipFeGlzdGluZyBNaXRpZ2F0aW9uKio6CiAgQ3JlZGVudGlhbHMgYXJlIG5ldmVyIHN0b3JlZCBpbiBwbGFpbnRleHQgaW4gUG9zdGdyZVNRTC4gUmF3IGNvbGxlY3RvciBzZWNyZXRzIGFyZSByZXR1cm5lZCBleGFjdGx5IG9uY2UgdXBvbiByZWdpc3RyYXRpb24gKGBDb2xsZWN0b3JSZWdpc3Rlck91dGApLgotICoqUmVzaWR1YWwgUmlzayoqOgogIFN0YXRpYyBrZXkgZGlzY2xvc3VyZSBpbiB0aGUgZW52aXJvbm1lbnQgY29tcHJvbWlzZXMgYXQtcmVzdCBjb25maWRlbnRpYWxpdHkgb2YgaW50ZWdyYXRpb24gY3JlZGVudGlhbHMgYWNyb3NzIHNpdGVzLgotICoqVGVzdGFibGUgUmVtZWRpYXRpb24gUmVjb21tZW5kYXRpb24qKjoKICBJbXBsZW1lbnQga2V5LXZlcnNpb25pbmcgaGVhZGVyIHRhZ3MgKGB2MTouLi5gKSBpbiBgc2VjcmV0cy5weWAgdG8gc3VwcG9ydCBrZXkgcm90YXRpb24sIGFuZCBpbnRlZ3JhdGUgYW4gZXh0ZXJuYWwgS01TIC8gVmF1bHQgZW52ZWxvcGUgZW5jcnlwdGlvbiBwcm92aWRlciBmb3IgcHJvZHVjdGlvbiBkZXBsb3ltZW50cy4KCi0tLQoKIyMjIDIuMyBTRUMtMDM6IENlbnRyYWwgUkVTVCBEcml2ZXIgTmV0d29yayBQb2xpY3kgVmFsaWRhdGlvbgotICoqQ2xhc3NpZmljYXRpb24qKjogKipXSVRIRFJBV04gKEZ1bGx5IE1pdGlnYXRlZCBpbiBNYWluKSoqCi0gKipBZmZlY3RlZCBDb21wb25lbnQqKjogYGJhY2tlbmQvYXBwL2FwcGxpY2F0aW9uL2RyaXZlcnMvcmVzdC5weWAsIGBSRVNURHJpdmVyLmNvbm5lY3QoKWAKLSAqKlNldmVyaXR5Kio6ICoqTi9BKioKLSAqKlRlY2huaWNhbCBFdmlkZW5jZSAmIFJlLWV2YWx1YXRpb24qKjoKICBEaXJlY3QgaW5zcGVjdGlvbiBvZiBgYmFja2VuZC9hcHAvYXBwbGljYXRpb24vZHJpdmVycy9yZXN0LnB5YCBjb25maXJtcyB0aGF0IGBSRVNURHJpdmVyLmNvbm5lY3QoKWAgZXhwbGljaXRseSBleGVjdXRlcyBgdGFyZ2V0ID0gYXdhaXQgdmFsaWRhdGVfdGFyZ2V0KHNjaGVtZT1zY2hlbWUsIGhvc3Q9dGFyZ2V0X2hvc3QsIHBvcnQ9dGFyZ2V0X3BvcnQsIG1ldGhvZD1tZXRob2QsIHBvbGljeT1zZWxmLm5ldHdvcmtfcG9saWN5KWAgYmVmb3JlIG1ha2luZyBhbnkgSFRUUCByZXF1ZXN0LiBgbmV0d29ya19wb2xpY3kucHlgIHZhbGlkYXRlcyB0YXJnZXQgaG9zdHMgYWdhaW5zdCBleHBsaWNpdCBJUC9zdWJuZXQgYWxsb3dsaXN0cywgYmxvY2tzIGxvb3BiYWNrIGFuZCByZXNlcnZlZCByYW5nZXMgYnkgZGVmYXVsdCAoYGFsbG93X2xvb3BiYWNrPUZhbHNlYCksIGRpc2FibGVzIEhUVFAgcmVkaXJlY3RzIChgZm9sbG93X3JlZGlyZWN0cz1GYWxzZWApLCBhbmQgaWdub3JlcyBhbWJpZW50IEhUVFAgcHJveGllcyAoYHRydXN0X2Vudj1GYWxzZWApLgotICoqQ29uY2x1c2lvbioqOgogICoqRmluZGluZyBTRUMtMDMgaXMgd2l0aGRyYXduLioqIFRoZSBjZW50cmFsIFJFU1QgZHJpdmVyIGFscmVhZHkgZW5mb3JjZXMgc3RyaWN0IG5ldHdvcmsgcG9saWN5IHRhcmdldCB2YWxpZGF0aW9uLgoKLS0tCgojIyMgMi40IFNFQy0wNDogU05NUCB2MmMgQ2xlYXJ0ZXh0IFRyYW5zbWlzc2lvbgotICoqQ2xhc3NpZmljYXRpb24qKjogKipBcmNoaXRlY3R1cmFsIExpbWl0YXRpb24qKgotICoqQWZmZWN0ZWQgQ29tcG9uZW50Kio6IGBlZGdlX2NvbGxlY3Rvci9zbm1wLnB5YCwgYFNOTVB2MmNDb2xsZWN0b3IuZ2V0KClgCi0gKipTZXZlcml0eSoqOiAqKk1FRElVTSoqCi0gKipBdHRhY2sgUHJlY29uZGl0aW9ucyoqOiBBdHRhY2tlciBoYXMgcGFzc2l2ZSBuZXR3b3JrIHBhY2tldCBjYXB0dXJpbmcgY2FwYWJpbGl0eSBvbiB0aGUgbG9jYWwgZGF0YSBjZW50ZXIgbmV0d29yayBzZWdtZW50IGJldHdlZW4gdGhlIEVkZ2UgQ29sbGVjdG9yIGFuZCBtb25pdG9yZWQgbmV0d29yayBkZXZpY2VzLgotICoqVGVjaG5pY2FsIEV2aWRlbmNlKio6CiAgU3RhbmRhcmQgU05NUCB2MmMgR0VUIHJlcXVlc3RzIHRyYW5zbWl0IGNvbW11bml0eSBzdHJpbmdzIGluIHBsYWludGV4dCBpbnNpZGUgQkVSIGhlYWRlcnMgb3ZlciBVRFAgcG9ydCAxNjEuCi0gKipFeGlzdGluZyBNaXRpZ2F0aW9uKio6CiAgU05NUCBjb21tdW5pdHkgc3RyaW5ncyBhcmUgZW5jcnlwdGVkIGF0IHJlc3Qgb24gY2VudHJhbCAoYGNyZWRlbnRpYWxfY2lwaGVydGV4dGApLCByZWRhY3RlZCBmcm9tIGxvZ3MsIGFuZCB0YXJnZXQgaG9zdHMgYXJlIHJlc3RyaWN0ZWQgdmlhIGBTTk1QVGFyZ2V0UG9saWN5YC4KLSAqKlJlc2lkdWFsIFJpc2sqKjoKICBPbi1wYXRoIGVhdmVzZHJvcHBlcnMgY2FuIGNhcHR1cmUgcmVhZC1vbmx5IFNOTVAgdjJjIGNvbW11bml0eSBzdHJpbmdzIG9uIHVuZW5jcnlwdGVkIGxvY2FsIExBTiBzZWdtZW50cy4KLSAqKlRlc3RhYmxlIFJlbWVkaWF0aW9uIFJlY29tbWVuZGF0aW9uKio6CiAgSW1wbGVtZW50IFNOTVB2MyBwcm90b2NvbCBzdXBwb3J0IHdpdGggVVNNIHVzZXIgYXV0aGVudGljYXRpb24gYW5kIHByaXZhY3kgZW5jcnlwdGlvbiAoYGF1dGhQcml2YCkuCgotLS0KCiMjIyAyLjUgU0VDLTA1OiBOb25jZSBhbmQgSGVhcnRiZWF0IFJldGVudGlvbiBMaWZlY3ljbGUKLSAqKkNsYXNzaWZpY2F0aW9uKio6ICoqSGFyZGVuaW5nIFJlY29tbWVuZGF0aW9uKioKLSAqKkFmZmVjdGVkIENvbXBvbmVudCoqOiBgYmFja2VuZC9hcHAvZG9tYWluL2ludGVncmF0aW9uL21vZGVscy5weWAgKGBDb2xsZWN0b3JSZXF1ZXN0Tm9uY2VgLCBgQ29sbGVjdG9ySGVhcnRiZWF0YCkKLSAqKlNldmVyaXR5Kio6ICoqTE9XKioKLSAqKkF0dGFjayBQcmVjb25kaXRpb25zKio6IExvbmctcnVubmluZyBwcm9kdWN0aW9uIGRlcGxveW1lbnQgd2l0aCBjb250aW51b3VzIGNvbGxlY3RvciBhY3Rpdml0eS4KLSAqKlRlY2huaWNhbCBFdmlkZW5jZSoqOgogIEhNQUMgbm9uY2VzIGFyZSBzdG9yZWQgaW4gYENvbGxlY3RvclJlcXVlc3ROb25jZWAgdG8gZW5mb3JjZSBzaW5nbGUtdXNlIHJlcGxheSBwcm90ZWN0aW9uLiBIZWFydGJlYXRzIGFyZSBpbnNlcnRlZCBpbnRvIGBDb2xsZWN0b3JIZWFydGJlYXRgLiBJbiBgbWFpbmAsIHRoZXNlIHRhYmxlcyBncm93IG1vbm90b25pY2FsbHkuCi0gKipFeGlzdGluZyBNaXRpZ2F0aW9uKio6CiAgQ29tcG9zaXRlIHVuaXF1ZSBpbmRleCBgKGNvbGxlY3Rvcl9pZCwgbm9uY2UpYCBlbnN1cmVzICRPKDEpJCBCLXRyZWUgY2xhaW0gbG9va3Vwcy4KLSAqKlJlc2lkdWFsIFJpc2sqKjoKICBEYXRhYmFzZSBzdG9yYWdlIGZvb3RwcmludCBpbmNyZWFzZXMgZ3JhZHVhbGx5IG92ZXIgbG9uZyBvcGVyYXRpb25hbCBwZXJpb2RzLgotICoqVGVzdGFibGUgUmVtZWRpYXRpb24gUmVjb21tZW5kYXRpb24qKjoKICBJbXBsZW1lbnQgYSBzY2hlZHVsZWQgQ2VsZXJ5IG1haW50ZW5hbmNlIHRhc2sgdG8gcHJ1bmUgbm9uY2VzIG9sZGVyIHRoYW4gMSBob3VyIGFuZCB0cnVuY2F0ZSBoZWFydGJlYXQgcmVjb3JkcyBvbGRlciB0aGFuIDMwIGRheXMuCgotLS0KCiMjIyAyLjYgU0VDLTA2OiBFZGdlIENvbGxlY3RvciBVbmVuY3J5cHRlZCBTUUxpdGUgU3RvcmFnZQotICoqQ2xhc3NpZmljYXRpb24qKjogKipEZXBsb3ltZW50LURlcGVuZGVudCBSaXNrKioKLSAqKkFmZmVjdGVkIENvbXBvbmVudCoqOiBgZWRnZV9jb2xsZWN0b3IvcXVldWUucHlgIChgU1FMaXRlUXVldWVgKSwgYGVkZ2VfY29sbGVjdG9yL2NvbmZpZy5weWAKLSAqKlNldmVyaXR5Kio6ICoqTUVESVVNKioKLSAqKkF0dGFjayBQcmVjb25kaXRpb25zKio6IEF0dGFja2VyIG9idGFpbnMgZGlyZWN0IHBoeXNpY2FsIG9yIGhvc3QgT1MgZGlzayByZWFkIGFjY2VzcyB0byB0aGUgRWRnZSBDb2xsZWN0b3IgYXBwbGlhbmNlLgotICoqVGVjaG5pY2FsIEV2aWRlbmNlKio6CiAgYFNRTGl0ZVF1ZXVlYCBzdG9yZXMgdW5hY2tub3dsZWRnZWQgb2JzZXJ2YXRpb25zIGluIGEgc3RhbmRhcmQgU1FMaXRlIGRhdGFiYXNlIGZpbGUgaW4gV0FMIG1vZGUgKGBxdWV1ZS5kYmApLiBSYXcgYXR0cmlidXRlcyBhbmQgcGF5bG9hZCBKU09OIGFyZSBzdG9yZWQgdW5lbmNyeXB0ZWQgYXQgcmVzdC4KLSAqKkV4aXN0aW5nIE1pdGlnYXRpb24qKjoKICBIb3N0IE9TIGZpbGUgcGVybWlzc2lvbnMgcmVzdHJpY3QgZGlyZWN0b3J5IGFjY2VzcyAoYDA3MDBgKS4KLSAqKlJlc2lkdWFsIFJpc2sqKjoKICBVbmF1dGhvcml6ZWQgcGh5c2ljYWwgZGlzayBhY2Nlc3Mgb3Igc25hcHNob3QgZXh0cmFjdGlvbiBleHBvc2VzIHVuYWNrbm93bGVkZ2VkIHNlbnNvciByZWFkaW5ncy4KLSAqKlRlc3RhYmxlIFJlbWVkaWF0aW9uIFJlY29tbWVuZGF0aW9uKio6CiAgVXRpbGl6ZSBPUy1sZXZlbCB0cmFuc3BhcmVudCBkaXNrIGVuY3J5cHRpb24gKExVS1MvZG0tY3J5cHQpIG9yIFNRTENpcGhlciBmb3IgZWRnZSBhcHBsaWFuY2UgZGVwbG95bWVudHMuCgotLS0KCiMjIyAyLjcgU0VDLTA3OiBJbmdlc3QgRXJyb3IgTG9nZ2luZyBTYW5pdGl6YXRpb24KLSAqKkNsYXNzaWZpY2F0aW9uKio6ICoqSGFyZGVuaW5nIFJlY29tbWVuZGF0aW9uKioKLSAqKkFmZmVjdGVkIENvbXBvbmVudCoqOiBgYmFja2VuZC9hcHAvYXBpL3YxL2NvbGxlY3RvcnMucHlgLCBgaW5nZXN0X2JhdGNoKClgCi0gKipTZXZlcml0eSoqOiAqKklORk9STUFUSU9OQUwqKgotICoqQXR0YWNrIFByZWNvbmRpdGlvbnMqKjogQW4gZWRnZSBjb2xsZWN0b3Igc3VibWl0cyBtYWxmb3JtZWQgcGF5bG9hZCBzdHJ1Y3R1cmVzIHRoYXQgY2F1c2UgdW5leHBlY3RlZCBiYWNrZW5kIGV4Y2VwdGlvbnMuCi0gKipUZWNobmljYWwgRXZpZGVuY2UqKjoKICBgaW5nZXN0X2JhdGNoKClgIGxvZ3MgYGVycm9yPXN0cihleGMpYCBvbiB1bmhhbmRsZWQgZXhjZXB0aW9ucy4gUmVzcG9uc2UgbWVzc2FnZXMgcmV0dXJuZWQgdG8gY29sbGVjdG9ycyBhcmUgc2FuaXRpemVkIChgZXJyb3JfY29kZT0iSU5URVJOQUxfUFJPQ0VTU0lOR19FUlJPUiJgKS4KLSAqKkV4aXN0aW5nIE1pdGlnYXRpb24qKjoKICBgc3RydWN0bG9nYCBwcm9jZXNzb3IgYF9yZWRhY3Rfc2Vuc2l0aXZlYCBzY3J1YnMgc3RhbmRhcmQgc2Vuc2l0aXZlIGtleXMgKGBwYXNzd29yZGAsIGBzZWNyZXRgLCBgY3JlZGVudGlhbGApLgotICoqUmVzaWR1YWwgUmlzayoqOgogIERhdGFiYXNlIGNvbnN0cmFpbnQgZXhjZXB0aW9uIHRleHQgbG9nZ2VkIG9uIGNlbnRyYWwgbWF5IGNvbnRhaW4gdW5oYW5kbGVkIGF0dHJpYnV0ZSB2YWx1ZXMuCi0gKipUZXN0YWJsZSBSZW1lZGlhdGlvbiBSZWNvbW1lbmRhdGlvbioqOgogIFNhbml0aXplIHJhdyBleGNlcHRpb24gbWVzc2FnZXMgcHJpb3IgdG8gbG9nZ2luZy4KCi0tLQoKIyMgMy4gUHJpb3JpdGl6ZWQgUmVtZWRpYXRpb24gQmFja2xvZwoKfCBSYW5rIHwgRmluZGluZyBJRCB8IFRpdGxlIHwgQ2F0ZWdvcnkgfCBTZXZlcml0eSB8IFRhcmdldGVkIEZpbGUgfAp8LS0tfC0tLXwtLS18LS0tfC0tLXwtLS18CnwgKioxKiogfCAqKlNFQy0wMioqIHwgS01TIEVudmVsb3BlIEVuY3J5cHRpb24gJiBLZXkgUm90YXRpb24gfCBEZXBsb3ltZW50LURlcGVuZGVudCB8ICoqTUVESVVNKiogfCBgYXBwL2NvcmUvc2VjcmV0cy5weWAgfAp8ICoqMioqIHwgKipTRUMtMDQqKiB8IFNOTVB2MyBVU00gRW5jcnlwdGlvbiBTdXBwb3J0IHwgQXJjaGl0ZWN0dXJhbCBMaW1pdGF0aW9uIHwgKipNRURJVU0qKiB8IGBlZGdlX2NvbGxlY3Rvci9zbm1wLnB5YCB8CnwgKiozKiogfCAqKlNFQy0wNioqIHwgRWRnZSBBcHBsaWFuY2UgRGlzayBFbmNyeXB0aW9uIChTUUxDaXBoZXIvTFVLUykgfCBEZXBsb3ltZW50LURlcGVuZGVudCB8ICoqTUVESVVNKiogfCBgZWRnZV9jb2xsZWN0b3IvcXVldWUucHlgIHwKfCAqKjQqKiB8ICoqU0VDLTA1KiogfCBBdXRvbWF0ZWQgTm9uY2UgJiBIZWFydGJlYXQgUHJ1bmluZyBUYXNrIHwgSGFyZGVuaW5nIHwgKipMT1cqKiB8IGBhcHAvaW5mcmFzdHJ1Y3R1cmUvdGFza3MvYCB8CnwgKio1KiogfCAqKlNFQy0wMSoqIHwgVGVsZW1ldHJ5IEJhdGNoIEluZ2VzdGlvbiBTYXZlcG9pbnQgSXNvbGF0aW9uIHwgSGFyZGVuaW5nIHwgKipMT1cqKiB8IGBhcHAvYXBpL3YxL3RlbGVtZXRyeS5weWAgfAp8ICoqNioqIHwgKipTRUMtMDcqKiB8IEluZ2VzdCBFeGNlcHRpb24gTG9nZ2luZyBTYW5pdGl6YXRpb24gfCBIYXJkZW5pbmcgfCAqKklORk9STUFUSU9OQUwqKiB8IGBhcHAvYXBpL3YxL2NvbGxlY3RvcnMucHlgIHwKCi0tLQoKIyMgNC4gU3VnZ2VzdGVkIFNlY3VyaXR5IFJlZ3Jlc3Npb24gVGVzdCBTdWl0ZQoKMS4gKipSZXBsYXkgUHJvdGVjdGlvbiBUZXN0Kio6CiAgIFN1Ym1pdCBhbiBpZGVudGljYWwgYChYLUNvbGxlY3Rvci1Ob25jZSwgWC1Db2xsZWN0b3ItVGltZXN0YW1wKWAgcGFpciB3aXRoaW4gdGhlIDMwMHMgd2luZG93IGFuZCB2ZXJpZnkgSFRUUCA0MDEgKCJOb25jZSBhbHJlYWR5IHVzZWQiKS4KMi4gKipTaXRlIEJvdW5kYXJ5IElzb2xhdGlvbiBUZXN0Kio6CiAgIFZlcmlmeSB0aGF0IGEgY29sbGVjdG9yIHJlZ2lzdGVyZWQgdG8gU2l0ZSBBIGF0dGVtcHRpbmcgdG8gaW5nZXN0IHJlY29yZHMgZm9yIGFuIEludGVncmF0aW9uIGFzc2lnbmVkIHRvIFNpdGUgQiByZWNlaXZlcyBhIGBOT1RfQVNTSUdORURgIHJlamVjdGlvbiBzdGF0dXMgd2l0aG91dCBmYWlsaW5nIHZhbGlkIHNpYmxpbmcgcmVjb3Jkcy4KMy4gKipOZXR3b3JrIFBvbGljeSBUYXJnZXQgVmFsaWRhdGlvbiBUZXN0Kio6CiAgIFZlcmlmeSB0aGF0IGBSRVNURHJpdmVyLmNvbm5lY3QoKWAgYW5kIGBTTk1QVGFyZ2V0UG9saWN5YCByZWplY3QgbG9vcGJhY2sgKGAxMjcuMC4wLjFgKSwgbGluay1sb2NhbCAoYDE2OS4yNTQuMTY5LjI1NGApLCBhbmQgbm9uLXBlcm1pdHRlZCBzdWJuZXQgdGFyZ2V0cy4KCi0tLQoKIyMgNS4gUG9zdC1tZXJnZSByZWNvbmNpbGlhdGlvbiBhZGRlbmR1bSDigJQgMjAyNi0wOS0yNgoKVGhpcyBhZGRlbmR1bSBpcyB3cml0dGVuIGJ5IHRoZSBkb2N1bWVudGF0aW9uLW9ubHkgUFIgcHVibGlzaGluZyB0aGlzIGZpbGUgb250byBjdXJyZW50IGBtYWluYC4gSXQgcmVjb25jaWxlcyBKdWxlcycgb3JpZ2luYWwgYXNzZXNzbWVudCAowqcxLcKnNCBhYm92ZSwgdW5jaGFuZ2VkKSBhZ2FpbnN0IHRoZSBtZXJnZSBvZiBQUiAjMjkuIEl0IGRvZXMgbm90IHJlLXJ1biBvciByZXdyaXRlIEp1bGVzJyB0ZWNobmljYWwgY29uY2x1c2lvbnMuCgoqKkJhc2VsaW5lIHRyYW5zaXRpb24qKjogVGhpcyBhc3Nlc3NtZW50J3Mgb3JpZ2luYWwgYmFzZWxpbmUgd2FzIGBkOTY2NzZjMDUzNDM5N2M3MzIwZjA5Y2EzZmI0YzVjM2Q3MmY4NmJhYCwgYW5kIGl0cyBoZWFkZXIgcmVhZCAiSG9sZCB1bnRpbCBQUiAjMjkgbWVyZ2VzLiIgW1BSICMyOV0oaHR0cHM6Ly9naXRodWIuY29tL0FobWVkTWFobW91ZDIyMjIvRENJTS9wdWxsLzI5KSBoYXMgc2luY2UgbWVyZ2VkOyBjdXJyZW50IGBtYWluYCBIRUFEIGlzIGBgMzkxNTFkODcyZTFmZThmNmI2NGY1YzE0YTVkMjljOTAwZmFjOTEzYGAuCgoqKldoYXQgd2FzIGNoZWNrZWQqKjogUFIgIzI5J3MgZnVsbCAyNy1maWxlIGRpZmYgKGB0ZWxlbWV0cnlfc2VydmljZS5weWAsIGBlZGdlX2NvbGxlY3Rvci9zbm1wLnB5YCwgYGVkZ2VfY29sbGVjdG9yL3NjaGVkdWxlci5weWAsIGNpL2RlcGxveW1lbnQtdmFsaWRhdGlvbiB3b3JrZmxvd3MsIGRvY3MsIGBjcmVhdGVfYWRtaW4ucHlgLCBgY2hlY2tfY29tcG9zZV9zZXR0aW5ncy5weWAsIHRlc3RzLCBhbmQgQ29tcG9zZS9lbnYgZmlsZXMpIHdhcyBjaGVja2VkIGFnYWluc3QgZXZlcnkgZmlsZSBhbmQgZnVuY3Rpb24gU0VDLTAxIHRocm91Z2ggU0VDLTA3IGNpdGUuICoqTm9uZSBvZiB0aGVtIHdlcmUgdG91Y2hlZC4qKiBFdmVyeSBmaW5kaW5nJ3MgdGVjaG5pY2FsIGV2aWRlbmNlIHN0aWxsIGRlc2NyaWJlcyBjdXJyZW50IGBtYWluYCB2ZXJiYXRpbSwgbm90IG1lcmVseSAicHJvYmFibHkgc3RpbGwgdHJ1ZSI6Cgp8IEZpbmRpbmcgfCBPcmlnaW5hbCBjbGFzc2lmaWNhdGlvbiB8IFN0YXR1cyBhZ2FpbnN0IGN1cnJlbnQgYG1haW5gIHwgTm90ZSB8CnwtLS18LS0tfC0tLXwtLS18CnwgU0VDLTAxIHwgSGFyZGVuaW5nIFJlY29tbWVuZGF0aW9uIHwgVW5yZXNvbHZlZCwgYXBwbGllcyB1bmNoYW5nZWQgfCBgYXBwL2FwaS92MS90ZWxlbWV0cnkucHlgJ3MgYGluZ2VzdF9jb2xsZWN0b3JfdGVsZW1ldHJ5KClgIGlzIHVudG91Y2hlZCBieSBQUiAjMjkuIFRoaXMgaXMgYSBkaWZmZXJlbnQgZnVuY3Rpb24gZnJvbSBgcmVjb3JkX2xhdGVzdF9zdGF0dXMoKWAgaW4gYGFwcC9hcHBsaWNhdGlvbi90ZWxlbWV0cnlfc2VydmljZS5weWAsIHdoaWNoIFBSICMyOSBkaWQgZml4IGZvciBhbiB1bnJlbGF0ZWQgb3JkZXJpbmcgZGVmZWN0IChzZWUgYFBIQVNFMTBfSU5ERVBFTkRFTlRfQVVESVRfUkVQT1JULm1kYCDCpzkgLyBgZG9jcy9BVURJVF9TVEFUVVMubWRgKS4gRG8gbm90IGNvbmZsYXRlIHRoZSB0d28uIHwKfCBTRUMtMDIgfCBEZXBsb3ltZW50LURlcGVuZGVudCBSaXNrIC8gQXJjaGl0ZWN0dXJhbCBMaW1pdGF0aW9uIHwgVW5yZXNvbHZlZCwgYXBwbGllcyB1bmNoYW5nZWQgfCBgYXBwL2NvcmUvc2VjcmV0cy5weWAgdW50b3VjaGVkLiB8CnwgU0VDLTAzIHwgV2l0aGRyYXduIHwgV2l0aGRyYXduLCB1bmFmZmVjdGVkIHwgYGFwcC9hcHBsaWNhdGlvbi9kcml2ZXJzL3Jlc3QucHlgIHVudG91Y2hlZDsgdGhlIHdpdGhkcmF3YWwgc3RhbmRzLiB8CnwgU0VDLTA0IHwgQXJjaGl0ZWN0dXJhbCBMaW1pdGF0aW9uIHwgVW5yZXNvbHZlZCwgYXBwbGllcyB1bmNoYW5nZWQgfCBQUiAjMjkncyBjaGFuZ2UgdG8gYGVkZ2VfY29sbGVjdG9yL3NubXAucHlgIGFkZGVkIGFuIG91dGVybW9zdC1kYXRhZ3JhbS1leGhhdXN0aW9uIGNoZWNrIChwYXJzaW5nIHJvYnVzdG5lc3MpLCBub3QgU05NUHYzL2VuY3J5cHRpb24gc3VwcG9ydC4gVGhlIGNsZWFydGV4dCBsaW1pdGF0aW9uIGlzIHVuYWZmZWN0ZWQuIHwKfCBTRUMtMDUgfCBIYXJkZW5pbmcgUmVjb21tZW5kYXRpb24gfCBVbnJlc29sdmVkLCBhcHBsaWVzIHVuY2hhbmdlZCB8IGBhcHAvZG9tYWluL2ludGVncmF0aW9uL21vZGVscy5weWAgKGBDb2xsZWN0b3JSZXF1ZXN0Tm9uY2VgLCBgQ29sbGVjdG9ySGVhcnRiZWF0YCkgdW50b3VjaGVkLiB8CnwgU0VDLTA2IHwgRGVwbG95bWVudC1EZXBlbmRlbnQgUmlzayB8IFVucmVzb2x2ZWQsIGFwcGxpZXMgdW5jaGFuZ2VkIHwgYGVkZ2VfY29sbGVjdG9yL3F1ZXVlLnB5YCBhbmQgYGNvbmZpZy5weWAgdW50b3VjaGVkLiB8CnwgU0VDLTA3IHwgSGFyZGVuaW5nIFJlY29tbWVuZGF0aW9uIHwgVW5yZXNvbHZlZCwgYXBwbGllcyB1bmNoYW5nZWQgfCBgYXBwL2FwaS92MS9jb2xsZWN0b3JzLnB5YCB1bnRvdWNoZWQuIHwKCioqU2NvcGUqKjogVGhpcyBpcyBkb2N1bWVudGF0aW9uIG9ubHkuIE5vIGNvZGUgY2hhbmdlcyBhcmUgcHJvcG9zZWQgb3IgbWFkZSBieSB0aGlzIHJlY29uY2lsaWF0aW9uLiBUaGUgcHJpb3JpdGl6ZWQgcmVtZWRpYXRpb24gYmFja2xvZyBpbiDCpzMgYWJvdmUgcmVtYWlucyBvcGVuIHdvcmssICoqbm90IHlldCB0cmFja2VkIGJ5IGEgZGVkaWNhdGVkIEdpdEh1YiBpc3N1ZSoqIGFzIG9mIHRoaXMgYWRkZW5kdW0gLSBmbGFnZ2VkIGZvciB0aGUgcmVwb3NpdG9yeSBvd25lciB0byBkZWNpZGUgd2hldGhlciB0byBvcGVuIG9uZSwgcmF0aGVyIHRoYW4gYXNzdW1lZCBoZXJlLgoKKipSZWxhdGlvbnNoaXAgdG8gUFIgIzI4Kio6IFtQUiAjMjhdKGh0dHBzOi8vZ2l0aHViLmNvbS9BaG1lZE1haG1vdWQyMjIyL0RDSU0vcHVsbC8yOCkgKEp1bGVzJyBvcmlnaW5hbCBicmFuY2gsIGhlYWQgYDRmOWU2NDZiYTdkMzY3ZTNlMmRiNTI1ZmZiZmE0YTdkZDY3NTBmMmJgKSByZW1haW5zIG9wZW4gYW5kIHVudG91Y2hlZCBieSB0aGlzIHJlY29uY2lsaWF0aW9uLiBJdHMgYmFzZSBwcmVkYXRlcyB0aGUgUFIgIzI5IG1lcmdlLCBzbyBpdCBjYW5ub3QgYmUgbWVyZ2VkIGRpcmVjdGx5IGludG8gY3VycmVudCBgbWFpbmA7IHRoaXMgc2VwYXJhdGUgZG9jdW1lbnRhdGlvbi1vbmx5IFBSIHJlcHVibGlzaGVzIGl0cyBjb250ZW50IGFnYWluc3QgY3VycmVudCBgbWFpbmAgaW5zdGVhZCwgbWF0Y2hpbmcgaG93IFBSICMzMCBzdGFnZWQgZG9jdW1lbnRhdGlvbiBmb3IgUFIgIzI5LgoKKipXaGF0IHRoaXMgYWRkZW5kdW0gZG9lcyBub3QgY2xhaW0qKjogSXQgZG9lcyBub3QgYXNzZXJ0IHRoYXQgYW55IFNFQy0wMSB0aHJvdWdoIFNFQy0wNyBmaW5kaW5nIGhhcyBiZWVuIGZpeGVkLiBJdCBkb2VzIG5vdCBhc3NlcnQgcHJvZHVjdGlvbiBkZXBsb3ltZW50IG9yIGEgY29tcGxldGVkIHBlbmV0cmF0aW9uIHRlc3QuIEl0IGRvZXMgbm90IHJlLW9wZW4gb3IgZHVwbGljYXRlIHRoZSBQaGFzZSAxMCBhdWRpdCB0cmFja2VkIGluIGlzc3VlcyAjMjQvIzI1LyMyNiAoYWxsIGNsb3NlZCk7IHRob3NlIGNvdmVyZWQgZnVuY3Rpb25hbC9DSSBnYXBzLCBub3QgdGhlIHRydXN0LWJvdW5kYXJ5IHNlY3VyaXR5IHN1cmZhY2UgdGhpcyBkb2N1bWVudCBhc3Nlc3Nlcy4K
+# Phase 11 Edge Collector Security Threat Model & Risk Assessment
+
+> **Status:** Reconciled and published against current `main` post-PR #29. Sections 1-4 below are Jules' original Phase 11 assessment, unchanged from PR #28 at commit `4f9e646ba7d367e3e2db525fbfba4a7dd6750f2b`. Read the dated §5 addendum for what has and has not been re-verified since. This addendum does not rewrite Jules' technical conclusions.
+
+**Original Baseline Commit SHA**: `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`
+**Repository**: `AhmedMahmoud2222/DCIM`
+**Target Branch**: `main`
+**Document Scope**: Refreshed, evidence-based security threat model and risk assessment of the Edge Collector runtime (`edge_collector/`) and Central DCIM collector trust boundary (`app/application/collector_auth.py`, `app/api/v1/collectors.py`, `app/core/secrets.py`, `app/application/drivers/rest.py`).
+
+This is a separate Phase 11 (Edge Collector / trust-boundary) security assessment, distinct from the Phase 10 functional/audit work tracked in issues [#24](https://github.com/AhmedMahmoud2222/DCIM/issues/24), [#25](https://github.com/AhmedMahmoud2222/DCIM/issues/25) and [#26](https://github.com/AhmedMahmoud2222/DCIM/issues/26) (all closed) and documented in `PHASE10_INDEPENDENT_AUDIT_REPORT.md` / `docs/AUDIT_STATUS.md`. Do not conflate the two.
+
+---
+
+## Executive Summary
+
+This document presents an updated security threat model evaluating the Edge Collector runtime, protocol drivers, local SQLite storage, HMAC-SHA256 machine authentication, credential encryption, and multi-site isolation boundaries against `main` at baseline commit `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`.
+
+All findings strictly distinguish **confirmed code facts in `main`**, **deployment-dependent risks**, **architectural limitations**, and **hardening recommendations**. Findings from earlier drafts have been re-evaluated and corrected or withdrawn where source code inspection proved effective existing mitigations.
+
+---
+
+## 1. Threat Taxonomy & Assessment Methodology
+
+The security assessment classifies findings into four distinct categories:
+1. **Confirmed Vulnerability**: A reproducible code defect that violates a stated security invariant or authorization boundary.
+2. **Deployment-Dependent Risk**: A security posture factor that relies on environment configuration (e.g. host OS permissions, KMS integration, network segmentation).
+3. **Architectural Limitation**: An inherent constraint of a supported protocol or standard (e.g. SNMP v2c cleartext transmission).
+4. **Hardening Recommendation**: An optional performance, hygiene, or defense-in-depth enhancement.
+
+---
+
+## 2. Re-evaluated Findings & Security Analysis
+
+### 2.1 SEC-01: Telemetry Batch Transaction Boundary Behavior
+- **Classification**: **Hardening Recommendation** (Reclassified from Security Defect)
+- **Affected Component**: `backend/app/api/v1/telemetry.py`, `ingest_collector_telemetry()`
+- **Severity**: **LOW**
+- **Attack Preconditions**: N/A (Functional error handling behavior).
+- **Technical Evidence**:
+  Source code review of `ingest_collector_telemetry()` confirms that handled per-record rejections (`assignment.collector_id != collector.id` and `MetricMappingNotFound`) produce structured ACK results (`NOT_ASSIGNED` and `UNKNOWN_METRIC_MAPPING`) without raising exceptions. An unhandled exception (e.g. DB connection loss) triggers a standard FastAPI endpoint transaction rollback.
+- **Existing Mitigation**:
+  Handled domain errors produce structured per-record ACK rejections, allowing the edge client to process partial acknowledgements.
+- **Residual Risk**:
+  Unexpected database failures on an intermediate record cause the full endpoint transaction to abort, prompting edge client retry.
+- **Testable Remediation Recommendation**:
+  Optionally wrap each reading ingestion in `ingest_collector_telemetry()` within an `async with db.begin_nested():` savepoint for extra granularity during DB-level constraints.
+
+---
+
+### 2.2 SEC-02: Static Fernet Encryption Key & KMS Lifecycle
+- **Classification**: **Deployment-Dependent Risk / Architectural Limitation** (Reclassified from High Security Defect)
+- **Affected Component**: `backend/app/core/secrets.py` (`encrypt_secret()`, `decrypt_secret()`)
+- **Severity**: **MEDIUM**
+- **Attack Preconditions**: Attacker accesses the host environment file (`.env`) or process environment variables containing `CREDENTIAL_ENCRYPTION_KEY`.
+- **Technical Evidence**:
+  `secrets.py` uses `Fernet` (AES-128-CBC + HMAC-SHA256) to reversibly encrypt credentials (`Integration.credential_ciphertext` and `Collector.secret_ciphertext`). Key loading relies on `settings.credential_encryption_key`. As documented in `secrets.py` module docstrings, this is an intentional foundation architecture primitive, with KMS integration explicitly planned for production deployment.
+- **Existing Mitigation**:
+  Credentials are never stored in plaintext in PostgreSQL. Raw collector secrets are returned exactly once upon registration (`CollectorRegisterOut`).
+- **Residual Risk**:
+  Static key disclosure in the environment compromises at-rest confidentiality of integration credentials across sites.
+- **Testable Remediation Recommendation**:
+  Implement key-versioning header tags (`v1:...`) in `secrets.py` to support key rotation, and integrate an external KMS / Vault envelope encryption provider for production deployments.
+
+---
+
+### 2.3 SEC-03: Central REST Driver Network Policy Validation
+- **Classification**: **WITHDRAWN (Fully Mitigated in Main)**
+- **Affected Component**: `backend/app/application/drivers/rest.py`, `RESTDriver.connect()`
+- **Severity**: **N/A**
+- **Technical Evidence & Re-evaluation**:
+  Direct inspection of `backend/app/application/drivers/rest.py` confirms that `RESTDriver.connect()` explicitly executes `target = await validate_target(scheme=scheme, host=target_host, port=target_port, method=method, policy=self.network_policy)` before making any HTTP request. `network_policy.py` validates target hosts against explicit IP/subnet allowlists, blocks loopback and reserved ranges by default (`allow_loopback=False`), disables HTTP redirects (`follow_redirects=False`), and ignores ambient HTTP proxies (`trust_env=False`).
+- **Conclusion**:
+  **Finding SEC-03 is withdrawn.** The central REST driver already enforces strict network policy target validation.
+
+---
+
+### 2.4 SEC-04: SNMP v2c Cleartext Transmission
+- **Classification**: **Architectural Limitation**
+- **Affected Component**: `edge_collector/snmp.py`, `SNMPv2cCollector.get()`
+- **Severity**: **MEDIUM**
+- **Attack Preconditions**: Attacker has passive network packet capturing capability on the local data center network segment between the Edge Collector and monitored network devices.
+- **Technical Evidence**:
+  Standard SNMP v2c GET requests transmit community strings in plaintext inside BER headers over UDP port 161.
+- **Existing Mitigation**:
+  SNMP community strings are encrypted at rest on central (`credential_ciphertext`), redacted from logs, and target hosts are restricted via `SNMPTargetPolicy`.
+- **Residual Risk**:
+  On-path eavesdroppers can capture read-only SNMP v2c community strings on unencrypted local LAN segments.
+- **Testable Remediation Recommendation**:
+  Implement SNMPv3 protocol support with USM user authentication and privacy encryption (`authPriv`).
+
+---
+
+### 2.5 SEC-05: Nonce and Heartbeat Retention Lifecycle
+- **Classification**: **Hardening Recommendation**
+- **Affected Component**: `backend/app/domain/integration/models.py` (`CollectorRequestNonce`, `CollectorHeartbeat`)
+- **Severity**: **LOW**
+- **Attack Preconditions**: Long-running production deployment with continuous collector activity.
+- **Technical Evidence**:
+  HMAC nonces are stored in `CollectorRequestNonce` to enforce single-use replay protection. Heartbeats are inserted into `CollectorHeartbeat`. In `main`, these tables grow monotonically.
+- **Existing Mitigation**:
+  Composite unique index `(collector_id, nonce)` ensures $O(1)$ B-tree claim lookups.
+- **Residual Risk**:
+  Database storage footprint increases gradually over long operational periods.
+- **Testable Remediation Recommendation**:
+  Implement a scheduled Celery maintenance task to prune nonces older than 1 hour and truncate heartbeat records older than 30 days.
+
+---
+
+### 2.6 SEC-06: Edge Collector Unencrypted SQLite Storage
+- **Classification**: **Deployment-Dependent Risk**
+- **Affected Component**: `edge_collector/queue.py` (`SQLiteQueue`), `edge_collector/config.py`
+- **Severity**: **MEDIUM**
+- **Attack Preconditions**: Attacker obtains direct physical or host OS disk read access to the Edge Collector appliance.
+- **Technical Evidence**:
+  `SQLiteQueue` stores unacknowledged observations in a standard SQLite database file in WAL mode (`queue.db`). Raw attributes and payload JSON are stored unencrypted at rest.
+- **Existing Mitigation**:
+  Host OS file permissions restrict directory access (`0700`).
+- **Residual Risk**:
+  Unauthorized physical disk access or snapshot extraction exposes unacknowledged sensor readings.
+- **Testable Remediation Recommendation**:
+  Utilize OS-level transparent disk encryption (LUKS/dm-crypt) or SQLCipher for edge appliance deployments.
+
+---
+
+### 2.7 SEC-07: Ingest Error Logging Sanitization
+- **Classification**: **Hardening Recommendation**
+- **Affected Component**: `backend/app/api/v1/collectors.py`, `ingest_batch()`
+- **Severity**: **INFORMATIONAL**
+- **Attack Preconditions**: An edge collector submits malformed payload structures that cause unexpected backend exceptions.
+- **Technical Evidence**:
+  `ingest_batch()` logs `error=str(exc)` on unhandled exceptions. Response messages returned to collectors are sanitized (`error_code="INTERNAL_PROCESSING_ERROR"`).
+- **Existing Mitigation**:
+  `structlog` processor `_redact_sensitive` scrubs standard sensitive keys (`password`, `secret`, `credential`).
+- **Residual Risk**:
+  Database constraint exception text logged on central may contain unhandled attribute values.
+- **Testable Remediation Recommendation**:
+  Sanitize raw exception messages prior to logging.
+
+---
+
+## 3. Prioritized Remediation Backlog
+
+| Rank | Finding ID | Title | Category | Severity | Targeted File |
+|---|---|---|---|---|---|
+| **1** | **SEC-02** | KMS Envelope Encryption & Key Rotation | Deployment-Dependent | **MEDIUM** | `app/core/secrets.py` |
+| **2** | **SEC-04** | SNMPv3 USM Encryption Support | Architectural Limitation | **MEDIUM** | `edge_collector/snmp.py` |
+| **3** | **SEC-06** | Edge Appliance Disk Encryption (SQLCipher/LUKS) | Deployment-Dependent | **MEDIUM** | `edge_collector/queue.py` |
+| **4** | **SEC-05** | Automated Nonce & Heartbeat Pruning Task | Hardening | **LOW** | `app/infrastructure/tasks/` |
+| **5** | **SEC-01** | Telemetry Batch Ingestion Savepoint Isolation | Hardening | **LOW** | `app/api/v1/telemetry.py` |
+| **6** | **SEC-07** | Ingest Exception Logging Sanitization | Hardening | **INFORMATIONAL** | `app/api/v1/collectors.py` |
+
+---
+
+## 4. Suggested Security Regression Test Suite
+
+1. **Replay Protection Test**:
+   Submit an identical `(X-Collector-Nonce, X-Collector-Timestamp)` pair within the 300s window and verify HTTP 401 ("Nonce already used").
+2. **Site Boundary Isolation Test**:
+   Verify that a collector registered to Site A attempting to ingest records for an Integration assigned to Site B receives a `NOT_ASSIGNED` rejection status without failing valid sibling records.
+3. **Network Policy Target Validation Test**:
+   Verify that `RESTDriver.connect()` and `SNMPTargetPolicy` reject loopback (`127.0.0.1`), link-local (`169.254.169.254`), and non-permitted subnet targets.
+
+---
+
+## 5. Post-merge reconciliation addendum — 2026-09-26
+
+This addendum is written by the documentation-only PR publishing this file onto current `main`. It reconciles Jules' original assessment (§1-§4 above, unchanged) against the merge of PR #29. It does not re-run or rewrite Jules' technical conclusions.
+
+**Baseline transition**: This assessment's original baseline was `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`, and its header read "Hold until PR #29 merges." [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) has since merged; current `main` HEAD is ``39151d872e1fe8f6b64f5c14b5d29c4900fac913``.
+
+**What was checked**: PR #29's full 27-file diff (`telemetry_service.py`, `edge_collector/snmp.py`, `edge_collector/scheduler.py`, ci/deployment-validation workflows, docs, `create_admin.py`, `check_compose_settings.py`, tests, and Compose/env files) was checked against every file and function SEC-01 through SEC-07 cite. **None of them were touched.** Every finding's technical evidence still describes current `main` verbatim, not merely "probably still true":
+
+| Finding | Original classification | Status against current `main` | Note |
+|---|---|---|---|
+| SEC-01 | Hardening Recommendation | Unresolved, applies unchanged | `app/api/v1/telemetry.py`'s `ingest_collector_telemetry()` is untouched by PR #29. This is a different function from `record_latest_status()` in `app/application/telemetry_service.py`, which PR #29 did fix for an unrelated ordering defect (see `PHASE10_INDEPENDENT_AUDIT_REPORT.md` §9 / `docs/AUDIT_STATUS.md`). Do not conflate the two. |
+| SEC-02 | Deployment-Dependent Risk / Architectural Limitation | Unresolved, applies unchanged | `app/core/secrets.py` untouched. |
+| SEC-03 | Withdrawn | Withdrawn, unaffected | `app/application/drivers/rest.py` untouched; the withdrawal stands. |
+| SEC-04 | Architectural Limitation | Unresolved, applies unchanged | PR #29's change to `edge_collector/snmp.py` added an outermost-datagram-exhaustion check (parsing robustness), not SNMPv3/encryption support. The cleartext limitation is unaffected. |
+| SEC-05 | Hardening Recommendation | Unresolved, applies unchanged | `app/domain/integration/models.py` (`CollectorRequestNonce`, `CollectorHeartbeat`) untouched. |
+| SEC-06 | Deployment-Dependent Risk | Unresolved, applies unchanged | `edge_collector/queue.py` and `config.py` untouched. |
+| SEC-07 | Hardening Recommendation | Unresolved, applies unchanged | `app/api/v1/collectors.py` untouched. |
+
+**Scope**: This is documentation only. No code changes are proposed or made by this reconciliation. The prioritized remediation backlog in §3 above remains open work, **not yet tracked by a dedicated GitHub issue** as of this addendum - flagged for the repository owner to decide whether to open one, rather than assumed here.
+
+**Relationship to PR #28**: [PR #28](https://github.com/AhmedMahmoud2222/DCIM/pull/28) (Jules' original branch, head `4f9e646ba7d367e3e2db525fbfba4a7dd6750f2b`) remains open and untouched by this reconciliation. Its base predates the PR #29 merge, so it cannot be merged directly into current `main`; this separate documentation-only PR republishes its content against current `main` instead, matching how PR #30 staged documentation for PR #29.
+
+**What this addendum does not claim**: It does not assert that any SEC-01 through SEC-07 finding has been fixed. It does not assert production deployment or a completed penetration test. It does not re-open or duplicate the Phase 10 audit tracked in issues #24/#25/#26 (all closed); those covered functional/CI gaps, not the trust-boundary security surface this document assesses.
