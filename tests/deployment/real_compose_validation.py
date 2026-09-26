@@ -182,7 +182,7 @@ exec /usr/bin/docker "$@"
                             '-Atc',sql).stdout
         if not create:
             assert output.strip()=='1', 'persistent PostgreSQL marker not recovered'
-            assert (self.data/'PG_VERSION').exists(), 'PostgreSQL storage disappeared'
+            assert run(['sudo','test','-f',str(self.data/'PG_VERSION')],check=False).returncode==0, 'PostgreSQL storage disappeared'
 
     def next_commit(self, kind):
         # A fresh synthetic main commit; never force push or change the real repository.
@@ -260,7 +260,9 @@ exec /usr/bin/docker "$@"
                         held=True
                         break
                 time.sleep(.1)
-            assert held, 'first deployment never acquired flock'
+            if not held:
+                _, early_stderr=first.communicate(timeout=2) if first.poll() is not None else ('', 'still running')
+                raise AssertionError('first deployment never acquired flock; exit='+str(first.returncode)+' stderr='+mask(early_stderr[-700:],self.env))
             inode=lock.stat().st_ino
             second=self.deploy(self.good)
             assert second.returncode!=0 and 'lock unavailable' in second.stderr
@@ -293,7 +295,7 @@ exec /usr/bin/docker "$@"
         assert result.returncode!=0 and 'ROLLBACK FAILED' in result.stderr, mask(result.stderr[-700:],self.env)
         assert (self.repo/'.deployment-sha').read_text().strip()==self.good
         assert (self.repo/'.previous-deployment-sha').read_text().strip()==self.baseline
-        assert (self.data/'PG_VERSION').exists()
+        assert run(['sudo','test','-f',str(self.data/'PG_VERSION')],check=False).returncode==0
         print('PASS: injected rollback Docker failure propagates nonzero and retains last successful SHA')
 
     def cleanup(self):
@@ -305,8 +307,8 @@ exec /usr/bin/docker "$@"
                 for args in (['ps','-aq'],['volume','ls','-q']):
                     check=run(['/usr/bin/docker',*args,'--filter','label=com.docker.compose.project='+self.project])
                     assert not check.stdout.strip(), 'disposable Compose resources remain'
-                if self.data.exists():
-                    assert (self.data/'PG_VERSION').exists(), 'storage removed by Docker down'
+                if run(['sudo','test','-d',str(self.data)],check=False).returncode==0:
+                    assert run(['sudo','test','-f',str(self.data/'PG_VERSION')],check=False).returncode==0, 'storage removed by Docker down'
                 print('PASS: isolated containers/volumes removed; bind-mounted database persisted until explicit fixture cleanup')
             except Exception as exc:
                 errors.append(str(exc))
