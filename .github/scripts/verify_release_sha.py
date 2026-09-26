@@ -71,15 +71,27 @@ def github_api_request(endpoint: str, method: str = "GET", data: Optional[Dict] 
         print(f"Response: {error_body}")
         sys.exit(1)
 
+def verify_sha_format(sha: str) -> bool:
+    """Verify SHA is exactly 40 hexadecimal characters."""
+    if not re.match(r'^[0-9a-f]{40}$', sha):
+        print(f"ERROR: SHA must be exactly 40 hexadecimal characters (provided: {sha})")
+        return False
+    print(f"✓ SHA format valid: {sha}")
+    return True
+
 def verify_sha_exists(sha: str) -> bool:
-    """Verify that the SHA exists in the repository."""
+    """Verify that the SHA exists in the repository as canonical commit."""
     try:
         result = github_api_request(f"/repos/{OWNER}/{REPO}/commits/{sha}")
         if "sha" in result:
-            print(f"✓ Commit {sha[:12]} exists")
+            canonical_sha = result["sha"]
+            if canonical_sha != sha:
+                print(f"ERROR: Provided SHA {sha} does not match canonical commit {canonical_sha}")
+                return False
+            print(f"✓ Commit {sha[:12]} exists with canonical identity")
             return True
-    except:
-        pass
+    except Exception as e:
+        print(f"ERROR: Could not verify commit: {e}")
     return False
 
 def verify_sha_on_main_branch(sha: str) -> bool:
@@ -141,25 +153,60 @@ def get_workflow_runs_for_sha(sha: str) -> List[Dict]:
     return runs
 
 def get_check_runs_for_sha(sha: str) -> List[Dict]:
-    """Get all check runs for a given SHA."""
+    """Get all check runs for a given SHA with pagination."""
     checks = []
+    page = 1
+    per_page = 100
 
     try:
-        result = github_api_request(f"/repos/{OWNER}/{REPO}/commits/{sha}/check-runs")
-        if "check_runs" in result:
-            checks = result["check_runs"]
+        while True:
+            result = github_api_request(
+                f"/repos/{OWNER}/{REPO}/commits/{sha}/check-runs?per_page={per_page}&page={page}"
+            )
+
+            if "check_runs" in result:
+                page_checks = result["check_runs"]
+                if not page_checks:
+                    break
+                checks.extend(page_checks)
+                if len(page_checks) < per_page:
+                    break
+                page += 1
+            else:
+                break
     except Exception as e:
         print(f"Warning: Could not fetch check runs: {e}")
 
     return checks
 
 def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
-    """Verify all required checks have passed."""
-    checks = get_check_runs_for_sha(sha)
+    """Verify all required checks have passed from non-superseded runs."""
+    all_checks = get_check_runs_for_sha(sha)
 
-    if not checks:
+    if not all_checks:
         print(f"ERROR: No check runs found for {sha[:12]}")
         return False, {}
+
+    # Filter to latest, non-superseded runs (by name)
+    # Group checks by name, keep only the most recent completed one
+    checks_by_name: Dict[str, Dict] = {}
+    for check in all_checks:
+        name = check.get("name")
+        if not name:
+            continue
+
+        # Skip superseded runs (GitHub marks reruns with higher ID)
+        # Keep the most recent one
+        if name not in checks_by_name:
+            checks_by_name[name] = check
+        else:
+            # Keep the more recent one (higher ID or later completion)
+            existing_id = checks_by_name[name].get("id", 0)
+            current_id = check.get("id", 0)
+            if current_id > existing_id:
+                checks_by_name[name] = check
+
+    checks = list(checks_by_name.values())
 
     check_status = {}
     failed_checks = []
@@ -168,8 +215,9 @@ def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
         name = check.get("name", "unknown")
         status = check.get("status", "unknown")
         conclusion = check.get("conclusion", "unknown")
+        check_id = check.get("id", "unknown")
 
-        check_status[name] = f"{status}/{conclusion}"
+        check_status[name] = f"{status}/{conclusion} (id: {check_id})"
 
         if name in REQUIRED_CHECKS:
             if status == "completed" and conclusion == "success":
@@ -180,12 +228,15 @@ def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
             elif conclusion in ["cancelled", "skipped", "stale"]:
                 print(f"✗ {name}: {conclusion.upper()} (cannot deploy)")
                 failed_checks.append(name)
+            elif conclusion == "failure":
+                print(f"✗ {name}: FAILED")
+                failed_checks.append(name)
             else:
                 print(f"✗ {name}: {conclusion.upper()}")
                 failed_checks.append(name)
 
     # Check for missing required checks
-    found_checks = {check.get("name") for check in checks}
+    found_checks = set(checks_by_name.keys())
     for required in REQUIRED_CHECKS:
         if required not in found_checks:
             print(f"✗ {required}: NOT FOUND")
@@ -201,31 +252,30 @@ def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
 
 def verify_release_sha(sha: str) -> bool:
     """Verify all deployment requirements for a given SHA."""
-    print(f"\n=== Verifying release SHA: {sha} ===\n")
+    print(f"\n=== Verifying release SHA ===\n")
 
-    # Normalize SHA (use at least 12 characters)
-    if len(sha) < 12:
-        print(f"ERROR: SHA must be at least 12 characters (provided: {len(sha)})")
+    # 1. Verify SHA format (must be exactly 40 hex chars)
+    if not verify_sha_format(sha):
         return False
 
-    # 1. Verify SHA exists
+    # 2. Verify SHA exists as canonical commit
     if not verify_sha_exists(sha):
-        print(f"ERROR: Commit {sha[:12]} does not exist in repository")
+        print(f"ERROR: Commit {sha} does not exist in repository")
         return False
 
-    # 2. Verify SHA is on main branch
+    # 3. Verify SHA is on main branch (reachable from main HEAD)
     if not verify_sha_on_main_branch(sha):
-        print(f"ERROR: Commit {sha[:12]} is not on {MAIN_BRANCH} branch")
+        print(f"ERROR: Commit {sha} is not on {MAIN_BRANCH} branch")
         return False
 
-    # 3. Verify all required checks passed
+    # 4. Verify all required checks passed (non-superseded, completed successfully)
     checks_passed, check_status = verify_required_checks(sha)
     if not checks_passed:
         return False
 
-    print(f"\n✓ All deployment gates passed for {sha[:12]}\n")
-    print(f"Deployment evidence for {sha[:12]}:")
-    print(json.dumps({"sha": sha[:12], "checks": check_status}, indent=2))
+    print(f"\n✓ All deployment gates verified for {sha}\n")
+    print(f"Deployment evidence:")
+    print(json.dumps({"sha": sha, "checks": check_status}, indent=2))
 
     return True
 
@@ -234,20 +284,22 @@ def main():
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <release-sha>")
         print(f"\nVerifies that a commit meets all deployment requirements:")
-        print(f"  - Commit exists in repository")
-        print(f"  - Commit is on {MAIN_BRANCH} branch")
-        print(f"  - All required CI checks passed")
+        print(f"  - SHA must be exactly 40 hexadecimal characters")
+        print(f"  - Commit exists in repository with canonical identity")
+        print(f"  - Commit is reachable from {MAIN_BRANCH} branch HEAD")
+        print(f"  - All required CI checks passed (non-superseded)")
         print(f"  - Compose smoke test passed")
         print(f"  - Deployment validation gate passed")
+        print(f"\nNo cancelled, skipped, stale, or failed checks allowed.")
         sys.exit(1)
 
     sha = sys.argv[1].strip()
 
     if verify_release_sha(sha):
-        print("SUCCESS: Release SHA is approved for deployment")
+        print("✓ SUCCESS: Release SHA is approved for deployment")
         sys.exit(0)
     else:
-        print("FAILURE: Release SHA does not meet deployment requirements")
+        print("✗ FAILURE: Release SHA does not meet deployment requirements")
         sys.exit(1)
 
 if __name__ == "__main__":

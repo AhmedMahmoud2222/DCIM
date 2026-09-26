@@ -58,25 +58,44 @@ die() {
 }
 
 acquire_deployment_lock() {
-    local timeout=300
-    local start_time=$(date +%s)
+    local lock_dir="$(dirname "$DEPLOYMENT_LOCK_FILE")"
+    mkdir -p "$lock_dir"
 
-    while [ -f "$DEPLOYMENT_LOCK_FILE" ]; do
-        local elapsed=$(($(date +%s) - start_time))
-        if [ $elapsed -ge $timeout ]; then
-            die "Deployment lock held for more than ${timeout}s; existing deployment may have failed"
+    # Use flock for atomic lock acquisition (requires flock available)
+    if ! command -v flock &> /dev/null; then
+        log_error "flock command not found; using fallback file lock (not atomic)"
+        # Fallback: wait for manual lock file removal
+        local timeout=300
+        local start_time=$(date +%s)
+        while [ -f "$DEPLOYMENT_LOCK_FILE" ]; do
+            local elapsed=$(($(date +%s) - start_time))
+            if [ $elapsed -ge $timeout ]; then
+                die "Deployment lock held for more than ${timeout}s (remove manually: rm $DEPLOYMENT_LOCK_FILE)"
+            fi
+            log "Waiting for previous deployment... ($elapsed/${timeout}s)"
+            sleep 5
+        done
+        echo "$$" > "$DEPLOYMENT_LOCK_FILE"
+        log "Acquired fallback file lock (PID: $$)"
+        return
+    fi
+
+    # Atomic lock using flock (300s timeout)
+    exec 200>"$DEPLOYMENT_LOCK_FILE"
+    if ! flock -n 200; then
+        log "Deployment lock in use; waiting (timeout: 300s)..."
+        if ! timeout 300 flock 200; then
+            die "Deployment lock timeout; previous deployment may have failed"
         fi
-        log "Waiting for previous deployment to complete... ($elapsed/${timeout}s)"
-        sleep 5
-    done
+    fi
 
-    # Create lock file with PID and timestamp
-    mkdir -p "$(dirname "$DEPLOYMENT_LOCK_FILE")"
-    echo "$$:$(date -Iseconds)" > "$DEPLOYMENT_LOCK_FILE"
-    log "Acquired deployment lock"
+    log "Acquired atomic deployment lock (PID: $$)"
 }
 
 release_deployment_lock() {
+    if [ -n "${DEPLOYMENT_LOCK_FD:-}" ]; then
+        exec 200>&-  # Close the file descriptor
+    fi
     rm -f "$DEPLOYMENT_LOCK_FILE"
     log "Released deployment lock"
 }
@@ -351,7 +370,7 @@ EOF
 # ============================================================================
 
 rollback_deployment() {
-    log_section "Rolling back deployment"
+    log_section "Rolling back to previous deployment"
 
     cd "$DEPLOY_DIR"
 
@@ -360,15 +379,70 @@ rollback_deployment() {
     fi
 
     local previous_sha=$(cat .deployment-sha)
+    if [ -z "$previous_sha" ]; then
+        die "Previous deployment SHA is empty; cannot rollback safely"
+    fi
+
     log "Rolling back to previous deployment: $previous_sha"
 
-    # Stop current services
-    docker compose -f docker-compose.production.yml down --remove-orphans
+    # Validate previous SHA exists in repository
+    if ! git rev-parse --verify "${previous_sha}^{commit}" > /dev/null 2>&1; then
+        die "Previous deployment SHA ${previous_sha} not found in repository; cannot rollback"
+    fi
 
-    # Checkout previous code
-    git checkout --quiet "$previous_sha"
+    log "Stopping current services..."
+    docker compose -f docker-compose.production.yml down --remove-orphans 2>/dev/null || true
 
-    log "Deployment rolled back to $previous_sha"
+    log "Checking out previous code: $previous_sha"
+    git fetch --quiet origin "$previous_sha" || die "Could not fetch previous SHA from origin"
+    git checkout --quiet "$previous_sha" || die "Could not checkout previous SHA"
+
+    # Restore previous .env from backup if available
+    if [ -f "$BACKUP_DIR/deployment-"*"/.env.backup" ]; then
+        log "Restoring previous environment configuration..."
+        local latest_backup=$(ls -d "$BACKUP_DIR"/deployment-* 2>/dev/null | sort -r | head -1)
+        if [ -n "$latest_backup" ] && [ -f "$latest_backup/.env.backup" ]; then
+            cp "$latest_backup/.env.backup" .env
+            chmod 600 .env
+            log "Restored .env from backup"
+        fi
+    fi
+
+    log "Starting services from previous deployment..."
+    docker compose -f docker-compose.production.yml up -d postgres redis 2>/dev/null || true
+    sleep 5
+    docker compose -f docker-compose.production.yml up -d migrate 2>/dev/null || true
+    docker compose -f docker-compose.production.yml up -d bootstrap-privileges 2>/dev/null || true
+    docker compose -f docker-compose.production.yml up -d 2>/dev/null || true
+
+    log "Verifying rollback..."
+    local verify_timeout=$((SECONDS + HEALTH_CHECK_TIMEOUT))
+    local verified=false
+
+    while [ $SECONDS -lt $verify_timeout ]; do
+        if curl -sf "$BACKEND_HEALTH_URL" > /dev/null 2>&1; then
+            log "✓ Backend health check passed"
+            verified=true
+            break
+        fi
+        sleep 3
+    done
+
+    if [ "$verified" = true ]; then
+        log "✓ Rollback verified: services healthy"
+        log "Deployment rolled back to $previous_sha"
+
+        # Record rollback in log
+        {
+            echo "$(date -Iseconds) | Rolled back to $previous_sha"
+            echo "  Initiated by: ${DEPLOY_USER:-unknown}"
+            echo "  Rollback verified: health checks passed"
+        } >> "$LOG_DIR/deployments.log"
+    else
+        log_error "Rollback completed but health checks failed; manual verification required"
+        log_error "Services may not be healthy; check: docker compose -f docker-compose.production.yml logs"
+        exit 1
+    fi
 }
 
 # ============================================================================

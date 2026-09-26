@@ -1,21 +1,31 @@
 # DCIM Deployment Implementation Guide
 
-**Version 1.0** | **Date**: 2026-09-26 | **Status**: Implementation PR (Not yet deployed)
+**Version 2.0** | **Date**: 2026-09-26 | **Status**: Implementation PR (Validation-only, not production-ready)
 
-This document describes the secure, auditable Docker Compose deployment infrastructure for DCIM production and staging environments.
+This document describes the secure, auditable deployment verification and infrastructure for DCIM production and staging environments.
+
+## Critical: This Workflow is Validation-Only
+
+**The GitHub Actions workflow performs release verification and deployment readiness validation only. It does NOT execute actual Docker Compose deployment operations.**
+
+Actual production deployment requires:
+1. Manual provisioning of target infrastructure (Linux server, Docker, directories, user)
+2. Secrets provisioning (POSTGRES_PASSWORD, DCIM_APP_PASSWORD, JWT_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY)
+3. Manual trigger of deployment script on target infrastructure: `bash scripts/deploy-docker-compose.sh <sha> production`
+4. Manual health verification and monitoring
 
 ---
 
 ## Executive Summary
 
 This implementation provides:
-- **Exact-SHA verification** via GitHub API (not user-supplied input)
-- **Approval-gated deployment** in GitHub Actions with environment protection
+- **Exact-SHA verification via GitHub API** (not user-supplied input, full 40-char validation)
+- **Approval-gated release verification** in GitHub Actions with environment protection
 - **Production-hardened Compose configuration** with persistent storage, health checks, and restricted networking
-- **Comprehensive Linux deployment script** with backup, rollback, and audit trail
-- **Staging-first validation** with negative test cases (invalid SHAs, missing checks, etc.)
+- **Comprehensive Linux deployment script** with atomic locking, backup, proper rollback, and audit trail
+- **Staging-first validation** with deployment readiness checks (no false deployment success)
 - **Zero production credentials in Git** — all secrets supplied at runtime only
-- **Fail-closed design** — deployment stops if any verification step fails
+- **Fail-closed design** — verification stops if any gate fails
 
 ## Architecture Overview
 
@@ -270,43 +280,51 @@ This mounts host storage, not Docker named volume, so data persists across conta
 
 ---
 
-## Known Limitations
+## Known Limitations & Implementation Status
 
-1. **No automatic production deployment**
-   - Workflow simulates deployment (no Docker daemon on GitHub runner)
-   - Actual deployment requires manual trigger on production server
+### Implemented (v2.0)
+- ✅ **Exact-SHA verification with full 40-character validation**
+- ✅ **Hardened SHA verification** (canonical identity, non-superseded checks, pagination)
+- ✅ **Atomic deployment lock** (flock-based, with fallback)
+- ✅ **Proper rollback** (restores code, .env, services, verifies health)
+- ✅ **Deployment readiness validation** (Compose syntax, script syntax, prerequisites)
+- ✅ **GitHub API verification** (required checks, non-cancelled/skipped status)
+- ✅ **GitHub environment approval gate** (production-deployment, requires owner setup)
+- ✅ **Audit trail** (deployments.log with timestamp, SHA, deployer, status)
+- ✅ **Health check verification** (60-second timeout, readiness endpoint polling)
+
+### Limitations (Not In Scope)
+
+1. **No automatic Docker deployment from GitHub Actions**
+   - GitHub runners do not have Docker daemon or access to private networks
+   - Workflow performs release verification and readiness validation only
+   - Actual Docker Compose deployment requires manual trigger on infrastructure
    - Example: `bash scripts/deploy-docker-compose.sh <sha> production`
 
-2. **No GitHub runner access to private network**
-   - Staging validation is in GitHub Actions (public runner environment)
-   - Cannot actually pull Docker images from private registry in workflow
-   - Cannot test actual database connection from runner
-   - Staging deployment is simulated (logs commands that would run)
-
-3. **Fernet key not rotated**
+2. **Fernet key not rotated**
    - Automatic rotation would break credential decryption
    - Rotation is out of scope for this deployment script
    - Manual key rotation requires credential re-encryption (separate process)
 
-4. **No automatic monitoring/alerting**
-   - Script records deployment evidence but doesn't integrate with monitoring
-   - Operator must check deployments.log and health status manually
-   - Recommend integrating with monitoring system (e.g., Datadog, Prometheus)
+3. **No automatic monitoring/alerting**
+   - Script records deployment evidence in deployments.log
+   - Operator must monitor logs and health status
+   - Integration with monitoring system (e.g., Datadog) is separate
 
-5. **No automatic rollback on health check failure**
-   - Script exits with error if health checks fail
-   - Operator must manually review logs and decide rollback
-   - Rollback is manual: `bash scripts/deploy-docker-compose.sh --rollback`
+4. **Manual rollback decision required**
+   - Script exits on health check failure (fail-closed)
+   - Operator must review logs and decide if rollback is needed
+   - Rollback execution: `bash scripts/deploy-docker-compose.sh --rollback`
 
-6. **No zero-downtime deployment**
-   - Script stops services, deploys code, starts services
+5. **No zero-downtime deployment**
+   - Script stops services during code deployment
    - Requests during deployment window will fail
    - Recommend scheduling deployments during low-traffic windows
+   - Blue-green deployment would require separate infrastructure
 
-7. **Lock file cleanup on hard crash**
-   - Lock file is released on normal exit (trap mechanism)
-   - If process killed with -9 or server crashes, lock persists for 300 seconds
-   - Manual cleanup: `rm /opt/dcim/.deployment.lock` (if older than 300 seconds)
+6. **flock may not be available**
+   - Deployment script provides fallback to manual file locking
+   - Fallback is not atomic; production should have flock installed
 
 ---
 
