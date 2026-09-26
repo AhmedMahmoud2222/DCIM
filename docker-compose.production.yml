@@ -1,0 +1,226 @@
+# Production Docker Compose configuration
+# This file overrides development settings for production deployment.
+#
+# SECURITY NOTES:
+# - All ports are restricted to localhost or private network (see deployment script)
+# - Environment variables are sourced from host, never committed
+# - PostgreSQL data volume is mounted to persistent host storage
+# - CORS origins must be configured for production domain
+# - TLS termination is handled by reverse proxy, not in this file
+# - Backups must be configured separately
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-dcim}
+      DCIM_APP_PASSWORD: ${DCIM_APP_PASSWORD}
+    volumes:
+      # Use persistent host storage for production data
+      - ${POSTGRES_DATA_PATH:-/var/lib/dcim/postgres}:/var/lib/postgresql/data
+      - ./backend/scripts/docker-initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Restricted to localhost by host firewall rules
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  redis:
+    image: redis:7
+    ports:
+      # Restricted to localhost by host firewall rules
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "2"
+
+  migrate:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:${DCIM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-dcim}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "1"
+
+  bootstrap-privileges:
+    image: postgres:16
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-dcim}
+    volumes:
+      - ./backend/scripts/bootstrap_privileged_roles.sql:/bootstrap_privileged_roles.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap_privileged_roles.sql"]
+    restart: "no"
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "1"
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:${DCIM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-dcim}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      ENVIRONMENT: production
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-["https://dcim.example.com"]}
+    ports:
+      # Restricted to localhost; reverse proxy handles external access
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bootstrap-privileges:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+        max-file: "5"
+
+  celery-worker:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:${DCIM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-dcim}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bootstrap-privileges:
+        condition: service_completed_successfully
+    command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance", "--prefetch-multiplier=1", "--max-tasks-per-child=100"]
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  celery-beat:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:${DCIM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-dcim}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bootstrap-privileges:
+        condition: service_completed_successfully
+    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "2"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      # Restricted to localhost; reverse proxy handles external access
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+volumes:
+  # Note: postgres_data volume removed; use host-mounted storage instead
+  # See POSTGRES_DATA_PATH environment variable
+
+networks:
+  dcim-internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
