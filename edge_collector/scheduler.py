@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 POLL_INTERVAL_PRESETS = frozenset((60, 180, 300, 600, 900, 1800))
 DEFAULT_POLL_INTERVAL_SECONDS = 300

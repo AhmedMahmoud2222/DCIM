@@ -186,3 +186,60 @@ async def test_operator_role_cannot_manage_bindings(client, auth_headers):
         headers=headers,
     )
     assert resp.status_code == 403
+
+
+async def test_stale_ingest_keeps_the_http_contract_and_returns_the_retained_status(client, auth_headers):
+    """The ordering guard changes which row wins, never the endpoint's shape: a stale
+    sample is still a 200 with the same `PortStatusOut` body, reporting the status that
+    is actually current (the retained newer one) rather than the one just submitted.
+    It is deliberately not an error — a poller retrying a delayed batch has done nothing
+    wrong and must not be driven into a retry loop by a 409."""
+    headers = await _admin(auth_headers)
+    revision = await _make_published_equipment_revision(client, headers, port_count=1)
+    equipment = await _instantiate(client, headers, revision["id"])
+    port = equipment["ports"][0]
+    binding_resp = await client.post(
+        "/api/v1/telemetry/bindings",
+        json={
+            "equipment_id": equipment["id"], "target_type": "network_port", "equipment_port_id": port["id"],
+            "protocol": "snmp", "external_ref": "oid", "label": None,
+        },
+        headers=headers,
+    )
+    assert binding_resp.status_code == 201, binding_resp.text
+    binding_id = binding_resp.json()["id"]
+
+    newer = datetime(2026, 9, 25, 12, 5, 0, tzinfo=UTC)
+    older = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)
+
+    newer_resp = await client.post(
+        "/api/v1/telemetry/port-status/ingest",
+        json={
+            "binding_id": binding_id, "sampled_at": newer.isoformat(),
+            "payload": {"link_state": "UP", "bandwidth_util_pct": 30.0, "error_rate_pct": 0.0},
+        },
+        headers=headers,
+    )
+    assert newer_resp.status_code == 200, newer_resp.text
+    assert newer_resp.json()["status_level"] == "UP"
+
+    stale_resp = await client.post(
+        "/api/v1/telemetry/port-status/ingest",
+        json={
+            "binding_id": binding_id, "sampled_at": older.isoformat(),
+            "payload": {"link_state": "DOWN", "bandwidth_util_pct": 0.0, "error_rate_pct": 0.0},
+        },
+        headers=headers,
+    )
+    assert stale_resp.status_code == 200, stale_resp.text
+    body = stale_resp.json()
+    assert set(body) == set(newer_resp.json()), "response shape must be unchanged"
+    assert body["status_level"] == "UP"
+    assert body["payload"]["bandwidth_util_pct"] == 30.0
+
+    latest_resp = await client.get(
+        "/api/v1/telemetry/port-status/latest", params={"equipment_id": equipment["id"]}, headers=headers
+    )
+    assert latest_resp.status_code == 200, latest_resp.text
+    [item] = latest_resp.json()
+    assert item["status_level"] == "UP"

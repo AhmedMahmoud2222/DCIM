@@ -57,6 +57,10 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Validate Compose required backend settings
+        run: |
+          ruff check scripts/check_compose_settings.py
+          python scripts/check_compose_settings.py
       - name: Provision least-privilege dcim_app role and database
         # dcim_app is deliberately NOT the database owner — see the note on the postgres
         # service above. PostgreSQL grants the database owner an implicit DROP TABLE right
@@ -117,6 +121,336 @@ jobs:
       - name: Full audit report (moderate and above, non-blocking)
         if: always()
         run: npm audit --audit-level=moderate || true
+      - name: Run frontend unit tests (Vitest)
+        run: npm test
       - run: npm run typecheck
       - run: npx eslint . --ext ts,tsx
       - run: npm run build
+
+  # The independently packaged Edge Collector runtime (edge_collector/). It is deliberately
+  # not installed into the backend distribution — the backend job only exposes its scheduler
+  # constants on PYTHONPATH for a contract test — so its own suite needs a job of its own.
+  # It is pure standard library plus httpx, which is why this job is this short.
+  edge-collector:
+    runs-on: ubuntu-latest
+    env:
+      # edge_collector/tests/ has no __init__.py, so pytest's rootdir insertion puts that
+      # directory on sys.path rather than the repository root, and `from edge_collector...`
+      # fails to import. (`python -m pytest` happens to paper over this by adding the
+      # working directory; the console script does not.) Same reason the backend job
+      # exports it: expose the repository root without installing the Edge runtime into
+      # any distribution.
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Edge Collector test dependencies
+        run: pip install "httpx>=0.27.0" "pytest>=8.3.0" "ruff>=0.6.0"
+      - name: Lint (ruff)
+        run: ruff check edge_collector
+      - name: Run Edge Collector tests
+        # tests/test_snmp.py binds a real UDP socket on 127.0.0.1 and speaks real BER to
+        # the collector; it needs no privileges and no external agent.
+        run: pytest -q edge_collector/tests
+
+  # Issue #26: the browser suite, on its own PostgreSQL 16 and Redis 7. Deliberately
+  # separate from the `backend` job rather than bolted onto it — that job validates
+  # least-privilege and retention behaviour against a database whose grants it asserts,
+  # and seeding an Administrator with a known password into it would undermine exactly
+  # what it is there to prove. Host ports (5433/6380) and the database name (dcim_e2e)
+  # differ from the backend job's so the isolation is real rather than incidental.
+  browser-e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: e2e_superuser_password
+          POSTGRES_DB: postgres
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6380:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:e2e_app_password@127.0.0.1:5433/dcim_e2e
+      REDIS_URL: redis://127.0.0.1:6380/0
+      JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
+      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+      ENVIRONMENT: test
+      PGPASSWORD_SUPERUSER: e2e_superuser_password
+      # The browser fixture's own throwaway credentials for this ephemeral database. Not
+      # a secret and deliberately not stored as one: a repository secret is masked in logs
+      # but still has to be readable by the job, and pretending a public fixture password
+      # is confidential would be worse than stating plainly that it is not. It never
+      # reaches a CLI argument — scripts/create_admin.py reads it from the environment —
+      # so it stays out of argv, /proc and the step trace.
+      E2E_ADMIN_EMAIL: e2e-admin@example.com
+      E2E_ADMIN_PASSWORD: E2ePassw0rd!
+      BACKEND_URL: http://127.0.0.1:8000
+      BASE_URL: http://127.0.0.1:5173
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install backend
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - name: Provision least-privilege dcim_app role and the isolated e2e database
+        # Same shape as the backend job: dcim_app is an ordinary role and is NOT the
+        # database owner, so the browser suite exercises the same privilege surface the
+        # application actually runs under rather than an accidentally-superuser one.
+        run: |
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -c \
+            "CREATE ROLE dcim_app LOGIN PASSWORD 'e2e_app_password';"
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -c \
+            "CREATE DATABASE dcim_e2e;"
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d dcim_e2e -c \
+            "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
+
+      - name: Enable required Postgres extensions
+        run: |
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d dcim_e2e -c \
+            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
+
+      - name: Run migrations
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          test "$(alembic heads | wc -l)" -eq 1
+
+      - name: Bootstrap privileged retention role
+        working-directory: backend
+        run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d dcim_e2e -f scripts/bootstrap_privileged_roles.sql
+
+      - name: Seed the deterministic Administrator fixture
+        working-directory: backend
+        # --password-from-env keeps the password out of argv (world-readable via /proc and
+        # echoed into the step trace); --if-exists skip keeps a re-run idempotent.
+        run: |
+          python scripts/create_admin.py \
+            --email "$E2E_ADMIN_EMAIL" \
+            --name "E2E Administrator" \
+            --password-from-env E2E_ADMIN_PASSWORD \
+            --if-exists skip
+
+      - name: Start the backend on 127.0.0.1:8000
+        working-directory: backend
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$GITHUB_WORKSPACE/backend.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/backend.pid"
+
+      - name: Wait for backend readiness
+        # Bounded, and it reads /health/ready rather than /health/live: liveness is true
+        # before PostgreSQL and Redis are reachable, so waiting on it would hand the
+        # browser suite a backend that 503s on its first real request. A non-ready backend
+        # fails here, with its log, instead of as an unexplained timeout inside Playwright.
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 2 "$BACKEND_URL/api/v1/health/ready" > /tmp/ready.json; then
+              echo "backend ready after ${attempt}s: $(cat /tmp/ready.json)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend did not become ready within 60s"
+          cat "$GITHUB_WORKSPACE/backend.log"
+          exit 1
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the Vite dev server on 127.0.0.1:5173
+        working-directory: frontend
+        # Started here rather than left to Playwright's own `webServer` so that a startup
+        # failure is reported by the step that caused it, with its log uploaded. The
+        # config's reuseExistingServer means Playwright attaches to this one.
+        run: |
+          nohup npm run dev -- --host 127.0.0.1 --port 5173 > "$GITHUB_WORKSPACE/frontend.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/frontend.pid"
+
+      - name: Wait for frontend readiness
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 2 "$BASE_URL" > /dev/null; then
+              echo "frontend ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::frontend did not become ready within 60s"
+          cat "$GITHUB_WORKSPACE/frontend.log"
+          exit 1
+
+      - name: Run Playwright browser tests
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Collect failure artifacts
+        if: failure()
+        # Runs on any failure above, including a readiness timeout, so a job that never
+        # reached Playwright still uploads the logs that explain why.
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/e2e-artifacts"
+          cp "$GITHUB_WORKSPACE/backend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/frontend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
+          # trace: "retain-on-failure" and screenshot: "only-on-failure" in
+          # frontend/playwright.config.ts write both into frontend/test-results/.
+          if [ -d frontend/test-results ]; then
+            cp -r frontend/test-results "$GITHUB_WORKSPACE/e2e-artifacts/playwright-test-results"
+          fi
+          echo "collected:"; find "$GITHUB_WORKSPACE/e2e-artifacts" -type f | head -50
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-failure-artifacts
+          path: e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop servers
+        if: always()
+        run: |
+          for pidfile in backend.pid frontend.pid; do
+            [ -f "$GITHUB_WORKSPACE/$pidfile" ] && kill "$(cat "$GITHUB_WORKSPACE/$pidfile")" 2>/dev/null || true
+          done
+
+  # Issue #26: does the full migrated backend suite actually pass on the runtimes
+  # backend/pyproject.toml's `requires-python = ">=3.11"` nominally permits? The floor is
+  # an installation constraint, not evidence, and the `backend` job above pins 3.11. This
+  # job produces the evidence, running the same migrations, privileged bootstrap, lint,
+  # typecheck and full suite against a real PostgreSQL 16 and Redis 7 per version.
+  #
+  # All three block. 3.12 and 3.13 were validated green locally (693 passed in the migrated
+  # suite, 6 in the retention hostile suite, 55 in the Edge Collector suite).
+  #
+  # 3.14 shipped non-blocking and was promoted once this job reported green, which is the
+  # criterion it shipped with. Worth recording why it was ever in doubt: the only 3.14
+  # build obtainable in the local validation environment was 3.14.0rc2, where pydantic
+  # 2.13.5 raises
+  #   TypeError: _eval_type() got an unexpected keyword argument 'prefer_fwd_module'
+  # importing pydantic.root_model, because rc2's typing._eval_type takes `parent_fwdref`
+  # and not `prefer_fwd_module`. That was a release-candidate gap rather than a property of
+  # 3.14 as shipped: against the final 3.14.x actions/setup-python installs, every step of
+  # this job passes, migrations, full suite and Edge Collector suite included.
+  backend-runtime-matrix:
+    name: backend suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.12"
+            experimental: false
+          - python-version: "3.13"
+            experimental: false
+          - python-version: "3.14"
+            experimental: false
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: dcim_dev_superuser_password
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
+      REDIS_URL: redis://localhost:6379/1
+      JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
+      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+      TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:dcim_dev_superuser_password@localhost:5432/dcim_test
+      ENVIRONMENT: test
+      PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
+      PYTHONPATH: ${{ github.workspace }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Report the resolved interpreter
+        # The matrix key is a request; this is what was actually installed, which is the
+        # only version worth quoting in a report.
+        run: python -VV
+      - name: Install dependencies
+        # The first place an unsupported runtime shows up: a dependency with no wheel and
+        # no buildable sdist for this interpreter fails here, naming itself.
+        run: pip install -e ".[dev]"
+      - name: Report the resolved dependency set
+        run: pip freeze
+      - name: Provision least-privilege dcim_app role and database
+        run: |
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d postgres -c \
+            "CREATE ROLE dcim_app LOGIN PASSWORD 'dcim_dev_password';"
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d postgres -c \
+            "CREATE DATABASE dcim_test;"
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -c \
+            "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
+      - name: Enable required Postgres extensions
+        run: |
+          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -c \
+            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
+      - name: Lint (ruff)
+        run: ruff check app tests
+      - name: Type check (mypy)
+        run: mypy app
+      - name: Run migrations
+        run: alembic upgrade head
+      - name: Validate retention migration round trip
+        run: |
+          test "$(alembic heads | wc -l)" -eq 1
+          alembic downgrade 0010_mvp_alarms
+          alembic upgrade head
+          test "$(alembic heads | wc -l)" -eq 1
+      - name: Bootstrap privileged retention role
+        run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
+      - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
+        run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
+      - name: Run PostgreSQL retention hostile validation
+        run: pytest -q tests/integration/test_mvp_retention_hostile.py
+      - name: Run regression tests
+        run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
+      - name: Run Edge Collector tests on this runtime
+        working-directory: ${{ github.workspace }}
+        run: pytest -q edge_collector/tests

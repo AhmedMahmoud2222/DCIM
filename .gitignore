@@ -32,3 +32,6 @@ frontend/blob-report/
 
 # Redis dump artifact (local redis-server default save location)
 dump.rdb
+
+# Uploaded media — runtime/test upload storage, never source
+backend/media/

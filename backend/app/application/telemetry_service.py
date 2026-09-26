@@ -244,10 +244,31 @@ async def _current_rated_capacity_kw(db: AsyncSession, power_node_id: uuid.UUID)
 async def record_latest_status(
     db: AsyncSession, *, binding_id: uuid.UUID, payload: dict, sampled_at: datetime
 ) -> TelemetryLatestStatus:
-    """Evaluate and upsert the one cached `TelemetryLatestStatus` row for `binding_id`.
+    """Evaluate and upsert the one cached `TelemetryLatestStatus` row for `binding_id`,
+    keeping the newest sample by the poller's own `sampled_at`, never by arrival order.
     `payload` must carry the fields for the binding's own `target_type` (see
     mapping_models.py's `TelemetryLatestStatus` docstring for the expected keys per
-    type) — a mismatch raises `KeyError`, surfaced by the route as a clean 422."""
+    type) — a mismatch raises `KeyError`, surfaced by the route as a clean 422.
+
+    Ordering contract (see `_LATEST_STATUS_ORDERING` below for why this is enforced in
+    SQL rather than by a read-then-write in Python):
+
+    * `sampled_at` strictly newer than the stored row — applied; this call's status and
+      payload become the cached current status.
+    * `sampled_at` strictly older than the stored row (a *stale* sample: a delayed
+      retry, a re-queued batch, a slow poller losing a race to a faster one) — rejected.
+      The stored row is left exactly as it was.
+    * `sampled_at` equal to the stored row (a *duplicate* re-delivery of one sample) —
+      treated as a no-op, first writer wins. There is no ordering evidence to prefer
+      either writer, so making the outcome independent of arrival order is the whole
+      point; last-writer-wins here would reintroduce the same nondeterminism under
+      concurrency that the strict comparison exists to remove.
+
+    In every case the return value is the row that is authoritative *after* this call —
+    this call's own row when it was applied, the retained newer row when it was not.
+    Callers that need to distinguish the two compare the returned `sampled_at` against
+    the one they submitted; the signature and return type are unchanged.
+    """
     binding = await db.get(PortTelemetryBinding, binding_id)
     if binding is None:
         raise BindingNotFound(f"PortTelemetryBinding {binding_id} not found.")
@@ -265,26 +286,41 @@ async def record_latest_status(
     assert status_level in LINK_STATES or status_level in THRESHOLD_STATUS_LEVELS
 
     received_at = datetime.now(UTC)
-    statement = (
-        insert(TelemetryLatestStatus)
-        .values(
-            id=uuid.uuid4(), binding_id=binding_id, status_level=status_level, payload=payload,
-            sampled_at=sampled_at, received_at=received_at,
-        )
-        .on_conflict_do_update(
-            index_elements=[TelemetryLatestStatus.binding_id],
-            set_={"status_level": status_level, "payload": payload, "sampled_at": sampled_at, "received_at": received_at},
-        )
-        .returning(TelemetryLatestStatus.id)
+    insert_statement = insert(TelemetryLatestStatus).values(
+        id=uuid.uuid4(), binding_id=binding_id, status_level=status_level, payload=payload,
+        sampled_at=sampled_at, received_at=received_at,
     )
-    status_id = (await db.execute(statement)).scalar_one()
-    row = await db.get(TelemetryLatestStatus, status_id)
-    assert row is not None
+    statement = insert_statement.on_conflict_do_update(
+        index_elements=[TelemetryLatestStatus.binding_id],
+        set_={"status_level": status_level, "payload": payload, "sampled_at": sampled_at, "received_at": received_at},
+        # _LATEST_STATUS_ORDERING: the guard that makes a late-arriving stale sample
+        # unable to overwrite a newer one. It belongs in the statement, not in a Python
+        # `if row.sampled_at < sampled_at` around it: two sessions ingesting for the same
+        # binding both read the same "before" row, both decide they are newer, and the
+        # slower one then overwrites the faster one's newer reading — a lost update no
+        # amount of retrying fixes. PostgreSQL evaluates this WHERE *after* taking the
+        # conflicting row's lock and re-reading its committed version, so a concurrent
+        # writer sees the other session's already-committed sampled_at and declines,
+        # atomically, in the one statement. `excluded` is the row this call proposed.
+        where=TelemetryLatestStatus.__table__.c.sampled_at < insert_statement.excluded.sampled_at,
+    ).returning(TelemetryLatestStatus.id)
+    status_id = (await db.execute(statement)).scalar_one_or_none()
+    if status_id is None:
+        # The guard declined: a stale or duplicate sample. `DO UPDATE ... WHERE` that
+        # matches nothing returns no row, and the stored row keeps its own status,
+        # payload, sampled_at and received_at untouched. Return that retained row.
+        row = (
+            await db.execute(select(TelemetryLatestStatus).where(TelemetryLatestStatus.binding_id == binding_id))
+        ).scalar_one()
+    else:
+        stored = await db.get(TelemetryLatestStatus, status_id)
+        assert stored is not None
+        row = stored
     # `db_session` fixtures/routes run with expire_on_commit=False, so a *second* ingest
     # for the same binding_id would otherwise return the first call's stale, still-
     # identity-mapped Python object here (the raw Core upsert above never touches the
     # ORM's in-memory attributes on conflict) -- refresh forces it back in sync with the
-    # row this call itself just wrote.
+    # row now actually stored, whichever call wrote it.
     await db.refresh(row)
     return row
 

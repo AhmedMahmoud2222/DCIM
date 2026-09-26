@@ -1,0 +1,739 @@
+# Phase 10 Post-Audit Remediation and Integration Report
+
+**Version:** 1.7
+**Date:** 2026-09-26
+**Branch:** `claude/intelligent-edison-94mvbo`
+**Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
+**Status:** AT THE REVIEW GATE. NOT MERGED. Merge requires explicit approval.
+
+> **2026-09-26 integration clarification:** sections 1–14 retain the implementation author's historical report and earlier review requests. The current-source clarification in section 15 supersedes obsolete review SHAs, the proposed PR-closure sequence and claims that the audit still has no addendum. Do not apply the historical merge sequence without owner approval.
+
+
+---
+
+## 1. Exact SHAs
+
+| Artifact | SHA |
+|---|---|
+| Baseline (`main`) | `d96676c0534397c7320f09ca3fb4c5c3d72f86ba` |
+| PR #27 head (Codex) | `c430f8445f1e82f941a6fb0192df4b7440335b15` |
+| PR #28 head (Jules) | `c710309ea437b5273c7be5453fc65599696df8dd` |
+| Integration head | `5235f6c2866b4831b5ef30db11d5d74028072359` |
+| Last code change (later commits are documentation) | `16f9255cfc0c81a2f5afa66ecde217ff14801936` |
+
+Both PR heads were verified against GitHub before merging. Each matched the head its pull request reported.
+
+### Commit sequence
+
+```
+09328a6 ci: put the repository root on PYTHONPATH for the edge-collector job
+4d1bbbf ci: gate Python 3.12/3.13 and report 3.14, and align the README runtime claims
+0e47173 ci: add Edge Collector and service-backed Playwright jobs (issue #26)
+a06f842 test(edge): parse SNMP requests structurally instead of by byte search
+ed19695 fix(telemetry): reject out-of-order latest-status samples via a guarded upsert
+2642224 ci: retain exactly one frontend Vitest step after reconciling #27 and #28
+b5020cc Merge origin/audit/phase10-post-merge-14423236032059353664   <- PR #28
+ca24dab merge: reconcile Codex PR #27                                 <- PR #27
+```
+
+Both source branches are merged with `--no-ff`. No commit from either branch is duplicated, and both authorships survive in history.
+
+---
+
+## 2. Combined diff against the baseline
+
+```
+ .github/workflows/ci.yml                                   | 324 +++++++++++++
+ .gitignore                                                 |   3 +
+ ARCHITECTURE_REVIEW.md                                     |  19 +-
+ PHASE10_INDEPENDENT_AUDIT_REPORT.md                        | 189 ++++++++
+ README.md                                                  |  29 +-
+ backend/app/application/telemetry_service.py               |  70 ++--
+ backend/scripts/create_admin.py                            |  42 +-
+ backend/tests/api/test_telemetry_port_status.py            |  57 +++
+ backend/tests/integration/test_telemetry_ordering_concurrency.py | 202 ++++++++
+ backend/tests/unit/test_telemetry_port_status.py           | 130 ++++++
+ edge_collector/scheduler.py                                |   2 +-
+ edge_collector/snmp.py                                     |  14 +-
+ edge_collector/tests/test_snmp.py                          | 300 ++++++++++--
+ 13 files changed, 1319 insertions(+), 62 deletions(-)
+```
+
+Two files carry production code changes: `telemetry_service.py` and `snmp.py`. Everything else is tests, CI, documentation or a bootstrap script.
+
+---
+
+## 3. Reconciliation of PR #27 and PR #28
+
+Both pull requests independently added `npm test` to the frontend CI job. Merging both produced two Vitest executions in one job.
+
+| Item | Disposition |
+|---|---|
+| `.github/workflows/ci.yml` Vitest step | PR #27's named step kept. PR #28's unnamed duplicate removed. One Vitest execution remains, verified by `grep -c "npm test"`. |
+| `README.md` | Codex's rewrite kept, then extended in commit `4d1bbbf` to state what CI gates rather than what `requires-python` permits. |
+| `ARCHITECTURE_REVIEW.md` §51 | Codex's addendum kept unchanged. |
+| `PHASE10_INDEPENDENT_AUDIT_REPORT.md` | Jules' report kept unchanged. Section 8 below records what still needs correcting in it. |
+| `edge_collector/tests/test_snmp.py` | Jules' fix superseded. Section 5 gives the evidence. |
+
+Neither PR #27 nor PR #28 was merged into `main`. Both remain open.
+
+---
+
+## 4. Task A. Telemetry ordering and concurrency
+
+### The defect
+
+`record_latest_status()` in `backend/app/application/telemetry_service.py` upserted `TelemetryLatestStatus` with an unconditional `ON CONFLICT DO UPDATE`. Whichever ingest committed last won, regardless of when its sample was taken.
+
+Jules' audit examined this function and reported the upsert as atomic, which it was. Atomicity was never the gap. Ordering was.
+
+A poller retrying a delayed batch, or a slow poller losing a race to a faster one, carries an older `sampled_at` and overwrote the newer reading. The rack-elevation overlay then showed a recovered link as `DOWN` until the next poll.
+
+### The fix
+
+The guard sits in the statement:
+
+```sql
+ON CONFLICT (binding_id) DO UPDATE SET ...
+WHERE telemetry_latest_status.sampled_at < excluded.sampled_at
+```
+
+A read-then-write in Python cannot provide this. Two sessions both read the same "before" row, both conclude they are newer, and the slower one overwrites the faster one. PostgreSQL evaluates this `WHERE` after taking the conflicting row's lock and re-reading its committed version, so a concurrent writer sees the other session's committed `sampled_at` and declines, in one statement.
+
+### Defined behaviour
+
+| Case | Outcome |
+|---|---|
+| `sampled_at` strictly newer | Applied. |
+| `sampled_at` strictly older (stale) | Declined. Stored row keeps its status, payload, `sampled_at` and `received_at`. |
+| `sampled_at` equal (duplicate) | No-op, first writer wins. No ordering evidence favours either writer, so the outcome stays independent of arrival order. |
+| No stored row | Applied. The guard only runs on conflict. |
+
+`received_at` is deliberately left alone on a decline. It records when the winning sample arrived.
+
+### API contract
+
+The signature and return type are unchanged. `record_latest_status()` returns the row that is authoritative after the call: this call's row when applied, the retained newer row when not.
+
+A declined sample is still `200` with the same `PortStatusOut` body. It is not an error. A poller retrying a delayed batch has done nothing wrong and must not be driven into a retry loop by a `409`.
+
+### Blast radius
+
+`record_latest_status()` is the only writer to `telemetry_latest_status` anywhere in the
+backend, and it has exactly one production caller, `POST /api/v1/telemetry/port-status/ingest`.
+No Celery task, collector path or migration writes that table. The guard therefore cannot
+be bypassed by a second writer, and the semantics change reaches exactly one endpoint.
+
+Verified by searching for both the function name and the model across `backend/app/`.
+
+### Test evidence
+
+| Test | Level | Fails before the fix |
+|---|---|---|
+| `test_stale_sample_does_not_overwrite_a_newer_cached_status` | unit | yes |
+| `test_duplicate_sample_at_an_equal_timestamp_is_a_no_op` | unit | yes |
+| `test_newer_sample_replaces_the_cached_status` | unit | no (control) |
+| `test_first_sample_for_a_binding_is_always_applied` | unit | no (control) |
+| `test_ordering_guard_is_scoped_per_binding` | unit | no (control) |
+| `test_concurrent_out_of_order_samples_leave_the_newest_stored` | integration | yes |
+| `test_a_concurrent_stale_sample_never_wins_against_a_newer_one` | integration | yes |
+| `test_concurrent_duplicate_samples_converge_on_one_row` | integration | yes |
+| `test_stale_ingest_keeps_the_http_contract_and_returns_the_retained_status` | api | yes |
+
+Six of the nine fail against the previous implementation, verified by reverting `telemetry_service.py` alone and re-running. The three controls pass on both sides, which is what makes them controls.
+
+The three concurrency tests use independent `AsyncSession` instances on their own connections from a dedicated engine, following `tests/integration/test_phase8_concurrency.py`. They are genuine races, not sequential simulations. One dispatches twelve shuffled samples for one binding; one repeats a two-writer race eight times with the dispatch order alternating; one sends ten concurrent re-deliveries of a single sample.
+
+---
+
+## 5. Task B. SNMP test reliability
+
+### Two wrong assumptions
+
+The original harness read the request ID at `request[18:22]`. `_integer()` in `edge_collector/snmp.py` encodes in the shortest form that fits and prepends a `0x00` sign byte when the top bit is set, so the request-ID TLV is 3 to 6 bytes wide and every field after it shifts.
+
+That slice is correct only when the request ID happens to encode to four content bytes. `get()` draws it from `secrets.randbelow(2**31 - 1) + 1`, and 2139095040 of those 2147483647 values encode to four bytes. The baseline test therefore passes 99.609375% of the time and fails about 1 run in 256. Six consecutive baseline runs in this environment all passed, which is what a defect at that rate looks like and why it reached `main`.
+
+PR #28 replaced the slice with `request.find(b"\xa0")`. This fixes the width problem and is correct for every community any test in the repository used. It substitutes a different assumption, though: `0xA0` is the GetRequest tag and also an ordinary byte, so a community string containing it is found first. No existing test exercised that, so the fix is sound for the suite as it stood and fragile for the suite as it grows.
+
+Reproduced directly against `_build_get_request`:
+
+| Community (UTF-8 on the wire) | PR #28 returns | Correct |
+|---|---|---|
+| `private` | `02047fffffff` | `02047fffffff` |
+| `pub\xa0lic` -> `70 75 62 C2 A0 6C 69 63` | 34 bytes of unrelated packet | `02047fffffff` |
+| `\xa0secret` | 35 bytes of unrelated packet | `02047fffffff` |
+
+### The replacement
+
+The agent now decodes the request, walking tag/length/value triples from the outer SEQUENCE inward, and echoes the request ID's own encoded TLV at whatever width the collector produced.
+
+The decoder is written out in the test module rather than imported from `snmp.py`. An agent parsing requests with the code under test would agree with the collector about a malformed frame by construction, and the tests would lose the ability to see a BER bug at all.
+
+### Coverage added
+
+6 test functions become 14. The Edge Collector suite goes from 25 tests to 55.
+
+- Request IDs at every encoding width: `0x01`, `0x7F`, `0x80`, `0x1234`, `0x00FFFF`, `0x123456`, `0x7FFFFFFF`, covering both sign-byte cases. Each asserts the observed TLV length, so a regression to a fixed width fails rather than passes by luck.
+- Communities carrying `0xA0`, in three positions.
+- Long-form lengths at community lengths 126, 127, 128, 255, 256 and 400, crossing both BER boundaries, plus an assertion that a two-byte long-form length is genuinely emitted so the parametrisation cannot silently stop exercising it.
+- Ten malformed packet shapes: empty datagram, tag only, header without body, body cut mid-PDU, last byte removed, overstated outer length, wrong outer tag, trailing garbage, a long-form length claiming five bytes, and an indefinite length.
+- Wrong request ID, wrong OID, and a non-zero agent error status.
+
+### One collector change
+
+The task instruction was to preserve the collector unless a separate reproducible defect was established. One was.
+
+`_parse_response()` checked four nested BER readers for trailing data and raised `SNMPError("SNMP response has trailing data")`, but never checked the outermost datagram. `read_constructed()` stops at the outer SEQUENCE's declared end and never looks past it, so a well-formed message followed by arbitrary padding was accepted. The function's own error message shows the intent; the outermost level was missed.
+
+The change adds `datagram.exhausted` to that condition. Scope is confirmed narrow: reverting `snmp.py` alone fails exactly one of the 55 tests. The other 54 pass against the collector unmodified.
+
+**This is the only production change outside `telemetry_service.py` and is flagged for the reviewer to accept or reject independently.**
+
+---
+
+## 6. Task C. CI and runtime validation
+
+### New jobs
+
+| Job | Blocking | Purpose |
+|---|---|---|
+| `edge-collector` | yes | Runs and lints `edge_collector/tests`. Never previously a gate. |
+| `browser-e2e` | yes | Playwright on isolated PostgreSQL 16 and Redis 7. |
+| `backend suite (Python 3.12)` | yes | Full migrated suite on 3.12. |
+| `backend suite (Python 3.13)` | yes | Full migrated suite on 3.13. |
+| `backend suite (Python 3.14)` | no | Reports 3.14 status. Section 7 explains why. |
+
+### browser-e2e design
+
+Host ports 5433 and 6380 and database `dcim_e2e`, so isolation from the `backend` job is real rather than incidental.
+
+It is a separate job on purpose. The `backend` job asserts the grants on its own database and exists to prove least-privilege behaviour. Seeding an Administrator with a known password into it would undermine what it validates.
+
+The job provisions the same ordinary non-owner `dcim_app` role, enables the three required extensions, migrates to a single head, runs `bootstrap_privileged_roles.sql`, seeds the Administrator fixture, starts the backend on `127.0.0.1:8000` and Vite on `127.0.0.1:5173`, polls `/api/v1/health/ready` and the frontend with 60 second bounded timeouts, installs Chromium, and runs `npm run test:e2e`.
+
+Readiness polls `/health/ready`, not `/health/live`. Liveness is true before PostgreSQL and Redis are reachable, so waiting on it would hand Playwright a backend that returns 503 on its first request.
+
+Both servers start in their own steps rather than through Playwright's `webServer`, so a startup failure is reported by the step that caused it with its log uploaded. `reuseExistingServer` means Playwright attaches to the running Vite instance.
+
+### Credential handling
+
+`scripts/create_admin.py` gains `--password-from-env VAR` and `--if-exists skip`. The password never reaches argv, which is world-readable through `/proc` and echoed into the CI step trace. Interactive use is unchanged and still prompts twice.
+
+The fixture password lives in the workflow file as a plain value, matching the existing treatment of `JWT_SECRET_KEY` and the database passwords already there. It is a throwaway credential for an ephemeral database. Storing it as a repository secret would mask it in logs while leaving it readable by the job, and would imply a confidentiality that does not apply.
+
+### Failure artifacts, verified
+
+Issue #26 asked for verification by a controlled failing run. A deliberately failing spec was added, run, and removed. It produced, under `frontend/test-results/`:
+
+```
+_artifact_probe-controlled-failure-produces-artifacts-chromium/trace.zip
+_artifact_probe-controlled-failure-produces-artifacts-chromium/test-failed-1.png
+_artifact_probe-controlled-failure-produces-artifacts-chromium/error-context.md
+```
+
+These are the exact paths the collection step copies. The collection and upload steps use `if: failure()`, so a job that times out at readiness and never reaches Playwright still uploads both server logs.
+
+---
+
+## 7. Runtime validation results
+
+Local environment: PostgreSQL 16.13, Redis 7, Node 22.22.2, Ubuntu 24.04 x86_64. Each Python version ran against its own database.
+
+| Check | 3.11 | 3.12 | 3.13 | 3.14.0rc2 |
+|---|---|---|---|---|
+| Dependency install | ok | ok (73 pkgs) | ok (73 pkgs) | ok (73 pkgs) |
+| Single Alembic head | `0024_telemetry_impact_map` | same | same | not reached |
+| Downgrade to `0010_mvp_alarms` and re-upgrade | pass | pass | pass | not reached |
+| Privileged retention bootstrap | pass | pass | pass | not reached |
+| `ruff check app tests` | clean | clean | clean | not reached |
+| `mypy app` | clean, 110 files | clean | clean | not reached |
+| Retention hostile suite | 6 passed | 6 passed | 6 passed | not reached |
+| Full migrated backend suite | 693 passed | 693 passed | 693 passed | blocked |
+| Edge Collector suite | 55 passed | 55 passed | 55 passed | not reached |
+
+Frontend, Node 22.22.2: Vitest 35 passed across 6 files. `npm run typecheck` clean. `npx eslint . --ext ts,tsx` clean. `npm run build` succeeded. `npm audit --audit-level=high` reported 0 vulnerabilities.
+
+Playwright against the real stack: `phase10b-instantiation.spec.ts` and `phase10c-telemetry-impact.spec.ts` both passed. This meets issue #26's acceptance criterion that both specs are green.
+
+The backend suite count of 693 is the baseline's 690 plus this branch's 9 new tests, less the 6 retention hostile tests reported separately.
+
+### Python 3.14 is not established
+
+Installation succeeds on 3.14.0rc2. Import does not:
+
+```
+TypeError: _eval_type() got an unexpected keyword argument 'prefer_fwd_module'
+```
+
+raised from `pydantic/_internal/_typing_extra.py` when importing `pydantic.root_model`, with `pydantic==2.13.5` and `pydantic-core==2.46.5`.
+
+This is a release-candidate gap, not a verdict on 3.14. Inspecting the signature on rc2:
+
+```
+typing._eval_type(t, globalns, localns, type_params=<sentinel>, *,
+                  recursive_guard=frozenset(), format=None, owner=None, parent_fwdref=None)
+```
+
+rc2 takes `parent_fwdref`. pydantic 2.13.5 passes `prefer_fwd_module`, which it does not accept. pydantic 2.13.5 targets the final 3.14 typing API, and rc2 predates it.
+
+No final 3.14 build was obtainable in the validation environment. The distribution's package index host is blocked by the environment's outbound proxy, and the available standalone builds stop at `3.14.0rc2`.
+
+Reporting 3.14 as unsupported on this evidence would be wrong. The matrix job settles it on GitHub's runners, where `actions/setup-python` installs a final 3.14.x, without a pre-release blocking every pull request. Promote it to blocking once it reports green; pin the fixed dependency once it reports red.
+
+---
+
+## 8. Findings status
+
+### Resolved on this branch
+
+| ID | Source | Severity | Disposition |
+|---|---|---|---|
+| F1 | Jules | HIGH | Resolved. One Vitest step in CI, duplicate removed. Playwright now gated by `browser-e2e`, which F1 left open. |
+| F2 | Jules | MEDIUM | Resolved differently. The underlying defect is a ~0.39% flake, not a hard failure. Jules' fix removes it but reintroduces fragility for communities carrying `0xA0`; section 5 has both measurements. |
+| New | this work | HIGH | Out-of-order telemetry overwrote newer readings. Section 4. |
+| New | this work | LOW | `_parse_response()` accepted trailing data after a valid frame. Section 5. |
+| New | this work | LOW | Edge Collector suite absent from CI. Resolved by `edge-collector`. |
+| New | this work | LOW | `backend/media/` upload storage was not ignored by git. Resolved in `.gitignore`. |
+
+### Open
+
+| ID | Source | Severity | Status |
+|---|---|---|---|
+| F3 | Jules | LOW | Open. `ingest_collector_telemetry` has no per-record savepoints, so an unexpected exception rolls back preceding valid records in a batch. Outside the assigned scope. Not attempted. |
+| F4 | Jules | INFORMATIONAL | Open. Starlette `HTTP_422_UNPROCESSABLE_ENTITY` and SQLAlchemy `.distinct()` deprecation warnings. 32 warnings still reported. |
+| F5 | Jules | INFORMATIONAL | Closed. The CI matrix exists and gates 3.12, 3.13 and 3.14, all verified green on GitHub's runners. |
+
+### Corrections owed to the independent audit report
+
+**Addressed by PR #30, outside this work.** `docs/AUDIT_STATUS.md` now carries a dated post-audit addendum that leaves Jules' report intact while recording that its F1 and F2 statuses describe its own historical work, that PR #28's byte-search heuristic was superseded, and that its telemetry conclusion "must not be read as an adversarial proof of out-of-order sample safety". That is the right shape for this correction: a separate dated document rather than a rewrite of another author's findings.
+
+The three items below are kept as the record of what needed correcting.
+
+`PHASE10_INDEPENDENT_AUDIT_REPORT.md` is itself unchanged on this branch. Correcting another author's report is theirs to do, and three items needed it:
+
+1. F2 is marked "Fix Provided in PR". The fix in that PR does not work for community strings containing `0xA0`. The status should be corrected and the reproduction from section 5 attached.
+2. F1 is marked "Fix Provided in PR", but that PR addressed only the Vitest half. Playwright stayed outside CI until this branch. The Edge Collector suite was absent from CI and the report does not record it at all.
+3. Section 8 concludes the telemetry pillar is "fundamentally sound, high-quality, and robust" after examining `record_latest_status()`. The function had an ordering defect at the audited SHA. The conclusion should distinguish what was verified from what was inspected without an adversarial concurrency test.
+
+One further item is a matter of precision rather than correctness. F2 is described as "causing SNMP test failure" and the fix as making the suite pass "deterministically". The baseline test is not deterministically broken: it fails about 1 run in 256. Section 5 has the measurement. The distinction matters because it explains why the defect survived review, and because a fix's value is judged differently for a rare flake than for a hard failure.
+
+---
+
+## 9. Acceptance criteria
+
+| Criterion | Status |
+|---|---|
+| All backend suites run against reconciled code | Met. 693 + 6 on 3.11, 3.12 and 3.13. |
+| Frontend suites run | Met. Vitest 35/35, typecheck, lint, build, audit. |
+| Edge Collector suite runs | Met. 55 passed on 3.11, 3.12 and 3.13. |
+| Playwright suite runs | Met. Both specs pass against a real migrated backend. |
+| Single Alembic head | Met. `0024_telemetry_impact_map`. |
+| Successful migration upgrade | Met. |
+| Supported downgrade validation | Met. Downgrade to `0010_mvp_alarms` and re-upgrade, single head after. |
+| Clean lint and typecheck | Met. ruff and mypy clean on backend and `edge_collector`. ESLint and tsc clean. |
+| Passing GitHub Actions | Met. All seven checks green, confirmed on two heads. |
+| Existing security and least-privilege validation preserved | Met. The `backend` job is unchanged. The new `browser-e2e` job reproduces its non-owner `dcim_app` pattern. |
+
+---
+
+## 10. GitHub Actions
+
+### First run, head `4d1bbbf42f03acca2f19c27a64a6b4e29ecf1ee2`
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36139059701
+
+| Job | Result |
+|---|---|
+| `frontend` | success |
+| `browser-e2e` | **success** |
+| `edge-collector` | failure |
+| `backend`, `backend suite (3.12 / 3.13 / 3.14)` | cancelled when the run failed |
+
+`browser-e2e` passing on a hosted runner settles risk 5 below. The isolated services, role provisioning, migration, privileged bootstrap, Administrator fixture, readiness polling and both Playwright specs all work on GitHub's infrastructure and not only locally.
+
+### `edge-collector` failure and fix
+
+The job failed on all five Edge Collector test modules:
+
+```
+ModuleNotFoundError: No module named 'edge_collector'
+```
+
+`edge_collector/tests/` has no `__init__.py`, so pytest's rootdir insertion adds that directory to `sys.path` instead of the repository root, and the absolute imports in the test modules cannot resolve.
+
+Local validation missed this. Every local run used `python -m pytest`, which prepends the working directory to `sys.path`; the job invokes the `pytest` console script, which does not. The failure reproduces locally the moment the console script is used, which is how the fix was confirmed rather than guessed.
+
+Fixed in `09328a6` by exporting `PYTHONPATH: ${{ github.workspace }}` on the job, the same mechanism and the same reason as the existing `backend` job. The `backend-runtime-matrix` job already inherited it at job level and was unaffected.
+
+This is a defect in work delivered here, not in the merged branches. It is recorded rather than quietly amended because a CI job that fails on its first real run is exactly the kind of thing a reviewer should see the trace of.
+
+### Second run, head `09328a6456e29804baa412cf88c739cdc9f978bf`
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36139361294
+
+All seven checks passed, and again on heads `56d3541` and `22cde68`, which differ from it only by this report:
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36139623080
+
+| Job | Result |
+|---|---|
+| `backend` (Python 3.11) | success |
+| `backend suite (Python 3.12)` | success |
+| `backend suite (Python 3.13)` | success |
+| `backend suite (Python 3.14)` | success |
+| `browser-e2e` | success |
+| `edge-collector` | success |
+| `frontend` | success |
+
+### Python 3.14 passes on a final release
+
+The 3.14 job reported success, and a job-level conclusion alone would not have been
+evidence: `continue-on-error: true` makes GitHub report a job as successful even when its
+steps fail. The step-level conclusions were read instead. Every step succeeded, including
+`Run migrations`, `Validate retention migration round trip`, `Run PostgreSQL retention
+hostile validation`, `Run regression tests` and `Run Edge Collector tests on this runtime`.
+
+The 3.14.0rc2 failure in section 7 was therefore a release-candidate artefact, exactly as
+the evidence there suggested. Against the final 3.14.x that `actions/setup-python`
+installs, the complete migrated backend suite passes. The job's `Report the resolved
+interpreter` step records the exact patch version for anyone who needs it.
+
+3.14 is promoted to blocking on this branch, which is the criterion it shipped with. All
+three matrix entries now gate.
+
+### Confirmation with 3.14 blocking
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36140273816
+
+Head `16f9255cfc0c81a2f5afa66ecde217ff14801936`, the first run with `continue-on-error`
+removed from the 3.14 entry. All seven checks green:
+
+| Job | Result |
+|---|---|
+| `backend` (Python 3.11) | success |
+| `backend suite (Python 3.12)` | success |
+| `backend suite (Python 3.13)` | success |
+| `backend suite (Python 3.14)` | success |
+| `browser-e2e` | success |
+| `edge-collector` | success |
+| `frontend` | success |
+
+This run is the one that settles 3.14 beyond argument. With the entry blocking, no
+step failure can be reported as a successful job, so the green conclusion needs no
+step-level corroboration to stand.
+
+Four runs total, on four heads, all seven checks green on each. `browser-e2e` has now
+passed on a hosted runner four consecutive times.
+
+### Documentation merge, head `5235f6c`
+
+The repository owner merged documentation PR #30 into this branch after the runs above: a
+README rewrite, a `backend/pyproject.toml` package-description correction, and six new
+files under `docs/`. All seven checks pass on the resulting head as well.
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36202967189
+
+Checked rather than assumed, since a merge into a reviewed branch can silently undo work:
+the ordering guard, the `datagram.exhausted` check, all five job definitions (seven expanded jobs) with 3.12, 3.13 and
+3.14 blocking, both reports and `requires-python = ">=3.11"` are unchanged, and the
+rewritten README keeps the runtime statement accurate.
+
+Every other commit on this branch changes only this report, so those runs exercise
+identical code.
+
+---
+
+## 11. Outstanding risks
+
+1. **Closed.** Python 3.14 passes the full migrated suite on a final release, verified at step level, and now blocks. The local 3.14.0rc2 result stands as a record of why it was in doubt, not as an open question.
+2. **F3 is unfixed.** A batch ingest that raises an unexpected exception still rolls back preceding valid records.
+3. **Largely closed** by PR #30's `docs/AUDIT_STATUS.md`, which records the distinction as a dated addendum. `PHASE10_INDEPENDENT_AUDIT_REPORT.md` itself still reads as though F1 and F2 are closed, so a reader who finds that file on its own can still be misled.
+4. **The equal-timestamp rule is a decision, not a deduction.** First-writer-wins at an identical `sampled_at` was chosen because it makes concurrent re-delivery deterministic. A deployment that intends last-writer-wins at equal timestamps would need this changed. It is documented in the function's docstring and covered by tests, so a future change is a visible one.
+5. **Closed.** `browser-e2e` passed on a hosted runner in the first CI run. Its failure-artifact path remains verified only locally, since the job has not yet failed on a runner.
+6. **Closed** by the promotion above. The residual risk is ordinary: a future 3.14 patch or dependency release could break the gate, which is what the gate is for.
+
+---
+
+## 12. Proposed merge order
+
+1. **Close PR #27 and PR #28 without merging.** Both are fully contained in PR #29, with authorship preserved through `--no-ff` merges. Merging either first would leave a duplicate Vitest step on `main` until PR #29 lands.
+2. **Obtain independent validation of `4d1bbbf42f03acca2f19c27a64a6b4e29ecf1ee2`.** Section 13.
+3. **Merge PR #29 into `main`** once CI is green and independent validation reports.
+4. **Close issue #26** once `browser-e2e` and the runtime matrix have passed on `main`. Both passed on this branch; the 3.14 outcome to record there is that it is supported and gated.
+5. **Open a follow-up for F3**, which is the only substantive item this work leaves open.
+
+---
+
+## 13. Requested independent validation
+
+Review is requested of exactly `4d1bbbf42f03acca2f19c27a64a6b4e29ecf1ee2`, covering:
+
+1. **Telemetry ordering under concurrency.** Whether the `ON CONFLICT ... WHERE` guard holds under `READ COMMITTED` for concurrent inserts as well as concurrent updates, whether the equal-timestamp rule is the right call, and whether returning `200` for a declined stale sample is right for every caller.
+2. **SNMP BER parsing.** Whether the test-module decoder is itself correct, whether the malformed-packet set has real gaps, and whether the `datagram.exhausted` change to the collector is acceptable or should be reverted.
+3. **RBAC and database invariants.** Whether the ordering guard affects any permission boundary or constraint, and whether `browser-e2e`'s role provisioning preserves the least-privilege properties the `backend` job asserts.
+4. **CI coverage and test evidence.** Whether the new jobs gate what they claim, whether the Administrator fixture leaks credentials into any log, and whether the failure-artifact path holds on a hosted runner.
+5. **Correction of `PHASE10_INDEPENDENT_AUDIT_REPORT.md`,** distinguishing resolved findings from deferred and unverified ones, per section 8.
+
+Every finding should carry severity, file references, reproducible evidence and a disposition.
+
+---
+
+## 14. Gate
+
+This work stops here. PR #29 is open for review and is not merged. Merging into `main` requires explicit approval.
+
+---
+
+## 15. Final integration documentation correction — 2026-09-26
+
+This section records the review before the Compose correction. Section 16 supersedes its open encryption-key-forwarding disposition.
+
+**Source reviewed:** `5235f6c2866b4831b5ef30db11d5d74028072359`, incorporating PR #30 into PR #29; subsequent report-only HEAD `b1373b11431267c69ec320438fe047d90b6cb0a9` was inspected and preserved before this correction; base `main` is `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. GitHub comparisons confirm the exact PR #27, #28 and #30 heads are ancestors with no missing commits. PR #30's head has the same tree as this merge. The workflow contains exactly one frontend `npm test` step. [Run #82](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36202967189) is the corresponding CI evidence; a later documentation commit needs its own seven-job result.
+
+### Before and after this documentation-only correction
+
+| Before | Corrected guidance |
+|---|---|
+| Original audit's broad telemetry conclusion and F1/F2 statuses could be read as current assurance | Original sections remain unchanged; a dated reviewer addendum records the missed ordering defect, superseded BER heuristic, 55 tests, browser CI and blocking runtime matrix. |
+| Equal-timestamp behavior described as independent of arrival order | First successful writer is retained; competing different payloads at one timestamp can have different winners under different schedules. The implemented first-writer-wins contract is unchanged. |
+| F3 described simply as an unfixed missing-savepoint defect | Telemetry commits once before ACK and rolls back unexpected failures; discovery ingestion already has savepoints. A stronger partial-persistence requirement is not established. No savepoints or application-code edits were made. |
+| Current guides referred to a `/telemetry/latest` window function | Actual endpoint sorts by `occurred_at DESC` and limits rows; it does not use a window function or prove the Phase 10C cache's behavior. |
+| Test setup omitted test-admin credentials, test-database privileged bootstrap and the backend suite's root import path; E2E seed instruction omitted `python` | Developer guide now names the isolated test environment, privileged bootstrap, `PYTHONPATH` and exact seed invocation. |
+| README advertised an immediately usable Compose quick-start | A reproduced pre-existing required-key omission blocks Compose startup. README and operations guide disclose it and direct contributors to local setup. Deployment configuration is not silently changed by this documentation review. |
+| The v1.5 documentation-merge paragraph linked run #80 to `5235f6c` | Corrected to run #82, whose API `head_sha` is `5235f6c2866b4831b5ef30db11d5d74028072359`. |
+| Earlier section 12 proposed closing constituent PRs and reviewing an obsolete SHA | Review the live final HEAD and obtain owner approval. Do not merge #29, close #27/#28 or modify `main` as part of this review. #30 is already merged into the integration branch. |
+
+The independent review executed all 55 Edge Collector tests locally and reproduced the Compose settings error described in [operations](docs/OPERATIONS.md). Backend database suites cannot run in that workspace; their evidence comes from the actual GitHub Actions job logs. This correction changes documentation only and makes no new production or external-security certification claim. GitHub had no submitted Jules review on PR #29 at review start; the baseline audit artifact remains separately attributable to PR #28.
+
+---
+
+## 16. Compose credential-encryption configuration correction — 2026-09-26
+
+**Verified starting HEAD:** `2626acbd6fdb0fce301bc22c36930f2bd914e797`. **Exact correction HEAD:** `dd4a03d0e20ebcc957ead4efb2089c082a08e72f` ([commit](https://github.com/AhmedMahmoud2222/DCIM/commit/dd4a03d0e20ebcc957ead4efb2089c082a08e72f)). **Base main:** `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. This report update follows the correction commit and changes documentation only. The final report-commit HEAD and its exact seven-job CI run must be recorded in the submitted PR review after completion; earlier run #85 is evidence for the starting HEAD only.
+
+### Defect and correction
+
+The HIGH-severity finding was reproduced against the starting Compose configuration: `Settings` raises a missing-field validation error because `migrate`, `backend`, `celery-worker` and `celery-beat` do not receive `CREDENTIAL_ENCRYPTION_KEY`. The previous configuration renders successfully even when this key is absent, so Compose did not expose the omission before backend settings failed.
+
+All four services now use `${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY to one shared Fernet key in .env}`. This requires a nonempty shared value and supplies no default. Generate once per environment with `Fernet.generate_key()`: Fernet requires URL-safe base64 encoding of 32 random bytes, normally 44 characters. Settings itself checks required/minimum length; the encryption helper constructs Fernet and enforces the actual format. The settings/encryption implementation is unchanged.
+
+No real key was committed. Root and backend environment examples intentionally leave this value empty, with generation/sharing instructions. README, development and operations guides describe private storage, one key across the four services and restarts, recovery together with matching database backups, and coordinated re-encryption for rotation. The application has no automatic keyring/rotation migration; merely changing the environment value strands existing ciphertext.
+
+### Targeted regression and configuration evidence
+
+`backend/scripts/check_compose_settings.py` invokes the real Compose configuration renderer with ephemeral fixture values, an explicit empty env file and no inherited CI secrets. It compares each required `Settings.model_fields` entry with the resolved environment of all four services, checks identical key forwarding, and validates each resolved environment through the actual Settings class and Fernet. It also requires named configuration errors for missing and empty encryption keys. Resolved configuration/key values are captured in memory and never printed. The check is a required step in the existing primary backend job, preserving seven expanded CI jobs.
+
+| Executed check | Result |
+|---|---|
+| Actual Settings with the previous required-field omission | Reproduced `credential_encryption_key: Field required` |
+| Current script against the old Compose file from `2626acb` | Failed as intended, naming the missing key for all four services |
+| Actual Compose `config --format json` with all required variables | Passed; all four required Settings fields present in each service and shared Fernet key valid |
+| Actual Compose config with key removed | Nonzero, named `CREDENTIAL_ENCRYPTION_KEY` configuration error |
+| Actual Compose config with key empty | Nonzero, named `CREDENTIAL_ENCRYPTION_KEY` configuration error |
+| `ruff check scripts/check_compose_settings.py` from backend | Passed |
+| Parsed Compose comparison after removing the four new key entries | Identical to baseline: ownership/bootstrap/dependencies/ports/volumes unchanged |
+
+Local command from the repository root: `PYTHONPATH=backend python backend/scripts/check_compose_settings.py --compose-command /absolute/path/to/docker-compose`. The same command with `--compose-file /absolute/path/to/compose-before.yml` supplied the negative control. The checksum-verified official standalone Docker Compose v5.5.1 binary executed the configuration checks without a daemon. In CI, the default command is `docker compose`; the committed step is `python scripts/check_compose_settings.py` from backend after dependency installation.
+
+### Runtime and approval boundary
+
+**Fresh isolated Compose startup remains unverified in the review workspace:** Docker Engine and its socket are unavailable. No claim is made that migration, API, worker, beat or HTTP 200 readiness have been observed under Compose. The new check validates configuration, not image build/startup, catalog-media persistence, production deployment or recovery. The existing isolated service-backed Playwright job remains a separate application validation path.
+
+The configuration omission is corrected and the local regression checks passed. Final acceptance still requires all seven jobs on the final report-commit HEAD; their actual job/step conclusions and URLs belong in the final PR review. Do not merge #29, close constituent PRs or modify main. Stop for the owner's approval with the remaining runtime-validation limitation explicit.
+
+---
+
+## 17. Final validation — 2026-09-26
+
+**Report HEAD:** `9c7255980e3f33b5ed24a0ef408c3f57083f9a35` (doc commit after Compose correction, `branch:claude/intelligent-edison-94mvbo`)  
+**Base:** `d96676c0534397c7320f09ca3fb4c5c3d72f86ba` (`main`)  
+**PR:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) (open, unmerged, mergeable)
+
+### Final validation gate checklist
+
+| Task | Evidence |
+|---|---|
+| **Live PR HEAD recheck** | `9c7255980e3f33b5ed24a0ef408c3f57083f9a35` (confirmed open, unmerged, mergeable) |
+| **Compose correction independent review** | CREDENTIAL_ENCRYPTION_KEY added to all four services; .env examples updated with generation instructions; Settings constraints verified |
+| **Regression test negative control and invariants** | Previous version (3f6d5b5): CREDENTIAL_ENCRYPTION_KEY missing from all four services (would fail) → Current version (dd4a03d): all four have key (passes). Unchanged: database ownership, privileged bootstrap, migration ordering, service dependencies |
+| **CI run #87 against exact HEAD** | [Workflow run 36205257535](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36205257535) (run #87): `head_sha=9c7255980e3f33b5ed24a0ef408c3f57083f9a35`, Status: **COMPLETED** → **SUCCESS**. All 7 check runs: ✓ backend, ✓ backend suite (3.12), ✓ backend suite (3.13), ✓ backend suite (3.14), ✓ browser-e2e, ✓ edge-collector, ✓ frontend |
+| **Compose smoke test** | Configuration validation: ✓ PASSED with ephemeral test credentials and identical valid Fernet key in all four services (migrate, backend, celery-worker, celery-beat). **Full Docker Compose startup NOT EXECUTED:** containerized migration run, privileged bootstrap, both Celery services, and backend HTTP 200 readiness remain unverified in the review workspace (Docker Engine unavailable). Service-backed Playwright job validates application logic separately from Docker Compose deployment. |
+| **Material documentation contradictions** | None found. README, operations, development guides and audit status are consistent with the Compose correction and unchanged invariants. Report section 16 accurately documents the defect, correction, regression test, and runtime-validation limitation |
+
+### Final gate status
+
+All six validation tasks completed. No material contradictions found.
+
+**Docker Compose startup validation limitation:** Full Docker Compose deployment with containerized migration execution, privileged bootstrap, Celery service startup, and API HTTP 200 readiness were not executed in the review workspace (Docker Engine unavailable). The Compose configuration itself validates with the Credential encryption key correctly forwarded to all four services. Service-backed Playwright and individual job testing proceed separately. CI run #87 validates application behavior through those independent paths.
+
+**Final PR state:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) remains open, unmerged, and mergeable. Final PR review and owner approval required.
+
+**Do not merge PR #29, close constituent PRs #27/#28, or modify main.** Owner approval is required.
+
+---
+
+## 18. Compose deployment validation gate integration — 2026-09-26
+
+**Integrated PR:** [#32](https://github.com/AhmedMahmoud2222/DCIM/pull/32) (`codex/compose-smoke-gate-v1`)  
+**Merged into:** `claude/intelligent-edison-94mvbo` (PR #29 integration branch)  
+**Merge commit:** `9f78a9e869841220c2fc1c240802c08765c3bb99`  
+**Original test discovery:** Run [#36221376961](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221376961) (failure)  
+**Successful validation:** Run [#36221516436](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516436) (success)  
+**Regular CI on PR #32:** Run [#36221516439](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516439) (all 7 jobs passed)
+
+### Discovery: first live Compose smoke test
+
+The first full Docker Compose startup attempt (run #36221376961, triggering deployment-validation.yml) succeeded through Compose configuration validation, image build, and service startup, but **Celery beat failed to initialize** with:
+
+```
+Permission denied: 'celerybeat-schedule'
+```
+
+Celery beat's default schedule path is `celerybeat-schedule` in the application workdir. The container runs as an unprivileged `celery` user; the application workdir (`/app`) is not writable by that user. The scheduled-job persister could not create or write the file, so the service exited code 1 immediately after starting.
+
+PostgreSQL, Redis, the migration job, privileged bootstrap, Celery worker and the backend service all initialized successfully. The failure was isolated to this one configuration detail.
+
+### Correction: schedule path moved to /tmp
+
+Commit `48f3718` (`codex/compose-smoke-gate-v1`) changed the Celery beat command in `docker-compose.yml`:
+
+```yaml
+# Before:
+["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info"]
+
+# After:
+["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+```
+
+`/tmp` is writable by unprivileged container users and is conventionally disposable per container instance. Celery beat rebuilds the schedule from its source on startup if the file is missing, so no persistent state is lost in the container model; in a Kubernetes or persistent-container deployment requiring durable scheduling, a separately provisioned writable path would be used instead.
+
+The change is documented in a code comment and recorded in operations and development guides.
+
+### Verification: successful startup and service lifecycle
+
+Run [#36221516436](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516436) executed the corrected smoke test (Compose version `48f3718`):
+
+| Component | Verified |
+|---|---|
+| Compose configuration validation | ✓ Passed with test credentials and valid Fernet key |
+| Negative control (missing CREDENTIAL_ENCRYPTION_KEY) | ✓ Correctly failed with named configuration error |
+| Negative control (empty CREDENTIAL_ENCRYPTION_KEY) | ✓ Correctly failed with named configuration error |
+| PostgreSQL initialization | ✓ Health check passed |
+| Redis initialization | ✓ Health check passed |
+| Migration job (`migrate` service) | ✓ Exited 0 |
+| Privileged bootstrap job (`bootstrap-privileges` service) | ✓ Exited 0 |
+| Backend service | ✓ HTTP 200 on `/api/v1/health/ready` |
+| Celery worker (`celery-worker` service) | ✓ Still running after 10-second stability check; no Compose healthcheck asserted |
+| Celery beat (`celery-beat` service) | ✓ Still running after 10-second stability check (previously failing); no Compose healthcheck asserted |
+| Frontend service | ✓ HTTP 200 on `/` and HTTP 200 for frontend-proxied `/api/v1/health/ready` |
+| Full stack cleanup | ✓ All isolated containers and volumes removed; no leaked resources |
+
+All verification steps passed: PostgreSQL, Redis and backend were healthy; migrate and bootstrap exited 0; worker, beat and frontend were running; and backend and frontend-proxied readiness returned HTTP 200.
+
+### Deployment validation gate
+
+Two new files implement the gate:
+
+1. **`.github/scripts/compose_smoke.py` (191 lines):** Docker Engine-backed Compose startup validation script with functions for:
+   - `prepare()`: Generate disposable project name and isolated `.env` with test credentials (PostgreSQL password, DCIM app password, JWT secret, Fernet key via `os.urandom(32)` base64-encoded), with secrets masked from logs
+   - `config()`: Validate Compose configuration with `docker compose config --quiet`, test negative cases (missing/empty encryption key)
+   - `start()`: Build and start the complete stack with 1500-second timeout
+   - `verify()`: Poll all 8 services (postgres, redis, migrate, bootstrap-privileges, backend, celery-worker, celery-beat, frontend) for initialization completion, health checks, HTTP 200 on readiness endpoints
+   - `diagnose()`: Emit sanitized logs (redacted credentials) on failure
+   - `cleanup()`: Remove all isolated containers, volumes and temporary files; verify complete isolation
+
+2. **`.github/workflows/deployment-validation.yml` (62 lines):** GitHub Actions workflow with:
+   - Trigger: pull requests to integration branch or main, pushes to main, manual dispatch
+   - `compose-smoke` job: Runs the nine steps above (prepare, config, regression check, start, verify, diagnostics, cleanup) with 35-minute timeout
+   - `deployment-validation` job (display name `Deployment validation gate`): Depends on successful `compose-smoke`; fails if smoke fails or is skipped. It does not block a production deployment without an enforced required check or a deployment workflow that depends on it
+
+The dependent gate job cannot succeed if the Compose smoke job fails or is skipped. That job dependency alone does not enforce a deployment policy outside this workflow.
+
+### Regular CI validation
+
+Run [#36221516439](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221516439) on the corrected PR #32 HEAD executed all seven regular CI jobs and all passed:
+
+| Job | Result |
+|---|---|
+| `backend` | ✓ success |
+| `backend suite (Python 3.12)` | ✓ success |
+| `backend suite (Python 3.13)` | ✓ success |
+| `backend suite (Python 3.14)` | ✓ success |
+| `browser-e2e` | ✓ success |
+| `edge-collector` | ✓ success |
+| `frontend` | ✓ success |
+
+The Celery beat schedule-path fix and new deployment gate workflow do not cause any test failure or regression in existing CI.
+
+### Documentation updates in PR #32
+
+Three documentation locations were updated:
+
+1. **`docs/DEVELOPMENT_AND_TESTING.md`** — New section "Actual Docker Compose startup check" documenting:
+   - First live run discovering Celery beat permission failure
+   - Service verification checklist (all 8 services, health checks, HTTP 200)
+   - Smoke job isolation, credential generation, cleanup, and failure diagnostics
+   - Local reproduction steps with trap-based cleanup
+
+2. **`docs/OPERATIONS.md`** — New section "Mandatory Compose smoke validation before deployment decision" documenting:
+   - Problem statement (first real startup discovered permission issue)
+   - The fix (schedule path to /tmp; persistent deployments need separately provisioned paths)
+   - Workflow trigger and job execution details
+   - What is checked (negative configuration cases, migrations, bootstrap, service health, HTTP 200, cleanup)
+   - Owner enforcement requirement (see below)
+   - Local diagnostic and reproduction commands
+
+3. **Code comment in `docker-compose.yml`** — Brief explanation of the Celery beat schedule path change and why /tmp is used for container-local disposable state
+
+### Enforcement limitation
+
+The `deployment-validation` job (display name `Deployment validation gate`) exists in the workflow, but **it is not yet enforced** on real deployments. Enforcement requires the repository owner to:
+
+1. Require the successful `Deployment validation gate` job for the exact release commit on the protected integration and deployment branches (typically `main`), or add a protected deployment workflow explicitly dependent on the smoke result
+2. Enable "Require branches to be up to date before merging" to ensure no stale CI results
+3. Disable "Bypass branch protections" capabilities for non-owners
+
+Without an enforced rule or protected deployment workflow, the gate runs and records evidence but cannot prevent merging or a manual deployment. The current repository has no production deployment job. GitHub returned 403 for branch-protection reads through this integration, so enforcement could not be verified; its rulesets endpoint also reported that this private repository needs an upgraded plan or public visibility for rulesets.
+
+The owner must confirm an available protection mechanism for this repository plan and verify it against a failing or pending smoke check before calling the gate mandatory.
+
+### CI status on merged head
+
+Merge commit `9f78a9e869841220c2fc1c240802c08765c3bb99` (PR #32 integrated into PR #29's integration branch) triggered two workflows on 2026-09-26 05:57:45Z. Both completed successfully:
+
+1. **Deployment validation (run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072)):** ✓ **SUCCESS** (2026-09-26 05:59:54Z)
+   - Compose configuration validation passed
+   - All 8 services initialized successfully (postgres, redis, migrate, bootstrap-privileges, backend, celery-worker, celery-beat, frontend)
+   - PostgreSQL, Redis and backend health checks passed; worker and beat remained running
+   - HTTP 200 verified on backend `/api/v1/health/ready`, frontend-proxied `/api/v1/health/ready`, and frontend `/`
+   - Isolated containers and volumes cleaned up
+   - Smoke test gate ready to enforce (when configured by owner)
+
+2. **Regular CI (run [36222319073](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319073)):** ✓ **SUCCESS** (2026-09-26 06:05:13Z)
+   - All seven jobs completed successfully:
+     - ✓ backend
+     - ✓ backend suite (Python 3.12)
+     - ✓ backend suite (Python 3.13)
+     - ✓ backend suite (Python 3.14)
+     - ✓ browser-e2e
+     - ✓ edge-collector
+     - ✓ frontend
+
+The integration preserves PR #32's authorship through `--no-ff` merge; its history and discovery of the Celery beat issue are retained. All seven regular CI jobs pass on the merged HEAD with no regressions.
+
+### Integration status and final validation
+
+PR #32 successfully integrated into PR #29's integration branch. All regular CI passed on PR #32's own HEAD before integration (run 36221516439). The merged HEAD passed all CI validation:
+
+| Validation | Result | Evidence |
+|---|---|---|
+| **Deployment validation gate on merged HEAD** | ✓ SUCCESS | Run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072): database/Redis/backend healthy, one-shot jobs exited 0, worker/beat running, smoke test passed |
+| **All seven regular CI jobs on merged HEAD** | ✓ SUCCESS | Run [36222319073](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319073): backend, backend suite (3.12/3.13/3.14), browser-e2e, edge-collector, frontend all passing |
+| **No regressions from Celery beat fix** | ✓ VERIFIED | Fix in place (schedule to /tmp), smoke test validates startup, no CI failures |
+| **No regressions from new deployment gate workflow** | ✓ VERIFIED | New workflows and scripts do not affect existing CI jobs; all 7 jobs unchanged |
+| **Authorship and history preservation** | ✓ CONFIRMED | Merge commit `9f78a9e` preserves PR #32 authorship and all commits through `--no-ff` |
+
+At the time of this earlier integration report, the documentation HEAD was `446e92ac0cf55c10bec277323cbb9ecc7b67c300`. A subsequent documentation commit advanced PR #29 to `3ed637307cd6e711e25c82c78cb8b79e635d0af3`; `main` was unchanged. On that later SHA, [deployment validation run 36222766582](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222766582) passed both smoke and dependent gate jobs, and [CI run 36222766579](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222766579) passed all seven jobs. Any later report correction or integration commit needs its own checks on its exact SHA.
+
+**Remaining enforcement limitation:** The owner must verify a required successful check or a protected deployment workflow that depends on this smoke result for the exact release SHA. Until then, the gate runs and logs results but cannot prevent merge or a manual deployment. See section 18 "Enforcement limitation" for configuration steps.
