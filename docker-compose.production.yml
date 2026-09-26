@@ -16,11 +16,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-dcim}
       DCIM_APP_PASSWORD: ${DCIM_APP_PASSWORD}
-    volumes:
+    volumes: !override
       # Use persistent host storage for production data
       - ${POSTGRES_DATA_PATH:-/var/lib/dcim/postgres}:/var/lib/postgresql/data
       - ./backend/scripts/docker-initdb:/docker-entrypoint-initdb.d:ro
-    ports:
+    ports: !override
       # Restricted to localhost by host firewall rules
       - "127.0.0.1:5432:5432"
     healthcheck:
@@ -39,7 +39,7 @@ services:
 
   redis:
     image: redis:7
-    ports:
+    ports: !override
       # Restricted to localhost by host firewall rules
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -113,7 +113,7 @@ services:
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
       ENVIRONMENT: production
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-["https://dcim.example.com"]}
-    ports:
+    ports: !override
       # Restricted to localhost; reverse proxy handles external access
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -200,7 +200,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    ports:
+    ports: !override
       # Restricted to localhost; reverse proxy handles external access
       - "127.0.0.1:8080:80"
     depends_on:
@@ -221,6 +221,8 @@ volumes:
 networks:
   dcim-internal:
     driver: bridge
+    # External DNS and registry access may be required by application services.
+    # This network is not isolated from egress; ingress is controlled by loopback binds.
     ipam:
       config:
         - subnet: 172.20.0.0/16
