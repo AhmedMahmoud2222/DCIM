@@ -26,6 +26,10 @@ DEPLOYMENT_LOCK_FILE="${DEPLOY_DIR}/.deployment.lock"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/dcim}"
 LOG_DIR="${LOG_DIR:-/var/log/dcim}"
 
+# Lock tracking
+DEPLOYMENT_LOCK_FD=""
+DEPLOYMENT_LOCK_TYPE=""  # "flock" or "fallback"
+
 # Release information
 RELEASE_SHA="${1:-}"
 RELEASE_ENVIRONMENT="${2:-production}"
@@ -76,12 +80,14 @@ acquire_deployment_lock() {
             sleep 5
         done
         echo "$$" > "$DEPLOYMENT_LOCK_FILE"
+        DEPLOYMENT_LOCK_TYPE="fallback"
         log "Acquired fallback file lock (PID: $$)"
         return
     fi
 
     # Atomic lock using flock (300s timeout)
     exec 200>"$DEPLOYMENT_LOCK_FILE"
+    DEPLOYMENT_LOCK_FD=200
     if ! flock -n 200; then
         log "Deployment lock in use; waiting (timeout: 300s)..."
         if ! timeout 300 flock 200; then
@@ -89,15 +95,33 @@ acquire_deployment_lock() {
         fi
     fi
 
-    log "Acquired atomic deployment lock (PID: $$)"
+    DEPLOYMENT_LOCK_TYPE="flock"
+    log "Acquired atomic deployment lock (PID: $$, FD: $DEPLOYMENT_LOCK_FD)"
 }
 
 release_deployment_lock() {
-    if [ -n "${DEPLOYMENT_LOCK_FD:-}" ]; then
-        exec 200>&-  # Close the file descriptor
+    # Only release if we actually acquired a lock
+    if [ -z "$DEPLOYMENT_LOCK_TYPE" ]; then
+        return  # Lock was never acquired
     fi
-    rm -f "$DEPLOYMENT_LOCK_FILE"
-    log "Released deployment lock"
+
+    case "$DEPLOYMENT_LOCK_TYPE" in
+        flock)
+            if [ -n "$DEPLOYMENT_LOCK_FD" ]; then
+                eval "exec $DEPLOYMENT_LOCK_FD>&-" 2>/dev/null || true  # Close the file descriptor
+                log "Released flock deployment lock"
+            fi
+            ;;
+        fallback)
+            # Only remove fallback lock file if we created it
+            if [ -f "$DEPLOYMENT_LOCK_FILE" ] && grep -q "^$$\$" "$DEPLOYMENT_LOCK_FILE" 2>/dev/null; then
+                rm -f "$DEPLOYMENT_LOCK_FILE"
+                log "Released fallback file lock"
+            else
+                log "Fallback lock file not owned by this process (PID: $$), not removing"
+            fi
+            ;;
+    esac
 }
 
 backup_current_deployment() {
@@ -322,13 +346,22 @@ wait_for_health() {
         if curl -sf "$BACKEND_HEALTH_URL" > /dev/null 2>&1; then
             log "Backend is ready"
 
-            # Verify all containers are running
+            # Verify expected long-running services are running
             cd "$DEPLOY_DIR"
-            local running=$(docker compose -f docker-compose.production.yml ps --quiet | wc -l)
-            local expected=$(docker compose -f docker-compose.production.yml config --services | wc -l)
+            local expected_services=("postgres" "redis" "backend" "celery-worker" "celery-beat" "frontend")
+            local all_running=true
 
-            if [ "$running" -eq "$expected" ]; then
-                log "All services healthy and running"
+            for service in "${expected_services[@]}"; do
+                local state=$(docker compose -f docker-compose.production.yml ps --filter "service=$service" --format "{{.State}}" 2>/dev/null)
+                if [ "$state" != "running" ]; then
+                    log "Service $service is not running (state: $state)"
+                    all_running=false
+                    break
+                fi
+            done
+
+            if [ "$all_running" = true ]; then
+                log "All long-running services healthy and running"
                 return 0
             fi
         fi
@@ -338,7 +371,8 @@ wait_for_health() {
         sleep $HEALTH_CHECK_INTERVAL
     done
 
-    die "Services failed to become healthy within ${HEALTH_CHECK_TIMEOUT}s"
+    log_error "Services failed to become healthy within ${HEALTH_CHECK_TIMEOUT}s"
+    return 1
 }
 
 record_deployment() {

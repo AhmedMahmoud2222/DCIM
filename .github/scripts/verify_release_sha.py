@@ -16,6 +16,7 @@ Requires GITHUB_TOKEN environment variable with API access (public_repo scope mi
 import sys
 import os
 import json
+import re
 import urllib.request
 import urllib.error
 from typing import Optional, Dict, List, Tuple
@@ -29,6 +30,7 @@ MAIN_BRANCH = "main"
 # Required checks that must pass
 REQUIRED_CHECKS = {
     "Deployment validation gate",
+    "Compose smoke",
     "backend suite (Python 3.12)",
     "backend suite (Python 3.13)",
     "backend suite (Python 3.14)",
@@ -37,6 +39,9 @@ REQUIRED_CHECKS = {
     "browser-e2e",
     "edge-collector",
 }
+
+# Expected workflow path for CI checks
+CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 
 def get_github_token() -> str:
     """Get GitHub token from environment."""
@@ -179,15 +184,51 @@ def get_check_runs_for_sha(sha: str) -> List[Dict]:
 
     return checks
 
+def verify_workflow_runs(sha: str) -> Tuple[bool, set]:
+    """Verify workflow runs exist and extract valid check names."""
+    runs = get_workflow_runs_for_sha(sha)
+
+    if not runs:
+        print(f"ERROR: No workflow runs found for {sha[:12]}")
+        return False, set()
+
+    valid_check_ids = set()
+    ci_workflow_found = False
+
+    for run in runs:
+        workflow_path = run.get("path", "")
+        run_id = run.get("id")
+        conclusion = run.get("conclusion")
+
+        if workflow_path == CI_WORKFLOW_PATH:
+            ci_workflow_found = True
+            if conclusion not in ["success", "neutral"]:
+                print(f"✗ Workflow run {run_id}: status={run.get('status')} conclusion={conclusion}")
+                return False, set()
+            valid_check_ids.add(run_id)
+
+    if not ci_workflow_found:
+        print(f"ERROR: CI workflow ({CI_WORKFLOW_PATH}) not found for this SHA")
+        return False, set()
+
+    return True, valid_check_ids
+
+
 def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
-    """Verify all required checks have passed from non-superseded runs."""
+    """Verify all required checks have passed from the CI workflow."""
+    # 1. Verify workflow runs exist and get valid run IDs
+    runs_valid, valid_run_ids = verify_workflow_runs(sha)
+    if not runs_valid:
+        return False, {}
+
+    # 2. Get check runs for this SHA
     all_checks = get_check_runs_for_sha(sha)
 
     if not all_checks:
         print(f"ERROR: No check runs found for {sha[:12]}")
         return False, {}
 
-    # Filter to latest, non-superseded runs (by name)
+    # 3. Filter to latest, non-superseded runs (by name)
     # Group checks by name, keep only the most recent completed one
     checks_by_name: Dict[str, Dict] = {}
     for check in all_checks:
@@ -195,12 +236,16 @@ def verify_required_checks(sha: str) -> Tuple[bool, Dict[str, str]]:
         if not name:
             continue
 
-        # Skip superseded runs (GitHub marks reruns with higher ID)
-        # Keep the most recent one
+        # Verify check came from a valid workflow run
+        run_id = check.get("check_suite", {}).get("id") if isinstance(check.get("check_suite"), dict) else None
+        if run_id and run_id not in valid_run_ids:
+            print(f"⚠ Check '{name}' from different workflow (run {run_id}), skipping")
+            continue
+
+        # Keep the most recent one by ID
         if name not in checks_by_name:
             checks_by_name[name] = check
         else:
-            # Keep the more recent one (higher ID or later completion)
             existing_id = checks_by_name[name].get("id", 0)
             current_id = check.get("id", 0)
             if current_id > existing_id:

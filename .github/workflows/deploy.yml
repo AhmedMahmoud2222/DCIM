@@ -21,9 +21,27 @@ permissions:
   statuses: read
 
 jobs:
+  validate-input:
+    name: Validate dispatch input
+    runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.validate.outputs.sha }}
+    steps:
+      - name: Validate release SHA format
+        id: validate
+        run: |
+          INPUT_SHA="${{ inputs.release_sha }}"
+          if ! [[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: Invalid SHA format. Must be exactly 40 hexadecimal characters."
+            echo "Received: $INPUT_SHA"
+            exit 1
+          fi
+          echo "sha=$INPUT_SHA" >> $GITHUB_OUTPUT
+
   verify-release:
     name: Verify release SHA
     runs-on: ubuntu-latest
+    needs: validate-input
     outputs:
       verified: ${{ steps.verify.outputs.verified }}
       check-status: ${{ steps.verify.outputs.check-status }}
@@ -42,38 +60,43 @@ jobs:
         id: verify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
-          python .github/scripts/verify_release_sha.py "${{ inputs.release_sha }}"
+          python .github/scripts/verify_release_sha.py "$RELEASE_SHA"
           echo "verified=true" >> $GITHUB_OUTPUT
 
       - name: Check verification result
         if: failure()
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
           echo "ERROR: Release SHA verification failed"
-          echo "SHA: ${{ inputs.release_sha }}"
+          echo "SHA: $RELEASE_SHA"
           echo "This release does not meet deployment requirements"
           exit 1
 
   request-approval:
     name: Request deployment approval
     runs-on: ubuntu-latest
-    needs: verify-release
+    needs: [validate-input, verify-release]
     if: inputs.environment == 'production'
     environment:
       name: production-deployment
       deployment-branch: main
     steps:
       - name: Confirm approval
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
           echo "Deployment approval required for production"
-          echo "Release: ${{ inputs.release_sha }}"
+          echo "Release: $RELEASE_SHA"
           echo "Environment: production"
           echo "This approval is tracked in GitHub Actions audit log"
 
   validate-environment:
     name: Validate deployment environment
     runs-on: ubuntu-latest
-    needs: [verify-release]
+    needs: [validate-input, verify-release]
     if: inputs.environment == 'staging'
     steps:
       - name: Checkout repository
@@ -82,9 +105,11 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout release SHA
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
-          git fetch origin "${{ inputs.release_sha }}"
-          git checkout "${{ inputs.release_sha }}"
+          git fetch origin "$RELEASE_SHA"
+          git checkout "$RELEASE_SHA"
 
       - name: Validate Docker Compose configuration
         run: |
@@ -116,7 +141,7 @@ jobs:
   staging-deployment:
     name: Validate staging deployment readiness
     runs-on: ubuntu-latest
-    needs: [verify-release, validate-environment]
+    needs: [validate-input, verify-release, validate-environment]
     if: inputs.environment == 'staging'
     outputs:
       deployment-result: ${{ steps.validate.outputs.result }}
@@ -127,9 +152,11 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout release SHA
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
-          git fetch origin "${{ inputs.release_sha }}"
-          git checkout "${{ inputs.release_sha }}"
+          git fetch origin "$RELEASE_SHA"
+          git checkout "$RELEASE_SHA"
 
       - name: Validate deployment prerequisites
         id: validate
@@ -173,7 +200,7 @@ jobs:
   record-deployment:
     name: Record verification evidence
     runs-on: ubuntu-latest
-    needs: [verify-release, staging-deployment]
+    needs: [validate-input, verify-release, staging-deployment]
     if: always()
     steps:
       - name: Checkout repository
@@ -182,13 +209,15 @@ jobs:
           fetch-depth: 0
 
       - name: Record release verification evidence
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
           echo "Recording release verification evidence"
-          cat > /tmp/verification-record.md <<EOF
+          cat > /tmp/verification-record.md <<'EOF'
           # Release Verification Record
 
           **Date/Time:** $(date -Iseconds)
-          **Release SHA:** ${{ inputs.release_sha }}
+          **Release SHA:** $RELEASE_SHA
           **Target Environment:** ${{ inputs.environment }}
           **Verification By:** GitHub Actions workflow_dispatch (actor: ${{ github.actor }})
 
@@ -231,7 +260,7 @@ jobs:
 
           3. Execute deployment:
              cd /opt/dcim
-             bash scripts/deploy-docker-compose.sh ${{ inputs.release_sha }} production
+             bash scripts/deploy-docker-compose.sh $RELEASE_SHA production
 
           4. Monitor deployment:
              - Check health: curl http://localhost:8000/api/v1/health/ready
@@ -244,7 +273,7 @@ jobs:
           ## Audit Trail
 
           - GitHub workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          - Release commit: https://github.com/${{ github.repository }}/commit/${{ inputs.release_sha }}
+          - Release commit: https://github.com/${{ github.repository }}/commit/$RELEASE_SHA
           - Workflow: https://github.com/${{ github.repository }}/blob/main/.github/workflows/deploy.yml
 
           ## Production Requirements
@@ -263,23 +292,27 @@ jobs:
           cat /tmp/verification-record.md
 
       - name: Upload verification record
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         uses: actions/upload-artifact@v3
         with:
-          name: verification-record-${{ inputs.release_sha }}
+          name: verification-record-${{ env.RELEASE_SHA }}
           path: /tmp/verification-record.md
           retention-days: 90
 
   deployment-summary:
     name: Workflow Summary
     runs-on: ubuntu-latest
-    needs: [verify-release, staging-deployment, record-deployment]
+    needs: [validate-input, verify-release, staging-deployment, record-deployment]
     if: always()
     steps:
       - name: Summarize release verification and deployment readiness
+        env:
+          RELEASE_SHA: ${{ needs.validate-input.outputs.release_sha }}
         run: |
           echo "## Release Verification and Deployment Readiness Summary"
           echo ""
-          echo "**Release SHA:** ${{ inputs.release_sha }}"
+          echo "**Release SHA:** $RELEASE_SHA"
           echo "**Target Environment:** ${{ inputs.environment }}"
           echo "**Verification Status:** PASSED"
           echo ""
@@ -300,7 +333,7 @@ jobs:
             echo "To deploy to staging infrastructure:"
             echo "1. SSH to staging server"
             echo "2. Export secrets (POSTGRES_PASSWORD, DCIM_APP_PASSWORD, JWT_SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY)"
-            echo "3. Run: bash /opt/dcim/scripts/deploy-docker-compose.sh ${{ inputs.release_sha }} staging"
+            echo "3. Run: bash /opt/dcim/scripts/deploy-docker-compose.sh $RELEASE_SHA staging"
             echo "4. Monitor health checks (60-second timeout)"
             echo "5. Verify services responding at http://localhost:8000/api/v1/health/ready"
             echo ""
