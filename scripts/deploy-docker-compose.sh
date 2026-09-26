@@ -344,12 +344,23 @@ start_services() {
     cd "$DEPLOY_DIR"
 
     # Start services in order (migrations, bootstrap, then main services)
-    docker compose -f docker-compose.production.yml up -d postgres redis
-    docker compose -f docker-compose.production.yml up -d migrate
-    docker compose -f docker-compose.production.yml up -d bootstrap-privileges
-    docker compose -f docker-compose.production.yml up -d
+    if ! docker compose -f docker-compose.production.yml up -d postgres redis; then
+        die "Failed to start postgres/redis services"
+    fi
 
-    log "Services started"
+    if ! docker compose -f docker-compose.production.yml up -d migrate; then
+        die "Failed to start database migration service"
+    fi
+
+    if ! docker compose -f docker-compose.production.yml up -d bootstrap-privileges; then
+        die "Failed to start bootstrap privileges service"
+    fi
+
+    if ! docker compose -f docker-compose.production.yml up -d; then
+        die "Failed to start all remaining services"
+    fi
+
+    log "Services started successfully"
 }
 
 wait_for_health() {
@@ -442,29 +453,43 @@ rollback_deployment() {
     fi
 
     log "Stopping current services..."
-    docker compose -f docker-compose.production.yml down --remove-orphans 2>/dev/null || true
+    if ! docker compose -f docker-compose.production.yml down --remove-orphans 2>&1; then
+        log_error "Warning: Could not cleanly stop services, continuing with rollback"
+    fi
 
     log "Checking out previous code: $previous_sha"
-    git fetch --quiet origin "$previous_sha" || die "Could not fetch previous SHA from origin"
-    git checkout --quiet "$previous_sha" || die "Could not checkout previous SHA"
+    if ! git fetch --quiet origin "$previous_sha"; then
+        die "ROLLBACK FAILED: Could not fetch previous SHA from origin"
+    fi
+    if ! git checkout --quiet "$previous_sha"; then
+        die "ROLLBACK FAILED: Could not checkout previous SHA"
+    fi
 
     # Restore previous .env from backup if available
     if [ -f "$BACKUP_DIR/deployment-"*"/.env.backup" ]; then
         log "Restoring previous environment configuration..."
         local latest_backup=$(ls -d "$BACKUP_DIR"/deployment-* 2>/dev/null | sort -r | head -1)
         if [ -n "$latest_backup" ] && [ -f "$latest_backup/.env.backup" ]; then
-            cp "$latest_backup/.env.backup" .env
+            cp "$latest_backup/.env.backup" .env || die "ROLLBACK FAILED: Could not restore .env"
             chmod 600 .env
             log "Restored .env from backup"
         fi
     fi
 
     log "Starting services from previous deployment..."
-    docker compose -f docker-compose.production.yml up -d postgres redis 2>/dev/null || true
+    if ! docker compose -f docker-compose.production.yml up -d postgres redis; then
+        die "ROLLBACK FAILED: Could not start postgres/redis"
+    fi
     sleep 5
-    docker compose -f docker-compose.production.yml up -d migrate 2>/dev/null || true
-    docker compose -f docker-compose.production.yml up -d bootstrap-privileges 2>/dev/null || true
-    docker compose -f docker-compose.production.yml up -d 2>/dev/null || true
+    if ! docker compose -f docker-compose.production.yml up -d migrate; then
+        log_error "Warning: Migration service failed, continuing with rollback"
+    fi
+    if ! docker compose -f docker-compose.production.yml up -d bootstrap-privileges; then
+        log_error "Warning: Bootstrap privileges service failed, continuing with rollback"
+    fi
+    if ! docker compose -f docker-compose.production.yml up -d; then
+        die "ROLLBACK FAILED: Could not start all services"
+    fi
 
     log "Verifying rollback..."
     local verify_timeout=$((SECONDS + HEALTH_CHECK_TIMEOUT))
