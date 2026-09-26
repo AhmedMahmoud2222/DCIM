@@ -141,7 +141,10 @@ services:
         condition: service_completed_successfully
       bootstrap-privileges:
         condition: service_completed_successfully
-    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info"]
+    # The backend image runs as an unprivileged user; its application workdir is
+    # read-only to that user. Keep Celery's local schedule database in writable
+    # container-local storage instead of failing at startup with EACCES.
+    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
 
   frontend:
     build:

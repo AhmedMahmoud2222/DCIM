@@ -112,6 +112,8 @@ On a **disposable migrated database only**, confirm the single Alembic head and 
 
 ### Actual Docker Compose startup check
 
+The first live Docker run [#36221376961](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36221376961) reproduced an unprivileged Celery beat failure: `Permission denied: 'celerybeat-schedule'`. PostgreSQL/Redis were healthy, migration and privileged bootstrap exited zero, backend was healthy and worker ran; the smoke job failed as intended, emitted sanitized diagnostics and removed the isolated containers and volume. The proposed Compose correction moves beat's disposable local schedule to writable `/tmp/celerybeat-schedule`; check the subsequent run before treating it as validated.
+
 The independent [Deployment validation workflow](../.github/workflows/deployment-validation.yml) runs on PRs to the integration branch or `main`, pushes to `main`, and manual dispatch after it is on the default branch. It contains a `Compose smoke` job and a dependent `Deployment validation gate` job. A runner creates one project-specific disposable volume and fresh credentials, builds and starts the complete stack, verifies one-shot migration/bootstrap exit codes, service health and HTTP 200 through both backend and frontend, checks worker/beat remain running, then tears down its project on either success or failure. The existing daemon-free `backend/scripts/check_compose_settings.py` check remains in the backend CI job and also runs in the smoke workflow.
 
 Reproduce with Docker Engine and Compose from the repository root. Keep shell tracing disabled and copy the printed `export DCIM_SMOKE_...` lines only into your own shell:
