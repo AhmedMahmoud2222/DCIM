@@ -1,6 +1,6 @@
 # Phase 10 Post-Audit Remediation and Integration Report
 
-**Version:** 1.4
+**Version:** 1.5
 **Date:** 2026-09-25
 **Branch:** `claude/intelligent-edison-94mvbo`
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
@@ -15,7 +15,8 @@
 | Baseline (`main`) | `d96676c0534397c7320f09ca3fb4c5c3d72f86ba` |
 | PR #27 head (Codex) | `c430f8445f1e82f941a6fb0192df4b7440335b15` |
 | PR #28 head (Jules) | `c710309ea437b5273c7be5453fc65599696df8dd` |
-| Integration head | `16f9255cfc0c81a2f5afa66ecde217ff14801936` |
+| Integration head | `5235f6c2866b4831b5ef30db11d5d74028072359` |
+| Last code change (later commits are documentation) | `16f9255cfc0c81a2f5afa66ecde217ff14801936` |
 
 Both PR heads were verified against GitHub before merging. Each matched the head its pull request reported.
 
@@ -302,7 +303,11 @@ Reporting 3.14 as unsupported on this evidence would be wrong. The matrix job se
 
 ### Corrections owed to the independent audit report
 
-`PHASE10_INDEPENDENT_AUDIT_REPORT.md` is unchanged on this branch. Correcting another author's report is theirs to do, and three items need it:
+**Addressed by PR #30, outside this work.** `docs/AUDIT_STATUS.md` now carries a dated post-audit addendum that leaves Jules' report intact while recording that its F1 and F2 statuses describe its own historical work, that PR #28's byte-search heuristic was superseded, and that its telemetry conclusion "must not be read as an adversarial proof of out-of-order sample safety". That is the right shape for this correction: a separate dated document rather than a rewrite of another author's findings.
+
+The three items below are kept as the record of what needed correcting.
+
+`PHASE10_INDEPENDENT_AUDIT_REPORT.md` is itself unchanged on this branch. Correcting another author's report is theirs to do, and three items needed it:
 
 1. F2 is marked "Fix Provided in PR". The fix in that PR does not work for community strings containing `0xA0`. The status should be corrected and the reproduction from section 5 attached.
 2. F1 is marked "Fix Provided in PR", but that PR addressed only the Vitest half. Playwright stayed outside CI until this branch. The Edge Collector suite was absent from CI and the report does not record it at all.
@@ -418,8 +423,21 @@ step-level corroboration to stand.
 Four runs total, on four heads, all seven checks green on each. `browser-e2e` has now
 passed on a hosted runner four consecutive times.
 
-Later commits to this branch change only this report, so their runs exercise identical
-code.
+### Documentation merge, head `5235f6c`
+
+The repository owner merged documentation PR #30 into this branch after the runs above: a
+README rewrite, a `backend/pyproject.toml` package-description correction, and six new
+files under `docs/`. All seven checks pass on the resulting head as well.
+
+https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654
+
+Checked rather than assumed, since a merge into a reviewed branch can silently undo work:
+the ordering guard, the `datagram.exhausted` check, all five CI jobs with 3.12, 3.13 and
+3.14 blocking, both reports and `requires-python = ">=3.11"` are unchanged, and the
+rewritten README keeps the runtime statement accurate.
+
+Every other commit on this branch changes only this report, so those runs exercise
+identical code.
 
 ---
 
@@ -427,7 +445,7 @@ code.
 
 1. **Closed.** Python 3.14 passes the full migrated suite on a final release, verified at step level, and now blocks. The local 3.14.0rc2 result stands as a record of why it was in doubt, not as an open question.
 2. **F3 is unfixed.** A batch ingest that raises an unexpected exception still rolls back preceding valid records.
-3. **The independent audit report is uncorrected.** Section 8. It currently reads as though F1 and F2 are closed and the telemetry pillar was adversarially verified.
+3. **Largely closed** by PR #30's `docs/AUDIT_STATUS.md`, which records the distinction as a dated addendum. `PHASE10_INDEPENDENT_AUDIT_REPORT.md` itself still reads as though F1 and F2 are closed, so a reader who finds that file on its own can still be misled.
 4. **The equal-timestamp rule is a decision, not a deduction.** First-writer-wins at an identical `sampled_at` was chosen because it makes concurrent re-delivery deterministic. A deployment that intends last-writer-wins at equal timestamps would need this changed. It is documented in the function's docstring and covered by tests, so a future change is a visible one.
 5. **Closed.** `browser-e2e` passed on a hosted runner in the first CI run. Its failure-artifact path remains verified only locally, since the job has not yet failed on a runner.
 6. **Closed** by the promotion above. The residual risk is ordinary: a future 3.14 patch or dependency release could break the gate, which is what the gate is for.
