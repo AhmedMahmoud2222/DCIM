@@ -243,6 +243,49 @@ validate_environment_variables() {
     log "Environment variables validated"
 }
 
+validate_deployment_authorization() {
+    log_section "Validating deployment authorization"
+
+    # Check for deployment authorization file
+    local auth_file="$DEPLOY_DIR/.deployment-auth"
+
+    if [ ! -f "$auth_file" ]; then
+        log_error "WARNING: Deployment authorization file not found: $auth_file"
+        log_error "IMPORTANT: Authorization verification requires explicit handoff from GitHub Actions workflow"
+        log_error ""
+        log_error "Proper deployment procedure:"
+        log_error "1. Run GitHub Actions deploy workflow: .github/workflows/deploy.yml"
+        log_error "2. Workflow verifies release SHA against all CI gates and approval"
+        log_error "3. Operator creates authorization file on deployment server:"
+        log_error "   echo '$RELEASE_SHA' > $auth_file"
+        log_error "4. Run this deployment script"
+        log_error ""
+        log_error "Without authorization file, you must manually verify:"
+        log_error "- GitHub Actions workflow completed successfully with this SHA"
+        log_error "- All required CI checks PASSED for this SHA"
+        log_error "- Approval gate was satisfied (if production environment)"
+        log_error ""
+        log_error "Proceeding without authorization file verification."
+        return 0
+    fi
+
+    # Verify authorization file is recent (within last 24 hours)
+    local file_age=$(($(date +%s) - $(stat -f%c "$auth_file" 2>/dev/null || stat -c%Y "$auth_file" 2>/dev/null || date +%s)))
+    local max_age=$((24 * 3600))
+
+    if [ "$file_age" -gt "$max_age" ]; then
+        die "Deployment authorization expired (file age: ${file_age}s, max: ${max_age}s)"
+    fi
+
+    # Verify authorization is for this SHA
+    local auth_sha=$(head -1 "$auth_file" 2>/dev/null || echo "")
+    if [ "$auth_sha" != "$RELEASE_SHA" ]; then
+        die "Deployment authorization SHA mismatch: expected $RELEASE_SHA, got $auth_sha"
+    fi
+
+    log "✓ Deployment authorization verified (age: ${file_age}s, SHA: ${RELEASE_SHA:0:12})"
+}
+
 # ============================================================================
 # Deployment functions
 # ============================================================================
@@ -494,6 +537,7 @@ main() {
     validate_permissions
     validate_docker
     validate_environment_variables
+    validate_deployment_authorization
 
     # Lock deployment
     acquire_deployment_lock
