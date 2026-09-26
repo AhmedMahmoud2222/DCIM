@@ -1,0 +1,62 @@
+name: Deployment validation
+
+on:
+  pull_request:
+    branches: [claude/intelligent-edison-94mvbo, main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate disposable credentials and project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py prepare
+      - name: Validate Compose contract and negative key cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py config
+      - name: Retain required backend settings regression
+        run: |
+          python3 -m pip install -e ./backend
+          python3 backend/scripts/check_compose_settings.py
+      - name: Build and start complete stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py start
+      - name: Check services and HTTP readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py verify
+      - name: Sanitized diagnostics on failure
+        if: failure()
+        shell: bash
+        run: python3 .github/scripts/compose_smoke.py diagnose
+      - name: Remove isolated containers and volumes
+        if: always()
+        shell: bash
+        run: python3 .github/scripts/compose_smoke.py cleanup
+
+  deployment-validation:
+    name: Deployment validation gate
+    needs: [compose-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful Compose smoke
+        env:
+          SMOKE_RESULT: ${{ needs.compose-smoke.result }}
+        run: test "$SMOKE_RESULT" = success
