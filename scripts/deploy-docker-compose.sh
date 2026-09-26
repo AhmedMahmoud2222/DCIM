@@ -36,7 +36,9 @@ validate() {
     git -C "$REPO_ROOT" fetch --quiet origin main
     git -C "$REPO_ROOT" merge-base --is-ancestor "$RELEASE_SHA" origin/main || { fail 'SHA is not on origin/main'; return 1; }
     GITHUB_TOKEN="${GITHUB_TOKEN:-}" python3 "$REPO_ROOT/.github/scripts/verify_release_sha.py" "$RELEASE_SHA" >/dev/null || { fail 'GitHub release evidence not verified'; return 1; }
-    docker info >/dev/null && docker compose version >/dev/null || { fail 'Docker unavailable'; return 1; }
+    if ! docker info >/dev/null || ! docker compose version >/dev/null; then
+        fail 'Docker unavailable'; return 1
+    fi
     for name in POSTGRES_PASSWORD DCIM_APP_PASSWORD JWT_SECRET_KEY CREDENTIAL_ENCRYPTION_KEY; do
         [[ -n "${!name:-}" ]] || { fail "missing $name"; return 1; }
     done
