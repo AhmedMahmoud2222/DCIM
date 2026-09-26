@@ -1,6 +1,6 @@
 # Phase 10 Post-Audit Remediation and Integration Report
 
-**Version:** 1.5
+**Version:** 1.6
 **Date:** 2026-09-25
 **Branch:** `claude/intelligent-edison-94mvbo`
 **Pull request:** [#29](https://github.com/AhmedMahmoud2222/DCIM/pull/29)
@@ -487,6 +487,8 @@ This work stops here. PR #29 is open for review and is not merged. Merging into 
 
 ## 15. Final integration documentation correction — 2026-09-26
 
+This section records the review before the Compose correction. Section 16 supersedes its open encryption-key-forwarding disposition.
+
 **Source reviewed:** `5235f6c2866b4831b5ef30db11d5d74028072359`, incorporating PR #30 into PR #29; subsequent report-only HEAD `b1373b11431267c69ec320438fe047d90b6cb0a9` was inspected and preserved before this correction; base `main` is `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. GitHub comparisons confirm the exact PR #27, #28 and #30 heads are ancestors with no missing commits. PR #30's head has the same tree as this merge. The workflow contains exactly one frontend `npm test` step. [Run #82](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36202967189) is the corresponding CI evidence; a later documentation commit needs its own seven-job result.
 
 ### Before and after this documentation-only correction
@@ -503,3 +505,39 @@ This work stops here. PR #29 is open for review and is not merged. Merging into 
 | Earlier section 12 proposed closing constituent PRs and reviewing an obsolete SHA | Review the live final HEAD and obtain owner approval. Do not merge #29, close #27/#28 or modify `main` as part of this review. #30 is already merged into the integration branch. |
 
 The independent review executed all 55 Edge Collector tests locally and reproduced the Compose settings error described in [operations](docs/OPERATIONS.md). Backend database suites cannot run in that workspace; their evidence comes from the actual GitHub Actions job logs. This correction changes documentation only and makes no new production or external-security certification claim. GitHub had no submitted Jules review on PR #29 at review start; the baseline audit artifact remains separately attributable to PR #28.
+
+---
+
+## 16. Compose credential-encryption configuration correction — 2026-09-26
+
+**Verified starting HEAD:** `2626acbd6fdb0fce301bc22c36930f2bd914e797`. **Exact correction HEAD:** `dd4a03d0e20ebcc957ead4efb2089c082a08e72f` ([commit](https://github.com/AhmedMahmoud2222/DCIM/commit/dd4a03d0e20ebcc957ead4efb2089c082a08e72f)). **Base main:** `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. This report update follows the correction commit and changes documentation only. The final report-commit HEAD and its exact seven-job CI run must be recorded in the submitted PR review after completion; earlier run #85 is evidence for the starting HEAD only.
+
+### Defect and correction
+
+The HIGH-severity finding was reproduced against the starting Compose configuration: `Settings` raises a missing-field validation error because `migrate`, `backend`, `celery-worker` and `celery-beat` do not receive `CREDENTIAL_ENCRYPTION_KEY`. The previous configuration renders successfully even when this key is absent, so Compose did not expose the omission before backend settings failed.
+
+All four services now use `${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY to one shared Fernet key in .env}`. This requires a nonempty shared value and supplies no default. Generate once per environment with `Fernet.generate_key()`: Fernet requires URL-safe base64 encoding of 32 random bytes, normally 44 characters. Settings itself checks required/minimum length; the encryption helper constructs Fernet and enforces the actual format. The settings/encryption implementation is unchanged.
+
+No real key was committed. Root and backend environment examples intentionally leave this value empty, with generation/sharing instructions. README, development and operations guides describe private storage, one key across the four services and restarts, recovery together with matching database backups, and coordinated re-encryption for rotation. The application has no automatic keyring/rotation migration; merely changing the environment value strands existing ciphertext.
+
+### Targeted regression and configuration evidence
+
+`backend/scripts/check_compose_settings.py` invokes the real Compose configuration renderer with ephemeral fixture values, an explicit empty env file and no inherited CI secrets. It compares each required `Settings.model_fields` entry with the resolved environment of all four services, checks identical key forwarding, and validates each resolved environment through the actual Settings class and Fernet. It also requires named configuration errors for missing and empty encryption keys. Resolved configuration/key values are captured in memory and never printed. The check is a required step in the existing primary backend job, preserving seven expanded CI jobs.
+
+| Executed check | Result |
+|---|---|
+| Actual Settings with the previous required-field omission | Reproduced `credential_encryption_key: Field required` |
+| Current script against the old Compose file from `2626acb` | Failed as intended, naming the missing key for all four services |
+| Actual Compose `config --format json` with all required variables | Passed; all four required Settings fields present in each service and shared Fernet key valid |
+| Actual Compose config with key removed | Nonzero, named `CREDENTIAL_ENCRYPTION_KEY` configuration error |
+| Actual Compose config with key empty | Nonzero, named `CREDENTIAL_ENCRYPTION_KEY` configuration error |
+| `ruff check scripts/check_compose_settings.py` from backend | Passed |
+| Parsed Compose comparison after removing the four new key entries | Identical to baseline: ownership/bootstrap/dependencies/ports/volumes unchanged |
+
+Local command from the repository root: `PYTHONPATH=backend python backend/scripts/check_compose_settings.py --compose-command /absolute/path/to/docker-compose`. The same command with `--compose-file /absolute/path/to/compose-before.yml` supplied the negative control. The checksum-verified official standalone Docker Compose v5.5.1 binary executed the configuration checks without a daemon. In CI, the default command is `docker compose`; the committed step is `python scripts/check_compose_settings.py` from backend after dependency installation.
+
+### Runtime and approval boundary
+
+**Fresh isolated Compose startup remains unverified in the review workspace:** Docker Engine and its socket are unavailable. No claim is made that migration, API, worker, beat or HTTP 200 readiness have been observed under Compose. The new check validates configuration, not image build/startup, catalog-media persistence, production deployment or recovery. The existing isolated service-backed Playwright job remains a separate application validation path.
+
+The configuration omission is corrected and the local regression checks passed. Final acceptance still requires all seven jobs on the final report-commit HEAD; their actual job/step conclusions and URLs belong in the final PR review. Do not merge #29, close constituent PRs or modify main. Stop for the owner's approval with the remaining runtime-validation limitation explicit.
