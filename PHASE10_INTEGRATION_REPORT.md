@@ -700,15 +700,40 @@ Without this owner configuration, the gate exists as evidence and proof-of-conce
 
 ### CI status on merged head
 
-Merge commit `9f78a9e` (PR #32 integrated into PR #29's integration branch) triggered two workflows:
+Merge commit `9f78a9e869841220c2fc1c240802c08765c3bb99` (PR #32 integrated into PR #29's integration branch) triggered two workflows on 2026-09-26 05:57:45Z. Both completed successfully:
 
-1. **Deployment validation (run 36222319072):** `compose-smoke` job currently executing (regression check step); expected to complete with all steps passing
-2. **Regular CI (run 36222319073):** All seven jobs started and executing; expected to complete with all passing
+1. **Deployment validation (run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072)):** ✓ **SUCCESS** (2026-09-26 05:59:54Z)
+   - Compose configuration validation passed
+   - All 8 services initialized successfully (postgres, redis, migrate, bootstrap-privileges, backend, celery-worker, celery-beat, frontend)
+   - All health checks passed
+   - HTTP readiness endpoints verified (backend `/api/v1/health/ready`, frontend `/`)
+   - Isolated containers and volumes cleaned up
+   - Smoke test gate ready to enforce (when configured by owner)
 
-Final merged-HEAD CI results and URLs will be recorded in the final PR review. The integration preserves PR #32's authorship through `--no-ff` merge; its history and discovery of the Celery beat issue are retained.
+2. **Regular CI (run [36222319073](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319073)):** ✓ **SUCCESS** (2026-09-26 06:05:13Z)
+   - All seven jobs completed successfully:
+     - ✓ backend
+     - ✓ backend suite (Python 3.12)
+     - ✓ backend suite (Python 3.13)
+     - ✓ backend suite (Python 3.14)
+     - ✓ browser-e2e
+     - ✓ edge-collector
+     - ✓ frontend
 
-### Integration status
+The integration preserves PR #32's authorship through `--no-ff` merge; its history and discovery of the Celery beat issue are retained. All seven regular CI jobs pass on the merged HEAD with no regressions.
 
-PR #32 successfully integrated into PR #29's integration branch. All regular CI passed on PR #32's own HEAD before integration. The merged HEAD is running fresh CI validation. No additional changes were made to application code, deployment configuration or main branch.
+### Integration status and final validation
 
-**Remaining enforcement limitation:** Owner must configure the deployment validation gate as a required status check to enforce it on production deployments. Until configured, the gate runs and logs results but does not prevent merge.
+PR #32 successfully integrated into PR #29's integration branch. All regular CI passed on PR #32's own HEAD before integration (run 36221516439). The merged HEAD passed all CI validation:
+
+| Validation | Result | Evidence |
+|---|---|---|
+| **Deployment validation gate on merged HEAD** | ✓ SUCCESS | Run [36222319072](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319072): All 8 services healthy, smoke test passed |
+| **All seven regular CI jobs on merged HEAD** | ✓ SUCCESS | Run [36222319073](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36222319073): backend, backend suite (3.12/3.13/3.14), browser-e2e, edge-collector, frontend all passing |
+| **No regressions from Celery beat fix** | ✓ VERIFIED | Fix in place (schedule to /tmp), smoke test validates startup, no CI failures |
+| **No regressions from new deployment gate workflow** | ✓ VERIFIED | New workflows and scripts do not affect existing CI jobs; all 7 jobs unchanged |
+| **Authorship and history preservation** | ✓ CONFIRMED | Merge commit `9f78a9e` preserves PR #32 authorship and all commits through `--no-ff` |
+
+No additional changes were made to application code, deployment configuration or main branch. The final PR #29 HEAD on integration branch is `446e92ac0cf55c10bec277323cbb9ecc7b67c300` (includes documentation updates).
+
+**Remaining enforcement limitation:** Owner must configure the deployment validation gate as a required status check in branch protection rules to enforce it on production deployments. Until configured, the gate runs and logs results but does not prevent merge. See section 18 "Enforcement limitation" for configuration steps.
