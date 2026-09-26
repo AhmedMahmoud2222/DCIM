@@ -73,7 +73,7 @@ export function AppShell() {
             Sign out
           </button>
         </header>
-        <main id="main-content" className="flex-1 p-6">
+        <main id="main-content" tabIndex={-1} className="flex-1 p-6">
           <Outlet />
         </main>
       </div>
