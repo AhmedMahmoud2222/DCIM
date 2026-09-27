@@ -331,7 +331,6 @@ async def test_ingest_batch_one_bad_record_does_not_fail_the_rest(client, auth_h
     assert results[bad["dedup_key"]] == "rejected"
 
 
-
 @pytest.mark.parametrize("failure_kind", ["integrity", "runtime"])
 async def test_ingest_unexpected_failure_never_logs_or_returns_sensitive_data(
     client, auth_headers, monkeypatch, failure_kind,
