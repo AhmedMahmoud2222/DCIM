@@ -102,14 +102,14 @@ class CollectorRequestNonce(Base, UUIDPkMixin):
     (the same INSERT-as-claim pattern `IdempotencyKey` already established) -- a
     captured, valid-signature request cannot be replayed to trigger processing twice.
 
-    OPEN DECISION / deferred (PHASE8_EDGE_COLLECTOR_CONTRACT.md): rows older than the
-    signature timestamp window are safe to prune (a replay of an expired-timestamp
-    request is already rejected on that basis alone), but no periodic pruning job is
-    wired up in this phase -- this table grows unbounded until one is added. Documented,
-    not silently ignored."""
+    SEC-05: the hourly maintenance task prunes rows strictly older than the approved
+    one-hour retention, which exceeds the 300-second signature acceptance window."""
 
     __tablename__ = "collector_request_nonce"
-    __table_args__ = (UniqueConstraint("collector_id", "nonce", name="uq_collector_request_nonce_collector_nonce"),)
+    __table_args__ = (
+        UniqueConstraint("collector_id", "nonce", name="uq_collector_request_nonce_collector_nonce"),
+        Index("ix_collector_request_nonce_seen_at", "seen_at"),
+    )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="CASCADE"), nullable=False, index=True)
     nonce: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -136,7 +136,10 @@ class CollectorHeartbeat(Base, UUIDPkMixin):
     prompt §13's explicit "never collapse these into one status")."""
 
     __tablename__ = "collector_heartbeat"
-    __table_args__ = (Index("ix_collector_heartbeat_collector_ts", "collector_id", "ts"),)
+    __table_args__ = (
+        Index("ix_collector_heartbeat_collector_ts", "collector_id", "ts"),
+        Index("ix_collector_heartbeat_ts", "ts"),
+    )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="CASCADE"), nullable=False)
     ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)

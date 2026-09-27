@@ -36,6 +36,11 @@ celery_app.conf.update(
             "schedule": 5.0,
             "options": {"queue": "default"},
         },
+        "prune-collector-nonces-and-heartbeats": {
+            "task": "app.infrastructure.tasks.maintenance.prune_collector_nonces_and_heartbeats",
+            "schedule": 3600.0,
+            "options": {"queue": "maintenance"},
+        },
         "ensure-audit-log-partitions": {
             "task": "app.infrastructure.tasks.audit_partition_maintenance.ensure_future_partitions",
             "schedule": 86400.0,
@@ -47,6 +52,7 @@ celery_app.conf.update(
 celery_app.conf.imports = (
     "app.infrastructure.tasks.outbox_dispatcher",
     "app.infrastructure.tasks.audit_partition_maintenance",
+    "app.infrastructure.tasks.maintenance",
     "app.infrastructure.tasks.floorplan_import",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
@@ -66,4 +72,5 @@ celery_app.conf.imports = (
 import app.db.models  # noqa: E402,F401
 import app.infrastructure.tasks.audit_partition_maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
+import app.infrastructure.tasks.maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401
