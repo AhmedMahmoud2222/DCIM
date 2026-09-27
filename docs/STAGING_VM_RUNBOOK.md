@@ -1,6 +1,6 @@
 # Dedicated staging VM operator runbook (draft; do not execute without owner authorization)
 
-Baseline: [plan](STAGING_VM_DEPLOYMENT_PLAN.md), [merged implementation](DEPLOYMENT_IMPLEMENTATION.md), [governance PR #40](https://github.com/AhmedMahmoud2222/DCIM/pull/40). Commands below are a **proposed** Ubuntu 24.04 procedure; owner supplies actual private VM addresses, repository SSH trust, disk device, authorized release SHA and token. Never paste secret values into a shell history, ticket or capture. Stop on any failed check. Do not run the CI disposable `real_compose_validation.py` against this VM. No command in this document has been executed on a staging host.
+Baseline: [plan](STAGING_VM_DEPLOYMENT_PLAN.md), [merged implementation](DEPLOYMENT_IMPLEMENTATION.md), [merged governance documentation (PR #40)](DEPLOYMENT_GOVERNANCE.md). Commands below are a **proposed** Ubuntu 24.04 procedure; owner supplies actual private VM addresses, repository SSH trust, disk device, authorized release SHA and token. Never paste secret values into a shell history, ticket or capture. Stop on any failed check. Do not run the CI disposable `real_compose_validation.py` against this VM. No command in this document has been executed on a staging host.
 
 ## 0. Decision gate and VM preflight
 
