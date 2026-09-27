@@ -380,9 +380,9 @@ class IngestRecordResult(BaseModel):
     # collector's own retry/backoff logic can branch on, independent of `error`'s
     # exact wording -- NOT_ASSIGNED / IDEMPOTENCY_CONFLICT / PROCESSING /
     # INTERNAL_PROCESSING_ERROR. `error` is always a hand-written, safe message; for
-    # `INTERNAL_PROCESSING_ERROR` it is deliberately generic -- the real exception
-    # detail (which can include SQL/constraint-internal text) is logged server-side
-    # only, never returned to the collector.
+    # `INTERNAL_PROCESSING_ERROR` it is deliberately generic. Unexpected exception
+    # details can contain SQL parameters or payload data and are neither returned to
+    # the collector nor logged.
     error_code: str | None = None
     error: str | None = None
 
@@ -508,20 +508,16 @@ async def ingest_batch(
             results.append(
                 IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error_code="NOT_ASSIGNED", error=exc.detail)
             )
-        except Exception as exc:  # noqa: BLE001 -- one record's failure (e.g. a
+        except Exception:  # noqa: BLE001 -- one record's failure (e.g. a
             # database constraint violation from ingest_discovery) must not fail the
             # rest of the batch -- same savepoint/claim-release reasoning as above.
-            # Pre-MVP consolidation hardening (Codex M3): this branch catches whatever
-            # ingest_discovery/complete_claim can raise that ISN'T a hand-written
-            # ApiError -- an IntegrityError's own str() includes the raw SQL statement
-            # and constraint-internal detail, which must never reach a collector
-            # response. The full exception is logged server-side (structlog's own
-            # `_redact_sensitive` processor still applies); the collector gets a
-            # stable, generic code and message only.
+            # Exception messages, tracebacks and request-derived identifiers may contain
+            # credentials, SQL parameters or raw telemetry. Log only fixed fields and
+            # the record position; generic ACKs retain the existing retry contract.
             await idem.release_claim(db, claim_id)
             logger.error(
-                "ingest_batch_record_processing_failed", batch_id=body.batch_id, collector_id=str(collector.id),
-                dedup_key=record.dedup_key, integration_id=str(record.integration_id), error=str(exc),
+                "ingest_batch_record_processing_failed",
+                error_code="INTERNAL_PROCESSING_ERROR", record_index=len(results),
             )
             results.append(
                 IngestRecordResult(
