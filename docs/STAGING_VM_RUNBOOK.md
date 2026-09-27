@@ -4,7 +4,7 @@ Baseline: [plan](STAGING_VM_DEPLOYMENT_PLAN.md), [merged implementation](DEPLOYM
 
 ## 0. Decision gate and VM preflight
 
-Record owner staging authorization separately before section 5. Confirm the staging-environment/CORS gap from the plan has been resolved in a reviewed PR or accepted after isolated functional proof, and no production route/customer data is accessible. On clean Ubuntu, an infrastructure administrator executes the following after checking the VM's assigned disk device and approved SSH/VPN CIDR; commands involving placeholders must be filled locally and reviewed before execution.
+Record owner staging authorization separately before section 5. Confirm the owner-managed private HTTPS DNS, trusted certificate, VPN-restricted reverse proxy and matching CORS origin required by the plan are in place; no production route/customer data is accessible. On clean Ubuntu, an infrastructure administrator executes the following after checking the VM's assigned disk device and approved SSH/VPN CIDR; commands involving placeholders must be filled locally and reviewed before execution.
 
 ```bash
 cat /etc/os-release
@@ -33,9 +33,22 @@ sudo install -d -o dcim-deploy -g dcim-deploy -m 0700 /opt/dcim /var/backups/dci
 sudo install -d -m 0700 /var/lib/dcim-staging/postgres
 ```
 
-Use an approved operator public key in `~dcim-deploy/.ssh/authorized_keys` (0700 directory, 0600 file), and a separate read-only repository deploy key (0600) with pinned `github.com` host key. Docker group provides root-equivalent authority: only named trusted operators may assume this identity. `sudo -iu dcim-deploy` starts a fresh group session. For the PostgreSQL host bind directory, obtain the image's numeric PostgreSQL UID/GID and set ownership **after** confirming the exact image version and dedicated mounted path; do not recursively chown an unverified mount. Example inspection: `docker run --rm --entrypoint id postgres:16 postgres`. Record image digest for the release evidence.
+Use an approved operator public key in `~dcim-deploy/.ssh/authorized_keys` (0700 directory, 0600 file), and a separate read-only repository deploy key (0600) with pinned `github.com` host key. Docker group provides root-equivalent authority: only named trusted operators may assume this identity. `sudo -iu dcim-deploy` starts a fresh group session. The combined Compose file binds `${POSTGRES_DATA_PATH:-/var/lib/dcim/postgres}` to `/var/lib/postgresql/data` in `postgres:16`. For the **first empty** staging disk only, after confirming `findmnt /var/lib/dcim-staging` shows the dedicated filesystem and the image digest is recorded, the infrastructure administrator runs:
 
-Restrict inbound firewall before allowing administrative access: deny inbound by default; allow TCP 22 only from **approved bastion/VPN CIDRs**; deny 5432, 6379, 8000 and 8080 on external interfaces. Verify from a second SSH session before enabling firewall so operators do not lose access. Restrict outbound to approved DNS/NTP/apt/GitHub API/git/container registry destinations, and explicitly block production/customer/operational DCIM prefixes, including traffic forwarded from Docker bridge. Host UFW rules alone may not filter Docker forwarding: validate effective nftables/DOCKER-USER controls and perform an external negative connectivity test. Keep frontend private and use SSH local forwarding: `ssh -L 18080:127.0.0.1:8080 dcim-deploy@<approved-staging-host>`; browser `http://127.0.0.1:18080/`. If HTTPS DNS is chosen instead, review proxy/CORS changes separately.
+```bash
+PG_UID="$(docker run --rm --entrypoint id postgres:16 -u postgres)"
+PG_GID="$(docker run --rm --entrypoint id postgres:16 -g postgres)"
+[[ "$PG_UID" =~ ^[0-9]+$ && "$PG_GID" =~ ^[0-9]+$ ]] || exit 1
+test "$(stat -c %U:%G /var/lib/dcim-staging/postgres)" = root:root || exit 1
+test -z "$(sudo find /var/lib/dcim-staging/postgres -mindepth 1 -maxdepth 1 -print -quit)" || exit 1
+sudo chown -- "$PG_UID:$PG_GID" /var/lib/dcim-staging/postgres
+sudo chmod 0700 /var/lib/dcim-staging/postgres
+test "$(stat -c %u:%g:%a /var/lib/dcim-staging/postgres)" = "$PG_UID:$PG_GID:700"
+```
+
+Stop if this is an existing volume, the mount is missing, the image differs from the Compose release, or any check fails. Never recursively chown existing PostgreSQL files: restore and ownership assessment need a separate reviewed procedure. The numeric UID/GID and mode verification are evidence; no secret is printed.
+
+Restrict inbound firewall before allowing administrative access: deny inbound by default; allow TCP 22 only from **approved bastion/VPN CIDRs**; deny 5432, 6379, 8000 and 8080 on external interfaces. Verify from a second SSH session before enabling firewall so operators do not lose access. Restrict outbound to approved DNS/NTP/apt/GitHub API/git/container registry destinations, and explicitly block production/customer/operational DCIM prefixes, including traffic forwarded from Docker bridge. Host UFW rules alone may not filter Docker forwarding: validate effective nftables/DOCKER-USER controls and perform an external negative connectivity test. Owner provisions the **private HTTPS ingress before login testing**: resolve `staging.<owner-domain>` on approved VPN clients, install a client-trusted certificate for that name, permit TCP 443 only from approved VPN CIDRs, and reverse-proxy both `/` and `/api/` to VM `http://127.0.0.1:8080` while forwarding Host and scheme headers. Verify `https://staging.<owner-domain>/` with ordinary TLS validation; do not use `curl -k`. No plain HTTP tunnel is an approved browser login path. No reverse-proxy installation command is provided because the host/proxy provider, certificate source and owner network policy have not been selected; this is a blocking infrastructure decision, not an already-implemented repository service.
 
 ## 2. Release selection and checkout (deployment operator)
 
@@ -67,12 +80,12 @@ POSTGRES_PASSWORD=<stage-only-alphanumeric-secret>
 DCIM_APP_PASSWORD=<distinct-stage-only-alphanumeric-secret>
 JWT_SECRET_KEY=<stage-only-random-secret>
 CREDENTIAL_ENCRYPTION_KEY=<stage-only-fernet-key>
-CORS_ALLOWED_ORIGINS='["http://localhost:8080"]'
+CORS_ALLOWED_ORIGINS='["https://staging.<owner-domain>"]'
 ```
 
-For tunnel browser origin `http://127.0.0.1:18080`, the server's CORS setting and auth flow may require a reviewed adjustment. Base frontend proxies `/api/` to backend; validate actual browser behavior. Note the production override forces `ENVIRONMENT: production` and may reject staging-only workflows: resolve this before the first authorized deployment. The app role creation only runs on an **empty** PostgreSQL data directory; changing `DCIM_APP_PASSWORD` in `.env` afterward does not alter the stored role password. Plan a coordinated database role rotation and app update; never rotate the Fernet key by replacing `.env` alone.
+Replace `<owner-domain>` with the **same exact private DNS name** in the trusted TLS certificate, browser URL and `CORS_ALLOWED_ORIGINS`; the origin is case-sensitive for the scheme/host and uses implicit port 443 (no trailing slash). Frontend nginx proxies same-origin `/api/` to the backend; direct cross-origin API access is not part of this smoke. The production override deliberately keeps `ENVIRONMENT: production`: refresh and CSRF cookies therefore have `Secure` and `SameSite=Strict` and are scoped to `/api/v1/auth`. Do not set `ENVIRONMENT=development`, disable cookie security or use HTTP for login. The app role creation only runs on an **empty** PostgreSQL data directory; changing `DCIM_APP_PASSWORD` in `.env` afterward does not alter the stored role password. Plan a coordinated database role rotation and app update; never rotate the Fernet key by replacing `.env` alone.
 
-Provide a short-lived fine-grained GitHub API token with Contents/Actions/Checks read. Enter through an approved private terminal `read -rs GITHUB_TOKEN; export GITHUB_TOKEN` without echo or tracing; confirm only presence (`test -n "${GITHUB_TOKEN:-}"`). The script uses it for API verification. Before invoking the script, load the file in the **same shell** using `set -a; . /opt/dcim/.env; set +a`. Because this executes shell syntax, only load a trusted, owner-controlled file with characters and quoting reviewed first; avoid arbitrary content. The template's JSON value must be shell quoted (e.g. `CORS_ALLOWED_ORIGINS='["http://localhost:8080"]'`) so quotes survive. Do not `cat .env` or publish environment or full Compose JSON. Prefer a reviewed vault injection process in a follow-up PR.
+Provide a short-lived fine-grained GitHub API token with Contents/Actions/Checks read. Enter through an approved private terminal `read -rs GITHUB_TOKEN; export GITHUB_TOKEN` without echo or tracing; confirm only presence (`test -n "${GITHUB_TOKEN:-}"`). The script uses it for API verification. Before invoking the script, load the file in the **same shell** using `set -a; . /opt/dcim/.env; set +a`. Because this executes shell syntax, only load a trusted, owner-controlled file with characters and quoting reviewed first; avoid arbitrary content. The template's JSON value must be shell quoted (e.g. `CORS_ALLOWED_ORIGINS='["https://staging.<owner-domain>"]'`) so quotes survive. Do not `cat .env` or publish environment or full Compose JSON. Prefer a reviewed vault injection process in a follow-up PR.
 
 ## 4. Non-disruptive preflight (deployment operator)
 
@@ -94,9 +107,10 @@ python3 .github/scripts/verify_release_sha.py "$RELEASE_SHA" > /dev/null
 findmnt /var/lib/dcim-staging
 df -h / /var/lib/dcim-staging
 ss -ltn
+curl -sS -o /dev/null -w '%{http_code} TLS-verify=%{ssl_verify_result}\n' 'https://staging.<owner-domain>/'
 ```
 
-Manually confirm Compose version >=2.24.4, at least 20 GiB and 20% free on build disk and 20% on data disk, exact `POSTGRES_DATA_PATH` mount, no external listeners or project name collision. To inspect effective bindings without disclosing other JSON fields, pipe `docker compose -f docker-compose.yml -f docker-compose.production.yml config --format json` through a narrowly reviewed `jq` filter selecting only service names, `ports[].host_ip` and postgres volume source/target; no raw output or shell tracing. Confirm each of postgres/redis/backend/frontend binds 127.0.0.1 and database target is `/var/lib/postgresql/data`. Capture only the filtered output. Pre-migration backup is mandatory on subsequent deployments; first empty database still needs a tested restoration path. Stop if release verifier fails, any data directory contains unexpected files, or backup cannot be verified.
+Manually confirm Compose version >=2.24.4, at least 20 GiB and 20% free on build disk and 20% on data disk, exact `POSTGRES_DATA_PATH` mount, no external listeners or project name collision. To inspect effective bindings without disclosing other JSON fields, pipe `docker compose -f docker-compose.yml -f docker-compose.production.yml config --format json` through the narrowly selected `jq` filter above; no raw output or shell tracing. Confirm each of postgres/redis/backend/frontend binds 127.0.0.1 and database target is `/var/lib/postgresql/data`. The pre-deployment HTTPS curl above can return a proxy upstream error while the stack is stopped; TLS and private DNS must validate now, and HTTP 200 is required after deployment. Capture only filtered output. Pre-migration backup is mandatory on subsequent deployments; first empty database still needs a tested restoration path. Stop if release verifier fails, any data directory contains unexpected files, or backup cannot be verified.
 
 ## 5. First deployment (only after separate staging authorization)
 
@@ -118,13 +132,15 @@ docker compose -f docker-compose.yml -f docker-compose.production.yml ps -a
 curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/health/ready
 curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/v1/health/ready
 curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/
+curl -fsS -o /dev/null -w '%{http_code} TLS-verify=%{ssl_verify_result}\n' 'https://staging.<owner-domain>/'
+curl -fsS -o /dev/null -w '%{http_code} TLS-verify=%{ssl_verify_result}\n' 'https://staging.<owner-domain>/api/v1/health/ready'
 docker compose -f docker-compose.yml -f docker-compose.production.yml exec -T postgres psql -U postgres -d dcim_staging -Atc 'SELECT version_num FROM alembic_version;'
 git rev-parse HEAD
 cat .deployment-sha
 df -h / /var/lib/dcim-staging
 ```
 
-Expect postgres/redis/backend `healthy`, worker/beat/frontend `running`, migrate/bootstrap `exited (0)`, all three HTTP codes `200`, Git HEAD and state SHA equal. Inspect service logs locally with `docker compose ... logs --tail=100 <service>` **without exporting raw lines**. Browser through tunnel: load login, authenticate a synthetic test user provisioned by the application's reviewed admin-creation procedure, navigate inventory/catalog and confirm API calls succeed; no admin is automatically created by Compose. Record timestamps, release SHA, masked run IDs, Docker/Compose versions, filtered states, migration revision, HTTP codes, synthetic smoke outcomes, backup ID, reviewer and alert thresholds. Avoid `docker inspect` environment fields, shell `env`, full Compose output, secret-containing logs and database records. Configure host alert checks for readiness, container restart counts, disk thresholds, database backup age, and worker/beat liveness; test alert route. Restore access controls and explicitly close the SSH tunnel after smoke.
+Expect postgres/redis/backend `healthy`, worker/beat/frontend `running`, migrate/bootstrap `exited (0)`, all three local HTTP codes `200`, Git HEAD and state SHA equal. Inspect service logs locally with `docker compose ... logs --tail=100 <service>` **without exporting raw lines**. From an approved VPN browser, visit exactly `https://staging.<owner-domain>/` with a valid trusted certificate; same-origin frontend requests use `https://staging.<owner-domain>/api/v1/…`. Authenticate a synthetic test user provisioned by the application's reviewed admin-creation procedure, navigate inventory/catalog and verify refresh and logout. Browser developer tools should show `dcim_refresh_token` (HttpOnly) and `dcim_csrf_token` cookies with `Secure`, `SameSite=Strict`, path `/api/v1/auth`; refresh requests must send both cookies and `X-CSRF-Token`, return success without a CORS error, and no auth request may downgrade to HTTP. Capture only redacted cookie **attributes**, HTTP status, origin, certificate validation and smoke outcome, never cookie/header values or tokens. No admin is automatically created by Compose. Record timestamps, release SHA, masked run IDs, Docker/Compose versions, filtered states, migration revision, HTTPS and local HTTP codes, synthetic smoke outcomes, backup ID, reviewer and alert thresholds. Avoid `docker inspect` environment fields, shell `env`, full Compose output, secret-containing logs and database records. Configure host alert checks for readiness, container restart counts, disk thresholds, database backup age, and worker/beat liveness; test alert route.
 
 ## 7. Synthetic failure and recovery evidence checklist
 
