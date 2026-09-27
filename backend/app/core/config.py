@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     telemetry_daily_retention_days: int | None = None
     alarm_history_retention_days: int | None = None
 
+    # SEC-05: only longer retention is configurable without a new owner policy.
+    # The worker, not the API or beat process, applies these settings at run time.
+    nonce_retention_seconds: int = Field(default=3600, ge=3600)
+    heartbeat_retention_days: int = Field(default=30, ge=30)
+
     api_v1_prefix: str = "/api/v1"
 
     log_level: str = "INFO"
