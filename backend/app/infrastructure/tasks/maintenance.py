@@ -6,6 +6,7 @@ The per-run cap bounds the work during a backlog; the next hourly run continues.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.engine import Connection, Engine
@@ -22,6 +23,8 @@ logger = get_logger(__name__)
 
 BATCH_SIZE = 500
 MAX_BATCHES_PER_RUN = 100
+_NONCE_TABLE = cast(Table, CollectorRequestNonce.__table__)
+_HEARTBEAT_TABLE = cast(Table, CollectorHeartbeat.__table__)
 
 
 def _delete_batch(conn: Connection, table: Table, timestamp_column: str, cutoff: datetime) -> int:
@@ -63,8 +66,8 @@ def prune_expired_collector_rows(
     for batch_index in range(MAX_BATCHES_PER_RUN):
         try:
             with database.begin() as conn:
-                nonces = _delete_batch(conn, CollectorRequestNonce.__table__, "seen_at", nonce_cutoff)
-                heartbeats = _delete_batch(conn, CollectorHeartbeat.__table__, "ts", heartbeat_cutoff)
+                nonces = _delete_batch(conn, _NONCE_TABLE, "seen_at", nonce_cutoff)
+                heartbeats = _delete_batch(conn, _HEARTBEAT_TABLE, "ts", heartbeat_cutoff)
         except Exception:  # noqa: BLE001 -- log only safe fixed fields; Celery must see a failure
             logger.error(
                 "collector_retention_failed", error_code="RETENTION_BATCH_FAILED",
