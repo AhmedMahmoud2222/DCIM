@@ -79,11 +79,14 @@ All findings from the security assessment were revalidated against `main` at com
 - **Target Files**: `backend/app/domain/integration/models.py`, `backend/app/infrastructure/tasks/maintenance.py`
 - **Severity**: Low (Hardening Recommendation)
 - **Verified Evidence**: `CollectorRequestNonce` and `CollectorHeartbeat` tables grow monotonically without automated pruning.
-- **Owner Decision Required**: None (Independent hardening task).
+- **Owner Decision Required**:
+  - Review proposed default retention durations and approve owner-configurable policy settings:
+    - `NONCE_RETENTION_SECONDS` (default: 3600s / 1 hour; minimum required: > `REQUEST_TIMESTAMP_WINDOW_SECONDS` [300s]).
+    - `HEARTBEAT_RETENTION_DAYS` (default: 30 days).
 - **Acceptance Criteria**:
-  - Celery maintenance task `prune_collector_nonces_and_heartbeats` runs hourly.
-  - Nonces older than 1 hour (outside 300s window) are deleted.
-  - Heartbeat records older than 30 days are pruned.
+  - Celery maintenance task `prune_collector_nonces_and_heartbeats` runs on schedule using configured parameters.
+  - Nonces older than `NONCE_RETENTION_SECONDS` are deleted.
+  - Heartbeat records older than `HEARTBEAT_RETENTION_DAYS` are pruned.
 - **Negative Tests**: Run pruning task with active nonces (<300s) and expired nonces (>1h); verify only expired nonces are deleted.
 
 ---
@@ -93,11 +96,14 @@ All findings from the security assessment were revalidated against `main` at com
 - **Severity**: Medium (Deployment-Dependent Risk)
 - **Verified Evidence**: `SQLiteQueue` stores unacknowledged observations in unencrypted local SQLite database file `queue.db`.
 - **Owner Decision Required**:
-  1. Choose between host OS transparent disk encryption (LUKS/dm-crypt) vs SQLCipher extension for `SQLiteQueue`.
-  2. Determine key derivation/passphrase injection method for edge appliances.
-- **Acceptance Criteria**:
-  - Edge collector queue database file is encrypted at rest on host storage.
-- **Negative Tests**: Attempt to read `queue.db` with standard `sqlite3` CLI without key; verify error / raw encrypted bytes.
+  - Choose between host OS transparent block-device encryption (LUKS/dm-crypt) vs application-level SQLCipher page encryption for `SQLiteQueue`.
+- **Acceptance Criteria & Negative Tests by Architecture Option**:
+  - **Option A — Host OS LUKS Encryption**:
+    - *Acceptance Criteria*: Edge appliance volume is backed by a LUKS encrypted block device (`cryptsetup luksOpen`). Mounted filesystem access works transparently for `edge_collector`.
+    - *Negative Test*: Direct raw block read of the underlying physical storage device (e.g. `head -c 4096 /dev/sda2`) contains random ciphertext and does **not** contain the SQLite magic header string `"SQLite format 3"`.
+  - **Option B — Application SQLCipher Encryption**:
+    - *Acceptance Criteria*: `SQLiteQueue` uses `sqlcipher` / `pysqlcipher3` with key injected via environment or secure key file (`PRAGMA key = '...'`).
+    - *Negative Test*: Opening `queue.db` using standard un-keyed `sqlite3` driver or `sqlite3` CLI returns error `"file is not a database"` or header corruption error.
 
 ---
 
@@ -116,7 +122,7 @@ All findings from the security assessment were revalidated against `main` at com
 
 ```text
 [Phase 1: Independent Hardening] (Immediate)
-├── WP-05 (SEC-05): Nonce & Heartbeat Retention Task
+├── WP-05 (SEC-05): Nonce & Heartbeat Retention Task (with configurable retention settings)
 └── WP-07 (SEC-07): Ingest Exception Logging Sanitization
 
 [Phase 2: Owner Decision Gates] (Sequential)
@@ -138,10 +144,10 @@ All findings from the security assessment were revalidated against `main` at com
 **Severity**: Low (Hardening Recommendation)
 
 ### Summary
-Re-evaluate and finalize telemetry batch transaction semantics in `ingest_collector_telemetry()`. Handled per-record domain rejections (`NOT_ASSIGNED`, `UNKNOWN_METRIC_MAPPING`) currently append structured ACK items. This task implements per-record nested transaction savepoints (`async with db.begin_nested():`) or explicitly documents whole-batch transaction atomicity per owner decision.
+Re-evaluate and finalize telemetry batch transaction semantics in `ingest_collector_telemetry()`. Handled per-record domain rejections (`NOT_ASSIGNED`, `UNKNOWN_METRIC_MAPPING`) currently append structured ACK items. This task implements per-record nested transaction savepoints (`async with db.begin_nested():`) OR explicitly documents whole-batch transaction atomicity per owner decision.
 
 ### Acceptance Criteria
-- [ ] Implement savepoint isolation or document whole-batch rollback contract.
+- [ ] Implement savepoint isolation OR document whole-batch rollback contract per owner decision.
 - [ ] Add negative test for mid-batch database constraint failures.
 ```
 
@@ -153,7 +159,7 @@ Re-evaluate and finalize telemetry batch transaction semantics in `ingest_collec
 **Severity**: Medium (Deployment-Dependent Risk)
 
 ### Summary
-Implement key versioning (`v1:<ciphertext>`), a pluggable KMS/Vault encryption provider interface, and an admin-authenticated collector secret rotation endpoint (`POST /collectors/{id}/rotate-secret`).
+Implement key versioning (`v1:<ciphertext>`), a pluggable KMS/Vault encryption provider interface, and an admin-authenticated collector secret rotation endpoint (`POST /collectors/{id}/rotate-secret`) per owner KMS architecture approval.
 
 ### Acceptance Criteria
 - [ ] Add key versioning header prefix and legacy fallback decryption in `secrets.py`.
@@ -169,7 +175,7 @@ Implement key versioning (`v1:<ciphertext>`), a pluggable KMS/Vault encryption p
 **Severity**: Medium (Architectural Limitation)
 
 ### Summary
-Add SNMPv3 USM (`authNoPriv` / `authPriv` with AES-128 and SHA-1) support to `edge_collector/snmp.py` to eliminate cleartext community string transmission over UDP port 161.
+Add SNMPv3 USM (`authNoPriv` / `authPriv` with AES-128 and SHA-1) support to `edge_collector/snmp.py` to eliminate cleartext community string transmission over UDP port 161 per owner credential schema decision.
 
 ### Acceptance Criteria
 - [ ] Implement `SNMPv3Collector` with USM user authentication and privacy encryption.
@@ -185,14 +191,14 @@ Add SNMPv3 USM (`authNoPriv` / `authPriv` with AES-128 and SHA-1) support to `ed
 **Severity**: Low (Hardening Recommendation)
 
 ### Summary
-Add a Celery background maintenance task `prune_collector_nonces_and_heartbeats` to delete expired `CollectorRequestNonce` rows (>1 hour) and prune `CollectorHeartbeat` history (>30 days).
+Add a Celery background maintenance task `prune_collector_nonces_and_heartbeats` to delete expired `CollectorRequestNonce` rows (>1 hour default, configurable via `NONCE_RETENTION_SECONDS`) and prune `CollectorHeartbeat` history (>30 days default, configurable via `HEARTBEAT_RETENTION_DAYS`).
 
 ### Acceptance Criteria
-- [ ] Implement `prune_collector_nonces_and_heartbeats` Celery beat task.
+- [ ] Implement `prune_collector_nonces_and_heartbeats` Celery beat task reading configurable retention settings.
 - [ ] Add unit and integration tests verifying pruning thresholds.
 ```
 
-### Child Issue 5: `[SEC-06] Edge Collector SQLite Storage Encryption (#38)`
+### Child Issue 5: `[SEC-06] Edge Collector Storage Encryption (#38)`
 ```markdown
 **Parent Issue**: #38
 **Finding ID**: SEC-06
@@ -200,11 +206,11 @@ Add a Celery background maintenance task `prune_collector_nonces_and_heartbeats`
 **Severity**: Medium (Deployment-Dependent Risk)
 
 ### Summary
-Provide edge appliance storage security by supporting transparent disk encryption (LUKS/dm-crypt) or SQLCipher database file encryption for local unacknowledged telemetry queue storage.
+Provide edge appliance storage security by supporting host OS transparent disk encryption (LUKS/dm-crypt) OR application-level SQLCipher page encryption for local unacknowledged telemetry queue storage per owner edge decision.
 
-### Acceptance Criteria
-- [ ] Document edge appliance LUKS encryption requirements.
-- [ ] Add optional SQLCipher passphrase support in `SQLiteQueue`.
+### Acceptance Criteria & Negative Tests
+- [ ] For LUKS option: Document LUKS deployment guidelines and verify raw block device does not contain SQLite header string `"SQLite format 3"`.
+- [ ] For SQLCipher option: Add SQLCipher key support and verify opening `queue.db` without key fails with database format error.
 ```
 
 ### Child Issue 6: `[SEC-07] Ingest Exception Logging Sanitization (#38)`
