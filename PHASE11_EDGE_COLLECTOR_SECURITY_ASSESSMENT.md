@@ -1,7 +1,7 @@
 # Phase 11 Edge Collector Security Threat Model & Risk Assessment
 
-**Status**: Hold until PR #29 merges
-**Baseline Commit SHA**: `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`
+**Status**: PR #29 Merged; Published via PR #37 (ee4695f)
+**Baseline Commit SHA**: `8d1793e161864ef804b4f3e0268177bff82b483e`
 **Repository**: `AhmedMahmoud2222/DCIM`
 **Target Branch**: `main`
 **Document Scope**: Refreshed, evidence-based security threat model and risk assessment of the Edge Collector runtime (`edge_collector/`) and Central DCIM collector trust boundary (`app/application/collector_auth.py`, `app/api/v1/collectors.py`, `app/core/secrets.py`, `app/application/drivers/rest.py`).
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-This document presents an updated security threat model evaluating the Edge Collector runtime, protocol drivers, local SQLite storage, HMAC-SHA256 machine authentication, credential encryption, and multi-site isolation boundaries against `main` at baseline commit `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`.
+This document presents an updated security threat model evaluating the Edge Collector runtime, protocol drivers, local SQLite storage, HMAC-SHA256 machine authentication, credential encryption, and multi-site isolation boundaries against `main` at baseline commit `8d1793e161864ef804b4f3e0268177bff82b483e`.
 
 All findings strictly distinguish **confirmed code facts in `main`**, **deployment-dependent risks**, **architectural limitations**, and **hardening recommendations**. Findings from earlier drafts have been re-evaluated and corrected or withdrawn where source code inspection proved effective existing mitigations.
 
