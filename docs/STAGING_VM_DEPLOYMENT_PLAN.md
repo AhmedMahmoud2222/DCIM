@@ -1,6 +1,6 @@
 # Dedicated staging VM deployment plan (draft)
 
-**Baseline:** `main@8d1793e161864ef804b4f3e0268177bff82b483e`, inspected 2026-09-27. Planning only: no host provisioned or deployment authorized. Review alongside [implementation](DEPLOYMENT_IMPLEMENTATION.md), [operations](OPERATIONS.md), [governance proposal PR #40](https://github.com/AhmedMahmoud2222/DCIM/pull/40) and [security backlog #38](https://github.com/AhmedMahmoud2222/DCIM/issues/38). PR #40 is open and its document is not yet in main. PR #31 is outside this scope.
+**Baseline:** `main@8d1793e161864ef804b4f3e0268177bff82b483e`, inspected 2026-09-27. Planning only: no host provisioned or deployment authorized. Review alongside [implementation](DEPLOYMENT_IMPLEMENTATION.md), [operations](OPERATIONS.md), [merged governance documentation from PR #40](DEPLOYMENT_GOVERNANCE.md) and [security backlog #38](https://github.com/AhmedMahmoud2222/DCIM/issues/38). PR #40's governance documentation is merged into main; its proposed controls still require owner configuration. PR #31 is outside this scope.
 
 ## Verified contract and release boundary
 
@@ -40,7 +40,7 @@ Persistence: bind-mounted PostgreSQL is authoritative; Redis and beat `/tmp` are
 | --- | --- | --- |
 | A | Verification, staging script, combined Compose, CI real-Docker fixtures, localhost binds and JSON rotation exist. | Engineering: keep tests green for chosen SHA. |
 | B | VM, firewall, SSH trust, Docker privileges, dedicated disks and database UID/GID, private DNS, trusted TLS certificate, VPN-restricted HTTPS reverse proxy, backup/restore, alerts and token provisioning. | Infrastructure/security/operations: configure and evidence before login rehearsal; proxy forwards both UI and `/api/` through port 8080. |
-| B | Branch rule requirements and independent review unknown; PR #40 proposes governance. | Repo owner: confirm actual Settings and authorized operator. |
+| B | Branch rule requirements and independent review unknown; merged governance documentation from PR #40 identifies controls still requiring configuration. | Repo owner: confirm actual Settings and authorized operator. |
 | A | Current `ENVIRONMENT: production` preserves `Secure` auth cookies; `CORS_ALLOWED_ORIGINS` is configurable from `.env`, and frontend nginx proxies `/api/` to backend. | Engineering/operations: keep production cookie behavior and set the exact private HTTPS origin; no application change required for first same-origin staging login. |
 | C | Catalog graphics/uploads have no persistent mount; risk if smoke creates media. | Focused PR 2 before media testing: dedicated mount and ownership, backup/restore and restart persistence test. |
 | C | Automatic rollback reruns migrations and cannot reverse incompatible schema changes; no database restore in script. | Focused PR 3 only if migrations are non-backward-compatible: migration compatibility contract and tested halt/restore protocol; do not automate blind downgrade. |
