@@ -11,7 +11,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.api.v1 import collectors as collector_api
-
 from tests.api._phase8_helpers import create_integration, register_collector, sign_request
 
 
