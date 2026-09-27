@@ -44,7 +44,15 @@ Owner action, not code. In **Settings → Branches**, confirm the existing rule 
 - Require pull request review before merging, with a defined minimum approval count.
 - Restrict who can push directly to `main`.
 
-**Caveat the owner should weigh before making Deployment Tools Test's jobs required:** that workflow triggers only on pushes/PRs touching a specific path list (deployment scripts, Compose files, migrations, and related backend/frontend files). A required check tied to a workflow that does not run on a given PR can block that PR's merge indefinitely rather than passing. GitHub has a setting to treat a required check as satisfied when its workflow does not run for the changed paths; confirm it is enabled for these two checks specifically, or add an unconditional pass-through job, before marking them required.
+**Caveat the owner should weigh before making Deployment Tools Test's jobs required:** that workflow triggers only on pushes/PRs touching a specific path list (deployment scripts, Compose files, migrations, and related backend/frontend files). GitHub does not have a setting that automatically satisfies a required check when the workflow that produces it is skipped by top-level `paths`/`paths-ignore` filtering. A required check bound to such a workflow stays pending, not passing, on any PR that doesn't touch those paths, which blocks that PR's merge indefinitely. This is a different situation from a job inside a workflow that *does* run being skipped by its own `if:` condition: that job reports a real `skipped` conclusion, and GitHub's required-checks mechanism treats a skipped conclusion as satisfying the requirement. The problem described here is specifically the workflow itself never running, so no conclusion, successful or skipped, is ever reported for its jobs.
+
+Before marking either of Deployment Tools Test's jobs as a required check, the owner should choose one of the following, none of which is implemented by this document:
+
+- **(A) Keep the workflow path-filtered and do not mark its jobs as required checks.** Simplest option. The trade-off: a PR that doesn't touch the filtered paths merges without that regression coverage having run at all, by design.
+- **(B) Remove the workflow's top-level path filters so it runs on every applicable PR, and use conditional execution inside it (an `if:` on specific steps or jobs) wherever a full run isn't warranted.** Preserves required-check reliability, since the workflow itself always runs and always reports a conclusion; costs CI time on every PR regardless of what changed.
+- **(C) Introduce a separate, unconditional deployment-validation gate job**, purpose-built to always trigger and always report a real conclusion, and make that job, not the path-filtered workflow's own jobs, the required check.
+
+This document takes no position on which option to choose. It is documenting the constraint, not proposing a specific fix to the workflow.
 
 ### 2. Deployment approval enforcement (proposed, not implemented)
 
