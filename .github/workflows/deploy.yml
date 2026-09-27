@@ -1,0 +1,94 @@
+name: Deploy DCIM (validation only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full main-branch release SHA
+        required: true
+        type: string
+      environment:
+        description: Target (production deployment disabled)
+        required: true
+        type: choice
+        options: [staging, production]
+        default: staging
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
+jobs:
+  verify-release:
+    name: Verify trusted release evidence
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact SHA
+        id: verify
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_ENVIRONMENT" == staging || "$TARGET_ENVIRONMENT" == production ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          python3 .github/scripts/verify_release_sha.py "$RELEASE_SHA"
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+  validate-staging:
+    name: Validate staging configuration (no deployment)
+    runs-on: ubuntu-latest
+    needs: verify-release
+    if: inputs.environment == 'staging'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-release.outputs.sha }}
+          persist-credentials: false
+      - name: Validate effective production Compose configuration
+        env:
+          POSTGRES_PASSWORD: disposable-ci-password
+          DCIM_APP_PASSWORD: disposable-ci-app-password
+          JWT_SECRET_KEY: disposable-ci-jwt-key-only
+          CREDENTIAL_ENCRYPTION_KEY: dGVzdC1vbmx5LWRpc3Bvc2FibGUtMzItYnl0ZS1rZXkhISE=
+          POSTGRES_DATA_PATH: /tmp/dcim-validation-postgres
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.production.yml config --quiet
+          bash -n scripts/deploy-docker-compose.sh
+          echo 'Staging configuration validated; no Docker services were started.'
+
+  verification-record:
+    name: Record validation outcome
+    runs-on: ubuntu-latest
+    needs: [verify-release, validate-staging]
+    if: always()
+    steps:
+      - name: Write accurate run summary
+        env:
+          RELEASE_SHA: ${{ needs.verify-release.outputs.sha }}
+          VERIFY_RESULT: ${{ needs.verify-release.result }}
+          STAGING_RESULT: ${{ needs.validate-staging.result }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          {
+            echo '# Release validation (no deployment)'
+            echo "Release: $RELEASE_SHA"
+            echo "Target: $TARGET_ENVIRONMENT"
+            echo "Release verification: $VERIFY_RESULT"
+            echo "Staging configuration: $STAGING_RESULT"
+            echo 'No Docker deployment or production approval occurred.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$TARGET_ENVIRONMENT" != staging || "$VERIFY_RESULT" != success || "$STAGING_RESULT" != success ]]; then
+            echo 'Release validation incomplete or failed; no passing record.' >&2
+            exit 1
+          fi
+          echo 'Validation status: PASSED' >> "$GITHUB_STEP_SUMMARY"
