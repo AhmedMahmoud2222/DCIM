@@ -1,0 +1,96 @@
+name: Deployment Tools Test
+
+on:
+  push:
+    branches: [main, 'claude/**', 'codex/**']
+    paths:
+      - '.github/scripts/verify_release_sha.py'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-tools-test.yml'
+      - 'scripts/deploy-docker-compose.sh'
+      - 'docker-compose.yml'
+      - 'docker-compose.production.yml'
+      - '.github/workflows/deployment-validation.yml'
+      - 'backend/Dockerfile'
+      - 'backend/pyproject.toml'
+      - 'backend/alembic.ini'
+      - 'backend/migrations/**'
+      - 'backend/scripts/bootstrap_privileged_roles.sql'
+      - 'frontend/Dockerfile'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'tests/deployment/**'
+  pull_request:
+    paths:
+      - '.github/scripts/verify_release_sha.py'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/deploy-tools-test.yml'
+      - 'scripts/deploy-docker-compose.sh'
+      - 'docker-compose.yml'
+      - 'docker-compose.production.yml'
+      - '.github/workflows/deployment-validation.yml'
+      - 'backend/Dockerfile'
+      - 'backend/pyproject.toml'
+      - 'backend/alembic.ini'
+      - 'backend/migrations/**'
+      - 'backend/scripts/bootstrap_privileged_roles.sql'
+      - 'frontend/Dockerfile'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'tests/deployment/**'
+
+permissions:
+  contents: read
+
+jobs:
+  deployment-tooling:
+    name: Deployment tooling regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check workflow syntax and security
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint" -color .github/workflows/deploy.yml .github/workflows/deploy-tools-test.yml
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/deploy-docker-compose.sh
+          python3 -m pip install PyYAML==6.0.2
+          python3 tests/deployment/check_workflows.py
+      - name: Run mocked API, lock and rollback tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests/deployment -p 'test_*.py' -v
+      - name: Check combined production Compose configuration
+        env:
+          POSTGRES_PASSWORD: disposable-ci-password
+          DCIM_APP_PASSWORD: disposable-ci-app-password
+          JWT_SECRET_KEY: disposable-ci-jwt-key-only
+          CREDENTIAL_ENCRYPTION_KEY: dGVzdC1vbmx5LWRpc3Bvc2FibGUtMzItYnl0ZS1rZXkhISE=
+          POSTGRES_DATA_PATH: /tmp/dcim-disposable-postgres
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.production.yml config --quiet
+          python3 tests/deployment/check_compose.py
+
+  combined-staging:
+    name: Disposable combined-stack startup and rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require real Docker Engine and Compose
+        run: |
+          set -euo pipefail
+          docker info >/dev/null
+          docker compose version
+      - name: Run isolated combined-stack and recovery cases
+        run: |
+          set -euo pipefail
+          python3 tests/deployment/real_compose_validation.py
