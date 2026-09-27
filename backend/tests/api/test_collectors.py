@@ -1,9 +1,16 @@
 """API-level tests for Phase 8 collector identity/capability/assignment/heartbeat/
 ingest endpoints."""
 
+import io
+import json
 import uuid
 
+import pytest
+import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+
+from app.api.v1 import collectors as collector_api
 
 from tests.api._phase8_helpers import create_integration, register_collector, sign_request
 
@@ -322,6 +329,98 @@ async def test_ingest_batch_one_bad_record_does_not_fail_the_rest(client, auth_h
     results = {r["dedup_key"]: r["status"] for r in resp.json()["results"]}
     assert results[good["dedup_key"]] == "accepted"
     assert results[bad["dedup_key"]] == "rejected"
+
+
+
+@pytest.mark.parametrize("failure_kind", ["integrity", "runtime"])
+async def test_ingest_unexpected_failure_never_logs_or_returns_sensitive_data(
+    client, auth_headers, monkeypatch, failure_kind,
+):
+    """SEC-07: SQL parameters and exception text are untrusted even on the server."""
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    credential = "synthetic-credential-SEC07-keep-private"
+    payload_secret = "synthetic-telemetry-SEC07-keep-private"
+    sql_parameter = "synthetic-sql-param-SEC07-keep-private"
+    external_id = "synthetic-device-id-SEC07-keep-private"
+    bad = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": external_id, "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"credential": credential, "telemetry": payload_secret},
+    }
+    good = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.52", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [bad, good]}).encode()
+    signed = sign_request(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body,
+    )
+
+    original_ingest = collector_api.ingest_discovery
+
+    async def fail_one_record(*args, **kwargs):
+        if kwargs["external_identifier"] == external_id:
+            if failure_kind == "integrity":
+                raise IntegrityError(
+                    "INSERT INTO discovered_device (credential) VALUES (:private_value)",
+                    {"private_value": sql_parameter},
+                    ValueError(f"database rejected {payload_secret}"),
+                )
+            raise RuntimeError(f"unexpected {credential} {sql_parameter}")
+        return await original_ingest(*args, **kwargs)
+
+    monkeypatch.setattr(collector_api, "ingest_discovery", fail_one_record)
+    log_output = io.StringIO()
+    # Capture the emitted structured JSON, not only the arguments passed to a mock.
+    logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+    monkeypatch.setattr(collector_api, "logger", logger)
+
+    response = await client.post(
+        f"/api/v1/collectors/{collector['id']}/ingest",
+        content=raw_body, headers={**signed, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == [
+        {
+            "dedup_key": bad["dedup_key"], "status": "rejected",
+            "error_code": "INTERNAL_PROCESSING_ERROR",
+            "error": "An internal error occurred while processing this record.",
+        },
+        {
+            "dedup_key": good["dedup_key"], "status": "accepted",
+            "error_code": None, "error": None,
+        },
+    ]
+    for sensitive in (credential, payload_secret, sql_parameter, external_id):
+        assert sensitive not in response.text
+
+    events = [json.loads(line) for line in log_output.getvalue().splitlines()]
+    assert events == [{
+        "event": "ingest_batch_record_processing_failed",
+        "error_code": "INTERNAL_PROCESSING_ERROR",
+        "record_index": 0,
+    }]
+    for sensitive in (
+        credential, payload_secret, sql_parameter, external_id,
+        bad["dedup_key"], batch_id, integration["id"], collector["id"],
+    ):
+        assert sensitive not in log_output.getvalue()
 
 
 async def test_poll_now_succeeds_on_real_icmp_and_creates_a_discovered_device(client, auth_headers):
