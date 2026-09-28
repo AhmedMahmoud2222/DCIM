@@ -109,10 +109,10 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
           </span>
         </span>
       </div>
-      <svg width={svgWidth} height={totalHeight + 4} className="rounded border border-slate-800 bg-slate-950">
+      <svg aria-label={`Rack elevation, ${elevation.height_u} units; equipment links and faceplate controls follow`} width={svgWidth} height={totalHeight + 4} className="rounded border border-slate-800 bg-slate-950">
         {Array.from({ length: elevation.height_u }, (_, i) => i + 1).map((u) => (
           <g key={u}>
-            <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="#64748b">
+            <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="#94a3b8">
               {u}
             </text>
             <line
@@ -194,7 +194,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
           ));
         })}
       </svg>
-      {elevation.slots.length === 0 && <p className="mt-2 text-sm text-slate-500">No equipment mounted in this rack.</p>}
+      {elevation.slots.length === 0 && <p className="mt-2 text-sm text-slate-400">No equipment mounted in this rack.</p>}
       {selection && (
         <MarkerDetailPanel
           slot={selection.slot}
@@ -272,19 +272,19 @@ function MarkerDetailPanel({
         </div>
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <dt className="text-slate-500">Type</dt>
+        <dt className="text-slate-400">Type</dt>
         <dd>{marker.marker_type === "network_port" ? "Network port" : marker.marker_type === "power_supply" ? "Power supply" : marker.marker_type}</dd>
-        <dt className="text-slate-500">Status</dt>
+        <dt className="text-slate-400">Status</dt>
         <dd data-testid="marker-detail-status" className="capitalize" style={{ color: STATUS_COLORS[status] }}>
           {status}
         </dd>
         {port && (
           <>
-            <dt className="text-slate-500">Port</dt>
+            <dt className="text-slate-400">Port</dt>
             <dd>{port.display_name} ({port.connector_type}, {port.media_type})</dd>
-            <dt className="text-slate-500">Cable ID</dt>
+            <dt className="text-slate-400">Cable ID</dt>
             <dd>{port.connection?.cable_id ?? "—"}</dd>
-            <dt className="text-slate-500">Linked to</dt>
+            <dt className="text-slate-400">Linked to</dt>
             <dd className="truncate">
               {port.connection?.target_port_id
                 ? `Port ${port.connection.target_port_id.slice(0, 8)}…`
@@ -296,19 +296,19 @@ function MarkerDetailPanel({
         )}
         {powerInlet && (
           <>
-            <dt className="text-slate-500">Inlet</dt>
+            <dt className="text-slate-400">Inlet</dt>
             <dd>{powerInlet.label} ({powerInlet.connector_type})</dd>
           </>
         )}
         {telemetryRows.map((row) => (
           <Fragment key={row.label}>
-            <dt className="text-slate-500">{row.label}</dt>
+            <dt className="text-slate-400">{row.label}</dt>
             <dd data-testid="marker-telemetry-value">{row.value}</dd>
           </Fragment>
         ))}
       </dl>
       {!selected.telemetry && (
-        <p className="mt-2 text-xs italic text-slate-500">No live telemetry binding for this marker.</p>
+        <p className="mt-2 text-xs italic text-slate-400">No live telemetry binding for this marker.</p>
       )}
       <a href={`/equipment/${slot.equipment_id}`} className="mt-2 inline-block text-xs text-blue-400 hover:underline">
         Open equipment for full telemetry →

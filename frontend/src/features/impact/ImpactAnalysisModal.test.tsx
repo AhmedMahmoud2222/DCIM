@@ -79,6 +79,30 @@ describe("ImpactAnalysisModal", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("names the dialog, contains keyboard focus, closes on Escape, and restores focus", async () => {
+    vi.mocked(impactApi.simulateImpact).mockResolvedValue(makeResult());
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const opener = document.createElement("button");
+    opener.textContent = "Simulate failure";
+    document.body.append(opener);
+    opener.focus();
+
+    const { unmount } = renderWithProviders(
+      <ImpactAnalysisModal target={{ type: "power_node", id: "node-1", label: "PDU" }} onClose={onClose} />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Simulate failure: PDU" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledOnce();
+    unmount();
+    expect(opener).toHaveFocus();
+    opener.remove();
+  });
+
   it("shows an error message when the simulation fails", async () => {
     const { ApiError } = await import("@/lib/apiClient");
     vi.mocked(impactApi.simulateImpact).mockRejectedValue(new ApiError(404, "Not Found", "PowerNode not found.", null));

@@ -22,7 +22,7 @@ const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
   dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
   single_feed: { text: "Single feed (no redundancy)", color: "bg-slate-700 text-slate-300" },
   degraded: { text: "Redundancy degraded", color: "bg-yellow-800 text-yellow-100" },
-  no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-500" },
+  no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-400" },
 };
 
 const LIFECYCLE_COLORS: Record<string, string> = {
@@ -165,21 +165,21 @@ export function EquipmentDetailPage() {
           {equipment.placement ? (
             <dl className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <dt className="text-slate-500">Type</dt>
+                <dt className="text-slate-400">Type</dt>
                 <dd>{equipment.placement.placement_type}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Room</dt>
+                <dt className="text-slate-400">Room</dt>
                 <dd>{currentRoom?.name ?? equipment.placement.room_id}</dd>
               </div>
               {equipment.placement.placement_type === "rack_mounted" && (
                 <>
                   <div className="flex justify-between">
-                    <dt className="text-slate-500">Rack</dt>
+                    <dt className="text-slate-400">Rack</dt>
                     <dd>{currentRack?.name ?? equipment.placement.rack_id}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-slate-500">U-range</dt>
+                    <dt className="text-slate-400">U-range</dt>
                     <dd>
                       U{equipment.placement.u_start}–{equipment.placement.u_end} ({equipment.placement.side})
                     </dd>
@@ -188,7 +188,7 @@ export function EquipmentDetailPage() {
               )}
             </dl>
           ) : (
-            <p className="text-sm italic text-slate-500">Not currently placed.</p>
+            <p className="text-sm italic text-slate-400">Not currently placed.</p>
           )}
           <div className="mt-4 flex gap-2">
             <button
@@ -211,6 +211,7 @@ export function EquipmentDetailPage() {
           {showMoveForm && (
             <form onSubmit={handleMoveSubmit} className="mt-4 space-y-2 border-t border-slate-800 pt-4">
               <select
+                aria-label="Placement type"
                 value={placementType}
                 onChange={(e) => setPlacementType(e.target.value as PlacementType)}
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -222,6 +223,7 @@ export function EquipmentDetailPage() {
                 ))}
               </select>
               <select
+                aria-label="Placement room"
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
                 className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -237,6 +239,7 @@ export function EquipmentDetailPage() {
               {placementType === "rack_mounted" && (
                 <>
                   <select
+                    aria-label="Placement rack"
                     value={rackId}
                     onChange={(e) => setRackId(e.target.value)}
                     className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -250,6 +253,7 @@ export function EquipmentDetailPage() {
                   </select>
                   <div className="flex gap-2">
                     <input
+                      aria-label="Rack starting unit"
                       type="number"
                       min={1}
                       value={uStart}
@@ -258,6 +262,7 @@ export function EquipmentDetailPage() {
                       className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                     />
                     <input
+                      aria-label="Rack ending unit, exclusive"
                       type="number"
                       min={2}
                       value={uEnd}
@@ -266,6 +271,7 @@ export function EquipmentDetailPage() {
                       className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                     />
                     <select
+                      aria-label="Rack side"
                       value={side}
                       onChange={(e) => setSide(e.target.value as Side)}
                       className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
@@ -288,7 +294,7 @@ export function EquipmentDetailPage() {
                 Confirm
               </button>
               {moveMutation.isError && (
-                <p className="text-sm text-red-400">
+                <p role="alert" className="text-sm text-red-400">
                   {moveMutation.error instanceof ApiError && moveMutation.error.status === 409
                     ? "That U-range conflicts with existing equipment, or someone else moved this item — reload and try again."
                     : (moveMutation.error as Error).message}
@@ -302,23 +308,23 @@ export function EquipmentDetailPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Details</h2>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Owner</dt>
+              <dt className="text-slate-400">Owner</dt>
               <dd>{equipment.owner ?? "—"}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Service</dt>
+              <dt className="text-slate-400">Service</dt>
               <dd>{equipment.service ?? "—"}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Environment</dt>
+              <dt className="text-slate-400">Environment</dt>
               <dd>{equipment.environment ?? "—"}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Version</dt>
+              <dt className="text-slate-400">Version</dt>
               <dd>{equipment.version}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Created</dt>
+              <dt className="text-slate-400">Created</dt>
               <dd>{new Date(equipment.created_at).toLocaleString()}</dd>
             </div>
           </dl>
@@ -378,7 +384,7 @@ export function EquipmentDetailPage() {
                 </div>
               ))}
               {powerSummaryQuery.data.feed_nodes.length === 0 && (
-                <p className="text-xs italic text-slate-500">No power feeds modeled for this equipment yet.</p>
+                <p className="text-xs italic text-slate-400">No power feeds modeled for this equipment yet.</p>
               )}
             </div>
             {powerSummaryQuery.data.effective_demand_kw !== null && (
@@ -395,7 +401,7 @@ export function EquipmentDetailPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Ports &amp; cabling</h2>
           {portsQuery.isLoading && <p className="text-sm text-slate-400">Loading ports…</p>}
           {portsQuery.data?.ports.length === 0 && (
-            <p className="text-sm italic text-slate-500">This catalog model has no network ports defined.</p>
+            <p className="text-sm italic text-slate-400">This catalog model has no network ports defined.</p>
           )}
           <div className="space-y-2">
             {portsQuery.data?.ports.map((port) => {
@@ -404,7 +410,7 @@ export function EquipmentDetailPage() {
               <div key={port.id} data-testid="equipment-port-row" className="rounded bg-slate-800/50 p-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-slate-200">
-                    {port.display_name} <span className="text-slate-500">({port.connector_type}, {port.media_type}, {port.side})</span>
+                    {port.display_name} <span className="text-slate-400">({port.connector_type}, {port.media_type}, {port.side})</span>
                     {liveStatus?.status_level && (
                       <span
                         data-testid="port-live-link-state"
@@ -451,7 +457,7 @@ export function EquipmentDetailPage() {
                     {port.connection.cable_id && <> · cable {port.connection.cable_id}</>}
                   </p>
                 ) : (
-                  <p className="mt-1 italic text-slate-500">Unassigned</p>
+                  <p className="mt-1 italic text-slate-400">Unassigned</p>
                 )}
                 {connectingPortId === port.id && (
                   <ConnectPortForm
@@ -484,7 +490,7 @@ export function EquipmentDetailPage() {
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Live metrics</h2>
         {latestTelemetryQuery.isLoading && <p className="text-sm text-slate-400">Loading telemetry…</p>}
         {latestTelemetryQuery.isError && <p className="text-sm text-red-400">Telemetry is currently unavailable.</p>}
-        {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-500">No telemetry is associated with this equipment.</p>}
+        {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No telemetry is associated with this equipment.</p>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {latestTelemetryQuery.data?.map((reading) => {
             const ageMs = Date.now() - new Date(reading.occurred_at).getTime();
@@ -492,10 +498,10 @@ export function EquipmentDetailPage() {
             // backend supplies the integration-specific cadence in the same query.
             const stale = reading.expected_poll_interval_seconds != null && ageMs > reading.expected_poll_interval_seconds * 2_000;
             return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded bg-slate-800/60 p-3 text-left hover:bg-slate-800">
-              <p className="text-xs uppercase tracking-wide text-slate-500">{reading.metric}</p>
+              <p className="text-xs uppercase tracking-wide text-slate-400">{reading.metric}</p>
               <p className="mt-1 text-xl font-semibold">{reading.value} <span className="text-sm text-slate-400">{reading.unit}</span></p>
               <p className={stale ? "mt-1 text-xs text-yellow-400" : "mt-1 text-xs text-green-400"}>{stale ? "Stale" : "Current"} · occurred {new Date(reading.occurred_at).toLocaleString()}</p>
-              {reading.received_at !== reading.occurred_at && <p className="mt-1 text-xs text-slate-500">received {new Date(reading.received_at).toLocaleString()}</p>}
+              {reading.received_at !== reading.occurred_at && <p className="mt-1 text-xs text-slate-400">received {new Date(reading.received_at).toLocaleString()}</p>}
             </button>;
           })}
         </div>
@@ -507,17 +513,17 @@ export function EquipmentDetailPage() {
             <select value={historyHours} onChange={(e) => setHistoryHours(Number(e.target.value))} className="rounded bg-slate-800 px-2 py-1 text-xs">
               <option value={1}>Last 1 hour</option><option value={24}>Last 24 hours</option><option value={168}>Last 7 days</option><option value={720}>Last 30 days</option><option value={2160}>Last 3 months</option><option value={4320}>Last 6 months</option><option value={8760}>Last 1 year</option>
             </select></div>
-          {!metric && <p className="text-sm italic text-slate-500">Choose a live metric to view its history.</p>}
+          {!metric && <p className="text-sm italic text-slate-400">Choose a live metric to view its history.</p>}
           {historyQuery.isLoading && metric && <p className="text-sm text-slate-400">Loading history…</p>}
           {historyQuery.isError && <p className="text-sm text-red-400">Unable to load the selected history range.</p>}
-          {historyQuery.data?.length === 0 && <p className="text-sm italic text-slate-500">No readings in this range.</p>}
+          {historyQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No readings in this range.</p>}
           {historyQuery.data && <TelemetryTrend points={historyQuery.data} />}
-          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.value} avg (${point.minimum_value}–${point.maximum_value}, n=${point.sample_count})` : point.value} {point.unit} <span className="text-slate-500">{point.resolution ?? "raw"}</span></span></div>)}</div>
+          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.value} avg (${point.minimum_value}–${point.maximum_value}, n=${point.sample_count})` : point.value} {point.unit} <span className="text-slate-400">{point.resolution ?? "raw"}</span></span></div>)}</div>
         </div>
         <div className="rounded border border-slate-800 bg-slate-900 p-4"><h2 className="mb-3 text-sm font-semibold text-slate-300">Alarm history</h2>
           {alarmHistoryQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
-          {alarmHistoryQuery.data?.items.length === 0 && <p className="text-sm italic text-slate-500">No alarms for this equipment.</p>}
-          <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.last_value}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-500">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-500">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
+          {alarmHistoryQuery.data?.items.length === 0 && <p className="text-sm italic text-slate-400">No alarms for this equipment.</p>}
+          <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.last_value}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-400">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-400">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
         </div>
       </div>
       <ImpactAnalysisModal target={impactTarget} onClose={() => setImpactTarget(null)} />
@@ -555,23 +561,25 @@ function ConnectPortForm({
   return (
     <form onSubmit={handleSubmit} className="mt-2 space-y-1.5 rounded border border-slate-700 bg-slate-950 p-2">
       <div className="flex gap-2">
-        <select value={targetKind} onChange={(e) => setTargetKind(e.target.value as "port" | "power_node")} className="rounded bg-slate-800 px-2 py-1 text-xs">
+        <select aria-label="Connection target type" value={targetKind} onChange={(e) => setTargetKind(e.target.value as "port" | "power_node")} className="rounded bg-slate-800 px-2 py-1 text-xs">
           <option value="port">Patch panel / switch port ID</option>
           <option value="power_node">PDU outlet (power node) ID</option>
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value as PortConnectionStatus)} className="rounded bg-slate-800 px-2 py-1 text-xs">
+        <select aria-label="Connection status" value={status} onChange={(e) => setStatus(e.target.value as PortConnectionStatus)} className="rounded bg-slate-800 px-2 py-1 text-xs">
           {PORT_CONNECTION_STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
       </div>
       <input
+        aria-label="Connection target ID"
         value={targetId}
         onChange={(e) => setTargetId(e.target.value)}
         placeholder={targetKind === "port" ? "Target EquipmentPort ID" : "Target PowerNode ID"}
         className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
       />
       <input
+        aria-label="Cable ID"
         value={cableId}
         onChange={(e) => setCableId(e.target.value)}
         placeholder="Cable ID (optional)"
@@ -585,7 +593,7 @@ function ConnectPortForm({
           Cancel
         </button>
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
     </form>
   );
 }
