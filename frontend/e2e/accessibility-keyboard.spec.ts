@@ -36,4 +36,12 @@ test("login labels and skip link work with a keyboard", async ({ page }) => {
     return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
   });
   expect(contrast).toBeGreaterThanOrEqual(4.5);
+
+  // At 400% zoom on a 1280px-wide viewport, the CSS viewport is approximately 320px.
+  await page.setViewportSize({ width: 320, height: 640 });
+  const mainBounds = await page.locator("#main-content").boundingBox();
+  expect(mainBounds).not.toBeNull();
+  expect(mainBounds!.x).toBe(0);
+  expect(mainBounds!.width).toBeGreaterThanOrEqual(320);
+  expect(mainBounds!.x + mainBounds!.width).toBeLessThanOrEqual(320);
 });
