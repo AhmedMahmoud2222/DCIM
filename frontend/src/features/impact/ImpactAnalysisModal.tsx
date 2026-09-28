@@ -115,7 +115,7 @@ export function ImpactAnalysisModal({
         {result && (
           <div role="status" aria-label="Simulation results">
             {result.directly_impacted.length === 0 && result.indirectly_impacted.length === 0 ? (
-              <p className="text-sm italic text-slate-500">No modeled equipment is affected by this failure.</p>
+              <p className="text-sm italic text-slate-400">No modeled equipment is affected by this failure.</p>
             ) : (
               <>
                 <ImpactSection title="Directly impacted" items={result.directly_impacted} />

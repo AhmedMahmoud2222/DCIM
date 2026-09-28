@@ -143,7 +143,7 @@ export function CatalogHomePage() {
                 </Link>
               </li>
             ))}
-            {manufacturersQuery.data.items.length === 0 && <li className="text-sm italic text-slate-500">No manufacturers yet.</li>}
+            {manufacturersQuery.data.items.length === 0 && <li className="text-sm italic text-slate-400">No manufacturers yet.</li>}
           </ul>
         )}
       </section>
@@ -271,7 +271,7 @@ export function CatalogHomePage() {
                     <Link to={`/admin/catalog/models/${model.id}`} className="font-medium text-blue-400 hover:underline">
                       {model.model_name}
                     </Link>
-                    {model.model_number && <span className="ml-2 font-mono text-xs text-slate-500">{model.model_number}</span>}
+                    {model.model_number && <span className="ml-2 font-mono text-xs text-slate-400">{model.model_number}</span>}
                   </th>
                   <td className="py-2 text-slate-300">{manufacturerNameById.get(model.manufacturer_id) ?? model.manufacturer_id}</td>
                   <td className="py-2 text-slate-400">{model.category}</td>
@@ -282,7 +282,7 @@ export function CatalogHomePage() {
               ))}
               {modelsQuery.data.items.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-6 text-center text-slate-500">
+                  <td colSpan={4} className="py-6 text-center text-slate-400">
                     No models yet. Create one to get started.
                   </td>
                 </tr>

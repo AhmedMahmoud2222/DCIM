@@ -18,4 +18,22 @@ test("login labels and skip link work with a keyboard", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.locator("#main-content")).toBeFocused();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+
+  // Measure the rendered admin section label against its opaque sidebar background.
+  const adminLabel = page.getByText("Admin", { exact: true });
+  await expect(adminLabel).toBeVisible();
+  const contrast = await adminLabel.evaluate((element) => {
+    const channels = (color: string) => color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    const luminance = (color: string) => {
+      const [r, g, b] = channels(color).map((value) => {
+        const srgb = value / 255;
+        return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const foreground = luminance(getComputedStyle(element).color);
+    const background = luminance(getComputedStyle(element.closest("aside")!).backgroundColor);
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
 });

@@ -91,11 +91,11 @@ export function RackDetailPage() {
           {rack.placement ? (
             <dl className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <dt className="text-slate-500">Room</dt>
+                <dt className="text-slate-400">Room</dt>
                 <dd>{currentRoom?.name ?? rack.placement.room_id}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Position</dt>
+                <dt className="text-slate-400">Position</dt>
                 <dd>
                   {rack.placement.x_mm != null && rack.placement.y_mm != null
                     ? `(${rack.placement.x_mm}, ${rack.placement.y_mm}) mm`
@@ -103,12 +103,12 @@ export function RackDetailPage() {
                 </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Rotation</dt>
+                <dt className="text-slate-400">Rotation</dt>
                 <dd>{rack.placement.rotation_deg ?? 0}°</dd>
               </div>
             </dl>
           ) : (
-            <p className="text-sm italic text-slate-500">Not currently placed in any room.</p>
+            <p className="text-sm italic text-slate-400">Not currently placed in any room.</p>
           )}
           <div className="mt-4 flex gap-2">
             <button
@@ -182,15 +182,15 @@ export function RackDetailPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Details</h2>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Owner</dt>
+              <dt className="text-slate-400">Owner</dt>
               <dd>{rack.owner ?? "—"}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Version</dt>
+              <dt className="text-slate-400">Version</dt>
               <dd>{rack.version}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Created</dt>
+              <dt className="text-slate-400">Created</dt>
               <dd>{new Date(rack.created_at).toLocaleString()}</dd>
             </div>
           </dl>
@@ -211,7 +211,7 @@ export function RackDetailPage() {
             Open topology →
           </Link>
         </div>
-        {equipmentIds.length === 0 && <p className="text-xs italic text-slate-500">No equipment mounted in this rack.</p>}
+        {equipmentIds.length === 0 && <p className="text-xs italic text-slate-400">No equipment mounted in this rack.</p>}
         <div className="space-y-1">
           {elevationQuery.data?.slots.map((slot, i) => {
             const summary = powerSummaryQueries[i]?.data;
@@ -226,7 +226,7 @@ export function RackDetailPage() {
                     </span>
                   </>
                 ) : (
-                  <span className="text-slate-500">loading…</span>
+                  <span className="text-slate-400">loading…</span>
                 )}
               </div>
             );

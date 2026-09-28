@@ -50,7 +50,7 @@ export function AppShell() {
           ))}
           {isCatalogAdministrator && (
             <>
-              <div className="mb-1 mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-slate-600">Admin</div>
+              <div className="mb-1 mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-slate-300">Admin</div>
               {ADMIN_NAV_ITEMS.map((item) => (
                 <NavLink
                   key={item.to}
