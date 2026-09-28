@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { KeyboardEvent, useEffect, useRef } from "react";
 
 import { simulateImpact } from "@/features/impact/api";
 import { ApiError } from "@/lib/apiClient";
@@ -32,6 +32,8 @@ export function ImpactAnalysisModal({
   onClose: () => void;
   onResult?: (result: ImpactSimulationResult | null) => void;
 }) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const mutation = useMutation({
     mutationFn: (t: ImpactTarget) => simulateImpact({ target_type: t.type, target_id: t.id }),
   });
@@ -52,34 +54,68 @@ export function ImpactAnalysisModal({
     [],
   );
 
+  useEffect(() => {
+    if (!target) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    return () => previousFocus?.focus();
+  }, [target]);
+
+  function handleDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      onClose();
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []);
+    if (!controls.length) {
+      event.preventDefault();
+      return;
+    }
+    if (event.shiftKey && document.activeElement === controls[0]) {
+      event.preventDefault();
+      controls[controls.length - 1].focus();
+    } else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) {
+      event.preventDefault();
+      controls[0].focus();
+    }
+  }
+
   if (!target) return null;
   const result = mutation.data;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="impact-dialog-title"
+        onKeyDown={handleDialogKeyDown}
         data-testid="impact-analysis-modal"
         className="max-h-[85vh] w-full max-w-2xl overflow-auto rounded border border-slate-700 bg-slate-900 p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-100">Simulate failure: {target.label}</h2>
-          <button onClick={onClose} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">
+          <h2 id="impact-dialog-title" className="text-base font-semibold text-slate-100">Simulate failure: {target.label}</h2>
+          <button ref={closeButtonRef} onClick={onClose} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">
             Close
           </button>
         </div>
 
-        {mutation.isPending && <p className="text-sm text-slate-400">Running simulation…</p>}
+        {mutation.isPending && <p role="status" className="text-sm text-slate-400">Running simulation…</p>}
         {mutation.isError && (
-          <p className="text-sm text-red-400">
+          <p role="alert" className="text-sm text-red-400">
             {mutation.error instanceof ApiError ? mutation.error.detail : "Simulation failed."}
           </p>
         )}
 
         {result && (
-          <>
+          <div role="status" aria-label="Simulation results">
             {result.directly_impacted.length === 0 && result.indirectly_impacted.length === 0 ? (
-              <p className="text-sm italic text-slate-500">No modeled equipment is affected by this failure.</p>
+              <p className="text-sm italic text-slate-400">No modeled equipment is affected by this failure.</p>
             ) : (
               <>
                 <ImpactSection title="Directly impacted" items={result.directly_impacted} />
@@ -108,7 +144,7 @@ export function ImpactAnalysisModal({
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
