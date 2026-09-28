@@ -270,6 +270,20 @@ export interface SpatialObject {
   source: string;
 }
 
+/** Additive (3D layout increment): rack-mounted equipment placed within one of a
+ * room's racks, with the same authoritative U-range/side data `RackElevation`'s
+ * `ElevationSlot` already carries — kept separate from `RoomEquipment` (which by
+ * design excludes rack-mounted items) rather than merged into it. */
+export interface RoomRackEquipment {
+  id: string;
+  rack_id: string;
+  asset_tag: string;
+  hostname: string | null;
+  u_start: number;
+  u_end: number;
+  side: Side;
+}
+
 export interface RoomRack {
   id: string;
   asset_tag: string;
@@ -278,6 +292,8 @@ export interface RoomRack {
   y_mm: number | null;
   rotation_deg: number | null;
   spatial_object_id: string | null;
+  // Additive (3D layout increment): the rack's own U capacity.
+  height_u: number;
 }
 
 export interface RoomEquipment {
@@ -299,6 +315,9 @@ export interface RoomSpatialView {
   racks: RoomRack[];
   equipment: RoomEquipment[];
   objects: SpatialObject[];
+  // Additive (3D layout increment): rack-mounted equipment, omitted from
+  // `equipment` by design — see RoomRackEquipment.
+  rack_equipment: RoomRackEquipment[];
 }
 
 // --------------------------------------------------------------------- Power
