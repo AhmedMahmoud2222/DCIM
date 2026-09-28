@@ -421,6 +421,104 @@ async def test_ingest_unexpected_failure_never_logs_or_returns_sensitive_data(
         assert sensitive not in log_output.getvalue()
 
 
+@pytest.mark.parametrize("failure_kind", ["integrity", "runtime"])
+async def test_ingest_claim_release_failure_never_logs_or_returns_sensitive_data(
+    client, auth_headers, monkeypatch, failure_kind,
+):
+    """Codex's Phase 11 independent review (Issue #38): `idem.release_claim()` runs its
+    own DELETE + COMMIT and can itself fail. Left uncaught, that new exception would
+    propagate past `ingest_batch()`'s own sanitized logging entirely and reach the
+    GLOBAL handlers in app/core/errors.py, which log unsanitized exception text --
+    and, via Python's implicit exception chaining, would also print the ORIGINAL
+    sensitive exception this record was already handling. Mirrors
+    test_ingest_unexpected_failure_never_logs_or_returns_sensitive_data above, but
+    forces the failure inside release_claim itself rather than inside
+    ingest_discovery, with a distinct synthetic secret so a passing test can only mean
+    release_claim's own failure path is what's being contained."""
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    original_credential = "synthetic-credential-SEC07B-original-keep-private"
+    release_secret = "synthetic-release-SEC07B-keep-private"
+    bad = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.60", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"credential": original_credential},
+    }
+    good = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.61", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [bad, good]}).encode()
+    signed = sign_request(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body,
+    )
+
+    original_ingest = collector_api.ingest_discovery
+
+    async def fail_bad_record(*args, **kwargs):
+        if kwargs["external_identifier"] == bad["external_identifier"]:
+            if failure_kind == "integrity":
+                raise IntegrityError(
+                    "INSERT INTO discovered_device (credential) VALUES (:private_value)",
+                    {"private_value": original_credential},
+                    ValueError(f"database rejected {original_credential}"),
+                )
+            raise RuntimeError(f"unexpected {original_credential}")
+        return await original_ingest(*args, **kwargs)
+
+    async def fail_release_claim(*args, **kwargs):
+        raise RuntimeError(f"release failed: {release_secret}")
+
+    monkeypatch.setattr(collector_api, "ingest_discovery", fail_bad_record)
+    monkeypatch.setattr(collector_api.idem, "release_claim", fail_release_claim)
+    log_output = io.StringIO()
+    logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+    monkeypatch.setattr(collector_api, "logger", logger)
+
+    response = await client.post(
+        f"/api/v1/collectors/{collector['id']}/ingest",
+        content=raw_body, headers={**signed, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json()["results"] == [
+        {
+            "dedup_key": bad["dedup_key"], "status": "rejected",
+            "error_code": "INTERNAL_PROCESSING_ERROR",
+            "error": "An internal error occurred while processing this record.",
+        },
+        {
+            "dedup_key": good["dedup_key"], "status": "accepted",
+            "error_code": None, "error": None,
+        },
+    ]
+    for sensitive in (original_credential, release_secret):
+        assert sensitive not in response.text
+
+    log_text = log_output.getvalue()
+    events = [json.loads(line) for line in log_text.splitlines()]
+    assert {"event": "ingest_batch_claim_release_failed", "record_index": 0} in events
+    for sensitive in (
+        original_credential, release_secret,
+        bad["dedup_key"], batch_id, integration["id"], collector["id"],
+    ):
+        assert sensitive not in log_text
+
+
 async def test_poll_now_succeeds_on_real_icmp_and_creates_a_discovered_device(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)

@@ -392,6 +392,30 @@ class IngestBatchOut(BaseModel):
     results: list[IngestRecordResult]
 
 
+async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record_index: int) -> None:
+    """`idem.release_claim()` runs its own DELETE + COMMIT (idempotency.py's
+    `release_claim`) -- either can itself fail (lock contention, connection loss, a
+    stale/duplicate delete racing this one). Left uncaught, that new exception would
+    propagate out of `ingest_batch()`'s own except blocks entirely, past the
+    sanitized per-record logging they otherwise reach, and into the GLOBAL handlers in
+    app/core/errors.py -- which log `str(exc)`/`str(exc.orig)` plus, for the
+    catch-all, a full traceback. Python's implicit exception chaining means that
+    traceback also prints the ORIGINAL exception this record was already handling (via
+    its own "During handling of the above exception..." section) -- silently undoing
+    SEC-07's sanitization for exactly the exception text it exists to keep out of logs
+    (Codex's Phase 11 independent review, Issue #38).
+
+    Rolling back here is safe specifically because the per-record loop below reads the
+    collector's identity from the `collector_id` path parameter, never from
+    `collector.id` -- so expiring `collector` cannot crash a later iteration with
+    MissingGreenlet (see the Finding I4 comment above `begin_nested()`)."""
+    try:
+        await idem.release_claim(db, claim_id)
+    except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
+        await db.rollback()
+        logger.error("ingest_batch_claim_release_failed", record_index=record_index)
+
+
 @router.post("/{collector_id}/ingest", response_model=IngestBatchOut)
 async def ingest_batch(
     collector_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
@@ -477,11 +501,11 @@ async def ingest_batch(
                 # per-batch, so one record naming an unassigned integration doesn't cost
                 # the whole batch.
                 assignment = await current_assignment(db, record.integration_id)
-                if assignment is None or assignment.collector_id != collector.id:
+                if assignment is None or assignment.collector_id != collector_id:
                     raise ApiError(
                         status_code=403, title="Not Assigned",
                         detail=(
-                            f"Collector {collector.id} is not the currently assigned collector "
+                            f"Collector {collector_id} is not the currently assigned collector "
                             f"for integration {record.integration_id}."
                         ),
                     )
@@ -504,7 +528,7 @@ async def ingest_batch(
             # retry of just this record can succeed later. `ApiError.detail` is always
             # a hand-written, safe-for-collectors message (the only one raised in this
             # block today is the "Not Assigned" 403 above) -- safe to return as-is.
-            await idem.release_claim(db, claim_id)
+            await _release_claim_safely(db, claim_id, record_index=len(results))
             results.append(
                 IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error_code="NOT_ASSIGNED", error=exc.detail)
             )
@@ -514,7 +538,7 @@ async def ingest_batch(
             # Exception messages, tracebacks and request-derived identifiers may contain
             # credentials, SQL parameters or raw telemetry. Log only fixed fields and
             # the record position; generic ACKs retain the existing retry contract.
-            await idem.release_claim(db, claim_id)
+            await _release_claim_safely(db, claim_id, record_index=len(results))
             logger.error(
                 "ingest_batch_record_processing_failed",
                 error_code="INTERNAL_PROCESSING_ERROR", record_index=len(results),
