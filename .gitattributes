@@ -1,0 +1,31 @@
+# Force LF line endings on checkout regardless of the host OS/Git config, so a clean
+# checkout on Windows (where Git's default `core.autocrlf=true` rewrites text files to
+# CRLF) does not corrupt scripts that Docker mounts or bakes into Linux containers
+# unchanged. This is the only fix this change makes: no PostgreSQL entrypoint, init
+# script, or Compose config is otherwise touched.
+#
+# Concretely, backend/scripts/docker-initdb/01-create-app-role.sh is bind-mounted by
+# both docker-compose.yml and docker-compose.production.yml straight into the official
+# postgres:16 image's /docker-entrypoint-initdb.d, which runs it via its own shebang. A
+# CRLF-corrupted shebang line (`#!/bin/bash\r`) fails at container start with
+# "/bin/bash^M: No such file or directory" -- the initdb script never runs and
+# `dcim_app` never gets created, breaking every environment that depends on it (the app
+# container's DATABASE_URL, the CI job's own role-provisioning step, etc.).
+* text=auto eol=lf
+
+# Executable shell scripts and SQL run inside Linux containers or against PostgreSQL --
+# always LF, explicitly, since these are exactly what breaks silently on Windows.
+*.sh text eol=lf
+*.sql text eol=lf
+
+# Common binary types, should this repository add any -- `text=auto`'s own content
+# heuristic is usually right, but an explicit `binary` (a shorthand for
+# `-text -diff -merge`) removes any ambiguity.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
