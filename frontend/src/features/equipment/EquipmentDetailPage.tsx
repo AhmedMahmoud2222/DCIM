@@ -294,7 +294,7 @@ export function EquipmentDetailPage() {
                 Confirm
               </button>
               {moveMutation.isError && (
-                <p className="text-sm text-red-400">
+                <p role="alert" className="text-sm text-red-400">
                   {moveMutation.error instanceof ApiError && moveMutation.error.status === 409
                     ? "That U-range conflicts with existing equipment, or someone else moved this item — reload and try again."
                     : (moveMutation.error as Error).message}
