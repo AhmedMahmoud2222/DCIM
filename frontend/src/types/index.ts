@@ -257,6 +257,60 @@ export interface ImportCandidate {
   resulting_spatial_object_id: string | null;
 }
 
+// ------------------------------------------------------------------- Bulk import
+// Generic job pipeline shared by rack/equipment/catalog XLSX imports
+// (backend/app/api/v1/bulk_import.py) — one job/row shape reused across all three
+// resources, distinguished only by `import_type`.
+
+export type BulkImportMode = "create_only" | "update_existing";
+
+export const BULK_IMPORT_TERMINAL_STATUSES = [
+  "validated",
+  "failed_parse",
+  "committed",
+  "committed_with_errors",
+  "cancelled",
+] as const;
+
+export interface BulkImportJob {
+  id: string;
+  import_type: string;
+  mode: string;
+  status: string;
+  original_filename: string;
+  file_size_bytes: number;
+  row_count: number;
+  valid_row_count: number;
+  error_row_count: number;
+  warning_row_count: number;
+  committed_row_count: number;
+  failed_row_count: number;
+  rejection_reason: string | null;
+  created_at: string;
+  validated_at: string | null;
+  committed_at: string | null;
+  report_available: boolean;
+}
+
+export interface BulkImportRowMessage {
+  field: string;
+  message: string;
+}
+
+export interface BulkImportRow {
+  id: string;
+  row_number: number;
+  sheet_name: string | null;
+  status: string;
+  action: string | null;
+  raw_data: Record<string, unknown>;
+  errors: BulkImportRowMessage[];
+  warnings: BulkImportRowMessage[];
+  target_managed_asset_id: string | null;
+  target_catalog_model_id: string | null;
+  target_catalog_revision_id: string | null;
+}
+
 export interface SpatialObject {
   id: string;
   object_type: string;

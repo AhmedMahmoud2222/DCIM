@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogHomePage } from "@/features/catalog-designer/CatalogHomePage";
 import * as api from "@/features/catalog-designer/api";
+import * as bulkImportApi from "@/features/bulk-import/api";
 import { renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
-import { CatalogModel, Manufacturer, Page } from "@/types";
+import { BulkImportJob, CatalogModel, Manufacturer, Page } from "@/types";
 
 vi.mock("@/features/catalog-designer/api");
+vi.mock("@/features/bulk-import/api");
 
 const manufacturer: Manufacturer = { id: "mfr-1", name: "Acme", status: "active", created_at: "2026-01-01T00:00:00Z" };
 const model: CatalogModel = {
@@ -76,5 +78,59 @@ describe("CatalogHomePage", () => {
     expect(await screen.findByRole("link", { name: "Acme" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New Manufacturer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New Model" })).not.toBeInTheDocument();
+  });
+
+  it("shows the Bulk Import button for a catalog administrator", async () => {
+    renderWithProviders(<CatalogHomePage />);
+
+    expect(await screen.findByRole("button", { name: "Bulk Import" })).toBeInTheDocument();
+  });
+
+  it("hides the Bulk Import button for a non-administrator", async () => {
+    renderWithProviders(<CatalogHomePage />, { user: VIEWER_TEST_USER });
+
+    await screen.findByRole("link", { name: "Acme" });
+    expect(screen.queryByRole("button", { name: "Bulk Import" })).not.toBeInTheDocument();
+  });
+
+  it("opens the bulk-import panel and refreshes catalog lists once committed", async () => {
+    const user = userEvent.setup();
+    const committedJob: BulkImportJob = {
+      id: "job-1",
+      import_type: "catalog",
+      mode: "create_only",
+      status: "committed",
+      original_filename: "catalog.xlsx",
+      file_size_bytes: 10,
+      row_count: 1,
+      valid_row_count: 1,
+      error_row_count: 0,
+      warning_row_count: 0,
+      committed_row_count: 1,
+      failed_row_count: 0,
+      rejection_reason: null,
+      created_at: "2026-01-01T00:00:00Z",
+      validated_at: "2026-01-01T00:00:01Z",
+      committed_at: "2026-01-01T00:00:02Z",
+      report_available: true,
+    };
+    vi.mocked(bulkImportApi.uploadImportJob).mockResolvedValue(committedJob);
+    vi.mocked(bulkImportApi.getImportJob).mockResolvedValue(committedJob);
+    vi.mocked(bulkImportApi.listImportJobRows).mockResolvedValue(mockPage([]));
+
+    renderWithProviders(<CatalogHomePage />);
+    await screen.findByRole("link", { name: "Acme" });
+
+    await user.click(screen.getByRole("button", { name: "Bulk Import" }));
+    expect(screen.getByRole("dialog", { name: "Bulk import Catalog Model" })).toBeInTheDocument();
+
+    const file = new File(["fake"], "catalog.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    await user.upload(screen.getByLabelText("Import file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+
+    await waitFor(() => expect(bulkImportApi.uploadImportJob).toHaveBeenCalledWith("catalog", expect.any(File), "create_only"));
+    await waitFor(() => expect(api.listCatalogModels).toHaveBeenCalledTimes(2));
   });
 });

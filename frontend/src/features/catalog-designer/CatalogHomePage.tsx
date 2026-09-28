@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import { createCatalogModel, createManufacturer, listCatalogModels, listManufacturers } from "@/features/catalog-designer/api";
 import { CATALOG_CATEGORIES } from "@/types";
 
@@ -15,6 +16,7 @@ const STATUS_COLORS: Record<string, string> = {
 export function CatalogHomePage() {
   const queryClient = useQueryClient();
   const isCatalogAdministrator = useIsCatalogAdministrator();
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [manufacturerQuery, setManufacturerQuery] = useState("");
   const [modelQuery, setModelQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -84,7 +86,27 @@ export function CatalogHomePage() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-lg font-semibold">Asset Catalog</h1>
+        {isCatalogAdministrator && (
+          <button
+            onClick={() => setShowBulkImport(true)}
+            className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+          >
+            Bulk Import
+          </button>
+        )}
       </div>
+
+      {showBulkImport && (
+        <BulkImportPanel
+          resource="catalog"
+          resourceLabel="Catalog Model"
+          onClose={() => setShowBulkImport(false)}
+          onCommitted={() => {
+            queryClient.invalidateQueries({ queryKey: ["catalog", "manufacturers"] });
+            queryClient.invalidateQueries({ queryKey: ["catalog", "models"] });
+          }}
+        />
+      )}
 
       <section className="mb-8 rounded border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
