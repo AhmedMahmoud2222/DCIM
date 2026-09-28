@@ -54,6 +54,7 @@ celery_app.conf.imports = (
     "app.infrastructure.tasks.audit_partition_maintenance",
     "app.infrastructure.tasks.maintenance",
     "app.infrastructure.tasks.floorplan_import",
+    "app.infrastructure.tasks.bulk_import",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
 # does not fit this project's layout (multiple task modules directly under
@@ -71,6 +72,7 @@ celery_app.conf.imports = (
 # forever, since the task raised before it could ever mark the job parsed/failed).
 import app.db.models  # noqa: E402,F401
 import app.infrastructure.tasks.audit_partition_maintenance  # noqa: E402,F401
+import app.infrastructure.tasks.bulk_import  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
 import app.infrastructure.tasks.maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401

@@ -20,10 +20,11 @@ triggers re-enforce at the database layer regardless of whether this check is by
 
 import uuid
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +32,11 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.api.v1.bulk_import import BulkImportJobOut
 from app.application.audit_service import write_audit_log
+from app.application.bulk_import.service import create_job as create_bulk_import_job
+from app.application.bulk_import.templates import build_catalog_template
+from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
 from app.application.catalog_designer_service import (
     GraphicRejected,
     ValidationFailed,
@@ -62,6 +67,7 @@ from app.domain.catalog.designer_models import (
     PowerSupplyTemplate,
 )
 from app.infrastructure.storage import get_storage_backend
+from app.infrastructure.tasks.bulk_import import parse_and_validate_bulk_import_job
 
 router = APIRouter(prefix="/catalog", tags=["catalog-designer"])
 
@@ -70,6 +76,59 @@ _BRIDGED_CATEGORIES = ("rack", "equipment")
 
 def _request_ids(request: Request) -> tuple[str | None, str | None]:
     return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
+
+
+# --------------------------------------------------------------------- Bulk import
+# Registered before "/manufacturers/{manufacturer_id}" etc. is unnecessary here (these
+# are new, distinct literal top-level segments — "import-template"/"import-jobs" — under
+# /catalog, so there is no existing "/{param}" route at this level for them to collide
+# with), but kept near the top of the router, close to the other module-level setup,
+# for discoverability.
+
+
+@router.get("/import-template")
+async def download_catalog_import_template(ctx: AuthContext = Depends(require_permission("catalog:read"))) -> StreamingResponse:
+    content = build_catalog_template()
+    return StreamingResponse(
+        BytesIO(content), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="catalog-import-template.xlsx"'},
+    )
+
+
+@router.post("/import-jobs", response_model=BulkImportJobOut, status_code=202)
+async def upload_catalog_import_job(
+    request: Request,
+    mode: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_catalog_administrator("catalog:import")),
+) -> BulkImportJobOut:
+    validate_mode(mode)
+    content = await file.read()
+    file_hash = validate_upload_bytes(content)
+
+    storage = get_storage_backend()
+    storage_key = f"{file_hash}.xlsx"
+    storage.save(storage_key, content)
+
+    job = await create_bulk_import_job(
+        db, import_type="catalog", mode=mode, uploaded_by_user_id=ctx.user.id,
+        original_filename=(file.filename or "upload.xlsx")[:255], file_hash=file_hash, file_size_bytes=len(content),
+        storage_key=storage_key,
+    )
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="catalog.bulk_import.upload", entity_type="bulk_import_job", entity_id=job.id,
+        request_id=request_id, correlation_id=correlation_id,
+        after={"filename": job.original_filename, "file_hash": file_hash, "size_bytes": len(content), "mode": mode},
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    parse_and_validate_bulk_import_job.delay(str(job.id))
+
+    return BulkImportJobOut.from_job(job)
 
 
 # ============================================================================ Manufacturer
