@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
+from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.location.models import Room
 from app.domain.physical.models import Equipment, Rack
@@ -33,6 +34,11 @@ class RoomRackOut(BaseModel):
     y_mm: int | None
     rotation_deg: int | None
     spatial_object_id: uuid.UUID | None
+    # Additive (3D layout increment): the rack's own U capacity, needed to scale a
+    # rack's mounted equipment within its face — every other field on this model
+    # already existed, this is read from the same RackModelRevision the 2D rack
+    # elevation view (`GET /racks/{id}/elevation`) already uses.
+    height_u: int
 
     model_config = {"from_attributes": True}
 
@@ -46,6 +52,24 @@ class RoomEquipmentOut(BaseModel):
     hostname: str | None
     placement_type: str
     spatial_object_id: uuid.UUID | None
+
+    model_config = {"from_attributes": True}
+
+
+class RoomRackEquipmentOut(BaseModel):
+    """Additive (3D layout increment): rack-mounted equipment placed in this room,
+    with the same authoritative U-range/side data `GET /racks/{id}/elevation`
+    returns — kept as a separate list from `equipment` above rather than folded into
+    it, so the existing "equipment excludes rack-mounted" contract (§8) is untouched
+    and every renderer still reads from the same query result (§40)."""
+
+    id: uuid.UUID
+    rack_id: uuid.UUID
+    asset_tag: str
+    hostname: str | None
+    u_start: int
+    u_end: int
+    side: str
 
     model_config = {"from_attributes": True}
 
@@ -77,6 +101,9 @@ class RoomSpatialViewOut(BaseModel):
     racks: list[RoomRackOut]
     equipment: list[RoomEquipmentOut]
     objects: list[SpatialObjectOut]
+    # Additive (3D layout increment): rack-mounted equipment for the racks above,
+    # omitted from `equipment` by design (§8) — see RoomRackEquipmentOut.
+    rack_equipment: list[RoomRackEquipmentOut]
 
 
 @router.get("/rooms/{room_id}/view", response_model=RoomSpatialViewOut)
@@ -98,9 +125,10 @@ async def get_room_spatial_view(
 
     rack_rows = (
         await db.execute(
-            select(RackPlacement, Rack, ManagedAsset)
+            select(RackPlacement, Rack, ManagedAsset, RackModelRevision)
             .join(Rack, Rack.id == RackPlacement.rack_id)
             .join(ManagedAsset, ManagedAsset.id == RackPlacement.rack_id)
+            .join(RackModelRevision, RackModelRevision.id == Rack.model_revision_id)
             .where(RackPlacement.room_id == room_id, RackPlacement.effective_to.is_(None))
         )
     ).all()
@@ -108,9 +136,11 @@ async def get_room_spatial_view(
         RoomRackOut(
             id=rack.id, asset_tag=asset.asset_tag, name=rack.name, x_mm=placement.x_mm, y_mm=placement.y_mm,
             rotation_deg=placement.rotation_deg, spatial_object_id=placement.spatial_object_id,
+            height_u=model_revision.height_u,
         )
-        for placement, rack, asset in rack_rows
+        for placement, rack, asset, model_revision in rack_rows
     ]
+    room_rack_ids = {rack.id for rack in racks}
 
     equipment_rows = (
         await db.execute(
@@ -131,6 +161,35 @@ async def get_room_spatial_view(
         )
         for placement, equipment, asset in equipment_rows
     ]
+
+    rack_equipment: list[RoomRackEquipmentOut] = []
+    if room_rack_ids:
+        rack_equipment_rows = (
+            await db.execute(
+                select(EquipmentPlacement, Equipment, ManagedAsset)
+                .join(Equipment, Equipment.id == EquipmentPlacement.equipment_id)
+                .join(ManagedAsset, ManagedAsset.id == EquipmentPlacement.equipment_id)
+                .where(
+                    EquipmentPlacement.rack_id.in_(room_rack_ids),
+                    EquipmentPlacement.placement_type == "rack_mounted",
+                    EquipmentPlacement.effective_to.is_(None),
+                )
+            )
+        ).all()
+        for placement, rack_mounted_equipment, asset in rack_equipment_rows:
+            u_range = placement.u_range
+            # Guaranteed by rack_mounted_requires_rack_u_range_and_side (models.py),
+            # same invariant `GET /racks/{id}/elevation` already relies on.
+            assert u_range is not None and u_range.lower is not None and u_range.upper is not None
+            assert placement.side is not None
+            assert placement.rack_id is not None
+            rack_equipment.append(
+                RoomRackEquipmentOut(
+                    id=rack_mounted_equipment.id, rack_id=placement.rack_id, asset_tag=asset.asset_tag,
+                    hostname=rack_mounted_equipment.hostname, u_start=u_range.lower, u_end=u_range.upper,
+                    side=placement.side,
+                )
+            )
 
     objects: list[SpatialObjectOut] = []
     if active_floor_plan is not None:
@@ -156,4 +215,5 @@ async def get_room_spatial_view(
         racks=racks,
         equipment=equipment,
         objects=objects,
+        rack_equipment=rack_equipment,
     )

@@ -25,6 +25,8 @@ import { ManagedAssetsPage } from "@/features/managed-assets/ManagedAssetsPage";
 import { PowerTopologyPage } from "@/features/power/PowerTopologyPage";
 import { RackDetailPage } from "@/features/racks/RackDetailPage";
 import { RacksPage } from "@/features/racks/RacksPage";
+import { Layout3DPage } from "@/features/spatial3d/Layout3DPage";
+import { EventsPage } from "@/features/telemetry/EventsPage";
 
 import { queryClient } from "./queryClient";
 
@@ -48,6 +50,8 @@ export function App() {
               <Route path="/equipment/:equipmentId" element={<EquipmentDetailPage />} />
               <Route path="/floor-plans" element={<FloorPlansPage />} />
               <Route path="/floor-plans/room/:roomId" element={<RoomFloorPlanPage />} />
+              <Route path="/floor-plans/3d-layout" element={<Layout3DPage />} />
+              <Route path="/events" element={<EventsPage />} />
               <Route path="/power" element={<PowerTopologyPage />} />
               <Route path="/collectors" element={<CollectorsPage />} />
               <Route path="/integrations" element={<IntegrationsPage />} />

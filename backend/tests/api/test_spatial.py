@@ -61,3 +61,44 @@ async def test_viewer_can_read_spatial_view(client, auth_headers):
     viewer_headers = await auth_headers("Viewer")
     resp = await client.get(f"/api/v1/spatial/rooms/{room_id}/view", headers=viewer_headers)
     assert resp.status_code == 200
+
+
+async def test_room_spatial_view_reports_rack_height_u_and_rack_mounted_equipment_separately(client, auth_headers):
+    """3D layout increment: `racks[].height_u` and the new `rack_equipment` list must
+    carry the same authoritative U-range/side data `GET /racks/{id}/elevation` returns,
+    without disturbing `equipment`'s existing rack-mounted exclusion (§8)."""
+    headers = await auth_headers("Engineer")
+    room_id = await create_room(client, auth_headers)
+    rack = await create_rack(client, headers, auth_headers, room_id=room_id)
+    mounted_eq = await create_equipment(client, headers, auth_headers)
+    await client.post(
+        f"/api/v1/equipment/{mounted_eq['id']}/move",
+        json={"placement_type": "rack_mounted", "room_id": room_id, "rack_id": rack["id"], "u_start": 3, "u_end": 5, "side": "front"},
+        headers=headers,
+    )
+
+    resp = await client.get(f"/api/v1/spatial/rooms/{room_id}/view", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert len(body["racks"]) == 1
+    assert body["racks"][0]["height_u"] == 42  # create_rack_model_revision's default
+
+    assert body["equipment"] == []  # unchanged: still excludes rack-mounted equipment
+
+    assert len(body["rack_equipment"]) == 1
+    entry = body["rack_equipment"][0]
+    assert entry["id"] == mounted_eq["id"]
+    assert entry["rack_id"] == rack["id"]
+    assert entry["u_start"] == 3
+    assert entry["u_end"] == 5
+    assert entry["side"] == "front"
+
+
+async def test_room_spatial_view_rack_equipment_is_empty_when_no_racks_are_placed(client, auth_headers):
+    headers = await auth_headers("Engineer")
+    room_id = await create_room(client, auth_headers)
+
+    resp = await client.get(f"/api/v1/spatial/rooms/{room_id}/view", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["rack_equipment"] == []
