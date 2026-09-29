@@ -78,12 +78,39 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     session's (by-then-already-cleared) internal state entirely. `in_transaction()` is a
     pure in-memory check (no I/O); `connection()` reuses the transaction's existing
     connection rather than opening a new one (`Session._connection_for_bind`'s own cache),
-    so this adds no new connections and is a no-op whenever no transaction is open."""
+    so this adds no new connections and is a no-op whenever no transaction is open.
+
+    Codex's fifth follow-up (same PR): `session.connection()` is an *awaited* SQLAlchemy
+    operation against the live connection, not a pure in-memory check -- unlike
+    `in_transaction()`, it can itself raise on a connection that is already unusable (e.g.
+    invalidated or lost) before rollback/close is even attempted. Calling it unguarded, as
+    the previous round did, meant a snapshot failure raised immediately: in the `except`
+    block, that happened *before* the guarded `session.rollback()` call ever ran, replacing
+    the original, already-sanitized exception (`ingest_batch`'s recovered `ApiError(503)`,
+    say) with this raw one -- undoing every previous round's fix one step further back. In
+    `finally`, it raised *before* the guarded `session.close()` call, which meant it could
+    replace an otherwise-*successful* response on an ordinary read route, and skipped
+    `close()` entirely -- leaking the connection outright rather than merely failing to
+    invalidate it. Fixed by `_safe_snapshot_connection_for_invalidation()` below, which
+    wraps the snapshot attempt itself in a guard: on failure it logs a fixed event name
+    only (distinct from the existing rollback/close-failure events, so "failed to obtain
+    the connection" is distinguishable from "obtained it but failed to close/invalidate
+    it") and returns `None` -- which every caller already treats as "nothing to invalidate"
+    -- so the guarded `rollback()`/`close()` call immediately below always still runs
+    regardless of whether the snapshot succeeded. A snapshot failure does mean this round's
+    direct-invalidation protection is unavailable for that specific cleanup attempt (there
+    is no connection reference left to invalidate); this is a narrow, documented
+    limitation, not silently claimed-away -- see the regression tests below, and note the
+    same asyncpg dialect auto-invalidation described in the fourth follow-up above already
+    covers the common case (a genuinely disconnected connection) independently of this
+    module's own logic."""
     session = AsyncSessionLocal()
     try:
         yield session
     except Exception:
-        connection = await _snapshot_connection_for_invalidation(session)
+        connection = await _safe_snapshot_connection_for_invalidation(
+            session, event="db_session_cleanup_snapshot_failed"
+        )
         try:
             await session.rollback()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
@@ -91,7 +118,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await _invalidate_snapshotted_connection(connection, event="db_session_cleanup_invalidate_failed")
         raise
     finally:
-        connection = await _snapshot_connection_for_invalidation(session)
+        connection = await _safe_snapshot_connection_for_invalidation(
+            session, event="db_session_cleanup_finally_snapshot_failed"
+        )
         try:
             await session.close()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
@@ -108,6 +137,21 @@ async def _snapshot_connection_for_invalidation(session: AsyncSession) -> AsyncC
     if not session.in_transaction():
         return None
     return await session.connection()
+
+
+async def _safe_snapshot_connection_for_invalidation(session: AsyncSession, *, event: str) -> AsyncConnection | None:
+    """Best-effort wrapper around `_snapshot_connection_for_invalidation`. See `get_db`'s
+    docstring (Codex's fifth follow-up) for why the snapshot attempt itself must never be
+    allowed to raise here: both call sites in `get_db` need the guarded `rollback()`/
+    `close()` call immediately after them to still run even when the connection could not
+    be captured. Never raises -- on failure, logs a fixed event name only (never the
+    exception's own text, which may embed SQL parameters or row data) and returns `None`,
+    which callers already treat as "nothing to invalidate"."""
+    try:
+        return await _snapshot_connection_for_invalidation(session)
+    except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
+        logger.error(event)
+        return None
 
 
 async def _invalidate_snapshotted_connection(connection: AsyncConnection | None, *, event: str) -> None:

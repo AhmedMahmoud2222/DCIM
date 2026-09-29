@@ -272,6 +272,133 @@ async def test_get_db_close_failure_does_not_exhaust_a_fully_saturated_pool(monk
         await engine.dispose()
 
 
+def _patch_session_connection_to_raise_once(monkeypatch, message: str) -> None:
+    """Patches the real, production `AsyncSession.connection` -- exactly the awaited call
+    `_snapshot_connection_for_invalidation` makes -- to raise once, on the real class, not
+    a stub. See this module's docstring (Codex's fifth follow-up) for why this specific
+    injection point is what reproduces the round-9 finding: unlike the round-8 tests
+    above (which break the low-level `Transaction.close`/`.rollback` SQLAlchemy calls
+    made *inside* the guarded `rollback()`/`close()` attempts), this breaks the snapshot
+    attempt that runs *before* either of those guarded calls."""
+    from sqlalchemy.ext.asyncio import AsyncSession as RealAsyncSession
+
+    original_connection = RealAsyncSession.connection
+    fired = {"count": 0}
+
+    async def patched_connection(self, *args, **kwargs):
+        fired["count"] += 1
+        if fired["count"] == 1:
+            monkeypatch.setattr(RealAsyncSession, "connection", original_connection)
+            raise RuntimeError(message)
+        return await original_connection(self, *args, **kwargs)
+
+    monkeypatch.setattr(RealAsyncSession, "connection", patched_connection)
+
+
+async def test_get_db_snapshot_failure_in_finally_still_closes_and_releases_the_pool_slot(monkeypatch, capsys):
+    """SEC (Codex PR #49 review, ROUND 9): the `finally` block's snapshot call ran
+    unguarded before `session.close()` -- a failure there would have replaced an
+    otherwise-successful generator exit with the raw snapshot exception, AND skipped
+    `close()` entirely (not merely failed to invalidate the connection afterward, but
+    never attempted to release it at all). Drives a real, healthy transaction to its
+    ordinary (non-exception) exit -- the same successful-read-route shape as the round-8
+    close-failure test above -- while `AsyncSession.connection()` itself raises once.
+    Asserts the generator still terminates normally (StopAsyncIteration, not the
+    synthetic snapshot exception), `close()` still runs and releases the real pool slot,
+    the fixed `db_session_cleanup_finally_snapshot_failed` event is logged, and the raw
+    exception text never reaches the log."""
+    engine = session_module.engine
+    await engine.dispose()  # see the close-failure test's comment on why
+    assert engine.pool.checkedout() == 0
+
+    snapshot_secret = "synthetic-snapshot-SEC07M-keep-private"
+    _patch_session_connection_to_raise_once(monkeypatch, f"snapshot failed: {snapshot_secret}")
+
+    try:
+        gen = real_get_db()
+        session = await gen.__anext__()
+        try:
+            result = await session.execute(text("SELECT 1"))
+            assert result.scalar_one() == 1
+            assert session.in_transaction() is True
+            assert engine.pool.checkedout() == 1
+
+            # Ordinary successful exit: no exception in flight. A regression (unguarded
+            # snapshot) would raise the synthetic RuntimeError here instead.
+            with pytest.raises(StopAsyncIteration):
+                await gen.__anext__()
+        finally:
+            await gen.aclose()
+
+        assert engine.pool.checkedout() == 0, (
+            "close() must still run -- and release the pool slot -- even though the snapshot "
+            "attempt immediately before it failed"
+        )
+
+        async with session_module.AsyncSessionLocal() as verifying_session:
+            result = await verifying_session.execute(text("SELECT 1"))
+            assert result.scalar_one() == 1
+        assert engine.pool.checkedout() == 0
+    finally:
+        await engine.dispose()
+
+    log_text = capsys.readouterr().out
+    assert snapshot_secret not in log_text
+    assert '"event": "db_session_cleanup_finally_snapshot_failed"' in log_text
+
+
+async def test_get_db_snapshot_failure_in_except_block_does_not_replace_the_original_exception(monkeypatch, capsys):
+    """SEC (Codex PR #49 review, ROUND 9): the `except` block's snapshot call ran
+    unguarded before the guarded `session.rollback()` attempt -- a failure there would
+    have replaced the ORIGINAL, already-sanitized exception propagating from the route
+    (e.g. `ingest_batch`'s recovered `ApiError(503)`) with this raw one, undoing every
+    prior round's sanitization one step further back, AND skipped the rollback attempt
+    entirely. Throws a distinct synthetic "original route failure" into the generator
+    (simulating an already-sanitized exception in flight) while `AsyncSession.connection()`
+    itself raises once with its own distinct secret. Asserts the ORIGINAL exception is
+    what actually propagates out of `athrow` (not the snapshot failure), `rollback()` still
+    ran on a real, live transaction (pool slot released), the fixed
+    `db_session_cleanup_snapshot_failed` event is logged, and neither secret reaches the
+    log."""
+    engine = session_module.engine
+    await engine.dispose()
+    assert engine.pool.checkedout() == 0
+
+    snapshot_secret = "synthetic-snapshot-SEC07N-keep-private"
+    original_secret = "synthetic-original-SEC07N-keep-private"
+    _patch_session_connection_to_raise_once(monkeypatch, f"snapshot failed: {snapshot_secret}")
+
+    try:
+        gen = real_get_db()
+        session = await gen.__anext__()
+        try:
+            await session.execute(text("SELECT 1"))
+            assert session.in_transaction() is True
+            assert engine.pool.checkedout() == 1
+
+            with pytest.raises(RuntimeError, match=original_secret):
+                await gen.athrow(RuntimeError(f"original route failure: {original_secret}"))
+        finally:
+            await gen.aclose()
+
+        assert engine.pool.checkedout() == 0, (
+            "rollback() must still run -- and release the pool slot -- even though the snapshot "
+            "attempt immediately before it failed"
+        )
+
+        async with session_module.AsyncSessionLocal() as verifying_session:
+            result = await verifying_session.execute(text("SELECT 1"))
+            assert result.scalar_one() == 1
+        assert engine.pool.checkedout() == 0
+    finally:
+        await engine.dispose()
+
+    log_text = capsys.readouterr().out
+    assert snapshot_secret not in log_text
+    assert original_secret not in log_text
+    assert '"event": "db_session_cleanup_snapshot_failed"' in log_text
+
+
 async def test_snapshot_helper_is_a_public_api_only_no_op_when_no_transaction_is_open():
     """Sanity check on `_snapshot_connection_for_invalidation`'s own stated contract:
     when nothing has touched the database yet, it must not open a connection just to
