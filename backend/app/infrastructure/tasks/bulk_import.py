@@ -39,6 +39,20 @@ from app.infrastructure.celery_app import celery_app
 logger = get_logger(__name__)
 
 
+class BulkImportTaskFailed(Exception):
+    """SEC (Codex PR #50 review, ROUND 2, finding #2A): raised in place of a bare `raise`
+    of the original caught exception, in both `_parse_and_validate_async`'s and
+    `_commit_async`'s inner `_body`. A bare `raise` there re-raises the ORIGINAL exception
+    object -- message, traceback, and any chained cause -- into Celery's own task-failure
+    machinery (result backend, worker logs), which can surface raw workbook cell values or
+    SQL parameters via that exception's own `str()`, even though the log line right above it
+    is already sanitized (fixed event name + exception class only). This wrapper carries
+    only the job id and the exception's *class* (a safe, bounded taxonomy) -- never the
+    original message -- and is always raised with `from None` so exception chaining never
+    lets Celery's own traceback capture walk back into the original exception's message or
+    `__cause__`/`__context__`."""
+
+
 def _run_async(coro_factory) -> None:
     """Runs `coro_factory()` to completion, blocking the calling (sync) thread. Always
     spawns a brand-new event loop on a dedicated thread — never a bare `asyncio.run()`
@@ -116,7 +130,7 @@ async def _parse_and_validate_async(job_id: str) -> None:
             # pattern for this exact class of bug.
             logger.error("bulk_import_parse_unexpected_failure", job_id=job_id, error_code=type(exc).__name__)
             await _mark_parse_failed_on_unexpected_error(db, uuid.UUID(job_id))
-            raise
+            raise BulkImportTaskFailed(f"job {job_id} failed: {type(exc).__name__}") from None
 
     await _with_fresh_session(_body)
 
@@ -129,7 +143,7 @@ async def _commit_async(job_id: str) -> None:
             await db.rollback()
             logger.error("bulk_import_commit_unexpected_failure", job_id=job_id, error_code=type(exc).__name__)
             await _mark_commit_failed_on_unexpected_error(db, uuid.UUID(job_id))
-            raise
+            raise BulkImportTaskFailed(f"job {job_id} failed: {type(exc).__name__}") from None
 
     await _with_fresh_session(_body)
 

@@ -74,7 +74,16 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
         if loaded_asset.asset_type != "rack":
             raise RowRejected("asset_tag", f"asset_tag {asset_tag!r} does not identify a rack.")
         asset = loaded_asset
-        loaded_rack = await db.get(Rack, asset.id)
+        # SEC (Codex PR #50 review, ROUND 2, finding #3): lock the row at read time —
+        # matches app/application/catalog_designer_service.py::lock_draft_revision_for_edit's
+        # established idiom in this codebase. Without this, the read-compare-write sequence
+        # below (load, compare row.expected_version, mutate, flush) is not atomic: a
+        # concurrent transaction could change this row between the read and this
+        # transaction's eventual commit, and this write would proceed anyway, silently
+        # clobbering that concurrent edit. Locking here forces a concurrent writer to block
+        # until this transaction ends, then re-read the now-current version and correctly
+        # detect the staleness this row's own check below would otherwise miss.
+        loaded_rack = await db.get(Rack, asset.id, with_for_update=True)
         if loaded_rack is None:
             raise RowRejected("asset_tag", f"asset_tag {asset_tag!r} has no rack row.")
         rack = loaded_rack

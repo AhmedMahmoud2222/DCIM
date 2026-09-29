@@ -16,9 +16,13 @@ duplicate/concurrent-commit fix.
    redelivery without needing two real concurrent callers."""
 
 import asyncio
+import io
+import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest_asyncio
+import structlog
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -180,3 +184,144 @@ async def test_run_commit_ignores_a_second_delivery_of_the_same_task(client, aut
         )
     ).scalar_one()
     assert audit_count == 1, "a second delivery must never write a duplicate job-level audit row"
+
+
+# ------------------------------------------------------------------------ ROUND 2 finding #1
+
+
+async def test_two_genuinely_overlapping_run_commit_deliveries_only_one_processes_rows(
+    client, auth_headers, db_session, monkeypatch,
+):
+    """SEC (Codex PR #50 review, ROUND 2, finding #1): unlike
+    test_run_commit_ignores_a_second_delivery_of_the_same_task above (two *sequential*
+    calls, the second only starting after the first has already finished), this proves two
+    *genuinely overlapping* deliveries are safe -- two independent AsyncSessions (simulating
+    two separate Celery worker processes racing each other) both calling
+    service.run_commit for the identical job via asyncio.gather. Before the lease fix,
+    run_commit's initial `SELECT ... FOR UPDATE` + status-check + immediate `db.commit()`
+    released the row lock right after checking status='committing' (not a one-shot-consumed
+    state), so a second, overlapping delivery could pass that same check and both deliveries
+    would then process the same batch of valid rows concurrently. The atomic lease claim
+    (a single `UPDATE ... WHERE status='committing' AND (no unexpired lease)`) is what
+    Postgres itself serializes: whichever delivery's claim UPDATE gets there first wins the
+    row lock; the other's claim UPDATE blocks, then re-evaluates its WHERE clause against
+    the now-committed (lease-held) row and matches zero rows -- a clean, immediate no-op,
+    never a second pass over the rows."""
+    monkeypatch.setattr(bulk_import_service, "BULK_IMPORT_COMMIT_BATCH_SIZE", 2)
+
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    tags = [f"RACK-{uuid.uuid4().hex[:8]}" for _ in range(5)]
+    rows = [
+        [tag, f"Row {i} Rack", model["manufacturer"], model["model_name"], "", room["site_code"],
+         room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]
+        for i, tag in enumerate(tags)
+    ]
+    content = build_workbook(RACK_HEADERS, rows)
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    # Claim the job into 'committing' exactly like the real API endpoint's atomic claim —
+    # this test exercises the two *overlapping run_commit deliveries* race directly, not
+    # the "two racing HTTP requests" race (already covered above).
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing"
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    # Capture the emitted structured JSON from service.py's own logger, not only mock call
+    # args, so we can directly assert the losing delivery's log event.
+    log_output = io.StringIO()
+    captured_logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output), processors=[structlog.processors.JSONRenderer()],
+    )
+    monkeypatch.setattr(bulk_import_service, "logger", captured_logger)
+
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=5)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with session_factory() as session_a, session_factory() as session_b:
+            await asyncio.gather(
+                bulk_import_service.run_commit(session_a, job_id),
+                bulk_import_service.run_commit(session_b, job_id),
+            )
+    finally:
+        await engine.dispose()
+
+    log_lines = [json.loads(line) for line in log_output.getvalue().splitlines() if line.strip()]
+    not_acquired = [line for line in log_lines if line.get("event") == "bulk_import_commit_lease_not_acquired"]
+    assert len(not_acquired) == 1, (
+        f"expected exactly one delivery to lose the lease claim and log immediately, got {not_acquired}"
+    )
+
+    final = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert final["status"] == "committed", final
+    assert final["committed_row_count"] == 5, "every row must be committed exactly once, by exactly one delivery"
+
+    racks = (await client.get("/api/v1/racks", headers=headers)).json()
+    for tag in tags:
+        matching = [r for r in racks["items"] if r["asset_tag"] == tag]
+        assert len(matching) == 1, f"{tag} must have been committed exactly once, never twice by two overlapping deliveries"
+
+
+async def test_run_commit_reclaims_an_expired_lease_after_a_crashed_delivery(client, auth_headers, db_session):
+    """SEC (Codex PR #50 review, ROUND 2, finding #1): a delivery that claimed the commit
+    lease and then crashed (worker killed, container OOM'd) mid-run leaves the job stuck at
+    status='committing' with a lease that will never be renewed again. A later call to
+    run_commit (redelivery, or an operator-triggered retry) must be able to reclaim that
+    lease once it has expired -- rather than being permanently stuck because the stale
+    lease looks "held" forever."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[asset_tag, "Row A Rack 1", model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing"
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    # Simulate a delivery that claimed the lease and then crashed without ever renewing or
+    # finishing: an already-expired lease left behind on the job row.
+    stale_lease_id = uuid.uuid4()
+    await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id).values(
+            commit_lease_id=stale_lease_id, commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=5),
+        )
+    )
+    await db_session.commit()
+
+    await bulk_import_service.run_commit(db_session, job_id)
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert job_status["status"] == "committed", job_status
+    assert job_status["committed_row_count"] == 1, "the recovering delivery must successfully finish the job"
+
+    racks = (await client.get("/api/v1/racks", headers=headers)).json()
+    matching = [r for r in racks["items"] if r["asset_tag"] == asset_tag]
+    assert len(matching) == 1

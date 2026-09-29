@@ -65,6 +65,19 @@ class BulkImportJob(Base, UUIDPkMixin, TimestampMixin):
     validated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     committed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
+    # SEC (Codex PR #50 review, ROUND 2, finding #1): a lease/ownership token claimed
+    # atomically by run_commit (app/application/bulk_import/service.py), renewed at every
+    # batch checkpoint, and verified before every durable write, so at most one Celery
+    # delivery can ever hold write ownership of this job's commit at any moment.
+    # status == 'committing' alone is not one-shot-consumed (it stays 'committing' for the
+    # whole run), so a plain status check let two overlapping deliveries of the same commit
+    # both observe 'committing' and both process the same rows concurrently. Both columns
+    # are NULL whenever no delivery currently holds the lease (job not committing, or
+    # commit already finished/failed terminally). commit_lease_expires_at also bounds how
+    # long a crashed delivery's lease is honored before another delivery may reclaim it.
+    commit_lease_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    commit_lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
 
 class BulkImportRow(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "bulk_import_row"

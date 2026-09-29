@@ -6,6 +6,14 @@ MAX_BULK_IMPORT_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MiB
 MAX_BULK_IMPORT_ROWS = 5000
 BULK_IMPORT_COMMIT_BATCH_SIZE = 200
 
+# SEC (Codex PR #50 review, ROUND 2, finding #1): how long a run_commit delivery's claimed
+# commit lease (BulkImportJob.commit_lease_id/commit_lease_expires_at) is honored before
+# another delivery may reclaim it. Long enough to comfortably cover one batch checkpoint's
+# normal processing time (renewed at every checkpoint, so a healthy delivery never lets it
+# lapse); short enough that recovery from a crashed/stalled delivery doesn't leave the job
+# stuck for long.
+BULK_IMPORT_COMMIT_LEASE_SECONDS = 60
+
 # SEC (Codex PR #50 review, finding #4): MAX_BULK_IMPORT_FILE_SIZE_BYTES above only
 # bounds the *compressed* upload — a small, honestly-compressible .xlsx (a zip) can still
 # decompress to a huge amount of data (a "zip bomb"), exhausting worker memory/CPU inside

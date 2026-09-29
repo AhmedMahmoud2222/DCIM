@@ -104,7 +104,11 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
         if loaded_asset.asset_type != "equipment":
             raise RowRejected("asset_tag", f"asset_tag {asset_tag!r} does not identify equipment.")
         asset = loaded_asset
-        loaded_equipment = await db.get(Equipment, asset.id)
+        # SEC (Codex PR #50 review, ROUND 2, finding #3): see commit/rack.py's identical
+        # comment — locks the row at read time (the established
+        # lock_draft_revision_for_edit idiom in this codebase) so the read-compare-write
+        # sequence below is atomic under a concurrent writer.
+        loaded_equipment = await db.get(Equipment, asset.id, with_for_update=True)
         if loaded_equipment is None:
             raise RowRejected("asset_tag", f"asset_tag {asset_tag!r} has no equipment row.")
         equipment = loaded_equipment

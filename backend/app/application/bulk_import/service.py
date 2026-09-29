@@ -8,9 +8,9 @@ app/infrastructure/tasks/floorplan_import.py's tasks already do for the floor-pl
 importer."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,7 @@ from app.application.bulk_import.commit import catalog as commit_catalog
 from app.application.bulk_import.commit import describe_integrity_error
 from app.application.bulk_import.commit import equipment as commit_equipment
 from app.application.bulk_import.commit import rack as commit_rack
-from app.application.bulk_import.limits import BULK_IMPORT_COMMIT_BATCH_SIZE
+from app.application.bulk_import.limits import BULK_IMPORT_COMMIT_BATCH_SIZE, BULK_IMPORT_COMMIT_LEASE_SECONDS
 from app.application.bulk_import.parsing import ParseRejected, parse_workbook
 from app.application.bulk_import.report import build_report_workbook
 from app.application.bulk_import.resolvers import RowRejected
@@ -102,7 +102,7 @@ async def run_parse_and_validate(db: AsyncSession, job_id: uuid.UUID) -> None:
         job.status = "failed_parse"
         job.rejection_reason = exc.reason
         await db.commit()
-        logger.warning("bulk_import_parse_rejected", job_id=str(job_id), reason=exc.reason)
+        logger.warning("bulk_import_parse_rejected", job_id=str(job_id), reason_code=exc.reason_code)
         return
 
     validate_row = _VALIDATE_FUNCS[job.import_type]
@@ -157,30 +157,50 @@ def _describe_commit_error(exc: Exception) -> dict:
 
 
 async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
-    # SEC (Codex PR #50 review, finding #1): the only caller that may ever move a job INTO
-    # 'committing' is the atomic UPDATE ... WHERE status='validated' in the API endpoint
-    # (app/api/v1/bulk_import.py::commit_bulk_import_job_endpoint) -- this function must
-    # never self-claim a job (that would defeat the point: two Celery deliveries of the
-    # same dispatched task, or a delivery arriving after the job already reached a
-    # terminal status, would both pass an unconditional "set it to committing" check).
-    # `SELECT ... FOR UPDATE` locks the row before the status check so a second delivery
-    # racing a still-in-flight first delivery blocks here (rather than reading a
-    # pre-mutation status) and, once unblocked, observes whatever status the first
-    # delivery's own transaction left behind -- 'committing' only while genuinely still
-    # in progress between checkpoints, and a terminal status once the first delivery
-    # finishes, at which point this second delivery cleanly no-ops below instead of
-    # reprocessing rows.
-    job = (
-        await db.execute(select(BulkImportJob).where(BulkImportJob.id == job_id).with_for_update())
+    # SEC (Codex PR #50 review, finding #1 / ROUND 2 finding #1): the only caller that may
+    # ever move a job INTO 'committing' is the atomic UPDATE ... WHERE status='validated' in
+    # the API endpoint (app/api/v1/bulk_import.py::commit_bulk_import_job_endpoint) -- this
+    # function must never self-claim a job into 'committing' (that would defeat the point).
+    #
+    # status == 'committing' is NOT one-shot-consumed -- it stays 'committing' for the
+    # entire run, so a plain "SELECT ... FOR UPDATE, check status, commit (releasing the
+    # lock immediately)" is not enough: a second delivery arriving shortly after the first
+    # released its row lock can also observe 'committing' and also proceed to select and
+    # process the *same* valid rows concurrently with the first delivery. Instead, this
+    # claims a short-lived lease token atomically: a single `UPDATE ... WHERE status=
+    # 'committing' AND (no lease held OR that lease has expired)` lets Postgres itself
+    # serialize two concurrent claim attempts -- exactly one can ever succeed per lease
+    # window, closing the "two deliveries start at almost the same instant" case directly
+    # (no reliance on lease *expiry* for that case -- expiry only matters for recovering a
+    # job whose owning delivery died mid-processing without finishing). The lease is then
+    # renewed at every batch checkpoint and verified immediately before every durable write,
+    # so a delivery that has lost its lease (another delivery reclaimed it after this one
+    # stalled past expiry) stops immediately instead of continuing to write.
+    lease_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    claimed_id = (
+        await db.execute(
+            update(BulkImportJob)
+            .where(
+                BulkImportJob.id == job_id,
+                BulkImportJob.status == "committing",
+                or_(BulkImportJob.commit_lease_expires_at.is_(None), BulkImportJob.commit_lease_expires_at < now),
+            )
+            .values(
+                commit_lease_id=lease_id, commit_lease_expires_at=now + timedelta(seconds=BULK_IMPORT_COMMIT_LEASE_SECONDS)
+            )
+            .returning(BulkImportJob.id)
+        )
     ).scalar_one_or_none()
+    if claimed_id is None:
+        await db.rollback()
+        logger.warning("bulk_import_commit_lease_not_acquired", job_id=str(job_id))
+        return
+    await db.commit()
+    job = await db.get(BulkImportJob, job_id)
     if job is None:
         logger.error("bulk_import_job_not_found", job_id=str(job_id))
         return
-    if job.status != "committing":
-        logger.warning("bulk_import_commit_skipped_not_committing", job_id=str(job_id), status=job.status)
-        await db.rollback()  # release the row lock without changing anything
-        return
-    await db.commit()  # release the row lock; the claim itself was already made by the API layer
 
     commit_row = _COMMIT_FUNCS[job.import_type]
 
@@ -230,6 +250,24 @@ async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
                     row.target_catalog_revision_id = result.target_catalog_revision_id
                 job.committed_row_count += 1
 
+        # SEC (Codex PR #50 review, ROUND 2, finding #1): renew the lease and verify this
+        # delivery still holds it BEFORE this batch's row/counter writes become durable --
+        # and commit both together, atomically, in the same transaction. If another
+        # delivery has already reclaimed the lease (this delivery stalled past expiry), 0
+        # rows match and this batch's not-yet-durable writes are discarded via rollback
+        # rather than committed by a delivery that no longer owns the job.
+        renewed_id = (
+            await db.execute(
+                update(BulkImportJob)
+                .where(BulkImportJob.id == job_id, BulkImportJob.commit_lease_id == lease_id)
+                .values(commit_lease_expires_at=datetime.now(UTC) + timedelta(seconds=BULK_IMPORT_COMMIT_LEASE_SECONDS))
+                .returning(BulkImportJob.id)
+            )
+        ).scalar_one_or_none()
+        if renewed_id is None:
+            await db.rollback()
+            logger.warning("bulk_import_commit_lease_lost", job_id=str(job_id))
+            return
         await db.commit()  # checkpoint this batch — visible to polling clients immediately
 
     job = await db.get(BulkImportJob, job_id)
@@ -240,6 +278,24 @@ async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
     storage = get_storage_backend()
     report_key = f"bulk-import-report-{job.id.hex}.xlsx"
     storage.save(report_key, report_bytes)
+
+    # SEC (Codex PR #50 review, ROUND 2, finding #1): verify+touch the lease one final time
+    # before finalizing (setting the terminal status/report/committed_at) -- a delivery that
+    # lost ownership since its last batch checkpoint must not finalize a job it no longer
+    # owns (e.g. it would otherwise overwrite the recovering delivery's own in-progress or
+    # already-finished work).
+    final_renewed_id = (
+        await db.execute(
+            update(BulkImportJob)
+            .where(BulkImportJob.id == job_id, BulkImportJob.commit_lease_id == lease_id)
+            .values(commit_lease_expires_at=datetime.now(UTC) + timedelta(seconds=BULK_IMPORT_COMMIT_LEASE_SECONDS))
+            .returning(BulkImportJob.id)
+        )
+    ).scalar_one_or_none()
+    if final_renewed_id is None:
+        await db.rollback()
+        logger.warning("bulk_import_commit_lease_lost", job_id=str(job_id))
+        return
 
     job.report_storage_key = report_key
     # "committed_with_errors" whenever the job did not cleanly succeed end to end — a row
