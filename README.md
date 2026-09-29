@@ -6,6 +6,8 @@
 
 [Current implementation status](docs/PROJECT_STATUS.md) · [Architecture overview](docs/ARCHITECTURE_OVERVIEW.md) · [Development and testing](docs/DEVELOPMENT_AND_TESTING.md) · [Operations and deployment](docs/OPERATIONS.md) · [Documentation index](docs/DOCUMENTATION_INDEX.md)
 
+[Consolidated product roadmap](docs/PRODUCT_ROADMAP.md) — original vision, delivered capabilities, and proposed R1–R5 releases. Roadmap milestones are not deployment claims.
+
 ## Implemented capabilities
 
 | Area | Present in repository | Primary code / evidence |
