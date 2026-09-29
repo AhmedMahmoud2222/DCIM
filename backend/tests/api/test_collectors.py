@@ -9,6 +9,7 @@ import pytest
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import collectors as collector_api
 from tests.api._phase8_helpers import create_integration, register_collector, sign_request
@@ -514,6 +515,100 @@ async def test_ingest_claim_release_failure_never_logs_or_returns_sensitive_data
     assert {"event": "ingest_batch_claim_release_failed", "record_index": 0} in events
     for sensitive in (
         original_credential, release_secret,
+        bad["dedup_key"], batch_id, integration["id"], collector["id"],
+    ):
+        assert sensitive not in log_text
+
+
+@pytest.mark.parametrize("failure_kind", ["integrity", "runtime"])
+async def test_ingest_claim_release_and_rollback_failure_aborts_batch_safely(
+    client, auth_headers, monkeypatch, failure_kind,
+):
+    """Codex's second-round Phase 11 review (Issue #38 / PR #49): if `db.rollback()`
+    itself fails after `release_claim()` already failed, the new exception must not
+    escape `_release_claim_safely()` unsanitized either -- left uncaught it would
+    propagate past `ingest_batch()` entirely, and the global catch-all handler's
+    `exc_info=True` would chain all three exceptions (the original ingest failure, the
+    release failure, and the rollback failure) into one traceback. Forces all three to
+    fail with distinct synthetic secrets and confirms none reach logs or the response,
+    and that the batch aborts outright (no 200 with an accepted ACK resting on a
+    session that failed to even roll back) rather than continuing to the sibling
+    record."""
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    original_credential = "synthetic-credential-SEC07C-original-keep-private"
+    release_secret = "synthetic-release-SEC07C-keep-private"
+    rollback_secret = "synthetic-rollback-SEC07C-keep-private"
+    bad = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.70", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"credential": original_credential},
+    }
+    good = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.71", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [bad, good]}).encode()
+    signed = sign_request(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body,
+    )
+
+    original_ingest = collector_api.ingest_discovery
+
+    async def fail_bad_record(*args, **kwargs):
+        if kwargs["external_identifier"] == bad["external_identifier"]:
+            if failure_kind == "integrity":
+                raise IntegrityError(
+                    "INSERT INTO discovered_device (credential) VALUES (:private_value)",
+                    {"private_value": original_credential},
+                    ValueError(f"database rejected {original_credential}"),
+                )
+            raise RuntimeError(f"unexpected {original_credential}")
+        return await original_ingest(*args, **kwargs)
+
+    async def fail_release_claim(*args, **kwargs):
+        raise RuntimeError(f"release failed: {release_secret}")
+
+    async def fail_rollback(self, *args, **kwargs):
+        raise RuntimeError(f"rollback failed: {rollback_secret}")
+
+    monkeypatch.setattr(collector_api, "ingest_discovery", fail_bad_record)
+    monkeypatch.setattr(collector_api.idem, "release_claim", fail_release_claim)
+    monkeypatch.setattr(AsyncSession, "rollback", fail_rollback)
+    log_output = io.StringIO()
+    logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+    monkeypatch.setattr(collector_api, "logger", logger)
+
+    response = await client.post(
+        f"/api/v1/collectors/{collector['id']}/ingest",
+        content=raw_body, headers={**signed, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["status"] == 503
+    for sensitive in (original_credential, release_secret, rollback_secret):
+        assert sensitive not in response.text
+
+    log_text = log_output.getvalue()
+    events = [json.loads(line) for line in log_text.splitlines()]
+    assert {"event": "ingest_batch_claim_release_rollback_failed", "record_index": 0} in events
+    for sensitive in (
+        original_credential, release_secret, rollback_secret,
         bad["dedup_key"], batch_id, integration["id"], collector["id"],
     ):
         assert sensitive not in log_text

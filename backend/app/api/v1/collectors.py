@@ -408,11 +408,35 @@ async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record
     Rolling back here is safe specifically because the per-record loop below reads the
     collector's identity from the `collector_id` path parameter, never from
     `collector.id` -- so expiring `collector` cannot crash a later iteration with
-    MissingGreenlet (see the Finding I4 comment above `begin_nested()`)."""
+    MissingGreenlet (see the Finding I4 comment above `begin_nested()`).
+
+    Codex's second-round review (Issue #38 / PR #49): the `db.rollback()` recovery
+    attempt itself can fail (e.g. the connection is already gone), and an unguarded
+    call would let THAT new exception escape this function just as unsanitized as the
+    one it was meant to recover from -- reaching the same global catch-all handler,
+    whose `exc_info=True` traceback would then chain all three exceptions (the
+    original per-record failure, the release failure, and the rollback failure) into
+    one log line. If rollback itself fails, the session is unusable for any further
+    record in this batch, so this raises `ApiError` to abort the whole request rather
+    than let siblings run against a broken connection -- deliberately `ApiError`, not
+    a bare exception, because its handler (app/core/errors.py's `_api_error_handler`)
+    never logs exception text at all, only the fixed `detail` below. Any record from
+    an earlier iteration that already reached its own `await db.commit()` stays
+    committed regardless; the collector's existing whole-batch-retry contract (this
+    endpoint's own docstring) already covers replaying the rest safely, since every
+    record is idempotent on its own `dedup_key`."""
     try:
         await idem.release_claim(db, claim_id)
     except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
-        await db.rollback()
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001 -- the session is unusable; abort rather than
+            # continue processing siblings on a connection that failed to even roll back.
+            logger.error("ingest_batch_claim_release_rollback_failed", record_index=record_index)
+            raise ApiError(
+                status_code=503, title="Service Unavailable",
+                detail="The database connection became unusable while processing this batch; retry the entire batch.",
+            ) from None
         logger.error("ingest_batch_claim_release_failed", record_index=record_index)
 
 
