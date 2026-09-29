@@ -772,6 +772,129 @@ async def test_ingest_release_route_rollback_and_cleanup_rollback_failures_all_c
     assert retry_results[bad["dedup_key"]]["error_code"] == "PROCESSING"
 
 
+async def test_ingest_release_rollback_and_session_close_failures_all_contained(
+    client, auth_headers, monkeypatch,
+):
+    """Codex's fourth-round Phase 11 review (Issue #38 / PR #49): the prior fix wrapped
+    get_db()'s cleanup rollback, but `async with AsyncSessionLocal() as session:` still
+    ran `AsyncSession.__aexit__`'s own `close()` OUTSIDE any guard -- a failing close()
+    would replace the just-recovered, sanitized `ApiError(503)` with its own raw
+    exception one layer further out, exactly like the rollback failure this same PR
+    already fixed twice over. get_db() now manages the session manually (see its
+    docstring) so `close()`, and a best-effort `invalidate()` when rollback itself
+    failed, are individually guarded too.
+
+    Forces a FIFTH distinct failure point -- `AsyncSession.close()` -- on top of the
+    four the prior test in this file already covers, using the same real-dependency
+    technique, and confirms the response and every logger involved stay exactly as
+    safe as before, and that a record after the failing one is never processed."""
+    import app.core.errors as errors_module
+    import app.db.session as session_module
+    from app.db.session import get_db as real_get_db
+    from app.main import app as fastapi_app
+
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    original_credential = "synthetic-credential-SEC07E-original-keep-private"
+    release_secret = "synthetic-release-SEC07E-keep-private"
+    route_rollback_secret = "synthetic-route-rollback-SEC07E-keep-private"
+    cleanup_rollback_secret = "synthetic-cleanup-rollback-SEC07E-keep-private"
+    close_secret = "synthetic-session-close-SEC07E-keep-private"
+
+    bad = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.90", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"credential": original_credential},
+    }
+    good_after = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.91", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [bad, good_after]}).encode()
+    signed = sign_request(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body,
+    )
+
+    original_ingest = collector_api.ingest_discovery
+
+    async def fail_bad_record(*args, **kwargs):
+        if kwargs["external_identifier"] == bad["external_identifier"]:
+            raise RuntimeError(f"unexpected {original_credential}")
+        return await original_ingest(*args, **kwargs)
+
+    async def fail_release_claim(*args, **kwargs):
+        raise RuntimeError(f"release failed: {release_secret}")
+
+    rollback_calls = {"count": 0}
+
+    async def fail_rollback(self, *args, **kwargs):
+        rollback_calls["count"] += 1
+        if rollback_calls["count"] == 1:
+            raise RuntimeError(f"route rollback failed: {route_rollback_secret}")
+        raise RuntimeError(f"cleanup rollback failed: {cleanup_rollback_secret}")
+
+    async def fail_close(self, *args, **kwargs):
+        raise RuntimeError(f"close failed: {close_secret}")
+
+    log_output = io.StringIO()
+    shared_logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+
+    monkeypatch.setattr(collector_api, "ingest_discovery", fail_bad_record)
+    monkeypatch.setattr(collector_api.idem, "release_claim", fail_release_claim)
+    monkeypatch.setattr(AsyncSession, "rollback", fail_rollback)
+    monkeypatch.setattr(AsyncSession, "close", fail_close)
+    monkeypatch.setattr(collector_api, "logger", shared_logger)
+    monkeypatch.setattr(errors_module, "logger", shared_logger)
+    monkeypatch.setattr(session_module, "logger", shared_logger, raising=False)
+
+    original_override = fastapi_app.dependency_overrides.get(real_get_db)
+    fastapi_app.dependency_overrides.pop(real_get_db, None)
+    try:
+        response = await client.post(
+            f"/api/v1/collectors/{collector['id']}/ingest",
+            content=raw_body, headers={**signed, "Content-Type": "application/json"},
+        )
+    finally:
+        if original_override is not None:
+            fastapi_app.dependency_overrides[real_get_db] = original_override
+        # Same reasoning as the four-failure test above: app.db.session's engine is a
+        # process-wide singleton, and the injected failures leave its connection bound
+        # to this test's event loop -- dispose it so no later test inherits it.
+        await session_module.engine.dispose()
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    assert body["status"] == 503
+    assert "results" not in body  # good_after was never reached, let alone processed
+    for sensitive in (original_credential, release_secret, route_rollback_secret, cleanup_rollback_secret, close_secret):
+        assert sensitive not in response.text
+
+    log_text = log_output.getvalue()
+    events = [json.loads(line) for line in log_text.splitlines()]
+    assert any(e.get("event") == "db_session_cleanup_rollback_failed" for e in events)
+    assert any(e.get("event") == "db_session_cleanup_close_failed" for e in events)
+    for sensitive in (
+        original_credential, release_secret, route_rollback_secret, cleanup_rollback_secret, close_secret,
+        bad["dedup_key"], good_after["dedup_key"], batch_id, integration["id"], collector["id"],
+    ):
+        assert sensitive not in log_text
+
+
 async def test_poll_now_succeeds_on_real_icmp_and_creates_a_discovered_device(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)

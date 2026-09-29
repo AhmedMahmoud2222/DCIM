@@ -29,15 +29,34 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     not necessarily an `ApiError` and so would reach `app/core/errors.py`'s
     catch-all handler -- logging `str(exc)`/`exc_info=True` unsanitized, and
     returning a generic 500 instead of whatever safe response the route intended.
-    Guarded here with the same fixed-field-only discipline, then the ORIGINAL
-    exception is re-raised (Python 3 restores the enclosing except's exception state
-    once the nested `except` below exits) so callers see exactly what they raised."""
-    async with AsyncSessionLocal() as session:
+
+    Codex's follow-up review (same PR): `async with AsyncSessionLocal() as session:`
+    puts `AsyncSession.__aexit__`'s own `close()` call OUTSIDE any guard -- it still
+    runs, unguarded, as this function's `except` block's `raise` propagates out through
+    the `async with`. A failing close() would then replace the just-recovered, sanitized
+    exception with its own raw one, undoing the fix above one layer further out. Managed
+    manually here instead of via `async with`, so every exit path -- the rollback
+    attempt, a best-effort `invalidate()` when rollback itself failed (discarding the
+    connection so the pool never hands a known-broken one to a later request, per Codex's
+    explicit ask), and the final `close()` -- is individually guarded with the same
+    fixed-field-only logging discipline. The ORIGINAL exception from `yield session` is
+    what ultimately propagates via the bare `raise` right after the nested guards;
+    `close()`'s own guard lives inside `finally` specifically so it can never replace it."""
+    session = AsyncSessionLocal()
+    try:
+        yield session
+    except Exception:
         try:
-            yield session
-        except Exception:
+            await session.rollback()
+        except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
+            logger.error("db_session_cleanup_rollback_failed")
             try:
-                await session.rollback()
-            except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
-                logger.error("db_session_cleanup_rollback_failed")
-            raise
+                await session.invalidate()
+            except Exception:  # noqa: BLE001 -- best-effort; must never mask the original exception.
+                logger.error("db_session_cleanup_invalidate_failed")
+        raise
+    finally:
+        try:
+            await session.close()
+        except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
+            logger.error("db_session_cleanup_close_failed")
