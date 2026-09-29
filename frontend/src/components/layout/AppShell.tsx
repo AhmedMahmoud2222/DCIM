@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
-import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { useHasPermission, useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
@@ -19,11 +19,19 @@ const NAV_ITEMS = [
 ];
 
 const ADMIN_NAV_ITEMS = [{ to: "/admin/catalog", label: "Asset Catalog" }];
+const ACCESS_NAV_ITEMS = [
+  { to: "/admin/users", label: "Users", permission: "user:read" },
+  { to: "/admin/groups", label: "Groups", permission: "group:read" },
+];
 
 export function AppShell() {
   const { user, logout } = useAuth();
   const isCatalogAdministrator = useIsCatalogAdministrator();
+  const canReadUsers = useHasPermission("user:read");
+  const canReadGroups = useHasPermission("group:read");
   const navigate = useNavigate();
+  const accessItems = ACCESS_NAV_ITEMS.filter((i) => (i.permission === "user:read" ? canReadUsers : canReadGroups));
+  const showAdminHeading = isCatalogAdministrator || accessItems.length > 0;
 
   async function handleLogout() {
     await logout();
@@ -50,22 +58,20 @@ export function AppShell() {
               {item.label}
             </NavLink>
           ))}
-          {isCatalogAdministrator && (
-            <>
-              <div className="mb-1 mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-slate-300">Admin</div>
-              {ADMIN_NAV_ITEMS.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    `block rounded px-3 py-2 text-sm ${isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-            </>
+          {showAdminHeading && (
+            <div className="mb-1 mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-slate-300">Admin</div>
           )}
+          {[...(isCatalogAdministrator ? ADMIN_NAV_ITEMS : []), ...accessItems].map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                `block rounded px-3 py-2 text-sm ${isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
         </nav>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">

@@ -12,6 +12,7 @@
 | Developer / CI maintainer | [Development and testing](DEVELOPMENT_AND_TESTING.md) | PostgreSQL/Redis bootstrap, frontend/Edge/Playwright suites, runtime matrix and migrations |
 | Operations / deployment team | [Operations](OPERATIONS.md) | Security, configuration, backup/restore, monitoring, health checks, rollback rehearsals and incident entry points |
 | Independent reviewer / auditor | [Audit status](AUDIT_STATUS.md) | Distinguishes original Phase 10 findings from PR #29 fixes, verified CI and pending review evidence |
+| Administrator / security reviewer | [User & group management](USER_GROUP_MANAGEMENT.md) | Users, groups, allow/deny permissions, site and rack access, effective-permission rules and safeguards |
 
 ## Historical architecture and phase records
 

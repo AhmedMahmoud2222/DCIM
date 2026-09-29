@@ -10,12 +10,18 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, File, Header, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
+from app.application.access_control import (
+    ensure_rack_access,
+    ensure_room_access,
+    rack_ids_in_site_query,
+    rack_visible_clause,
+)
 from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_rack_template
@@ -33,7 +39,7 @@ from app.application.outbox_service import write_outbox_event
 from app.application.placement_service import PlacementConflict, get_current_rack_placement, move_rack, retire_rack_placement
 from app.application.rbac import require_permission
 from app.application.spatial_validation import validate_coordinate, validate_rotation_degrees
-from app.core.errors import ApiError, ConflictError, NotFoundError
+from app.core.errors import ApiError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Rack
@@ -122,6 +128,12 @@ async def create_rack(
     validate_coordinate("x_mm", body.x_mm)
     validate_coordinate("y_mm", body.y_mm)
     validate_rotation_degrees(body.rotation_deg)
+    if not ctx.scope.unrestricted:
+        # A site-restricted user may only create racks directly inside a site they can access;
+        # an unplaced rack belongs to no site and would be unreachable for them.
+        if body.room_id is None:
+            raise ForbiddenError("Site-restricted users must place a new rack in a room of an accessible site.")
+        await ensure_room_access(db, ctx.scope, body.room_id)
 
     request_hash = hash_request_body(body.model_dump(mode="json"))
     claim = None
@@ -196,15 +208,20 @@ async def create_rack(
 
 @router.get("", response_model=Page[RackOut])
 async def list_racks(
+    site_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("rack:read")),
 ) -> Page:
-    total = (await db.execute(select(func.count()).select_from(Rack))).scalar_one()
+    visible = rack_visible_clause(ctx.scope, Rack.id)
+    if site_id is not None:
+        visible = and_(visible, Rack.id.in_(rack_ids_in_site_query(site_id)))
+    total = (await db.execute(select(func.count()).select_from(Rack).where(visible))).scalar_one()
     rows = (
         await db.execute(
             select(Rack, ManagedAsset)
             .join(ManagedAsset, ManagedAsset.id == Rack.id)
+            .where(visible)
             .order_by(Rack.name)
             .offset(pagination.offset)
             .limit(pagination.limit)
@@ -273,6 +290,7 @@ async def upload_rack_import_job(
 async def get_rack(
     rack_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("rack:read"))
 ) -> RackOut:
+    await ensure_rack_access(db, ctx.scope, rack_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
@@ -290,6 +308,7 @@ async def update_rack(
     if_match_version: int = Depends(require_if_match),
     ctx=Depends(require_permission("rack:manage")),
 ) -> RackOut:
+    await ensure_rack_access(db, ctx.scope, rack_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
@@ -334,6 +353,8 @@ async def move_rack_endpoint(
     validate_coordinate("y_mm", body.y_mm)
     validate_rotation_degrees(body.rotation_deg)
 
+    await ensure_rack_access(db, ctx.scope, rack_id)
+    await ensure_room_access(db, ctx.scope, body.room_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
@@ -382,6 +403,7 @@ async def retire_rack_endpoint(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("rack:place")),
 ) -> RackOut:
+    await ensure_rack_access(db, ctx.scope, rack_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
@@ -437,6 +459,7 @@ async def get_rack_elevation(
     from app.domain.physical.models import Equipment
     from app.domain.placement.models import EquipmentPlacement
 
+    await ensure_rack_access(db, ctx.scope, rack_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")

@@ -12,6 +12,8 @@ import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { EquipmentDetailPage } from "@/features/equipment/EquipmentDetailPage";
 import { EquipmentPage } from "@/features/equipment/EquipmentPage";
 import { InstantiatePage } from "@/features/equipment/InstantiatePage";
+import { GroupsPage } from "@/features/access/GroupsPage";
+import { UsersPage } from "@/features/access/UsersPage";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { RoomFloorPlanPage } from "@/features/floor-plans/RoomFloorPlanPage";
 import { FloorPlansPage } from "@/features/floor-plans/FloorPlansPage";
@@ -56,6 +58,8 @@ export function App() {
               <Route path="/collectors" element={<CollectorsPage />} />
               <Route path="/integrations" element={<IntegrationsPage />} />
               <Route path="/discovery" element={<DiscoveryPage />} />
+              <Route path="/admin/users" element={<UsersPage />} />
+              <Route path="/admin/groups" element={<GroupsPage />} />
               <Route path="/admin/catalog" element={<CatalogHomePage />} />
               <Route path="/admin/catalog/manufacturers/:manufacturerId" element={<ManufacturerDetailPage />} />
               <Route path="/admin/catalog/models/:modelId" element={<ModelDetailPage />} />
