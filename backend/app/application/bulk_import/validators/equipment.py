@@ -18,6 +18,7 @@ from app.application.spatial_validation import validate_u_range_against_rack_cap
 from app.core.errors import ApiError
 from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import LIFECYCLE_STATUSES
+from app.domain.physical.models import Equipment
 from app.domain.placement.models import PLACEMENT_TYPES, SIDES
 
 
@@ -100,6 +101,7 @@ async def validate_row(
                 errors.append(error("u_start", exc.detail))
 
     target_managed_asset_id = None
+    expected_version = None
     action = "create"
     if mode == "create_only":
         existing = await resolve_managed_asset_by_tag(db, asset_tag)
@@ -114,6 +116,11 @@ async def validate_row(
             errors.append(error("asset_tag", f"asset_tag {asset_tag!r} does not identify equipment."))
         else:
             target_managed_asset_id = existing.id
+            # SEC (Codex PR #50 review, finding #5): snapshot Equipment.version now — see
+            # validators/rack.py's identical comment for the full reasoning.
+            existing_equipment = await db.get(Equipment, existing.id)
+            if existing_equipment is not None:
+                expected_version = existing_equipment.version
 
     manufacturer = cell_str(raw.get("manufacturer"))
     model_name = cell_str(raw.get("model_name"))
@@ -138,4 +145,5 @@ async def validate_row(
     status = "invalid" if errors else "valid"
     return RowValidationResult(
         status=status, action=action, errors=errors, warnings=warnings, target_managed_asset_id=target_managed_asset_id,
+        expected_version=expected_version,
     )

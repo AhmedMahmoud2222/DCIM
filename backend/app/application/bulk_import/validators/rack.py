@@ -16,6 +16,7 @@ from app.application.bulk_import.resolvers import (
 )
 from app.application.bulk_import.validators import BatchState, RowValidationResult, error
 from app.application.spatial_validation import MAX_COORDINATE_MM, MIN_COORDINATE_MM
+from app.domain.physical.models import Rack
 
 
 async def validate_row(
@@ -64,6 +65,7 @@ async def validate_row(
         errors.append(error(exc.field, exc.message))
 
     target_managed_asset_id = None
+    expected_version = None
     action = "create"
     if mode == "create_only":
         existing = await resolve_managed_asset_by_tag(db, asset_tag)
@@ -78,6 +80,13 @@ async def validate_row(
             errors.append(error("asset_tag", f"asset_tag {asset_tag!r} does not identify a rack."))
         else:
             target_managed_asset_id = existing.id
+            # SEC (Codex PR #50 review, finding #5): snapshot Rack.version now, at the
+            # moment this row's target is resolved, so commit can detect a concurrent
+            # edit landing between preview and commit instead of always comparing a
+            # freshly re-fetched version against itself.
+            existing_rack = await db.get(Rack, existing.id)
+            if existing_rack is not None:
+                expected_version = existing_rack.version
 
     manufacturer = cell_str(raw.get("manufacturer"))
     model_name = cell_str(raw.get("model_name"))
@@ -102,4 +111,5 @@ async def validate_row(
     status = "invalid" if errors else "valid"
     return RowValidationResult(
         status=status, action=action, errors=errors, warnings=warnings, target_managed_asset_id=target_managed_asset_id,
+        expected_version=expected_version,
     )

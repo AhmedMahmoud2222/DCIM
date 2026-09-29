@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.api.v1.bulk_import import BulkImportJobOut
+from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
 from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_rack_template
@@ -38,7 +38,6 @@ from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Rack
 from app.infrastructure.storage import get_storage_backend
-from app.infrastructure.tasks.bulk_import import parse_and_validate_bulk_import_job
 
 router = APIRouter(prefix="/racks", tags=["racks"])
 
@@ -265,7 +264,7 @@ async def upload_rack_import_job(
     await db.commit()
     await db.refresh(job)
 
-    parse_and_validate_bulk_import_job.delay(str(job.id))
+    await dispatch_parse_job_or_fail(db, job)
 
     return BulkImportJobOut.from_job(job)
 

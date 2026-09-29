@@ -127,6 +127,7 @@ async def validate_row(
 
     target_catalog_model_id = None
     target_catalog_revision_id = None
+    expected_version = None
     action = "create"
 
     if mode == "update_existing":
@@ -174,6 +175,13 @@ async def validate_row(
                         )
                     else:
                         target_catalog_revision_id = revision.id
+                        # SEC (Codex PR #50 review, finding #5): snapshot the revision's
+                        # own `version` now, at the moment it's resolved here — see
+                        # validators/rack.py's identical comment for the full reasoning
+                        # (commit/catalog.py currently re-fetches "the current version"
+                        # at commit time instead, which can never detect staleness since
+                        # it always trivially matches itself).
+                        expected_version = revision.version
     else:
         if clone_from_revision_number is not None and manufacturer_name and model_name and category:
             manufacturer = (
@@ -219,4 +227,5 @@ async def validate_row(
     return RowValidationResult(
         status=status, action=action, errors=errors, warnings=warnings,
         target_catalog_model_id=target_catalog_model_id, target_catalog_revision_id=target_catalog_revision_id,
+        expected_version=expected_version,
     )

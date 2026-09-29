@@ -78,9 +78,22 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
         if loaded_rack is None:
             raise RowRejected("asset_tag", f"asset_tag {asset_tag!r} has no rack row.")
         rack = loaded_rack
+        # SEC (Codex PR #50 review, finding #5): row.expected_version snapshots
+        # rack.version as it was at validate time (validators/rack.py); a live mismatch
+        # here means the rack was edited by something else between preview and commit —
+        # reject the row rather than silently overwriting/losing that concurrent edit.
+        # None means either a create-mode row (never reaches this branch) or a row whose
+        # target wasn't actually resolved at validate time — nothing to compare against,
+        # so no check is possible for that row (matches this pipeline's pre-existing
+        # unconditional-write behavior for such rows).
+        if row.expected_version is not None and rack.version != row.expected_version:
+            raise RowRejected(
+                "asset_tag", "This record changed since it was previewed — re-validate and retry."
+            )
         # Mutable fields only — model_revision_id is deliberately never patched here
         # (a bulk update must not silently re-home an existing rack onto a different
         # catalog model/revision).
+        rack.name = rack_name
         if owner is not None:
             rack.owner = owner
         if notes is not None:

@@ -114,7 +114,16 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
             raise RowRejected("revision_number", "revision_number is required in update_existing mode.")
 
         revision_id = row.target_catalog_revision_id
+        # SEC (Codex PR #50 review, finding #5): expected_version is only meaningful
+        # relative to the *previewed* revision_id above — if that wasn't resolved at
+        # validate time (revision_id is None, resolved fresh just below instead), there
+        # is nothing that was actually shown to the operator to compare staleness
+        # against, so this row falls back to an unconditional current-version claim
+        # (the pre-fix behavior) rather than spuriously rejecting a row that was never
+        # previewed with a specific target in the first place.
+        expected_version = row.expected_version
         if revision_id is None:
+            expected_version = None
             manufacturer = (
                 await db.execute(select(Manufacturer).where(Manufacturer.name == manufacturer_name))
             ).scalar_one_or_none()
@@ -144,15 +153,24 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
         current = await db.get(CatalogModelRevision, revision_id)
         if current is None:
             raise RowRejected("revision_number", "The target revision no longer exists.")
+        # SEC (Codex PR #50 review, finding #5): `current.version`, read a moment ago,
+        # would always trivially match itself and could never detect "this revision
+        # changed since it was previewed" — `expected_version` (row.expected_version when
+        # this row's target was actually resolved at validate time, else current.version
+        # as a no-preview-to-compare-against fallback, set just above) is what was
+        # actually shown to the operator in the preview/report.
+        if_match_version = expected_version if expected_version is not None else current.version
         try:
-            revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=current.version)
+            revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
         except NotFoundError as exc:
             raise RowRejected("revision_number", "The target revision no longer exists.") from exc
         except ConflictError as exc:
-            # Never a silent no-op: a published/retired target is a hard row failure,
-            # and the row is left byte-for-byte unchanged (lock_draft_revision_for_edit
-            # raises before mutating anything).
-            raise RowRejected("revision_number", exc.detail) from exc
+            # Never a silent no-op: a published/retired target, or a target that changed
+            # since preview, is a hard row failure, and the row is left byte-for-byte
+            # unchanged (lock_draft_revision_for_edit raises before mutating anything).
+            # check_version_match's own message (concurrency.py) already names expected
+            # vs. current version; append the operator-facing next-step on top of it.
+            raise RowRejected("revision_number", f"{exc.detail} Re-validate and retry.") from exc
 
         overrides = _scalar_overrides(raw)
         for field_name, value in overrides.items():

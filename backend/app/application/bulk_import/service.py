@@ -128,6 +128,7 @@ async def run_parse_and_validate(db: AsyncSession, job_id: uuid.UUID) -> None:
                 target_managed_asset_id=result.target_managed_asset_id,
                 target_catalog_model_id=result.target_catalog_model_id,
                 target_catalog_revision_id=result.target_catalog_revision_id,
+                expected_version=result.expected_version,
             )
         )
 
@@ -156,13 +157,30 @@ def _describe_commit_error(exc: Exception) -> dict:
 
 
 async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
-    job = await db.get(BulkImportJob, job_id)
+    # SEC (Codex PR #50 review, finding #1): the only caller that may ever move a job INTO
+    # 'committing' is the atomic UPDATE ... WHERE status='validated' in the API endpoint
+    # (app/api/v1/bulk_import.py::commit_bulk_import_job_endpoint) -- this function must
+    # never self-claim a job (that would defeat the point: two Celery deliveries of the
+    # same dispatched task, or a delivery arriving after the job already reached a
+    # terminal status, would both pass an unconditional "set it to committing" check).
+    # `SELECT ... FOR UPDATE` locks the row before the status check so a second delivery
+    # racing a still-in-flight first delivery blocks here (rather than reading a
+    # pre-mutation status) and, once unblocked, observes whatever status the first
+    # delivery's own transaction left behind -- 'committing' only while genuinely still
+    # in progress between checkpoints, and a terminal status once the first delivery
+    # finishes, at which point this second delivery cleanly no-ops below instead of
+    # reprocessing rows.
+    job = (
+        await db.execute(select(BulkImportJob).where(BulkImportJob.id == job_id).with_for_update())
+    ).scalar_one_or_none()
     if job is None:
         logger.error("bulk_import_job_not_found", job_id=str(job_id))
         return
-
-    job.status = "committing"
-    await db.commit()
+    if job.status != "committing":
+        logger.warning("bulk_import_commit_skipped_not_committing", job_id=str(job_id), status=job.status)
+        await db.rollback()  # release the row lock without changing anything
+        return
+    await db.commit()  # release the row lock; the claim itself was already made by the API layer
 
     commit_row = _COMMIT_FUNCS[job.import_type]
 
@@ -190,8 +208,17 @@ async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
                 row.status = "failed"
                 row.errors = [*row.errors, _describe_commit_error(exc)]
                 job.failed_row_count += 1
+                # SEC (Codex PR #50 review, finding #3): never str(exc) here. For an
+                # IntegrityError in particular, str(exc) includes the raw SQL statement and
+                # bound parameters -- i.e. the imported row's own data, which can be
+                # PII/credentials-shaped. Log only the fixed event name, the exception
+                # *class* (a safe, bounded taxonomy), and identifiers -- never row content.
+                # The row-level message the uploading user actually sees comes from
+                # _describe_commit_error/describe_integrity_error, which is a separate,
+                # already-sanitized fixed-message path (never str(exc) either).
                 logger.warning(
-                    "bulk_import_row_commit_failed", job_id=str(job_id), row_number=row.row_number, reason=str(exc)
+                    "bulk_import_row_commit_failed", job_id=str(job_id), row_number=row.row_number,
+                    error_code=type(exc).__name__,
                 )
             else:
                 row.status = "committed"

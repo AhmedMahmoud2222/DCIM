@@ -31,7 +31,11 @@ def _run_parse(job_id: str) -> None:
     parse_and_validate_bulk_import_job.run(job_id)
 
 
-def _run_commit(job_id: str) -> None:
+async def _run_commit(client, headers, job_id: str) -> None:
+    """See test_bulk_import_racks.py's identical helper for the full reasoning (SEC,
+    Codex PR #50 review, finding #1)."""
+    resp = await client.post(f"/api/v1/import-jobs/{job_id}/commit", headers=headers)
+    assert resp.status_code == 202, resp.text
     commit_bulk_import_job.run(job_id)
 
 
@@ -83,7 +87,7 @@ async def test_commit_create_only_mode_success(client, auth_headers):
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed", job_status
@@ -116,7 +120,7 @@ async def test_commit_update_existing_mode_success(client, auth_headers):
         )
     ).json()
     _run_parse(create_upload["id"])
-    _run_commit(create_upload["id"])
+    await _run_commit(client, headers, create_upload["id"])
 
     update_content = build_workbook(
         CATALOG_HEADERS, [_base_row(manufacturer_name, model_name, revision_number=1, weight_value=9.5, description="updated")]
@@ -128,7 +132,7 @@ async def test_commit_update_existing_mode_success(client, auth_headers):
         )
     ).json()
     _run_parse(update_upload["id"])
-    _run_commit(update_upload["id"])
+    await _run_commit(client, headers, update_upload["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{update_upload['id']}", headers=headers)).json()
     assert job_status["status"] == "committed", job_status
@@ -161,7 +165,7 @@ async def test_update_existing_against_published_revision_fails_and_leaves_row_b
         )
     ).json()
     _run_parse(create_upload["id"])
-    _run_commit(create_upload["id"])
+    await _run_commit(client, headers, create_upload["id"])
 
     manufacturers = (await client.get("/api/v1/catalog/manufacturers", params={"q": manufacturer_name}, headers=headers)).json()
     models = (
@@ -203,7 +207,7 @@ async def test_update_existing_against_published_revision_fails_and_leaves_row_b
         )
     ).json()
     _run_parse(update_upload["id"])
-    _run_commit(update_upload["id"])
+    await _run_commit(client, headers, update_upload["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{update_upload['id']}", headers=headers)).json()
     # The row is rejected either at validate time (preferred: an accurate preview) or at
@@ -217,6 +221,68 @@ async def test_update_existing_against_published_revision_fails_and_leaves_row_b
         )
     ).mappings().one()
     assert dict(after) == before_dict
+
+
+async def test_update_existing_row_fails_if_revision_changed_since_preview(client, auth_headers):
+    """SEC (Codex PR #50 review, finding #5): the row is previewed against the revision's
+    version at that moment; before commit runs, a concurrent PATCH bumps the revision's
+    version. Commit must reject the stale row rather than silently overwrite the
+    concurrent edit."""
+    headers = await auth_headers("Administrator")
+    manufacturer_name = f"Mfr-{uuid.uuid4().hex[:8]}"
+    model_name = f"Model-{uuid.uuid4().hex[:8]}"
+
+    create_content = build_workbook(CATALOG_HEADERS, [_base_row(manufacturer_name, model_name)])
+    create_upload = (
+        await client.post(
+            "/api/v1/catalog/import-jobs?mode=create_only",
+            files={"file": ("catalog.xlsx", create_content, "application/octet-stream")}, headers=headers,
+        )
+    ).json()
+    _run_parse(create_upload["id"])
+    await _run_commit(client, headers, create_upload["id"])
+
+    manufacturers = (await client.get("/api/v1/catalog/manufacturers", params={"q": manufacturer_name}, headers=headers)).json()
+    models = (
+        await client.get("/api/v1/catalog/models", params={"manufacturer_id": manufacturers["items"][0]["id"]}, headers=headers)
+    ).json()
+    revision_id = (await client.get(f"/api/v1/catalog/models/{models['items'][0]['id']}", headers=headers)).json()[
+        "revisions"
+    ][0]["id"]
+
+    update_content = build_workbook(
+        CATALOG_HEADERS, [_base_row(manufacturer_name, model_name, revision_number=1, weight_value=9.5)]
+    )
+    update_upload = (
+        await client.post(
+            "/api/v1/catalog/import-jobs?mode=update_existing",
+            files={"file": ("catalog.xlsx", update_content, "application/octet-stream")}, headers=headers,
+        )
+    ).json()
+    _run_parse(update_upload["id"])
+
+    # Concurrent edit lands after preview, before commit.
+    patch = await client.patch(
+        f"/api/v1/catalog/revisions/{revision_id}", json={"mounting_orientation": "concurrent-edit"},
+        headers={**headers, "If-Match": "1"},
+    )
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["version"] == 2
+
+    await _run_commit(client, headers, update_upload["id"])
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{update_upload['id']}", headers=headers)).json()
+    assert job_status["committed_row_count"] == 0
+    assert job_status["failed_row_count"] == 1
+
+    rows = (await client.get(f"/api/v1/import-jobs/{update_upload['id']}/rows", headers=headers)).json()
+    failed_row = rows["items"][0]
+    assert failed_row["status"] == "failed"
+
+    revision = (await client.get(f"/api/v1/catalog/revisions/{revision_id}", headers=headers)).json()
+    assert revision["mounting_orientation"] == "concurrent-edit", "the concurrent edit must not be silently overwritten"
+    assert revision["version"] == 2
+    assert float(revision["weight_value"]) != 9.5
 
 
 async def test_duplicate_catalog_identity_within_the_same_file(client, auth_headers):

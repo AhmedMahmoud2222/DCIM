@@ -89,3 +89,16 @@ class BulkImportRow(Base, UUIDPkMixin, TimestampMixin):
     target_catalog_revision_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("catalog_model_revision.id", ondelete="SET NULL")
     )
+
+    # SEC (Codex PR #50 review, finding #5): a snapshot of the target entity's own
+    # optimistic-concurrency `version` (Rack.version / Equipment.version /
+    # CatalogModelRevision.version) at validate time, for update-mode rows only — never
+    # set for a create-mode row, where there is no existing entity to go stale. Preview
+    # and commit can be arbitrarily far apart in time (and other commits can land in
+    # between), so without this, commit re-fetching "the current version" at commit time
+    # can never distinguish "still exactly what was previewed" from "changed since
+    # preview" — it would always trivially match itself. NULL means either a create-mode
+    # row, or an update-mode row whose target wasn't actually resolved at validate time
+    # (so there is nothing to compare staleness against — commit falls back to an
+    # unconditional live-version claim for that row, same as before this column existed).
+    expected_version: Mapped[int | None] = mapped_column(Integer)

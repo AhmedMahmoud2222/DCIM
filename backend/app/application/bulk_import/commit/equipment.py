@@ -46,6 +46,10 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
     room_code = require_str(raw.get("room_code"), "room_code")
     hostname = cell_str(raw.get("hostname"))
     ip_address = cell_str(raw.get("ip_address"))
+    # SEC (Codex PR #50 review, finding #6): mac_address is a real template column
+    # (templates.py) and a real Equipment column (app/domain/physical/models.py) but was
+    # previously never read here at all — silently dropped on both create and update.
+    mac_address = cell_str(raw.get("mac_address"))
     owner = cell_str(raw.get("owner"))
     service = cell_str(raw.get("service"))
     environment = cell_str(raw.get("environment"))
@@ -84,8 +88,8 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
         db.add(asset)
         await db.flush()
         equipment = Equipment(
-            id=asset.id, model_revision_id=model_revision.id, hostname=hostname, ip_address=ip_address, owner=owner,
-            service=service, environment=environment, notes=notes,
+            id=asset.id, model_revision_id=model_revision.id, hostname=hostname, ip_address=ip_address,
+            mac_address=mac_address, owner=owner, service=service, environment=environment, notes=notes,
         )
         db.add(equipment)
         await db.flush()
@@ -104,10 +108,38 @@ async def commit_row(db: AsyncSession, *, job: BulkImportJob, row: BulkImportRow
         if loaded_equipment is None:
             raise RowRejected("asset_tag", f"asset_tag {asset_tag!r} has no equipment row.")
         equipment = loaded_equipment
+        # SEC (Codex PR #50 review, finding #5): see commit/rack.py's identical comment —
+        # row.expected_version snapshots equipment.version at validate time; a live
+        # mismatch means the equipment was edited concurrently between preview and
+        # commit.
+        if row.expected_version is not None and equipment.version != row.expected_version:
+            raise RowRejected(
+                "asset_tag", "This record changed since it was previewed — re-validate and retry."
+            )
+        # SEC (Codex PR #50 review, finding #6): lifecycle_status has no update path
+        # anywhere in this application (POST /equipment sets it once, at creation, and
+        # there is no PATCH for it) — it is deliberately create-only by design. An update
+        # row must therefore never silently have its lifecycle_status value dropped: a
+        # blank cell (defaulted to "planned" by the parsing above) or a value matching
+        # the asset's current status is a no-op, but a genuine attempt to change it via
+        # bulk update is a clear row-level rejection rather than a silent no-op.
+        raw_lifecycle_status = cell_str(raw.get("lifecycle_status"))
+        if raw_lifecycle_status is not None and raw_lifecycle_status != asset.lifecycle_status:
+            raise RowRejected(
+                "lifecycle_status", "lifecycle_status cannot be changed via bulk update; it may only be set at creation."
+            )
         # Mutable fields only — model_revision_id is never patched here, matching
         # commit/rack.py's own "never re-home onto a different catalog model" rule.
         if hostname is not None:
             equipment.hostname = hostname
+        # SEC (Codex PR #50 review, finding #6): ip_address/mac_address were previously
+        # set on create but silently ignored on update, even though both are ordinary
+        # mutable fields (no lifecycle/immutability rule applies to either) — now updated
+        # exactly like hostname/owner/service/environment/notes.
+        if ip_address is not None:
+            equipment.ip_address = ip_address
+        if mac_address is not None:
+            equipment.mac_address = mac_address
         if owner is not None:
             equipment.owner = owner
         if service is not None:

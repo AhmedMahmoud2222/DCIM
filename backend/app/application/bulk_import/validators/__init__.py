@@ -14,6 +14,12 @@ class RowValidationResult:
     target_managed_asset_id: uuid.UUID | None = None
     target_catalog_model_id: uuid.UUID | None = None
     target_catalog_revision_id: uuid.UUID | None = None
+    # SEC (Codex PR #50 review, finding #5): the target entity's own `version` at the
+    # moment it was resolved here (update-mode rows only, and only when a target was
+    # actually resolved) — see app/domain/bulk_import/models.py::BulkImportRow.
+    # expected_version's docstring for why this must be snapshotted here rather than
+    # re-derived at commit time.
+    expected_version: int | None = None
 
 
 @dataclass

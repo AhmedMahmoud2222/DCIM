@@ -1,13 +1,26 @@
 """Bulk-import job execution: two Celery tasks, `parse_and_validate_bulk_import_job` and
 `commit_bulk_import_job`, modeled on app/infrastructure/tasks/floorplan_import.py's own
 structure (status transitions committed immediately so polling clients see progress,
-try/except with rollback + a guaranteed terminal-status fallback so a job can never hang
-forever) — with one structural difference floorplan_import.py's fully-sync pipeline
-doesn't need: this pipeline's validate/commit functions are async (so they can call
-straight into the existing async application services — move_rack/move_equipment/
-catalog_designer_service — without re-deriving their logic in a sync form), so each
-task's body runs via `_run_async` on a dedicated thread with its own event loop and its
-own short-lived async engine, rather than app/db/sync_session.py's shared sync engine."""
+try/except with rollback + a terminal-status fallback for the common failure mode) — with
+one structural difference floorplan_import.py's fully-sync pipeline doesn't need: this
+pipeline's validate/commit functions are async (so they can call straight into the
+existing async application services — move_rack/move_equipment/catalog_designer_service —
+without re-deriving their logic in a sync form), so each task's body runs via `_run_async`
+on a dedicated thread with its own event loop and its own short-lived async engine, rather
+than app/db/sync_session.py's shared sync engine.
+
+The terminal-status fallback below is deliberately qualified, not an unconditional
+guarantee: it catches any exception raised *after* this task body starts running and the
+database is reachable (a bad row, a domain-service bug, an unexpected constraint) and
+marks the job failed/committed_with_errors rather than leaving it silently stuck. It does
+NOT cover the job never being picked up at all -- a Celery dispatch (`.delay(...)`) that
+never reaches the broker in the first place (Redis unreachable, serialization failure) is
+caught and surfaced synchronously as a 502 at the API layer instead (see the `.delay()`
+call sites in app/api/v1/bulk_import.py / racks.py / equipment.py / catalog_designer.py,
+Codex PR #50 review finding #7) precisely so this fallback is never depended on for that
+case. Nor does it cover the database itself being unreachable while this fallback's own
+write is attempted -- that failure simply propagates (there is nothing else to write it
+to), and the job is left in whatever status it last durably reached."""
 
 import asyncio
 import concurrent.futures
@@ -94,9 +107,14 @@ async def _parse_and_validate_async(job_id: str) -> None:
     async def _body(db: AsyncSession) -> None:
         try:
             await service.run_parse_and_validate(db, uuid.UUID(job_id))
-        except Exception:
+        except Exception as exc:
             await db.rollback()
-            logger.exception("bulk_import_parse_unexpected_failure", job_id=job_id)
+            # SEC (Codex PR #50 review, finding #3): `logger.exception`/`exc_info` would
+            # emit a full traceback, which can embed raw workbook cell values (e.g. a
+            # ValueError message quoting the bad cell) -- fixed event name + exception
+            # *class* only, matching app/api/v1/collectors.py's SEC-07 `logger.error`
+            # pattern for this exact class of bug.
+            logger.error("bulk_import_parse_unexpected_failure", job_id=job_id, error_code=type(exc).__name__)
             await _mark_parse_failed_on_unexpected_error(db, uuid.UUID(job_id))
             raise
 
@@ -107,9 +125,9 @@ async def _commit_async(job_id: str) -> None:
     async def _body(db: AsyncSession) -> None:
         try:
             await service.run_commit(db, uuid.UUID(job_id))
-        except Exception:
+        except Exception as exc:
             await db.rollback()
-            logger.exception("bulk_import_commit_unexpected_failure", job_id=job_id)
+            logger.error("bulk_import_commit_unexpected_failure", job_id=job_id, error_code=type(exc).__name__)
             await _mark_commit_failed_on_unexpected_error(db, uuid.UUID(job_id))
             raise
 

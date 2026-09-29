@@ -5,3 +5,18 @@ a single, explicit ceiling checked before any real parsing work is attempted."""
 MAX_BULK_IMPORT_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MiB
 MAX_BULK_IMPORT_ROWS = 5000
 BULK_IMPORT_COMMIT_BATCH_SIZE = 200
+
+# SEC (Codex PR #50 review, finding #4): MAX_BULK_IMPORT_FILE_SIZE_BYTES above only
+# bounds the *compressed* upload — a small, honestly-compressible .xlsx (a zip) can still
+# decompress to a huge amount of data (a "zip bomb"), exhausting worker memory/CPU inside
+# openpyxl.load_workbook itself, before MAX_BULK_IMPORT_ROWS ever gets a chance to apply
+# (that cap only limits rows we chose to materialize, not what load_workbook does
+# internally to open the archive). parsing.py checks these against the zip's own central
+# directory (`ZipInfo.file_size`/`.compress_size`) before ever calling load_workbook.
+MAX_BULK_IMPORT_UNCOMPRESSED_BYTES = 100 * 1024 * 1024  # 100 MiB
+MAX_BULK_IMPORT_ZIP_ENTRIES = 50  # a real .xlsx has on the order of 10-20 entries
+# A real .xlsx's XML parts compress well (highly repetitive markup/shared strings) but not
+# thousands-to-one — 100:1 is generous headroom above what legitimate XML compression
+# achieves in practice, while still catching a member built purely to decompress huge
+# (e.g. a run of a single repeated byte, which readily compresses beyond 1000:1).
+MAX_BULK_IMPORT_ZIP_COMPRESSION_RATIO = 100

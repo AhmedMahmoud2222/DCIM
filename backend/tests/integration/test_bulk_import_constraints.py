@@ -62,6 +62,13 @@ async def test_gist_exclusion_constraint_isolates_one_conflicting_row_without_cr
     )
     job = upload.json()
     parse_and_validate_bulk_import_job.run(job["id"])
+
+    # SEC (Codex PR #50 review, finding #1): run_commit now expects the job to already be
+    # 'committing' -- only the real POST .../commit endpoint's atomic UPDATE ...
+    # WHERE status='validated' puts it there. No worker consumes the broker queue in this
+    # test environment, so the dispatched task is then drained synchronously.
+    commit_resp = await client.post(f"/api/v1/import-jobs/{job['id']}/commit", headers=headers)
+    assert commit_resp.status_code == 202, commit_resp.text
     commit_bulk_import_job.run(job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()

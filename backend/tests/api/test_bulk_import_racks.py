@@ -36,7 +36,16 @@ def _run_parse(job_id: str) -> None:
     parse_and_validate_bulk_import_job.run(job_id)
 
 
-def _run_commit(job_id: str) -> None:
+async def _run_commit(client, headers, job_id: str) -> None:
+    """SEC (Codex PR #50 review, finding #1): `run_commit` now expects the job to already
+    be 'committing' when it starts — only the real POST .../commit endpoint's atomic
+    UPDATE ... WHERE status='validated' may put it there (see service.py::run_commit's own
+    docstring). So exercising commit in tests now means hitting that endpoint for the
+    claim first (no worker consumes the broker queue in this test environment, so the
+    dispatched task itself is then drained synchronously, exactly as `_run_parse` already
+    does for the parse task)."""
+    resp = await client.post(f"/api/v1/import-jobs/{job_id}/commit", headers=headers)
+    assert resp.status_code == 202, resp.text
     commit_bulk_import_job.run(job_id)
 
 
@@ -107,7 +116,7 @@ async def test_commit_create_only_mode_success(client, auth_headers):
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed", job_status
@@ -144,7 +153,7 @@ async def test_commit_update_existing_mode_success(client, auth_headers):
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed", job_status
@@ -155,6 +164,53 @@ async def test_commit_update_existing_mode_success(client, auth_headers):
     assert updated["notes"] == "updated"
     # model_revision_id must never be silently re-homed by a bulk update.
     assert updated["model_revision_id"] == existing["model_revision_id"]
+
+
+async def test_update_existing_row_fails_if_rack_changed_since_preview(client, auth_headers):
+    """SEC (Codex PR #50 review, finding #5): the row is previewed (validated) against
+    the rack's version at that moment; before commit runs, a concurrent PATCH bumps the
+    rack's version. Commit must reject the stale row rather than silently overwrite the
+    concurrent edit — and the concurrent edit's value must still be there afterward."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    existing = await create_rack(client, headers, auth_headers, room_id=room["room_id"])
+    assert existing["version"] == 1
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[existing["asset_tag"], existing["name"], model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], "", "", "", "Stale Owner", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=update_existing",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    _run_parse(job["id"])
+
+    # Concurrent edit lands after preview, before commit.
+    patch = await client.patch(
+        f"/api/v1/racks/{existing['id']}", json={"owner": "Concurrent Edit"},
+        headers={**headers, "If-Match": "1"},
+    )
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["version"] == 2
+
+    await _run_commit(client, headers, job["id"])
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert job_status["committed_row_count"] == 0
+    assert job_status["failed_row_count"] == 1
+
+    rows = (await client.get(f"/api/v1/import-jobs/{job['id']}/rows", headers=headers)).json()
+    failed_row = rows["items"][0]
+    assert failed_row["status"] == "failed"
+    assert "changed" in failed_row["errors"][-1]["message"].lower()
+
+    current = (await client.get(f"/api/v1/racks/{existing['id']}", headers=headers)).json()
+    assert current["owner"] == "Concurrent Edit", "the concurrent edit must not be silently overwritten"
+    assert current["version"] == 2
 
 
 async def test_duplicate_asset_tag_within_the_same_file(client, auth_headers):
@@ -314,7 +370,7 @@ async def test_partially_valid_workbook_only_good_rows_commit_report_reflects_bo
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed_with_errors"

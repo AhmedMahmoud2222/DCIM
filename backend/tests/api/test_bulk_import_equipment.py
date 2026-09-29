@@ -32,7 +32,11 @@ def _run_parse(job_id: str) -> None:
     parse_and_validate_bulk_import_job.run(job_id)
 
 
-def _run_commit(job_id: str) -> None:
+async def _run_commit(client, headers, job_id: str) -> None:
+    """See test_bulk_import_racks.py's identical helper for the full reasoning (SEC,
+    Codex PR #50 review, finding #1)."""
+    resp = await client.post(f"/api/v1/import-jobs/{job_id}/commit", headers=headers)
+    assert resp.status_code == 202, resp.text
     commit_bulk_import_job.run(job_id)
 
 
@@ -99,7 +103,7 @@ async def test_commit_create_only_mode_success_rack_mounted(client, auth_headers
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed", job_status
@@ -131,7 +135,7 @@ async def test_commit_update_existing_mode_success(client, auth_headers):
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed", job_status
@@ -140,6 +144,147 @@ async def test_commit_update_existing_mode_success(client, auth_headers):
     assert updated["hostname"] == "new-hostname"
     assert updated["owner"] == "New Owner"
     assert updated["model_revision_id"] == existing["model_revision_id"]
+
+
+async def test_update_existing_row_fails_if_equipment_changed_since_preview(client, auth_headers):
+    """SEC (Codex PR #50 review, finding #5): see test_bulk_import_racks.py's identical
+    test — same reasoning, applied to Equipment.version."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_equipment_model(client, auth_headers)
+    existing = await create_equipment(client, headers, auth_headers)
+    assert existing["version"] == 1
+
+    row = [
+        existing["asset_tag"], "new-hostname", model["manufacturer"], model["model_name"], "", "floor_standing",
+        room["site_code"], room["building_code"], room["floor_level"], room["room_code"], "", "", "", "", "", "",
+        "Stale Owner", "", "", "", "planned",
+    ]
+    content = build_workbook(EQUIPMENT_HEADERS, [row])
+    upload = await client.post(
+        "/api/v1/equipment/import-jobs?mode=update_existing",
+        files={"file": ("equipment.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    _run_parse(job["id"])
+
+    patch = await client.patch(
+        f"/api/v1/equipment/{existing['id']}", json={"owner": "Concurrent Edit"},
+        headers={**headers, "If-Match": "1"},
+    )
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["version"] == 2
+
+    await _run_commit(client, headers, job["id"])
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert job_status["committed_row_count"] == 0
+    assert job_status["failed_row_count"] == 1
+
+    rows = (await client.get(f"/api/v1/import-jobs/{job['id']}/rows", headers=headers)).json()
+    failed_row = rows["items"][0]
+    assert failed_row["status"] == "failed"
+    assert "changed" in failed_row["errors"][-1]["message"].lower()
+
+    current = (await client.get(f"/api/v1/equipment/{existing['id']}", headers=headers)).json()
+    assert current["owner"] == "Concurrent Edit"
+    assert current["version"] == 2
+
+
+async def test_lifecycle_status_change_on_update_is_rejected_not_silently_dropped(client, auth_headers):
+    """SEC (Codex PR #50 review, finding #6): lifecycle_status has no update path
+    anywhere else in this application — a bulk-update row attempting to change it must
+    be a clear row-level rejection, never a silent no-op."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_equipment_model(client, auth_headers)
+    existing = await create_equipment(client, headers, auth_headers)  # lifecycle_status defaults to "planned"
+
+    row = [
+        existing["asset_tag"], "new-hostname", model["manufacturer"], model["model_name"], "", "floor_standing",
+        room["site_code"], room["building_code"], room["floor_level"], room["room_code"], "", "", "", "", "", "",
+        "", "", "", "", "decommissioned",
+    ]
+    content = build_workbook(EQUIPMENT_HEADERS, [row])
+    upload = await client.post(
+        "/api/v1/equipment/import-jobs?mode=update_existing",
+        files={"file": ("equipment.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    _run_parse(job["id"])
+    await _run_commit(client, headers, job["id"])
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert job_status["committed_row_count"] == 0
+    assert job_status["failed_row_count"] == 1
+
+    rows = (await client.get(f"/api/v1/import-jobs/{job['id']}/rows", headers=headers)).json()
+    assert "lifecycle_status" in rows["items"][0]["errors"][-1]["message"].lower()
+
+    current = (await client.get(f"/api/v1/equipment/{existing['id']}", headers=headers)).json()
+    assert current["lifecycle_status"] == "planned"
+
+
+async def test_update_existing_applies_mac_address_and_ip_address(client, auth_headers, db_session):
+    """SEC (Codex PR #50 review, finding #6): mac_address/ip_address were previously
+    silently dropped by commit (mac_address on both create and update; ip_address on
+    update only). EquipmentOut does not expose either column (a pre-existing,
+    out-of-scope gap), so this reads the committed row directly."""
+    from sqlalchemy import text as sql_text
+
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_equipment_model(client, auth_headers)
+    asset_tag = f"EQ-{uuid.uuid4().hex[:8]}"
+
+    create_row = [
+        asset_tag, "host-1", model["manufacturer"], model["model_name"], "", "floor_standing", room["site_code"],
+        room["building_code"], room["floor_level"], room["room_code"], "", "", "", "", "10.0.0.1", "AA:BB:CC:DD:EE:01",
+        "", "", "", "", "planned",
+    ]
+    content = build_workbook(EQUIPMENT_HEADERS, [create_row])
+    upload = await client.post(
+        "/api/v1/equipment/import-jobs?mode=create_only",
+        files={"file": ("equipment.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    _run_parse(job["id"])
+    await _run_commit(client, headers, job["id"])
+
+    items = (await client.get("/api/v1/equipment", headers=headers)).json()["items"]
+    created = next(e for e in items if e["asset_tag"] == asset_tag)
+
+    async def _fetch(equipment_id: str) -> dict:
+        row = (
+            await db_session.execute(
+                sql_text("SELECT ip_address, mac_address FROM equipment WHERE id = :id"), {"id": equipment_id}
+            )
+        ).mappings().one()
+        # ip_address is INET at the DB level — asyncpg/SQLAlchemy surfaces it as an
+        # ipaddress.IPv4Address, not a plain str.
+        return {"ip_address": str(row["ip_address"]), "mac_address": row["mac_address"]}
+
+    after_create = await _fetch(created["id"])
+    assert after_create["ip_address"] == "10.0.0.1"
+    assert after_create["mac_address"] == "AA:BB:CC:DD:EE:01"
+
+    update_row = [
+        asset_tag, "host-1", model["manufacturer"], model["model_name"], "", "floor_standing", room["site_code"],
+        room["building_code"], room["floor_level"], room["room_code"], "", "", "", "", "10.0.0.2", "AA:BB:CC:DD:EE:02",
+        "", "", "", "", "planned",
+    ]
+    update_content = build_workbook(EQUIPMENT_HEADERS, [update_row])
+    update_upload = await client.post(
+        "/api/v1/equipment/import-jobs?mode=update_existing",
+        files={"file": ("equipment.xlsx", update_content, "application/octet-stream")}, headers=headers,
+    )
+    update_job = update_upload.json()
+    _run_parse(update_job["id"])
+    await _run_commit(client, headers, update_job["id"])
+
+    after_update = await _fetch(created["id"])
+    assert after_update["ip_address"] == "10.0.0.2"
+    assert after_update["mac_address"] == "AA:BB:CC:DD:EE:02"
 
 
 async def test_invalid_rack_asset_tag(client, auth_headers):
@@ -189,7 +334,7 @@ async def test_overlapping_u_positions_between_two_rows_targeting_the_same_rack(
     )
     job = upload.json()
     _run_parse(job["id"])
-    _run_commit(job["id"])
+    await _run_commit(client, headers, job["id"])
 
     job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
     assert job_status["status"] == "committed_with_errors", job_status

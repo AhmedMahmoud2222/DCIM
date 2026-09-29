@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.api.v1.bulk_import import BulkImportJobOut
+from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
 from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_equipment_template
@@ -55,7 +55,6 @@ from app.domain.physical.models import Equipment, Rack
 from app.domain.physical.ports import PORT_CONNECTION_STATUSES, EquipmentPort
 from app.domain.placement.models import PLACEMENT_TYPES, SIDES
 from app.infrastructure.storage import get_storage_backend
-from app.infrastructure.tasks.bulk_import import parse_and_validate_bulk_import_job
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
 
@@ -302,7 +301,7 @@ async def upload_equipment_import_job(
     await db.commit()
     await db.refresh(job)
 
-    parse_and_validate_bulk_import_job.delay(str(job.id))
+    await dispatch_parse_job_or_fail(db, job)
 
     return BulkImportJobOut.from_job(job)
 

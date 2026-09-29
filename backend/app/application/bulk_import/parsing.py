@@ -9,7 +9,12 @@ import zipfile
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
 
-from app.application.bulk_import.limits import MAX_BULK_IMPORT_ROWS
+from app.application.bulk_import.limits import (
+    MAX_BULK_IMPORT_ROWS,
+    MAX_BULK_IMPORT_UNCOMPRESSED_BYTES,
+    MAX_BULK_IMPORT_ZIP_COMPRESSION_RATIO,
+    MAX_BULK_IMPORT_ZIP_ENTRIES,
+)
 from app.application.bulk_import.templates import COLUMNS_BY_IMPORT_TYPE, ColumnSpec
 
 # The ZIP local-file-header magic bytes — every real .xlsx is a ZIP archive (OOXML), so
@@ -46,6 +51,47 @@ def _validate_header(header: list[str | None], columns: tuple[ColumnSpec, ...]) 
         raise ParseRejected(f"The uploaded file is missing required column(s): {sorted(missing_required)}.")
 
 
+def _reject_if_zip_bomb(content: bytes) -> None:
+    """SEC (Codex PR #50 review, finding #4): checked against the zip's own central
+    directory metadata — cheap and entirely bounded regardless of how large the archive
+    claims its members decompress to — before openpyxl ever inflates a single byte of
+    member content. Every real .xlsx passes this trivially (a handful of small, well-
+    compressed XML parts); this only rejects an archive shaped like a decompression-bomb
+    attack."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            infos = zf.infolist()
+            if len(infos) > MAX_BULK_IMPORT_ZIP_ENTRIES:
+                raise ParseRejected(
+                    f"The uploaded file's archive has more than the maximum allowed "
+                    f"{MAX_BULK_IMPORT_ZIP_ENTRIES} entries."
+                )
+            total_uncompressed = 0
+            for info in infos:
+                if info.file_size > MAX_BULK_IMPORT_UNCOMPRESSED_BYTES:
+                    raise ParseRejected(
+                        f"The uploaded file's archive contains an entry that exceeds the maximum "
+                        f"allowed uncompressed size of {MAX_BULK_IMPORT_UNCOMPRESSED_BYTES} bytes."
+                    )
+                total_uncompressed += info.file_size
+                if total_uncompressed > MAX_BULK_IMPORT_UNCOMPRESSED_BYTES:
+                    raise ParseRejected(
+                        f"The uploaded file's archive would decompress to more than the maximum "
+                        f"allowed {MAX_BULK_IMPORT_UNCOMPRESSED_BYTES} bytes in total."
+                    )
+                ratio = info.file_size / max(info.compress_size, 1)
+                if ratio > MAX_BULK_IMPORT_ZIP_COMPRESSION_RATIO:
+                    raise ParseRejected(
+                        "The uploaded file's archive contains an entry with an implausible "
+                        "compression ratio (possible decompression bomb)."
+                    )
+            bad_member = zf.testzip()
+            if bad_member is not None:
+                raise ParseRejected(f"The uploaded file's archive is corrupt (bad member {bad_member!r}).")
+    except zipfile.BadZipFile as exc:
+        raise ParseRejected(f"The uploaded file could not be read as a valid XLSX workbook: {exc}") from exc
+
+
 def parse_workbook(content: bytes, import_type: str) -> tuple[str, list[tuple[int, dict]]]:
     """Returns `(sheet_name, rows)`, where `rows` is `[(row_number, row_dict), ...]` —
     `row_number` is the real 1-based spreadsheet row (header is row 1; gaps from
@@ -57,6 +103,10 @@ def parse_workbook(content: bytes, import_type: str) -> tuple[str, list[tuple[in
     problems are the caller's/validator's job, not this function's."""
     if not _is_xlsx(content):
         raise ParseRejected("File content is not recognized as an XLSX workbook (checked by content, not filename).")
+
+    # Bounded against a decompression bomb (finding #4) strictly before openpyxl is ever
+    # asked to inflate anything — see MAX_BULK_IMPORT_UNCOMPRESSED_BYTES's docstring.
+    _reject_if_zip_bomb(content)
 
     columns = COLUMNS_BY_IMPORT_TYPE[import_type]
 
