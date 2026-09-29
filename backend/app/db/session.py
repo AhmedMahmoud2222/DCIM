@@ -41,7 +41,17 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     explicit ask), and the final `close()` -- is individually guarded with the same
     fixed-field-only logging discipline. The ORIGINAL exception from `yield session` is
     what ultimately propagates via the bare `raise` right after the nested guards;
-    `close()`'s own guard lives inside `finally` specifically so it can never replace it."""
+    `close()`'s own guard lives inside `finally` specifically so it can never replace it.
+
+    Codex's third follow-up (same PR): the `invalidate()` fallback above only fired when
+    `rollback()` itself failed -- a `close()` failure with NO preceding rollback failure
+    (an ordinary successful request, or one whose rollback succeeded fine) was logged and
+    swallowed with no attempt to discard the connection at all. A connection whose own
+    close() failed is exactly the kind SQLAlchemy's pool cannot safely trust back into
+    circulation (this session's own reproduction of the pre-guard version proved a failed
+    close can leave a connection "idle in transaction" holding real locks indefinitely --
+    see the regression tests below). `close()`'s own failure now attempts the same
+    best-effort `invalidate()`, independent of which branch got here."""
     session = AsyncSessionLocal()
     try:
         yield session
@@ -60,3 +70,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
             logger.error("db_session_cleanup_close_failed")
+            try:
+                await session.invalidate()
+            except Exception:  # noqa: BLE001 -- best-effort; must never mask a pending exception.
+                logger.error("db_session_cleanup_close_invalidate_failed")

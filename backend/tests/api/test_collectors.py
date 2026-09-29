@@ -1048,6 +1048,107 @@ async def test_ingest_close_failure_alone_on_a_fully_successful_request_stays_sa
     assert close_secret not in log_text
 
 
+async def test_ingest_close_failure_invalidates_connection_so_pool_recovers_without_engine_dispose(
+    client, auth_headers, monkeypatch,
+):
+    """Codex's fourth-round review: a close()-only failure (no preceding rollback
+    failure) was previously logged and swallowed with no attempt to discard the
+    connection at all -- exactly the condition this session's own reproduction of the
+    pre-guard code proved can leave a connection "idle in transaction" holding real
+    Postgres locks indefinitely, silently corrupting the pool for later, unrelated
+    requests. `get_db()` now attempts the same best-effort `invalidate()` when
+    `close()` itself fails, independent of whether rollback ran or failed.
+
+    This test verifies the OPERATIONAL guarantee, deliberately kept separate from the
+    sanitization tests above (response/log secrecy): `invalidate()` actually runs, and
+    -- critically -- a SECOND, wholly ordinary request through the same real `get_db`
+    dependency succeeds immediately afterward, with no `engine.dispose()` call in
+    between rescuing it. The `dispose()` calls in the other real-`get_db` tests in
+    this file are a test-hygiene-only safety net against inter-test pollution (see
+    their own comments); this test proves the fix works on its own, without leaning
+    on that safety net at all."""
+    import app.db.session as session_module
+    from app.db.session import get_db as real_get_db
+    from app.main import app as fastapi_app
+
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    record = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.97", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    raw_body = json.dumps({"batch_id": uuid.uuid4().hex, "records": [record]}).encode()
+    signed = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body)
+
+    invalidate_calls = {"count": 0}
+    original_invalidate = AsyncSession.invalidate
+    original_close = AsyncSession.close
+
+    async def spy_invalidate(self, *args, **kwargs):
+        invalidate_calls["count"] += 1
+        return await original_invalidate(self, *args, **kwargs)
+
+    async def fail_close_once(self, *args, **kwargs):
+        # Only THIS request's own close() call fails -- restored immediately after, so
+        # the second request's cleanup (and this test's own eventual teardown) behaves
+        # normally, modeling a transient close failure rather than a permanently dead
+        # driver.
+        monkeypatch.setattr(AsyncSession, "close", original_close)
+        raise RuntimeError("close failed: synthetic-session-close-SEC07H-keep-private")
+
+    monkeypatch.setattr(AsyncSession, "close", fail_close_once)
+    monkeypatch.setattr(AsyncSession, "invalidate", spy_invalidate)
+
+    original_override = fastapi_app.dependency_overrides.get(real_get_db)
+    fastapi_app.dependency_overrides.pop(real_get_db, None)
+    try:
+        response = await client.post(
+            f"/api/v1/collectors/{collector['id']}/ingest",
+            content=raw_body, headers={**signed, "Content-Type": "application/json"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["results"][0]["status"] == "accepted"
+        assert invalidate_calls["count"] >= 1
+
+        # The critical operational assertion: a second, wholly ordinary request
+        # through the SAME real get_db dependency (same engine, same pool) succeeds
+        # immediately -- no engine.dispose() has happened yet. If the first request's
+        # broken connection had been silently returned to the pool instead of
+        # invalidated, this would hang or fail exactly like this session's own
+        # pre-fix reproduction (a connection stuck "idle in transaction" holding
+        # locks the next checkout needs).
+        record2 = {
+            "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+            "external_identifier": "10.0.0.98", "occurred_at": "2026-01-01T00:00:00Z",
+            "raw_attributes": {"reachable": True},
+        }
+        raw_body2 = json.dumps({"batch_id": uuid.uuid4().hex, "records": [record2]}).encode()
+        signed2 = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body2)
+        response2 = await client.post(
+            f"/api/v1/collectors/{collector['id']}/ingest",
+            content=raw_body2, headers={**signed2, "Content-Type": "application/json"},
+        )
+        assert response2.status_code == 200, response2.text
+        assert response2.json()["results"][0]["status"] == "accepted"
+    finally:
+        if original_override is not None:
+            fastapi_app.dependency_overrides[real_get_db] = original_override
+        # Test-hygiene-only, run AFTER the operational assertion above already proved
+        # the fix works without it.
+        await session_module.engine.dispose()
+
+
 async def test_poll_now_succeeds_on_real_icmp_and_creates_a_discovered_device(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)
