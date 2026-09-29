@@ -5,15 +5,21 @@ read from EquipmentPlacement, never stored (§12/§7c)."""
 
 import uuid
 from datetime import datetime
+from io import BytesIO
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, File, Header, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
 from app.application.audit_service import write_audit_log
+from app.application.bulk_import.service import create_job as create_bulk_import_job
+from app.application.bulk_import.templates import build_rack_template
+from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
 from app.application.concurrency import check_version_match, require_if_match
 from app.application.idempotency import (
     IdempotencyConflict,
@@ -31,6 +37,7 @@ from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Rack
+from app.infrastructure.storage import get_storage_backend
 
 router = APIRouter(prefix="/racks", tags=["racks"])
 
@@ -205,6 +212,61 @@ async def list_racks(
     ).all()
     items = [await _serialize_rack(db, rack, asset) for rack, asset in rows]
     return Page(items=items, total=total, limit=pagination.limit, offset=pagination.offset)
+
+
+# --------------------------------------------------------------------- Bulk import
+# Registered before the "/{rack_id}" routes below: Starlette matches path routes in
+# registration order, and "/{rack_id}" would otherwise swallow "/import-template" and
+# "/import-jobs" as if rack_id=="import-template"/"import-jobs".
+
+
+@router.get("/import-template")
+async def download_rack_import_template(ctx=Depends(require_permission("rack:read"))) -> StreamingResponse:
+    content = build_rack_template()
+    return StreamingResponse(
+        BytesIO(content), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="rack-import-template.xlsx"'},
+    )
+
+
+@router.post("/import-jobs", response_model=BulkImportJobOut, status_code=202)
+async def upload_rack_import_job(
+    request: Request,
+    mode: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+    ctx=Depends(require_permission("rack:import")),
+) -> BulkImportJobOut:
+    """Untrusted input — same discipline as `upload_floor_plan_file`
+    (app/api/v1/floor_plans.py): content-sniffed (real XLSX zip magic bytes, never
+    trusted by extension/declared content-type), size-capped, and dispatched to a Celery
+    task rather than parsed inline (202 + a job resource the caller polls)."""
+    validate_mode(mode)
+    content = await file.read()
+    file_hash = validate_upload_bytes(content)
+
+    storage = get_storage_backend()
+    storage_key = f"{file_hash}.xlsx"
+    storage.save(storage_key, content)
+
+    job = await create_bulk_import_job(
+        db, import_type="rack", mode=mode, uploaded_by_user_id=ctx.user.id,
+        original_filename=(file.filename or "upload.xlsx")[:255], file_hash=file_hash, file_size_bytes=len(content),
+        storage_key=storage_key,
+    )
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="rack.bulk_import.upload", entity_type="bulk_import_job", entity_id=job.id,
+        request_id=request_id, correlation_id=correlation_id,
+        after={"filename": job.original_filename, "file_hash": file_hash, "size_bytes": len(content), "mode": mode},
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    await dispatch_parse_job_or_fail(db, job)
+
+    return BulkImportJobOut.from_job(job)
 
 
 @router.get("/{rack_id}", response_model=RackOut)

@@ -275,6 +275,32 @@ jobs:
           cat "$GITHUB_WORKSPACE/backend.log"
           exit 1
 
+      - name: Start the Celery worker
+        # The bulk-import job pipeline (and floor-plan import) dispatch their parse/commit
+        # steps via Celery `.delay()` rather than running inline, so a spec that waits for
+        # a job to leave "uploaded" needs a real worker consuming the same Redis broker the
+        # backend was started against. Same command as docker-compose.yml's celery-worker
+        # service, run in the foreground-backgrounded style as the backend/frontend above.
+        working-directory: backend
+        run: |
+          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance \
+            > "$GITHUB_WORKSPACE/celery-worker.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/celery-worker.pid"
+
+      - name: Wait for Celery worker readiness
+        working-directory: backend
+        run: |
+          for attempt in $(seq 1 60); do
+            if celery -A app.infrastructure.celery_app inspect ping --timeout 2 > /dev/null 2>&1; then
+              echo "celery worker ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::celery worker did not become ready within 60s"
+          cat "$GITHUB_WORKSPACE/celery-worker.log"
+          exit 1
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -317,6 +343,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/e2e-artifacts"
           cp "$GITHUB_WORKSPACE/backend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
           cp "$GITHUB_WORKSPACE/frontend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/celery-worker.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
           # trace: "retain-on-failure" and screenshot: "only-on-failure" in
           # frontend/playwright.config.ts write both into frontend/test-results/.
           if [ -d frontend/test-results ]; then
@@ -336,7 +363,7 @@ jobs:
       - name: Stop servers
         if: always()
         run: |
-          for pidfile in backend.pid frontend.pid; do
+          for pidfile in backend.pid frontend.pid celery-worker.pid; do
             [ -f "$GITHUB_WORKSPACE/$pidfile" ] && kill "$(cat "$GITHUB_WORKSPACE/$pidfile")" 2>/dev/null || true
           done
 

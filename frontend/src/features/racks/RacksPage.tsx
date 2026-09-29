@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { useHasPermission } from "@/features/auth/useAuthorization";
+import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
 
 const LIFECYCLE_COLORS: Record<string, string> = {
@@ -16,6 +18,8 @@ const LIFECYCLE_COLORS: Record<string, string> = {
 export function RacksPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const canImport = useHasPermission("rack:import");
 
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
@@ -64,13 +68,32 @@ export function RacksPage() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-lg font-semibold">Racks</h1>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-        >
-          {showForm ? "Cancel" : "New Rack"}
-        </button>
+        <div className="flex gap-2">
+          {canImport && (
+            <button
+              onClick={() => setShowBulkImport(true)}
+              className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+            >
+              Bulk Import
+            </button>
+          )}
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+          >
+            {showForm ? "Cancel" : "New Rack"}
+          </button>
+        </div>
       </div>
+
+      {showBulkImport && (
+        <BulkImportPanel
+          resource="rack"
+          resourceLabel="Rack"
+          onClose={() => setShowBulkImport(false)}
+          onCommitted={() => queryClient.invalidateQueries({ queryKey: ["racks"] })}
+        />
+      )}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="mb-6 grid max-w-3xl grid-cols-2 gap-3 rounded border border-slate-800 bg-slate-900 p-4">

@@ -47,6 +47,10 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 _APP_TRUNCATE_TABLES = [
     "idempotency_key",
     "outbox_event",
+    # Bulk-import pipeline (app/domain/bulk_import/models.py) — no FK back to
+    # managed_asset/room, same reasoning as the legacy/Phase 10A catalog tables below.
+    "bulk_import_row",
+    "bulk_import_job",
     # MVP telemetry/alarm tables are per-test data, just like inventory.  Listing
     # their roots prevents focused PostgreSQL retention tests from observing a
     # prior test's daily aggregate or collector-scoped deduplication key.
