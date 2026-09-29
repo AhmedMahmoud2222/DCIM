@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
-from app.core.security import create_token, decode_token, verify_password
+from app.core.security import create_token, decode_token, hash_password, verify_password
 from app.domain.auth.models import RefreshToken, User
 
 
@@ -23,10 +23,18 @@ class InvalidRefreshTokenError(ApiError):
         super().__init__(status_code=401, title="Unauthorized", detail="Refresh token is invalid, expired, or revoked.")
 
 
+# Verified against when no active user matches, so unknown and known emails cost the same
+# Argon2 work and response time does not reveal which accounts exist (SEC-AUTH-01).
+_DUMMY_PASSWORD_HASH = hash_password("dcim-dummy-password-for-timing-parity")
+
+
 async def authenticate(db: AsyncSession, *, email: str, password: str) -> User:
     stmt = select(User).where(User.email == email.lower(), User.is_active.is_(True))
     user = (await db.execute(stmt)).scalar_one_or_none()
-    if user is None or not verify_password(password, user.password_hash):
+    if user is None:
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        raise InvalidCredentialsError()
+    if not verify_password(password, user.password_hash):
         raise InvalidCredentialsError()
     return user
 
