@@ -10,10 +10,13 @@ must still reach a clean terminal status rather than hanging or 500ing."""
 
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.application.bulk_import import service as bulk_import_service
 from app.application.bulk_import.commit import rack as commit_rack
 from app.application.bulk_import.resolvers import RowRejected
 from app.core.security import hash_password
@@ -234,3 +237,198 @@ async def test_two_sessions_racing_rack_update_commit_row_toctou_is_rejected_not
         reread = await verify.get(Rack, rack_id)
         assert reread.version == starting_version + 1, "exactly one increment -- B's rejected attempt must not count"
         assert reread.name == "A's New Name", "A's edit must survive, never silently overwritten or lost"
+
+
+# ------------------------------------------------------------------------ ROUND 4 finding (fallback ownership race)
+
+
+async def test_two_sessions_racing_stale_fallback_against_a_live_claim_a_wins_the_lock(client, auth_headers, db_engine):
+    """SEC (Codex PR #50 review, ROUND 4): `_mark_commit_failed_if_still_owner`
+    (service.py) previously read the job row with a plain `db.get(BulkImportJob, job_id)`
+    -- no lock -- compared its (possibly soon-to-be-stale) `commit_lease_id`/`status`
+    snapshot in Python, then wrote. A second delivery's claim UPDATE could commit in the
+    gap between that read and this function's own eventual write, and the write -- a
+    plain UPDATE-by-primary-key with no `commit_lease_id` predicate of its own -- would
+    then silently clobber whatever the second delivery had already done. This is a
+    genuine two-session interleaving where delivery B's claim attempt (via the real
+    `run_commit`, not a hand-rolled reimplementation of its claim UPDATE) happens WHILE
+    delivery A is inside its own fallback -- not before A starts and not only after A has
+    already reached a terminal state (the earlier two-worker fencing test only exercised
+    the latter). This is lock order 1: A reaches the row lock first, so B's claim
+    genuinely blocks in Postgres until A finishes. `_mark_commit_failed_if_still_owner`
+    fuses its lock acquisition, writes, and final `db.commit()` into one coroutine with no
+    external seam to pause it from outside, and A's own execution -- once started -- runs
+    end to end in a few milliseconds, far too fast for a fixed `asyncio.sleep()` before
+    dispatching B to reliably land B's dispatch inside A's still-open transaction. So this
+    test instruments session_a's own `execute()` (the real method the real function's own
+    `with_for_update` read goes through -- not a bespoke reimplementation of it) to signal
+    an event the instant that first real DB round trip returns, and only dispatches B once
+    that fires -- guaranteeing B starts while A's transaction (and, once fixed, its row
+    lock) is still open, deterministically, without relying on wall-clock luck."""
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with session_factory() as setup:
+        user_id = await _make_bulk_import_user(setup)
+        lease_id_a = uuid.uuid4()
+        job = BulkImportJob(
+            import_type="rack", mode="create_only", status="committing", uploaded_by_user_id=user_id,
+            original_filename="a.xlsx", file_hash="a" * 64, file_size_bytes=1, row_count=1, valid_row_count=1,
+            commit_lease_id=lease_id_a, commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=5),
+        )
+        setup.add(job)
+        await setup.flush()
+        job_id = job.id
+        row = BulkImportRow(
+            job_id=job_id, row_number=1, status="valid", action="create",
+            raw_data={
+                "asset_tag": asset_tag, "rack_name": "Stuck Row", "manufacturer": model["manufacturer"],
+                "model_name": model["model_name"], "revision_number": None, "site_code": room["site_code"],
+                "building_code": room["building_code"], "floor_level": room["floor_level"],
+                "room_code": room["room_code"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0, "owner": None, "notes": None,
+            },
+        )
+        setup.add(row)
+        await setup.commit()
+
+    session_a = session_factory()
+    session_b = session_factory()
+    real_execute = session_a.execute
+    a_has_read = asyncio.Event()
+    a_may_continue = asyncio.Event()
+
+    async def _execute_pause_after_first_call(*args, **kwargs):
+        result = await real_execute(*args, **kwargs)
+        # Genuinely suspend A's coroutine right after its own first real DB round trip (its
+        # `with_for_update` read) returns -- before the ownership check's writes are even
+        # set on the Python object, let alone flushed. A's transaction (and, once fixed,
+        # its row lock) stays open across this suspension exactly as it would across any
+        # other slow `await` in real production code; only the timing is test-controlled.
+        if not a_has_read.is_set():
+            a_has_read.set()
+            await a_may_continue.wait()
+        return result
+
+    session_a.execute = _execute_pause_after_first_call
+    try:
+        # A's real fallback -- unmodified production code, its own `with_for_update` read
+        # is the first statement it issues.
+        task_a = asyncio.create_task(
+            bulk_import_service._mark_commit_failed_if_still_owner(session_a, job_id, lease_id_a)
+        )
+        await a_has_read.wait()  # A has read; A is now paused, its transaction still open
+
+        # B's claim attempt is real production code (run_commit's own atomic claim UPDATE
+        # is its very first statement) -- not a bespoke reimplementation. Dispatched only
+        # now, deterministically while A's transaction is still open, rather than at some
+        # unproven point relative to it. `shield` keeps task_b alive (not cancelled) if the
+        # timeout below fires, so it can still be awaited to a real conclusion afterward.
+        task_b = asyncio.create_task(bulk_import_service.run_commit(session_b, job_id))
+        try:
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+            b_finished_while_a_was_paused = True
+        except TimeoutError:
+            b_finished_while_a_was_paused = False
+        assert not b_finished_while_a_was_paused, (
+            "B's claim must genuinely block on A's held row lock while A's transaction is "
+            "still open -- not race ahead and commit the row while A still believes (from "
+            "its now-stale in-memory snapshot) that it owns the job"
+        )
+
+        a_may_continue.set()  # let A finish: row -> failed, job -> committed_with_errors, commits -- releasing the lock
+        await task_a
+        await task_b  # B's now-unblocked claim UPDATE re-reads the post-A row: status != 'committing' -> 0 rows -> clean no-op
+    finally:
+        session_a.execute = real_execute
+        await session_a.close()
+        await session_b.close()
+
+    async with session_factory() as verify:
+        job_after = await verify.get(BulkImportJob, job_id)
+        assert job_after.status == "committed_with_errors", "A's fallback must reach a real terminal status"
+        assert job_after.failed_row_count == 1
+        assert job_after.commit_lease_id == lease_id_a, "B's blocked claim must never have taken effect"
+        assert job_after.report_storage_key is None, "the fallback path never builds a report"
+
+        row_after = (await verify.execute(text("SELECT status FROM bulk_import_row WHERE job_id = :id"), {"id": str(job_id)})).scalar_one()
+        assert row_after == "failed", "the row A's fallback marked must stay failed, not be silently reprocessed by B"
+
+        audit_count = (
+            await verify.execute(
+                text("SELECT count(*) FROM audit_log WHERE action = 'rack.bulk_import.commit_job' AND entity_id = :id"),
+                {"id": str(job_id)},
+            )
+        ).scalar_one()
+        # _mark_commit_failed_if_still_owner is a fallback finalize, not the normal
+        # success-path finalize (service.py:425) -- it never writes a job-level audit row
+        # itself. What matters here is that there are zero, not one: B's blocked claim
+        # must never have reached that success path and written its own.
+        assert audit_count == 0, "B's blocked claim must never have taken effect and written its own audit row"
+
+
+async def test_two_sessions_stale_fallback_after_a_live_claim_already_won_is_a_clean_noop(db_engine):
+    """SEC (Codex PR #50 review, ROUND 4): lock order 2 -- delivery B claims and finishes
+    the job for real FIRST (an ordinary, uncontested reclaim of A's expired lease), and
+    only then does A's own stale fallback (still carrying A's original, now-superseded
+    `lease_id`) get invoked. A's fenced ownership check must see B's live token and the
+    job's new terminal status and cleanly no-op -- including rolling back its own
+    transaction -- rather than raising or clobbering any part of what B already
+    committed (status, counts, lease, report). Uses only direct-ORM/db_engine setup (no
+    client/auth_headers) since this job has zero rows and never touches the HTTP API."""
+    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    async with session_factory() as setup:
+        user_id = await _make_bulk_import_user(setup)
+        lease_id_a = uuid.uuid4()
+        # Zero rows: this job's only purpose is to prove the claim/finalize/no-op
+        # interleaving, not to exercise row-commit logic (already covered elsewhere) --
+        # B's real run_commit() still claims, finds an empty batch, builds a real (empty)
+        # report, and finalizes to 'committed' entirely through production code.
+        job = BulkImportJob(
+            import_type="rack", mode="create_only", status="committing", uploaded_by_user_id=user_id,
+            original_filename="b.xlsx", file_hash="b" * 64, file_size_bytes=1, row_count=0, valid_row_count=0,
+            commit_lease_id=lease_id_a, commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=5),
+        )
+        setup.add(job)
+        await setup.commit()
+        job_id = job.id
+
+    session_a = session_factory()
+    session_b = session_factory()
+    try:
+        # B reclaims A's expired lease and finishes the (empty) job for real, uncontested.
+        await bulk_import_service.run_commit(session_b, job_id)
+
+        async with session_factory() as check:
+            job_after_b = await check.get(BulkImportJob, job_id)
+            assert job_after_b.status == "committed"
+            lease_id_b = job_after_b.commit_lease_id
+            assert lease_id_b != lease_id_a
+            report_key_after_b = job_after_b.report_storage_key
+            assert report_key_after_b is not None
+
+        # A's own, separately-triggered fallback finally runs, still carrying the
+        # original, now-stale lease_id_a -- must be a clean no-op.
+        await bulk_import_service._mark_commit_failed_if_still_owner(session_a, job_id, lease_id_a)
+        # The function's own no-op path already calls db.rollback() -- confirm the
+        # session is left clean and usable, not stuck in a broken transaction.
+        await session_a.execute(text("SELECT 1"))
+    finally:
+        await session_a.close()
+        await session_b.close()
+
+    async with session_factory() as verify:
+        job_final = await verify.get(BulkImportJob, job_id)
+        assert job_final.status == "committed", "A's no-op fallback must never revert B's terminal status"
+        assert job_final.commit_lease_id == lease_id_b, "A's no-op fallback must never touch B's lease token"
+        assert job_final.report_storage_key == report_key_after_b, "A's no-op fallback must never touch B's report"
+        assert job_final.failed_row_count == 0, "A's no-op fallback must never mark any row failed"
+
+        audit_count = (
+            await verify.execute(
+                text("SELECT count(*) FROM audit_log WHERE action = 'rack.bulk_import.commit_job' AND entity_id = :id"),
+                {"id": str(job_id)},
+            )
+        ).scalar_one()
+        assert audit_count == 1, "only B's audit row must exist -- A's no-op must never write a second one"

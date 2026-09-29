@@ -171,8 +171,28 @@ async def _mark_commit_failed_if_still_owner(
     isn't 'committing' any more), this delivery has already been superseded and must not
     write anything — whichever delivery currently holds the lease (or the bounded sweeper,
     app/infrastructure/tasks/bulk_import.py::requeue_stuck_bulk_import_commits, if nobody
-    currently does) is responsible for the job's fate instead."""
-    job = await db.get(BulkImportJob, job_id)
+    currently does) is responsible for the job's fate instead.
+
+    SEC (Codex PR #50 review, ROUND 4, second finding): the ownership check above and the
+    writes below must be ONE fenced operation, not a plain read followed by an unguarded
+    write. `with_for_update=True` locks the job row at this read and HOLDS that lock for
+    the rest of this function's still-open transaction (through the row/counter/status
+    mutations and up to this function's own `db.commit()` below) — exactly the
+    `lock_draft_revision_for_edit` idiom this codebase already uses for the same class of
+    race (and the one `commit/rack.py`/`commit/equipment.py` already apply for their own
+    stale-preview checks). Without the lock, a second delivery's claim UPDATE could commit
+    in the gap between this function's read and its eventual write: this function's
+    in-memory `job` object would then be stale, and its final flush -- an ordinary
+    UPDATE-by-primary-key with no `commit_lease_id` predicate of its own -- would silently
+    overwrite whatever that second delivery had already done, regardless of what the
+    Python-level `if` comparison above concluded from the now-outdated snapshot it read.
+    With the lock: whichever of two racing deliveries reaches this SELECT (or the other's
+    claim UPDATE) first wins outright -- the other genuinely blocks in Postgres until the
+    winner's transaction ends, then re-reads the now-current row and reacts correctly
+    (a claim attempt sees the wrong status and matches zero rows; a fallback call here sees
+    a lease token that no longer matches and cleanly no-ops) -- never a lost update racing
+    against a stale in-memory read."""
+    job = await db.get(BulkImportJob, job_id, with_for_update=True)
     if job is None:
         return
     if job.commit_lease_id != lease_id or job.status != "committing":
