@@ -130,14 +130,14 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
             rack_by_access.setdefault(access_id, set()).add(rack_id)
 
     roles_by_user: dict[uuid.UUID, list] = {}
-    for row in role_rows:
-        roles_by_user.setdefault(row[0], []).append(row)
+    for role_row in role_rows:
+        roles_by_user.setdefault(role_row[0], []).append(role_row)
     perms_by_user: dict[uuid.UUID, list] = {}
-    for row in group_perm_rows:
-        perms_by_user.setdefault(row[0], []).append(row)
+    for perm_row in group_perm_rows:
+        perms_by_user.setdefault(perm_row[0], []).append(perm_row)
     sites_by_user: dict[uuid.UUID, list] = {}
-    for row in site_rows:
-        sites_by_user.setdefault(row[0], []).append(row)
+    for site_row in site_rows:
+        sites_by_user.setdefault(site_row[0], []).append(site_row)
 
     result: dict[uuid.UUID, EffectiveAccess] = {}
     for uid in wanted:

@@ -416,7 +416,8 @@ async def set_site_access(
 
     if rack_ids:
         sub = _current_rack_sites().subquery()
-        placed = dict((await db.execute(select(sub.c.rack_id, sub.c.site_id).where(sub.c.rack_id.in_(rack_ids)))).all())
+        rows = (await db.execute(select(sub.c.rack_id, sub.c.site_id).where(sub.c.rack_id.in_(rack_ids)))).all()
+        placed: dict[uuid.UUID, uuid.UUID] = {rack: site for rack, site in rows}
         for entry in body.sites:
             for rid in entry.rack_ids:
                 if placed.get(rid) != entry.site_id:

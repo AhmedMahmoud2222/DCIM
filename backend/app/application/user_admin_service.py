@@ -89,7 +89,8 @@ async def assert_can_grant_sites(
     if outside:
         raise ForbiddenError("You cannot grant access to sites outside your own access.")
     if rack_ids:
-        visible = set((await db.execute(select(visible_rack_ids_query(ctx.scope).subquery().c.rack_id))).scalars())
+        visible_sub = visible_rack_ids_query(ctx.scope).subquery()
+        visible: set[uuid.UUID] = set((await db.execute(select(visible_sub.c.rack_id))).scalars())
         if not rack_ids <= visible:
             raise ForbiddenError("You cannot grant access to racks outside your own access.")
 
