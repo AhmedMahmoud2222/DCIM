@@ -144,6 +144,48 @@ async def run_parse_and_validate(db: AsyncSession, job_id: uuid.UUID) -> None:
     )
 
 
+async def _mark_commit_failed_if_still_owner(db: AsyncSession, job_id: uuid.UUID, lease_id: uuid.UUID) -> None:
+    """SEC (Codex PR #50 review, ROUND 3, finding #2): called from `run_commit`'s own
+    except block, after `db.rollback()` has discarded whatever this delivery hadn't yet
+    made durable, so it can mark any still-'valid' row failed and reach a terminal job
+    status rather than leaving the job silently stuck 'committing' forever.
+
+    The scenario this guards against: delivery A's lease expires while A is stalled
+    (blocked on a slow call, GC pause, etc. -- not dead, just late); delivery B correctly
+    reclaims the lease and starts processing the next batch; A then resumes and hits an
+    unexpected exception of its own (e.g. a transient DB/storage error) before reaching
+    its own next lease-renewal checkpoint. If A's fallback wrote unconditionally here (the
+    pre-fix behavior), it would mark B's still-'valid' rows failed and flip the job to
+    'committed_with_errors' out from under B -- corrupting B's in-progress or already-
+    finished work, purely because A finally got around to handling its own stale error.
+
+    Fenced by comparing the *live* `commit_lease_id` against the `lease_id` this specific
+    call to `run_commit` actually claimed: if they no longer match (or the job somehow
+    isn't 'committing' any more), this delivery has already been superseded and must not
+    write anything — whichever delivery currently holds the lease (or the bounded sweeper,
+    app/infrastructure/tasks/bulk_import.py::requeue_stuck_bulk_import_commits, if nobody
+    currently does) is responsible for the job's fate instead."""
+    job = await db.get(BulkImportJob, job_id)
+    if job is None:
+        return
+    if job.commit_lease_id != lease_id or job.status != "committing":
+        logger.warning("bulk_import_commit_fallback_skipped_not_owner", job_id=str(job_id))
+        await db.rollback()
+        return
+    stuck_rows = list(
+        (
+            await db.execute(select(BulkImportRow).where(BulkImportRow.job_id == job.id, BulkImportRow.status == "valid"))
+        ).scalars()
+    )
+    for row in stuck_rows:
+        row.status = "failed"
+        row.errors = [*row.errors, {"field": None, "message": "This row could not be committed due to an internal error."}]
+        job.failed_row_count += 1
+    job.status = "committed_with_errors"
+    job.committed_at = datetime.now(UTC)
+    await db.commit()
+
+
 def _describe_commit_error(exc: Exception) -> dict:
     if isinstance(exc, RowRejected):
         return {"field": exc.field, "message": exc.message}
@@ -202,6 +244,30 @@ async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
         logger.error("bulk_import_job_not_found", job_id=str(job_id))
         return
 
+    try:
+        await _run_commit_owned(db, job_id, lease_id)
+    except Exception as exc:
+        await db.rollback()
+        # SEC (Codex PR #50 review, finding #3): never str(exc) — see the identical
+        # reasoning on the per-row log line inside _run_commit_owned below.
+        logger.error("bulk_import_commit_unexpected_failure", job_id=str(job_id), error_code=type(exc).__name__)
+        # SEC (Codex PR #50 review, ROUND 3, finding #2): fenced by lease_id — see
+        # _mark_commit_failed_if_still_owner's own docstring. This delivery only gets to
+        # mark the job/rows failed if it still, at this moment, actually owns the lease it
+        # originally claimed.
+        await _mark_commit_failed_if_still_owner(db, job_id, lease_id)
+        raise
+
+
+async def _run_commit_owned(db: AsyncSession, job_id: uuid.UUID, lease_id: uuid.UUID) -> None:
+    """The lease-owning body of `run_commit`, split out so `run_commit` itself can wrap it
+    in a single try/except that fences its unexpected-failure fallback by the exact
+    `lease_id` this delivery claimed (see `_mark_commit_failed_if_still_owner`). Every
+    write below either happens while this delivery still provably holds the lease (each
+    batch checkpoint and the final status write re-verify it atomically) or is discarded
+    via rollback — never assume the caller re-checks anything on success."""
+    job = await db.get(BulkImportJob, job_id)
+    assert job is not None
     commit_row = _COMMIT_FUNCS[job.import_type]
 
     while True:

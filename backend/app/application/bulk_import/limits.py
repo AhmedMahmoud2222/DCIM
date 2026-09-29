@@ -14,6 +14,17 @@ BULK_IMPORT_COMMIT_BATCH_SIZE = 200
 # stuck for long.
 BULK_IMPORT_COMMIT_LEASE_SECONDS = 60
 
+# SEC (Codex PR #50 review, ROUND 3, finding #1): with Celery's default (early)
+# acknowledgment, a worker process that dies while holding a commit lease is never
+# redelivered by the broker -- BULK_IMPORT_COMMIT_LEASE_SECONDS above lets another
+# delivery reclaim ownership once the lease expires, but only if some delivery actually
+# gets invoked again. requeue_stuck_bulk_import_commits (a Celery-beat task, see
+# celery_app.py's beat_schedule) is the bounded sweeper that makes that happen: it polls
+# for jobs stuck in "committing" past their lease and re-dispatches the commit task for
+# up to this many of them per sweep, so a single crash can never turn into an unbounded
+# burst of redispatch work.
+BULK_IMPORT_SWEEPER_MAX_JOBS_PER_SWEEP = 50
+
 # SEC (Codex PR #50 review, finding #4): MAX_BULK_IMPORT_FILE_SIZE_BYTES above only
 # bounds the *compressed* upload — a small, honestly-compressible .xlsx (a zip) can still
 # decompress to a huge amount of data (a "zip bomb"), exhausting worker memory/CPU inside

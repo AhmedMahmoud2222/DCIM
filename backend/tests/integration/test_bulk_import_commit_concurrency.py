@@ -24,12 +24,13 @@ from datetime import UTC, datetime, timedelta
 import pytest_asyncio
 import structlog
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.deps import get_db
 from app.application.bulk_import import service as bulk_import_service
-from app.domain.bulk_import.models import BulkImportJob
+from app.domain.bulk_import.models import BulkImportJob, BulkImportRow
+from app.infrastructure.tasks import bulk_import as bulk_import_tasks
 from app.infrastructure.tasks.bulk_import import commit_bulk_import_job, parse_and_validate_bulk_import_job
 from app.main import app
 from tests.api._bulk_import_helpers import build_workbook, create_room_with_codes
@@ -325,3 +326,212 @@ async def test_run_commit_reclaims_an_expired_lease_after_a_crashed_delivery(cli
     racks = (await client.get("/api/v1/racks", headers=headers)).json()
     matching = [r for r in racks["items"] if r["asset_tag"] == asset_tag]
     assert len(matching) == 1
+
+
+# ------------------------------------------------------------------------ ROUND 3 finding #1
+
+
+async def test_sweeper_requeues_and_the_redelivered_task_actually_finishes_a_crashed_job(
+    client, auth_headers, db_session, monkeypatch,
+):
+    """SEC (Codex PR #50 review, ROUND 3, finding #1): the earlier crash-recovery test
+    (test_run_commit_reclaims_an_expired_lease_after_a_crashed_delivery) only proves
+    run_commit *can* reclaim an expired lease if something calls it again — it doesn't
+    prove anything ever would, operationally, given Celery's default early acknowledgment
+    (a worker that dies mid-task is never redelivered by the broker on its own). This test
+    exercises the actual recovery path end to end: a job is left stuck in 'committing'
+    with an expired lease (simulating a crashed delivery), the bounded sweeper
+    (requeue_stuck_bulk_import_commits) is invoked exactly as Celery-beat would invoke it,
+    and the job must actually reach a terminal 'committed' status as a result — not via a
+    second direct call to run_commit made by the test itself.
+
+    `commit_bulk_import_job.delay` is monkeypatched to run the task inline instead of
+    publishing to Redis (there's no worker consuming the broker in this test environment,
+    same reasoning tests/api/test_bulk_import_racks.py's `_run_import`-style helpers use
+    for `.run()` throughout this suite) — this still proves the sweeper calls `.delay()`
+    with the right job id and that the redelivered task genuinely finishes the job, which
+    is exactly the gap the prior test left open."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[asset_tag, "Row A Rack 1", model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing"
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    # A crashed delivery: an already-expired lease left behind, and — unlike the earlier
+    # crash-recovery test — nothing in this test calls run_commit directly afterward.
+    await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id).values(
+            commit_lease_id=uuid.uuid4(), commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=5),
+        )
+    )
+    await db_session.commit()
+
+    dispatched_job_ids: list[str] = []
+
+    def _fake_delay(job_id_str: str) -> None:
+        dispatched_job_ids.append(job_id_str)
+        commit_bulk_import_job.run(job_id_str)
+
+    monkeypatch.setattr(commit_bulk_import_job, "delay", _fake_delay)
+
+    bulk_import_tasks.requeue_stuck_bulk_import_commits()
+
+    assert dispatched_job_ids == [str(job_id)], "the sweeper must dispatch exactly the one stuck job, by its real id"
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert job_status["status"] == "committed", job_status
+    assert job_status["committed_row_count"] == 1
+
+    racks = (await client.get("/api/v1/racks", headers=headers)).json()
+    matching = [r for r in racks["items"] if r["asset_tag"] == asset_tag]
+    assert len(matching) == 1
+
+
+async def test_sweeper_does_not_touch_a_job_whose_lease_is_still_live(client, auth_headers, db_session, monkeypatch):
+    """The sweeper's own query (status='committing' AND lease expired) must never select a
+    job whose owning delivery is still healthy and within its lease window — re-dispatching
+    a live delivery's job would be wasteful at best; this proves it simply doesn't happen."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[asset_tag, "Row A Rack 1", model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing", commit_lease_id=uuid.uuid4(),
+            commit_lease_expires_at=datetime.now(UTC) + timedelta(seconds=60),
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    dispatched: list[str] = []
+    monkeypatch.setattr(commit_bulk_import_job, "delay", lambda job_id_str: dispatched.append(job_id_str))
+
+    bulk_import_tasks.requeue_stuck_bulk_import_commits()
+
+    assert dispatched == [], "a job with a live, unexpired lease must never be requeued by the sweeper"
+
+
+# ------------------------------------------------------------------------ ROUND 3 finding #2
+
+
+async def test_a_stale_deliverys_fallback_never_corrupts_the_replacement_deliverys_job(
+    client, auth_headers, db_session,
+):
+    """SEC (Codex PR #50 review, ROUND 3, finding #2): the exact interleaving the review
+    described. Delivery A claims the commit lease (lease_id_A). A's lease then expires
+    while A is merely stalled, not dead. Delivery B reclaims the lease and runs the job to
+    completion (status='committed'). A finally wakes up and, unaware it was ever
+    superseded, hits its own unexpected error and tries to run its fallback with its own
+    original lease_id_A. Before this fix, that fallback wrote unconditionally — marking
+    B's already-committed row 'failed' and flipping the finished job back to
+    'committed_with_errors'. This proves the fenced fallback
+    (service.py::_mark_commit_failed_if_still_owner) is a clean no-op instead: B's
+    finished job/row/audit state must be completely untouched by A's late fallback."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[asset_tag, "Row A Rack 1", model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    # Delivery A claims the lease (simulating the real atomic claim run_commit itself would
+    # perform, but capturing lease_id_A so this test can later call the fenced fallback
+    # exactly as A itself would, with A's own — by then stale — token).
+    lease_id_a = uuid.uuid4()
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing", commit_lease_id=lease_id_a,
+            commit_lease_expires_at=datetime.now(UTC) + timedelta(seconds=60),
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    # A's lease expires (A is stalled, not dead) -- then delivery B reclaims and finishes
+    # the job for real via the normal run_commit path.
+    await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id).values(
+            commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=1)
+        )
+    )
+    await db_session.commit()
+    await bulk_import_service.run_commit(db_session, job_id)
+
+    finished = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert finished["status"] == "committed", finished
+    assert finished["committed_row_count"] == 1
+
+    audit_count_before = (
+        await db_session.execute(
+            text("SELECT count(*) FROM audit_log WHERE action = 'rack.bulk_import.commit_job' AND entity_id = :id"),
+            {"id": str(job_id)},
+        )
+    ).scalar_one()
+    assert audit_count_before == 1
+
+    # A finally wakes up and tries its own fallback with its own, by-now-stale lease_id_a.
+    await bulk_import_service._mark_commit_failed_if_still_owner(db_session, job_id, lease_id_a)
+
+    # B's finished job must be completely untouched by A's late, unauthorized fallback.
+    unchanged = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert unchanged["status"] == "committed", "a stale delivery's fallback must never flip a finished job's status"
+    assert unchanged["failed_row_count"] == 0, "a stale delivery's fallback must never mark the replacement's rows failed"
+
+    committed_row = (
+        await db_session.execute(select(BulkImportRow).where(BulkImportRow.job_id == job_id))
+    ).scalar_one()
+    assert committed_row.status == "committed", "the replacement delivery's committed row must not be reverted to failed"
+
+    audit_count_after = (
+        await db_session.execute(
+            text("SELECT count(*) FROM audit_log WHERE action = 'rack.bulk_import.commit_job' AND entity_id = :id"),
+            {"id": str(job_id)},
+        )
+    ).scalar_one()
+    assert audit_count_after == audit_count_before, "a skipped fallback must never write its own duplicate audit row"

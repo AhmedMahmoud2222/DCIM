@@ -20,7 +20,22 @@ call sites in app/api/v1/bulk_import.py / racks.py / equipment.py / catalog_desi
 Codex PR #50 review finding #7) precisely so this fallback is never depended on for that
 case. Nor does it cover the database itself being unreachable while this fallback's own
 write is attempted -- that failure simply propagates (there is nothing else to write it
-to), and the job is left in whatever status it last durably reached."""
+to), and the job is left in whatever status it last durably reached.
+
+SEC (Codex PR #50 review, ROUND 3, finding #1): none of the above covers a worker process
+that dies (SIGKILL, OOM, host crash) while genuinely holding a commit lease
+(app/application/bulk_import/service.py::run_commit) -- with Celery's default
+acknowledgment, the broker already considers that task's message delivered and will never
+redeliver it to another worker, so nothing would otherwise ever call run_commit again for
+that job and its lease would simply expire with no one around to reclaim it.
+`requeue_stuck_bulk_import_commits` (a Celery-beat task, see celery_app.py's
+beat_schedule) is the bounded recovery path for exactly this: it periodically finds jobs
+stuck in 'committing' past their lease expiry and re-dispatches the commit task for a
+bounded number of them. Re-dispatching a job whose original delivery is not actually dead
+(just slow) is safe, not just tolerated: run_commit's lease claim is atomic, so a delivery
+that still holds a live, unexpired lease is never selected by the sweeper's own query in
+the first place, and if two commit deliveries for the same job ever do race, exactly one
+of them wins the claim and the other cleanly no-ops."""
 
 import asyncio
 import concurrent.futures
@@ -31,9 +46,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.application.bulk_import import service
+from app.application.bulk_import.limits import BULK_IMPORT_SWEEPER_MAX_JOBS_PER_SWEEP
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.domain.bulk_import.models import BulkImportJob, BulkImportRow
+from app.domain.bulk_import.models import BulkImportJob
 from app.infrastructure.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -92,31 +108,6 @@ async def _mark_parse_failed_on_unexpected_error(db: AsyncSession, job_id: uuid.
     await db.commit()
 
 
-async def _mark_commit_failed_on_unexpected_error(db: AsyncSession, job_id: uuid.UUID) -> None:
-    """Any row left at status='valid' (neither 'committed' nor 'failed' by the normal
-    per-row handling in app/application/bulk_import/service.py::run_commit) could not be
-    resolved one way or the other by the failure that interrupted this task — mark each
-    one failed with a generic reason so no row is left silently unresolved and the job
-    still reaches an allowed terminal status (JOB_STATUSES has no separate "commit failed
-    unexpectedly" state; treating it as committed_with_errors is accurate: some rows did
-    not commit)."""
-    job = await db.get(BulkImportJob, job_id)
-    if job is None:
-        return
-    stuck_rows = list(
-        (
-            await db.execute(select(BulkImportRow).where(BulkImportRow.job_id == job.id, BulkImportRow.status == "valid"))
-        ).scalars()
-    )
-    for row in stuck_rows:
-        row.status = "failed"
-        row.errors = [*row.errors, {"field": None, "message": "This row could not be committed due to an internal error."}]
-        job.failed_row_count += 1
-    job.status = "committed_with_errors"
-    job.committed_at = datetime.now(UTC)
-    await db.commit()
-
-
 async def _parse_and_validate_async(job_id: str) -> None:
     async def _body(db: AsyncSession) -> None:
         try:
@@ -140,9 +131,20 @@ async def _commit_async(job_id: str) -> None:
         try:
             await service.run_commit(db, uuid.UUID(job_id))
         except Exception as exc:
+            # SEC (Codex PR #50 review, ROUND 3, finding #2): unlike the parse path above,
+            # run_commit already performs its OWN rollback + sanitized log + lease-fenced
+            # fallback (app/application/bulk_import/service.py::
+            # _mark_commit_failed_if_still_owner) before re-raising — this outer handler
+            # must NOT also write to the job/rows here, since it has no way to know whether
+            # this delivery still owns the commit lease. A second, unconditional fallback
+            # write here is exactly the bug that finding described: a stale delivery
+            # clobbering the state of whichever delivery currently owns the job. This
+            # rollback() call is purely defensive (a harmless no-op if run_commit's own
+            # already ran) for the one path that reaches here without ever calling
+            # run_commit's internal try block at all — an exception raised while claiming
+            # the lease itself, before any row processing (and therefore before there was
+            # anything to fence).
             await db.rollback()
-            logger.error("bulk_import_commit_unexpected_failure", job_id=job_id, error_code=type(exc).__name__)
-            await _mark_commit_failed_on_unexpected_error(db, uuid.UUID(job_id))
             raise BulkImportTaskFailed(f"job {job_id} failed: {type(exc).__name__}") from None
 
     await _with_fresh_session(_body)
@@ -156,3 +158,36 @@ def parse_and_validate_bulk_import_job(job_id: str) -> None:
 @celery_app.task(name="app.infrastructure.tasks.bulk_import.commit_bulk_import_job")
 def commit_bulk_import_job(job_id: str) -> None:
     _run_async(lambda: _commit_async(job_id))
+
+
+async def _requeue_stuck_commits_async() -> None:
+    async def _body(db: AsyncSession) -> None:
+        now = datetime.now(UTC)
+        stuck_ids = list(
+            (
+                await db.execute(
+                    select(BulkImportJob.id)
+                    .where(BulkImportJob.status == "committing", BulkImportJob.commit_lease_expires_at < now)
+                    .limit(BULK_IMPORT_SWEEPER_MAX_JOBS_PER_SWEEP)
+                )
+            ).scalars()
+        )
+        for job_id in stuck_ids:
+            logger.warning("bulk_import_commit_requeued_after_lease_expiry", job_id=str(job_id))
+            commit_bulk_import_job.delay(str(job_id))
+
+    await _with_fresh_session(_body)
+
+
+@celery_app.task(name="app.infrastructure.tasks.bulk_import.requeue_stuck_bulk_import_commits")
+def requeue_stuck_bulk_import_commits() -> None:
+    """SEC (Codex PR #50 review, ROUND 3, finding #1): see this module's own docstring for
+    the full reasoning — the bounded sweeper that recovers a commit whose owning worker
+    died while holding the lease, since Celery's default acknowledgment means the broker
+    itself will not redeliver that task on its own. Scheduled via celery_app.py's
+    beat_schedule; safe to invoke more often than strictly necessary since re-dispatching
+    a job whose lease is still actually held and live is a no-op (this query only selects
+    jobs whose lease has already expired), and re-dispatching a job that's already been
+    re-claimed by an earlier sweep's dispatch is likewise a safe, cheap no-op once it
+    runs."""
+    _run_async(_requeue_stuck_commits_async)

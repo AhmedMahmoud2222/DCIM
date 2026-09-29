@@ -46,6 +46,16 @@ celery_app.conf.update(
             "schedule": 86400.0,
             "options": {"queue": "maintenance"},
         },
+        # SEC (Codex PR #50 review, ROUND 3, finding #1): half of
+        # BULK_IMPORT_COMMIT_LEASE_SECONDS (app/application/bulk_import/limits.py), so a
+        # commit stuck by a crashed worker is typically caught within about 1.5x the lease
+        # duration rather than waiting a full extra lease window on top of the expiry
+        # itself.
+        "requeue-stuck-bulk-import-commits": {
+            "task": "app.infrastructure.tasks.bulk_import.requeue_stuck_bulk_import_commits",
+            "schedule": 30.0,
+            "options": {"queue": "default"},
+        },
     },
 )
 
