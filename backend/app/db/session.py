@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -51,26 +51,73 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     circulation (this session's own reproduction of the pre-guard version proved a failed
     close can leave a connection "idle in transaction" holding real locks indefinitely --
     see the regression tests below). `close()`'s own failure now attempts the same
-    best-effort `invalidate()`, independent of which branch got here."""
+    best-effort `invalidate()`, independent of which branch got here.
+
+    Codex's fourth follow-up (same PR): `session.invalidate()` itself is not a reliable
+    fallback after `rollback()`/`close()` has already failed. Reading SQLAlchemy 2.x's own
+    source (`Session.invalidate` -> `_close_impl(invalidate=True)` -> only iterates
+    `self._transaction._iterate_self_and_parents()` `if self._transaction is not None`)
+    against `SessionTransaction.close()`/`.rollback()` shows both set
+    `session._transaction = self._parent` (`None` for a root transaction) *before* the
+    loop that actually closes/rolls back each connection -- a loop whose own
+    `connection.close()`/`t[1].rollback()` call is exactly what can raise and reach our
+    `except` blocks below. By the time that exception reaches us, `session._transaction`
+    is already `None`, so our own `await session.invalidate()` call's internal
+    `if self._transaction is not None` check is always false -- it is a silent no-op,
+    every single time it would ever actually be needed. Verified directly against this
+    project's pinned SQLAlchemy version (not merely read from upstream source) in this
+    round's regression tests below, with a real, uncommitted, checked-out connection.
+
+    Fixed by never depending on the *session's* transaction bookkeeping to find the
+    connection to invalidate: `_snapshot_connection_for_invalidation()` below grabs the
+    actual `AsyncConnection` object directly, via the public `session.in_transaction()` /
+    `session.connection()` APIs, immediately *before* the operation that might fail
+    (`rollback()` or `close()`) -- while the session's own pointers are still intact --
+    and holds onto that reference independently. If the operation then fails, invalidation
+    calls `.invalidate()` directly on that captured connection object, bypassing the
+    session's (by-then-already-cleared) internal state entirely. `in_transaction()` is a
+    pure in-memory check (no I/O); `connection()` reuses the transaction's existing
+    connection rather than opening a new one (`Session._connection_for_bind`'s own cache),
+    so this adds no new connections and is a no-op whenever no transaction is open."""
     session = AsyncSessionLocal()
     try:
         yield session
     except Exception:
+        connection = await _snapshot_connection_for_invalidation(session)
         try:
             await session.rollback()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
             logger.error("db_session_cleanup_rollback_failed")
-            try:
-                await session.invalidate()
-            except Exception:  # noqa: BLE001 -- best-effort; must never mask the original exception.
-                logger.error("db_session_cleanup_invalidate_failed")
+            await _invalidate_snapshotted_connection(connection, event="db_session_cleanup_invalidate_failed")
         raise
     finally:
+        connection = await _snapshot_connection_for_invalidation(session)
         try:
             await session.close()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
             logger.error("db_session_cleanup_close_failed")
-            try:
-                await session.invalidate()
-            except Exception:  # noqa: BLE001 -- best-effort; must never mask a pending exception.
-                logger.error("db_session_cleanup_close_invalidate_failed")
+            await _invalidate_snapshotted_connection(connection, event="db_session_cleanup_close_invalidate_failed")
+
+
+async def _snapshot_connection_for_invalidation(session: AsyncSession) -> AsyncConnection | None:
+    """Captures the session's current live connection, if any, via public APIs only --
+    called immediately before `rollback()`/`close()`, while the session's own transaction
+    pointer is still intact. See `get_db`'s docstring (Codex's fourth follow-up) for why
+    this snapshot -- not a post-failure `session.invalidate()` call -- is what actually
+    lets a subsequent failure discard the real connection."""
+    if not session.in_transaction():
+        return None
+    return await session.connection()
+
+
+async def _invalidate_snapshotted_connection(connection: AsyncConnection | None, *, event: str) -> None:
+    """Best-effort invalidation of a connection snapshotted by
+    `_snapshot_connection_for_invalidation` before a failed `rollback()`/`close()`. Never
+    raises -- this runs from inside an `except` block already handling a cleanup failure
+    and must not mask it with a new one."""
+    if connection is None:
+        return
+    try:
+        await connection.invalidate()
+    except Exception:  # noqa: BLE001 -- best-effort; must never mask a pending exception.
+        logger.error(event)

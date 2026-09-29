@@ -9,7 +9,7 @@ import pytest
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.api.v1 import collectors as collector_api
 from tests.api._phase8_helpers import create_integration, register_collector, sign_request
@@ -849,7 +849,7 @@ async def test_ingest_release_rollback_and_session_close_failures_all_contained(
         raise RuntimeError(f"close failed: {close_secret}")
 
     invalidate_calls = {"count": 0}
-    original_invalidate = AsyncSession.invalidate
+    original_invalidate = AsyncConnection.invalidate
 
     async def spy_invalidate(self, *args, **kwargs):
         invalidate_calls["count"] += 1
@@ -865,7 +865,12 @@ async def test_ingest_release_rollback_and_session_close_failures_all_contained(
     monkeypatch.setattr(collector_api.idem, "release_claim", fail_release_claim)
     monkeypatch.setattr(AsyncSession, "rollback", fail_rollback)
     monkeypatch.setattr(AsyncSession, "close", fail_close)
-    monkeypatch.setattr(AsyncSession, "invalidate", spy_invalidate)
+    # SEC (Codex PR #49 review, ROUND 8): get_db()'s own invalidate fallback now calls
+    # AsyncConnection.invalidate() directly on a connection snapshotted before rollback/
+    # close (see app/db/session.py's docstring for why session.invalidate() itself is
+    # unreliable here) -- spy at that level, not AsyncSession.invalidate, which this path
+    # no longer calls at all.
+    monkeypatch.setattr(AsyncConnection, "invalidate", spy_invalidate)
     monkeypatch.setattr(collector_api, "logger", shared_logger)
     monkeypatch.setattr(errors_module, "logger", shared_logger)
     monkeypatch.setattr(session_module, "logger", shared_logger, raising=False)
@@ -1060,13 +1065,23 @@ async def test_ingest_close_failure_invalidates_connection_so_pool_recovers_with
     `close()` itself fails, independent of whether rollback ran or failed.
 
     This test verifies the OPERATIONAL guarantee, deliberately kept separate from the
-    sanitization tests above (response/log secrecy): `invalidate()` actually runs, and
-    -- critically -- a SECOND, wholly ordinary request through the same real `get_db`
-    dependency succeeds immediately afterward, with no `engine.dispose()` call in
-    between rescuing it. The `dispose()` calls in the other real-`get_db` tests in
-    this file are a test-hygiene-only safety net against inter-test pollution (see
-    their own comments); this test proves the fix works on its own, without leaning
-    on that safety net at all."""
+    sanitization tests above (response/log secrecy): a SECOND, wholly ordinary request
+    through the same real `get_db` dependency succeeds immediately afterward, with no
+    `engine.dispose()` call in between rescuing it. The `dispose()` calls in the other
+    real-`get_db` tests in this file are a test-hygiene-only safety net against
+    inter-test pollution (see their own comments); this test proves the second request
+    works on its own, without leaning on that safety net at all.
+
+    SEC (Codex PR #49 review, ROUND 8): this scenario's request has already
+    `await db.commit()`-ed its accepted record before `get_db()`'s cleanup ever runs,
+    so `session.in_transaction()` is already `False` by the time the injected `close()`
+    failure hits -- there is no live connection here for the fix to discard (confirmed
+    empirically: `get_db`'s connection-snapshot helper correctly captures nothing in
+    this exact scenario). This test therefore no longer asserts that any connection was
+    invalidated -- see
+    `tests/integration/test_db_session_cleanup.py` for that proof, using a genuinely
+    live, uncommitted transaction and direct pool-level assertions, exactly matching
+    Codex's own named example (a read endpoint that returns without committing)."""
     import app.db.session as session_module
     from app.db.session import get_db as real_get_db
     from app.main import app as fastapi_app
@@ -1091,13 +1106,7 @@ async def test_ingest_close_failure_invalidates_connection_so_pool_recovers_with
     raw_body = json.dumps({"batch_id": uuid.uuid4().hex, "records": [record]}).encode()
     signed = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body)
 
-    invalidate_calls = {"count": 0}
-    original_invalidate = AsyncSession.invalidate
     original_close = AsyncSession.close
-
-    async def spy_invalidate(self, *args, **kwargs):
-        invalidate_calls["count"] += 1
-        return await original_invalidate(self, *args, **kwargs)
 
     async def fail_close_once(self, *args, **kwargs):
         # Only THIS request's own close() call fails -- restored immediately after, so
@@ -1108,7 +1117,6 @@ async def test_ingest_close_failure_invalidates_connection_so_pool_recovers_with
         raise RuntimeError("close failed: synthetic-session-close-SEC07H-keep-private")
 
     monkeypatch.setattr(AsyncSession, "close", fail_close_once)
-    monkeypatch.setattr(AsyncSession, "invalidate", spy_invalidate)
 
     original_override = fastapi_app.dependency_overrides.get(real_get_db)
     fastapi_app.dependency_overrides.pop(real_get_db, None)
@@ -1119,7 +1127,6 @@ async def test_ingest_close_failure_invalidates_connection_so_pool_recovers_with
         )
         assert response.status_code == 200, response.text
         assert response.json()["results"][0]["status"] == "accepted"
-        assert invalidate_calls["count"] >= 1
 
         # The critical operational assertion: a second, wholly ordinary request
         # through the SAME real get_db dependency (same engine, same pool) succeeds
