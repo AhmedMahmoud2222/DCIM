@@ -21,6 +21,7 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 import pytest_asyncio
 import structlog
 from httpx import ASGITransport, AsyncClient
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.deps import get_db
 from app.application.bulk_import import service as bulk_import_service
+from app.application.bulk_import.limits import BULK_IMPORT_COMMIT_MAX_ATTEMPTS
 from app.domain.bulk_import.models import BulkImportJob, BulkImportRow
 from app.infrastructure.tasks import bulk_import as bulk_import_tasks
 from app.infrastructure.tasks.bulk_import import commit_bulk_import_job, parse_and_validate_bulk_import_job
@@ -535,3 +537,97 @@ async def test_a_stale_deliverys_fallback_never_corrupts_the_replacement_deliver
         )
     ).scalar_one()
     assert audit_count_after == audit_count_before, "a skipped fallback must never write its own duplicate audit row"
+
+
+# ------------------------------------------------------------------------ ROUND 4 blocker 1
+
+
+async def test_run_commit_bounds_retries_for_a_job_that_crashes_on_every_delivery(
+    client, auth_headers, db_session, monkeypatch,
+):
+    """SEC (Codex PR #50 review, ROUND 4, blocker 1): the crash-recovery sweeper
+    (requeue_stuck_bulk_import_commits) re-dispatches any job stuck 'committing' past its
+    lease expiry, unconditionally, every sweep. Without a per-job cap, a job whose commit
+    genuinely crashes the worker process on *every* delivery (a poison-pill row that OOMs
+    or segfaults, not an ordinary Python exception — those are already caught and finalized
+    on the very first attempt by run_commit's own except block / fenced fallback) would be
+    reclaimed and re-crashed forever at the sweeper's fixed interval, never reaching a
+    terminal status.
+
+    Simulates a real crash — as opposed to an ordinary exception — by making
+    `_run_commit_owned` raise `asyncio.CancelledError`, a `BaseException` subclass that
+    `run_commit`'s own `except Exception` does NOT catch, so it propagates out exactly like
+    a killed process would (no fallback ever runs; the claim's own writes, already
+    committed, are all that persists). Each iteration then force-expires the lease exactly
+    as a real elapsed lease-duration would, standing in for the sweeper's next sweep.
+
+    After `BULK_IMPORT_COMMIT_MAX_ATTEMPTS` such crashes, the next claim must stop
+    retrying and finalize the job as `committed_with_errors` instead of crashing again —
+    proving the retry loop is bounded, not just that a single crash can be recovered from
+    (already covered by the two crash-recovery tests above)."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[asset_tag, "Row A Rack 1", model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing"
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    async def _simulated_crash(*args, **kwargs):
+        raise asyncio.CancelledError("simulated worker crash: no exception handler ever runs")
+
+    monkeypatch.setattr(bulk_import_service, "_run_commit_owned", _simulated_crash)
+
+    for _ in range(BULK_IMPORT_COMMIT_MAX_ATTEMPTS):
+        with pytest.raises(asyncio.CancelledError):
+            await bulk_import_service.run_commit(db_session, job_id)
+        # Stand in for real time passing until the lease naturally expires, exactly as the
+        # sweeper's own query would see it on its next scheduled sweep.
+        await db_session.execute(
+            update(BulkImportJob).where(BulkImportJob.id == job_id).values(
+                commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=1)
+            )
+        )
+        await db_session.commit()
+
+    attempts_before_final = (
+        await db_session.execute(select(BulkImportJob.commit_attempt_count).where(BulkImportJob.id == job_id))
+    ).scalar_one()
+    assert attempts_before_final == BULK_IMPORT_COMMIT_MAX_ATTEMPTS
+
+    # The (MAX_ATTEMPTS + 1)-th claim must NOT crash again -- it must finalize the job.
+    await bulk_import_service.run_commit(db_session, job_id)
+
+    job_status = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    assert job_status["status"] == "committed_with_errors", job_status
+    assert job_status["failed_row_count"] == 1, job_status
+    assert job_status["committed_row_count"] == 0, "the perpetually-crashing row must never be reported as committed"
+
+    row = (await db_session.execute(select(BulkImportRow).where(BulkImportRow.job_id == job_id))).scalar_one()
+    assert row.status == "failed"
+    assert any("repeated attempts" in e["message"] for e in row.errors)
+
+    # A job that has already been finalized must never be reselected by the sweeper again
+    # -- it is no longer 'committing', regardless of how its lease looks.
+    dispatched: list[str] = []
+    monkeypatch.setattr(commit_bulk_import_job, "delay", lambda job_id_str: dispatched.append(job_id_str))
+    bulk_import_tasks.requeue_stuck_bulk_import_commits()
+    assert dispatched == [], "a finalized (attempts-exhausted) job must never be re-swept"

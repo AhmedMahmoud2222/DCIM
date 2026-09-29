@@ -25,6 +25,17 @@ BULK_IMPORT_COMMIT_LEASE_SECONDS = 60
 # burst of redispatch work.
 BULK_IMPORT_SWEEPER_MAX_JOBS_PER_SWEEP = 50
 
+# SEC (Codex PR #50 review, ROUND 4, blocker 1): BULK_IMPORT_SWEEPER_MAX_JOBS_PER_SWEEP
+# above bounds how much work one sweep can do, but says nothing about how many times a
+# single, deterministically-failing job gets re-dispatched — without a per-job cap, a job
+# whose commit always raises before its first lease renewal would have its lease expire,
+# get reclaimed by the very next sweep, fail again, and repeat forever at the sweeper's
+# fixed interval. run_commit (service.py) increments BulkImportJob.commit_attempt_count
+# atomically as part of every lease claim (original dispatch or sweeper redispatch alike)
+# and finalizes the job as committed_with_errors instead of processing once this bound is
+# exceeded, so the sweeper's own query (status='committing') stops reselecting it.
+BULK_IMPORT_COMMIT_MAX_ATTEMPTS = 5
+
 # SEC (Codex PR #50 review, finding #4): MAX_BULK_IMPORT_FILE_SIZE_BYTES above only
 # bounds the *compressed* upload — a small, honestly-compressible .xlsx (a zip) can still
 # decompress to a huge amount of data (a "zip bomb"), exhausting worker memory/CPU inside

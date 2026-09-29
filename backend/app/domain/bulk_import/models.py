@@ -78,6 +78,13 @@ class BulkImportJob(Base, UUIDPkMixin, TimestampMixin):
     commit_lease_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     commit_lease_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
+    # SEC (Codex PR #50 review, ROUND 4, blocker 1): incremented atomically every time
+    # run_commit successfully claims the commit lease (original dispatch or a sweeper
+    # re-dispatch alike). Bounds requeue_stuck_bulk_import_commits' otherwise-unbounded
+    # retry loop for a job whose commit deterministically fails every attempt — see
+    # limits.py::BULK_IMPORT_COMMIT_MAX_ATTEMPTS and service.py::run_commit.
+    commit_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
 
 class BulkImportRow(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "bulk_import_row"

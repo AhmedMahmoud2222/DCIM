@@ -19,7 +19,11 @@ from app.application.bulk_import.commit import catalog as commit_catalog
 from app.application.bulk_import.commit import describe_integrity_error
 from app.application.bulk_import.commit import equipment as commit_equipment
 from app.application.bulk_import.commit import rack as commit_rack
-from app.application.bulk_import.limits import BULK_IMPORT_COMMIT_BATCH_SIZE, BULK_IMPORT_COMMIT_LEASE_SECONDS
+from app.application.bulk_import.limits import (
+    BULK_IMPORT_COMMIT_BATCH_SIZE,
+    BULK_IMPORT_COMMIT_LEASE_SECONDS,
+    BULK_IMPORT_COMMIT_MAX_ATTEMPTS,
+)
 from app.application.bulk_import.parsing import ParseRejected, parse_workbook
 from app.application.bulk_import.report import build_report_workbook
 from app.application.bulk_import.resolvers import RowRejected
@@ -144,7 +148,10 @@ async def run_parse_and_validate(db: AsyncSession, job_id: uuid.UUID) -> None:
     )
 
 
-async def _mark_commit_failed_if_still_owner(db: AsyncSession, job_id: uuid.UUID, lease_id: uuid.UUID) -> None:
+async def _mark_commit_failed_if_still_owner(
+    db: AsyncSession, job_id: uuid.UUID, lease_id: uuid.UUID, *,
+    row_error_message: str = "This row could not be committed due to an internal error.",
+) -> None:
     """SEC (Codex PR #50 review, ROUND 3, finding #2): called from `run_commit`'s own
     except block, after `db.rollback()` has discarded whatever this delivery hadn't yet
     made durable, so it can mark any still-'valid' row failed and reach a terminal job
@@ -179,7 +186,7 @@ async def _mark_commit_failed_if_still_owner(db: AsyncSession, job_id: uuid.UUID
     )
     for row in stuck_rows:
         row.status = "failed"
-        row.errors = [*row.errors, {"field": None, "message": "This row could not be committed due to an internal error."}]
+        row.errors = [*row.errors, {"field": None, "message": row_error_message}]
         job.failed_row_count += 1
     job.status = "committed_with_errors"
     job.committed_at = datetime.now(UTC)
@@ -220,7 +227,7 @@ async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
     # stalled past expiry) stops immediately instead of continuing to write.
     lease_id = uuid.uuid4()
     now = datetime.now(UTC)
-    claimed_id = (
+    claimed = (
         await db.execute(
             update(BulkImportJob)
             .where(
@@ -229,19 +236,45 @@ async def run_commit(db: AsyncSession, job_id: uuid.UUID) -> None:
                 or_(BulkImportJob.commit_lease_expires_at.is_(None), BulkImportJob.commit_lease_expires_at < now),
             )
             .values(
-                commit_lease_id=lease_id, commit_lease_expires_at=now + timedelta(seconds=BULK_IMPORT_COMMIT_LEASE_SECONDS)
+                commit_lease_id=lease_id,
+                commit_lease_expires_at=now + timedelta(seconds=BULK_IMPORT_COMMIT_LEASE_SECONDS),
+                # SEC (Codex PR #50 review, ROUND 4, blocker 1): counted as part of the same
+                # atomic claim UPDATE that wins the lease — see limits.py::
+                # BULK_IMPORT_COMMIT_MAX_ATTEMPTS for why an unbounded count of claims
+                # (each one potentially re-dispatched by the sweeper) would otherwise let a
+                # deterministically-failing job retry forever.
+                commit_attempt_count=BulkImportJob.commit_attempt_count + 1,
             )
-            .returning(BulkImportJob.id)
+            .returning(BulkImportJob.id, BulkImportJob.commit_attempt_count)
         )
-    ).scalar_one_or_none()
-    if claimed_id is None:
+    ).one_or_none()
+    if claimed is None:
         await db.rollback()
         logger.warning("bulk_import_commit_lease_not_acquired", job_id=str(job_id))
         return
+    _claimed_id, attempt_count = claimed
     await db.commit()
     job = await db.get(BulkImportJob, job_id)
     if job is None:
         logger.error("bulk_import_job_not_found", job_id=str(job_id))
+        return
+
+    if attempt_count > BULK_IMPORT_COMMIT_MAX_ATTEMPTS:
+        # SEC (Codex PR #50 review, ROUND 4, blocker 1): this delivery just won the lease it
+        # is about to immediately give up — safe to finalize directly via the same
+        # lease-fenced fallback the exception path below uses, since this delivery
+        # provably owns `lease_id` at this exact moment (it just claimed it, atomically,
+        # above). Finalizing to a terminal status (rather than leaving the job
+        # 'committing' with an expired lease) is what stops the sweeper's own query from
+        # ever reselecting this job again.
+        logger.error(
+            "bulk_import_commit_attempts_exhausted", job_id=str(job_id), attempts=attempt_count,
+            max_attempts=BULK_IMPORT_COMMIT_MAX_ATTEMPTS,
+        )
+        await _mark_commit_failed_if_still_owner(
+            db, job_id, lease_id,
+            row_error_message="This row could not be committed after repeated attempts; the batch was abandoned.",
+        )
         return
 
     try:
