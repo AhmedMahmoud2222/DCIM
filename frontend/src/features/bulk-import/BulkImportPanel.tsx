@@ -22,6 +22,7 @@ const ROWS_PER_PAGE = 25;
 // {id} (and the rows list, once it's past uploaded/parsing) until it leaves this set.
 const IN_FLIGHT_STATUSES = new Set(["uploaded", "parsing", "committing"]);
 const CANCELLABLE_STATUSES = new Set(["uploaded", "validated"]);
+const JOB_TERMINAL_STATUSES = new Set(["committed", "committed_with_errors", "cancelled", "failed_parse"]);
 
 const JOB_STATUS_COLORS: Record<string, string> = {
   uploaded: "bg-slate-700 text-slate-200",
@@ -98,7 +99,17 @@ export function BulkImportPanel({
     queryKey: ["bulk-import-job", jobId],
     queryFn: () => getImportJob(jobId!),
     enabled: !!jobId,
-    refetchInterval: (query) => (query.state.data && IN_FLIGHT_STATUSES.has(query.state.data.status) ? POLL_INTERVAL_MS : false),
+    // Also keep polling once commit has been requested even while the job still reads
+    // "validated": the POST /import-jobs/{id}/commit response (and this query's first
+    // refetch right after it) can land before the dispatched Celery task has actually
+    // flipped the job to "committing" — without this, that single race-prone refetch
+    // would find the job still "validated" (not in IN_FLIGHT_STATUSES) and stop the
+    // interval for good, leaving the UI stuck showing "validated" forever.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (!status || JOB_TERMINAL_STATUSES.has(status)) return false;
+      return IN_FLIGHT_STATUSES.has(status) || commitStarted ? POLL_INTERVAL_MS : false;
+    },
   });
   const job = jobQuery.data;
 
@@ -106,7 +117,8 @@ export function BulkImportPanel({
   // alongside the job itself while a commit is in flight so committed/failed counts on
   // each row update live, then stops once the job reaches a terminal state.
   const showPreview = !!job && job.status !== "uploaded" && job.status !== "parsing" && job.status !== "failed_parse";
-  const jobInFlight = !!job && IN_FLIGHT_STATUSES.has(job.status);
+  const jobInFlight =
+    !!job && !JOB_TERMINAL_STATUSES.has(job.status) && (IN_FLIGHT_STATUSES.has(job.status) || commitStarted);
 
   const rowsQuery = useQuery({
     queryKey: ["bulk-import-job-rows", jobId, rowStatusFilter, offset],
