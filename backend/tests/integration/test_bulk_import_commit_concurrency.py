@@ -631,3 +631,104 @@ async def test_run_commit_bounds_retries_for_a_job_that_crashes_on_every_deliver
     monkeypatch.setattr(commit_bulk_import_job, "delay", lambda job_id_str: dispatched.append(job_id_str))
     bulk_import_tasks.requeue_stuck_bulk_import_commits()
     assert dispatched == [], "a finalized (attempts-exhausted) job must never be re-swept"
+
+
+# ------------------------------------------------------------------------ ROUND 4 review
+
+
+async def test_stale_deliverys_fallback_racing_a_real_reclaim_never_corrupts_the_winner(
+    client, auth_headers, db_session,
+):
+    """SEC (Codex PR #50 review, fourth round): the earlier fenced-fallback test
+    (test_a_stale_deliverys_fallback_never_corrupts_the_replacement_deliverys_job) only
+    proves the fallback is safe once its target has ALREADY reached a terminal state --
+    it never puts a real, concurrent reclaim attempt BETWEEN the fallback's own ownership
+    check and its own write. Codex traced the actual gap: `_mark_commit_failed_if_still_
+    owner`'s `db.get(BulkImportJob, job_id)` was a plain, unlocked read -- a concurrent
+    claim UPDATE could commit in the window between that read and the fallback's own
+    final `db.commit()`, and the fallback would then overwrite the claim's work
+    unconditionally, since nothing re-verified ownership at the moment of the write.
+
+    This races the REAL `_mark_commit_failed_if_still_owner` (simulating delivery A's own
+    exception-handling fallback, using A's actual, already-expired lease token) against a
+    REAL `run_commit` call (delivery B's genuine reclaim-and-process attempt) via
+    `asyncio.gather` -- two independent sessions/connections, exactly like the
+    overlapping-run_commit test above, so whichever side's row-locking statement reaches
+    Postgres first is a genuine race, not an orchestrated sequence. `with_for_update=True`
+    on the fallback's own read (this round's fix) makes the two sides mutually exclusive:
+    whichever gets there first commits its own outcome; the other, once unblocked,
+    re-reads the post-commit state and cleanly no-ops instead of corrupting it.
+
+    Rather than asserting one specific winner (a genuine race can legitimately go either
+    way), this asserts the job ends up in exactly one of the two internally-consistent
+    terminal states -- never a mixed/corrupted one (a 'committed' job with a 'failed' row,
+    two racks, or a doubled/missing audit entry)."""
+    headers = await auth_headers("Engineer")
+    room = await create_room_with_codes(client, auth_headers)
+    model = await _create_rack_model(client, auth_headers)
+    asset_tag = f"RACK-{uuid.uuid4().hex[:8]}"
+
+    content = build_workbook(
+        RACK_HEADERS,
+        [[asset_tag, "Row A Rack 1", model["manufacturer"], model["model_name"], "", room["site_code"],
+          room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
+    )
+    upload = await client.post(
+        "/api/v1/racks/import-jobs?mode=create_only",
+        files={"file": ("racks.xlsx", content, "application/octet-stream")}, headers=headers,
+    )
+    job = upload.json()
+    parse_and_validate_bulk_import_job.run(job["id"])
+    job_id = uuid.UUID(job["id"])
+
+    # Delivery A already claimed the lease and it has since expired -- A is about to run
+    # its own fallback with this exact, now-stale token, exactly as run_commit's own
+    # except block would after A's own unrelated error.
+    lease_id_a = uuid.uuid4()
+    claim = await db_session.execute(
+        update(BulkImportJob).where(BulkImportJob.id == job_id, BulkImportJob.status == "validated").values(
+            status="committing", commit_lease_id=lease_id_a,
+            commit_lease_expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+    )
+    assert claim.rowcount == 1
+    await db_session.commit()
+
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=5)
+    session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with session_factory() as session_a, session_factory() as session_b:
+            await asyncio.gather(
+                bulk_import_service._mark_commit_failed_if_still_owner(session_a, job_id, lease_id_a),
+                bulk_import_service.run_commit(session_b, job_id),
+            )
+    finally:
+        await engine.dispose()
+
+    final = (await client.get(f"/api/v1/import-jobs/{job['id']}", headers=headers)).json()
+    row = (await db_session.execute(select(BulkImportRow).where(BulkImportRow.job_id == job_id))).scalar_one()
+    racks = (await client.get("/api/v1/racks", headers=headers)).json()
+    matching_racks = [r for r in racks["items"] if r["asset_tag"] == asset_tag]
+    audit_count = (
+        await db_session.execute(
+            text("SELECT count(*) FROM audit_log WHERE action = 'rack.bulk_import.commit_job' AND entity_id = :id"),
+            {"id": str(job_id)},
+        )
+    ).scalar_one()
+
+    if final["status"] == "committed":
+        # Delivery B won the race.
+        assert final["committed_row_count"] == 1, final
+        assert final["failed_row_count"] == 0, final
+        assert row.status == "committed", "B won: the row must be committed, not left failed by A's losing fallback"
+        assert len(matching_racks) == 1, "B won: exactly one rack must exist"
+        assert audit_count == 1, "B won: exactly one audit entry for its own finalize"
+    elif final["status"] == "committed_with_errors":
+        # Delivery A won the race.
+        assert final["failed_row_count"] == 1, final
+        assert final["committed_row_count"] == 0, final
+        assert row.status == "failed", "A won: the row must be failed, not left committed by a corrupted write"
+        assert len(matching_racks) == 0, "A won: no rack must have been created"
+        assert audit_count == 0, "A's fallback never writes a job-level audit entry"
+    else:
+        pytest.fail(f"job reached an unexpected, non-terminal or mixed status: {final}")
