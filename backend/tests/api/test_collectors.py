@@ -614,6 +614,164 @@ async def test_ingest_claim_release_and_rollback_failure_aborts_batch_safely(
         assert sensitive not in log_text
 
 
+async def test_ingest_release_route_rollback_and_cleanup_rollback_failures_all_contained(
+    client, auth_headers, monkeypatch,
+):
+    """Codex's third-round Phase 11 review (Issue #38 / PR #49): app/db/session.py's
+    get_db() dependency has its OWN cleanup rollback (`except Exception: await
+    session.rollback(); raise`), which runs on ANY exception escaping the route --
+    including the sanitized ApiError(503) _release_claim_safely() now raises when its
+    own route-level rollback fails. If THAT cleanup rollback also fails, the raw
+    cleanup exception previously replaced the sanitized ApiError and could reach the
+    global catch-all handler unsanitized.
+
+    The `client` fixture's own get_db override is a bare passthrough
+    (`yield db_session`) that never exercises production cleanup at all -- exactly
+    what Codex flagged the prior release/rollback test for. This test restores the
+    REAL get_db dependency for the ingest requests, forces all four failure points
+    (original ingest, release_claim, the route-level rollback, and get_db's own
+    cleanup rollback) with four distinct synthetic secrets, and confirms: the
+    response stays a generic 503 (not a 500 from the unguarded cleanup failure), none
+    of the four secrets reach the response or any of the three loggers involved
+    (route, global handlers, session cleanup) -- and, on an unpatched retry of the
+    identical batch, the record that already committed before the failure replays as
+    a duplicate, proving no data loss and that the batch remains valid for retry."""
+    import app.core.errors as errors_module
+    import app.db.session as session_module
+    from app.db.session import get_db as real_get_db
+    from app.main import app as fastapi_app
+
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    original_credential = "synthetic-credential-SEC07D-original-keep-private"
+    release_secret = "synthetic-release-SEC07D-keep-private"
+    route_rollback_secret = "synthetic-route-rollback-SEC07D-keep-private"
+    cleanup_rollback_secret = "synthetic-cleanup-rollback-SEC07D-keep-private"
+
+    good_before = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.80", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    bad = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.81", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"credential": original_credential},
+    }
+    good_after = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.82", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [good_before, bad, good_after]}).encode()
+    signed = sign_request(
+        secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body,
+    )
+
+    original_ingest = collector_api.ingest_discovery
+    original_release_claim = collector_api.idem.release_claim
+    original_rollback = AsyncSession.rollback
+
+    async def fail_bad_record(*args, **kwargs):
+        if kwargs["external_identifier"] == bad["external_identifier"]:
+            raise RuntimeError(f"unexpected {original_credential}")
+        return await original_ingest(*args, **kwargs)
+
+    async def fail_release_claim(*args, **kwargs):
+        raise RuntimeError(f"release failed: {release_secret}")
+
+    rollback_calls = {"count": 0}
+
+    async def fail_rollback(self, *args, **kwargs):
+        rollback_calls["count"] += 1
+        if rollback_calls["count"] == 1:
+            raise RuntimeError(f"route rollback failed: {route_rollback_secret}")
+        raise RuntimeError(f"cleanup rollback failed: {cleanup_rollback_secret}")
+
+    log_output = io.StringIO()
+    shared_logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+
+    monkeypatch.setattr(collector_api, "ingest_discovery", fail_bad_record)
+    monkeypatch.setattr(collector_api.idem, "release_claim", fail_release_claim)
+    monkeypatch.setattr(AsyncSession, "rollback", fail_rollback)
+    monkeypatch.setattr(collector_api, "logger", shared_logger)
+    monkeypatch.setattr(errors_module, "logger", shared_logger)
+    monkeypatch.setattr(session_module, "logger", shared_logger, raising=False)
+
+    original_override = fastapi_app.dependency_overrides.get(real_get_db)
+    fastapi_app.dependency_overrides.pop(real_get_db, None)
+    try:
+        response = await client.post(
+            f"/api/v1/collectors/{collector['id']}/ingest",
+            content=raw_body, headers={**signed, "Content-Type": "application/json"},
+        )
+    finally:
+        if original_override is not None:
+            fastapi_app.dependency_overrides[real_get_db] = original_override
+        # The real get_db() above used app.db.session's own module-level engine/pool --
+        # a process-wide singleton, unlike the per-test db_engine fixture. The injected
+        # rollback failures leave its connection in a bad state bound to THIS test's
+        # event loop; left pooled, the next test (a fresh event loop) would check it
+        # out and crash with "attached to a different loop" / "Event loop is closed".
+        # Disposing here forces a fresh connection for every later test.
+        await session_module.engine.dispose()
+
+    assert response.status_code == 503, response.text
+    assert response.json()["status"] == 503
+    for sensitive in (original_credential, release_secret, route_rollback_secret, cleanup_rollback_secret):
+        assert sensitive not in response.text
+
+    log_text = log_output.getvalue()
+    events = [json.loads(line) for line in log_text.splitlines()]
+    assert {"event": "ingest_batch_claim_release_rollback_failed", "record_index": 1} in events
+    assert any(e.get("event") == "db_session_cleanup_rollback_failed" for e in events)
+    for sensitive in (
+        original_credential, release_secret, route_rollback_secret, cleanup_rollback_secret,
+        good_before["dedup_key"], bad["dedup_key"], good_after["dedup_key"],
+        batch_id, integration["id"], collector["id"],
+    ):
+        assert sensitive not in log_text
+
+    monkeypatch.setattr(collector_api, "ingest_discovery", original_ingest)
+    monkeypatch.setattr(collector_api.idem, "release_claim", original_release_claim)
+    monkeypatch.setattr(AsyncSession, "rollback", original_rollback)
+
+    # A real collector retry re-signs the same batch content with a fresh nonce --
+    # replaying the identical signed request is itself correctly rejected by the
+    # HMAC replay-protection layer (a single-use nonce), independent of anything
+    # this test is verifying.
+    retry_signed = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body)
+    retry_response = await client.post(
+        f"/api/v1/collectors/{collector['id']}/ingest",
+        content=raw_body, headers={**retry_signed, "Content-Type": "application/json"},
+    )
+    assert retry_response.status_code == 200, retry_response.text
+    retry_results = {r["dedup_key"]: r for r in retry_response.json()["results"]}
+    assert retry_results[good_before["dedup_key"]]["status"] == "duplicate"
+    assert retry_results[good_after["dedup_key"]]["status"] == "accepted"
+    # `bad`'s claim from the aborted attempt above was never released (the real
+    # release_claim() was mocked out before it could run) -- it is genuinely still
+    # "processing" in the database, so an immediate retry correctly finds it still
+    # claimed rather than silently duplicating or losing it. It becomes reclaimable
+    # again only after idempotency.STALE_CLAIM_TIMEOUT.
+    assert retry_results[bad["dedup_key"]]["status"] == "rejected"
+    assert retry_results[bad["dedup_key"]]["error_code"] == "PROCESSING"
+
+
 async def test_poll_now_succeeds_on_real_icmp_and_creates_a_discovered_device(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)
