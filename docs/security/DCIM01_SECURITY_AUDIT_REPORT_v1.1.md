@@ -1,6 +1,6 @@
 # DCIM01 Hostile Security Audit Report
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** 2026-09-29 (executed on demand; the 23:30 UAE scheduled trigger was disabled at the owner's request)
 **Baseline:** `main` at `f94f22078ae0316b1706fb86ba6705a0a364de44`
 **Open PRs at start:** #53 (docs only, head `674fc1bb74a4d8d8b2adbe8a84c5a533e2ea9ded`)
@@ -116,7 +116,7 @@ Every remote branch, with its head SHA. "Ahead" counts commits not in `main`. Br
 
 - Live application behavior in staging or production (no deployment access, and none was authorized).
 - Repository settings: branch protection, default workflow permissions, Dependabot, secret scanning and push protection (no admin access).
-- SNMP and Modbus wire parsing beyond the BER exhaustion checks cited in existing reports. Modbus code was not located in this repository.
+- SNMP wire parsing beyond the BER exhaustion checks cited in existing reports, and the central `snmp.py`, `icmp.py` and `rest.py` drivers (REST network policy was read only through prior reports). No Modbus driver exists in the repository; the string appears only as a protocol label in the telemetry mapping model and migration 0024.
 - Cross-router IDOR and mass-assignment testing of every endpoint; Pydantic model strictness per route.
 - Celery task authorization and payload trust; broker exposure.
 - PostgreSQL role grants beyond reading the bootstrap SQL and CI provisioning.
