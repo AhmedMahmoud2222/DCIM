@@ -848,6 +848,13 @@ async def test_ingest_release_rollback_and_session_close_failures_all_contained(
     async def fail_close(self, *args, **kwargs):
         raise RuntimeError(f"close failed: {close_secret}")
 
+    invalidate_calls = {"count": 0}
+    original_invalidate = AsyncSession.invalidate
+
+    async def spy_invalidate(self, *args, **kwargs):
+        invalidate_calls["count"] += 1
+        return await original_invalidate(self, *args, **kwargs)
+
     log_output = io.StringIO()
     shared_logger = structlog.wrap_logger(
         structlog.PrintLogger(file=log_output),
@@ -858,6 +865,7 @@ async def test_ingest_release_rollback_and_session_close_failures_all_contained(
     monkeypatch.setattr(collector_api.idem, "release_claim", fail_release_claim)
     monkeypatch.setattr(AsyncSession, "rollback", fail_rollback)
     monkeypatch.setattr(AsyncSession, "close", fail_close)
+    monkeypatch.setattr(AsyncSession, "invalidate", spy_invalidate)
     monkeypatch.setattr(collector_api, "logger", shared_logger)
     monkeypatch.setattr(errors_module, "logger", shared_logger)
     monkeypatch.setattr(session_module, "logger", shared_logger, raising=False)
@@ -884,6 +892,10 @@ async def test_ingest_release_rollback_and_session_close_failures_all_contained(
     for sensitive in (original_credential, release_secret, route_rollback_secret, cleanup_rollback_secret, close_secret):
         assert sensitive not in response.text
 
+    # The cleanup rollback failed, so get_db() must have discarded the connection via
+    # invalidate() rather than silently handing a known-broken one to a later request.
+    assert invalidate_calls["count"] >= 1
+
     log_text = log_output.getvalue()
     events = [json.loads(line) for line in log_text.splitlines()]
     assert any(e.get("event") == "db_session_cleanup_rollback_failed" for e in events)
@@ -893,6 +905,147 @@ async def test_ingest_release_rollback_and_session_close_failures_all_contained(
         bad["dedup_key"], good_after["dedup_key"], batch_id, integration["id"], collector["id"],
     ):
         assert sensitive not in log_text
+
+
+async def test_ingest_close_failure_after_successful_rollback_stays_safe(client, auth_headers, monkeypatch):
+    """Codex's fourth-round review asked specifically for a close failure DISTINCT from
+    a rollback failure -- proving close() is guarded independently, not only as a
+    side effect of the rollback-failure path. Here `_release_claim_safely()`'s own
+    `db.rollback()` succeeds normally (the existing, already-safe NOT_ASSIGNED-style
+    outcome), so the request completes as an ordinary 200 with a rejected ACK -- but
+    `get_db()`'s cleanup then hits `session.close()` failing on its own, on what is
+    otherwise get_db()'s HAPPY exit path (no exception was propagating out of the
+    route at all). Confirms the close failure is contained there too: the normal 200
+    response is unaffected, and the close secret never reaches it or any logger."""
+    import app.core.errors as errors_module
+    import app.db.session as session_module
+    from app.db.session import get_db as real_get_db
+    from app.main import app as fastapi_app
+
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    # Deliberately no assignment -- current_assignment() returns None, so the record
+    # takes the existing, already-safe ApiError("Not Assigned") path, whose rollback
+    # (the savepoint's automatic one, then _release_claim_safely()'s real rollback)
+    # succeeds normally; only close() is broken here.
+
+    close_secret = "synthetic-session-close-SEC07F-keep-private"
+    record = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.95", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [record]}).encode()
+    signed = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body)
+
+    async def fail_close(self, *args, **kwargs):
+        raise RuntimeError(f"close failed: {close_secret}")
+
+    log_output = io.StringIO()
+    shared_logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+    monkeypatch.setattr(AsyncSession, "close", fail_close)
+    monkeypatch.setattr(collector_api, "logger", shared_logger)
+    monkeypatch.setattr(errors_module, "logger", shared_logger)
+    monkeypatch.setattr(session_module, "logger", shared_logger, raising=False)
+
+    original_override = fastapi_app.dependency_overrides.get(real_get_db)
+    fastapi_app.dependency_overrides.pop(real_get_db, None)
+    try:
+        response = await client.post(
+            f"/api/v1/collectors/{collector['id']}/ingest",
+            content=raw_body, headers={**signed, "Content-Type": "application/json"},
+        )
+    finally:
+        if original_override is not None:
+            fastapi_app.dependency_overrides[real_get_db] = original_override
+        await session_module.engine.dispose()
+
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["error_code"] == "NOT_ASSIGNED"
+    assert close_secret not in response.text
+
+    log_text = log_output.getvalue()
+    assert {"event": "db_session_cleanup_close_failed"} in [json.loads(line) for line in log_text.splitlines()]
+    assert close_secret not in log_text
+
+
+async def test_ingest_close_failure_alone_on_a_fully_successful_request_stays_safe(client, auth_headers, monkeypatch):
+    """The purest form of Codex's "independent close failure" ask: NOTHING else fails --
+    no ingest error, no release_claim call, no rollback at all -- yet get_db()'s
+    close() still fails on its own during a fully successful request's cleanup.
+    Confirms this never surfaces to the client (still 200, still the real accepted
+    result) and is only ever logged as the fixed, safe event."""
+    import app.core.errors as errors_module
+    import app.db.session as session_module
+    from app.db.session import get_db as real_get_db
+    from app.main import app as fastapi_app
+
+    headers = await auth_headers("DCIM Manager")
+    collector = await register_collector(client, headers)
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/capabilities",
+        json={"protocol_codes": ["icmp"]}, headers=headers,
+    )
+    integration = await create_integration(client, headers, integration_type="icmp")
+    await client.post(
+        f"/api/v1/collectors/{collector['id']}/assignments",
+        json={"integration_id": integration["id"]}, headers=headers,
+    )
+
+    close_secret = "synthetic-session-close-SEC07G-keep-private"
+    record = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"],
+        "external_identifier": "10.0.0.96", "occurred_at": "2026-01-01T00:00:00Z",
+        "raw_attributes": {"reachable": True},
+    }
+    batch_id = uuid.uuid4().hex
+    raw_body = json.dumps({"batch_id": batch_id, "records": [record]}).encode()
+    signed = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=raw_body)
+
+    async def fail_close(self, *args, **kwargs):
+        raise RuntimeError(f"close failed: {close_secret}")
+
+    log_output = io.StringIO()
+    shared_logger = structlog.wrap_logger(
+        structlog.PrintLogger(file=log_output),
+        processors=[structlog.processors.JSONRenderer()],
+    )
+    monkeypatch.setattr(AsyncSession, "close", fail_close)
+    monkeypatch.setattr(collector_api, "logger", shared_logger)
+    monkeypatch.setattr(errors_module, "logger", shared_logger)
+    monkeypatch.setattr(session_module, "logger", shared_logger, raising=False)
+
+    original_override = fastapi_app.dependency_overrides.get(real_get_db)
+    fastapi_app.dependency_overrides.pop(real_get_db, None)
+    try:
+        response = await client.post(
+            f"/api/v1/collectors/{collector['id']}/ingest",
+            content=raw_body, headers={**signed, "Content-Type": "application/json"},
+        )
+    finally:
+        if original_override is not None:
+            fastapi_app.dependency_overrides[real_get_db] = original_override
+        await session_module.engine.dispose()
+
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["status"] == "accepted"
+    assert close_secret not in response.text
+
+    log_text = log_output.getvalue()
+    assert {"event": "db_session_cleanup_close_failed"} in [json.loads(line) for line in log_text.splitlines()]
+    assert close_secret not in log_text
 
 
 async def test_poll_now_succeeds_on_real_icmp_and_creates_a_discovered_device(client, auth_headers):
