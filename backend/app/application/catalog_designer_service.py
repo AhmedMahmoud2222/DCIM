@@ -73,6 +73,7 @@ from app.domain.catalog.designer_models import (
     NetworkPortTemplate,
     PowerSupplyTemplate,
 )
+from app.domain.catalog.document_models import CatalogRevisionDocument
 from app.domain.catalog.models import EquipmentModel, EquipmentModelRevision, RackModel, RackModelRevision
 from app.infrastructure.storage import StorageBackend
 
@@ -716,6 +717,24 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
                         sort_order=marker.sort_order,
                     )
                 )
+
+    # DCIM01 PDF datasheet import: the clone links the same document rows (files are
+    # content-addressed and immutable, so nothing is copied). Each link records the cloning
+    # user; the source revision's links are untouched.
+    source_links = list(
+        (
+            await db.execute(
+                select(CatalogRevisionDocument).where(CatalogRevisionDocument.catalog_model_revision_id == source.id)
+            )
+        ).scalars()
+    )
+    for link in source_links:
+        db.add(
+            CatalogRevisionDocument(
+                catalog_model_revision_id=clone.id, catalog_document_id=link.catalog_document_id,
+                attached_by_user_id=user_id, attached_at=datetime.now(UTC),
+            )
+        )
 
     await db.flush()
     return clone

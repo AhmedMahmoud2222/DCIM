@@ -45,3 +45,6 @@ class LocalFileSystemStorageBackend:
 
     def exists(self, key: str) -> bool:
         return self._safe_path(key).exists()
+
+    def delete(self, key: str) -> None:
+        self._safe_path(key).unlink(missing_ok=True)

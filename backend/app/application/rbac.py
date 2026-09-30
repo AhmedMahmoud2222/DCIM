@@ -72,6 +72,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "catalog:retire",
         "catalog:import",
         "catalog:migrate",
+        "catalog:document_download",
     ],
     "DCIM Manager": [
         "organization:read",
@@ -111,6 +112,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "alarm:read",
         "alarm:manage",
         "catalog:read",
+        "catalog:document_download",
     ],
     "Engineer": [
         "organization:read",
@@ -141,6 +143,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "telemetry:read",
         "alarm:read",
         "catalog:read",
+        "catalog:document_download",
     ],
     "Operator": [
         "organization:read",

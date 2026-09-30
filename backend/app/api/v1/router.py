@@ -6,6 +6,7 @@ from app.api.v1 import (
     bulk_import,
     catalog,
     catalog_designer,
+    catalog_documents,
     collectors,
     dashboard,
     discovery,
@@ -33,6 +34,7 @@ api_router.include_router(locations.router)
 api_router.include_router(managed_assets.router)
 api_router.include_router(catalog.router)
 api_router.include_router(catalog_designer.router)
+api_router.include_router(catalog_documents.router)
 api_router.include_router(bulk_import.router)
 api_router.include_router(racks.router)
 api_router.include_router(equipment.router)
