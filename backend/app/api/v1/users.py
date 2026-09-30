@@ -21,6 +21,7 @@ from app.application.user_admin_service import (
     assert_administrator_remains,
     assert_can_assign_group,
     assert_can_assign_role,
+    begin_authority_change,
     clean_text,
     get_user_or_404,
     validate_password,
@@ -178,6 +179,7 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("user:manage")),
 ) -> UserOut:
+    ctx = await begin_authority_change(db, ctx, "user:manage")
     full_name = clean_text(body.full_name, field="full_name", max_length=200)
     validate_password(body.password)
     email = body.email.lower()
@@ -226,6 +228,7 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("user:manage")),
 ) -> UserOut:
+    ctx = await begin_authority_change(db, ctx, "user:manage")
     user = await get_user_or_404(db, user_id)
     await assert_actor_outranks_target(db, ctx, user.id)
     before = {"full_name": user.full_name, "is_active": user.is_active}
@@ -252,7 +255,6 @@ async def update_user(
         after["group_ids"] = sorted(str(g) for g in new)
     await db.flush()
     await assert_administrator_remains(db)
-
     request_id, correlation_id = _request_ids(request)
     action = "user.update"
     if after.get("is_active") is False:
@@ -275,6 +277,7 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("user:manage")),
 ) -> None:
+    ctx = await begin_authority_change(db, ctx, "user:manage")
     user = await get_user_or_404(db, user_id)
     if user.id == ctx.user.id:
         raise ForbiddenError("You cannot delete your own account.")

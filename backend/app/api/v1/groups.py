@@ -22,6 +22,7 @@ from app.application.user_admin_service import (
     assert_can_grant_permissions,
     assert_can_grant_sites,
     assert_can_modify_group,
+    begin_authority_change,
     clean_text,
     get_group_or_404,
     group_scope,
@@ -234,6 +235,7 @@ async def update_group(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
@@ -266,6 +268,7 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> None:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
@@ -301,6 +304,7 @@ async def set_members(
 ) -> GroupDetailOut:
     from app.application.user_admin_service import assert_can_assign_group
 
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     target = set(body.user_ids)
@@ -357,6 +361,7 @@ async def set_permissions(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
@@ -424,6 +429,7 @@ async def set_site_access(
 ) -> GroupDetailOut:
     """Replaces the group's whole site/rack grant set. Every rack must currently be placed
     in the site it is granted under (cross-site rack grants are rejected)."""
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)

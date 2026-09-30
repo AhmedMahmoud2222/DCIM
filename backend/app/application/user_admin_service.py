@@ -2,6 +2,7 @@
 last-administrator invariant, and input normalisation. Every rule here is enforced
 server-side and independent of what the frontend shows."""
 
+import dataclasses
 import re
 import uuid
 
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import (
     AccessScope,
+    EffectiveAccess,
     active_administrator_ids,
     load_effective_access,
     visible_rack_ids_query,
@@ -213,19 +215,75 @@ async def get_group_or_404(db: AsyncSession, group_id: uuid.UUID) -> UserGroup:
     return group
 
 
+async def _covers(db: AsyncSession, outer: EffectiveAccess | AuthContext, inner: EffectiveAccess) -> bool:
+    """`inner` <= `outer` in the authority order: `inner` holds no permission and no
+    site/rack scope that `outer` lacks."""
+    return inner.permission_codes <= outer.permission_codes and await scope_contains(db, outer.scope, inner.scope)
+
+
+async def actor_strictly_outranks(db: AsyncSession, ctx: AuthContext, target: EffectiveAccess) -> str | None:
+    """Delegated-administration rule. Effective authority is the pair (permissions, scope),
+    ordered component-wise: permissions by set inclusion, scope by `scope_contains`. That is
+    a partial order, so no numeric rank is invented. The actor strictly outranks the target
+    only when target <= actor AND NOT actor <= target. Returns None on success, else the
+    reason:
+      * "exceeds"    the target holds a permission or scope the actor lacks, which also
+                     covers incomparable principals (safe default: reject);
+      * "equal"      identical effective authority (a peer)."""
+    if not await _covers(db, ctx, target):
+        return "exceeds"
+    actor_as_access = EffectiveAccess(
+        user_id=ctx.user.id, permission_codes=ctx.permission_codes, role_names=ctx.role_names, scope=ctx.scope
+    )
+    if await _covers(db, target, actor_as_access):
+        return "equal"
+    return None
+
+
 async def assert_actor_outranks_users(db: AsyncSession, ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
-    """A user may not administer someone whose effective permissions or data scope exceed
-    their own (prevents a delegated admin from disabling, re-passwording, re-grouping or
-    denying a more powerful user, or one whose scope lies wholly or partly elsewhere).
-    Every route that changes what another user can do must go through this check."""
+    """A user may administer another user only when they STRICTLY outrank them (see
+    `actor_strictly_outranks`): the target's permissions and site/rack scope lie within the
+    actor's and the two are not identical. Peers, wider, and incomparable principals are all
+    refused. Every route that changes what another user can do must go through this check,
+    before it is made. Granting a user permissions or scope the actor holds is still delegation
+    (see `assert_can_grant_*`); it never lets the actor create authority beyond their own."""
     others = user_ids - {ctx.user.id}
     if not others:
         return
     for access in (await load_effective_access(db, list(others))).values():
-        if not access.permission_codes <= ctx.permission_codes:
-            raise ForbiddenError("You cannot administer a user who holds permissions you do not hold.")
-        if not await scope_contains(db, ctx.scope, access.scope):
-            raise ForbiddenError("You cannot administer a user whose site or rack access exceeds yours.")
+        reason = await actor_strictly_outranks(db, ctx, access)
+        if reason == "exceeds":
+            raise ForbiddenError(
+                "You cannot administer a user whose permissions or site/rack access exceed or differ from yours."
+            )
+        if reason == "equal":
+            raise ForbiddenError("You cannot administer a user with the same effective authority as yours.")
+
+
+async def begin_authority_change(db: AsyncSession, ctx: AuthContext, permission: str) -> AuthContext:
+    """Serialises every authority-changing mutation and returns the actor's CURRENT context.
+    The context resolved at request start can be stale by the time the mutation commits (a
+    concurrent membership/grant change could shrink the actor or promote the target after the
+    check). A transaction-scoped advisory lock makes such mutations run one at a time, and the
+    actor is re-read after the lock is held, so every later check sees all earlier commits
+    (READ COMMITTED). The lock is released at commit/rollback. Lock order is always this lock,
+    then the last-administrator lock."""
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext('dcim.authority_change'))"))
+    active = (
+        await db.execute(select(User.is_active).where(User.id == ctx.user.id).execution_options(populate_existing=True))
+    ).scalar_one_or_none()
+    if not active:
+        raise ForbiddenError("Your account is no longer active.")
+    access = (await load_effective_access(db, [ctx.user.id]))[ctx.user.id]
+    if permission not in access.permission_codes:
+        raise ForbiddenError(f"Permission {permission} is required.")
+    return dataclasses.replace(
+        ctx,
+        permission_codes=access.permission_codes,
+        role_names=access.role_names,
+        scope=access.scope,
+        inactive_permissions=access.inactive_permissions,
+    )
 
 
 async def assert_actor_outranks_target(db: AsyncSession, ctx: AuthContext, target_user_id: uuid.UUID) -> None:
@@ -233,7 +291,7 @@ async def assert_actor_outranks_target(db: AsyncSession, ctx: AuthContext, targe
 
 
 async def assert_can_modify_group(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
-    """Changing a group changes every member's access, so the actor must outrank all
+    """Changing a group changes every member's access, so the actor must strictly outrank all
     current members, and (if site-restricted) the group's own site grants must lie within
     the actor's scope. Closes cross-site group tampering and deny-group lockouts."""
     members = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
