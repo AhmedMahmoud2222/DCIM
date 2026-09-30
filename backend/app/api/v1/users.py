@@ -341,11 +341,13 @@ async def get_effective_access(
     else:
         rows = (await db.execute(select(Site).where(Site.id.in_(access.scope.site_ids)).order_by(Site.code))).scalars().all()
         for site in rows:
+            if not ctx.scope.allows_site(site.id):
+                continue  # never disclose another site's grants to a site-restricted actor
             full = site.id in access.scope.full_site_ids
             sites.append(
                 EffectiveSite(
                     site_id=site.id, code=site.code, name=site.name, rack_scope="all" if full else "selected",
-                    rack_ids=[] if full else sorted(await _selected_racks(db, access, site.id), key=str),
+                    rack_ids=[] if full else sorted(await _selected_racks(db, access, site.id, ctx.scope), key=str),
                 )
             )
     return EffectiveAccessOut(
@@ -357,5 +359,9 @@ async def get_effective_access(
     )
 
 
-async def _selected_racks(db: AsyncSession, access, site_id: uuid.UUID) -> list[uuid.UUID]:
-    return await visible_rack_ids_in_site(db, access.scope, site_id)
+async def _selected_racks(db: AsyncSession, access, site_id: uuid.UUID, actor_scope=None) -> list[uuid.UUID]:
+    racks = await visible_rack_ids_in_site(db, access.scope, site_id)
+    if actor_scope is not None and not actor_scope.unrestricted:
+        allowed = set(await visible_rack_ids_in_site(db, actor_scope, site_id))
+        racks = [r for r in racks if r in allowed]
+    return racks

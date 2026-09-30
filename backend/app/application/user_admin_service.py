@@ -9,6 +9,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import (
+    AccessScope,
     active_administrator_ids,
     load_effective_access,
     visible_rack_ids_query,
@@ -21,7 +22,9 @@ from app.domain.auth.models import (
     RolePermission,
     User,
     UserGroup,
+    UserGroupMember,
     UserGroupPermission,
+    UserGroupRackAccess,
     UserGroupSiteAccess,
 )
 from app.domain.location.models import Site
@@ -75,24 +78,71 @@ def assert_can_grant_permissions(ctx: AuthContext, codes: set[str]) -> None:
         raise ForbiddenError(f"You cannot grant permissions you do not hold: {', '.join(missing[:10])}")
 
 
+async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope) -> bool:
+    """True when everything `inner` can see, `outer` can see too: every site, every
+    `rack_scope=all` site, and every individually selected rack. Compared on granted
+    scope, so a wider rack scope inside a shared site is correctly reported as wider."""
+    if outer.unrestricted:
+        return True
+    if inner.unrestricted:
+        return False
+    if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
+        return False
+    wanted = inner.rack_ids - outer.rack_ids
+    if not wanted:
+        return True
+    visible_sub = visible_rack_ids_query(outer).subquery()
+    seen: set[uuid.UUID] = set(
+        (await db.execute(select(visible_sub.c.rack_id).where(visible_sub.c.rack_id.in_(wanted)))).scalars()
+    )
+    return wanted <= seen
+
+
+def scope_from_entries(entries: list[tuple[uuid.UUID, str, list[uuid.UUID]]]) -> AccessScope:
+    """Builds the scope a set of (site_id, rack_scope, rack_ids) grants would confer."""
+    return AccessScope(
+        unrestricted=False,
+        site_ids=frozenset(site for site, _, _ in entries),
+        full_site_ids=frozenset(site for site, scope, _ in entries if scope == "all"),
+        rack_ids=frozenset(rack for _, scope, racks in entries if scope != "all" for rack in racks),
+    )
+
+
+async def group_scope(db: AsyncSession, group_id: uuid.UUID) -> AccessScope:
+    rows = (
+        await db.execute(
+            select(UserGroupSiteAccess.id, UserGroupSiteAccess.site_id, UserGroupSiteAccess.rack_scope).where(
+                UserGroupSiteAccess.group_id == group_id
+            )
+        )
+    ).all()
+    racks: dict[uuid.UUID, list[uuid.UUID]] = {}
+    if rows:
+        for access_id, rack_id in (
+            await db.execute(
+                select(UserGroupRackAccess.site_access_id, UserGroupRackAccess.rack_id).where(
+                    UserGroupRackAccess.site_access_id.in_([r[0] for r in rows])
+                )
+            )
+        ).all():
+            racks.setdefault(access_id, []).append(rack_id)
+    return scope_from_entries([(site, scope, racks.get(access_id, [])) for access_id, site, scope in rows])
+
+
 async def assert_can_grant_sites(
-    db: AsyncSession, ctx: AuthContext, site_ids: set[uuid.UUID], rack_ids: set[uuid.UUID]
+    db: AsyncSession, ctx: AuthContext, entries: list[tuple[uuid.UUID, str, list[uuid.UUID]]]
 ) -> None:
-    """The actor's own site/rack scope bounds what they can hand out."""
+    """The actor's own site/rack scope bounds what they can hand out, including the rack
+    scope inside a shared site (an actor limited to some racks cannot grant `all`)."""
+    site_ids = {site for site, _, _ in entries}
     if site_ids:
         existing = set((await db.execute(select(Site.id).where(Site.id.in_(site_ids)))).scalars())
         if existing != site_ids:
             raise ValidationFailed("One or more sites do not exist.")
     if ctx.scope.unrestricted:
         return
-    outside = [s for s in site_ids if s not in ctx.scope.site_ids]
-    if outside:
-        raise ForbiddenError("You cannot grant access to sites outside your own access.")
-    if rack_ids:
-        visible_sub = visible_rack_ids_query(ctx.scope).subquery()
-        visible: set[uuid.UUID] = set((await db.execute(select(visible_sub.c.rack_id))).scalars())
-        if not rack_ids <= visible:
-            raise ForbiddenError("You cannot grant access to racks outside your own access.")
+    if not await scope_contains(db, ctx.scope, scope_from_entries(entries)):
+        raise ForbiddenError("You cannot grant site or rack access beyond your own access.")
 
 
 async def group_grants(db: AsyncSession, group_id: uuid.UUID) -> tuple[set[str], set[uuid.UUID]]:
@@ -113,10 +163,10 @@ async def group_grants(db: AsyncSession, group_id: uuid.UUID) -> tuple[set[str],
 async def assert_can_assign_group(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
     """Adding a user to a group hands them everything the group confers, so the actor must
     already hold all of it. Members of a group cannot manage that group's membership."""
-    codes, sites = await group_grants(db, group_id)
+    codes, _ = await group_grants(db, group_id)
     assert_can_grant_permissions(ctx, codes)
-    if not ctx.scope.unrestricted and not sites <= ctx.scope.site_ids:
-        raise ForbiddenError("You cannot assign a group that grants sites outside your own access.")
+    if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
+        raise ForbiddenError("You cannot assign a group that grants site or rack access beyond your own access.")
 
 
 async def assert_can_assign_role(db: AsyncSession, ctx: AuthContext, role: Role) -> None:
@@ -163,14 +213,30 @@ async def get_group_or_404(db: AsyncSession, group_id: uuid.UUID) -> UserGroup:
     return group
 
 
-async def assert_actor_outranks_target(db: AsyncSession, ctx: AuthContext, target_user_id: uuid.UUID) -> None:
-    """A user may not administer someone holding permissions they lack (prevents a
-    delegated admin from disabling, re-passwording or re-grouping a more powerful user)."""
-    if target_user_id == ctx.user.id:
+async def assert_actor_outranks_users(db: AsyncSession, ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
+    """A user may not administer someone whose effective permissions or data scope exceed
+    their own (prevents a delegated admin from disabling, re-passwording, re-grouping or
+    denying a more powerful user, or one whose scope lies wholly or partly elsewhere).
+    Every route that changes what another user can do must go through this check."""
+    others = user_ids - {ctx.user.id}
+    if not others:
         return
-    access = (await load_effective_access(db, [target_user_id]))[target_user_id]
-    if not access.permission_codes <= ctx.permission_codes:
-        raise ForbiddenError("You cannot administer a user who holds permissions you do not hold.")
-    if not ctx.scope.unrestricted and access.scope.unrestricted:
-        raise ForbiddenError("You cannot administer an unrestricted user.")
+    for access in (await load_effective_access(db, list(others))).values():
+        if not access.permission_codes <= ctx.permission_codes:
+            raise ForbiddenError("You cannot administer a user who holds permissions you do not hold.")
+        if not await scope_contains(db, ctx.scope, access.scope):
+            raise ForbiddenError("You cannot administer a user whose site or rack access exceeds yours.")
 
+
+async def assert_actor_outranks_target(db: AsyncSession, ctx: AuthContext, target_user_id: uuid.UUID) -> None:
+    await assert_actor_outranks_users(db, ctx, {target_user_id})
+
+
+async def assert_can_modify_group(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
+    """Changing a group changes every member's access, so the actor must outrank all
+    current members, and (if site-restricted) the group's own site grants must lie within
+    the actor's scope. Closes cross-site group tampering and deny-group lockouts."""
+    members = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
+    await assert_actor_outranks_users(db, ctx, members)
+    if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
+        raise ForbiddenError("You cannot modify a group that grants site or rack access beyond your own access.")
