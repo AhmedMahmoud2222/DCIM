@@ -1,7 +1,7 @@
 # DCIM01 Hostile Security Audit Report
 
-**Version:** 1.1
-**Date:** 2026-09-29 (executed on demand; the 23:30 UAE scheduled trigger was disabled at the owner's request)
+**Version:** 1.2
+**Date:** 2026-09-30 (v1.2 adds section 8, the PR #59 review; v1.1 dated 2026-09-29) (executed on demand; the 23:30 UAE scheduled trigger was disabled at the owner's request)
 **Baseline:** `main` at `f94f22078ae0316b1706fb86ba6705a0a364de44`
 **Open PRs at start:** #53 (docs only, head `674fc1bb74a4d8d8b2adbe8a84c5a533e2ea9ded`)
 **Reviewer note:** this is a single-pass review by an automated agent. It is not an independent penetration test, and CI status was not used as evidence.
@@ -146,3 +146,152 @@ Every remote branch, with its head SHA. "Ahead" counts commits not in `main`. Br
 | 8 | Owner decisions on #38 items SEC-02, 04, 06 | Not started |
 
 No PR was merged, no branch protection touched, and nothing was deployed.
+
+
+---
+
+# 8. PR #59 review (added in v1.2)
+
+**Scope:** PR #59, "user & group management with RBAC and site/rack access", treated as a security boundary implementation and as the candidate remediation for issue #57.
+**This section deliberately omits reproduction steps and payloads.** Exploit-relevant detail sits in the regression tests of the remediation PRs, which are unmerged, and in the linked issues at the level of the defect class only.
+
+## 8.1 Exact baseline
+
+| Item | SHA / state |
+|---|---|
+| `main` | `f94f22078ae0316b1706fb86ba6705a0a364de44` (unchanged since v1.1) |
+| PR #59 head / base | `6dac357eccb9a01aefaa9ff104ef987a1e654461` / `f94f22078ae0316b1706fb86ba6705a0a364de44`, mergeable, 2 commits, 24 files, +3078 / -86 |
+| PR #59 CI on that head | 11 of 12 checks pass; `github-advanced-security` fails before analysing any file (`CAPIError 400`, unsupported model, issue #52) |
+| PR #59 reviews | none; one author comment about the scanner failure |
+| Migration lineage | `0030_bulk_import_attempts` to `0031_user_groups`, single head |
+| #58 / #60 / #61 / #62 heads | `c57271f...` / `41b3190...` / `2e024cb...` / `39fe287...` (unchanged; all merge textually clean with #59 and with each other in that order) |
+
+Drift since v1.1: none on `main`. PR #59 has two commits, `8d22dfd` (feature) and `6dac357` (mypy fix); the author's scanner comment cites the first. Findings refer to head `6dac357` only.
+
+## 8.2 Method
+
+1. Full read of the #59 diff: access engine, RBAC context, user and group routes, the three scoped routers, migration.
+2. Dynamic tests on PostgreSQL 16 and Redis 7 through the real ASGI app: hostile-actor tests per the brief, an object-level Site A / Site B / Rack A / Rack B matrix, permission-composition and revocation tests, real overlapping transactions for administrator changes.
+3. Route sweep: all 178 operations in the OpenAPI schema called as a Site A user granted every permission the administrator holds. 121 refused (401/403); results explained in 8.5.
+4. Migration 0031 upgrade, downgrade and re-upgrade on a scratch database seeded with one user per default role.
+5. Interaction check against #58, #60, #61.
+Non-vacuity was checked: an early version of the sweep exercised no routes and was corrected before any result was used.
+
+## 8.3 Verdict on PR #59
+
+**Security status: BLOCKED until the remediation PRs below (or equivalents) are merged into it.** Four defects were confirmed dynamically against `6dac357`. The core object-level scoping of locations, racks and equipment held up under test.
+
+| ID | Severity (est.) | Issue | Status | Remediation PR |
+|---|---|---|---|---|
+| SEC-RBAC-59-01 rank check ignores scope; group route skips it | High (8.8) | #63 | Confirmed, fix proposed | #67 |
+| SEC-RBAC-59-02 rack scope can be widened | Medium (6.5) | #64 | Confirmed, fix proposed | #67 |
+| SEC-RBAC-59-03 cross-site group tampering and disclosure | Medium-High (7.1) | #65 | Confirmed, fix proposed | #67 |
+| SEC-RBAC-59-04 import jobs readable across scope | Medium (5.3) | #66 | Confirmed, fix proposed | #68 |
+
+## 8.4 Verified properties (tested, passing on `6dac357`)
+
+- Site A user gets 404 for Site B racks, equipment, sites, rooms, organizations, elevation and ports, and for writes against them (update, move, retire, create into a Site B room, move a Site A rack into Site B).
+- List endpoints exclude Site B objects and report totals that match the returned items; a `site_id` filter for another site returns nothing.
+- Rack-limited users see only their selected racks and the equipment in them; equipment placed directly in a room needs `rack_scope=all`.
+- Unknown and foreign ids are indistinguishable (same status and title).
+- A rack grant does not follow a rack moved to another site.
+- Union of sites and racks across groups; `all` wins over `selected`; a group `deny` beats an allow from another group and from a role; a user with permissions but no sites sees nothing.
+- Removing a rack, site or membership, deleting a group, and deactivating a user all take effect on the next request.
+- Password policy (12 to 256 characters) applies to create and reset; passwords never appear in responses or the audit log; login errors are identical for unknown, wrong and deactivated accounts; email case is normalised the same way as login.
+- Two administrators deactivating each other concurrently (5 rounds, separate sessions) always leave one active.
+- Migration 0031 (see 8.6).
+
+## 8.5 Authorization coverage matrix (restricted Site A user)
+
+"Reachable" means the route answers with anything other than 401/403 for a restricted user holding every permission. Evidence: route sweep plus object-level tests.
+
+| Resource family | Restricted-user behaviour | Coverage |
+|---|---|---|
+| Organizations, countries, cities, sites, buildings, floors, rooms | Scoped lists; by-id reads 404 outside scope | **Remediated by #59** (tested) |
+| Racks (read, update, move, retire, elevation, create) | Scoped; out of scope is 404 | **Remediated by #59** (tested) |
+| Equipment (list, get, ports) | Scoped | **Remediated by #59** (tested) |
+| Equipment mutations, placement, cabling, instantiate | Refused: permissions not site-aware, so inactive | Blocked, not scoped |
+| Users and groups (administration) | Reachable | Defects #63, #64, #65; **partially remediated** |
+| Import jobs (read, rows, report, commit, cancel) | Reachable for read of any job | **Newly exposed** #66 |
+| Import upload | Refused (import permissions inactive) | Blocked, not scoped |
+| Catalog reference data (rack and equipment models, revisions, graphics) | Reachable, read only | Global reference data, no site content; accepted |
+| Collector machine endpoints (heartbeat, ingest, telemetry) | HMAC-authenticated, not user sessions | Separate trust boundary; collectors are not site-scoped |
+| Alarms, telemetry queries, power, capacity, dashboard, floor plans, spatial, impact, discovery, integrations, collector management, managed assets, audit, settings | Refused | **Not remediated**: unavailable to restricted users; unrestricted users unchanged |
+| Celery and background jobs | Reachable only through the import routes above | Covered by #66 |
+| Realtime or WebSocket paths | None found in the API | n/a |
+
+## 8.6 Migration 0031 assessment
+
+- Upgrade from `0030`, downgrade, re-upgrade: all succeed with data present; users preserved; single Alembic head.
+- Adds five tables and three permissions; no existing user, role or grant changes. After upgrade, on a seeded scratch database: Administrator 46 to 49 permissions (only the three new ones), DCIM Manager 37, Engineer 28, Operator 19, Viewer 16 (unchanged), all still unrestricted; a user with no role still holds zero permissions and no site access. No existing non-administrator gains site or rack access.
+- Foreign keys cascade correctly (group, member, permission, site access, rack access); `effect` and `rack_scope` are CHECK-constrained; group names are unique case-insensitively.
+- Locking: new tables only; adding foreign keys takes brief locks on `app_user`, `permission`, `site` and `managed_asset`. No table rewrite. Not load-tested on a large database.
+- Not covered: PostgreSQL versions other than 16; behaviour with an Administrator role that has been renamed or removed (the migration would fail loudly).
+
+## 8.7 Reconciliation of issue #57
+
+| Part of #57 | Classification |
+|---|---|
+| Site scope enforced for locations, racks, equipment | **Remediated by #59** for restricted users (tested) |
+| Rack-level scope inside a site | **Partially remediated**: enforced on reads and mutations; group assignment could widen it until #64 is fixed |
+| Delegated administration respects scope | **Newly exposed** (#63, #64, #65) |
+| Imports | **Newly exposed** (#66) |
+| Alarms, telemetry, power, dashboard, floor plans, spatial, impact, discovery, integrations, collectors, managed assets, audit | **Not remediated**: blocked for restricted users |
+| Tenant isolation | **Requires architectural work**: there is no tenant entity; organizations are visible when they contain a granted site |
+| Collector and telemetry ingestion by site | **Requires architectural work**: collectors and integrations carry no site link |
+| Cross-cutting: scope for global reference data, audit log, caching of effective access | **Requires architectural work** |
+
+**Do not close #57.** #59 delivers scoping for three modules and a fail-closed default for the rest.
+
+## 8.8 Interactions with #58, #60, #61
+
+- No textual or semantic conflict found: #59 touches neither `auth_service.py`, `auth.py` nor `errors.py`. All four merge cleanly in sequence, and the combined tree passes the auth, throttle, refresh and group suites (see 8.9).
+- #59 deactivation revokes refresh tokens; with #58 a later replay of such a token triggers the reuse path, which is harmless.
+- #60 throttles by email: an administrator password reset does not clear a locked account's counter; an anonymous caller can lock a known account for 15 minutes (already recorded as the accepted cost in #60).
+
+## 8.9 Test and CI evidence
+
+| Check | Result |
+|---|---|
+| Baseline: #59's own 28 tests on its head `6dac357` (local PostgreSQL 16, Redis 7) | pass |
+| Hostile tests against `6dac357` before any fix | **10 of 10 fail** (delegation boundary) and **2 of 2 fail** (import jobs); control tests pass |
+| #67 (`808707a`): new tests | 13 pass (10 fixed defects plus 3 positive controls) |
+| #67 full backend suite, local | **845 passed** |
+| #67 GitHub CI (8 checks: backend on Python 3.12, 3.13, 3.14, frontend, browser E2E, edge collector, code scanning) | all success |
+| #68 (`e150222`): new tests, `test_bulk_import*`, `test_user_groups` | 36 and 40 pass; GitHub CI 8 of 8 success |
+| #69 (`d26cc2d`): coverage tests | 14 pass |
+| Combined tree: #58, #60, #61, #59, #67, #68, #69 merged in order (`8bedbf4`), full backend suite, local | **871 passed**, no textual conflicts |
+| Route sweep (178 operations as a restricted user with every permission) | 121 refused; reachable set limited to reviewed modules, catalogs, collector machine endpoints, import jobs |
+| Migration 0031 upgrade, downgrade, re-upgrade with seeded users | pass |
+| `ruff`, `mypy app` on every fix branch | clean |
+
+Not run: `test_mvp_retention_hostile.py` locally (the earlier v1.1 runs also excluded it; GitHub CI runs it), Playwright locally, the code-scanning AI check on PR #59 itself (fails on the scanner's model configuration, issue #52).
+
+## 8.10 Untested, and residual risk
+
+- User and group directories stay readable to delegated administrators (needed to assign members).
+- Effective access is computed per request; no load test.
+- Access tokens stay valid for their 15-minute life after a password reset (deactivation is immediate because the user row is checked on every request).
+- Frontend `/admin` pages were not security-reviewed beyond confirming the server enforces every rule independently.
+- Playwright end-to-end, container image scanning, and non-PostgreSQL-16 versions were not run.
+- Static analysis beyond the earlier Bandit run was not repeated on the #59 code.
+- Group `site_count` in group lists still reflects grants to sites the actor cannot see.
+
+## 8.11 Recommended next actions
+
+1. Review the delegation-boundary fix (#67) and import-job fix (#68), merge them into PR #59, and consider the coverage tests (#69) alongside, then re-run its CI, before #59 merges.
+2. Decide whether delegated administrators should see the full user directory.
+3. Add site linkage to import jobs (uploader-only is the interim rule).
+4. Scope the remaining modules one at a time and add each to the sweep test's expected-reachable list.
+5. Design tenant and collector-to-site models before enabling a second organization.
+6. Fix the code-scanning check (#52) so #59 gets a completed scan.
+
+## 8.12 Remediation PR index
+
+| PR | Purpose | Head | Base |
+|---|---|---|---|
+| #67 | Delegation boundary: scope and rank (fixes #63, #64, #65) | `808707a` | `feature/user-group-management` |
+| #68 | Import-job access (fixes #66) | `e150222` | `feature/user-group-management` |
+| #69 | Authorization coverage tests (refs #57) | `d26cc2d` | `feature/user-group-management` |
+
+All three are stacked on PR #59 and unmerged. Nothing was merged, deployed, or changed in branch protection.
