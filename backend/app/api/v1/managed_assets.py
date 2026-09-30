@@ -193,7 +193,9 @@ async def transition_lifecycle(
     before_status = asset.lifecycle_status
     asset.lifecycle_status = body.to_status
     if body.to_status == "decommissioned":
-        asset.decommissioned_at = datetime.now(UTC)
+        # The existing column is TIMESTAMP WITHOUT TIME ZONE. Store naive UTC to
+        # match that contract; asyncpg rejects an aware datetime for this column.
+        asset.decommissioned_at = datetime.now(UTC).replace(tzinfo=None)
     await db.flush()
 
     request_id, correlation_id = _request_ids(request)
