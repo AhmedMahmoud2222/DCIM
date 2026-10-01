@@ -46,14 +46,32 @@ async def issue_tokens(db: AsyncSession, *, user: User) -> tuple[str, str]:
 async def rotate_refresh_token(db: AsyncSession, *, refresh_token: str) -> tuple[str, str, User]:
     try:
         payload = decode_token(refresh_token, expected_type="refresh")
-    except jwt.PyJWTError as exc:
+        user_id = uuid.UUID(payload["sub"])
+        jti = payload["jti"]
+        if not isinstance(jti, str) or not jti:
+            raise ValueError("invalid token identifier")
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError, AttributeError) as exc:
         raise InvalidRefreshTokenError() from exc
 
-    jti = payload["jti"]
+    # Serialize all refresh operations for this user BEFORE locking a token. A
+    # token-only lock lets an UPDATE miss a different rotation's new successor
+    # under READ COMMITTED, and competing reuse requests can invert token locks.
+    user = (
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise InvalidRefreshTokenError()
     # FOR UPDATE serializes concurrent rotations of the same token: the second request
     # waits, then sees revoked_at set and takes the reuse path below instead of minting a
     # second live successor (SEC-AUTH-02).
-    stmt = select(RefreshToken).where(RefreshToken.jti == jti).with_for_update()
+    stmt = (
+        select(RefreshToken)
+        .where(RefreshToken.jti == jti, RefreshToken.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     record = (await db.execute(stmt)).scalar_one_or_none()
     if record is None:
         raise InvalidRefreshTokenError()
@@ -64,8 +82,7 @@ async def rotate_refresh_token(db: AsyncSession, *, refresh_token: str) -> tuple
     if record.expires_at < datetime.now(UTC):
         raise InvalidRefreshTokenError()
 
-    user = await db.get(User, uuid.UUID(payload["sub"]))
-    if user is None or not user.is_active:
+    if not user.is_active:
         raise InvalidRefreshTokenError()
 
     record.revoked_at = datetime.now(UTC)
@@ -92,9 +109,22 @@ async def _revoke_all_for_user_and_commit(db: AsyncSession, *, user_id: uuid.UUI
 async def revoke_refresh_token(db: AsyncSession, *, refresh_token: str) -> None:
     try:
         payload = decode_token(refresh_token, expected_type="refresh")
-    except jwt.PyJWTError:
+        user_id = uuid.UUID(payload["sub"])
+        jti = payload["jti"]
+        if not isinstance(jti, str) or not jti:
+            return
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError, AttributeError):
         return
-    stmt = select(RefreshToken).where(RefreshToken.jti == payload["jti"])
+    # Logout uses the same user -> token lock order as rotation/reuse.
+    user = (await db.execute(select(User).where(User.id == user_id).with_for_update())).scalar_one_or_none()
+    if user is None:
+        return
+    stmt = (
+        select(RefreshToken)
+        .where(RefreshToken.jti == jti, RefreshToken.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     record = (await db.execute(stmt)).scalar_one_or_none()
     if record is not None and record.revoked_at is None:
         record.revoked_at = datetime.now(UTC)
