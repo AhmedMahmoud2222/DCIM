@@ -83,3 +83,15 @@ One behavioural note: a `role_assignment` with a non-global `scope_type` previou
 * The UI creates group-only (site-restricted) users. Legacy role assignment is available on `POST /users` (`role_name`) but has no UI, and roles cannot be changed after creation.
 * Deleting a user who owns imports or catalog revisions is refused (409); deactivate instead.
 * Effective access is computed per request with a handful of queries; very large tenants may want caching.
+
+## Import jobs and site-restricted users (interim rule, product decision pending)
+Operations (bulk-import pipeline): upload and template download per domain (`POST|GET /racks|equipment|catalog/import-*`), and on `/import-jobs/{id}`: status, `/rows` (preview, `?status=invalid` for validation errors), `/report`, `/commit`, `/cancel`. There is no list or retry endpoint.
+
+Current behaviour: a site-restricted caller may touch a job only if they uploaded it; any other job answers a 404 identical to a missing id, for every operation. Unrestricted callers keep the earlier behaviour (a holder of `rack:read` / `equipment:read` can read any job of that type; `catalog` jobs need `catalog:read`).
+
+What the acceptance tests show (`tests/api/test_pr68_import_job_acceptance.py`):
+* `rack:import`, `equipment:import` and `catalog:import` are not site-aware, so they are inactive for a restricted user. A restricted user therefore cannot upload, commit or cancel, and the only jobs they can "own" are ones uploaded while they were unrestricted. Today that needs a direct database change (roles cannot change through the API).
+* Uploader ownership alone does not equal scope: a historical owner keeps read access to a job whose rows describe rooms outside their current scope. The tests pin this behaviour; they do not endorse it.
+* No site or rack link has been added to jobs and the scope model is unchanged.
+
+Decision needed before import is made available to restricted users (affected operations in brackets): (a) deny all import-job reads to restricted callers regardless of ownership [status, rows, report]; (b) keep uploader-only; (c) link jobs to a site and filter rows and reports by scope, which also needs scope checks in the row validators and commit, because they resolve rooms and racks by code without consulting the caller's scope [all operations, including upload and commit]. Until (c) exists, `*:import` must stay outside `SCOPE_AWARE_PERMISSIONS`.
