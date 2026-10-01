@@ -1,6 +1,6 @@
 # DCIM01 remediation and final-tree validation: handoff for independent review
 
-**Document version: v1.0** (2026-10-01). Prepared by the remediation and validation agent for the independent Codex review. Documentation only. Nothing here is merged, deployed or closed. The repository owner keeps final merge authorization.
+**Document version: v1.1** (v1.0: draft; v1.1: heads refreshed, final-tree results filled, open defects added) (2026-10-01). Prepared by the remediation and validation agent for the independent Codex review. Documentation only. Nothing here is merged, deployed or closed. The repository owner keeps final merge authorization.
 
 ## 1. Live state and drift (observed 2026-10-01)
 
@@ -28,10 +28,10 @@ Tooling (checked before claiming dynamic validation): Git yes; PostgreSQL 16.14 
 | PR | Branch | Head | Base branch | Content |
 |---|---|---|---|---|
 | #80 | `claude/dcim01-pr70-clamd-fail-closed` | `1521104` | #70 | strict, bounded clamd reply parser |
-| #81 | `claude/dcim01-pr67-strict-authority` | `17e95ec` | #67 | strict outranking; reuses candidate `claude/pr67-equal-authority-fix-5vg7ee` (`70d0084`) |
-| #82 | `claude/dcim01-pr68-import-job-acceptance` | `4bcaeb4` | #68 | acceptance matrix, contract note |
-| #83 | `claude/dcim01-pr69-nonvacuous-authz-matrix` | `70a12eb` | #69 | non-vacuous matrix, exact sweep |
-| #84 | `claude/dcim01-pr71-lifecycle-verification` | `ea0e0ce` | #71 | tests only |
+| #81 | `claude/dcim01-pr67-strict-authority` | `e2df933` | #67 | strict outranking; reuses candidate `claude/pr67-equal-authority-fix-5vg7ee` (`70d0084`) |
+| #82 | `claude/dcim01-pr68-import-job-acceptance` | `d92fd77` | #68 | acceptance matrix, contract note |
+| #83 | `claude/dcim01-pr69-nonvacuous-authz-matrix` | `30d38db` | #69 | non-vacuous matrix, exact sweep |
+| #84 | `claude/dcim01-pr71-lifecycle-verification` | `ea58739` | main | tests only |
 | none | `claude/dcim01-audit-v1.3-corrections` | `967775c` | `security/dcim01-audit-v1.3` | v1.3.1 documentation, no PR opened on purpose |
 
 ## 3. #67, strict authority dominance (PR #81)
@@ -68,7 +68,7 @@ Write paths: `transition_lifecycle` is the only mover of an existing asset. Bulk
 
 **This is a throwaway local simulation. It was never pushed and never merged into remote main.**
 
-Base `origin/main` `8f593e8`. Merge order, each `--no-ff`:
+Base `origin/main` `aadaa37` (already contains #71, merged by the owner; #84 now targets `main`). Merge order, each `--no-ff`:
 
 | # | Source | Source SHA | Result |
 |---|---|---|---|
@@ -76,24 +76,31 @@ Base `origin/main` `8f593e8`. Merge order, each `--no-ff`:
 | 2 | #60 `security/sec-auth-01-login-throttle` | `41b3190` | clean |
 | 3 | #61 `security/sec-ci-01-workflow-permissions` | `2e024cb` | clean |
 | 4 | #59 `feature/user-group-management` | `6dac357` | clean |
-| 5 | #81 `claude/dcim01-pr67-strict-authority` (carries #67 `808707a` and the candidate) | `17e95ec` | clean |
-| 6 | #82 `claude/dcim01-pr68-import-job-acceptance` (carries #68 `e150222`) | `4bcaeb4` | conflict in `docs/USER_GROUP_MANAGEMENT.md` (both append at the end); kept both sections |
-| 7 | #83 `claude/dcim01-pr69-nonvacuous-authz-matrix` (carries #69 `d26cc2d`) | `70a12eb` | clean |
+| 5 | #81 `claude/dcim01-pr67-strict-authority` (carries #67 `808707a` and the candidate) | `e2df933` | clean |
+| 6 | #82 `claude/dcim01-pr68-import-job-acceptance` (carries #68 `e150222`) | `d92fd77` | conflict in `docs/USER_GROUP_MANAGEMENT.md` (both append at the end); kept both sections |
+| 7 | #83 `claude/dcim01-pr69-nonvacuous-authz-matrix` (carries #69 `d26cc2d`) | `30d38db` | clean |
 | 8 | #80 `claude/dcim01-pr70-clamd-fail-closed` (carries #70 `b9ee791`, which already contains #59 through a merge commit) | `1521104` | clean |
-| 9 | #84 `claude/dcim01-pr71-lifecycle-verification` (carries #71 `ff19127` and #76) | `ea0e0ce` (after two earlier test-only revisions `8550fc1`, `31fbef4`) | clean |
+| 9 | #84 `claude/dcim01-pr71-lifecycle-verification` (carries #71 `ff19127` and #76) | `ea58739` | clean |
 | 10 | #79 `security/ci-alembic-single-head` | `28f7d48` | clean (its `ci.yml` change merges with #61's) |
 
 `.github/workflows/ci.yml` is touched by #61 and #79 and did not conflict. #62 (audit report) was not part of the simulation.
 
-Final simulated commit: `74f32b24d96bbfb984eeb97ca757cfde5389bf5d`, tree `36d96676ac229fd30fec3e8026cc67dc4cb8765b`. Earlier states of the same simulation (`95e59e7` tree `146dda8e`, `39a1ded` tree `3adc0539`) differ only in one backend test file; frontend, Edge Collector, migration, Compose-config and E2E results were produced on those earlier states and are marked below.
+Final simulated commit: `a9ab4b9923a94e4af8a4eaf494211d5f94cfd5fa`, tree `7dfbfe7fee2bb24ed6bf8539158b617b7bfed342` (branch `local-sim/final-tree2`, local only). Only the two #59-stack documentation merges conflicted (`docs/USER_GROUP_MANAGEMENT.md`, both sides append); I kept both sections. An earlier simulation (`557bf08`) predates the #81 stale-grant commit and the #84 revision; its frontend, Edge Collector and E2E results are marked as produced on that earlier tree.
 
 Alembic: exactly one head, `0032_catalog_documents`, chain `0030_bulk_import_attempts -> 0031_user_groups -> 0032_catalog_documents`; gate `scripts/check_alembic_single_head.py` prints `OK: single Alembic head 0032_catalog_documents`.
 
-Results (RESULTS_TABLE)
+Backend, exact final tree `a9ab4b9` (fresh PostgreSQL database at Alembic head, Redis, nothing running concurrently):
+
+| Run | Passed | Failed | Skipped |
+|---|---|---|---|
+| Full backend suite excluding the retention-hostile file (as CI does) | **1352** | 0 | 0 |
+| `tests/integration/test_mvp_retention_hostile.py` (as CI runs it separately) | **6** | 0 | 0 |
+
+Single Alembic head confirmed on this tree (`OK: single Alembic head 0032_catalog_documents`). Frontend, Edge Collector, migration round trip, Compose config and browser E2E ran on the earlier simulation tree `557bf08` and were not repeated on `a9ab4b9`; the later differences touch backend tests and the authority scope code only. Compose runtime smoke was not run (section 11).
 
 Ancestry and squash: #70's branch contains #59 through a merge commit, so after #59 is squash-merged its history does not contain main's squash commit; retargeting #70 (and #67, #68, #69, #80 to #84, which stack on those) to `main` shows #59's diff again until `main` is merged into each branch, which is content-neutral. `required_linear_history` forbids merge commits on `main`, so squash is the workable method for branches that contain merge commits (#70, #80). A squash creates one GitHub-signed commit per PR and loses per-commit authorship. Each child's CI must re-run after retargeting. #71 and #79 target `main` directly and are independent of the #59 stack. #79's gate passes on `main` alone and on the combined tree, and fails on the unfixed #59 plus #70 combination.
 
-## 8. Why #71 is not mergeable yet
+## 8. #71 merge requirements (history: #71 has since been merged by the owner)
 
 Live: `behind` (4 documentation commits behind main). The active ruleset "Default Policy" (target: default branch; owner may bypass; I did not) requires: no deletion, no force push, **linear history**, **signed commits**, a **pull request** (0 approvals, thread resolution, "extra approval for unattributed changes"), and the checks **`backend` and `frontend`**, **up to date with main**. Checks `backend` and `frontend` are green on `ff19127`. Commit verification: `ff19127` is authored and committed by `t <t@t>` (reason `no_user`), `dc858eb` and `9bbd979` are `unsigned`.
 
@@ -123,3 +130,17 @@ The successes on #71 and #79 are not evidence of analysis: the #71 log shows no 
 ## 12. Exact heads for review
 
 PR heads and the simulation SHAs are in sections 2 and 7. Reproduce a fail-before by copying a PR's new test files onto the base head named in the table and running them; test files that import new helper names are split out and are not used as reproductions.
+
+| PR | Head |
+|---|---|
+| #80 | `15211049e97ef8eb6f1bba964ff5cc6173357c3a` |
+| #81 | `e2df9332eda6601f367a004cb2f719f18edbb410` |
+| #82 | `d92fd773c4556dcc07500a7d055ba242e1563356` |
+| #83 | `30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584` |
+| #84 | `ea58739c41ed305ebc8c5d70a0f27d48f90c81f2` |
+| main | `aadaa37` |
+
+## 13. Open defects found during re-review (not fixed in these heads)
+
+1. **#81 delegation regression (blocker).** `e2df933` normalised stale selected-rack grants inside `scope_contains` for every caller. An actor can then assign a user to a group that carries a stale rack grant the actor does not hold (`17e95ec` returns 403, `e2df933` returns 200); if the rack later returns to the site, the grant revives. Fix: normalise only in the reverse containment of `actor_strictly_outranks`; keep raw ids for target-within-actor, group assignment, grant checks and post-state; add the probe as a regression test. A comment on #81 cites a local commit `fcfd358` implementing this; it is not on GitHub and I could not verify it. Not applied by me.
+2. **#82 test gaps.** Templates are never requested; the upload-denial assertion accepts 403 or 404; the historical-owner report case accepts 200 or 409 on a parsed-only job. Probe: rack and equipment templates return 200 and catalog returns 403 for a restricted user.
