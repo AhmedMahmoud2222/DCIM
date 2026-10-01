@@ -19,7 +19,7 @@ from app.application.audit_service import write_audit_log
 from app.application.catalog_designer_service import lock_draft_revision_for_edit
 from app.application.catalog_documents.malware_scan import ClamdScanner, MalwareDetected, MalwareScanner, ScannerUnavailable
 from app.application.catalog_documents.pdf_validation import PdfRejected
-from app.application.catalog_documents.service import attach_document, stage_document
+from app.application.catalog_documents.service import attach_document, sanitize_filename, stage_document
 from app.application.concurrency import require_if_match
 from app.application.rbac import AuthContext, require_catalog_administrator, require_permission
 from app.core.config import Settings, get_settings
@@ -144,7 +144,7 @@ async def _stage_or_reject(
         await write_audit_log(
             db, actor_user_id=actor_id, action="catalog.document.upload_rejected_malware", entity_type="catalog_document",
             entity_id=None, request_id=request_id, correlation_id=correlation_id,
-            after={"filename": (file.filename or "")[:255], "signature": exc.signature[:128]},
+            after={"filename": sanitize_filename(file.filename), "signature": exc.signature[:128]},
         )
         await db.commit()
         raise ApiError(
@@ -243,6 +243,8 @@ async def download_document(
     document = await _load_document(db, document_id)
     if document.scan_status not in DOWNLOADABLE_SCAN_STATUSES:
         raise ApiError(status_code=409, title="Conflict", detail="This document did not pass malware scanning.")
+    if document.scan_status == "skipped" and get_settings().catalog_pdf_scan_mode == "required":
+        raise ApiError(status_code=409, title="Conflict", detail="This document was stored without a malware scan.")
     non_draft = (
         await db.execute(
             select(CatalogRevisionDocument.id)
