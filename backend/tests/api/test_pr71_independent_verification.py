@@ -70,7 +70,12 @@ async def _asset(client, headers, *path):
 
 
 async def _settle(*tasks):
-    """Cancel and drain request tasks so a failing assertion can never leave a transaction open for the next test."""
+    """Drain request tasks so a failing assertion can never leave a transaction open for the next test. Requests are
+    given time to finish first (the lock holder has been released by now); cancelling a request in the middle of its
+    transaction is what would leak the lock."""
+    live = [t for t in tasks if not t.done()]
+    if live:
+        await asyncio.wait(live, timeout=WAIT)
     for task in tasks:
         if not task.done():
             task.cancel()
