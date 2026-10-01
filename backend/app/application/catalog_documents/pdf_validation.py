@@ -20,7 +20,10 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from pypdf import PdfReader
 
 # Names whose presence means active or attachable content. `(?![A-Za-z0-9_.\-])` keeps `/JS`
 # from matching `/JSON`-style names and `/AA` from matching longer names.
@@ -33,6 +36,9 @@ _FORBIDDEN_ACTION_TYPES = frozenset(
     {"/JavaScript", "/Launch", "/SubmitForm", "/ImportData", "/GoToR", "/GoToE", "/Rendition", "/Sound", "/Movie"}
 )
 _MAX_ANNOTATIONS_SCANNED = 20000
+_MAX_OBJECTS_SCANNED = 200000
+_MAX_NODES_PER_OBJECT = 50000
+_FORBIDDEN_KEYS = frozenset({"/JS", "/AA", "/OpenAction", "/XFA", "/EF", "/RichMedia"})
 _TRAILER_WINDOW = 1024
 
 CHILD_TIMEOUT_SECONDS = 20
@@ -78,6 +84,44 @@ def _scan_action(action: object, where: str) -> None:
             _scan_action(item, where)
 
 
+def _scan_all_objects(reader: "PdfReader") -> None:
+    """Checks every parsed object, including those stored in compressed object streams that
+    the raw byte scan cannot see and the page/catalog walk may not reach (outlines, fields no
+    page references). Dictionary keys and `/S` action types are compared to the forbidden sets."""
+    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
+
+    xref = cast(dict, reader.xref)
+    compressed = cast(dict, reader.xref_objStm)
+    references = [(number, generation) for generation, entries in xref.items() for number in entries]
+    references += [(number, 0) for number in compressed]
+    if len(references) > _MAX_OBJECTS_SCANNED:
+        raise _reject("too_complex", "The PDF contains too many objects to inspect safely.")
+    for number, generation in references:
+        try:
+            obj = IndirectObject(number, generation, reader).get_object()
+        except Exception:  # noqa: BLE001  unreadable free or broken entries are the parser's concern
+            continue
+        pending = [obj]
+        visited = 0
+        while pending:
+            candidate = pending.pop()
+            visited += 1
+            if visited > _MAX_NODES_PER_OBJECT:
+                raise _reject("too_complex", "The PDF contains too deeply nested objects to inspect safely.")
+            if isinstance(candidate, ArrayObject):
+                # Indirect members are visited as objects of their own; only direct ones nest here.
+                pending.extend(item for item in candidate if not isinstance(item, IndirectObject))
+                continue
+            if not isinstance(candidate, DictionaryObject):
+                continue
+            if _FORBIDDEN_KEYS.intersection(candidate.keys()):
+                raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
+            action_type = candidate.get("/S")
+            if action_type is not None and str(action_type) in _FORBIDDEN_ACTION_TYPES:
+                raise _reject("active_content", f"PDF contains a {action_type} action.")
+            pending.extend(value for value in candidate.values() if not isinstance(value, IndirectObject))
+
+
 def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
     """Raises PdfRejected. Runs in the current process; API callers use
     `validate_pdf_isolated()`."""
@@ -119,6 +163,8 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
         acro_form = root.get("/AcroForm")
         if acro_form is not None and "/XFA" in cast(DictionaryObject, acro_form.get_object()):
             raise _reject("active_content", "PDF contains XFA forms.")
+
+        _scan_all_objects(reader)
 
         scanned = 0
         for index, page in enumerate(reader.pages):
