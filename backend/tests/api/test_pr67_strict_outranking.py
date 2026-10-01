@@ -32,6 +32,7 @@ async def world(client, admin, auth_headers):
     a = await _make_site(client, admin)
     b = await _make_site(client, admin, a["org"])
     return {
+        "room_a": a["room"],
         "a": a["site"],
         "b": b["site"],
         "rack_a1": await _make_rack(client, admin, auth_headers, a["room"]),
@@ -374,3 +375,23 @@ async def test_delegation_inside_a_strictly_subordinate_scope_is_permitted(clien
     assert (await client.patch(f"/api/v1/users/{reader['id']}", json={"is_active": False}, headers=h)).status_code == 200
     assert (await client.delete(f"/api/v1/groups/{team}", headers=h)).status_code == 204
     assert (await client.delete(f"/api/v1/users/{reader['id']}", headers=h)).status_code == 204
+
+
+# ------------------------------------------------------------------ stale selected-rack grants (Codex review, P1)
+async def test_a_stale_selected_rack_grant_does_not_make_a_peer_look_lower(client, admin, world, auth_headers):
+    """The actor's group still lists a rack that has since moved to a site neither user holds. Neither can see it, so the
+    two have identical effective authority and are peers: the actor must not be able to administer the other."""
+    other = await _make_site(client, admin)
+    moved = await _make_rack(client, admin, auth_headers, world["room_a"])
+    actor = await _principal(client, admin, BASE, [_entry(world["a"], "selected", [world["rack_a1"], moved])])
+    twin = await _principal(client, admin, BASE, [_entry(world["a"], "selected", [world["rack_a1"]])])
+    lower = await _principal(client, admin, BASE, [_entry(world["a"], "selected", [world["rack_a1"]])])
+    # control: while the extra rack is still visible to the actor, the actor really is strictly above the other two
+    assert (await USER_ROUTES["rename"](client, actor["headers"], lower["id"], lower["group"])).status_code == 200
+    # the rack moves to a site nobody in this scenario holds
+    mv = await client.post(f"/api/v1/racks/{moved}/move", json={"room_id": other["room"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)
+    assert mv.status_code == 200, mv.text
+    assert (await _effective(client, admin, actor["id"])) == (await _effective(client, admin, twin["id"]))
+    for route in ("password", "deactivate", "delete"):
+        _denied(await USER_ROUTES[route](client, actor["headers"], twin["id"], twin["group"]))
+    await _assert_user_untouched(client, admin, twin)

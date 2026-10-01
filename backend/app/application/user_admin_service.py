@@ -83,15 +83,25 @@ def assert_can_grant_permissions(ctx: AuthContext, codes: set[str]) -> None:
 
 async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope) -> bool:
     """True when everything `inner` can see, `outer` can see too: every site, every
-    `rack_scope=all` site, and every individually selected rack. Compared on granted
-    scope, so a wider rack scope inside a shared site is correctly reported as wider."""
+    `rack_scope=all` site, and every individually selected rack that is currently
+    visible. Compared on granted scope, so a wider rack scope inside a shared site is correctly reported as wider, while a
+    stale grant (rack moved out of the granted site) is ignored."""
     if outer.unrestricted:
         return True
     if inner.unrestricted:
         return False
     if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
         return False
-    wanted = inner.rack_ids - outer.rack_ids
+    # A selected-rack grant can outlive the rack's placement (the rack moved to a site `inner` is not granted). Such an id
+    # confers nothing today, so only racks `inner` can CURRENTLY see count; otherwise a stale grant would make a peer look
+    # strictly lower than the user holding it.
+    live: set[uuid.UUID] = set()
+    if inner.rack_ids:
+        inner_visible = visible_rack_ids_query(inner).subquery()
+        live = set(
+            (await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(inner.rack_ids)))).scalars()
+        )
+    wanted = live - outer.rack_ids
     if not wanted:
         return True
     visible_sub = visible_rack_ids_query(outer).subquery()
