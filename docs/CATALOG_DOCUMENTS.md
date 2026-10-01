@@ -42,6 +42,11 @@ same document rows; no bytes are copied.
    `required` (default) rejects the upload with 503 if the scanner is unreachable; `optional` records
    `scan_status=skipped`; `off` never scans. `ENVIRONMENT=production` refuses to start unless the mode is
    `required`. A detection is rejected with 422, written to the audit log, and nothing is stored.
+   Reply handling is strict: the scanner accepts only one NUL-terminated line (`stream: OK` or
+   `stream: <signature> FOUND`) followed by the daemon closing the connection, within 1024 bytes and the
+   configured timeout in total. An `ERROR` line, an empty, truncated, oversized or multi-verdict reply, a reply
+   that merely ends in `OK`, or a peer that never closes is "no verdict": `required` rejects the upload (503),
+   `optional` records `skipped`, and no mode records it as clean.
 4. Store as `<sha256>.pdf` via `StorageBackend` (`CATALOG_DOCUMENTS_STORAGE_ROOT`, default
    `media/catalog/documents`). The original filename is sanitized display text only.
 

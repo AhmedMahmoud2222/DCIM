@@ -3,6 +3,7 @@ EICAR test file's hash) so no signature download is needed. Skipped where clamd 
 installed (`apt-get install clamav-daemon`)."""
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -84,6 +85,40 @@ def test_real_clamd_detects_eicar_and_passes_clean_pdf(clamd_port):
     scanner = ClamdScanner("127.0.0.1", clamd_port, 30)
     assert scanner.scan(make_pdf("clean datasheet")) is None
     assert "Eicar" in (scanner.scan(EICAR) or "")
+
+
+def _raw_instream(port: int, content: bytes) -> tuple[bytes, bytes]:
+    """The bytes a real clamd sends back for `zINSTREAM`, and whatever follows them (b"" means it closed)."""
+    import struct
+
+    with socket.create_connection(("127.0.0.1", port), timeout=30) as sock:
+        sock.sendall(b"zINSTREAM\0" + struct.pack("!I", len(content)) + content + struct.pack("!I", 0))
+        reply = b""
+        while not reply.endswith(b"\0"):
+            part = sock.recv(4096)
+            assert part, f"clamd closed without terminating its reply: {reply!r}"
+            reply += part
+        sock.settimeout(5)
+        return reply, sock.recv(4096)
+
+
+def test_real_clamd_reply_framing_is_what_the_strict_parser_expects(clamd_port):
+    """Positive control for the parser: a real daemon's raw reply is one NUL-terminated line followed by
+    EOF, for a clean file and for an infected one."""
+    reply, after = _raw_instream(clamd_port, b"%PDF-1.4 harmless")
+    assert reply == b"stream: OK\0" and after == b""
+    reply, after = _raw_instream(clamd_port, EICAR)
+    assert re.fullmatch(rb"stream: Eicar[\x21-\x7e]* FOUND\0", reply), reply
+    assert after == b""
+    signature = reply[len(b"stream: ") : -len(b" FOUND\0")].decode()
+    assert ClamdScanner("127.0.0.1", clamd_port, 30).scan(EICAR) == signature
+
+
+def test_real_clamd_size_limit_error_is_no_verdict(clamd_port):
+    """StreamMaxLength is 25M in this fixture: one byte more makes clamd answer with an ERROR line and
+    drop the stream. The scanner must report no verdict, never clean."""
+    with pytest.raises(ScannerUnavailable):
+        ClamdScanner("127.0.0.1", clamd_port, 60).scan(b"0" * (25 * 1024 * 1024 + 1024))
 
 
 def test_real_clamd_scans_a_25mb_stream(clamd_port):
