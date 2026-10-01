@@ -123,22 +123,24 @@ async def test_a_transition_waits_for_a_row_lock_held_by_another_transaction(rac
     failing) and complete only after the holder releases. Without FOR UPDATE on the read, validation would run
     against the stale row and the request would not wait."""
     asset_id = await _asset(race_client, headers, "installed", "active")
-    async with db_engine.connect() as holder:
-        tx = await holder.begin()
-        await holder.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE"), {"i": asset_id})
-        pending = asyncio.create_task(_transition(race_client, headers, asset_id, "decommissioned"))
-        try:
-            await _until(lambda: _is_waiting(db_engine), "the request to block on the asset row lock")
-            assert not pending.done(), "the request finished while another transaction held the row"
-            assert (await _row(db_engine, asset_id))[0] == "active"
-        finally:
-            await tx.rollback()
+    pending = None
     try:
+        async with db_engine.connect() as holder:
+            tx = await holder.begin()
+            try:
+                await holder.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE"), {"i": asset_id})
+                pending = asyncio.create_task(_transition(race_client, headers, asset_id, "decommissioned"))
+                await _until(lambda: _is_waiting(db_engine), "the request to block on the asset row lock")
+                assert not pending.done(), "the request finished while another transaction held the row"
+                assert (await _row(db_engine, asset_id))[0] == "active"
+            finally:
+                await tx.rollback()
         resp = await asyncio.wait_for(pending, WAIT)
+        assert resp.status_code == 200, resp.text
+        assert (await _row(db_engine, asset_id))[0] == "decommissioned"
     finally:
-        await _settle(pending)
-    assert resp.status_code == 200, resp.text
-    assert (await _row(db_engine, asset_id))[0] == "decommissioned"
+        if pending is not None:
+            await _settle(pending)
 
 
 async def _is_waiting(engine):
@@ -191,16 +193,17 @@ async def test_competing_decommissions_one_wins_the_rest_are_rejected_safely(rac
             seen["max"] = max(seen["max"], await _waiters(db_engine))
             await asyncio.sleep(0.005)
 
-    async with db_engine.connect() as holder:  # force every contender to queue behind one lock, then release together
-        tx = await holder.begin()
-        await holder.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE"), {"i": asset_id})
-        watcher = asyncio.create_task(watch())
-        tasks = [asyncio.create_task(_transition(race_client, headers, asset_id, "decommissioned")) for _ in range(contenders)]
-        try:
-            await _until(lambda: _at_least(db_engine, contenders), f"all {contenders} contenders to queue on the row")
-        finally:
-            await tx.rollback()
+    watcher = asyncio.create_task(watch())
+    tasks: list[asyncio.Task] = []
     try:
+        async with db_engine.connect() as holder:  # force every contender to queue behind one lock, then release together
+            tx = await holder.begin()
+            try:
+                await holder.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE"), {"i": asset_id})
+                tasks = [asyncio.create_task(_transition(race_client, headers, asset_id, "decommissioned")) for _ in range(contenders)]
+                await _until(lambda: _at_least(db_engine, contenders), f"all {contenders} contenders to queue on the row")
+            finally:
+                await tx.rollback()
         results = await asyncio.wait_for(asyncio.gather(*tasks), WAIT * 2)
     finally:
         stop.set()
