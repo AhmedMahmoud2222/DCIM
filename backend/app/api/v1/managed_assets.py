@@ -178,7 +178,13 @@ async def transition_lifecycle(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("managed_asset:update_lifecycle")),
 ) -> ManagedAsset:
-    asset = await db.get(ManagedAsset, asset_id)
+    # Lock the row before validating the transition so concurrent transitions on one
+    # asset run one after the other and each validates against the committed status.
+    asset = (
+        await db.execute(
+            select(ManagedAsset).where(ManagedAsset.id == asset_id).with_for_update().execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
     if asset is None:
         raise NotFoundError(f"ManagedAsset {asset_id} not found.")
 
