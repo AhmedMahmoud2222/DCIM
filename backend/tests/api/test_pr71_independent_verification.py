@@ -168,21 +168,23 @@ async def test_the_row_lock_is_held_until_commit(race_client, headers, db_engine
     monkeypatch.setattr(module, "write_outbox_event", paused)
     request = asyncio.create_task(_transition(race_client, headers, asset_id, "decommissioned"))
     try:
-        await asyncio.wait_for(reached.wait(), WAIT)
-        async with db_engine.connect() as probe:
-            with pytest.raises(DBAPIError) as caught:
-                await probe.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE NOWAIT"), {"i": asset_id})
-            assert "lock" in str(caught.value).lower()
-        assert (await _row(db_engine, asset_id))[0] == "active", "uncommitted change must not be visible to other sessions"
-    finally:
-        release.set()
-    try:
+        try:
+            await asyncio.wait_for(reached.wait(), WAIT)
+            async with db_engine.connect() as probe:
+                with pytest.raises(DBAPIError) as caught:
+                    await probe.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE NOWAIT"), {"i": asset_id})
+                assert "lock" in str(caught.value).lower()
+            assert (await _row(db_engine, asset_id))[0] == "active", "uncommitted change must not be visible to other sessions"
+        finally:
+            release.set()
         resp = await asyncio.wait_for(request, WAIT)
+        assert resp.status_code == 200, resp.text
+        async with db_engine.connect() as probe:  # committed: the row is free again
+            await probe.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE NOWAIT"), {"i": asset_id})
     finally:
+        # also reached when the probe or a visibility assertion fails: never leave the request (and its row lock) running
+        release.set()
         await _settle(request)
-    assert resp.status_code == 200, resp.text
-    async with db_engine.connect() as probe:  # committed: the row is free again
-        await probe.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE NOWAIT"), {"i": asset_id})
 
 
 # ------------------------------------------------------------------ competing decommissions
