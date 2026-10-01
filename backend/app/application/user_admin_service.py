@@ -16,6 +16,7 @@ from app.application.access_control import (
     load_effective_access,
     visible_rack_ids_query,
 )
+from app.application.authority_lock import ADMIN_INVARIANT_LOCK_NAME, acquire_authority_lock
 from app.application.rbac import AuthContext
 from app.core.errors import ApiError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.auth.models import (
@@ -194,7 +195,7 @@ async def assert_administrator_remains(db: AsyncSession) -> None:
     after flush; the caller rolls back on failure. A transaction-scoped advisory lock
     serialises concurrent admin-affecting changes so two requests cannot each see the other
     administrator still present and both proceed."""
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext('dcim.admin_invariant'))"))
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:name))"), {"name": ADMIN_INVARIANT_LOCK_NAME})
     if not await active_administrator_ids(db):
         raise ConflictError(
             "This change would leave no active administrator (a user holding both user:manage and group:manage)."
@@ -260,15 +261,44 @@ async def assert_actor_outranks_users(db: AsyncSession, ctx: AuthContext, user_i
             raise ForbiddenError("You cannot administer a user with the same effective authority as yours.")
 
 
+async def assert_resulting_authority_within_actor(db: AsyncSession, ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
+    """Post-state guard, called after the change is flushed and before anything is committed.
+    The pre-mutation check (`assert_actor_outranks_users`) only proves the target is below the
+    actor NOW; removing a deny grant, a deny membership or a whole group can restore authority
+    the target already held elsewhere. Every surviving principal whose effective access the
+    change can alter must still satisfy `target <= actor` afterwards. Equality is allowed (that
+    is delegation: the actor conferred what they hold); exceeding the actor, or becoming
+    incomparable with the actor, is not. On failure the whole transaction (membership and grant
+    rows, password or token changes, audit rows) is rolled back and the locks are released."""
+    others = user_ids - {ctx.user.id}
+    if not others:
+        return
+    for access in (await load_effective_access(db, list(others))).values():
+        if not await _covers(db, ctx, access):
+            await db.rollback()
+            raise ForbiddenError(
+                "This change would give a user permissions or site/rack access that exceed or differ from yours."
+            )
+
+
+def assert_not_changing_own_membership(ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
+    """Nobody may add themselves to, or remove themselves from, a group. A group can hold a
+    deny grant, so a self-addition is a self-modification of effective permissions, and the
+    outranking check deliberately skips the actor."""
+    if ctx.user.id in user_ids:
+        raise ForbiddenError("You cannot change your own group memberships.")
+
+
 async def begin_authority_change(db: AsyncSession, ctx: AuthContext, permission: str) -> AuthContext:
     """Serialises every authority-changing mutation and returns the actor's CURRENT context.
     The context resolved at request start can be stale by the time the mutation commits (a
     concurrent membership/grant change could shrink the actor or promote the target after the
     check). A transaction-scoped advisory lock makes such mutations run one at a time, and the
     actor is re-read after the lock is held, so every later check sees all earlier commits
-    (READ COMMITTED). The lock is released at commit/rollback. Lock order is always this lock,
-    then the last-administrator lock."""
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext('dcim.authority_change'))"))
+    (READ COMMITTED). Rack-placement writers take the same lock shared, so a rack relocation
+    cannot commit between this decision and its commit either (see authority_lock.py for the
+    full lock order). The lock is released at commit/rollback."""
+    await acquire_authority_lock(db)
     active = (
         await db.execute(select(User.is_active).where(User.id == ctx.user.id).execution_options(populate_existing=True))
     ).scalar_one_or_none()

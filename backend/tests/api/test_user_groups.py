@@ -375,22 +375,35 @@ async def test_cannot_deactivate_or_delete_own_account(client, admin):
     assert (await client.delete(f"/api/v1/users/{me['id']}", headers=admin)).status_code == 403
 
 
-async def test_deny_that_would_remove_the_last_administrator_is_rolled_back(client, admin, make_user, db_session):
+async def test_deny_that_would_remove_the_last_administrator_is_refused(client, admin, make_user, db_session):
+    """A sole administrator can no longer be denied by adding itself to a deny group: nobody may change
+    their own group memberships (PR #67 remediation, Blocker 3), so that route is refused outright and
+    the membership is not written. The last-administrator invariant itself is covered at helper level
+    below, because no authenticated actor can now reach it through the API: an actor who strictly
+    outranks an administrator holds both administrator permissions and remains one."""
     gid = await _group(client, admin, allow=["user:manage", "user:read", "group:manage", "group:read"])
     user, _ = await _group_user(client, admin, [gid])
-    # Make the group member the only administrator.
     await db_session.execute(text("DELETE FROM role_assignment WHERE user_id <> :u"), {"u": user["id"]})
     await db_session.commit()
     root = await make_user("root2@example.com", PW, "Administrator")
     root_headers = await _login(client, "root2@example.com")
-    # Removing the member leaves `root` -> fine.
     assert (await client.put(f"/api/v1/groups/{gid}/members", json={"user_ids": []}, headers=root_headers)).status_code == 200
-    # Deleting the last role-based admin's only power path is blocked: deny on a group containing root.
     denier = await _group(client, root_headers, deny=["group:manage"])
     r = await client.put(f"/api/v1/groups/{denier}/members", json={"user_ids": [str(root.id)]}, headers=root_headers)
-    assert r.status_code == 409
+    assert r.status_code == 403
     detail = (await client.get(f"/api/v1/groups/{denier}", headers=root_headers)).json()
-    assert detail["member_ids"] == []  # rolled back
+    assert detail["member_ids"] == []
+
+
+async def test_last_administrator_invariant_helper_raises_when_none_remain(db_session):
+    """Helper-level test (not an API reproduction): with no active user holding user:manage and
+    group:manage the invariant check raises."""
+    from app.application.user_admin_service import assert_administrator_remains
+    from app.core.errors import ConflictError
+
+    with pytest.raises(ConflictError):
+        await assert_administrator_remains(db_session)
+    await db_session.rollback()
 
 
 # ------------------------------------------------------------------ Audit
