@@ -192,3 +192,70 @@ async def test_logout_then_replay_revokes_other_sessions(per_request_client, mak
 @pytest.mark.parametrize("token", ["malformed", "", "a.b.c"])
 async def test_malformed_refresh_returns_401(per_request_client, token):
     assert (await _request(per_request_client, token, "test-csrf")).status_code == 401
+
+
+async def test_unknown_and_database_expired_tokens_do_not_revoke_live_sessions(
+    per_request_client, make_user, db_engine
+):
+    from app.core.security import create_token
+
+    user = await make_user("invalid-state@example.com", PASSWORD, "Viewer")
+    token, csrf = await _login(per_request_client, user.email)
+    unknown, _, _ = create_token(subject=str(user.id), token_type="refresh")
+    before = await _live_jtis(db_engine, user.id)
+    assert (await _request(per_request_client, unknown, csrf)).status_code == 401
+    assert await _live_jtis(db_engine, user.id) == before
+    async with db_engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE refresh_token SET expires_at = now() - interval '1 second' WHERE user_id = :uid"),
+            {"uid": user.id},
+        )
+    assert (await _request(per_request_client, token, csrf)).status_code == 401
+    assert await _live_jtis(db_engine, user.id) == before
+
+
+async def test_reuse_logging_has_only_fixed_safe_fields(per_request_client, make_user, monkeypatch):
+    captured = []
+
+    class Recorder:
+        def warning(self, event, **fields):
+            captured.append((event, fields))
+
+    monkeypatch.setattr(auth_service, "logger", Recorder())
+    user = await make_user("logging@example.com", PASSWORD, "Viewer")
+    token, csrf = await _login(per_request_client, user.email)
+    assert (await _request(per_request_client, token, csrf)).status_code == 200
+    assert (await _request(per_request_client, token, csrf)).status_code == 401
+    assert captured == [("auth.refresh_token_reuse_detected", {"user_id": str(user.id)})]
+    assert token not in repr(captured)
+    assert PASSWORD not in repr(captured)
+
+
+async def test_persistence_regression_detects_a_removed_commit(
+    per_request_client, make_user, db_engine, monkeypatch
+):
+    """Run the SAME persistence regression with commit suppressed; it must fail."""
+    original = auth_service._revoke_all_for_user_and_commit
+
+    async def without_commit(db, *, user_id):
+        real_commit = db.commit
+
+        async def no_commit():
+            pass
+
+        db.commit = no_commit
+        try:
+            await original(db, user_id=user_id)
+        finally:
+            db.commit = real_commit
+
+    monkeypatch.setattr(auth_service, "_revoke_all_for_user_and_commit", without_commit)
+    with pytest.raises(AssertionError):
+        await test_replaying_a_rotated_refresh_token_revokes_the_whole_session(
+            per_request_client, make_user, db_engine
+        )
+    # The failure was the fresh-connection persistence assertion: successor remains live.
+    async with db_engine.connect() as connection:
+        assert (
+            await connection.execute(text("SELECT count(*) FROM refresh_token WHERE revoked_at IS NULL"))
+        ).scalar_one() == 1
