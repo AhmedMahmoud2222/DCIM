@@ -8,19 +8,14 @@ and including, the actor's own.
 Every case is its own parametrized test (one route per test) so that an early assertion cannot mask
 an untested route when the rule is mutated. Each test builds persisted sites, racks, groups and users
 and sends valid payloads: a 403 therefore comes from the authority rule, not from a malformed request.
-Concurrency tests live in tests/integration/test_pr67_authority_relocation_race.py."""
+Concurrency tests live in tests/integration/test_pr67_authority_*.py; the two tests that call the
+lock helper directly live in tests/integration/test_pr67_authority_lock_protocol.py so that this
+file is pure HTTP and runs unchanged against #67's own head."""
 
-import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.application.rbac import get_auth_context
-from app.application.user_admin_service import begin_authority_change
-from app.core.errors import ForbiddenError
-from app.domain.auth.models import User, UserGroupMember
 from tests.api.test_user_groups import PW, _group, _group_user, _make_rack, _make_site
 
 BASE = ["user:read", "user:manage", "group:read", "group:manage", "rack:read", "rack:manage", "rack:place"]
@@ -379,40 +374,3 @@ async def test_delegation_inside_a_strictly_subordinate_scope_is_permitted(clien
     assert (await client.patch(f"/api/v1/users/{reader['id']}", json={"is_active": False}, headers=h)).status_code == 200
     assert (await client.delete(f"/api/v1/groups/{team}", headers=h)).status_code == 204
     assert (await client.delete(f"/api/v1/users/{reader['id']}", headers=h)).status_code == 204
-
-
-# ------------------------------------------------------------------ TOCTOU / concurrency (lock protocol)
-async def test_authority_is_reevaluated_after_the_serialising_lock(client, admin, world, db_session):
-    """A request resolves its AuthContext first; a change committed before the mutation runs
-    must be visible to it. `begin_authority_change` re-reads the actor under the lock."""
-    a = await _principal(client, admin, BASE, [_entry(world["a"])])
-    actor = (await db_session.execute(select(User).where(User.id == uuid.UUID(a["id"])))).scalar_one()
-    stale = await get_auth_context(actor, db_session)
-    assert "user:manage" in stale.permission_codes
-    assert (await client.delete(f"/api/v1/groups/{a['group']}", headers=admin)).status_code == 204
-    with pytest.raises(ForbiddenError):
-        await begin_authority_change(db_session, stale, "user:manage")
-    await db_session.rollback()
-
-
-async def test_authority_changing_mutations_are_serialised(client, admin, world, db_engine):
-    """Two transactions cannot both be inside the authority-change section: the second blocks
-    until the first commits and then sees its committed effects (here, the actor losing rights)."""
-    a = await _principal(client, admin, BASE, [_entry(world["a"])])
-    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
-    async with factory() as s1, factory() as s2:
-        actor = (await s1.execute(select(User).where(User.id == uuid.UUID(a["id"])))).scalar_one()
-        ctx = await get_auth_context(actor, s1)
-        await begin_authority_change(s1, ctx, "user:manage")  # s1 holds the lock
-
-        waiter = asyncio.create_task(begin_authority_change(s2, ctx, "user:manage"))
-        await asyncio.sleep(0.5)
-        assert not waiter.done(), "second mutation entered the authority section while the first held the lock"
-
-        member = await s1.get(UserGroupMember, (uuid.UUID(a["group"]), uuid.UUID(a["id"])))
-        await s1.delete(member)
-        await s1.commit()  # releases the lock
-
-        with pytest.raises(ForbiddenError):
-            await asyncio.wait_for(waiter, timeout=5)
-        await s2.rollback()
