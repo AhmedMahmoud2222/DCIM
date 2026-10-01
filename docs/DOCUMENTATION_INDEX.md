@@ -13,6 +13,10 @@
 | Operations / deployment team | [Operations](OPERATIONS.md) | Security, configuration, backup/restore, monitoring, health checks, rollback rehearsals and incident entry points |
 | Independent reviewer / auditor | [Audit status](AUDIT_STATUS.md) | Distinguishes original Phase 10 findings from PR #29 fixes, verified CI and pending review evidence |
 
+## Product roadmap
+
+- [Consolidated product roadmap](PRODUCT_ROADMAP.md) — original scope, Phase 10/11 additions and proposed R1–R5 releases; distinguish planned from implemented and deployed.
+
 ## Historical architecture and phase records
 
 The documents below are useful **historical evidence**. Their dates and baseline SHAs matter: a sentence saying a later phase "does not exist" may have been true when it was written and false for today's code. Do not silently rewrite those dated conclusions.

@@ -6,6 +6,12 @@
 **Open PRs at start:** #53 (docs only, head `674fc1bb74a4d8d8b2adbe8a84c5a533e2ea9ded`)
 **Reviewer note:** this is a single-pass review by an automated agent. It is not an independent penetration test, and CI status was not used as evidence.
 
+## Historical snapshot — current-state interpretation
+
+This report records the original audit observations at the stated baseline and dates. The branch heads, PR counts, findings and test results below are historical claims from that audit, not a live repository inventory or acceptance of later remediation heads. Current status must be reverified through GitHub, CI and independent review. No deployment approval is implied.
+
+As of this documentation refresh on 2026-10-01, main is `aadaa377388bead80103cc58b0c7f18fcd93b163` and PR #71 has merged. Authentication remediation PR #58 and the feature-dependent security chains remain open. Do not infer their acceptance from historical test results below. Residual issue criteria remain authoritative until fully verified.
+
 ## 1. Scope actually covered
 
 | Area | Depth | Method |

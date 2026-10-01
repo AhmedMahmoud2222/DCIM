@@ -1,4 +1,7 @@
 import uuid
+from datetime import UTC, datetime
+
+from app.domain.identity.models import ManagedAsset
 
 
 async def test_create_managed_asset(client, auth_headers):
@@ -80,6 +83,38 @@ async def test_lifecycle_transition_valid_path(client, auth_headers):
     )
     assert resp.status_code == 200
     assert resp.json()["lifecycle_status"] == "installed"
+
+
+async def test_lifecycle_transition_to_decommissioned_persists_utc_timestamp(client, auth_headers, db_session):
+    headers = await auth_headers("Engineer")
+    created = await client.post(
+        "/api/v1/managed-assets", json={"asset_type": "rack", "asset_tag": f"RACK-{uuid.uuid4().hex[:8]}"}, headers=headers
+    )
+    assert created.status_code == 201
+    asset_id = created.json()["id"]
+
+    for status in ("installed", "active"):
+        response = await client.post(
+            f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": status}, headers=headers
+        )
+        assert response.status_code == 200, response.text
+
+    before = datetime.now(UTC).replace(tzinfo=None)
+    response = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition",
+        json={"to_status": "decommissioned"},
+        headers=headers,
+    )
+    after = datetime.now(UTC).replace(tzinfo=None)
+    assert response.status_code == 200, response.text
+    assert response.json()["lifecycle_status"] == "decommissioned"
+
+    asset = await db_session.get(ManagedAsset, uuid.UUID(asset_id))
+    assert asset is not None
+    await db_session.refresh(asset)
+    assert asset.decommissioned_at is not None
+    assert asset.decommissioned_at.tzinfo is None
+    assert before <= asset.decommissioned_at <= after
 
 
 async def test_lifecycle_transition_invalid_path_is_rejected(client, auth_headers):
