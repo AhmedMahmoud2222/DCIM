@@ -55,7 +55,11 @@ def sanitize_filename(name: str | None) -> str:
 async def _existing_by_sha(db: AsyncSession, catalog_model_id: uuid.UUID, sha256: str) -> CatalogDocument | None:
     return (
         await db.execute(
-            select(CatalogDocument).where(CatalogDocument.catalog_model_id == catalog_model_id, CatalogDocument.sha256 == sha256)
+            select(CatalogDocument)
+            .where(CatalogDocument.catalog_model_id == catalog_model_id, CatalogDocument.sha256 == sha256)
+            # A purge that selected this row holds it FOR UPDATE until it commits; waiting here
+            # means we either see the row gone or keep it alive (the purge then skips it).
+            .with_for_update(read=True)
         )
     ).scalar_one_or_none()
 
@@ -177,6 +181,47 @@ async def attach_document(
 
 
 def purge_expired_staged_documents(
+    db: Session, *, storage: StorageBackend, retention_days: int, now: datetime | None = None, batch_size: int = 100
+) -> int:
+    """Row purge followed by the orphan-object sweep. Returns the number of rows deleted."""
+    deleted = _purge_expired_rows(db, storage=storage, retention_days=retention_days, now=now, batch_size=batch_size)
+    sweep_orphan_objects(db, storage=storage, now=now)
+    return deleted
+
+
+_OBJECT_KEY = re.compile(r"^[0-9a-f]{64}\.pdf$")
+ORPHAN_GRACE_SECONDS = 3600
+
+
+def sweep_orphan_objects(db: Session, *, storage: StorageBackend, now: datetime | None = None) -> int:
+    """Deletes stored objects no row references, such as the file a request wrote before its
+    commit failed. Each key is re-checked under the same advisory lock uploads hold, so an
+    upload that is writing or has just committed the same bytes is never undercut. Objects
+    younger than ORPHAN_GRACE_SECONDS and names that are not `<sha256>.pdf` are left alone."""
+    reference = (now or datetime.now(UTC)).timestamp()
+    old_keys = [
+        key for key, modified in storage.iter_keys() if _OBJECT_KEY.match(key) and reference - modified > ORPHAN_GRACE_SECONDS
+    ]
+    removed = 0
+    for key in old_keys:
+        lock_connection = db.get_bind().connect().execution_options(isolation_level="AUTOCOMMIT")  # type: ignore[union-attr]
+        try:
+            lock_connection.execute(select(func.pg_advisory_lock(*object_lock_key(key.removesuffix(".pdf")))))
+            referenced = db.execute(
+                select(func.count()).select_from(CatalogDocument).where(CatalogDocument.storage_key == key)
+            ).scalar_one()
+            db.rollback()
+            if not referenced:
+                storage.delete(key)
+                removed += 1
+                logger.info("catalog_document_orphan_object_deleted", storage_key=key)
+        finally:
+            lock_connection.execute(select(func.pg_advisory_unlock(*object_lock_key(key.removesuffix(".pdf")))))
+            lock_connection.close()
+    return removed
+
+
+def _purge_expired_rows(
     db: Session, *, storage: StorageBackend, retention_days: int, now: datetime | None = None, batch_size: int = 100
 ) -> int:
     """Deletes datasheet rows nobody attached within the retention window (default 14 days),
