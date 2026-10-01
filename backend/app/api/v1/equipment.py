@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
+from app.application.access_control import ensure_equipment_access, equipment_visible_clause
 from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_equipment_template
@@ -244,8 +245,9 @@ async def list_equipment(
 ) -> Page:
     from app.domain.placement.models import EquipmentPlacement
 
-    stmt = select(Equipment, ManagedAsset).join(ManagedAsset, ManagedAsset.id == Equipment.id)
-    count_stmt = select(func.count()).select_from(Equipment)
+    visible = equipment_visible_clause(ctx.scope, Equipment.id)
+    stmt = select(Equipment, ManagedAsset).join(ManagedAsset, ManagedAsset.id == Equipment.id).where(visible)
+    count_stmt = select(func.count()).select_from(Equipment).where(visible)
     if rack_id is not None:
         stmt = stmt.join(
             EquipmentPlacement,
@@ -310,6 +312,7 @@ async def upload_equipment_import_job(
 async def get_equipment(
     equipment_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("equipment:read"))
 ) -> EquipmentOut:
+    await ensure_equipment_access(db, ctx.scope, equipment_id)
     equipment = await db.get(Equipment, equipment_id)
     if equipment is None:
         raise NotFoundError(f"Equipment {equipment_id} not found.")
@@ -676,6 +679,7 @@ class PortsListOut(BaseModel):
 async def list_equipment_ports_endpoint(
     equipment_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("equipment:read"))
 ) -> PortsListOut:
+    await ensure_equipment_access(db, ctx.scope, equipment_id)
     equipment = await db.get(Equipment, equipment_id)
     if equipment is None:
         raise NotFoundError(f"Equipment {equipment_id} not found.")

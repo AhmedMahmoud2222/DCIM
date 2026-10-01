@@ -12,6 +12,7 @@ from app.api.v1 import (
     discovery,
     equipment,
     floor_plans,
+    groups,
     health,
     impact,
     integrations,
@@ -30,6 +31,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(alarms.router)
 api_router.include_router(users.router)
+api_router.include_router(groups.router)
 api_router.include_router(locations.router)
 api_router.include_router(managed_assets.router)
 api_router.include_router(catalog.router)

@@ -86,3 +86,68 @@ class RefreshToken(Base, UUIDPkMixin, TimestampMixin):
     jti: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+GROUP_PERMISSION_EFFECTS = ("allow", "deny")
+GROUP_RACK_SCOPES = ("all", "selected")
+
+
+class UserGroup(Base, UUIDPkMixin, TimestampMixin):
+    """Administrator-managed group: a named set of users carrying permission grants
+    (allow/deny) and site/rack access. Additive to the legacy Role/RoleAssignment model,
+    which is untouched — see docs/USER_GROUP_MANAGEMENT.md for how the two combine."""
+
+    __tablename__ = "user_group"
+
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+
+
+class UserGroupMember(Base):
+    __tablename__ = "user_group_member"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_group.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+class UserGroupPermission(Base):
+    __tablename__ = "user_group_permission"
+    __table_args__ = (CheckConstraint(f"effect IN {GROUP_PERMISSION_EFFECTS!r}", name="effect_allowed"),)
+
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_group.id", ondelete="CASCADE"), primary_key=True)
+    permission_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("permission.id", ondelete="CASCADE"), primary_key=True
+    )
+    effect: Mapped[str] = mapped_column(String(8), nullable=False, default="allow")
+
+    permission: Mapped[Permission] = relationship()
+
+
+class UserGroupSiteAccess(Base, UUIDPkMixin):
+    """Grants a group access to one site. rack_scope='all' covers every rack currently
+    placed in the site; 'selected' restricts to the racks in UserGroupRackAccess."""
+
+    __tablename__ = "user_group_site_access"
+    __table_args__ = (
+        CheckConstraint(f"rack_scope IN {GROUP_RACK_SCOPES!r}", name="rack_scope_allowed"),
+        UniqueConstraint("group_id", "site_id", name="uq_user_group_site_access"),
+    )
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_group.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("site.id", ondelete="CASCADE"), nullable=False, index=True)
+    rack_scope: Mapped[str] = mapped_column(String(8), nullable=False, default="selected")
+
+
+class UserGroupRackAccess(Base):
+    __tablename__ = "user_group_rack_access"
+
+    site_access_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_group_site_access.id", ondelete="CASCADE"), primary_key=True
+    )
+    rack_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("managed_asset.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
