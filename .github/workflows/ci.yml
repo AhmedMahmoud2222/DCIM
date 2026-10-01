@@ -57,6 +57,13 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Alembic single-head gate
+        # Two PRs that each add a revision on the same parent merge cleanly as text but
+        # leave two heads. This reads the revision files only (no database), so it fails
+        # fast and names both heads, before any migration step runs.
+        run: |
+          ruff check scripts/check_alembic_single_head.py
+          python scripts/check_alembic_single_head.py
       - name: Validate Compose required backend settings
         run: |
           ruff check scripts/check_compose_settings.py
@@ -446,6 +453,13 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Report the resolved dependency set
         run: pip freeze
+      - name: Alembic single-head gate
+        # Two PRs that each add a revision on the same parent merge cleanly as text but
+        # leave two heads. This reads the revision files only (no database), so it fails
+        # fast and names both heads, before any migration step runs.
+        run: |
+          ruff check scripts/check_alembic_single_head.py
+          python scripts/check_alembic_single_head.py
       - name: Provision least-privilege dcim_app role and database
         run: |
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d postgres -c \
