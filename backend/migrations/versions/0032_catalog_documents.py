@@ -14,8 +14,8 @@ be inserted, changed or removed: a newer datasheet never alters an existing publ
 revision or the assets instantiated from it. A second trigger requires the linked document
 to belong to the revision's own model and to have passed scanning.
 
-Revision ID: 0031_catalog_documents
-Revises: 0030_bulk_import_attempts
+Revision ID: 0032_catalog_documents
+Revises: 0031_user_groups
 Create Date: 2026-09-29
 """
 
@@ -25,8 +25,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "0031_catalog_documents"
-down_revision = "0030_bulk_import_attempts"
+revision = "0032_catalog_documents"
+down_revision = "0031_user_groups"
 branch_labels = None
 depends_on = None
 

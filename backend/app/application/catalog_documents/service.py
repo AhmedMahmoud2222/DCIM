@@ -4,7 +4,7 @@ and purge staged uploads nobody attached.
 Datasheet versioning (plan v2 section 4.7): a second, different PDF for the same catalog
 model becomes `version_number + 1` in the model's document group and points at its
 predecessor. Nothing here ever edits an earlier document, its file, or any published
-revision's links; database triggers (migration 0031) enforce that independently of this
+revision's links; database triggers (migration 0032) enforce that independently of this
 code. Uploading identical bytes for the same model returns the existing document."""
 
 import asyncio

@@ -16,7 +16,7 @@ physical measurement, so the database unit audit does not block it.
 | Documents of a revision | `GET /api/v1/catalog/revisions/{id}/documents` | `catalog:read` (published), `catalog:read_draft` (draft) |
 | Download the original | `GET /api/v1/catalog/documents/{id}/file` | `catalog:document_download`; documents not linked to a published revision also need `catalog:read_draft` |
 
-`catalog:document_download` is granted to Administrator, DCIM Manager and Engineer by migration 0031.
+`catalog:document_download` is granted to Administrator, DCIM Manager and Engineer by migration 0032.
 
 ## Versioning rule
 

@@ -4,7 +4,7 @@
 `CatalogDocument` is one immutable uploaded file. A datasheet the manufacturer later revises
 is a *new* row in the same `document_group_id` with `version_number + 1`; the old row, its
 file and its links are never touched. `CatalogRevisionDocument` links a document to a
-revision. Migration 0031 attaches `fn_reject_write_on_non_draft_revision()` to it, so a
+revision. Migration 0032 attaches `fn_reject_write_on_non_draft_revision()` to it, so a
 published or retired revision's links are immutable at the database level and a new
 datasheet version can never change an existing published revision or the assets
 instantiated from it."""

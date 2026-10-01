@@ -1,4 +1,4 @@
-"""Database-level guarantees for datasheet documents (migration 0031), independent of the
+"""Database-level guarantees for datasheet documents (migration 0032), independent of the
 API: immutability of document rows, draft-only links, model/scan checks, version chain
 constraints, and the staging-retention purge."""
 
