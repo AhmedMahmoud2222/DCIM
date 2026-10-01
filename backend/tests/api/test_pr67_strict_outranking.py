@@ -77,7 +77,7 @@ GROUP_ROUTES = {
     "allow_permissions": lambda c, h, u, g: c.put(f"/api/v1/groups/{g}/permissions", json={"allow": ["rack:read"], "deny": []}, headers=h),
     "site_access": lambda c, h, u, g: c.put(f"/api/v1/groups/{g}/site-access", json={"sites": []}, headers=h),
     "members": lambda c, h, u, g: c.put(f"/api/v1/groups/{g}/members", json={"user_ids": []}, headers=h),
-    "rename": lambda c, h, u, g: c.patch(f"/api/v1/groups/{g}", json={"name": "renamed-by-peer"}, headers=h),
+    "rename": lambda c, h, u, g: c.patch(f"/api/v1/groups/{g}", json={"name": f"renamed-by-peer-{uuid.uuid4().hex[:8]}"}, headers=h),
     "delete": lambda c, h, u, g: c.delete(f"/api/v1/groups/{g}", headers=h),
 }
 user_route = pytest.mark.parametrize("route", sorted(USER_ROUTES))
@@ -92,10 +92,10 @@ async def _assert_user_untouched(client, admin, target):
     assert target["group"] in {g["id"] for g in me["groups"]}
 
 
-async def _assert_group_untouched(client, admin, group_id, *, perms, name_not="renamed-by-peer"):
+async def _assert_group_untouched(client, admin, group_id, *, perms, name_prefix="renamed-by-peer"):
     detail = (await client.get(f"/api/v1/groups/{group_id}", headers=admin)).json()
     assert set(detail["allow_permissions"]) == set(perms) and detail["deny_permissions"] == []
-    assert detail["name"] != name_not and len(detail["sites"]) >= 1
+    assert not detail["name"].startswith(name_prefix) and len(detail["sites"]) >= 1
 
 
 # ------------------------------------------------------------------ equal-authority peer
