@@ -157,6 +157,9 @@ async def test_two_administrators_cannot_deactivate_each_other_concurrently(race
             return_exceptions=True,
         )
         assert not [r for r in results if isinstance(r, Exception)], results
+        # Only outcomes the design allows: success, last-administrator conflict, or refusal. A 401 (lapsed token) or a 5xx
+        # would make the "at least one stays active" check below pass for the wrong reason.
+        assert {r.status_code for r in results} <= {200, 403, 409}, [(r.status_code, r.text) for r in results]
         async with db_engine.connect() as conn:
             active = (await conn.execute(text("SELECT count(*) FROM app_user WHERE id IN (:a, :b) AND is_active"), {"a": u1["id"], "b": u2["id"]})).scalar_one()
         assert active >= 1, sorted(r.status_code for r in results)
