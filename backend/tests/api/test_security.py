@@ -72,9 +72,9 @@ async def test_response_never_includes_password_hash(client, auth_headers, make_
     headers = await auth_headers("Administrator")
     resp = await client.post(
         "/api/v1/users",
-        json={"email": f"leak-{uuid.uuid4().hex[:6]}@example.com", "full_name": "Leak Test", "password": "hunter2", "role_name": "Viewer"},
+        json={"email": f"leak-{uuid.uuid4().hex[:6]}@example.com", "full_name": "Leak Test", "password": "hunter2-hunter2", "role_name": "Viewer"},
         headers=headers,
     )
     assert resp.status_code == 201
     assert "password" not in resp.text.lower()
-    assert "hunter2" not in resp.text
+    assert "hunter2-hunter2" not in resp.text

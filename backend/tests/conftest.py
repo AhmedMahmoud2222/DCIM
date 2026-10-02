@@ -74,6 +74,9 @@ _APP_TRUNCATE_TABLES = [
     "organization",
     "refresh_token",
     "role_assignment",
+    # user_group has no FK to anything truncated above (only its member/site rows point at
+    # app_user/site), so it must be listed or groups leak between tests.
+    "user_group",
     "app_user",
     "rack_model_revision",
     "rack_model",

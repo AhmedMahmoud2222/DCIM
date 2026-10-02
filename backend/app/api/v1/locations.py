@@ -13,6 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.application.access_control import (
+    city_visible_clause,
+    country_visible_clause,
+    ensure_room_access,
+    ensure_site_access,
+    floor_visible_clause,
+    organization_visible_clause,
+    room_visible_clause,
+    site_visible_clause,
+)
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import check_version_match, require_if_match
 from app.application.rbac import require_permission
@@ -71,9 +81,12 @@ async def list_organizations(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("organization:read")),
 ) -> Page:
-    total = (await db.execute(select(func.count()).select_from(Organization))).scalar_one()
+    visible = organization_visible_clause(ctx.scope, Organization.id)
+    total = (await db.execute(select(func.count()).select_from(Organization).where(visible))).scalar_one()
     rows = (
-        await db.execute(select(Organization).order_by(Organization.name).offset(pagination.offset).limit(pagination.limit))
+        await db.execute(
+            select(Organization).where(visible).order_by(Organization.name).offset(pagination.offset).limit(pagination.limit)
+        )
     ).scalars().all()
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)
 
@@ -85,7 +98,10 @@ async def get_organization(
     ctx=Depends(require_permission("organization:read")),
 ) -> Organization:
     org = await db.get(Organization, organization_id)
-    if org is None:
+    if org is None or not (
+        await db.execute(select(func.count()).select_from(Organization).where(
+            Organization.id == organization_id, organization_visible_clause(ctx.scope, Organization.id)))
+    ).scalar_one():
         raise NotFoundError(f"Organization {organization_id} not found.")
     return org
 
@@ -126,8 +142,9 @@ async def list_countries(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
 ) -> Page:
-    stmt = select(Country)
-    count_stmt = select(func.count()).select_from(Country)
+    visible = country_visible_clause(ctx.scope, Country.id)
+    stmt = select(Country).where(visible)
+    count_stmt = select(func.count()).select_from(Country).where(visible)
     if organization_id is not None:
         stmt = stmt.where(Country.organization_id == organization_id)
         count_stmt = count_stmt.where(Country.organization_id == organization_id)
@@ -170,8 +187,9 @@ async def list_cities(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
 ) -> Page:
-    stmt = select(City)
-    count_stmt = select(func.count()).select_from(City)
+    visible = city_visible_clause(ctx.scope, City.id)
+    stmt = select(City).where(visible)
+    count_stmt = select(func.count()).select_from(City).where(visible)
     if country_id is not None:
         stmt = stmt.where(City.country_id == country_id)
         count_stmt = count_stmt.where(City.country_id == country_id)
@@ -234,8 +252,9 @@ async def list_sites(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
 ) -> Page:
-    stmt = select(Site)
-    count_stmt = select(func.count()).select_from(Site)
+    visible = site_visible_clause(ctx.scope, Site.id)
+    stmt = select(Site).where(visible)
+    count_stmt = select(func.count()).select_from(Site).where(visible)
     if city_id is not None:
         stmt = stmt.where(Site.city_id == city_id)
         count_stmt = count_stmt.where(Site.city_id == city_id)
@@ -248,6 +267,7 @@ async def list_sites(
 async def get_site(
     site_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("location:read"))
 ) -> Site:
+    await ensure_site_access(ctx.scope, site_id)
     site = await db.get(Site, site_id)
     if site is None:
         raise NotFoundError(f"Site {site_id} not found.")
@@ -290,8 +310,9 @@ async def list_buildings(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
 ) -> Page:
-    stmt = select(Building)
-    count_stmt = select(func.count()).select_from(Building)
+    visible = site_visible_clause(ctx.scope, Building.site_id)
+    stmt = select(Building).where(visible)
+    count_stmt = select(func.count()).select_from(Building).where(visible)
     if site_id is not None:
         stmt = stmt.where(Building.site_id == site_id)
         count_stmt = count_stmt.where(Building.site_id == site_id)
@@ -336,8 +357,9 @@ async def list_floors(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
 ) -> Page:
-    stmt = select(Floor)
-    count_stmt = select(func.count()).select_from(Floor)
+    visible = floor_visible_clause(ctx.scope, Floor.id)
+    stmt = select(Floor).where(visible)
+    count_stmt = select(func.count()).select_from(Floor).where(visible)
     if building_id is not None:
         stmt = stmt.where(Floor.building_id == building_id)
         count_stmt = count_stmt.where(Floor.building_id == building_id)
@@ -408,8 +430,9 @@ async def list_rooms(
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("location:read")),
 ) -> Page:
-    stmt = select(Room)
-    count_stmt = select(func.count()).select_from(Room)
+    visible = room_visible_clause(ctx.scope, Room.id)
+    stmt = select(Room).where(visible)
+    count_stmt = select(func.count()).select_from(Room).where(visible)
     if floor_id is not None:
         stmt = stmt.where(Room.floor_id == floor_id)
         count_stmt = count_stmt.where(Room.floor_id == floor_id)
@@ -430,6 +453,7 @@ async def list_rooms(
 async def get_room(
     room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("location:read"))
 ) -> Room:
+    await ensure_room_access(db, ctx.scope, room_id)
     room = await db.get(Room, room_id)
     if room is None:
         raise NotFoundError(f"Room {room_id} not found.")
