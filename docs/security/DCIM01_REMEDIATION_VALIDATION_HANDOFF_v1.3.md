@@ -1,6 +1,6 @@
 # DCIM01 remediation and final-tree validation: handoff for independent review
 
-**Document version: v1.2** (v1.0 draft; v1.1 heads refreshed and final-tree results filled; v1.2 owner-assigned fixes published for #81, #82, #84 with exact-head CI) (2026-10-01). Prepared by the remediation and validation agent for the independent Codex review. Documentation only. Nothing here is merged, deployed or closed. The repository owner keeps final merge authorization.
+**Document version: v1.3, final** (v1.0 draft; v1.1 heads refreshed and final-tree results filled; v1.2 owner-assigned fixes published for #81, #82, #84 with exact-head CI; v1.3 merge outcomes and the #84 flake fix) (2026-10-01). Prepared by the remediation and validation agent for the independent Codex review. Documentation only. Nothing here is merged, deployed or closed. The repository owner keeps final merge authorization.
 
 ## 1. Live state and drift (observed 2026-10-01)
 
@@ -151,3 +151,21 @@ All three are normal fast-forward pushes or a merge commit; no force-push. All c
 | #84 | `44da879` | Merge of main `8b6d004` into the branch; tree diff against main is still the one test file (+298) | 14 passed locally (12 verification and 2 existing lifecycle tests), single Alembic head `0030_bulk_import_attempts` | 9 of 9 success |
 
 Remaining from section 11 unchanged: import-job contract decision, code-scanning model, Compose runtime smoke on a host with registry access (the #84 CI run shows `Compose smoke` green on GitHub), peer-recovery procedure, finding B and the lifecycle CHECK. The final-tree validation in section 7 was run on a tree based on `aadaa37` and has not been repeated on main `8b6d004` with the new heads.
+
+## 14. Final outcome (2026-10-02)
+
+Merges below were made by the repository owner. I merged nothing and closed no issue.
+
+| PR | Merged into | Merged head | Note |
+|---|---|---|---|
+| #82 | #68 branch `security/pr59-import-job-scope` | `7915feb` | exact-head CI 7 of 7 green |
+| #81 | #67 branch `security/pr59-delegation-boundary` | `9f2b0f9` | exact-head CI 7 of 7 green; I authored the fix, so no independent review is recorded here |
+| #80 | #70 branch `claude/catalog-documents-storage` | `1521104` | CI green except `github-advanced-security` (unsupported model, not a required check) |
+| #84 | `main` | `8d15a2d` | exact head carries the flake fix below |
+| #83 | open | `30d38db` | CI green, mergeable, into the #69 branch |
+
+**#84 flake.** CI on `a044552` failed one test on Python 3.14: `test_competing_decommissions_one_wins_the_rest_are_rejected_safely[3]`, "contention was not exercised: at most 3 waiting". Cause: the assertion read a maximum from a 5 ms sampler that can miss the moment six requests are queued. Fixed in `8d15a2d`: the test asserts the waiter count PostgreSQL showed at the release point. 12 of 12 pass on three runs and 48 consecutive runs of the competing test pass locally. The file on `main` has the fixed version.
+
+**What is on `main` and what is not.** Only #84 (tests) reached `main`. #80, #81 and #82 landed in parent branches of the #59 stack (#70, #67, #68); they reach `main` when that stack lands. #83 is not merged. Commits on all my branches are unsigned (sandbox signing key empty); squash-merge through GitHub is the signed path.
+
+**Not done.** Final-tree validation (section 7) was run on a tree based on `aadaa37` and not repeated on the current `main` with the merged heads. Compose runtime smoke ran green only in GitHub CI on #84. Open owner decisions from section 11 are unchanged: code-scanning model, peer-recovery procedure, finding B and the lifecycle CHECK. #57 and #75 stay open; no issue was closed.
