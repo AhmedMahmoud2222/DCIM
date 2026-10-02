@@ -192,15 +192,12 @@ async def test_the_row_lock_is_held_until_commit(race_client, headers, db_engine
 async def test_competing_decommissions_one_wins_the_rest_are_rejected_safely(race_client, headers, db_engine, round_no):
     contenders = 6
     asset_id = await _asset(race_client, headers, "installed", "active")
-    seen = {"max": 0}
-    stop = asyncio.Event()
+    queued = {"n": 0}  # what PostgreSQL showed at the moment the holder let go (not a sampled maximum)
 
-    async def watch():
-        while not stop.is_set():
-            seen["max"] = max(seen["max"], await _waiters(db_engine))
-            await asyncio.sleep(0.005)
+    async def all_queued():
+        queued["n"] = await _waiters(db_engine)
+        return queued["n"] >= contenders
 
-    watcher = asyncio.create_task(watch())
     tasks: list[asyncio.Task] = []
     try:
         async with db_engine.connect() as holder:  # force every contender to queue behind one lock, then release together
@@ -208,17 +205,16 @@ async def test_competing_decommissions_one_wins_the_rest_are_rejected_safely(rac
             try:
                 await holder.execute(text("SELECT id FROM managed_asset WHERE id = :i FOR UPDATE"), {"i": asset_id})
                 tasks = [asyncio.create_task(_transition(race_client, headers, asset_id, "decommissioned")) for _ in range(contenders)]
-                await _until(lambda: _at_least(db_engine, contenders), f"all {contenders} contenders to queue on the row")
+                await _until(all_queued, f"all {contenders} contenders to queue on the row")
             finally:
                 await tx.rollback()
         results = await asyncio.wait_for(asyncio.gather(*tasks), WAIT * 2)
     finally:
-        stop.set()
-        await _settle(watcher, *tasks)
+        await _settle(*tasks)
 
     codes = sorted(r.status_code for r in results)
     assert codes == [200] + [422] * (contenders - 1), codes
-    assert seen["max"] >= contenders - 1, f"contention was not exercised: at most {seen['max']} waiting"
+    assert queued["n"] >= contenders, f"contention was not exercised: {queued['n']} waiting when the row was released"
     status, stamp = await _row(db_engine, asset_id)
     assert status == "decommissioned" and stamp is not None and stamp.tzinfo is None
     audits, events = await _trail(db_engine, asset_id)
