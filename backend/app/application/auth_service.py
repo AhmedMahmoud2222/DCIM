@@ -65,9 +65,7 @@ async def rotate_refresh_token(db: AsyncSession, *, refresh_token: str) -> tuple
     # token-only lock lets an UPDATE miss a different rotation's new successor
     # under READ COMMITTED, and competing reuse requests can invert token locks.
     user = (
-        await db.execute(
-            select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
-        )
+        await db.execute(select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True))
     ).scalar_one_or_none()
     if user is None:
         raise InvalidRefreshTokenError()

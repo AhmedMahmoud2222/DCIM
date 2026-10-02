@@ -88,9 +88,7 @@ async def _wait_for_blocked(engine, user_id, count):
     raise AssertionError(f"Did not observe {count} independently blocked database connections for {user_id}")
 
 
-async def test_replaying_a_rotated_refresh_token_revokes_the_whole_session(
-    per_request_client, make_user, db_engine
-):
+async def test_replaying_a_rotated_refresh_token_revokes_the_whole_session(per_request_client, make_user, db_engine):
     user = await make_user("reuse@example.com", PASSWORD, "Viewer")
     token, csrf = await _login(per_request_client, user.email)
     response = await _request(per_request_client, token, csrf)
@@ -103,17 +101,13 @@ async def test_replaying_a_rotated_refresh_token_revokes_the_whole_session(
     assert (await _request(per_request_client, successor, csrf)).status_code == 401
 
 
-async def test_concurrent_refresh_with_one_token_mints_only_one_successor(
-    per_request_client, make_user, db_engine
-):
+async def test_concurrent_refresh_with_one_token_mints_only_one_successor(per_request_client, make_user, db_engine):
     user = await make_user("race@example.com", PASSWORD, "Viewer")
     token, csrf = await _login(per_request_client, user.email)
     # Hold the token in another transaction; all six requests must queue in PostgreSQL.
     async with db_engine.connect() as blocker:
         transaction = await blocker.begin()
-        await blocker.execute(
-            text("SELECT id FROM refresh_token WHERE user_id = :uid FOR UPDATE"), {"uid": user.id}
-        )
+        await blocker.execute(text("SELECT id FROM refresh_token WHERE user_id = :uid FOR UPDATE"), {"uid": user.id})
         tasks = [asyncio.create_task(_request(per_request_client, token, csrf)) for _ in range(6)]
         try:
             await _wait_for_blocked(db_engine, user.id, 6)
@@ -124,9 +118,7 @@ async def test_concurrent_refresh_with_one_token_mints_only_one_successor(
     assert await _live_jtis(db_engine, user.id) == set()
 
 
-async def test_reuse_cannot_miss_another_tokens_in_flight_successor(
-    per_request_client, make_user, db_engine, monkeypatch
-):
+async def test_reuse_cannot_miss_another_tokens_in_flight_successor(per_request_client, make_user, db_engine, monkeypatch):
     user = await make_user("cross-token@example.com", PASSWORD, "Viewer")
     first, csrf = await _login(per_request_client, user.email)
     assert (await _request(per_request_client, first, csrf)).status_code == 200
@@ -194,9 +186,7 @@ async def test_malformed_refresh_returns_401(per_request_client, token):
     assert (await _request(per_request_client, token, "test-csrf")).status_code == 401
 
 
-async def test_unknown_and_database_expired_tokens_do_not_revoke_live_sessions(
-    per_request_client, make_user, db_engine
-):
+async def test_unknown_and_database_expired_tokens_do_not_revoke_live_sessions(per_request_client, make_user, db_engine):
     from app.core.security import create_token
 
     user = await make_user("invalid-state@example.com", PASSWORD, "Viewer")
@@ -231,9 +221,7 @@ async def test_reuse_logging_has_only_fixed_safe_fields(per_request_client, make
     assert PASSWORD not in repr(captured)
 
 
-async def test_persistence_regression_detects_a_removed_commit(
-    per_request_client, make_user, db_engine, monkeypatch
-):
+async def test_persistence_regression_detects_a_removed_commit(per_request_client, make_user, db_engine, monkeypatch):
     """Run the SAME persistence regression with commit suppressed; it must fail."""
     original = auth_service._revoke_all_for_user_and_commit
 
@@ -250,12 +238,10 @@ async def test_persistence_regression_detects_a_removed_commit(
             db.commit = real_commit
 
     monkeypatch.setattr(auth_service, "_revoke_all_for_user_and_commit", without_commit)
-    with pytest.raises(AssertionError):
-        await test_replaying_a_rotated_refresh_token_revokes_the_whole_session(
-            per_request_client, make_user, db_engine
-        )
+    # Match the fresh-connection persistence assertion specifically, so an unrelated
+    # assertion failure cannot satisfy this mutation check.
+    with pytest.raises(AssertionError, match=r"== set\(\)"):
+        await test_replaying_a_rotated_refresh_token_revokes_the_whole_session(per_request_client, make_user, db_engine)
     # The failure was the fresh-connection persistence assertion: successor remains live.
     async with db_engine.connect() as connection:
-        assert (
-            await connection.execute(text("SELECT count(*) FROM refresh_token WHERE revoked_at IS NULL"))
-        ).scalar_one() == 1
+        assert (await connection.execute(text("SELECT count(*) FROM refresh_token WHERE revoked_at IS NULL"))).scalar_one() == 1
