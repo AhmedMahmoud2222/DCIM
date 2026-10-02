@@ -46,6 +46,11 @@ celery_app.conf.update(
             "schedule": 86400.0,
             "options": {"queue": "maintenance"},
         },
+        "purge-expired-staged-catalog-documents": {
+            "task": "app.infrastructure.tasks.maintenance.purge_expired_staged_catalog_documents",
+            "schedule": 86400.0,
+            "options": {"queue": "maintenance"},
+        },
         # SEC (Codex PR #50 review, ROUND 3, finding #1): half of
         # BULK_IMPORT_COMMIT_LEASE_SECONDS (app/application/bulk_import/limits.py), so a
         # commit stuck by a crashed worker is typically caught within about 1.5x the lease

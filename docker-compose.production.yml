@@ -199,6 +199,16 @@ services:
         max-size: "50m"
         max-file: "2"
 
+  clamav:
+    restart: unless-stopped
+    networks:
+      - dcim-internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "2"
+
   frontend:
     build:
       context: ./frontend

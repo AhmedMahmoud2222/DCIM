@@ -24,7 +24,9 @@ COPY migrations ./migrations
 COPY alembic.ini ./
 COPY scripts ./scripts
 
-RUN useradd --create-home --shell /bin/bash dcim
+RUN useradd --create-home --shell /bin/bash dcim \
+    && mkdir -p /app/media \
+    && chown -R dcim:dcim /app/media
 USER dcim
 
 EXPOSE 8000

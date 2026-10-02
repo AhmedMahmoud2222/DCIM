@@ -92,3 +92,21 @@ def prune_expired_collector_rows(
 @celery_app.task(name="app.infrastructure.tasks.maintenance.prune_collector_nonces_and_heartbeats")
 def prune_collector_nonces_and_heartbeats() -> dict[str, int | bool]:
     return prune_expired_collector_rows()
+
+
+@celery_app.task(name="app.infrastructure.tasks.maintenance.purge_expired_staged_catalog_documents")
+def purge_expired_staged_catalog_documents() -> int:
+    """DCIM01 PDF datasheet import: removes datasheet uploads nobody attached within
+    `catalog_document_staging_retention_days` (default 14), plus their stored objects when
+    unshared. Attached and superseded-predecessor documents are never touched."""
+    from app.application.catalog_documents.service import purge_expired_staged_documents
+    from app.db.sync_session import get_sync_db
+    from app.infrastructure.storage import get_document_storage_backend
+
+    settings = get_settings()
+    with get_sync_db() as db:
+        deleted = purge_expired_staged_documents(
+            db, storage=get_document_storage_backend(), retention_days=settings.catalog_document_staging_retention_days
+        )
+    logger.info("catalog_document_staging_purged", deleted=deleted)
+    return deleted
