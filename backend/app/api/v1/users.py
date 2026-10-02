@@ -21,6 +21,7 @@ from app.application.user_admin_service import (
     assert_administrator_remains,
     assert_can_assign_group,
     assert_can_assign_role,
+    assert_user_visible,
     clean_text,
     get_user_or_404,
     validate_password,
@@ -142,7 +143,7 @@ async def list_users(
     group_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     pagination: Pagination = Depends(pagination_params),
-    ctx=Depends(require_permission("user:read")),
+    ctx: AuthContext = Depends(require_permission("user:read")),
 ) -> Page:
     conds = []
     if q:
@@ -155,19 +156,32 @@ async def list_users(
         conds.append(User.is_active.is_(is_active))
     if group_id is not None:
         conds.append(User.id.in_(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id)))
-    total = (await db.execute(select(func.count()).select_from(User).where(*conds))).scalar_one()
-    users = list(
-        (await db.execute(select(User).where(*conds).order_by(User.email).offset(pagination.offset).limit(pagination.limit)))
-        .scalars()
-    )
+    if ctx.scope.unrestricted:
+        total = (await db.execute(select(func.count()).select_from(User).where(*conds))).scalar_one()
+        users = list(
+            (
+                await db.execute(
+                    select(User).where(*conds).order_by(User.email).offset(pagination.offset).limit(pagination.limit)
+                )
+            ).scalars()
+        )
+    else:
+        # A site-restricted administrator only sees users whose whole scope lies inside theirs
+        # (so never an unrestricted user, nor anyone granted another site).
+        candidates = list((await db.execute(select(User).where(*conds).order_by(User.email))).scalars())
+        accesses = await load_effective_access(db, [u.id for u in candidates])
+        visible = [u for u in candidates if u.id == ctx.user.id or ctx.scope.contains(accesses[u.id].scope)]
+        total = len(visible)
+        users = visible[pagination.offset : pagination.offset + pagination.limit]
     return Page(items=await _serialize(db, users), total=total, limit=pagination.limit, offset=pagination.offset)
 
 
 @router.get("/{user_id}", response_model=UserOut)
 async def get_user(
-    user_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("user:read"))
+    user_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("user:read"))
 ) -> UserOut:
     user = await get_user_or_404(db, user_id)
+    await assert_user_visible(db, ctx, user_id)
     return (await _serialize(db, [user]))[0]
 
 
@@ -333,6 +347,7 @@ async def get_effective_access(
     from app.domain.location.models import Site
 
     user = await get_user_or_404(db, user_id)
+    await assert_user_visible(db, ctx, user_id)
     access = (await load_effective_access(db, [user.id]))[user.id]
     groups = (await _serialize(db, [user]))[0].groups
     sites: list[EffectiveSite] = []

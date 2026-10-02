@@ -375,22 +375,16 @@ async def test_cannot_deactivate_or_delete_own_account(client, admin):
     assert (await client.delete(f"/api/v1/users/{me['id']}", headers=admin)).status_code == 403
 
 
-async def test_deny_that_would_remove_the_last_administrator_is_rolled_back(client, admin, make_user, db_session):
-    gid = await _group(client, admin, allow=["user:manage", "user:read", "group:manage", "group:read"])
-    user, _ = await _group_user(client, admin, [gid])
-    # Make the group member the only administrator.
-    await db_session.execute(text("DELETE FROM role_assignment WHERE user_id <> :u"), {"u": user["id"]})
-    await db_session.commit()
+async def test_a_user_cannot_deny_themselves_out_of_administration(client, admin, make_user):
+    """Self-membership changes are refused outright; the concurrent last-administrator case is
+    covered in test_user_groups_authz.py with genuinely parallel transactions."""
     root = await make_user("root2@example.com", PW, "Administrator")
     root_headers = await _login(client, "root2@example.com")
-    # Removing the member leaves `root` -> fine.
-    assert (await client.put(f"/api/v1/groups/{gid}/members", json={"user_ids": []}, headers=root_headers)).status_code == 200
-    # Deleting the last role-based admin's only power path is blocked: deny on a group containing root.
     denier = await _group(client, root_headers, deny=["group:manage"])
     r = await client.put(f"/api/v1/groups/{denier}/members", json={"user_ids": [str(root.id)]}, headers=root_headers)
-    assert r.status_code == 409
+    assert r.status_code == 403
     detail = (await client.get(f"/api/v1/groups/{denier}", headers=root_headers)).json()
-    assert detail["member_ids"] == []  # rolled back
+    assert detail["member_ids"] == []
 
 
 # ------------------------------------------------------------------ Audit

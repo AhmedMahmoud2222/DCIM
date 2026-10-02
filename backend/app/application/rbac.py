@@ -17,7 +17,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.application.access_control import UNRESTRICTED, AccessScope, load_effective_access
+from app.application.access_control import AccessScope, load_effective_access
 from app.core.errors import ForbiddenError
 from app.domain.auth.models import User
 
@@ -200,9 +200,10 @@ class AuthContext:
     permission grants — deliberately not derived by joining through RolePermission,
     since a role stripped of every permission would then vanish from this set even
     though the user is still formally assigned to it (spec §9.1)."""
-    scope: AccessScope = UNRESTRICTED
+    scope: AccessScope = AccessScope(unrestricted=False)
     """Site/rack data scope (see app/application/access_control.py). Unrestricted for
-    every user holding a global role, so pre-existing users are unaffected."""
+    every user holding a global role, so pre-existing users are unaffected. The default is
+    the empty restricted scope so a context built without a scope fails closed."""
     inactive_permissions: frozenset[str] = frozenset()
 
     def has_permission(self, code: str) -> bool:
