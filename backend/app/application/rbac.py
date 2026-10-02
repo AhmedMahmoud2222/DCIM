@@ -14,12 +14,12 @@ exception, not a new general mechanism."""
 from dataclasses import dataclass
 
 from fastapi import Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.application.access_control import AccessScope, load_effective_access
 from app.core.errors import ForbiddenError
-from app.domain.auth.models import Permission, Role, RoleAssignment, RolePermission, User
+from app.domain.auth.models import User
 
 # Default role -> permission-code seed, per ARCHITECTURE_REVIEW.md v1.0 §6.1 role list.
 # Custom roles remain fully supported (Role is a normal table); this is only the seed set
@@ -35,6 +35,9 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "managed_asset:manage",
         "managed_asset:update_lifecycle",
         "user:manage",
+        "user:read",
+        "group:read",
+        "group:manage",
         "role:manage",
         "audit:view",
         "rack:read",
@@ -197,6 +200,11 @@ class AuthContext:
     permission grants — deliberately not derived by joining through RolePermission,
     since a role stripped of every permission would then vanish from this set even
     though the user is still formally assigned to it (spec §9.1)."""
+    scope: AccessScope = AccessScope(unrestricted=False)
+    """Site/rack data scope (see app/application/access_control.py). Unrestricted for
+    every user holding a global role, so pre-existing users are unaffected. The default is
+    the empty restricted scope so a context built without a scope fails closed."""
+    inactive_permissions: frozenset[str] = frozenset()
 
     def has_permission(self, code: str) -> bool:
         return code in self.permission_codes
@@ -208,22 +216,16 @@ class AuthContext:
 async def get_auth_context(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> AuthContext:
-    # LEFT JOIN from role_assignment/role outward to role_permission/permission, not an
-    # INNER JOIN starting from permission — a role with zero permissions still produces a
-    # row (permission columns NULL), so role membership is captured correctly regardless
-    # of what that role currently grants (spec §9.1).
-    stmt = (
-        select(Role.name, Permission.resource, Permission.action)
-        .select_from(RoleAssignment)
-        .join(Role, Role.id == RoleAssignment.role_id)
-        .outerjoin(RolePermission, RolePermission.role_id == Role.id)
-        .outerjoin(Permission, Permission.id == RolePermission.permission_id)
-        .where(RoleAssignment.user_id == user.id)
+    """Effective permissions = (role grants + group allows) - group denies, evaluated on
+    every request from the database so membership/permission changes apply immediately."""
+    access = (await load_effective_access(db, [user.id]))[user.id]
+    return AuthContext(
+        user=user,
+        permission_codes=access.permission_codes,
+        role_names=access.role_names,
+        scope=access.scope,
+        inactive_permissions=access.inactive_permissions,
     )
-    rows = (await db.execute(stmt)).all()
-    role_names = frozenset(name for name, _, _ in rows)
-    codes = frozenset(f"{resource}:{action}" for _, resource, action in rows if resource is not None)
-    return AuthContext(user=user, permission_codes=codes, role_names=role_names)
 
 
 def require_permission(code: str):

@@ -47,11 +47,20 @@ async def _load_job(job_id: uuid.UUID, db: AsyncSession) -> BulkImportJob:
     return job
 
 
+def _assert_job_visible(job: BulkImportJob, ctx: AuthContext) -> None:
+    """A job has no site link, so a site-restricted caller may only touch jobs they
+    uploaded themselves. Reported as 404, the same as a missing job, so ids cannot be
+    probed (SEC-RBAC-59-04). Unrestricted callers keep the existing behaviour."""
+    if not ctx.scope.unrestricted and job.uploaded_by_user_id != ctx.user.id:
+        raise NotFoundError(f"BulkImportJob {job.id} not found.")
+
+
 def _check_import_permission(job: BulkImportJob, ctx: AuthContext) -> None:
     """`catalog` import additionally requires Administrator role membership, mirroring
     `require_catalog_administrator` (app/application/rbac.py) exactly — this is not a new
     RBAC mechanism, just that dependency's logic inlined for a permission that can only
     be chosen after the job (and its import_type) is loaded."""
+    _assert_job_visible(job, ctx)
     if job.import_type == "catalog":
         if not ctx.has_permission("catalog:import"):
             raise ForbiddenError("Missing required permission: catalog:import")
@@ -67,6 +76,7 @@ async def _load_job_for_read(
     job_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
 ) -> BulkImportJob:
     job = await _load_job(job_id, db)
+    _assert_job_visible(job, ctx)
     required = f"{job.import_type}:read"
     if not ctx.has_permission(required):
         raise ForbiddenError(f"Missing required permission: {required}")
