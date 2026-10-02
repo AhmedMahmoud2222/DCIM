@@ -2,6 +2,7 @@
 last-administrator invariant, and input normalisation. Every rule here is enforced
 server-side and independent of what the frontend shows."""
 
+import dataclasses
 import re
 import uuid
 
@@ -10,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import (
     AccessScope,
+    EffectiveAccess,
     active_administrator_ids,
     load_effective_access,
     visible_rack_ids_query,
 )
+from app.application.authority_lock import ADMIN_INVARIANT_LOCK_NAME, acquire_authority_lock
 from app.application.rbac import AuthContext
 from app.core.errors import ApiError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.auth.models import (
@@ -78,17 +81,29 @@ def assert_can_grant_permissions(ctx: AuthContext, codes: set[str]) -> None:
         raise ForbiddenError(f"You cannot grant permissions you do not hold: {', '.join(missing[:10])}")
 
 
-async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope) -> bool:
+async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope, *, current_only: bool = False) -> bool:
     """True when everything `inner` can see, `outer` can see too: every site, every
     `rack_scope=all` site, and every individually selected rack. Compared on granted
-    scope, so a wider rack scope inside a shared site is correctly reported as wider."""
+    scope, so a wider rack scope inside a shared site is correctly reported as wider.
+
+    A selected-rack grant can outlive the rack's placement (the rack moved to a site the grant's holder is not granted):
+    it confers nothing today but revives if the rack returns. The default comparison keeps those raw ids, so delegation
+    (group assignment, grant checks, post-state) never lets an actor confer a latent grant it does not hold itself.
+    `current_only=True` drops the stale ids of `inner` and is for the strict-outranking peer test only, where a stale
+    grant must not make a peer look lower."""
     if outer.unrestricted:
         return True
     if inner.unrestricted:
         return False
     if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
         return False
-    wanted = inner.rack_ids - outer.rack_ids
+    inner_racks = set(inner.rack_ids)
+    if current_only and inner_racks:
+        inner_visible = visible_rack_ids_query(inner).subquery()
+        inner_racks = set(
+            (await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(inner_racks)))).scalars()
+        )
+    wanted = inner_racks - outer.rack_ids
     if not wanted:
         return True
     visible_sub = visible_rack_ids_query(outer).subquery()
@@ -192,7 +207,7 @@ async def assert_administrator_remains(db: AsyncSession) -> None:
     after flush; the caller rolls back on failure. A transaction-scoped advisory lock
     serialises concurrent admin-affecting changes so two requests cannot each see the other
     administrator still present and both proceed."""
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext('dcim.admin_invariant'))"))
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:name))"), {"name": ADMIN_INVARIANT_LOCK_NAME})
     if not await active_administrator_ids(db):
         raise ConflictError(
             "This change would leave no active administrator (a user holding both user:manage and group:manage)."
@@ -213,19 +228,109 @@ async def get_group_or_404(db: AsyncSession, group_id: uuid.UUID) -> UserGroup:
     return group
 
 
+async def _covers(
+    db: AsyncSession, outer: EffectiveAccess | AuthContext, inner: EffectiveAccess, *, current_only: bool = False
+) -> bool:
+    """`inner` <= `outer` in the authority order: `inner` holds no permission and no
+    site/rack scope that `outer` lacks."""
+    return inner.permission_codes <= outer.permission_codes and await scope_contains(
+        db, outer.scope, inner.scope, current_only=current_only
+    )
+
+
+async def actor_strictly_outranks(db: AsyncSession, ctx: AuthContext, target: EffectiveAccess) -> str | None:
+    """Delegated-administration rule. Effective authority is the pair (permissions, scope),
+    ordered component-wise: permissions by set inclusion, scope by `scope_contains`. That is
+    a partial order, so no numeric rank is invented. The actor strictly outranks the target
+    only when target <= actor AND NOT actor <= target. Returns None on success, else the
+    reason:
+      * "exceeds"    the target holds a permission or scope the actor lacks, which also
+                     covers incomparable principals (safe default: reject);
+      * "equal"      identical effective authority (a peer)."""
+    if not await _covers(db, ctx, target):
+        return "exceeds"
+    actor_as_access = EffectiveAccess(
+        user_id=ctx.user.id, permission_codes=ctx.permission_codes, role_names=ctx.role_names, scope=ctx.scope
+    )
+    # Reverse half only: a stale selected-rack grant held by the actor must not make a peer look lower.
+    if await _covers(db, target, actor_as_access, current_only=True):
+        return "equal"
+    return None
+
+
 async def assert_actor_outranks_users(db: AsyncSession, ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
-    """A user may not administer someone whose effective permissions or data scope exceed
-    their own (prevents a delegated admin from disabling, re-passwording, re-grouping or
-    denying a more powerful user, or one whose scope lies wholly or partly elsewhere).
-    Every route that changes what another user can do must go through this check."""
+    """A user may administer another user only when they STRICTLY outrank them (see
+    `actor_strictly_outranks`): the target's permissions and site/rack scope lie within the
+    actor's and the two are not identical. Peers, wider, and incomparable principals are all
+    refused. Every route that changes what another user can do must go through this check,
+    before it is made. Granting a user permissions or scope the actor holds is still delegation
+    (see `assert_can_grant_*`); it never lets the actor create authority beyond their own."""
     others = user_ids - {ctx.user.id}
     if not others:
         return
     for access in (await load_effective_access(db, list(others))).values():
-        if not access.permission_codes <= ctx.permission_codes:
-            raise ForbiddenError("You cannot administer a user who holds permissions you do not hold.")
-        if not await scope_contains(db, ctx.scope, access.scope):
-            raise ForbiddenError("You cannot administer a user whose site or rack access exceeds yours.")
+        reason = await actor_strictly_outranks(db, ctx, access)
+        if reason == "exceeds":
+            raise ForbiddenError(
+                "You cannot administer a user whose permissions or site/rack access exceed or differ from yours."
+            )
+        if reason == "equal":
+            raise ForbiddenError("You cannot administer a user with the same effective authority as yours.")
+
+
+async def assert_resulting_authority_within_actor(db: AsyncSession, ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
+    """Post-state guard, called after the change is flushed and before anything is committed.
+    The pre-mutation check (`assert_actor_outranks_users`) only proves the target is below the
+    actor NOW; removing a deny grant, a deny membership or a whole group can restore authority
+    the target already held elsewhere. Every surviving principal whose effective access the
+    change can alter must still satisfy `target <= actor` afterwards. Equality is allowed (that
+    is delegation: the actor conferred what they hold); exceeding the actor, or becoming
+    incomparable with the actor, is not. On failure the whole transaction (membership and grant
+    rows, password or token changes, audit rows) is rolled back and the locks are released."""
+    others = user_ids - {ctx.user.id}
+    if not others:
+        return
+    for access in (await load_effective_access(db, list(others))).values():
+        if not await _covers(db, ctx, access):
+            await db.rollback()
+            raise ForbiddenError(
+                "This change would give a user permissions or site/rack access that exceed or differ from yours."
+            )
+
+
+def assert_not_changing_own_membership(ctx: AuthContext, user_ids: set[uuid.UUID]) -> None:
+    """Nobody may add themselves to, or remove themselves from, a group. A group can hold a
+    deny grant, so a self-addition is a self-modification of effective permissions, and the
+    outranking check deliberately skips the actor."""
+    if ctx.user.id in user_ids:
+        raise ForbiddenError("You cannot change your own group memberships.")
+
+
+async def begin_authority_change(db: AsyncSession, ctx: AuthContext, permission: str) -> AuthContext:
+    """Serialises every authority-changing mutation and returns the actor's CURRENT context.
+    The context resolved at request start can be stale by the time the mutation commits (a
+    concurrent membership/grant change could shrink the actor or promote the target after the
+    check). A transaction-scoped advisory lock makes such mutations run one at a time, and the
+    actor is re-read after the lock is held, so every later check sees all earlier commits
+    (READ COMMITTED). Rack-placement writers take the same lock shared, so a rack relocation
+    cannot commit between this decision and its commit either (see authority_lock.py for the
+    full lock order). The lock is released at commit/rollback."""
+    await acquire_authority_lock(db)
+    active = (
+        await db.execute(select(User.is_active).where(User.id == ctx.user.id).execution_options(populate_existing=True))
+    ).scalar_one_or_none()
+    if not active:
+        raise ForbiddenError("Your account is no longer active.")
+    access = (await load_effective_access(db, [ctx.user.id]))[ctx.user.id]
+    if permission not in access.permission_codes:
+        raise ForbiddenError(f"Permission {permission} is required.")
+    return dataclasses.replace(
+        ctx,
+        permission_codes=access.permission_codes,
+        role_names=access.role_names,
+        scope=access.scope,
+        inactive_permissions=access.inactive_permissions,
+    )
 
 
 async def assert_actor_outranks_target(db: AsyncSession, ctx: AuthContext, target_user_id: uuid.UUID) -> None:
@@ -233,7 +338,7 @@ async def assert_actor_outranks_target(db: AsyncSession, ctx: AuthContext, targe
 
 
 async def assert_can_modify_group(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
-    """Changing a group changes every member's access, so the actor must outrank all
+    """Changing a group changes every member's access, so the actor must strictly outrank all
     current members, and (if site-restricted) the group's own site grants must lie within
     the actor's scope. Closes cross-site group tampering and deny-group lockouts."""
     members = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())

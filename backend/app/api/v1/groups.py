@@ -22,6 +22,9 @@ from app.application.user_admin_service import (
     assert_can_grant_permissions,
     assert_can_grant_sites,
     assert_can_modify_group,
+    assert_not_changing_own_membership,
+    assert_resulting_authority_within_actor,
+    begin_authority_change,
     clean_text,
     get_group_or_404,
     group_scope,
@@ -136,6 +139,10 @@ async def _detail(db: AsyncSession, group: UserGroup, ctx: AuthContext | None = 
     )
 
 
+async def _member_ids(db: AsyncSession, group_id: uuid.UUID) -> set[uuid.UUID]:
+    return set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
+
+
 async def _assert_not_member(ctx: AuthContext, db: AsyncSession, group_id: uuid.UUID) -> None:
     """Self-escalation guard: members cannot rewrite the group that grants them access."""
     if await db.get(UserGroupMember, (group_id, ctx.user.id)) is not None:
@@ -234,6 +241,7 @@ async def update_group(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
@@ -266,12 +274,15 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> None:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
     detail = await _detail(db, group)
+    survivors = await _member_ids(db, group_id)
     await db.delete(group)
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, survivors)
     try:
         await assert_administrator_remains(db)
     except ConflictError:
@@ -301,9 +312,11 @@ async def set_members(
 ) -> GroupDetailOut:
     from app.application.user_admin_service import assert_can_assign_group
 
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     target = set(body.user_ids)
+    assert_not_changing_own_membership(ctx, target)
     if target:
         found = set((await db.execute(select(User.id).where(User.id.in_(target)))).scalars())
         if found != target:
@@ -322,6 +335,7 @@ async def set_members(
         if member is not None:
             await db.delete(member)
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, changed)
     try:
         await assert_administrator_remains(db)
     except ConflictError:
@@ -357,6 +371,7 @@ async def set_permissions(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
@@ -373,6 +388,7 @@ async def set_permissions(
     for perm in deny.values():
         db.add(UserGroupPermission(group_id=group_id, permission_id=perm.id, effect="deny"))
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, await _member_ids(db, group_id))
     try:
         await assert_administrator_remains(db)
     except ConflictError:
@@ -424,6 +440,7 @@ async def set_site_access(
 ) -> GroupDetailOut:
     """Replaces the group's whole site/rack grant set. Every rack must currently be placed
     in the site it is granted under (cross-site rack grants are rejected)."""
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
@@ -454,6 +471,7 @@ async def set_site_access(
     except IntegrityError as exc:
         await db.rollback()
         raise ConflictError("Site access could not be saved; a site or rack no longer exists.") from exc
+    await assert_resulting_authority_within_actor(db, ctx, await _member_ids(db, group_id))
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
         db, actor_user_id=ctx.user.id, action="group.site_access.update", entity_type="group", entity_id=group.id,

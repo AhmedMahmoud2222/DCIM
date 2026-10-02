@@ -21,11 +21,13 @@ from app.application.user_admin_service import (
     assert_administrator_remains,
     assert_can_assign_group,
     assert_can_assign_role,
+    assert_resulting_authority_within_actor,
+    begin_authority_change,
     clean_text,
     get_user_or_404,
     validate_password,
 )
-from app.core.errors import ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import ApiError, ConflictError, ForbiddenError, NotFoundError
 from app.core.security import hash_password
 from app.domain.auth.models import RefreshToken, Role, RoleAssignment, User, UserGroup, UserGroupMember
 
@@ -178,6 +180,7 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("user:manage")),
 ) -> UserOut:
+    ctx = await begin_authority_change(db, ctx, "user:manage")
     full_name = clean_text(body.full_name, field="full_name", max_length=200)
     validate_password(body.password)
     email = body.email.lower()
@@ -203,6 +206,7 @@ async def create_user(
     for gid in group_ids:
         db.add(UserGroupMember(group_id=gid, user_id=user.id))
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, {user.id})
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
@@ -226,33 +230,43 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("user:manage")),
 ) -> UserOut:
+    ctx = await begin_authority_change(db, ctx, "user:manage")
     user = await get_user_or_404(db, user_id)
     await assert_actor_outranks_target(db, ctx, user.id)
     before = {"full_name": user.full_name, "is_active": user.is_active}
     after: dict = {}
 
-    if body.full_name is not None:
-        user.full_name = clean_text(body.full_name, field="full_name", max_length=200)
-        after["full_name"] = user.full_name
-    if body.is_active is not None and body.is_active != user.is_active:
-        if user.id == ctx.user.id and not body.is_active:
-            raise ForbiddenError("You cannot deactivate your own account.")
-        user.is_active = body.is_active
-        after["is_active"] = user.is_active
-        if not user.is_active:
+    if user.id == ctx.user.id and body.group_ids is not None:
+        raise ForbiddenError("You cannot change your own group memberships.")
+    try:
+        if body.full_name is not None:
+            user.full_name = clean_text(body.full_name, field="full_name", max_length=200)
+            after["full_name"] = user.full_name
+        if body.is_active is not None and body.is_active != user.is_active:
+            if user.id == ctx.user.id and not body.is_active:
+                raise ForbiddenError("You cannot deactivate your own account.")
+            user.is_active = body.is_active
+            after["is_active"] = user.is_active
+            if not user.is_active:
+                await _revoke_refresh_tokens(db, user.id)
+        if body.password is not None:
+            validate_password(body.password)
+            user.password_hash = hash_password(body.password)
+            after["password"] = "changed"
             await _revoke_refresh_tokens(db, user.id)
-    if body.password is not None:
-        validate_password(body.password)
-        user.password_hash = hash_password(body.password)
-        after["password"] = "changed"
-        await _revoke_refresh_tokens(db, user.id)
-    if body.group_ids is not None:
-        old, new = await _set_memberships(db, ctx, user, body.group_ids)
-        before["group_ids"] = sorted(str(g) for g in old)
-        after["group_ids"] = sorted(str(g) for g in new)
-    await db.flush()
-    await assert_administrator_remains(db)
-
+        if body.group_ids is not None:
+            old, new = await _set_memberships(db, ctx, user, body.group_ids)
+            before["group_ids"] = sorted(str(g) for g in old)
+            after["group_ids"] = sorted(str(g) for g in new)
+        await db.flush()
+        if body.group_ids is not None:
+            await assert_resulting_authority_within_actor(db, ctx, {user.id})
+        await assert_administrator_remains(db)
+    except ApiError:
+        # Any refusal after the first write (authority, last-administrator, validation) must
+        # discard the password, token, active-flag and membership changes made so far.
+        await db.rollback()
+        raise
     request_id, correlation_id = _request_ids(request)
     action = "user.update"
     if after.get("is_active") is False:
@@ -275,6 +289,7 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("user:manage")),
 ) -> None:
+    ctx = await begin_authority_change(db, ctx, "user:manage")
     user = await get_user_or_404(db, user_id)
     if user.id == ctx.user.id:
         raise ForbiddenError("You cannot delete your own account.")
