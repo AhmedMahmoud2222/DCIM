@@ -10,6 +10,11 @@ from app.domain.auth.models import (  # noqa: F401
     RoleAssignment,
     RolePermission,
     User,
+    UserGroup,
+    UserGroupMember,
+    UserGroupPermission,
+    UserGroupRackAccess,
+    UserGroupSiteAccess,
 )
 from app.domain.bulk_import.models import BulkImportJob, BulkImportRow  # noqa: F401
 from app.domain.catalog.designer_models import (  # noqa: F401
