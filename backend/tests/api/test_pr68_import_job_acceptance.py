@@ -163,13 +163,40 @@ async def test_prerequisites_restricted_callers_hold_read_but_never_import(clien
     assert len(world["jobs"]) == 6
 
 
-async def test_prerequisite_restricted_callers_cannot_upload_or_use_import_templates(client, world):
+UPLOAD_PATHS = (
+    "/api/v1/racks/import-jobs?mode=create_only",
+    "/api/v1/equipment/import-jobs?mode=create_only",
+    "/api/v1/catalog/import-jobs?mode=create_only",
+)
+# (path, status a restricted caller gets). Rack and equipment templates only need the read permission, which is active
+# for restricted users; the catalog template needs `catalog:import`, which is inactive for them.
+TEMPLATES = (
+    ("/api/v1/racks/import-template", 200),
+    ("/api/v1/equipment/import-template", 200),
+    ("/api/v1/catalog/import-template", 403),
+)
+
+
+async def test_prerequisite_restricted_callers_get_an_exact_403_on_every_upload_route(client, world):
     content = build_workbook(RACK_HEADERS, [])
     for headers in (world["headers_a"], world["headers_b"]):
-        for path in ("/api/v1/racks/import-jobs?mode=create_only", "/api/v1/equipment/import-jobs?mode=create_only",
-                     "/api/v1/catalog/import-jobs?mode=create_only"):
+        for path in UPLOAD_PATHS:
             resp = await client.post(path, files={"file": ("x.xlsx", content, "application/octet-stream")}, headers=headers)
-            assert resp.status_code in (403, 404), (path, resp.status_code)
+            assert resp.status_code == 403, (path, resp.status_code, resp.text)
+
+
+async def test_template_downloads_for_restricted_and_unrestricted_callers(client, world):
+    """Every template route is requested. Restricted callers get exactly the answer their active permissions give them;
+    the unrestricted uploader can download all three. A 200 is a real XLSX, not an error page."""
+    for headers in (world["headers_a"], world["headers_b"]):
+        for path, expected in TEMPLATES:
+            resp = await client.get(path, headers=headers)
+            assert resp.status_code == expected, (path, resp.status_code, resp.text[:200])
+            if expected == 200:
+                assert resp.content[:4] == b"PK\x03\x04", path
+    for path, _ in TEMPLATES:
+        resp = await client.get(path, headers=world["uploader"])
+        assert resp.status_code == 200 and resp.content[:4] == b"PK\x03\x04", (path, resp.status_code)
 
 
 # ------------------------------------------------------------------ the full operation matrix for restricted A/B
@@ -249,7 +276,7 @@ async def test_a_restricted_user_with_no_import_permission_never_gets_403_for_a_
 @pytest.mark.parametrize("operation", ["status", "rows", "report", "commit", "cancel"])
 async def test_historical_owner_cases(client, world, db_session, admin, auth_headers, make_user, operation):
     email = f"hist-{uuid.uuid4().hex[:8]}@example.com"
-    user = await make_user(email, PW, "Engineer")  # global role: unrestricted, may upload
+    user = await make_user(email, PW, "Engineer")  # global role: unrestricted, may upload and commit
     headers = await _login(client, email)
     room = world["room"]
     from tests.api.test_bulk_import_racks import _create_rack_model as _model
@@ -261,7 +288,12 @@ async def test_historical_owner_cases(client, world, db_session, admin, auth_hea
           room["building_code"], room["floor_level"], room["room_code"], 0, 0, 0, "Facilities", ""]],
     )
     job_id = await _upload(client, headers, "/api/v1/racks/import-jobs?mode=create_only", content)
-    assert (await client.get(f"/api/v1/import-jobs/{job_id}", headers=headers)).status_code == 200  # owner while unrestricted
+    assert (await client.post(f"/api/v1/import-jobs/{job_id}/commit", headers=headers)).status_code == 202
+    commit_bulk_import_job.run(job_id)
+    owned = await client.get(f"/api/v1/import-jobs/{job_id}", headers=headers)
+    assert owned.status_code == 200 and owned.json()["status"] == "committed" and owned.json()["committed_row_count"] == 1, owned.text
+    report = await client.get(f"/api/v1/import-jobs/{job_id}/report", headers=headers)
+    assert report.status_code == 200 and report.content[:4] == b"PK\x03\x04"  # a real XLSX exists before the restriction
 
     # the user loses the global role and keeps only a Site A group: now restricted, no access to the room's site
     await db_session.execute(text("DELETE FROM role_assignment WHERE user_id = :u"), {"u": str(user.id)})
@@ -273,13 +305,21 @@ async def test_historical_owner_cases(client, world, db_session, admin, auth_hea
 
     method, suffix = {"status": ("get", ""), "rows": ("get", "/rows"), "report": ("get", "/report"),
                       "commit": ("post", "/commit"), "cancel": ("post", "/cancel")}[operation]
+    before = await _snapshot(db_session, job_id)
     resp = await client.request(method, f"/api/v1/import-jobs/{job_id}{suffix}", headers=headers)
-    # Current behaviour: reads are allowed by ownership alone (200, or 409 for a report that does not exist yet);
-    # commit and cancel are 403 because the import permissions are inactive for a restricted user.
-    expected = {"status": {200}, "rows": {200}, "report": {200, 409}, "commit": {403}, "cancel": {403}}[operation]
-    assert resp.status_code in expected, (operation, resp.status_code, resp.text)
+    # Owner-approved contract (2026-10-01, "keep uploader access"): the uploader keeps reading its own job after it
+    # becomes site-restricted; commit and cancel are 403 because the import permissions are inactive for it.
+    expected = {"status": 200, "rows": 200, "report": 200, "commit": 403, "cancel": 403}[operation]
+    assert resp.status_code == expected, (operation, resp.status_code, resp.text[:200])
+    if operation == "status":
+        assert resp.json()["status"] == "committed"
     if operation == "rows":
         assert resp.json()["items"][0]["raw_data"]["room_code"] == room["room_code"], "rows expose the out-of-scope room's data"
-    # and another restricted user (not the owner) still gets the uniform 404
+    if operation == "report":
+        assert resp.content[:4] == b"PK\x03\x04", "the report is a real XLSX"
+    # another restricted user (not the owner) gets exactly the answer a missing id gets, and nothing changes
     other = await client.request(method, f"/api/v1/import-jobs/{job_id}{suffix}", headers=world["headers_b"])
-    assert other.status_code == 404
+    ref = await client.request(method, f"/api/v1/import-jobs/{uuid.uuid4()}{suffix}", headers=world["headers_b"])
+    assert other.status_code == ref.status_code == 404
+    assert _json(other).get("title") == _json(ref).get("title")
+    assert await _snapshot(db_session, job_id) == before, "a restricted request changed the job, its report or its audit trail"
