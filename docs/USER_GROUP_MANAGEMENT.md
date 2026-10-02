@@ -83,3 +83,15 @@ One behavioural note: a `role_assignment` with a non-global `scope_type` previou
 * The UI creates group-only (site-restricted) users. Legacy role assignment is available on `POST /users` (`role_name`) but has no UI, and roles cannot be changed after creation.
 * Deleting a user who owns imports or catalog revisions is refused (409); deactivate instead.
 * Effective access is computed per request with a handful of queries; very large tenants may want caching.
+
+## Import jobs and site-restricted users (owner-approved uploader-access rule)
+Operations (bulk-import pipeline): upload and template download per domain (`POST|GET /racks|equipment|catalog/import-*`), and on `/import-jobs/{id}`: status, `/rows` (preview, `?status=invalid` for validation errors), `/report`, `/commit`, `/cancel`. There is no list or retry endpoint.
+
+Current behaviour: a site-restricted caller may touch a job only if they uploaded it; any other job answers a 404 identical to a missing id, for every operation. Unrestricted callers keep the earlier behaviour (a holder of `rack:read` / `equipment:read` can read any job of that type; `catalog` jobs need `catalog:read`).
+
+What the acceptance tests show (`tests/api/test_pr68_import_job_acceptance.py`):
+* `rack:import`, `equipment:import` and `catalog:import` are not site-aware, so they are inactive for a restricted user. A restricted user therefore cannot upload, commit or cancel, and the only jobs they can "own" are ones uploaded while they were unrestricted. Today that needs a direct database change (roles cannot change through the API).
+* Uploader ownership alone does not equal site scope: a historical owner keeps read access to a job whose rows describe rooms outside their current scope. On 2026-10-01 the owner explicitly selected **keep uploader access**, accepting this read-access contract. The tests pin that approved behavior; import write permissions remain inactive for restricted users.
+* No site or rack link has been added to jobs and the scope model is unchanged.
+
+Owner decision (2026-10-01): preserve uploader-only read access for historical uploads, including rows and reports outside the uploader's current site scope. Other restricted callers still receive the same 404 as a missing job. This approves the existing read contract only; it does not enable restricted-user upload, commit or cancel, create a tenant model, or add site/rack linkage to jobs. `*:import` stays outside `SCOPE_AWARE_PERMISSIONS`. Any later site-aware import-write feature requires separate scoped design and authorization.
