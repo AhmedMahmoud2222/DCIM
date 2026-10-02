@@ -75,12 +75,9 @@ def _require_csrf_match(request: Request, x_csrf_token: str | None) -> None:
 async def login(
     body: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ) -> AccessTokenResponse:
-    await login_throttle.check(body.email)
-    try:
-        user = await auth_service.authenticate(db, email=body.email, password=body.password)
-    except auth_service.InvalidCredentialsError:
-        await login_throttle.record_failure(body.email)
-        raise
+    # The slot is taken before the password is verified, so concurrent guesses are bounded.
+    await login_throttle.reserve(body.email)
+    user = await auth_service.authenticate(db, email=body.email, password=body.password)
     await login_throttle.reset(body.email)
     access_token, refresh_token = await auth_service.issue_tokens(db, user=user)
     _set_auth_cookies(response, refresh_token=refresh_token)
