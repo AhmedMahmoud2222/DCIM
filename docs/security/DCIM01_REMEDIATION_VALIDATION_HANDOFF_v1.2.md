@@ -1,6 +1,6 @@
 # DCIM01 remediation and final-tree validation: handoff for independent review
 
-**Document version: v1.1** (v1.0: draft; v1.1: heads refreshed, final-tree results filled, open defects added) (2026-10-01). Prepared by the remediation and validation agent for the independent Codex review. Documentation only. Nothing here is merged, deployed or closed. The repository owner keeps final merge authorization.
+**Document version: v1.2** (v1.0 draft; v1.1 heads refreshed and final-tree results filled; v1.2 owner-assigned fixes published for #81, #82, #84 with exact-head CI) (2026-10-01). Prepared by the remediation and validation agent for the independent Codex review. Documentation only. Nothing here is merged, deployed or closed. The repository owner keeps final merge authorization.
 
 ## 1. Live state and drift (observed 2026-10-01)
 
@@ -134,13 +134,20 @@ PR heads and the simulation SHAs are in sections 2 and 7. Reproduce a fail-befor
 | PR | Head |
 |---|---|
 | #80 | `15211049e97ef8eb6f1bba964ff5cc6173357c3a` |
-| #81 | `e2df9332eda6601f367a004cb2f719f18edbb410` |
-| #82 | `d92fd773c4556dcc07500a7d055ba242e1563356` |
+| #81 | `9f2b0f901b86985ac2b07ba60d8aff125c2fd8e4` |
+| #82 | `7915febacf977d9250c01860b7b959447a40e3bd` |
 | #83 | `30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584` |
-| #84 | `ea58739c41ed305ebc8c5d70a0f27d48f90c81f2` |
-| main | `aadaa37` |
+| #84 | `44da8799576d9d3d98ab4597cbe1bf79251752f5` |
+| main | `8b6d004` (was `aadaa37` when the final-tree run was made) |
 
-## 13. Open defects found during re-review (not fixed in these heads)
+## 13. Owner-assigned fixes (2026-10-02), published on the existing branches
 
-1. **#81 delegation regression (blocker).** `e2df933` normalised stale selected-rack grants inside `scope_contains` for every caller. An actor can then assign a user to a group that carries a stale rack grant the actor does not hold (`17e95ec` returns 403, `e2df933` returns 200); if the rack later returns to the site, the grant revives. Fix: normalise only in the reverse containment of `actor_strictly_outranks`; keep raw ids for target-within-actor, group assignment, grant checks and post-state; add the probe as a regression test. A comment on #81 cites a local commit `fcfd358` implementing this; it is not on GitHub and I could not verify it. Not applied by me.
-2. **#82 test gaps.** Templates are never requested; the upload-denial assertion accepts 403 or 404; the historical-owner report case accepts 200 or 409 on a parsed-only job. Probe: rack and equipment templates return 200 and catalog returns 403 for a restricted user.
+All three are normal fast-forward pushes or a merge commit; no force-push. All commits are **unsigned** (the sandbox signing key file is empty), so none is GitHub-verifiable. I authored all three, so none counts as independent acceptance; each head needs a reviewer who did not write it. No thread was resolved.
+
+| PR | Head | Change | Evidence | Exact-head CI |
+|---|---|---|---|---|
+| #81 | `9f2b0f9` | `scope_contains` compares raw grants again; `current_only` drops stale inner ids and is used only in the reverse half of `actor_strictly_outranks`; new latent-group-grant test | Fails on `e2df933` (group assignment 200), passes on the fix; equal-peer stale test unchanged; authority, group and concurrency files 236 passed on PostgreSQL | 7 of 7 success |
+| #82 | `7915feb` | Exact 403 on all upload routes; all template routes requested (rack, equipment 200 XLSX; catalog 403); committed historical-owner job with real XLSX report, exact 200 reads and exact 403 commit and cancel | 12 passed on head; 7 failed, 5 passed on `6dac357` | 7 of 7 success |
+| #84 | `44da879` | Merge of main `8b6d004` into the branch; tree diff against main is still the one test file (+298) | 14 passed locally (12 verification and 2 existing lifecycle tests), single Alembic head `0030_bulk_import_attempts` | 9 of 9 success |
+
+Remaining from section 11 unchanged: import-job contract decision, code-scanning model, Compose runtime smoke on a host with registry access (the #84 CI run shows `Compose smoke` green on GitHub), peer-recovery procedure, finding B and the lifecycle CHECK. The final-tree validation in section 7 was run on a tree based on `aadaa37` and has not been repeated on main `8b6d004` with the new heads.
