@@ -81,27 +81,29 @@ def assert_can_grant_permissions(ctx: AuthContext, codes: set[str]) -> None:
         raise ForbiddenError(f"You cannot grant permissions you do not hold: {', '.join(missing[:10])}")
 
 
-async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope) -> bool:
+async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope, *, current_only: bool = False) -> bool:
     """True when everything `inner` can see, `outer` can see too: every site, every
-    `rack_scope=all` site, and every individually selected rack that is currently
-    visible. Compared on granted scope, so a wider rack scope inside a shared site is correctly reported as wider, while a
-    stale grant (rack moved out of the granted site) is ignored."""
+    `rack_scope=all` site, and every individually selected rack. Compared on granted
+    scope, so a wider rack scope inside a shared site is correctly reported as wider.
+
+    A selected-rack grant can outlive the rack's placement (the rack moved to a site the grant's holder is not granted):
+    it confers nothing today but revives if the rack returns. The default comparison keeps those raw ids, so delegation
+    (group assignment, grant checks, post-state) never lets an actor confer a latent grant it does not hold itself.
+    `current_only=True` drops the stale ids of `inner` and is for the strict-outranking peer test only, where a stale
+    grant must not make a peer look lower."""
     if outer.unrestricted:
         return True
     if inner.unrestricted:
         return False
     if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
         return False
-    # A selected-rack grant can outlive the rack's placement (the rack moved to a site `inner` is not granted). Such an id
-    # confers nothing today, so only racks `inner` can CURRENTLY see count; otherwise a stale grant would make a peer look
-    # strictly lower than the user holding it.
-    live: set[uuid.UUID] = set()
-    if inner.rack_ids:
+    inner_racks = set(inner.rack_ids)
+    if current_only and inner_racks:
         inner_visible = visible_rack_ids_query(inner).subquery()
-        live = set(
-            (await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(inner.rack_ids)))).scalars()
+        inner_racks = set(
+            (await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(inner_racks)))).scalars()
         )
-    wanted = live - outer.rack_ids
+    wanted = inner_racks - outer.rack_ids
     if not wanted:
         return True
     visible_sub = visible_rack_ids_query(outer).subquery()
@@ -226,10 +228,14 @@ async def get_group_or_404(db: AsyncSession, group_id: uuid.UUID) -> UserGroup:
     return group
 
 
-async def _covers(db: AsyncSession, outer: EffectiveAccess | AuthContext, inner: EffectiveAccess) -> bool:
+async def _covers(
+    db: AsyncSession, outer: EffectiveAccess | AuthContext, inner: EffectiveAccess, *, current_only: bool = False
+) -> bool:
     """`inner` <= `outer` in the authority order: `inner` holds no permission and no
     site/rack scope that `outer` lacks."""
-    return inner.permission_codes <= outer.permission_codes and await scope_contains(db, outer.scope, inner.scope)
+    return inner.permission_codes <= outer.permission_codes and await scope_contains(
+        db, outer.scope, inner.scope, current_only=current_only
+    )
 
 
 async def actor_strictly_outranks(db: AsyncSession, ctx: AuthContext, target: EffectiveAccess) -> str | None:
@@ -246,7 +252,8 @@ async def actor_strictly_outranks(db: AsyncSession, ctx: AuthContext, target: Ef
     actor_as_access = EffectiveAccess(
         user_id=ctx.user.id, permission_codes=ctx.permission_codes, role_names=ctx.role_names, scope=ctx.scope
     )
-    if await _covers(db, target, actor_as_access):
+    # Reverse half only: a stale selected-rack grant held by the actor must not make a peer look lower.
+    if await _covers(db, target, actor_as_access, current_only=True):
         return "equal"
     return None
 

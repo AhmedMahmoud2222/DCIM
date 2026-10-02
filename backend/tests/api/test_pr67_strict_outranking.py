@@ -395,3 +395,24 @@ async def test_a_stale_selected_rack_grant_does_not_make_a_peer_look_lower(clien
     for route in ("password", "deactivate", "delete"):
         _denied(await USER_ROUTES[route](client, actor["headers"], twin["id"], twin["group"]))
     await _assert_user_untouched(client, admin, twin)
+
+
+async def test_a_stale_group_rack_grant_cannot_be_conferred_by_an_actor_who_does_not_hold_it(client, admin, world, auth_headers):
+    """Group G lists rack R2 in a site the actor reaches only through R1. R2 then moves to a site nobody here holds, so
+    the grant is latent: it confers nothing today and revives when R2 returns. Normalising stale grants away must apply
+    to the peer test only. Delegation still compares raw grants, so the actor cannot put a user into G."""
+    other = await _make_site(client, admin)
+    r2 = await _make_rack(client, admin, auth_headers, world["room_a"])
+    g = await _group(client, admin, allow=["rack:read"], sites=[_entry(world["a"], "selected", [r2])])
+    actor = await _principal(client, admin, BASE, [_entry(world["a"], "selected", [world["rack_a1"]])])
+    low = await _principal(client, admin, ["rack:read"], [_entry(world["a"], "selected", [world["rack_a1"]])])
+    mv = await client.post(f"/api/v1/racks/{r2}/move", json={"room_id": other["room"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)
+    assert mv.status_code == 200, mv.text
+    # both delegation routes that would put `low` into G
+    _denied(await client.put(f"/api/v1/groups/{g}/members", json={"user_ids": [low["id"]]}, headers=actor["headers"]))
+    _denied(await client.patch(f"/api/v1/users/{low['id']}", json={"group_ids": [low["group"], g]}, headers=actor["headers"]))
+    assert (await client.get(f"/api/v1/groups/{g}", headers=admin)).json()["member_ids"] == []
+    # revival: the rack returns; `low` must still not see it
+    back = await client.post(f"/api/v1/racks/{r2}/move", json={"room_id": world["room_a"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)
+    assert back.status_code == 200, back.text
+    assert (await client.get(f"/api/v1/racks/{r2}", headers=low["headers"])).status_code in (403, 404)
