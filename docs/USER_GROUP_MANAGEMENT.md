@@ -33,9 +33,9 @@ Rules:
 * Every other user is **site-restricted** and sees only what their groups grant:
   * sites = union of granted sites;
   * for a site, `all` wins over `selected` when two groups disagree; otherwise racks = union of selected racks;
-  * a rack is visible only if its **current placement** is in a granted site, so moving a rack out of a site immediately hides it from a stale grant (no cross-site leak);
+  * a rack is visible only if its **current placement** is in a granted site, and a *selected* rack only in the site it was granted under, so moving a rack out of a site immediately hides it from a stale grant (no cross-site leak, even if the user holds another grant on the new site);
   * organizations, countries, cities, buildings, floors and rooms are limited to those containing a visible site (cross-tenant isolation);
-  * equipment is visible when it sits in a visible rack, or is placed directly in a room of an `all` site;
+  * equipment is visible when it sits in a visible rack (it follows its rack, not the room recorded on its placement), or when it is not in any rack and is placed in a room of an `all` site;
   * unplaced racks and equipment are invisible to restricted users.
 * Out-of-scope objects return **404**, not 403, so ids cannot be probed.
 * **Fail closed for unscoped endpoints.** A restricted user keeps only permissions whose endpoints filter by site/rack: `organization:read`, `location:read`, `rack:read`, `rack:manage`, `rack:place`, `equipment:read`, plus user/group administration. Any other granted permission (alarms, telemetry, power, dashboard, imports, ...) is *inactive* for them and reported as such in the effective-access view. Making another module site-aware means adding its permission codes to `SCOPE_AWARE_PERMISSIONS` in `app/application/access_control.py` together with the query filter.
@@ -44,8 +44,9 @@ Rules:
 ## Security safeguards
 
 * **Privilege escalation**
-  * An actor can `allow` only permissions they hold; site grants must lie within the actor's own site scope, and rack grants within their visible racks.
-  * Adding a user to a group requires holding everything the group confers (permissions and sites).
+  * An actor can `allow` only permissions they hold; deny grants are always allowed.
+  * Site grants are compared by *containment*: the actor's own scope must contain everything handed out. A site needs the actor's access to it, `all` racks needs the actor's `all`, and selected racks must already be visible to the actor on that site. A delegate limited to selected racks therefore cannot grant `all`.
+  * Adding a user to a group requires holding everything the group confers (every allowed permission and the whole site/rack scope).
   * A legacy role can be assigned only if the actor holds all of its permissions, and never by a restricted actor.
   * Users cannot edit or delete a group they belong to, or change their own memberships.
   * **Strict outranking.** Effective authority is the pair (permission set, site/rack scope). Permissions compare by set inclusion and scope by containment (sites, `rack_scope=all`, selected racks), so authority is a partial order and no numeric rank is used. An actor may administer a user only if the user's permissions and scope both lie within the actor's (`target <= actor`) and the actor's do not lie within the user's (`not actor <= target`). Equal authority (peers), wider authority, and incomparable authority are all refused with 403. This covers user update/deactivate/re-password/regroup/delete and every group change that reaches a member (permissions, site access, rename, delete, membership add or remove): the actor must strictly outrank every user the change affects. Consequence: two principals with identical authority, including two global Administrators, cannot administer each other through the API; a strictly more senior principal must do it.
@@ -54,6 +55,7 @@ Rules:
   * **No self-membership changes.** Nobody may add themselves to or remove themselves from a group, on either the user route or the group route, because a group can carry deny grants. Changing your own name or password is still allowed.
   * **Concurrency and lock order.** Every authority-changing route (user create/update/delete, group update/delete/members/permissions/site-access) takes the exclusive transaction-scoped advisory lock `dcim.authority_change` first, then re-reads the actor's effective access and re-checks their `user:manage`/`group:manage` permission and active flag. Scope is derived from current rack placement, so the only two writers of rack placement (`placement_service.move_rack` and `retire_rack_placement`, used by the rack create/move/retire routes and the bulk-import rack commit) take the same lock **shared**. A relocation therefore waits for any open authority decision to commit, and an authority decision waits for any open relocation and then reads its result; relocations do not block each other. Global order: `dcim.authority_change` (exclusive or shared) -> `dcim.admin_invariant` -> row locks (import job, rack, placement, group, user). The power-topology and catalog/alarm/discovery locks are never taken in a transaction that also takes the authority lock. A new writer of rack placement, or of room/floor/building parentage, must take the shared lock first (`tests/integration/test_pr67_authority_relocation_race.py` guards the first case). Equipment placement does not enter the authority comparison.
 * **Last administrator.** An administrator is an active user holding both `user:manage` and `group:manage`. Any change that would leave none (deny grants, membership, group deletion, deactivation, deletion) fails with 409 and is rolled back. Users cannot deactivate or delete themselves. With strict outranking and the self-membership rule, an actor who may change an administrator also holds both permissions and stays one, so this check is defence in depth rather than a path an authenticated actor can reach today.
+* **Scoped administration.** A site-restricted administrator sees only users and groups whose grants lie inside their own scope; out-of-scope objects return 404. Users with no groups and no roles remain visible for onboarding.
 * **Validation.** Names are trimmed, length-limited and reject control characters; group names are unique case-insensitively; permission codes must exist; passwords need 12 to 256 characters; list sizes are capped; racks granted under a site must currently be placed in it.
 * **Sessions.** Deactivating a user revokes their refresh tokens and their access token stops working on the next request.
 * **Audit.** Every mutation writes an audit entry in the same transaction (`user.create|update|activate|deactivate|delete`, `group.create|update|delete`, `group.members.update`, `group.permissions.update`, `group.site_access.update`) with before/after values. Passwords are never logged.
@@ -85,7 +87,8 @@ One behavioural note: a `role_assignment` with a non-global `scope_type` previou
 
 * Endpoints outside locations, racks and equipment are not site-scoped yet (see fail-closed rule above).
 * The UI creates group-only (site-restricted) users. Legacy role assignment is available on `POST /users` (`role_name`) but has no UI, and roles cannot be changed after creation.
-* Deleting a user who owns imports or catalog revisions is refused (409); deactivate instead.
+* Deleting a user who owns imports or catalog revisions is refused (409); deactivate instead. Users holding a legacy role delete normally.
+* Denied escalation attempts return 403/404 but are not written to the audit log.
 * Effective access is computed per request with a handful of queries; very large tenants may want caching.
 
 ## Break-glass and recovery (current state, not implemented here)
@@ -94,4 +97,16 @@ One behavioural note: a `role_assignment` with a non-global `scope_type` previou
 ## Tenant model: implemented behaviour and what stays outside it (issue #57 stays open)
 Implemented: data scope is the pair (sites, racks) held through groups. Site-aware modules (organization/location read, racks, equipment, rack placement) filter by that scope and answer 404 for out-of-scope ids. Administering another principal (user and group routes) is bounded by strict outranking on permissions and scope, as described above, evaluated under the authority lock.
 
-Outside the model today: there is no tenant entity that owns users, groups, import jobs or catalog data. User and group directories are readable by any holder of `user:read` / `group:read` (grants of other sites are hidden from restricted actors). Catalog data is global manufacturer data. Alarms, telemetry, power, dashboard, floor plans, discovery and integrations are not site-scoped and stay disabled for restricted users. Import jobs carry no site link (see the PR #68 contract note). Two principals cannot be separated into tenants beyond what site/rack grants express; a real tenant boundary needs an owning-tenant column on users, groups and jobs and is a separate design.
+Outside the model today: there is no tenant entity that owns users, groups, import jobs or catalog data. User and group directories require `user:read` / `group:read`; restricted actors see only principals and groups whose grants are contained in their site/rack scope. This is scope filtering, not owning-tenant isolation. Catalog data is global manufacturer data. Alarms, telemetry, power, dashboard, floor plans, discovery and integrations are not site-scoped and stay disabled for restricted users. Import jobs carry no site link (see the PR #68 contract note). Two principals cannot be separated into tenants beyond what site/rack grants express; a real tenant boundary needs an owning-tenant column on users, groups and jobs and is a separate design.
+
+## Import jobs and site-restricted users (owner-approved uploader-access rule)
+Operations (bulk-import pipeline): upload and template download per domain (`POST|GET /racks|equipment|catalog/import-*`), and on `/import-jobs/{id}`: status, `/rows` (preview, `?status=invalid` for validation errors), `/report`, `/commit`, `/cancel`. There is no list or retry endpoint.
+
+Current behaviour: a site-restricted caller may touch a job only if they uploaded it; any other job answers a 404 identical to a missing id, for every operation. Unrestricted callers keep the earlier behaviour (a holder of `rack:read` / `equipment:read` can read any job of that type; `catalog` jobs need `catalog:read`).
+
+What the acceptance tests show (`tests/api/test_pr68_import_job_acceptance.py`):
+* `rack:import`, `equipment:import` and `catalog:import` are not site-aware, so they are inactive for a restricted user. A restricted user therefore cannot upload, commit or cancel, and the only jobs they can "own" are ones uploaded while they were unrestricted. Today that needs a direct database change (roles cannot change through the API).
+* Uploader ownership alone does not equal site scope: a historical owner keeps read access to a job whose rows describe rooms outside their current scope. On 2026-10-01 the owner explicitly selected **keep uploader access**, accepting this read-access contract. The tests pin that approved behavior; import write permissions remain inactive for restricted users.
+* No site or rack link has been added to jobs and the scope model is unchanged.
+
+Owner decision (2026-10-01): preserve uploader-only read access for historical uploads, including rows and reports outside the uploader's current site scope. Other restricted callers still receive the same 404 as a missing job. This approves the existing read contract only; it does not enable restricted-user upload, commit or cancel, create a tenant model, or add site/rack linkage to jobs. `*:import` stays outside `SCOPE_AWARE_PERMISSIONS`. Any later site-aware import-write feature requires separate scoped design and authorization.

@@ -20,6 +20,7 @@ Data-scope rules
 """
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from sqlalchemy import Select, and_, false, literal, or_, select, true
@@ -60,9 +61,30 @@ class AccessScope:
     site_ids: frozenset[uuid.UUID] = frozenset()
     full_site_ids: frozenset[uuid.UUID] = frozenset()
     rack_ids: frozenset[uuid.UUID] = frozenset()
+    selected_racks_by_site: Mapping[uuid.UUID, frozenset[uuid.UUID]] = field(default_factory=dict)
+    """site id -> racks granted by `selected` grants on that site (empty for `all` sites)."""
 
     def allows_site(self, site_id: uuid.UUID | None) -> bool:
         return self.unrestricted or (site_id is not None and site_id in self.site_ids)
+
+    def contains(self, inner: "AccessScope") -> bool:
+        """True when everything `inner` can reach, this scope can reach too. Compares the
+        grants themselves (site, all-vs-selected, per-site racks), so a `selected` scope
+        never contains an `all` scope on the same site."""
+        if self.unrestricted:
+            return True
+        if inner.unrestricted:
+            return False
+        if not inner.site_ids <= self.site_ids or not inner.full_site_ids <= self.full_site_ids:
+            return False
+        for site_id in inner.site_ids - inner.full_site_ids:
+            if site_id in self.full_site_ids:
+                continue
+            if not inner.selected_racks_by_site.get(site_id, frozenset()) <= self.selected_racks_by_site.get(
+                site_id, frozenset()
+            ):
+                return False
+        return True
 
 
 UNRESTRICTED = AccessScope(unrestricted=True)
@@ -78,6 +100,60 @@ class EffectiveAccess:
     inactive_permissions: frozenset[str] = frozenset()
     group_ids: frozenset[uuid.UUID] = frozenset()
     sources: dict[str, list[str]] = field(default_factory=dict)  # code -> ["role:Viewer", "group:Ops"]
+
+
+def build_scope(
+    site_rows: list[tuple[uuid.UUID, uuid.UUID, str]], rack_by_access: dict[uuid.UUID, set[uuid.UUID]]
+) -> AccessScope:
+    """site_rows: (site_access_id, site_id, rack_scope) grants; rack_by_access: selected racks."""
+    site_ids: set[uuid.UUID] = set()
+    full_sites: set[uuid.UUID] = set()
+    selected: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for access_id, site_id, rack_scope in site_rows:
+        site_ids.add(site_id)
+        if rack_scope == "all":
+            full_sites.add(site_id)
+        else:
+            selected.setdefault(site_id, set()).update(rack_by_access.get(access_id, set()))
+    return AccessScope(
+        unrestricted=False,
+        site_ids=frozenset(site_ids),
+        full_site_ids=frozenset(full_sites),
+        rack_ids=frozenset(r for racks in selected.values() for r in racks),
+        selected_racks_by_site={k: frozenset(v) for k, v in selected.items() if k not in full_sites},
+    )
+
+
+async def load_group_scopes(db: AsyncSession, group_ids: list[uuid.UUID]) -> dict[uuid.UUID, AccessScope]:
+    """The site/rack grants of each group, as a scope (empty scope when it grants nothing)."""
+    result = {gid: AccessScope(unrestricted=False) for gid in group_ids}
+    if not group_ids:
+        return result
+    rows = (
+        await db.execute(
+            select(
+                UserGroupSiteAccess.group_id, UserGroupSiteAccess.id, UserGroupSiteAccess.site_id,
+                UserGroupSiteAccess.rack_scope,
+            ).where(UserGroupSiteAccess.group_id.in_(group_ids))
+        )
+    ).all()
+    access_ids = {r[1] for r in rows}
+    racks: dict[uuid.UUID, set[uuid.UUID]] = {}
+    if access_ids:
+        for access_id, rack_id in (
+            await db.execute(
+                select(UserGroupRackAccess.site_access_id, UserGroupRackAccess.rack_id).where(
+                    UserGroupRackAccess.site_access_id.in_(access_ids)
+                )
+            )
+        ).all():
+            racks.setdefault(access_id, set()).add(rack_id)
+    by_group: dict[uuid.UUID, list[tuple[uuid.UUID, uuid.UUID, str]]] = {}
+    for gid, access_id, site_id, rack_scope in rows:
+        by_group.setdefault(gid, []).append((access_id, site_id, rack_scope))
+    for gid, grants in by_group.items():
+        result[gid] = build_scope(grants, racks)
+    return result
 
 
 async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, EffectiveAccess]:
@@ -161,15 +237,10 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
             else:
                 allowed.setdefault(code, []).append(f"group:{group_name}")
 
-        site_ids: set[uuid.UUID] = set()
-        full_sites: set[uuid.UUID] = set()
-        rack_ids: set[uuid.UUID] = set()
-        for _uid, access_id, site_id, rack_scope in sites_by_user.get(uid, []):
-            site_ids.add(site_id)
-            if rack_scope == "all":
-                full_sites.add(site_id)
-            else:
-                rack_ids |= rack_by_access.get(access_id, set())
+        user_scope = build_scope(
+            [(access_id, site_id, rack_scope) for _uid, access_id, site_id, rack_scope in sites_by_user.get(uid, [])],
+            rack_by_access,
+        )
 
         unrestricted = has_global_role
         effective = {code for code in allowed if code not in denied}
@@ -177,14 +248,7 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
         if not unrestricted:
             inactive = {code for code in effective if not is_scope_independent(code)}
             effective -= inactive
-        scope = (
-            UNRESTRICTED
-            if unrestricted
-            else AccessScope(
-                unrestricted=False, site_ids=frozenset(site_ids), full_site_ids=frozenset(full_sites),
-                rack_ids=frozenset(rack_ids),
-            )
-        )
+        scope = UNRESTRICTED if unrestricted else user_scope
         result[uid] = EffectiveAccess(
             user_id=uid, permission_codes=frozenset(effective), role_names=frozenset(role_names), scope=scope,
             denied_permissions=frozenset(denied & set(allowed)), inactive_permissions=frozenset(inactive),
@@ -213,8 +277,11 @@ def visible_rack_ids_query(scope: AccessScope) -> Select:
     conds: list[ColumnElement[bool]] = []
     if scope.full_site_ids:
         conds.append(sub.c.site_id.in_(scope.full_site_ids))
-    if scope.site_ids and scope.rack_ids:
-        conds.append(and_(sub.c.site_id.in_(scope.site_ids), sub.c.rack_id.in_(scope.rack_ids)))
+    # A selected rack is visible only in the site it was granted under: a rack granted on
+    # site A that moved to site B (where the user holds a different grant) stays hidden.
+    for site_id, racks in scope.selected_racks_by_site.items():
+        if racks and site_id not in scope.full_site_ids:
+            conds.append(and_(sub.c.site_id == site_id, sub.c.rack_id.in_(racks)))
     return select(sub.c.rack_id).where(or_(*conds) if conds else false())
 
 
@@ -250,7 +317,11 @@ def equipment_visible_clause(scope: AccessScope, equipment_id_col) -> ColumnElem
     )
     in_visible_rack = placement.where(EquipmentPlacement.rack_id.in_(visible_rack_ids_query(scope)))
     if scope.full_site_ids:
-        in_full_site = placement.where(Building.site_id.in_(scope.full_site_ids))
+        # Only rack-less equipment is matched by its room: a rack-mounted item follows its
+        # rack, because equipment_placement.room_id is not updated when the rack moves.
+        in_full_site = placement.where(
+            Building.site_id.in_(scope.full_site_ids), EquipmentPlacement.rack_id.is_(None)
+        )
         return or_(equipment_id_col.in_(in_visible_rack), equipment_id_col.in_(in_full_site))
     return equipment_id_col.in_(in_visible_rack)
 

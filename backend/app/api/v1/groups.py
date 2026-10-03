@@ -12,16 +12,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import _current_rack_sites, is_scope_independent, visible_rack_ids_in_site
+from app.application.access_control import (
+    _current_rack_sites,
+    is_scope_independent,
+    load_group_scopes,
+    visible_rack_ids_in_site,
+)
 from app.application.audit_service import write_audit_log
 from app.application.rbac import AuthContext, require_permission
 from app.application.user_admin_service import (
     ValidationFailed,
     assert_actor_outranks_users,
     assert_administrator_remains,
+    assert_can_assign_group,
     assert_can_grant_permissions,
     assert_can_grant_sites,
     assert_can_modify_group,
+    assert_group_visible,
     assert_not_changing_own_membership,
     assert_resulting_authority_within_actor,
     begin_authority_change,
@@ -168,20 +175,28 @@ async def list_groups(
     q: str | None = Query(default=None, max_length=100),
     db: AsyncSession = Depends(get_db),
     pagination: Pagination = Depends(pagination_params),
-    ctx=Depends(require_permission("group:read")),
+    ctx: AuthContext = Depends(require_permission("group:read")),
 ) -> Page:
     conds = []
     if q:
         needle = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         conds.append(func.lower(UserGroup.name).like(f"%{needle}%", escape="\\"))
-    total = (await db.execute(select(func.count()).select_from(UserGroup).where(*conds))).scalar_one()
-    groups = list(
-        (
-            await db.execute(
-                select(UserGroup).where(*conds).order_by(UserGroup.name).offset(pagination.offset).limit(pagination.limit)
-            )
-        ).scalars()
-    )
+    if ctx.scope.unrestricted:
+        total = (await db.execute(select(func.count()).select_from(UserGroup).where(*conds))).scalar_one()
+        groups = list(
+            (
+                await db.execute(
+                    select(UserGroup).where(*conds).order_by(UserGroup.name).offset(pagination.offset).limit(pagination.limit)
+                )
+            ).scalars()
+        )
+    else:
+        # A site-restricted administrator sees only groups whose grants lie inside their own scope.
+        candidates = list((await db.execute(select(UserGroup).where(*conds).order_by(UserGroup.name))).scalars())
+        scopes = await load_group_scopes(db, [g.id for g in candidates])
+        visible = [g for g in candidates if ctx.scope.contains(scopes[g.id])]
+        total = len(visible)
+        groups = visible[pagination.offset : pagination.offset + pagination.limit]
     ids = [g.id for g in groups]
     members = dict((await db.execute(
         select(UserGroupMember.group_id, func.count()).where(UserGroupMember.group_id.in_(ids)).group_by(UserGroupMember.group_id)
@@ -202,9 +217,11 @@ async def list_groups(
 
 @router.get("/{group_id}", response_model=GroupDetailOut)
 async def get_group(
-    group_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("group:read"))
+    group_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("group:read"))
 ) -> GroupDetailOut:
-    return await _detail(db, await get_group_or_404(db, group_id), ctx)
+    group = await get_group_or_404(db, group_id)
+    await assert_group_visible(db, ctx, group_id)
+    return await _detail(db, group, ctx)
 
 
 @router.post("", response_model=GroupDetailOut, status_code=201)
@@ -310,19 +327,17 @@ async def set_members(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
-    from app.application.user_admin_service import assert_can_assign_group
-
     ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
-    await _assert_not_member(ctx, db, group_id)
+    await assert_can_modify_group(db, ctx, group_id)
     target = set(body.user_ids)
-    assert_not_changing_own_membership(ctx, target)
     if target:
         found = set((await db.execute(select(User.id).where(User.id.in_(target)))).scalars())
         if found != target:
             raise NotFoundError("One or more users were not found.")
     current = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
     changed = target ^ current
+    assert_not_changing_own_membership(ctx, changed)
     await assert_actor_outranks_users(db, ctx, changed)
     if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
         raise ForbiddenError("You cannot modify a group that grants site or rack access beyond your own access.")

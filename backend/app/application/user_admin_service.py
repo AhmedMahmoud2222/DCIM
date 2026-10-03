@@ -13,7 +13,9 @@ from app.application.access_control import (
     AccessScope,
     EffectiveAccess,
     active_administrator_ids,
+    build_scope,
     load_effective_access,
+    load_group_scopes,
     visible_rack_ids_query,
 )
 from app.application.authority_lock import ADMIN_INVARIANT_LOCK_NAME, acquire_authority_lock
@@ -91,35 +93,25 @@ async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScop
     (group assignment, grant checks, post-state) never lets an actor confer a latent grant it does not hold itself.
     `current_only=True` drops the stale ids of `inner` and is for the strict-outranking peer test only, where a stale
     grant must not make a peer look lower."""
-    if outer.unrestricted:
-        return True
-    if inner.unrestricted:
-        return False
-    if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
-        return False
-    inner_racks = set(inner.rack_ids)
-    if current_only and inner_racks:
-        inner_visible = visible_rack_ids_query(inner).subquery()
-        inner_racks = set(
-            (await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(inner_racks)))).scalars()
-        )
-    wanted = inner_racks - outer.rack_ids
-    if not wanted:
-        return True
-    visible_sub = visible_rack_ids_query(outer).subquery()
-    seen: set[uuid.UUID] = set(
-        (await db.execute(select(visible_sub.c.rack_id).where(visible_sub.c.rack_id.in_(wanted)))).scalars()
+    if not current_only or inner.unrestricted or not inner.rack_ids:
+        return outer.contains(inner)
+    # Keep the parent branch's per-site grant identity while dropping stale selected
+    # racks only in the reverse comparison used to distinguish equal peers.
+    visible = set((await db.execute(visible_rack_ids_query(inner))).scalars())
+    current = dataclasses.replace(
+        inner,
+        rack_ids=frozenset(inner.rack_ids & visible),
+        selected_racks_by_site={site: frozenset(racks & visible) for site, racks in inner.selected_racks_by_site.items()},
     )
-    return wanted <= seen
+    return outer.contains(current)
 
 
 def scope_from_entries(entries: list[tuple[uuid.UUID, str, list[uuid.UUID]]]) -> AccessScope:
     """Builds the scope a set of (site_id, rack_scope, rack_ids) grants would confer."""
-    return AccessScope(
-        unrestricted=False,
-        site_ids=frozenset(site for site, _, _ in entries),
-        full_site_ids=frozenset(site for site, scope, _ in entries if scope == "all"),
-        rack_ids=frozenset(rack for _, scope, racks in entries if scope != "all" for rack in racks),
+    access_ids = [uuid.uuid4() for _ in entries]
+    return build_scope(
+        [(access_id, site, scope) for access_id, (site, scope, _) in zip(access_ids, entries, strict=True)],
+        {access_id: set(racks) for access_id, (_, _, racks) in zip(access_ids, entries, strict=True)},
     )
 
 
@@ -341,7 +333,29 @@ async def assert_can_modify_group(db: AsyncSession, ctx: AuthContext, group_id: 
     """Changing a group changes every member's access, so the actor must strictly outrank all
     current members, and (if site-restricted) the group's own site grants must lie within
     the actor's scope. Closes cross-site group tampering and deny-group lockouts."""
+    await assert_group_visible(db, ctx, group_id)
     members = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
+    if ctx.user.id in members:
+        raise ForbiddenError("You cannot modify a group you are a member of.")
     await assert_actor_outranks_users(db, ctx, members)
     if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
         raise ForbiddenError("You cannot modify a group that grants site or rack access beyond your own access.")
+
+
+async def assert_user_visible(db: AsyncSession, ctx: AuthContext, target_user_id: uuid.UUID) -> None:
+    """Site-restricted administrators only see users whose whole scope lies inside theirs.
+    Reported as 404 so ids outside the actor's scope cannot be probed."""
+    if ctx.scope.unrestricted or target_user_id == ctx.user.id:
+        return
+    access = (await load_effective_access(db, [target_user_id]))[target_user_id]
+    if not ctx.scope.contains(access.scope):
+        raise NotFoundError(f"User {target_user_id} not found.")
+
+
+async def assert_group_visible(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
+    """Site-restricted administrators only see groups whose grants lie inside their scope."""
+    if ctx.scope.unrestricted:
+        return
+    scope = (await load_group_scopes(db, [group_id]))[group_id]
+    if not ctx.scope.contains(scope):
+        raise NotFoundError(f"Group {group_id} not found.")

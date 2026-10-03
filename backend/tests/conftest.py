@@ -28,6 +28,7 @@ os.environ.setdefault(
 # checkout entirely, same reasoning TEST_ADMIN_DATABASE_URL above already applies to
 # not touching real application state.
 os.environ.setdefault("CATALOG_GRAPHICS_STORAGE_ROOT", tempfile.mkdtemp(prefix="dcim-test-graphics-"))
+os.environ.setdefault("CATALOG_DOCUMENTS_STORAGE_ROOT", tempfile.mkdtemp(prefix="dcim-test-documents-"))
 
 from app.core.security import hash_password  # noqa: E402
 from app.db.session import get_db  # noqa: E402
@@ -74,6 +75,9 @@ _APP_TRUNCATE_TABLES = [
     "organization",
     "refresh_token",
     "role_assignment",
+    # user_group has no FK to anything truncated above (only its member/site rows point at
+    # app_user/site), so it must be listed or groups leak between tests.
+    "user_group",
     "app_user",
     "rack_model_revision",
     "rack_model",
@@ -83,6 +87,8 @@ _APP_TRUNCATE_TABLES = [
     # either, same reasoning as the legacy catalog tables just above. Listed leaf-first
     # is not required (one combined TRUNCATE ... CASCADE statement), but kept in FK
     # dependency order for readability.
+    "catalog_revision_document",
+    "catalog_document",
     "catalog_graphic_marker",
     "catalog_graphic",
     "monitoring_metric_template",

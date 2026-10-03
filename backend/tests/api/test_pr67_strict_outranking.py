@@ -171,7 +171,12 @@ async def test_wider_higher_or_incomparable_target_group_route_is_rejected(clien
     _, actor_spec, target_spec = case
     a = await _principal(client, admin, *actor_spec(world))
     t = await _principal(client, admin, *target_spec(world))
-    _denied(await GROUP_ROUTES[route](client, a["headers"], t["id"], t["group"]))
+    resp = await GROUP_ROUTES[route](client, a["headers"], t["id"], t["group"])
+    # Wider site/rack grants are hidden at the object boundary before rank checks.
+    expected = 404 if case[0] in {
+        "wider-rack-scope", "wider-site-scope", "higher-in-both", "lower-permissions-but-other-site", "incomparable-scope"
+    } else 403
+    assert resp.status_code == expected, resp.text
     assert t["id"] in (await client.get(f"/api/v1/groups/{t['group']}", headers=admin)).json()["member_ids"]
 
 

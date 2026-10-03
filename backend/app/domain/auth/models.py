@@ -23,7 +23,9 @@ class User(Base, UUIDPkMixin, TimestampMixin):
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    role_assignments: Mapped[list["RoleAssignment"]] = relationship(back_populates="user")
+    # passive_deletes: role_assignment.user_id is NOT NULL with ON DELETE CASCADE, so deleting a user
+    # must leave the rows to the database rather than have the ORM try to NULL them first.
+    role_assignments: Mapped[list["RoleAssignment"]] = relationship(back_populates="user", passive_deletes=True)
 
 
 class Role(Base, UUIDPkMixin, TimestampMixin):

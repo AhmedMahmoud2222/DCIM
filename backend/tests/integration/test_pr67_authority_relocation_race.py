@@ -51,9 +51,9 @@ async def scenario(client, admin, auth_headers):
     a = await _make_site(client, admin)
     b = await _make_site(client, admin, a["org"])
     rack = await _make_rack(client, admin, auth_headers, a["room"])
-    actor_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"]), _site(b["site"], "selected")])
+    actor_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"], "selected", [rack]), _site(b["site"], "selected")])
     actor, actor_headers = await _group_user(client, admin, [actor_group])
-    target_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"], "selected", [rack]), _site(b["site"], "selected")])
+    target_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"], "selected"), _site(b["site"], "selected")])
     target, _ = await _group_user(client, admin, [target_group])
     return SimpleNamespace(
         site_a=a["site"], site_b=b["site"], room_a=a["room"], room_b=b["room"], rack=rack, admin=admin,
@@ -146,7 +146,7 @@ async def test_relocation_cannot_commit_between_an_authority_decision_and_its_co
 
     assert not early, (
         "RACE: the relocation committed while the delegated-administration decision was still open, so T1 "
-        "committed using an authorization that no longer held (target now sees the rack, actor does not)"
+        "committed using an authorization that no longer held (the actor lost its extra visible rack and is now a peer)"
     )
     assert r1.status_code == 200, r1.text
     assert r2 is not None and r2.status_code == 200, r2.text  # the relocation itself is legitimate and still succeeds
