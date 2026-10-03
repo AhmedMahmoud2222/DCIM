@@ -95,12 +95,12 @@ export function ImpactAnalysisModal({
         aria-labelledby="impact-dialog-title"
         onKeyDown={handleDialogKeyDown}
         data-testid="impact-analysis-modal"
-        className="max-h-[85vh] w-full max-w-2xl overflow-auto rounded border border-slate-700 bg-slate-900 p-5"
+        className="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-sm border border-slate-700 bg-slate-900 p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id="impact-dialog-title" className="text-base font-semibold text-slate-100">Simulate failure: {target.label}</h2>
-          <button ref={closeButtonRef} onClick={onClose} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">
+          <button ref={closeButtonRef} onClick={onClose} className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700">
             Close
           </button>
         </div>
@@ -123,7 +123,7 @@ export function ImpactAnalysisModal({
               </>
             )}
             {result.lost_redundancy_paths.length > 0 && (
-              <div data-testid="impact-lost-redundancy" className="mt-4 rounded border border-yellow-800 bg-yellow-950/40 p-3">
+              <div data-testid="impact-lost-redundancy" className="mt-4 rounded-sm border border-yellow-800 bg-yellow-950/40 p-3">
                 <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-yellow-400">Lost redundancy</h3>
                 <ul className="space-y-1 text-sm text-yellow-200">
                   {result.lost_redundancy_paths.map((path) => (
@@ -137,7 +137,7 @@ export function ImpactAnalysisModal({
                 <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Affected services</h3>
                 <div className="flex flex-wrap gap-1.5">
                   {result.affected_services.map((service) => (
-                    <span key={service} className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-200">
+                    <span key={service} className="rounded-sm bg-slate-800 px-2 py-0.5 text-xs text-slate-200">
                       {service}
                     </span>
                   ))}
@@ -158,7 +158,7 @@ function ImpactSection({ title, items }: { title: string; items: ImpactedEquipme
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h3>
       <div className="space-y-1.5">
         {items.map((item) => (
-          <div key={item.equipment_id} data-testid="impact-item" className="rounded bg-slate-800/60 p-2 text-sm">
+          <div key={item.equipment_id} data-testid="impact-item" className="rounded-sm bg-slate-800/60 p-2 text-sm">
             <div className="flex items-center justify-between">
               <span className="font-medium text-slate-200">{item.hostname ?? item.asset_tag}</span>
               <span className={`text-xs font-semibold uppercase ${IMPACT_TYPE_COLORS[item.impact_type] ?? "text-slate-400"}`}>

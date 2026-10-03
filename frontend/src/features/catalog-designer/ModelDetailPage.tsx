@@ -88,14 +88,14 @@ export function ModelDetailPage() {
             {model.model_number ? ` · ${model.model_number}` : ""}
           </p>
         </div>
-        <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-300">{model.status}</span>
+        <span className="rounded-sm bg-slate-700 px-2 py-0.5 text-xs text-slate-300">{model.status}</span>
       </div>
 
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Metadata</h2>
           {isCatalogAdministrator && !editingMetadata && (
-            <button onClick={startEditingMetadata} className="rounded bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700">
+            <button onClick={startEditingMetadata} className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700">
               Edit
             </button>
           )}
@@ -107,26 +107,26 @@ export function ModelDetailPage() {
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Description"
               rows={3}
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             />
             <input
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
               placeholder="Tags (comma-separated)"
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             />
             <div className="flex gap-2">
               <button
                 type="submit"
                 disabled={updateMetadataMutation.isPending}
-                className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 Save
               </button>
               <button
                 type="button"
                 onClick={() => setEditingMetadata(false)}
-                className="rounded bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+                className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
               >
                 Cancel
               </button>
@@ -138,7 +138,7 @@ export function ModelDetailPage() {
             <p className="mb-2 text-slate-300">{model.description || <span className="italic text-slate-500">No description.</span>}</p>
             <div className="flex flex-wrap gap-1">
               {model.tags.map((tag) => (
-                <span key={tag} className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+                <span key={tag} className="rounded-sm bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
                   {tag}
                 </span>
               ))}
@@ -147,14 +147,14 @@ export function ModelDetailPage() {
         )}
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Revisions</h2>
           {isCatalogAdministrator && (
             <button
               onClick={() => createDraftMutation.mutate()}
               disabled={createDraftMutation.isPending}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
               {createDraftMutation.isPending ? "Creating…" : "New Draft"}
             </button>
@@ -182,7 +182,7 @@ export function ModelDetailPage() {
                   </Link>
                 </td>
                 <td className="py-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[revision.lifecycle_status] ?? "bg-slate-700"}`}>
+                  <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[revision.lifecycle_status] ?? "bg-slate-700"}`}>
                     {revision.lifecycle_status}
                   </span>
                 </td>
@@ -193,7 +193,7 @@ export function ModelDetailPage() {
                     <button
                       onClick={() => cloneMutation.mutate(revision.id)}
                       disabled={cloneMutation.isPending}
-                      className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                      className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                     >
                       Clone
                     </button>

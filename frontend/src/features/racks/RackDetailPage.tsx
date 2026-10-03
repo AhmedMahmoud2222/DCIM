@@ -80,13 +80,13 @@ export function RackDetailPage() {
           <h1 className="text-lg font-semibold">{rack.name}</h1>
           <p className="font-mono text-sm text-slate-400">{rack.asset_tag}</p>
         </div>
-        <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
+        <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
           {rack.lifecycle_status}
         </span>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-6">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Placement</h2>
           {rack.placement ? (
             <dl className="space-y-1 text-sm">
@@ -113,7 +113,7 @@ export function RackDetailPage() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => setShowMoveForm((v) => !v)}
-              className="rounded bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+              className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
             >
               {rack.placement ? "Move" : "Place"}
             </button>
@@ -121,7 +121,7 @@ export function RackDetailPage() {
               <button
                 onClick={() => retireMutation.mutate()}
                 disabled={retireMutation.isPending}
-                className="rounded bg-red-900/50 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900 disabled:opacity-50"
+                className="rounded-sm bg-red-900/50 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900 disabled:opacity-50"
               >
                 Retire placement
               </button>
@@ -133,7 +133,7 @@ export function RackDetailPage() {
                 aria-label="Placement room"
                 value={moveRoomId}
                 onChange={(e) => setMoveRoomId(e.target.value)}
-                className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+                className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
               >
                 <option value="">Select room…</option>
                 {roomsQuery.data?.items.map((room) => (
@@ -149,7 +149,7 @@ export function RackDetailPage() {
                   value={moveX}
                   onChange={(e) => setMoveX(e.target.value)}
                   placeholder="x_mm"
-                  className="w-1/2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+                  className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                 />
                 <input
                   aria-label="Vertical position in millimeters"
@@ -157,13 +157,13 @@ export function RackDetailPage() {
                   value={moveY}
                   onChange={(e) => setMoveY(e.target.value)}
                   placeholder="y_mm"
-                  className="w-1/2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+                  className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
                 />
               </div>
               <button
                 type="submit"
                 disabled={moveMutation.isPending}
-                className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 Confirm
               </button>
@@ -178,7 +178,7 @@ export function RackDetailPage() {
           )}
         </div>
 
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Details</h2>
           <dl className="space-y-1 text-sm">
             <div className="flex justify-between">
@@ -198,16 +198,16 @@ export function RackDetailPage() {
         </div>
       </div>
 
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Elevation</h2>
         {elevationQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {elevationQuery.data && <RackElevationView elevation={elevationQuery.data} />}
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Rack Power Summary</h2>
-          <Link to="/power" className="rounded bg-slate-800 px-2 py-1 text-xs text-blue-400 hover:bg-slate-700">
+          <Link to="/power" className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-blue-400 hover:bg-slate-700">
             Open topology →
           </Link>
         </div>
@@ -216,7 +216,7 @@ export function RackDetailPage() {
           {elevationQuery.data?.slots.map((slot, i) => {
             const summary = powerSummaryQueries[i]?.data;
             return (
-              <div key={slot.equipment_id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-1.5 text-xs">
+              <div key={slot.equipment_id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-3 py-1.5 text-xs">
                 <span>{slot.asset_tag}</span>
                 {summary ? (
                   <>

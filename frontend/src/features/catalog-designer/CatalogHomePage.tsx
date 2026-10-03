@@ -89,7 +89,7 @@ export function CatalogHomePage() {
         {isCatalogAdministrator && (
           <button
             onClick={() => setShowBulkImport(true)}
-            className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+            className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
           >
             Bulk Import
           </button>
@@ -108,13 +108,13 @@ export function CatalogHomePage() {
         />
       )}
 
-      <section className="mb-8 rounded border border-slate-800 bg-slate-900 p-4">
+      <section className="mb-8 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Manufacturers</h2>
           {isCatalogAdministrator && (
             <button
               onClick={() => setShowManufacturerForm((v) => !v)}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
             >
               {showManufacturerForm ? "Cancel" : "New Manufacturer"}
             </button>
@@ -128,12 +128,12 @@ export function CatalogHomePage() {
               value={newManufacturerName}
               onChange={(e) => setNewManufacturerName(e.target.value)}
               placeholder="Manufacturer name"
-              className="flex-1 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="flex-1 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             />
             <button
               type="submit"
               disabled={createManufacturerMutation.isPending}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
               {createManufacturerMutation.isPending ? "Creating…" : "Create"}
             </button>
@@ -148,7 +148,7 @@ export function CatalogHomePage() {
           value={manufacturerQuery}
           onChange={(e) => setManufacturerQuery(e.target.value)}
           placeholder="Search manufacturers…"
-          className="mb-3 w-full max-w-sm rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+          className="mb-3 w-full max-w-sm rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
         />
 
         {manufacturersQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
@@ -159,7 +159,7 @@ export function CatalogHomePage() {
               <li key={m.id}>
                 <Link
                   to={`/admin/catalog/manufacturers/${m.id}`}
-                  className="inline-block rounded bg-slate-800 px-3 py-1 text-sm text-slate-200 hover:bg-slate-700"
+                  className="inline-block rounded-sm bg-slate-800 px-3 py-1 text-sm text-slate-200 hover:bg-slate-700"
                 >
                   {m.name}
                 </Link>
@@ -170,13 +170,13 @@ export function CatalogHomePage() {
         )}
       </section>
 
-      <section className="rounded border border-slate-800 bg-slate-900 p-4">
+      <section className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-300">Models</h2>
           {isCatalogAdministrator && (
             <button
               onClick={() => setShowModelForm((v) => !v)}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
             >
               {showModelForm ? "Cancel" : "New Model"}
             </button>
@@ -184,12 +184,12 @@ export function CatalogHomePage() {
         </div>
 
         {isCatalogAdministrator && showModelForm && (
-          <form onSubmit={handleModelSubmit} className="mb-4 grid max-w-2xl grid-cols-2 gap-3 rounded border border-slate-800 bg-slate-950 p-4">
+          <form onSubmit={handleModelSubmit} className="mb-4 grid max-w-2xl grid-cols-2 gap-3 rounded-sm border border-slate-800 bg-slate-950 p-4">
             <select
               aria-label="Model manufacturer"
               value={newModelManufacturerId}
               onChange={(e) => setNewModelManufacturerId(e.target.value)}
-              className="col-span-2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="col-span-2 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             >
               <option value="">Select manufacturer…</option>
               {manufacturersQuery.data?.items.map((m) => (
@@ -202,7 +202,7 @@ export function CatalogHomePage() {
               aria-label="Model category"
               value={newModelCategory}
               onChange={(e) => setNewModelCategory(e.target.value)}
-              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             >
               {CATALOG_CATEGORIES.map((c) => (
                 <option key={c} value={c}>
@@ -215,20 +215,20 @@ export function CatalogHomePage() {
               value={newModelNumber}
               onChange={(e) => setNewModelNumber(e.target.value)}
               placeholder="Model number (optional)"
-              className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             />
             <input
               aria-label="Model name"
               value={newModelName}
               onChange={(e) => setNewModelName(e.target.value)}
               placeholder="Model name"
-              className="col-span-2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+              className="col-span-2 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
             />
             <div className="col-span-2">
               <button
                 type="submit"
                 disabled={createModelMutation.isPending}
-                className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 {createModelMutation.isPending ? "Creating…" : "Create Model"}
               </button>
@@ -243,13 +243,13 @@ export function CatalogHomePage() {
             value={modelQuery}
             onChange={(e) => setModelQuery(e.target.value)}
             placeholder="Search models…"
-            className="flex-1 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="flex-1 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <select
             aria-label="Filter by category"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           >
             <option value="">All categories</option>
             {CATALOG_CATEGORIES.map((c) => (
@@ -262,7 +262,7 @@ export function CatalogHomePage() {
             aria-label="Filter by manufacturer"
             value={manufacturerFilter}
             onChange={(e) => setManufacturerFilter(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           >
             <option value="">All manufacturers</option>
             {manufacturersQuery.data?.items.map((m) => (
@@ -298,7 +298,7 @@ export function CatalogHomePage() {
                   <td className="py-2 text-slate-300">{manufacturerNameById.get(model.manufacturer_id) ?? model.manufacturer_id}</td>
                   <td className="py-2 text-slate-400">{model.category}</td>
                   <td className="py-2">
-                    <span className={`rounded px-2 py-0.5 text-xs ${STATUS_COLORS[model.status] ?? "bg-slate-700"}`}>{model.status}</span>
+                    <span className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[model.status] ?? "bg-slate-700"}`}>{model.status}</span>
                   </td>
                 </tr>
               ))}

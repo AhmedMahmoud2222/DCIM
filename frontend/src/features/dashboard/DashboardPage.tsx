@@ -13,7 +13,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <div className="rounded border border-slate-800 bg-slate-900 p-4">
+    <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-slate-100">{value}</p>
       {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
@@ -95,21 +95,21 @@ export function DashboardPage() {
       )}
 
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Open alarms</h2>
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         {activeAlarmsQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
         {activeAlarmsQuery.data?.length === 0 && <p className="text-sm text-slate-500">No active alarms.</p>}
-        <div className="space-y-2">{activeAlarmsQuery.data?.slice(0, 8).map((alarm) => <div key={alarm.id} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-2 text-sm"><div><span className="mr-2 rounded bg-red-900 px-1.5 py-0.5 text-[10px] text-red-100">ACTIVE</span><span>{alarm.subject_key} · {alarm.last_value}</span><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></div>{alarm.managed_asset_id && <Link className="text-xs text-blue-400 hover:underline" to={`/equipment/${alarm.managed_asset_id}`}>Equipment →</Link>}</div>)}</div>
+        <div className="space-y-2">{activeAlarmsQuery.data?.slice(0, 8).map((alarm) => <div key={alarm.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-3 py-2 text-sm"><div><span className="mr-2 rounded-sm bg-red-900 px-1.5 py-0.5 text-[10px] text-red-100">ACTIVE</span><span>{alarm.subject_key} · {alarm.last_value}</span><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></div>{alarm.managed_asset_id && <Link className="text-xs text-blue-400 hover:underline" to={`/equipment/${alarm.managed_asset_id}`}>Equipment →</Link>}</div>)}</div>
       </div>
 
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Infrastructure Exceptions</h2>
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         {exceptionsQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {exceptionsQuery.data?.length === 0 && <p className="text-sm text-slate-500">No capacity or topology exceptions detected.</p>}
         <div className="space-y-2">
           {exceptionsQuery.data?.map((exc, i) => (
-            <div key={i} className="flex items-center justify-between rounded bg-slate-800/50 px-3 py-2 text-sm">
+            <div key={i} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-3 py-2 text-sm">
               <div>
-                <span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] ${SEVERITY_COLORS[exc.severity] ?? "bg-slate-700"}`}>
+                <span className={`mr-2 rounded-sm px-1.5 py-0.5 text-[10px] ${SEVERITY_COLORS[exc.severity] ?? "bg-slate-700"}`}>
                   {exc.code}
                 </span>
                 <span className="text-slate-300">{exc.message}</span>

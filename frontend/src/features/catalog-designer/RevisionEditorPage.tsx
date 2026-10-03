@@ -79,14 +79,14 @@ export function RevisionEditorPage() {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-lg font-semibold">Revision {revision.revision_number}</h1>
         <div className="flex items-center gap-3">
-          <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[revision.lifecycle_status] ?? "bg-slate-700"}`}>
+          <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[revision.lifecycle_status] ?? "bg-slate-700"}`}>
             {revision.lifecycle_status}
           </span>
           {canEditDraft && (
             <button
               onClick={() => deleteMutation.mutate()}
               disabled={deleteMutation.isPending}
-              className="rounded bg-red-900/50 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900 disabled:opacity-50"
+              className="rounded-sm bg-red-900/50 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900 disabled:opacity-50"
             >
               Delete draft
             </button>
@@ -175,10 +175,10 @@ function ScalarFieldsSection({
   }
 
   const inputClass =
-    "w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60";
+    "w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden disabled:opacity-60";
 
   return (
-    <form onSubmit={handleSubmit} className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+    <form onSubmit={handleSubmit} className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
       <h2 className="mb-3 text-sm font-semibold text-slate-300">Physical &amp; Electrical</h2>
       <div className="grid grid-cols-3 gap-3">
         <label className="text-xs text-slate-400">
@@ -255,7 +255,7 @@ function ScalarFieldsSection({
           <button
             type="submit"
             disabled={saveMutation.isPending}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             {saveMutation.isPending ? "Saving…" : "Save"}
           </button>
@@ -345,42 +345,42 @@ function NetworkPortTemplateEditor({
   }
 
   return (
-    <section className="rounded border border-slate-800 bg-slate-900 p-4">
+    <section className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-300">Network Ports</h2>
         {!readOnly && (
-          <button onClick={() => setShowForm((v) => !v)} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700">
+          <button onClick={() => setShowForm((v) => !v)} className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700">
             {showForm ? "Cancel" : "Add"}
           </button>
         )}
       </div>
       {showForm && (
-        <form onSubmit={handleSubmit} className="mb-3 space-y-2 rounded border border-slate-800 bg-slate-950 p-3">
+        <form onSubmit={handleSubmit} className="mb-3 space-y-2 rounded-sm border border-slate-800 bg-slate-950 p-3">
           <input
             value={stableKey}
             onChange={(e) => setStableKey(e.target.value)}
             placeholder="Stable key (e.g. eth0)"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="Display name"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <div className="flex gap-2">
             <input
               value={connectorType}
               onChange={(e) => setConnectorType(e.target.value)}
               placeholder="Connector"
-              className="w-1/2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+              className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
             />
-            <select value={side} onChange={(e) => setSide(e.target.value)} className="w-1/2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
+            <select value={side} onChange={(e) => setSide(e.target.value)} className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
               <option value="front">front</option>
               <option value="rear">rear</option>
             </select>
           </div>
-          <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
+          <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
             <option value="copper">copper</option>
             <option value="fiber">fiber</option>
             <option value="other">other</option>
@@ -389,12 +389,12 @@ function NetworkPortTemplateEditor({
             value={speeds}
             onChange={(e) => setSpeeds(e.target.value)}
             placeholder="Speeds (Mbps, comma-separated)"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <button
             type="submit"
             disabled={createMutation.isPending}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-sm bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             Add port
           </button>
@@ -403,7 +403,7 @@ function NetworkPortTemplateEditor({
       )}
       <ul className="space-y-1 text-xs">
         {revision.network_ports.map((port) => (
-          <li key={port.id} className="flex items-center justify-between rounded bg-slate-800/50 px-2 py-1">
+          <li key={port.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1">
             <span>
               {port.display_name} <span className="text-slate-500">({port.connector_type}, {port.side})</span>
             </span>
@@ -461,48 +461,48 @@ function PowerSupplyTemplateEditor({
   }
 
   return (
-    <section className="rounded border border-slate-800 bg-slate-900 p-4">
+    <section className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-300">Power Supplies</h2>
         {!readOnly && (
-          <button onClick={() => setShowForm((v) => !v)} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700">
+          <button onClick={() => setShowForm((v) => !v)} className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700">
             {showForm ? "Cancel" : "Add"}
           </button>
         )}
       </div>
       {showForm && (
-        <form onSubmit={handleSubmit} className="mb-3 space-y-2 rounded border border-slate-800 bg-slate-950 p-3">
+        <form onSubmit={handleSubmit} className="mb-3 space-y-2 rounded-sm border border-slate-800 bg-slate-950 p-3">
           <input
             value={stableKey}
             onChange={(e) => setStableKey(e.target.value)}
             placeholder="Stable key (e.g. psu1)"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="Label"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <div className="flex gap-2">
             <input
               value={connectorType}
               onChange={(e) => setConnectorType(e.target.value)}
               placeholder="Connector"
-              className="w-1/2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+              className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
             />
             <input
               type="number"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               placeholder="Qty"
-              className="w-1/2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+              className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
             />
           </div>
           <button
             type="submit"
             disabled={createMutation.isPending}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-sm bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             Add power supply
           </button>
@@ -511,7 +511,7 @@ function PowerSupplyTemplateEditor({
       )}
       <ul className="space-y-1 text-xs">
         {revision.power_supplies.map((psu) => (
-          <li key={psu.id} className="flex items-center justify-between rounded bg-slate-800/50 px-2 py-1">
+          <li key={psu.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1">
             <span>
               {psu.label} <span className="text-slate-500">({psu.connector_type} × {psu.quantity})</span>
             </span>
@@ -571,36 +571,36 @@ function MonitoringTemplateEditor({
   }
 
   return (
-    <section className="rounded border border-slate-800 bg-slate-900 p-4">
+    <section className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-300">Monitoring Metrics</h2>
         {!readOnly && (
-          <button onClick={() => setShowForm((v) => !v)} className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700">
+          <button onClick={() => setShowForm((v) => !v)} className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700">
             {showForm ? "Cancel" : "Add"}
           </button>
         )}
       </div>
       {showForm && (
-        <form onSubmit={handleSubmit} className="mb-3 space-y-2 rounded border border-slate-800 bg-slate-950 p-3">
+        <form onSubmit={handleSubmit} className="mb-3 space-y-2 rounded-sm border border-slate-800 bg-slate-950 p-3">
           <input
             value={stableKey}
             onChange={(e) => setStableKey(e.target.value)}
             placeholder="Stable key (e.g. temp_inlet)"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <input
             value={metricName}
             onChange={(e) => setMetricName(e.target.value)}
             placeholder="Metric name"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <div className="flex gap-2">
-            <select value={protocol} onChange={(e) => setProtocol(e.target.value)} className="w-1/2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
+            <select value={protocol} onChange={(e) => setProtocol(e.target.value)} className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
               <option value="snmp">snmp</option>
               <option value="redfish">redfish</option>
               <option value="other">other</option>
             </select>
-            <select value={valueType} onChange={(e) => setValueType(e.target.value)} className="w-1/2 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
+            <select value={valueType} onChange={(e) => setValueType(e.target.value)} className="w-1/2 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100">
               <option value="numeric">numeric</option>
               <option value="boolean">boolean</option>
               <option value="enum">enum</option>
@@ -610,12 +610,12 @@ function MonitoringTemplateEditor({
             value={oid}
             onChange={(e) => setOid(e.target.value)}
             placeholder="OID (SNMP only)"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <button
             type="submit"
             disabled={createMutation.isPending}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-sm bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             Add metric
           </button>
@@ -624,7 +624,7 @@ function MonitoringTemplateEditor({
       )}
       <ul className="space-y-1 text-xs">
         {revision.monitoring_metrics.map((metric) => (
-          <li key={metric.id} className="flex items-center justify-between rounded bg-slate-800/50 px-2 py-1">
+          <li key={metric.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1">
             <span>
               {metric.metric_name} <span className="text-slate-500">({metric.protocol})</span>
             </span>
@@ -663,21 +663,21 @@ function PublishPanel({ revision, onPublished }: { revision: CatalogModelRevisio
   });
 
   return (
-    <div className="rounded border border-slate-800 bg-slate-900 p-4">
+    <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-300">Validate &amp; Publish</h2>
         <div className="flex gap-2">
           <button
             onClick={() => validateMutation.mutate()}
             disabled={validateMutation.isPending}
-            className="rounded bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+            className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
           >
             Validate
           </button>
           <button
             onClick={() => publishMutation.mutate()}
             disabled={publishMutation.isPending || summary?.valid === false}
-            className="rounded bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
+            className="rounded-sm bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
           >
             {publishMutation.isPending ? "Publishing…" : "Publish"}
           </button>
@@ -719,10 +719,10 @@ function RetirePanel({ revision, onRetired }: { revision: CatalogModelRevisionDe
   }
 
   return (
-    <div className="rounded border border-slate-800 bg-slate-900 p-4">
+    <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-300">Retire</h2>
-        <button onClick={() => setShowForm((v) => !v)} className="rounded bg-red-900/50 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900">
+        <button onClick={() => setShowForm((v) => !v)} className="rounded-sm bg-red-900/50 px-3 py-1.5 text-sm text-red-200 hover:bg-red-900">
           {showForm ? "Cancel" : "Retire this revision"}
         </button>
       </div>
@@ -733,7 +733,7 @@ function RetirePanel({ revision, onRetired }: { revision: CatalogModelRevisionDe
             onChange={(e) => setReason(e.target.value)}
             placeholder="Reason for retirement (required)"
             rows={2}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <label className="flex items-center gap-2 text-sm text-slate-300">
             <input type="checkbox" checked={allowInstall} onChange={(e) => setAllowInstall(e.target.checked)} />
@@ -742,7 +742,7 @@ function RetirePanel({ revision, onRetired }: { revision: CatalogModelRevisionDe
           <button
             type="submit"
             disabled={retireMutation.isPending}
-            className="rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50"
+            className="rounded-sm bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50"
           >
             Confirm retirement
           </button>
@@ -771,7 +771,7 @@ function RetireOverridePanel({ revision, onChanged }: { revision: CatalogModelRe
   }
 
   return (
-    <div className="rounded border border-slate-800 bg-slate-900 p-4">
+    <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <h2 className="mb-3 text-sm font-semibold text-slate-300">Retirement Override</h2>
       <p className="mb-3 text-sm text-slate-400">
         New installations against this revision are currently{" "}
@@ -786,12 +786,12 @@ function RetireOverridePanel({ revision, onChanged }: { revision: CatalogModelRe
           onChange={(e) => setReason(e.target.value)}
           placeholder="Reason for this change (required)"
           rows={2}
-          className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
         />
         <button
           type="submit"
           disabled={toggleMutation.isPending}
-          className="rounded bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700 disabled:opacity-50"
         >
           {revision.allow_installation_when_retired ? "Block new installations" : "Allow new installations"}
         </button>

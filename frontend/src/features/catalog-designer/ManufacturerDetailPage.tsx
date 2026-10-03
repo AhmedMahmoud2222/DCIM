@@ -29,10 +29,10 @@ export function ManufacturerDetailPage() {
       </Link>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-lg font-semibold">{manufacturer.name}</h1>
-        <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-300">{manufacturer.status}</span>
+        <span className="rounded-sm bg-slate-700 px-2 py-0.5 text-xs text-slate-300">{manufacturer.status}</span>
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Models</h2>
         {modelsQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {modelsQuery.error && <p className="text-sm text-red-400">{(modelsQuery.error as Error).message}</p>}

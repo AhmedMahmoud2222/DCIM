@@ -80,7 +80,7 @@ function SideGraphicPanel({
   }
 
   return (
-    <section className="rounded border border-slate-800 bg-slate-900 p-4">
+    <section className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold capitalize text-slate-300">{side} view</h2>
         {!readOnly && (
@@ -89,7 +89,7 @@ function SideGraphicPanel({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadMutation.isPending}
-              className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+              className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
             >
               {uploadMutation.isPending ? "Uploading…" : graphic ? "Replace image" : "Upload image"}
             </button>
@@ -292,7 +292,7 @@ function FrontRearImageCanvas({
         data-testid="graphic-canvas"
         onClick={handleContainerClick}
         onPointerMove={handleContainerPointerMove}
-        className={`relative w-full overflow-hidden rounded border border-slate-800 bg-slate-950 ${placingType ? "cursor-crosshair" : ""}`}
+        className={`relative w-full overflow-hidden rounded-sm border border-slate-800 bg-slate-950 ${placingType ? "cursor-crosshair" : ""}`}
         style={{ aspectRatio: `${graphic.width_px} / ${graphic.height_px}` }}
       >
         {imageUrl ? (
@@ -317,7 +317,7 @@ function FrontRearImageCanvas({
                 aria-label={`${MARKER_TYPE_LABELS[marker.marker_type]} marker${
                   marker.label ? `, ${marker.label}` : ""
                 }, at ${Math.round(pos.x * 100)} percent across, ${Math.round(pos.y * 100)} percent down. Arrow keys move, Enter edits, Delete removes.`}
-                className="cursor-move outline-none"
+                className="cursor-move outline-hidden"
                 onPointerDown={(e) => handleMarkerPointerDown(e, marker)}
                 onPointerUp={(e) => handleMarkerPointerUp(e, marker)}
                 onKeyDown={(e) => handleMarkerKeyDown(e, marker)}
@@ -390,14 +390,14 @@ function MarkerPlacementForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-2 space-y-2 rounded border border-slate-700 bg-slate-950 p-3">
+    <form onSubmit={handleSubmit} className="mt-2 space-y-2 rounded-sm border border-slate-700 bg-slate-950 p-3">
       <p className="text-xs text-slate-400">Placing a {MARKER_TYPE_LABELS[placement.type]} marker.</p>
       {needsTarget ? (
         <select
           value={targetId}
           onChange={(e) => setTargetId(e.target.value)}
           required
-          className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
         >
           <option value="">Select {placement.type === "network_port" ? "a port" : "a power supply"}…</option>
           {targetOptions.map((option) => (
@@ -411,18 +411,18 @@ function MarkerPlacementForm({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Label (optional)"
-          className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
         />
       )}
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending || (needsTarget && !targetId)}
-          className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          className="rounded-sm bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
         >
           {isPending ? "Placing…" : "Place marker"}
         </button>
-        <button type="button" onClick={onCancel} className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700">
+        <button type="button" onClick={onCancel} className="rounded-sm bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700">
           Cancel
         </button>
       </div>
@@ -460,7 +460,7 @@ function MarkerEditForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-2 space-y-2 rounded border border-slate-700 bg-slate-950 p-3">
+    <form onSubmit={handleSubmit} className="mt-2 space-y-2 rounded-sm border border-slate-700 bg-slate-950 p-3">
       <p className="text-xs text-slate-400">
         Editing {MARKER_TYPE_LABELS[marker.marker_type]} marker
         {needsTarget && targetName && (
@@ -473,7 +473,7 @@ function MarkerEditForm({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Label (optional)"
-          className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
         />
       )}
       <div className="flex gap-2">
@@ -481,7 +481,7 @@ function MarkerEditForm({
           <button
             type="submit"
             disabled={isSaving}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded-sm bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             {isSaving ? "Saving…" : "Save"}
           </button>
@@ -490,11 +490,11 @@ function MarkerEditForm({
           type="button"
           onClick={onDelete}
           disabled={isDeleting}
-          className="rounded bg-red-900/50 px-3 py-1 text-xs text-red-200 hover:bg-red-900 disabled:opacity-50"
+          className="rounded-sm bg-red-900/50 px-3 py-1 text-xs text-red-200 hover:bg-red-900 disabled:opacity-50"
         >
           {isDeleting ? "Removing…" : "Remove marker"}
         </button>
-        <button type="button" onClick={onClose} className="rounded bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700">
+        <button type="button" onClick={onClose} className="rounded-sm bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700">
           Close
         </button>
       </div>

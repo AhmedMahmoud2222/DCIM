@@ -110,13 +110,13 @@ export function EventsPage() {
           type="button"
           onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
           disabled={visibleAlarms.length === 0}
-          className="whitespace-nowrap rounded border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
         >
           Export current results CSV
         </button>
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div role="tablist" aria-label="Events view" className="flex gap-2">
             <button
@@ -127,7 +127,7 @@ export function EventsPage() {
                 setView("active");
                 setSelectedId(null);
               }}
-              className={`rounded px-3 py-1.5 text-sm ${view === "active" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
+              className={`rounded-sm px-3 py-1.5 text-sm ${view === "active" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
             >
               Active <span className="ml-1 text-xs opacity-80">{(activeQuery.data?.length ?? 0) + (acknowledgedQuery.data?.length ?? 0)}</span>
             </button>
@@ -140,7 +140,7 @@ export function EventsPage() {
                 setCursor(undefined);
                 setSelectedId(null);
               }}
-              className={`rounded px-3 py-1.5 text-sm ${view === "history" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
+              className={`rounded-sm px-3 py-1.5 text-sm ${view === "history" ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
             >
               History
             </button>
@@ -150,7 +150,7 @@ export function EventsPage() {
               <>
                 <select
                   aria-label="History range"
-                  className="rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
+                  className="rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
                   value={preset}
                   onChange={(event) => changePreset(event.target.value)}
                 >
@@ -161,7 +161,7 @@ export function EventsPage() {
                 </select>
                 <select
                   aria-label="Alarm status"
-                  className="rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
+                  className="rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
                   value={status}
                   onChange={(event) => {
                     setStatus(event.target.value as StatusFilter);
@@ -178,7 +178,7 @@ export function EventsPage() {
             )}
             <input
               aria-label="Search events"
-              className="min-w-[220px] rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500"
+              className="min-w-[220px] rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500"
               placeholder="Search subject or identifier"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -192,7 +192,7 @@ export function EventsPage() {
               <input
                 aria-label="Events start"
                 type="datetime-local"
-                className="mt-1 block w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
+                className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
                 value={customStart}
                 onChange={(event) => {
                   setCustomStart(event.target.value);
@@ -205,7 +205,7 @@ export function EventsPage() {
               <input
                 aria-label="Events end"
                 type="datetime-local"
-                className="mt-1 block w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
+                className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
                 value={customEnd}
                 onChange={(event) => {
                   setCustomEnd(event.target.value);
@@ -218,12 +218,12 @@ export function EventsPage() {
         )}
       </div>
 
-      {loading && <div className="mt-4 rounded border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Loading requested events…</div>}
+      {loading && <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Loading requested events…</div>}
       {error && (
-        <div className="mt-4 rounded border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">Unable to retrieve the requested event records.</div>
+        <div className="mt-4 rounded-sm border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">Unable to retrieve the requested event records.</div>
       )}
       {!loading && !error && visibleAlarms.length === 0 && (
-        <div className="mt-4 rounded border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
+        <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
           {view === "active"
             ? "No active or acknowledged alarm condition is currently reported."
             : "No events in this range. Try a different time range or state filter."}
@@ -232,7 +232,7 @@ export function EventsPage() {
 
       {!loading && !error && visibleAlarms.length > 0 && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="overflow-hidden rounded border border-slate-800 bg-slate-900">
+          <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-slate-500">
@@ -252,7 +252,7 @@ export function EventsPage() {
                       className={`cursor-pointer border-t border-slate-800 ${selected?.id === alarm.id ? "bg-slate-800/70" : "hover:bg-slate-800/40"}`}
                     >
                       <td className="px-3 py-2">
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[alarm.status]}`}>{alarm.status}</span>
+                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[alarm.status]}`}>{alarm.status}</span>
                       </td>
                       <td className="max-w-[280px] truncate px-3 py-2 font-medium text-slate-200">
                         {alarm.subject_key}
@@ -278,7 +278,7 @@ export function EventsPage() {
                       setCursor(historyQuery.data?.next_cursor ?? undefined);
                       setSelectedId(null);
                     }}
-                    className="rounded border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
+                    className="rounded-sm border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
                   >
                     Next page →
                   </button>
@@ -287,13 +287,13 @@ export function EventsPage() {
             )}
           </div>
           {selected && (
-            <aside className="rounded border border-slate-800 bg-slate-900 p-4">
+            <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Event detail</p>
               <div className="mt-3 flex items-center gap-2">
-                <span className={`rounded px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
+                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
                 <span className="text-sm text-slate-400">last value {selected.last_value}</span>
               </div>
-              <h2 className="mt-3 break-words text-lg font-semibold text-slate-100">{selected.subject_key}</h2>
+              <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.subject_key}</h2>
               <dl className="mt-4 space-y-2 text-sm">
                 <div>
                   <dt className="text-slate-500">First occurrence</dt>
@@ -326,7 +326,7 @@ export function EventsPage() {
                   type="button"
                   disabled={acknowledgeMutation.isPending}
                   onClick={() => acknowledgeMutation.mutate(selected.id)}
-                  className="mt-4 w-full rounded bg-yellow-800 px-3 py-1.5 text-sm font-medium text-yellow-100 hover:bg-yellow-700 disabled:opacity-50"
+                  className="mt-4 w-full rounded-sm bg-yellow-800 px-3 py-1.5 text-sm font-medium text-yellow-100 hover:bg-yellow-700 disabled:opacity-50"
                 >
                   Acknowledge active event
                 </button>

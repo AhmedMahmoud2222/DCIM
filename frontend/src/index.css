@@ -1,6 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Tailwind 4 changed the default border color to currentcolor. Keep the v3 default so
+   existing borders without an explicit color render as before. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 /* 3D floor layout (Infrastructure -> 3D Layout): Tailwind 3's utility set has no
    preserve-3d/perspective transform utilities, so this schematic CSS-projection scene

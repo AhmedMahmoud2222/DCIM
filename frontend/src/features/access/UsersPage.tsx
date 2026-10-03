@@ -66,7 +66,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
         {codes.length === 0 && <p className="text-slate-500">None. Access is denied by default.</p>}
         <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
           {codes.map((code) => (
-            <li key={code} className="rounded bg-slate-800 px-2 py-1">
+            <li key={code} className="rounded-sm bg-slate-800 px-2 py-1">
               <span className="font-mono text-xs">{code}</span>
               <span className="ml-2 text-xs text-slate-400">via {access.permissions[code].join(", ")}</span>
             </li>
@@ -94,7 +94,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
           {access.sites.length === 0 && <p className="text-slate-500">No site access.</p>}
           <ul className="space-y-1">
             {access.sites.map((s) => (
-              <li key={s.site_id} className="rounded bg-slate-800 px-2 py-1">
+              <li key={s.site_id} className="rounded-sm bg-slate-800 px-2 py-1">
                 {s.code} · {s.name} ·{" "}
                 {s.rack_scope === "all" ? "all racks" : `${s.rack_ids.length} selected rack(s)`}
               </li>
@@ -207,40 +207,40 @@ export function UsersPage() {
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4 lg:col-span-1">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 lg:col-span-1">
           <div className="mb-3 flex items-center gap-2">
             <input
               aria-label="Search users"
               placeholder="Search email or name"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm"
+              className="min-w-0 flex-1 rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm"
             />
             {canManage && (
-              <button onClick={() => setShowCreate((v) => !v)} className="rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700">
+              <button onClick={() => setShowCreate((v) => !v)} className="rounded-sm bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700">
                 + New user
               </button>
             )}
           </div>
           {showCreate && canManage && (
-            <form onSubmit={submitCreate} className="mb-4 space-y-2 rounded border border-slate-800 p-3" aria-label="Create user">
+            <form onSubmit={submitCreate} className="mb-4 space-y-2 rounded-sm border border-slate-800 p-3" aria-label="Create user">
               <label className="block text-xs text-slate-400">
                 Email
                 <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                  className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
               </label>
               <label className="block text-xs text-slate-400">
                 Full name
                 <input required maxLength={200} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                  className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
               </label>
               <label className="block text-xs text-slate-400">
                 Initial password (12+ characters)
                 <input type="password" required minLength={12} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                  className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
               </label>
               <GroupChecklist groups={groups} selected={form.group_ids} onChange={(ids) => setForm({ ...form, group_ids: ids })} />
-              <button type="submit" disabled={createMutation.isPending} className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50">
+              <button type="submit" disabled={createMutation.isPending} className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50">
                 Create user
               </button>
             </form>
@@ -253,7 +253,7 @@ export function UsersPage() {
                 <button
                   onClick={() => select(u)}
                   aria-pressed={selected?.id === u.id}
-                  className={`w-full rounded px-2 py-2 text-left text-sm ${selected?.id === u.id ? "bg-blue-600 text-white" : "hover:bg-slate-800"}`}
+                  className={`w-full rounded-sm px-2 py-2 text-left text-sm ${selected?.id === u.id ? "bg-blue-600 text-white" : "hover:bg-slate-800"}`}
                 >
                   <span className="block break-all">{u.email}</span>
                   <span className="block text-xs text-slate-300">
@@ -265,7 +265,7 @@ export function UsersPage() {
           </ul>
         </div>
 
-        <div className="rounded border border-slate-800 bg-slate-900 p-4 lg:col-span-2">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 lg:col-span-2">
           {!selected && <p className="text-sm text-slate-400">Select a user to view details and effective access.</p>}
           {selected && (
             <div className="space-y-5">
@@ -275,11 +275,11 @@ export function UsersPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => updateMutation.mutate({ id: selected.id, body: { is_active: !selected.is_active } })}
-                      className="rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+                      className="rounded-sm bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
                     >
                       {selected.is_active ? "Deactivate" : "Activate"}
                     </button>
-                    <button onClick={confirmDelete} className="rounded bg-red-900 px-2 py-1 text-xs text-red-100 hover:bg-red-800">
+                    <button onClick={confirmDelete} className="rounded-sm bg-red-900 px-2 py-1 text-xs text-red-100 hover:bg-red-800">
                       Delete
                     </button>
                   </div>
@@ -289,7 +289,7 @@ export function UsersPage() {
                 <label className="block text-xs text-slate-400">
                   Full name
                   <input value={editName} onChange={(e) => setEditName(e.target.value)} disabled={!canManage} maxLength={200}
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                    className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
                 </label>
                 <GroupChecklist groups={groups} selected={editGroups} onChange={setEditGroups} disabled={!canManage} />
                 {canManage && (
@@ -297,9 +297,9 @@ export function UsersPage() {
                     <label className="block text-xs text-slate-400">
                       Reset password (optional, 12+ characters)
                       <input type="password" minLength={12} value={editPassword} onChange={(e) => setEditPassword(e.target.value)}
-                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                        className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
                     </label>
-                    <button type="submit" disabled={updateMutation.isPending} className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50">
+                    <button type="submit" disabled={updateMutation.isPending} className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50">
                       Save changes
                     </button>
                   </>

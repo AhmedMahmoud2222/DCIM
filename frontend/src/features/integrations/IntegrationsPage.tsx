@@ -52,7 +52,7 @@ export function IntegrationsPage() {
       <div className="mb-4">
         <button
           onClick={() => setShowCreateForm((v) => !v)}
-          className="rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="rounded-sm bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
         >
           + New Integration
         </button>
@@ -64,19 +64,19 @@ export function IntegrationsPage() {
             e.preventDefault();
             createMutation.mutate();
           }}
-          className="mb-4 max-w-md space-y-2 rounded border border-slate-700 bg-slate-800/50 p-3"
+          className="mb-4 max-w-md space-y-2 rounded-sm border border-slate-700 bg-slate-800/50 p-3"
         >
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Integration name"
             required
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <select
             value={integrationType}
             onChange={(e) => setIntegrationType(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           >
             <option value="icmp">icmp</option>
             <option value="snmp">snmp</option>
@@ -87,19 +87,19 @@ export function IntegrationsPage() {
             onChange={(e) => setTargetHost(e.target.value)}
             placeholder="Target host (IP or hostname)"
             required
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <input
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
             placeholder="Credential (optional, e.g. SNMP community string)"
             type="password"
-            className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           />
           <button
             type="submit"
             disabled={createMutation.isPending}
-            className="w-full rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            className="w-full rounded-sm bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             Create
           </button>
@@ -111,7 +111,7 @@ export function IntegrationsPage() {
         </form>
       )}
 
-      <div className="overflow-x-auto rounded border border-slate-800 bg-slate-900">
+      <div className="overflow-x-auto rounded-sm border border-slate-800 bg-slate-900">
         <table className="w-full text-left text-xs">
           <thead className="border-b border-slate-800 text-slate-400">
             <tr>
@@ -142,7 +142,7 @@ export function IntegrationsPage() {
                 <td className="p-2">
                   <button
                     onClick={() => toggleMutation.mutate({ id: i.id, enabled: i.enabled, version: i.version })}
-                    className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700"
+                    className="rounded-sm bg-slate-800 px-2 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700"
                   >
                     {i.enabled ? "Disable" : "Enable"}
                   </button>
