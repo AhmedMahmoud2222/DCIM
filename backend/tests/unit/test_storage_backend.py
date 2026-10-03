@@ -58,3 +58,17 @@ def test_concurrent_saves_never_leave_a_partial_file_visible(tmp_path):
     backend.save("large.png", b"x" * (2 * 1024 * 1024))
     leftover_temp_files = list(tmp_path.glob(".tmp-*"))
     assert leftover_temp_files == []
+
+
+def test_delete_removes_object_and_tolerates_missing_key(tmp_path):
+    backend = LocalFileSystemStorageBackend(root_dir=tmp_path)
+    backend.save("gone.pdf", b"content")
+    backend.delete("gone.pdf")
+    assert backend.exists("gone.pdf") is False
+    backend.delete("gone.pdf")  # already gone: not an error
+
+
+def test_delete_rejects_path_traversal(tmp_path):
+    backend = LocalFileSystemStorageBackend(root_dir=tmp_path)
+    with pytest.raises(ValueError):
+        backend.delete("../escape.pdf")

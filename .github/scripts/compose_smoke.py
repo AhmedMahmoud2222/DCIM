@@ -16,7 +16,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_TEMP = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
 PYTHON_SERVICES = ("migrate", "backend", "celery-worker", "celery-beat")
-ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend")
+MEDIA_DIR = "/app/media"
+CLAMAV_HEALTH_TIMEOUT = 600  # signature download on a cold runner can take minutes
+PROBE = ROOT / ".github" / "scripts" / "clamd_probe.py"
+# Exit codes of clamd_probe.py, which runs inside the backend container.
+SCANNER_EXIT_MESSAGES = {
+    10: "SCANNER CONFIG FAILURE: backend is not configured for CATALOG_PDF_SCAN_MODE=required against clamav:3310",
+    11: "SCANNER NETWORK FAILURE: backend resolves clamav to an address that is not the Compose clamav container",
+    12: "SCANNER NETWORK FAILURE: backend ClamdScanner could not obtain a verdict from clamav:3310",
+    13: "SCANNER FAILURE: clamd rejected or errored on a clean PDF payload",
+    14: "SCANNER FAILURE: clamd accepted the EICAR test file as clean (signatures missing or scanner bypassed)",
+}
+ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend", "clamav")
 
 
 def prepare():
@@ -137,6 +148,110 @@ def verify():
             break
         time.sleep(3)
     raise RuntimeError("Timed out or service exited before complete Compose readiness")
+
+
+def compose_exec(cmd, env, service, args, *, stdin=None, extra_env=None, timeout=120):
+    flags = [flag for key, value in (extra_env or {}).items() for flag in ("-e", f"{key}={value}")]
+    return subprocess.run([*cmd, "exec", "-T", *flags, service, *args], cwd=ROOT, env=env, input=stdin,
+                          capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def container_ips(container_id, env):
+    fmt = "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}"
+    result = run(["docker", "inspect", "--format", fmt, container_id], env)
+    return result.stdout.split() if result.returncode == 0 else []
+
+
+def wait_for_clamav_healthy(cmd, env, *, timeout=CLAMAV_HEALTH_TIMEOUT, poll=5):
+    """Bounded wait on the real ClamAV container healthcheck (clamdcheck.sh: clamd answers PING)."""
+    services = run([*cmd, "config", "--services"], env).stdout.split()
+    if "clamav" not in services:
+        raise RuntimeError("CLAMAV STARTUP FAILURE: the clamav service is missing from the Compose configuration")
+    cid = container(cmd, env, "clamav")
+    deadline = time.monotonic() + timeout
+    while True:
+        status = state(cid, env, ".State.Status")
+        health = state(cid, env, ".State.Health.Status")
+        if status != "running":
+            raise RuntimeError(f"CLAMAV STARTUP FAILURE: clamav container is {status}, not running")
+        if health == "healthy":
+            return cid
+        if health in ("<no value>", "unavailable", ""):
+            raise RuntimeError("CLAMAV STARTUP FAILURE: clamav container has no healthcheck")
+        if health == "unhealthy":
+            raise RuntimeError("CLAMAV HEALTH FAILURE: clamd or its signatures are unavailable (healthcheck reports unhealthy)")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"CLAMAV HEALTH FAILURE: clamav not healthy after {timeout}s (health={health})")
+        time.sleep(poll)
+
+
+def verify_clamav():
+    cmd, env, _, _ = context()
+    cid = wait_for_clamav_healthy(cmd, env)
+    print("PASS: clamav container healthcheck healthy")
+    ips = container_ips(cid, env)
+    if not ips:
+        raise RuntimeError("SCANNER NETWORK FAILURE: clamav container has no network address")
+    result = compose_exec(cmd, env, "backend", ["python", "-"], stdin=PROBE.read_text(),
+                          extra_env={"EXPECT_CLAMD_HOST": "clamav", "EXPECT_CLAMD_IPS": ",".join(ips)})
+    if result.returncode:
+        message = SCANNER_EXIT_MESSAGES.get(result.returncode, f"SCANNER FAILURE: probe exited {result.returncode}")
+        raise RuntimeError(f"{message} | {' '.join((result.stdout + result.stderr).split())[-300:]}")
+    print("PASS: backend ClamdScanner (scan_mode=required) reached the Compose clamav container "
+          f"{','.join(ips)}: {result.stdout.strip()}")
+
+
+def media_write(cmd, env, service, name, token):
+    code = ("import os,sys;p=os.path.join(%r,os.environ['N']);"
+            "f=open(p,'x');f.write(os.environ['T']);f.close()" % MEDIA_DIR)
+    return compose_exec(cmd, env, service, ["python", "-c", code], extra_env={"N": name, "T": token})
+
+
+def media_read(cmd, env, service, name):
+    code = ("import os;print(open(os.path.join(%r,os.environ['N'])).read(),end='')" % MEDIA_DIR)
+    return compose_exec(cmd, env, service, ["python", "-c", code], extra_env={"N": name})
+
+
+def media_remove(cmd, env, service, name):
+    code = ("import os;os.path.exists(os.path.join(%r,os.environ['N'])) and os.remove(os.path.join(%r,os.environ['N']))" % (MEDIA_DIR, MEDIA_DIR))
+    return compose_exec(cmd, env, service, ["python", "-c", code], extra_env={"N": name})
+
+
+def media_transfer(cmd, env, writer, reader, name, token):
+    written = media_write(cmd, env, writer, name, token)
+    if written.returncode:
+        detail = written.stderr
+        kind = "PERMISSION FAILURE" if "PermissionError" in detail or "Read-only" in detail else "SHARED VOLUME FAILURE"
+        raise RuntimeError(f"{kind}: {writer} cannot write {MEDIA_DIR}: {' '.join(detail.split())[-200:]}")
+    read = media_read(cmd, env, reader, name)
+    if read.returncode:
+        detail = read.stderr
+        if "PermissionError" in detail:
+            raise RuntimeError(f"PERMISSION FAILURE: {reader} cannot read the file {writer} wrote in {MEDIA_DIR}")
+        raise RuntimeError(f"SHARED VOLUME FAILURE: {reader} cannot see the file written by {writer} in {MEDIA_DIR} (isolated or missing mount)")
+    if read.stdout != token:
+        raise RuntimeError(f"SHARED VOLUME FAILURE: content written by {writer} differs when read by {reader}")
+
+
+def verify_shared_media():
+    cmd, env, _, _ = context()
+    for service in ("backend", "celery-worker"):
+        if state(container(cmd, env, service), env, ".State.Status") != "running":
+            raise RuntimeError(f"SHARED VOLUME FAILURE: {service} is not running")
+    names = []
+    try:
+        for writer, reader in (("backend", "celery-worker"), ("celery-worker", "backend")):
+            name = f".smoke-sentinel-{secrets.token_hex(8)}"
+            names.append(name)
+            token = secrets.token_hex(32)
+            media_transfer(cmd, env, writer, reader, name, token)
+            print(f"PASS: {writer} wrote and {reader} read identical sentinel bytes in {MEDIA_DIR}")
+    finally:
+        for name in names:
+            for service in ("backend", "celery-worker"):
+                if media_remove(cmd, env, service, name).returncode:
+                    print(f"WARN: could not remove sentinel {name} via {service}", file=sys.stderr)
+    print("PASS: catalog_media is shared read/write between backend and celery-worker; sentinels removed")
 
 
 def diagnose():
