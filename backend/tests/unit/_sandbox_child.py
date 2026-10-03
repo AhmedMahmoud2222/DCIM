@@ -13,18 +13,14 @@ from app.application.catalog_documents.extraction.sandbox import enter_sandbox
 def main() -> None:
     mode = sys.argv[1]
     workdir = os.environ.get("TEST_WORKDIR")
-    if mode == "environ_without_landlock":  # control: the same read, with the filesystem policy left out
-        return _read_parent_environ_control()
+    if mode == "victim_environ_without_policy":  # control: the same read, with the filesystem policy left out
+        return _read_victim_environ()
     enter_sandbox(
         cpu_seconds=3, address_space_bytes=512 * 1024 * 1024, require_seccomp=True,
         write_dirs=(workdir,) if workdir else (),
     )
-    if mode == "read_parent_environ":
-        try:
-            open(f"/proc/{os.getppid()}/environ").read()
-            print("READ")
-        except OSError as exc:
-            print("denied", type(exc).__name__)
+    if mode == "read_victim_environ":
+        _read_victim_environ()
     elif mode == "read_proc_self":
         try:
             open("/proc/self/environ").read()
@@ -113,12 +109,14 @@ def main() -> None:
         print('{"ok": true}')
 
 
-def _read_parent_environ_control() -> None:
+def _read_victim_environ() -> None:
+    """Reads the environment of another same-UID process (the stand-in for the worker or its Celery
+    master, which hold the database and signing secrets)."""
     try:
-        open(f"/proc/{os.getppid()}/environ").read()
-        print("READ")
-    except OSError:
-        print("denied")
+        content = open(f"/proc/{os.environ['TEST_VICTIM_PID']}/environ").read()
+        print("READ", "secret-visible" if "DEMO_SECRET=s3cret" in content else "secret-missing")
+    except OSError as exc:
+        print("denied", type(exc).__name__)
 
 
 if __name__ == "__main__":

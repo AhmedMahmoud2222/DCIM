@@ -100,14 +100,27 @@ def test_landlock_is_available_where_the_tests_run():
     assert landlock_available(), "CI and the worker image must allow the unprivileged Landlock policy"
 
 
-def test_control_without_the_policy_a_child_reads_its_parents_process_environment(monkeypatch):
-    """The premise of the finding: same UID, so /proc/<ppid>/environ is readable unless the policy stops it."""
-    monkeypatch.setenv("DEMO_SECRET", "not-visible-through-env")  # the child's own env is scrubbed either way
-    assert child("environ_without_landlock").stdout.decode().strip() == "READ"
+@pytest.fixture
+def victim():
+    """A same-UID process holding a secret in its environment, like the worker or its Celery master. A plain
+    system binary on purpose: the interpreter running the tests may carry file capabilities (CI grants
+    cap_net_raw), which makes its own /proc entries unreadable and would hide the very thing under test."""
+    import subprocess
+
+    process = subprocess.Popen(["/bin/sleep", "60"], env={"DEMO_SECRET": "s3cret"})  # noqa: S603
+    time.sleep(0.2)
+    yield {"TEST_VICTIM_PID": str(process.pid)}
+    process.kill()
+    process.wait()
 
 
-def test_the_policy_makes_the_parents_process_environment_unreachable():
-    assert child("read_parent_environ").stdout.decode().strip() == "denied PermissionError"
+def test_control_without_the_policy_a_child_reads_another_same_uid_process_environment(victim):
+    """The premise of the finding: same UID, so /proc/<pid>/environ is readable unless the policy stops it."""
+    assert child("victim_environ_without_policy", env=victim).stdout.decode().strip() == "READ secret-visible"
+
+
+def test_the_policy_makes_other_processes_environments_unreachable(victim):
+    assert child("read_victim_environ", env=victim).stdout.decode().strip() == "denied PermissionError"
     assert child("read_proc_self").stdout.decode().strip() == "denied"
 
 
