@@ -119,11 +119,16 @@ PERMISSION_OPS = {
             json={"placement_type": "rack_mounted", "room_id": w.a["room"], "rack_id": w.rack_a1, "u_start": 20, "u_end": 21, "side": "front"}, headers=h),
         "eq_b", "eq_a"),
     "equipment.retire": (lambda c, w, h, rid: c.post(f"/api/v1/equipment/{rid}/retire", headers=h), "eq_b", "eq_a"),
-    "equipment.port-connect": (
-        lambda c, w, h, rid: c.post(f"/api/v1/equipment/{rid}/ports/connect", json={"port_id": w.port_b or str(uuid.uuid4()), "target_port_id": w.port_a or str(uuid.uuid4())}, headers=h),
-        "eq_b", "eq_a"),
+    "equipment.port-connect": (lambda c, w, h, rid: _port_connect(c, w, h, rid), "eq_b", "eq_a"),
     "room.update": (lambda c, w, h, rid: _room_patch(c, w, h, rid), "b_room", "a_room"),
 }
+
+
+async def _port_connect(c, w, h, rid):
+    """Connect the TARGET equipment's own real port to a real port on the other equipment, so a missing permission
+    check would really create a connection (a port that belongs to another equipment would only 404)."""
+    own, other = (w.port_a, w.port_b) if str(rid) == str(w.eq_a) else (w.port_b, w.port_a)
+    return await c.post(f"/api/v1/equipment/{rid}/ports/connect", json={"port_id": own, "target_port_id": other}, headers=h)
 
 
 async def _room_patch(c, w, h, rid):
@@ -140,13 +145,41 @@ def _target(w, attr):
     return {"b_room": w.b["room"], "a_room": w.a["room"]}.get(attr) or getattr(w, attr)
 
 
-async def _state(c, w):
-    """Everything a rejected mutation must leave untouched, read as the administrator."""
-    rack = (await c.get(f"/api/v1/racks/{w.rack_b1}", headers=w.admin)).json()
-    equipment = [(await c.get(f"/api/v1/equipment/{e}", headers=w.admin)).json() for e in (w.eq_b, w.eq_b2)]
-    racks = (await c.get("/api/v1/racks?limit=200", headers=w.admin)).json()["total"]
-    room = (await c.get(f"/api/v1/rooms/{w.b['room']}", headers=w.admin)).json()
-    return {"rack": rack, "equipment": equipment, "rack_total": racks, "room_b": room}
+async def _snapshot(c, w):
+    """Everything any rejected request could touch, read back as the administrator, in named sections.
+
+    Both sites are covered (the caller's own objects too: the permission tests target them), including the
+    equipment ports and their connections, the rack elevations (placements), the sites/rooms/organisations and the
+    list totals (a created rack or equipment shows up there)."""
+
+    async def get(url):
+        resp = await c.get(url, headers=w.admin)
+        assert resp.status_code == 200, (url, resp.status_code, resp.text)
+        return resp.json()
+
+    racks = (w.rack_a1, w.rack_a2, w.rack_b1)
+    equipment = (w.eq_a, w.eq_b, w.eq_b2)
+    return {
+        "racks": [await get(f"/api/v1/racks/{r}") for r in racks],
+        "elevations": [await get(f"/api/v1/racks/{r}/elevation") for r in racks],
+        "equipment": [await get(f"/api/v1/equipment/{e}") for e in equipment],
+        "ports": [await get(f"/api/v1/equipment/{e}/ports") for e in equipment],
+        "rooms": [await get(f"/api/v1/rooms/{site['room']}") for site in (w.a, w.b)],
+        "sites": [await get(f"/api/v1/sites/{site['site']}") for site in (w.a, w.b)],
+        "organizations": [await get(f"/api/v1/organizations/{site['org']}") for site in (w.a, w.b)],
+        "rack_listing": await get("/api/v1/racks?limit=200"),
+        "equipment_listing": await get("/api/v1/equipment?limit=200"),
+    }
+
+
+async def _request_leaves_state_unchanged(c, w, make_request):
+    """Snapshot immediately before and immediately after the one request under test and require them equal."""
+    before = await _snapshot(c, w)
+    resp = await make_request()
+    after = await _snapshot(c, w)
+    changed = sorted(section for section in before if before[section] != after[section])
+    assert not changed, f"a rejected request ({resp.status_code}) changed persisted state: {changed}"
+    return resp
 
 
 def _same_denial(resp, baseline):
@@ -171,33 +204,31 @@ async def test_prerequisites_effective_permissions_before_any_operation(client, 
 @pytest.mark.parametrize("op", sorted(OBJECT_OPS))
 async def test_foreign_object_is_a_uniform_404_and_nothing_changes(client, w, op):
     call, foreign_attr, _, _ = OBJECT_OPS[op]
-    before = await _state(client, w)
-    resp = await call(client, w, w.headers, getattr(w, foreign_attr))
     baseline = await call(client, w, w.headers, uuid.uuid4())
     assert baseline.status_code == 404, "the baseline (random id) must itself be a 404 from the same code path"
+    resp = await _request_leaves_state_unchanged(client, w, lambda: call(client, w, w.headers, getattr(w, foreign_attr)))
     _same_denial(resp, baseline)
-    assert await _state(client, w) == before
 
 
 @pytest.mark.parametrize("op", sorted(SCOPE_TARGET_OPS))
 async def test_foreign_site_room_org_or_destination_is_a_uniform_404_and_nothing_changes(client, w, op):
     call, foreign, _, _ = SCOPE_TARGET_OPS[op]
-    before = await _state(client, w)
-    resp = await call(client, w, w.headers, foreign(w))
     baseline = await call(client, w, w.headers, uuid.uuid4())
     assert baseline.status_code == 404
+    resp = await _request_leaves_state_unchanged(client, w, lambda: call(client, w, w.headers, foreign(w)))
     _same_denial(resp, baseline)
-    assert await _state(client, w) == before
+
+
+async def _own_rack_move_to_foreign_room(c, w):
+    return await c.post(f"/api/v1/racks/{w.rack_a1}/move", json={"room_id": w.b["room"], "x_mm": 1, "y_mm": 1, "rotation_deg": 0}, headers=w.headers)
 
 
 async def test_own_rack_cannot_be_moved_into_a_foreign_room(client, w):
     """Cross-site widening of the caller's own rack: the destination room is outside the caller's scope."""
-    before = (await client.get(f"/api/v1/racks/{w.rack_a1}", headers=w.admin)).json()
-    resp = await client.post(f"/api/v1/racks/{w.rack_a1}/move", json={"room_id": w.b["room"], "x_mm": 1, "y_mm": 1, "rotation_deg": 0}, headers=w.headers)
     baseline = await client.post(f"/api/v1/racks/{w.rack_a1}/move", json={"room_id": str(uuid.uuid4()), "x_mm": 1, "y_mm": 1, "rotation_deg": 0}, headers=w.headers)
     assert baseline.status_code == 404
+    resp = await _request_leaves_state_unchanged(client, w, lambda: _own_rack_move_to_foreign_room(client, w))
     _same_denial(resp, baseline)
-    assert (await client.get(f"/api/v1/racks/{w.rack_a1}", headers=w.admin)).json() == before
     assert (await client.get(f"/api/v1/racks/{w.rack_a1}", headers=w.headers)).status_code == 200  # still visible: it did not leave Site A
 
 
@@ -205,13 +236,11 @@ async def test_own_rack_cannot_be_moved_into_a_foreign_room(client, w):
 @pytest.mark.parametrize("op", sorted(PERMISSION_OPS))
 async def test_inactive_write_permission_is_a_403_for_foreign_and_for_own_objects_and_changes_nothing(client, w, op):
     call, foreign_attr, own_attr = PERMISSION_OPS[op]
-    before = await _state(client, w)
     for attr in (foreign_attr, own_attr):
-        resp = await call(client, w, w.headers, _target(w, attr))
+        resp = await _request_leaves_state_unchanged(client, w, lambda attr=attr: call(client, w, w.headers, _target(w, attr)))
         assert resp.status_code == 403, (op, attr, resp.status_code, resp.text)
-    missing = await call(client, w, w.headers, uuid.uuid4())
+    missing = await _request_leaves_state_unchanged(client, w, lambda: call(client, w, w.headers, uuid.uuid4()))
     assert missing.status_code == 403, "permission check precedes the lookup: no existence oracle"
-    assert await _state(client, w) == before
 
 
 # ---------------------------------------------------------------- 3. authorised positive controls (same requests, entitled objects)
@@ -242,3 +271,40 @@ async def test_equipment_in_a_foreign_rack_is_invisible_in_lists_and_totals(clie
     assert {i["id"] for i in listing["items"]} == {w.eq_a} and listing["total"] == 1
     racks = (await client.get("/api/v1/racks?limit=200", headers=w.headers)).json()
     assert {i["id"] for i in racks["items"]} == {w.rack_a1, w.rack_a2} and racks["total"] == 2
+
+
+# ---------------------------------------------------------------- 4. the snapshot can see each mutation (so "unchanged" is not vacuous)
+# Every mutating operation, run as the unrestricted administrator against the caller's OWN objects, must succeed AND
+# change the snapshot section that holds its effect. If a section did not move, the "unchanged after a rejection"
+# assertions above could never fail for that operation.
+MUTATION_SECTIONS = {
+    "rack.update": ("rack_a1", "racks"),
+    "rack.move-foreign-rack-into-own-room": ("rack_a1", "racks"),
+    "rack.retire": ("rack_a2", "racks"),
+    "equipment.update": ("eq_a", "equipment"),
+    "equipment.move": ("eq_a", "equipment"),
+    "equipment.retire": ("eq_a", "equipment"),
+    "equipment.port-connect": ("eq_a", "ports"),
+    "room.update": ("a_room", "rooms"),
+}
+
+
+@pytest.mark.parametrize("op", sorted(MUTATION_SECTIONS))
+async def test_the_snapshot_detects_the_effect_of_every_mutating_operation(client, w, op):
+    attr, section = MUTATION_SECTIONS[op]
+    call = OBJECT_OPS[op][0] if op in OBJECT_OPS else PERMISSION_OPS[op][0]
+    before = await _snapshot(client, w)
+    resp = await call(client, w, w.admin, _target(w, attr))
+    assert resp.status_code in (200, 201), (op, resp.status_code, resp.text)
+    after = await _snapshot(client, w)
+    assert before[section] != after[section], f"{op} succeeded but the '{section}' section did not change: the snapshot is blind to it"
+
+
+async def test_the_snapshot_detects_a_created_rack(client, w):
+    call, _, own, _ = SCOPE_TARGET_OPS["rack.create-in-foreign-room"]
+    before = await _snapshot(client, w)
+    resp = await call(client, w, w.admin, own(w))
+    assert resp.status_code == 201, resp.text
+    after = await _snapshot(client, w)
+    assert before["rack_listing"] != after["rack_listing"]
+

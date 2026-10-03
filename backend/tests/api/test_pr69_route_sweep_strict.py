@@ -10,7 +10,7 @@
      that is tested object by object in test_pr69_object_matrix_strict.py.
 
 The set of operations a fully-permissioned restricted user can get past the permission layer is pinned
-EXACTLY (REVIEWED_REACHABLE, plus the few reviewed routes that exist only when later PRs land). A new route that becomes reachable fails the test until someone reviews it, and
+EXACTLY (REVIEWED_REACHABLE, 57 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
 so does a reviewed route that disappears. The sweep itself is tested against a deliberate regression
 (a non-site-aware permission declared scope-aware)."""
 
@@ -89,14 +89,6 @@ REVIEWED_REACHABLE = {
 }
 
 
-# Reviewed routes that exist only once later PRs land (they are not registered on #69's own base). Each is global
-# catalog data with no site or tenant link (issue #57), so a restricted user holding `catalog:read` may reach it.
-#   #70: list the datasheet documents linked to a catalog revision.
-REVIEWED_REACHABLE_WHEN_PRESENT = {
-    ("GET", "/api/v1/catalog/revisions/{revision_id}/documents"),
-}
-
-
 async def _sweep(client, admin):
     me = (await client.get("/api/v1/auth/me", headers=admin)).json()
     site = await _make_site(client, admin)
@@ -149,9 +141,9 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    unreviewed = reachable - REVIEWED_REACHABLE - REVIEWED_REACHABLE_WHEN_PRESENT
-    assert not unreviewed and REVIEWED_REACHABLE <= reachable, (
-        f"new reachable: {sorted(unreviewed)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
+    assert len(REVIEWED_REACHABLE) == 57, "the reviewed reachable set is pinned at exactly 57 operations"
+    assert reachable == REVIEWED_REACHABLE, (
+        f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )
 
 
@@ -162,5 +154,5 @@ async def test_the_sweep_detects_a_route_that_wrongly_becomes_reachable(client, 
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    leaked = sorted(reachable - REVIEWED_REACHABLE - REVIEWED_REACHABLE_WHEN_PRESENT)
+    leaked = sorted(reachable - REVIEWED_REACHABLE)
     assert leaked and all("/alarms" in path for _, path in leaked), leaked
