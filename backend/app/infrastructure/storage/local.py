@@ -45,3 +45,13 @@ class LocalFileSystemStorageBackend:
 
     def exists(self, key: str) -> bool:
         return self._safe_path(key).exists()
+
+    def delete(self, key: str) -> None:
+        self._safe_path(key).unlink(missing_ok=True)
+
+    def iter_keys(self) -> list[tuple[str, float]]:
+        found: list[tuple[str, float]] = []
+        for entry in os.scandir(self._root):
+            if entry.is_file(follow_symlinks=False) and not entry.name.startswith(".tmp-"):
+                found.append((entry.name, entry.stat(follow_symlinks=False).st_mtime))
+        return found

@@ -27,6 +27,7 @@ from app.domain.catalog.designer_models import (  # noqa: F401
     NetworkPortTemplate,
     PowerSupplyTemplate,
 )
+from app.domain.catalog.document_models import CatalogDocument, CatalogRevisionDocument  # noqa: F401
 from app.domain.catalog.models import (  # noqa: F401
     EquipmentModel,
     EquipmentModelRevision,
