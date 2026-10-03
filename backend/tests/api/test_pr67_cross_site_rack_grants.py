@@ -68,3 +68,21 @@ async def test_control_a_rack_held_at_its_own_site_can_still_be_conferred(client
         headers=holder,
     )
     assert resp.status_code == 200, resp.text
+
+
+async def test_actor_cannot_confer_a_moved_rack_at_its_new_site_through_a_stale_grant_at_the_old_one(client, admin, auth_headers):
+    """The mirror image (Codex review of 7674ddf): the actor holds `selected [R]` at A and an empty `selected` grant at B.
+    R moves to B, so the actor loses it. Conferring R under B passed the flattened comparison because R was already in
+    the actor's rack ids, although the actor cannot see R at B."""
+    a = await _make_site(client, admin)
+    b = await _make_site(client, admin, a["org"])
+    rack_r = await _make_rack(client, admin, auth_headers, a["room"])
+    gid = await _group(client, admin, allow=BASE, sites=[_entry(a["site"], "selected", [rack_r]), _entry(b["site"], "selected", [])])
+    _, headers = await _group_user(client, admin, [gid])
+    moved = await client.post(f"/api/v1/racks/{rack_r}/move", json={"room_id": b["room"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)
+    assert moved.status_code == 200, moved.text
+    assert (await client.get(f"/api/v1/racks/{rack_r}", headers=headers)).status_code == 404
+    group = (await client.post("/api/v1/groups", json={"name": "mirror-conferral"}, headers=headers)).json()["id"]
+    resp = await client.put(f"/api/v1/groups/{group}/site-access", json={"sites": [_entry(b["site"], "selected", [rack_r])]}, headers=headers)
+    assert resp.status_code == 403, resp.text
+    assert (await client.get(f"/api/v1/groups/{group}", headers=admin)).json()["sites"] == []
