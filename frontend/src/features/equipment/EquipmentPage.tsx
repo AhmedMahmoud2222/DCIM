@@ -64,21 +64,21 @@ export function EquipmentPage() {
         <div className="flex gap-2">
           <Link
             to="/equipment/instantiate"
-            className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+            className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
           >
             Instantiate from catalog
           </Link>
           {canImport && (
             <button
               onClick={() => setShowBulkImport(true)}
-              className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+              className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
             >
               Bulk Import
             </button>
           )}
           <button
             onClick={() => setShowForm((v) => !v)}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+            className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
           >
             {showForm ? "Cancel" : "New Equipment"}
           </button>
@@ -95,36 +95,36 @@ export function EquipmentPage() {
       )}
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="mb-6 grid max-w-2xl grid-cols-2 gap-3 rounded border border-slate-800 bg-slate-900 p-4">
+        <form onSubmit={handleSubmit} className="mb-6 grid max-w-2xl grid-cols-2 gap-3 rounded-sm border border-slate-800 bg-slate-900 p-4">
           <input
             value={assetTag}
             onChange={(e) => setAssetTag(e.target.value)}
             placeholder="Asset tag (e.g. SRV-0142)"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <input
             value={hostname}
             onChange={(e) => setHostname(e.target.value)}
             placeholder="Hostname (optional)"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <input
             value={manufacturer}
             onChange={(e) => setManufacturer(e.target.value)}
             placeholder="Manufacturer"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <input
             value={modelName}
             onChange={(e) => setModelName(e.target.value)}
             placeholder="Model name"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <div className="col-span-2">
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
               {createMutation.isPending ? "Creating…" : "Create Equipment"}
             </button>
@@ -158,7 +158,7 @@ export function EquipmentPage() {
                 </td>
                 <td className="py-2 font-mono text-slate-300">{eq.asset_tag}</td>
                 <td className="py-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[eq.lifecycle_status] ?? "bg-slate-700"}`}>
+                  <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[eq.lifecycle_status] ?? "bg-slate-700"}`}>
                     {eq.lifecycle_status}
                   </span>
                 </td>

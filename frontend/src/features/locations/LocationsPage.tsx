@@ -36,12 +36,12 @@ export function LocationsPage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="New organization name"
-          className="w-64 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+          className="w-64 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
         />
         <button
           type="submit"
           disabled={createOrganization.isPending}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
         >
           Create
         </button>

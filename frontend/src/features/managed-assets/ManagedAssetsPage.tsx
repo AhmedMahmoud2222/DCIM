@@ -46,7 +46,7 @@ export function ManagedAssetsPage() {
                 <td className="py-2 font-mono">{asset.asset_tag}</td>
                 <td className="py-2">{asset.asset_type}</td>
                 <td className="py-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${STATUS_COLORS[asset.lifecycle_status] ?? "bg-slate-700"}`}>
+                  <span className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[asset.lifecycle_status] ?? "bg-slate-700"}`}>
                     {asset.lifecycle_status}
                   </span>
                 </td>

@@ -164,12 +164,12 @@ export function GroupsPage() {
         </p>
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           {canManage && (
             <form onSubmit={submitCreate} className="mb-3 flex gap-2" aria-label="Create group">
               <input aria-label="New group name" required maxLength={100} value={newName} onChange={(e) => setNewName(e.target.value)}
-                placeholder="New group name" className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
-              <button type="submit" className="rounded bg-blue-600 px-2 py-1 text-xs text-white">Add</button>
+                placeholder="New group name" className="min-w-0 flex-1 rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+              <button type="submit" className="rounded-sm bg-blue-600 px-2 py-1 text-xs text-white">Add</button>
             </form>
           )}
           {groupsQuery.isError && <p role="alert" className="text-sm text-red-400">{errorText(groupsQuery.error)}</p>}
@@ -179,7 +179,7 @@ export function GroupsPage() {
                 <button
                   onClick={() => { setSelectedId(g.id); setMessage(null); }}
                   aria-pressed={selectedId === g.id}
-                  className={`w-full rounded px-2 py-2 text-left text-sm ${selectedId === g.id ? "bg-blue-600 text-white" : "hover:bg-slate-800"}`}
+                  className={`w-full rounded-sm px-2 py-2 text-left text-sm ${selectedId === g.id ? "bg-blue-600 text-white" : "hover:bg-slate-800"}`}
                 >
                   <span className="block">{g.name}</span>
                   <span className="block text-xs text-slate-300">{g.member_count} member(s) · {g.site_count} site(s)</span>
@@ -189,7 +189,7 @@ export function GroupsPage() {
           </ul>
         </div>
 
-        <div className="rounded border border-slate-800 bg-slate-900 p-4 lg:col-span-2">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 lg:col-span-2">
           {!selectedId && <p className="text-sm text-slate-400">Select or create a group.</p>}
           {selectedId && detailQuery.isError && <p role="alert" className="text-sm text-red-400">{errorText(detailQuery.error)}</p>}
           {selectedId && detail && (
@@ -197,7 +197,7 @@ export function GroupsPage() {
               <div role="tablist" aria-label="Group sections" className="mb-4 flex flex-wrap gap-1">
                 {tabs.map(([key, label]) => (
                   <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
-                    className={`rounded px-3 py-1 text-sm ${tab === key ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}>
+                    className={`rounded-sm px-3 py-1 text-sm ${tab === key ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}>
                     {label}
                   </button>
                 ))}
@@ -208,18 +208,18 @@ export function GroupsPage() {
                   <label className="block text-xs text-slate-400">
                     Name
                     <input value={name} onChange={(e) => setName(e.target.value)} disabled={!canManage} maxLength={100}
-                      className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                      className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
                   </label>
                   <label className="block text-xs text-slate-400">
                     Description
                     <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canManage} maxLength={500}
-                      className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
+                      className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
                   </label>
                   {canManage && (
                     <div className="flex gap-2">
-                      <button type="submit" className="rounded bg-blue-600 px-3 py-1 text-sm text-white">Save</button>
+                      <button type="submit" className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white">Save</button>
                       <button type="button" onClick={() => window.confirm(`Delete group ${detail.name}? Members lose the access it grants.`) && deleteMutation.mutate()}
-                        className="rounded bg-red-900 px-3 py-1 text-sm text-red-100">Delete group</button>
+                        className="rounded-sm bg-red-900 px-3 py-1 text-sm text-red-100">Delete group</button>
                     </div>
                   )}
                 </form>
@@ -238,7 +238,7 @@ export function GroupsPage() {
                       </li>
                     ))}
                   </ul>
-                  {canManage && <button onClick={() => membersMutation.mutate()} className="rounded bg-blue-600 px-3 py-1 text-sm text-white">Save members</button>}
+                  {canManage && <button onClick={() => membersMutation.mutate()} className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white">Save members</button>}
                 </div>
               )}
 
@@ -249,7 +249,7 @@ export function GroupsPage() {
                     Permissions marked <em>global users only</em> are not honoured for site-restricted members.
                   </p>
                   {groupByResource(catalogQuery.data ?? []).map(([resource, items]) => (
-                    <fieldset key={resource} className="rounded border border-slate-800 p-3">
+                    <fieldset key={resource} className="rounded-sm border border-slate-800 p-3">
                       <legend className="px-1 text-sm font-semibold capitalize">{resource.replace(/_/g, " ")}</legend>
                       <div className="space-y-1">
                         {items.map((p) => (
@@ -261,7 +261,7 @@ export function GroupsPage() {
                             <select aria-label={`Effect for ${p.code}`} disabled={!canManage}
                               value={permissionState(allow, deny, p.code)}
                               onChange={(e) => setState(p.code, e.target.value as PermissionState)}
-                              className="rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-xs">
+                              className="rounded-sm border border-slate-700 bg-slate-950 px-1 py-0.5 text-xs">
                               <option value="none">Not set</option>
                               <option value="allow">Allow</option>
                               <option value="deny">Deny</option>
@@ -271,7 +271,7 @@ export function GroupsPage() {
                       </div>
                     </fieldset>
                   ))}
-                  {canManage && <button onClick={() => permissionsMutation.mutate()} className="rounded bg-blue-600 px-3 py-1 text-sm text-white">Save permissions</button>}
+                  {canManage && <button onClick={() => permissionsMutation.mutate()} className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white">Save permissions</button>}
                 </div>
               )}
 
@@ -284,7 +284,7 @@ export function GroupsPage() {
                   {sitesQuery.data?.items.map((site) => {
                     const grant = sites.find((s) => s.site_id === site.id);
                     return (
-                      <div key={site.id} className="rounded border border-slate-800 p-3">
+                      <div key={site.id} className="rounded-sm border border-slate-800 p-3">
                         <label className="flex items-center gap-2 text-sm font-semibold">
                           <input type="checkbox" disabled={!canManage} checked={!!grant}
                             onChange={() => setSites(toggleSite(sites, site.id, () => ({
@@ -298,7 +298,7 @@ export function GroupsPage() {
                               Rack access
                               <select aria-label={`Rack access for ${site.code}`} disabled={!canManage} value={grant.rack_scope}
                                 onChange={(e) => updateSite(site.id, { rack_scope: e.target.value as RackScope, rack_ids: [] })}
-                                className="ml-2 rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-xs">
+                                className="ml-2 rounded-sm border border-slate-700 bg-slate-950 px-1 py-0.5 text-xs">
                                 <option value="selected">Selected racks only</option>
                                 <option value="all">All racks in site</option>
                               </select>
@@ -312,7 +312,7 @@ export function GroupsPage() {
                       </div>
                     );
                   })}
-                  {canManage && <button onClick={() => accessMutation.mutate()} className="rounded bg-blue-600 px-3 py-1 text-sm text-white">Save site &amp; rack access</button>}
+                  {canManage && <button onClick={() => accessMutation.mutate()} className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white">Save site &amp; rack access</button>}
                 </div>
               )}
             </div>

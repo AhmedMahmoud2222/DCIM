@@ -22,7 +22,7 @@ export function RoomSpatialCanvas({ view }: { view: RoomSpatialView }) {
       <svg
         width={CANVAS_WIDTH_PX}
         height={canvasHeight}
-        className="rounded border border-slate-800 bg-slate-950"
+        className="rounded-sm border border-slate-800 bg-slate-950"
       >
         <rect x={0} y={0} width={CANVAS_WIDTH_PX} height={canvasHeight} fill="none" stroke="#1e293b" />
 
@@ -72,7 +72,7 @@ export function RoomSpatialCanvas({ view }: { view: RoomSpatialView }) {
       </svg>
       <div className="mt-2 flex gap-6 text-xs text-slate-500">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm bg-blue-700" /> Rack (click to open)
+          <span className="inline-block h-3 w-3 rounded-xs bg-blue-700" /> Rack (click to open)
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 rounded-full bg-teal-600" /> Floor/wall/ceiling-mounted equipment

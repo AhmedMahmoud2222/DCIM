@@ -152,7 +152,7 @@ export function FaceplateOverlay({
   return (
     <div
       data-testid="faceplate-overlay"
-      className="relative w-full overflow-hidden rounded border border-slate-800 bg-slate-950"
+      className="relative w-full overflow-hidden rounded-sm border border-slate-800 bg-slate-950"
       style={{ aspectRatio: `${graphic.width_px} / ${graphic.height_px}` }}
     >
       <img src={imageUrl} alt={`${side} view`} className="pointer-events-none h-full w-full select-none object-contain" draggable={false} />
@@ -176,7 +176,7 @@ export function FaceplateOverlay({
               tabIndex={onSelect ? 0 : -1}
               role={onSelect ? "button" : undefined}
               aria-label={`${marker.marker_type === "network_port" ? "Port" : "Power"} ${marker.label ?? ""}: ${status}${tooltip ? ` — ${tooltip}` : ""}`}
-              className={onSelect ? "cursor-pointer outline-none" : undefined}
+              className={onSelect ? "cursor-pointer outline-hidden" : undefined}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

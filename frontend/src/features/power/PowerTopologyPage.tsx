@@ -28,7 +28,7 @@ const NODE_TYPE_COLORS: Record<string, string> = {
 
 function NodeBadge({ nodeType }: { nodeType: string }) {
   return (
-    <span className={`rounded px-2 py-0.5 text-xs ${NODE_TYPE_COLORS[nodeType] ?? "bg-slate-700 text-slate-200"}`}>
+    <span className={`rounded-sm px-2 py-0.5 text-xs ${NODE_TYPE_COLORS[nodeType] ?? "bg-slate-700 text-slate-200"}`}>
       {nodeType.replace(/_/g, " ")}
     </span>
   );
@@ -40,7 +40,7 @@ function DataQualityBadge({ quality }: { quality: string }) {
     unknown: "bg-slate-700 text-slate-300",
     not_applicable: "bg-slate-800 text-slate-500",
   };
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] ${colors[quality] ?? "bg-slate-700"}`}>{quality}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${colors[quality] ?? "bg-slate-700"}`}>{quality}</span>;
 }
 
 function fmtKw(value: number | null): string {
@@ -120,12 +120,12 @@ export function PowerTopologyPage() {
 
       <div className="grid grid-cols-3 gap-6">
         {/* Node list */}
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-300">Power Nodes</h2>
             <button
               onClick={() => setShowCreateForm((v) => !v)}
-              className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+              className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
             >
               + New
             </button>
@@ -133,7 +133,7 @@ export function PowerTopologyPage() {
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
-            className="mb-3 w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+            className="mb-3 w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
           >
             <option value="">All types</option>
             {Object.keys(NODE_TYPE_COLORS).map((t) => (
@@ -149,12 +149,12 @@ export function PowerTopologyPage() {
                 e.preventDefault();
                 createMutation.mutate();
               }}
-              className="mb-3 space-y-2 rounded border border-slate-700 bg-slate-800/50 p-2"
+              className="mb-3 space-y-2 rounded-sm border border-slate-700 bg-slate-800/50 p-2"
             >
               <select
                 value={createKind}
                 onChange={(e) => setCreateKind(e.target.value as typeof createKind)}
-                className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
               >
                 <option value="utility">Utility intake</option>
                 <option value="pdu">PDU</option>
@@ -167,7 +167,7 @@ export function PowerTopologyPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Label / name"
                 required
-                className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
               />
               {createKind !== "utility" && (
                 <input
@@ -175,19 +175,19 @@ export function PowerTopologyPage() {
                   onChange={(e) => setAssetTag(e.target.value)}
                   placeholder="Asset tag"
                   required
-                  className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                  className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                 />
               )}
               {(createKind === "ups" || createKind === "power_panel") && (
-                <input id="room_id_input" placeholder="Room ID" required className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100" />
+                <input id="room_id_input" placeholder="Room ID" required className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100" />
               )}
               {createKind === "generator" && (
-                <input id="site_id_input" placeholder="Site ID" required className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100" />
+                <input id="site_id_input" placeholder="Site ID" required className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100" />
               )}
               <button
                 type="submit"
                 disabled={createMutation.isPending}
-                className="w-full rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="w-full rounded-sm bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 Create
               </button>
@@ -217,14 +217,14 @@ export function PowerTopologyPage() {
         {/* Selected node detail + topology */}
         <div className="col-span-2 space-y-4">
           {!selectedNode && (
-            <div className="rounded border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+            <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
               Select a power node from the list to inspect it.
             </div>
           )}
 
           {selectedNode && (
             <>
-              <div className="rounded border border-slate-800 bg-slate-900 p-4">
+              <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-200">{selectedNode.label}</h2>
@@ -232,7 +232,7 @@ export function PowerTopologyPage() {
                   </div>
                   <button
                     onClick={() => setShowConnectForm((v) => !v)}
-                    className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                    className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
                   >
                     + Connect
                   </button>
@@ -244,7 +244,7 @@ export function PowerTopologyPage() {
                       e.preventDefault();
                       connectMutation.mutate();
                     }}
-                    className="mb-3 space-y-2 rounded border border-slate-700 bg-slate-800/50 p-2"
+                    className="mb-3 space-y-2 rounded-sm border border-slate-700 bg-slate-800/50 p-2"
                   >
                     <p className="text-xs text-slate-400">Source (upstream) → this node is a common pattern; fill both IDs explicitly:</p>
                     <input
@@ -252,7 +252,7 @@ export function PowerTopologyPage() {
                       onChange={(e) => setConnSource(e.target.value)}
                       placeholder="Source node ID"
                       required
-                      className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                     />
                     <input
                       value={connTarget}
@@ -260,12 +260,12 @@ export function PowerTopologyPage() {
                       placeholder="Target node ID"
                       defaultValue={selectedNode.id}
                       required
-                      className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                     />
                     <select
                       value={connFeedLabel}
                       onChange={(e) => setConnFeedLabel(e.target.value)}
-                      className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                     >
                       <option value="single">single</option>
                       <option value="A">A</option>
@@ -274,7 +274,7 @@ export function PowerTopologyPage() {
                     <button
                       type="submit"
                       disabled={connectMutation.isPending}
-                      className="w-full rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                      className="w-full rounded-sm bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
                     >
                       Create connection
                     </button>
@@ -323,7 +323,7 @@ export function PowerTopologyPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="rounded border border-slate-800 bg-slate-900 p-4">
+                <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Upstream (sources)</h3>
                   <div className="space-y-1">
                     {upstreamQuery.data?.length === 0 && (
@@ -333,7 +333,7 @@ export function PowerTopologyPage() {
                       <button
                         key={n.node_id}
                         onClick={() => setSelectedNodeId(n.node_id)}
-                        className="flex w-full items-center justify-between rounded bg-slate-800/60 px-2 py-1 text-left text-xs hover:bg-slate-800"
+                        className="flex w-full items-center justify-between rounded-sm bg-slate-800/60 px-2 py-1 text-left text-xs hover:bg-slate-800"
                       >
                         <span>{n.label}</span>
                         <NodeBadge nodeType={n.node_type} />
@@ -341,7 +341,7 @@ export function PowerTopologyPage() {
                     ))}
                   </div>
                 </div>
-                <div className="rounded border border-slate-800 bg-slate-900 p-4">
+                <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Downstream (loads)</h3>
                   <div className="space-y-1">
                     {downstreamQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">Nothing connected downstream.</p>}
@@ -349,7 +349,7 @@ export function PowerTopologyPage() {
                       <button
                         key={n.node_id}
                         onClick={() => setSelectedNodeId(n.node_id)}
-                        className="flex w-full items-center justify-between rounded bg-slate-800/60 px-2 py-1 text-left text-xs hover:bg-slate-800"
+                        className="flex w-full items-center justify-between rounded-sm bg-slate-800/60 px-2 py-1 text-left text-xs hover:bg-slate-800"
                       >
                         <span>{n.label}</span>
                         <NodeBadge nodeType={n.node_type} />
