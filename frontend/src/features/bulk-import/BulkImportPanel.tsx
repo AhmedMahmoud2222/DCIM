@@ -220,7 +220,7 @@ export function BulkImportPanel({
         aria-labelledby="bulk-import-dialog-title"
         onKeyDown={handleDialogKeyDown}
         data-testid="bulk-import-panel"
-        className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded border border-slate-700 bg-slate-900 p-5"
+        className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-sm border border-slate-700 bg-slate-900 p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -230,7 +230,7 @@ export function BulkImportPanel({
           <button
             ref={closeButtonRef}
             onClick={onClose}
-            className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700"
+            className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700"
           >
             Close
           </button>
@@ -242,7 +242,7 @@ export function BulkImportPanel({
               <button
                 onClick={() => templateMutation.mutate()}
                 disabled={templateMutation.isPending}
-                className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
+                className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
               >
                 {templateMutation.isPending ? "Downloading…" : "Download template"}
               </button>
@@ -253,7 +253,7 @@ export function BulkImportPanel({
               )}
             </div>
 
-            <form onSubmit={handleUploadSubmit} className="space-y-3 rounded border border-slate-800 bg-slate-950 p-4">
+            <form onSubmit={handleUploadSubmit} className="space-y-3 rounded-sm border border-slate-800 bg-slate-950 p-4">
               <fieldset>
                 <legend className="mb-1 text-xs uppercase tracking-wide text-slate-500">Mode</legend>
                 <label className="mr-4 inline-flex items-center gap-2 text-sm text-slate-200">
@@ -286,14 +286,14 @@ export function BulkImportPanel({
                   aria-label="Import file"
                   accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   onChange={handleFileChange}
-                  className="mt-1 block w-full text-xs text-slate-400 file:mr-2 file:rounded file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-slate-200"
+                  className="mt-1 block w-full text-xs text-slate-400 file:mr-2 file:rounded-sm file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-slate-200"
                 />
               </label>
 
               <button
                 type="submit"
                 disabled={!file || uploadMutation.isPending}
-                className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 {uploadMutation.isPending ? "Uploading…" : "Upload"}
               </button>
@@ -314,7 +314,7 @@ export function BulkImportPanel({
                 {job && (
                   <span
                     data-testid="bulk-import-job-status"
-                    className={`rounded px-2 py-0.5 text-xs ${JOB_STATUS_COLORS[job.status] ?? "bg-slate-700"}`}
+                    className={`rounded-sm px-2 py-0.5 text-xs ${JOB_STATUS_COLORS[job.status] ?? "bg-slate-700"}`}
                   >
                     {job.status.replace(/_/g, " ")}
                   </span>
@@ -363,7 +363,7 @@ export function BulkImportPanel({
                       aria-label="Filter rows by status"
                       value={rowStatusFilter}
                       onChange={(e) => setRowStatusFilter(e.target.value as "" | "valid" | "invalid")}
-                      className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className="rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                     >
                       <option value="">All rows</option>
                       <option value="valid">Valid only</option>
@@ -374,7 +374,7 @@ export function BulkImportPanel({
                   <button
                     onClick={() => commitMutation.mutate()}
                     disabled={job.status !== "validated" || commitMutation.isPending || commitStarted}
-                    className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                    className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
                   >
                     {commitMutation.isPending || committing ? (
                       <span className="inline-flex items-center gap-1.5">
@@ -413,7 +413,7 @@ export function BulkImportPanel({
                             {row.row_number}
                           </th>
                           <td className="py-2">
-                            <span className={`rounded px-2 py-0.5 text-xs ${ROW_STATUS_COLORS[row.status] ?? "bg-slate-700"}`}>
+                            <span className={`rounded-sm px-2 py-0.5 text-xs ${ROW_STATUS_COLORS[row.status] ?? "bg-slate-700"}`}>
                               {row.status}
                             </span>
                           </td>
@@ -457,7 +457,7 @@ export function BulkImportPanel({
                     <button
                       onClick={() => setOffset((o) => Math.max(0, o - ROWS_PER_PAGE))}
                       disabled={offset === 0}
-                      className="rounded bg-slate-800 px-2 py-1 hover:bg-slate-700 disabled:opacity-50"
+                      className="rounded-sm bg-slate-800 px-2 py-1 hover:bg-slate-700 disabled:opacity-50"
                     >
                       Previous
                     </button>
@@ -467,7 +467,7 @@ export function BulkImportPanel({
                     <button
                       onClick={() => setOffset((o) => o + ROWS_PER_PAGE)}
                       disabled={offset + ROWS_PER_PAGE >= rowsQuery.data.total}
-                      className="rounded bg-slate-800 px-2 py-1 hover:bg-slate-700 disabled:opacity-50"
+                      className="rounded-sm bg-slate-800 px-2 py-1 hover:bg-slate-700 disabled:opacity-50"
                     >
                       Next
                     </button>
@@ -479,7 +479,7 @@ export function BulkImportPanel({
                     <button
                       onClick={() => reportMutation.mutate()}
                       disabled={reportMutation.isPending}
-                      className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
+                      className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
                     >
                       {reportMutation.isPending ? "Downloading…" : "Download results report"}
                     </button>

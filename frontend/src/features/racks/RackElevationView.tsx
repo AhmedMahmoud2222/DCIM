@@ -89,13 +89,13 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
     <div>
       <div className="mb-2 flex gap-6 text-xs text-slate-400">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: SIDE_COLOR.front }} /> Front
+          <span className="inline-block h-3 w-3 rounded-xs" style={{ background: SIDE_COLOR.front }} /> Front
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: SIDE_COLOR.rear }} /> Rear
+          <span className="inline-block h-3 w-3 rounded-xs" style={{ background: SIDE_COLOR.rear }} /> Rear
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: SIDE_COLOR.both }} /> Both
+          <span className="inline-block h-3 w-3 rounded-xs" style={{ background: SIDE_COLOR.both }} /> Both
         </span>
         <span className="ml-auto flex items-center gap-3">
           <span className="flex items-center gap-1.5">
@@ -109,7 +109,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
           </span>
         </span>
       </div>
-      <svg aria-label={`Rack elevation, ${elevation.height_u} units; equipment links and faceplate controls follow`} width={svgWidth} height={totalHeight + 4} className="rounded border border-slate-800 bg-slate-950">
+      <svg aria-label={`Rack elevation, ${elevation.height_u} units; equipment links and faceplate controls follow`} width={svgWidth} height={totalHeight + 4} className="rounded-sm border border-slate-800 bg-slate-950">
         {Array.from({ length: elevation.height_u }, (_, i) => i + 1).map((u) => (
           <g key={u}>
             <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="#94a3b8">
@@ -251,7 +251,7 @@ function MarkerDetailPanel({
       : null;
 
   return (
-    <div data-testid="marker-detail-panel" className="mt-3 rounded border border-slate-700 bg-slate-900 p-3 text-sm">
+    <div data-testid="marker-detail-panel" className="mt-3 rounded-sm border border-slate-700 bg-slate-900 p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
         <p className="font-semibold text-slate-200">
           {equipmentLabel} — {marker.label ?? (port?.display_name ?? powerInlet?.label ?? "marker")}
@@ -261,12 +261,12 @@ function MarkerDetailPanel({
             <button
               data-testid="simulate-failure-button"
               onClick={() => onSimulateFailure(simulateTarget)}
-              className="rounded bg-red-900/60 px-2 py-0.5 text-xs text-red-200 hover:bg-red-900"
+              className="rounded-sm bg-red-900/60 px-2 py-0.5 text-xs text-red-200 hover:bg-red-900"
             >
               Simulate failure
             </button>
           )}
-          <button onClick={onClose} className="rounded bg-slate-800 px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-700">
+          <button onClick={onClose} className="rounded-sm bg-slate-800 px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-700">
             Close
           </button>
         </div>

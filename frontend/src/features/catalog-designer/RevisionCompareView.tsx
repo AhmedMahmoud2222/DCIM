@@ -40,7 +40,7 @@ export function RevisionCompareView() {
         </div>
       </div>
 
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Field changes</h2>
         {compare.field_diffs.length === 0 ? (
           <p className="text-sm italic text-slate-500">No scalar field differences.</p>
@@ -66,15 +66,15 @@ export function RevisionCompareView() {
         )}
       </div>
 
-      <div className="rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Child template changes</h2>
         {compare.child_diffs.length === 0 ? (
           <p className="text-sm italic text-slate-500">No child template differences.</p>
         ) : (
           <ul className="space-y-2 text-sm">
             {compare.child_diffs.map((diff, i) => (
-              <li key={`${diff.collection}-${diff.stable_key}-${i}`} className="rounded bg-slate-800/50 px-3 py-2">
-                <span className="mr-2 rounded bg-slate-700 px-2 py-0.5 text-xs uppercase text-slate-300">{diff.change}</span>
+              <li key={`${diff.collection}-${diff.stable_key}-${i}`} className="rounded-sm bg-slate-800/50 px-3 py-2">
+                <span className="mr-2 rounded-sm bg-slate-700 px-2 py-0.5 text-xs uppercase text-slate-300">{diff.change}</span>
                 <span className="text-slate-400">{diff.collection}</span> / <span className="font-mono text-xs">{diff.stable_key}</span>
               </li>
             ))}

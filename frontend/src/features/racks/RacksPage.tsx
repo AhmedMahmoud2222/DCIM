@@ -72,14 +72,14 @@ export function RacksPage() {
           {canImport && (
             <button
               onClick={() => setShowBulkImport(true)}
-              className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+              className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
             >
               Bulk Import
             </button>
           )}
           <button
             onClick={() => setShowForm((v) => !v)}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+            className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
           >
             {showForm ? "Cancel" : "New Rack"}
           </button>
@@ -96,24 +96,24 @@ export function RacksPage() {
       )}
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="mb-6 grid max-w-3xl grid-cols-2 gap-3 rounded border border-slate-800 bg-slate-900 p-4">
+        <form onSubmit={handleSubmit} className="mb-6 grid max-w-3xl grid-cols-2 gap-3 rounded-sm border border-slate-800 bg-slate-900 p-4">
           <div className="col-span-2 text-xs uppercase tracking-wide text-slate-500">Rack identity</div>
           <input
             value={assetTag}
             onChange={(e) => setAssetTag(e.target.value)}
             placeholder="Asset tag (e.g. RACK-A01)"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Display name"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <select
             value={roomId}
             onChange={(e) => setRoomId(e.target.value)}
-            className="col-span-2 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="col-span-2 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           >
             <option value="">No initial placement (place later)</option>
             {roomsQuery.data?.items.map((room) => (
@@ -131,13 +131,13 @@ export function RacksPage() {
             value={manufacturer}
             onChange={(e) => setManufacturer(e.target.value)}
             placeholder="Manufacturer"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <input
             value={modelName}
             onChange={(e) => setModelName(e.target.value)}
             placeholder="Model name"
-            className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none"
+            className="rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
           <label className="flex items-center gap-2 text-xs text-slate-400">
             Height (U)
@@ -147,7 +147,7 @@ export function RacksPage() {
               max={60}
               value={heightU}
               onChange={(e) => setHeightU(e.target.value)}
-              className="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
+              className="w-20 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
             />
           </label>
           <div className="flex gap-4">
@@ -157,7 +157,7 @@ export function RacksPage() {
                 type="number"
                 value={widthMm}
                 onChange={(e) => setWidthMm(e.target.value)}
-                className="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
+                className="w-20 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
               />
             </label>
             <label className="flex items-center gap-2 text-xs text-slate-400">
@@ -166,7 +166,7 @@ export function RacksPage() {
                 type="number"
                 value={depthMm}
                 onChange={(e) => setDepthMm(e.target.value)}
-                className="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
+                className="w-20 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100"
               />
             </label>
           </div>
@@ -175,7 +175,7 @@ export function RacksPage() {
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
               {createMutation.isPending ? "Creating…" : "Create Rack"}
             </button>
@@ -210,7 +210,7 @@ export function RacksPage() {
                 </td>
                 <td className="py-2 font-mono text-slate-300">{rack.asset_tag}</td>
                 <td className="py-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
+                  <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
                     {rack.lifecycle_status}
                   </span>
                 </td>

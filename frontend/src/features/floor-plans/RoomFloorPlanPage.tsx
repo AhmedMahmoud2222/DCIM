@@ -144,7 +144,7 @@ export function RoomFloorPlanPage() {
       </Link>
       <h1 className="mb-6 text-lg font-semibold">{room?.name ?? "Room"} — Spatial View</h1>
 
-      <div className="mb-6 rounded border border-slate-800 bg-slate-900 p-4">
+      <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">2D Layout</h2>
         {spatialViewQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
         {spatialViewQuery.error && <p className="text-sm text-red-400">{(spatialViewQuery.error as Error).message}</p>}
@@ -161,13 +161,13 @@ export function RoomFloorPlanPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-300">Floor Plan Revisions</h2>
             <button
               onClick={() => createFloorPlanMutation.mutate()}
               disabled={createFloorPlanMutation.isPending}
-              className="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              className="rounded-sm bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
               New draft
             </button>
@@ -183,7 +183,7 @@ export function RoomFloorPlanPage() {
               >
                 <span>Revision {fp.revision_number}</span>
                 <span className="flex items-center gap-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${STATUS_COLORS[fp.status]}`}>{fp.status}</span>
+                  <span className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[fp.status]}`}>{fp.status}</span>
                   {fp.status !== "active" && (
                     <button
                       onClick={(e) => {
@@ -212,7 +212,7 @@ export function RoomFloorPlanPage() {
                   accept=".svg,.png,.jpg,.jpeg,image/svg+xml,image/png,image/jpeg"
                   onChange={handleFileChange}
                   disabled={uploadMutation.isPending}
-                  className="mt-1 block w-full text-xs text-slate-400 file:mr-2 file:rounded file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-slate-200"
+                  className="mt-1 block w-full text-xs text-slate-400 file:mr-2 file:rounded-sm file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-slate-200"
                 />
               </label>
               {uploadMutation.isError && (
@@ -224,14 +224,14 @@ export function RoomFloorPlanPage() {
           )}
         </div>
 
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Import Diagnostics</h2>
           {!selectedJob && <p className="text-sm text-slate-500">Upload a file to see import diagnostics here.</p>}
           {selectedJob && (
             <>
               <div className="mb-2 flex items-center gap-2 text-sm">
                 <span className="text-slate-400">{selectedJob.original_filename}</span>
-                <span className={`rounded px-2 py-0.5 text-xs ${STATUS_COLORS[selectedJob.status] ?? "bg-slate-700"}`}>
+                <span className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[selectedJob.status] ?? "bg-slate-700"}`}>
                   {selectedJob.status}
                 </span>
               </div>
@@ -266,11 +266,11 @@ export function RoomFloorPlanPage() {
                   </h3>
                   <ul className="space-y-1">
                     {candidatesQuery.data.items.map((c) => (
-                      <li key={c.id} className="flex items-center justify-between rounded bg-slate-800/50 px-2 py-1.5 text-sm">
+                      <li key={c.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1.5 text-sm">
                         <span>
                           {c.raw_geometry.shape_type}
                           {c.suggested_object_type && (
-                            <span className="ml-2 rounded bg-slate-700 px-1.5 py-0.5 text-xs text-slate-300">
+                            <span className="ml-2 rounded-sm bg-slate-700 px-1.5 py-0.5 text-xs text-slate-300">
                               suggests: {c.suggested_object_type}
                             </span>
                           )}

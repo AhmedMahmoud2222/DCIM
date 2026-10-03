@@ -84,7 +84,7 @@ export function InstantiatePage() {
         )}
       </p>
 
-      <form onSubmit={handleSubmit} className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4">
+      <form onSubmit={handleSubmit} className="space-y-3 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <select
           data-testid="instantiate-model-select"
           value={modelId}
@@ -92,7 +92,7 @@ export function InstantiatePage() {
             setModelId(e.target.value);
             setRevisionId("");
           }}
-          className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
         >
           <option value="">Select a catalog model…</option>
           {modelsQuery.data?.items.map((m) => (
@@ -107,7 +107,7 @@ export function InstantiatePage() {
             data-testid="instantiate-revision-select"
             value={revisionId}
             onChange={(e) => setRevisionId(e.target.value)}
-            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
           >
             <option value="">Select a published revision…</option>
             {publishedRevisions.map((r) => (
@@ -126,14 +126,14 @@ export function InstantiatePage() {
           value={assetTag}
           onChange={(e) => setAssetTag(e.target.value)}
           placeholder="Asset tag (e.g. SRV-0142)"
-          className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
         />
         <input
           data-testid="instantiate-hostname"
           value={hostname}
           onChange={(e) => setHostname(e.target.value)}
           placeholder="Hostname (optional)"
-          className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
         />
 
         <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -152,7 +152,7 @@ export function InstantiatePage() {
               data-testid="instantiate-room-select"
               value={roomId}
               onChange={(e) => setRoomId(e.target.value)}
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+              className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
             >
               <option value="">Select room…</option>
               {roomsQuery.data?.items.map((room) => (
@@ -163,7 +163,7 @@ export function InstantiatePage() {
               data-testid="instantiate-rack-select"
               value={rackId}
               onChange={(e) => setRackId(e.target.value)}
-              className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+              className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
             >
               <option value="">Select rack…</option>
               {racksQuery.data?.items.map((rack) => (
@@ -174,17 +174,17 @@ export function InstantiatePage() {
               <input
                 data-testid="instantiate-u-start"
                 type="number" min={1} value={uStart} onChange={(e) => setUStart(e.target.value)} placeholder="U start"
-                className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+                className="w-1/3 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
               />
               <input
                 data-testid="instantiate-u-end"
                 type="number" min={2} value={uEnd} onChange={(e) => setUEnd(e.target.value)} placeholder="U end (exclusive)"
-                className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+                className="w-1/3 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
               />
               <select
                 data-testid="instantiate-side-select"
                 value={side} onChange={(e) => setSide(e.target.value as Side)}
-                className="w-1/3 rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+                className="w-1/3 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
               >
                 <option value="front">front</option>
                 <option value="rear">rear</option>
@@ -198,7 +198,7 @@ export function InstantiatePage() {
           data-testid="instantiate-submit"
           type="submit"
           disabled={instantiateMutation.isPending}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
         >
           {instantiateMutation.isPending ? "Instantiating…" : "Instantiate"}
         </button>

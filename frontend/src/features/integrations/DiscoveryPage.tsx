@@ -51,10 +51,10 @@ export function DiscoveryPage() {
             {diffsQuery.data?.map((diff) => {
               const device = devicesById.get(diff.discovered_device_id);
               return (
-                <div key={diff.id} className="rounded border border-slate-800 bg-slate-900 p-3 text-xs">
+                <div key={diff.id} className="rounded-sm border border-slate-800 bg-slate-900 p-3 text-xs">
                   <div className="mb-2 flex items-center justify-between">
                     <span className="font-mono text-slate-300">{device?.external_identifier ?? diff.discovered_device_id}</span>
-                    <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">{diff.diff_type}</span>
+                    <span className="rounded-sm bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">{diff.diff_type}</span>
                   </div>
                   <form
                     onSubmit={(e: FormEvent) => {
@@ -68,12 +68,12 @@ export function DiscoveryPage() {
                       value={assetIdByDiff[diff.id] ?? ""}
                       onChange={(e) => setAssetIdByDiff((m) => ({ ...m, [diff.id]: e.target.value }))}
                       placeholder="Existing ManagedAsset ID to link"
-                      className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-100"
+                      className="flex-1 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-100"
                     />
                     <button
                       type="submit"
                       disabled={acceptMutation.isPending}
-                      className="rounded bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                      className="rounded-sm bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-500 disabled:opacity-50"
                     >
                       Accept
                     </button>
@@ -81,7 +81,7 @@ export function DiscoveryPage() {
                       type="button"
                       onClick={() => rejectMutation.mutate(diff.id)}
                       disabled={rejectMutation.isPending}
-                      className="rounded bg-slate-700 px-2 py-1 text-[10px] font-medium text-slate-100 hover:bg-slate-600 disabled:opacity-50"
+                      className="rounded-sm bg-slate-700 px-2 py-1 text-[10px] font-medium text-slate-100 hover:bg-slate-600 disabled:opacity-50"
                     >
                       Reject
                     </button>
@@ -100,7 +100,7 @@ export function DiscoveryPage() {
 
         <div>
           <h2 className="mb-2 text-sm font-semibold text-slate-300">All Discovered Devices</h2>
-          <div className="overflow-x-auto rounded border border-slate-800 bg-slate-900">
+          <div className="overflow-x-auto rounded-sm border border-slate-800 bg-slate-900">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-slate-800 text-slate-400">
                 <tr>
@@ -114,7 +114,7 @@ export function DiscoveryPage() {
                   <tr key={d.id} className="border-b border-slate-800/50">
                     <td className="p-2 font-mono">{d.external_identifier}</td>
                     <td className="p-2">
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[d.status] ?? "bg-slate-700"}`}>{d.status}</span>
+                      <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[d.status] ?? "bg-slate-700"}`}>{d.status}</span>
                     </td>
                     <td className="p-2">{d.matched_managed_asset_id ?? "—"}</td>
                   </tr>

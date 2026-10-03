@@ -23,7 +23,14 @@ test("login labels and skip link work with a keyboard", async ({ page }) => {
   const adminLabel = page.getByText("Admin", { exact: true });
   await expect(adminLabel).toBeVisible();
   const contrast = await adminLabel.evaluate((element) => {
-    const channels = (color: string) => color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    // Tailwind 4 colors compute as oklch(), not rgb(), so resolve any CSS color to sRGB through a canvas pixel.
+    const channels = (color: string) => {
+      const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+      context.fillStyle = "#000";
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+    };
     const luminance = (color: string) => {
       const [r, g, b] = channels(color).map((value) => {
         const srgb = value / 255;

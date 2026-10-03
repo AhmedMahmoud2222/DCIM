@@ -226,7 +226,7 @@ export function Layout3DPage() {
         <label className="block text-sm">
           <span className="mb-1 block text-slate-400">Room</span>
           <select
-            className="min-w-64 rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
+            className="min-w-64 rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
             value={activeRoom}
             onChange={(event) => {
               setRoomId(event.target.value);
@@ -247,14 +247,14 @@ export function Layout3DPage() {
           </span>
           <Link
             to={activeRoom ? `/floor-plans/room/${activeRoom}` : "/floor-plans"}
-            className="whitespace-nowrap rounded border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
+            className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
           >
             2D floor plan
           </Link>
           <button
             type="button"
             onClick={reset}
-            className="whitespace-nowrap rounded border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
+            className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
           >
             Reset / fit
           </button>
@@ -262,14 +262,14 @@ export function Layout3DPage() {
       </div>
 
       {view.isLoading ? (
-        <div className="rounded border border-slate-800 bg-slate-900 p-8 text-sm text-slate-500">Loading authoritative spatial data…</div>
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-sm text-slate-500">Loading authoritative spatial data…</div>
       ) : view.isError ? (
-        <div className="rounded border border-slate-800 bg-slate-900 p-8 text-sm text-red-400">Unable to load this room's spatial data.</div>
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-sm text-red-400">Unable to load this room's spatial data.</div>
       ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section
             ref={viewportRef}
-            className="layout3d-viewport rounded border border-slate-800"
+            className="layout3d-viewport rounded-sm border border-slate-800"
             tabIndex={0}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -325,7 +325,7 @@ export function Layout3DPage() {
               (marked ≈) at a standardized fallback grid position.
             </p>
           </section>
-          <aside className="rounded border border-slate-800 bg-slate-900 p-4">
+          <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4">
             <h2 className="font-semibold">Rack context</h2>
             {selectedRack ? (
               <>
@@ -351,7 +351,7 @@ export function Layout3DPage() {
                     <dd>{rackEquipment.filter((item) => item.rack_id === selectedRack.id).length || "None recorded"}</dd>
                   </div>
                 </dl>
-                <Link to={`/racks/${selectedRack.id}`} className="mt-5 inline-block rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">
+                <Link to={`/racks/${selectedRack.id}`} className="mt-5 inline-block rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">
                   Open rack elevation
                 </Link>
               </>

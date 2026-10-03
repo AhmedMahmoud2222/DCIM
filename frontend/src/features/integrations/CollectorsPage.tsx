@@ -19,7 +19,7 @@ const HEALTH_COLORS: Record<string, string> = {
 };
 
 function HealthBadge({ health }: { health: string }) {
-  return <span className={`rounded px-1.5 py-0.5 text-[10px] ${HEALTH_COLORS[health] ?? "bg-slate-700"}`}>{health}</span>;
+  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${HEALTH_COLORS[health] ?? "bg-slate-700"}`}>{health}</span>;
 }
 
 function fmtSeconds(s: number | null): string {
@@ -86,12 +86,12 @@ export function CollectorsPage() {
       </p>
 
       <div className="grid grid-cols-3 gap-6">
-        <div className="rounded border border-slate-800 bg-slate-900 p-4">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-300">Registered Collectors</h2>
             <button
               onClick={() => setShowRegisterForm((v) => !v)}
-              className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+              className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
             >
               + Register
             </button>
@@ -103,19 +103,19 @@ export function CollectorsPage() {
                 e.preventDefault();
                 registerMutation.mutate();
               }}
-              className="mb-3 space-y-2 rounded border border-slate-700 bg-slate-800/50 p-2"
+              className="mb-3 space-y-2 rounded-sm border border-slate-700 bg-slate-800/50 p-2"
             >
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Collector name"
                 required
-                className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
               />
               <select
                 value={collectorType}
                 onChange={(e) => setCollectorType(e.target.value as "central" | "edge")}
-                className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
               >
                 <option value="central">central</option>
                 <option value="edge">edge</option>
@@ -126,13 +126,13 @@ export function CollectorsPage() {
                   onChange={(e) => setSiteId(e.target.value)}
                   placeholder="Site ID (required for edge)"
                   required
-                  className="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                  className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                 />
               )}
               <button
                 type="submit"
                 disabled={registerMutation.isPending}
-                className="w-full rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                className="w-full rounded-sm bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
               >
                 Register
               </button>
@@ -145,7 +145,7 @@ export function CollectorsPage() {
           )}
 
           {lastSecret && (
-            <div className="mb-3 rounded border border-amber-700 bg-amber-950/50 p-2 text-xs text-amber-200">
+            <div className="mb-3 rounded-sm border border-amber-700 bg-amber-950/50 p-2 text-xs text-amber-200">
               <p className="mb-1 font-semibold">Collector secret (shown once — copy it now):</p>
               <code className="break-all">{lastSecret}</code>
               <button onClick={() => setLastSecret(null)} className="mt-1 block text-amber-400 hover:text-amber-300">
@@ -175,26 +175,26 @@ export function CollectorsPage() {
 
         <div className="col-span-2 space-y-4">
           {!selected && (
-            <div className="rounded border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+            <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
               Select a collector from the list to inspect it.
             </div>
           )}
 
           {selected && (
             <>
-              <div className="rounded border border-slate-800 bg-slate-900 p-4">
+              <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-200">{selected.name}</h2>
                     <div className="mt-1 flex gap-2">
                       <HealthBadge health={selected.health} />
-                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">{selected.status}</span>
+                      <span className="rounded-sm bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">{selected.status}</span>
                     </div>
                   </div>
                   <button
                     onClick={() => pollMutation.mutate()}
                     disabled={pollMutation.isPending}
-                    className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                    className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                   >
                     Poll now
                   </button>
@@ -232,11 +232,11 @@ export function CollectorsPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="rounded border border-slate-800 bg-slate-900 p-4">
+                <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Capabilities</h3>
                   <div className="mb-2 flex flex-wrap gap-1">
                     {capabilitiesQuery.data?.map((c) => (
-                      <span key={c.protocol_code} className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+                      <span key={c.protocol_code} className="rounded-sm bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
                         {c.protocol_code}
                       </span>
                     ))}
@@ -252,7 +252,7 @@ export function CollectorsPage() {
                     <select
                       value={capabilityInput}
                       onChange={(e) => setCapabilityInput(e.target.value)}
-                      className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className="flex-1 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                     >
                       <option value="icmp">icmp</option>
                       <option value="snmp">snmp</option>
@@ -261,18 +261,18 @@ export function CollectorsPage() {
                     <button
                       type="submit"
                       disabled={declareMutation.isPending}
-                      className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                      className="rounded-sm bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
                     >
                       Declare
                     </button>
                   </form>
                 </div>
 
-                <div className="rounded border border-slate-800 bg-slate-900 p-4">
+                <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Assigned Integrations</h3>
                   <div className="mb-2 space-y-1">
                     {assignedIntegrations.map((i) => (
-                      <div key={i.id} className="rounded bg-slate-800/60 px-2 py-1 text-xs">
+                      <div key={i.id} className="rounded-sm bg-slate-800/60 px-2 py-1 text-xs">
                         {i.name} <span className="text-slate-500">({i.integration_type})</span>
                       </div>
                     ))}
@@ -289,7 +289,7 @@ export function CollectorsPage() {
                       value={assignIntegrationId}
                       onChange={(e) => setAssignIntegrationId(e.target.value)}
                       required
-                      className="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+                      className="flex-1 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
                     >
                       <option value="">Select integration…</option>
                       {integrationsQuery.data?.map((i) => (
@@ -301,7 +301,7 @@ export function CollectorsPage() {
                     <button
                       type="submit"
                       disabled={assignMutation.isPending}
-                      className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                      className="rounded-sm bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
                     >
                       Assign
                     </button>

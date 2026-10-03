@@ -40,7 +40,7 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 sm:flex-row">
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-white">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded-sm focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-white">
         Skip to main content
       </a>
       <aside className="w-full border-b border-slate-800 bg-slate-900 p-4 sm:w-56 sm:shrink-0 sm:border-b-0 sm:border-r">
@@ -52,7 +52,7 @@ export function AppShell() {
               to={item.to}
               end={item.to === "/"}
               className={({ isActive }) =>
-                `block rounded px-3 py-2 text-sm ${isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`
+                `block rounded-sm px-3 py-2 text-sm ${isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`
               }
             >
               {item.label}
@@ -66,7 +66,7 @@ export function AppShell() {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `block rounded px-3 py-2 text-sm ${isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`
+                `block rounded-sm px-3 py-2 text-sm ${isActive ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`
               }
             >
               {item.label}
