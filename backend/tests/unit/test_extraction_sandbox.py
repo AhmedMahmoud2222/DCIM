@@ -107,7 +107,8 @@ def victim():
     cap_net_raw), which makes its own /proc entries unreadable and would hide the very thing under test."""
     import subprocess
 
-    process = subprocess.Popen(["/bin/sleep", "60"], env={"DEMO_SECRET": "s3cret"})  # noqa: S603
+    # Its own session: if the sandbox ever regressed, killpg would hit this process only, not the test runner.
+    process = subprocess.Popen(["/bin/sleep", "60"], env={"DEMO_SECRET": "s3cret"}, start_new_session=True)  # noqa: S603
     time.sleep(0.2)
     yield {"TEST_VICTIM_PID": str(process.pid)}
     process.kill()
@@ -184,3 +185,69 @@ def test_a_lost_claim_stops_the_child_at_once():
     started = time.monotonic()
     result = child("sleep", wall=30, tick=lambda: False, tick_every=0.3)
     assert result.aborted and not result.timed_out and time.monotonic() - started < 10
+
+
+# ------------------------------------------------------------------------------ signals and file metadata (review round 2)
+
+
+def test_control_without_the_sandbox_a_child_can_signal_and_mutate_other_files_and_processes(victim, tmp_path):
+    target = tmp_path / "stored.pdf"
+    target.write_text("original bytes")
+    result = child("control_signal_and_mutate", env={**victim, "TEST_PROBE": str(target)})
+    assert result.stdout.decode().strip() == "control ok", "the premise of the finding does not hold here"
+    assert target.read_text() == ""  # truncated: the damage the sandbox must prevent
+
+
+def test_a_sandboxed_child_cannot_signal_any_other_process(victim):
+    import os as _os
+
+    lines = child("kill_victim", env=victim).stdout.decode().splitlines()
+    assert lines == [f"kill blocked {errno.EPERM}", f"kill_all blocked {errno.EPERM}", f"killpg blocked {errno.EPERM}"], lines
+    _os.kill(int(victim["TEST_VICTIM_PID"]), 0)  # still alive: nothing reached it
+
+
+def test_raw_signal_pidfd_and_prlimit_syscalls_are_denied_too(victim):
+    lines = child("raw_syscalls", env=victim).stdout.decode().splitlines()
+    assert len(lines) == 6 and all(line.endswith(f"blocked {errno.EPERM}") for line in lines), lines
+
+
+def test_file_metadata_and_truncation_are_refused_even_on_files_the_user_owns(tmp_path):
+    target = tmp_path / "media" / "stored.pdf"
+    target.parent.mkdir()
+    target.write_text("original bytes")
+    target.chmod(0o640)
+    before = (target.stat().st_mode, target.stat().st_mtime)
+    lines = child("mutate_metadata", env={"TEST_PROBE": str(target)}).stdout.decode().splitlines()
+    verdicts = {line.split()[0]: line for line in lines}
+    for operation in ("chmod", "chown", "utime", "setxattr", "removexattr", "truncate"):
+        assert verdicts[operation] == f"{operation} blocked {errno.EPERM}", verdicts
+    assert verdicts["unchanged"] == "unchanged True"
+    assert target.read_text() == "original bytes" and (target.stat().st_mode, target.stat().st_mtime) == before
+
+
+def test_truncation_is_refused_without_landlock_abi_3_because_seccomp_stands_alone(tmp_path):
+    target = tmp_path / "stored.pdf"
+    target.write_text("original bytes")
+    result = child("truncate_older_abi", env={"TEST_PROBE": str(target)})
+    assert result.stdout.decode().strip() == f"blocked {errno.EPERM}" and target.read_text() == "original bytes"
+
+
+def test_every_denied_syscall_group_is_present_for_both_architectures():
+    for index, machine in enumerate(("x86_64", "aarch64")):
+        numbers = set(sandbox._denied_numbers(index))
+        for group, calls in sandbox._DENIED.items():
+            expected = {pair[index] for pair in calls.values() if pair[index] is not None}
+            assert expected and expected <= numbers, (machine, group)
+        assert len(sandbox.build_seccomp_program(machine)) // 8 < 256
+
+
+def test_the_supervisor_kills_helpers_a_normally_exiting_child_leaves_behind():
+    import subprocess
+
+    seconds = str(3000 + int(time.time()) % 997)  # a sleep length nothing else on the host uses
+    result = child("leave_helper", env={"TEST_SLEEP_SECONDS": seconds})
+    assert result.returncode == 0 and result.stdout.decode().strip() == "exiting"
+    time.sleep(0.3)
+    listing = subprocess.run(["ps", "-eo", "stat,args"], capture_output=True, text=True).stdout.splitlines()
+    alive = [line for line in listing if f"sleep {seconds}" in line and not line.startswith("Z")]
+    assert not alive, "the helper outlived its child"

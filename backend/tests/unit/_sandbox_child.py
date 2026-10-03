@@ -15,6 +15,14 @@ def main() -> None:
     workdir = os.environ.get("TEST_WORKDIR")
     if mode == "victim_environ_without_policy":  # control: the same read, with the filesystem policy left out
         return _read_victim_environ()
+    if mode == "control_signal_and_mutate":  # control: the same calls, with no sandbox at all
+        target = os.environ["TEST_PROBE"]
+        os.chmod(target, 0o600)
+        os.utime(target, (1, 1))
+        os.truncate(target, 0)
+        os.kill(int(os.environ["TEST_VICTIM_PID"]), signal.SIGTERM)
+        print("control ok")
+        return None
     enter_sandbox(
         cpu_seconds=3, address_space_bytes=512 * 1024 * 1024, require_seccomp=True,
         write_dirs=(workdir,) if workdir else (),
@@ -47,6 +55,58 @@ def main() -> None:
             print("LISTED", os.listdir(os.environ["TEST_PROBE"]))
         except OSError:
             print("denied")
+    elif mode == "kill_victim":
+        pid = int(os.environ["TEST_VICTIM_PID"])
+        for label, call in (("kill", lambda: os.kill(pid, signal.SIGTERM)), ("kill_all", lambda: os.kill(-1, 0)),
+                            ("killpg", lambda: os.killpg(os.getpgid(pid), signal.SIGTERM))):
+            try:
+                call()
+                print(label, "ALLOWED")
+            except OSError as exc:
+                print(label, "blocked", exc.errno)
+    elif mode == "raw_syscalls":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        pid = int(os.environ["TEST_VICTIM_PID"])
+        arch = os.uname().machine
+        numbers = {  # x86_64, aarch64
+            "tgkill": (234, 131), "tkill": (200, 130), "rt_sigqueueinfo": (129, 138), "pidfd_send_signal": (424, 424),
+            "pidfd_open": (434, 434), "prlimit64": (302, 261),
+        }
+        for name, (x86, arm) in numbers.items():
+            number = x86 if arch == "x86_64" else arm
+            result = libc.syscall(number, pid, pid, 0, 0, 0, 0)
+            print(name, "blocked" if result < 0 else "ALLOWED", ctypes.get_errno())
+    elif mode == "mutate_metadata":
+        target = os.environ["TEST_PROBE"]
+        before = os.stat(target)
+        attempts = {
+            "chmod": lambda: os.chmod(target, 0o000),
+            "chown": lambda: os.chown(target, os.getuid(), os.getgid()),
+            "utime": lambda: os.utime(target, (0, 0)),
+            "setxattr": lambda: os.setxattr(target, "user.dcim", b"x"),
+            "removexattr": lambda: os.removexattr(target, "user.dcim"),
+            "truncate": lambda: os.truncate(target, 0),
+        }
+        for label, call in attempts.items():
+            try:
+                call()
+                print(label, "ALLOWED")
+            except OSError as exc:
+                print(label, "blocked", exc.errno)
+        after = os.stat(target)
+        print("unchanged", (before.st_mode, before.st_mtime, before.st_size) == (after.st_mode, after.st_mtime, after.st_size))
+    elif mode == "truncate_older_abi":
+        # Landlock behaving like ABI 2 (no truncate right): the seccomp layer alone must still refuse.
+        from app.application.catalog_documents.extraction.sandbox import default_read_paths, install_landlock
+
+        install_landlock(read_paths=default_read_paths(), abi_limit=2)
+        try:
+            os.truncate(os.environ["TEST_PROBE"], 0)
+            print("TRUNCATED")
+        except OSError as exc:
+            print("blocked", exc.errno)
     elif mode == "ptrace_parent":
         import ctypes
 
@@ -96,11 +156,16 @@ def main() -> None:
         while True:
             blocks.append(bytearray(64 * 1024 * 1024))
     elif mode == "crash":
-        os.kill(os.getpid(), signal.SIGSEGV)
+        import ctypes
+
+        ctypes.string_at(0)  # a real segmentation fault: a sandboxed child cannot signal itself
     elif mode == "flood":
         while True:
             sys.stdout.write("x" * 65536)
             sys.stdout.flush()
+    elif mode == "leave_helper":  # exits normally but leaves a helper process behind, like an OCR engine would
+        subprocess.Popen(["/bin/sleep", os.environ["TEST_SLEEP_SECONDS"]])
+        print("exiting", flush=True)
     elif mode == "grandchild_sleep":
         subprocess.Popen(["/bin/sleep", "60"])
         print("spawned", flush=True)

@@ -8,8 +8,10 @@ Layers, innermost first:
 3. `install_seccomp_no_network`: a seccomp-bpf filter denies `socket`, `socketpair`, `connect`,
    `bind`, `listen`, `accept`, `sendto`, `sendmsg`, `sendmmsg` and `io_uring_setup` with EPERM.
    The filter is inherited across `fork` and `exec`, so the OCR engine binary, which Python's
-   socket patch cannot reach, cannot create a socket either. It also denies `ptrace` and
-   `process_vm_readv/writev`, so a child cannot inspect or patch its same-UID parent. `PR_SET_NO_NEW_PRIVS` makes this
+   socket patch cannot reach, cannot create a socket either. The same filter denies, by group (see
+   `_DENIED`): inspecting or patching other processes (`ptrace`, `process_vm_*`, `pidfd_*`, `prlimit64`),
+   signalling them (`kill` and relatives), and mutating files Landlock does not mediate (truncation, mode,
+   owner, extended attributes, timestamps). `PR_SET_NO_NEW_PRIVS` makes this
    possible without privileges, and Docker's default seccomp profile permits it (a network
    namespace would need CAP_SYS_ADMIN, which the worker does not have).
 
@@ -50,12 +52,84 @@ _BPF_JMP_JGE_K = 0x35
 _BPF_RET_K = 0x06
 _X32_SYSCALL_BIT = 0x40000000
 
+# Denied syscalls by purpose: name -> (x86_64 number, aarch64 number); None where the architecture has no
+# such call (the generic table dropped the legacy ones). Everything here returns EPERM to the child.
+_DENIED: dict[str, dict[str, tuple[int | None, int | None]]] = {
+    # No sockets of any kind, and no io_uring (which can create them).
+    "network": {
+        "socket": (41, 198),
+        "socketpair": (53, 199),
+        "connect": (42, 203),
+        "bind": (49, 200),
+        "listen": (50, 201),
+        "accept": (43, 202),
+        "accept4": (288, 242),
+        "sendto": (44, 206),
+        "sendmsg": (46, 211),
+        "sendmmsg": (307, 269),
+        "io_uring_setup": (425, 425),
+    },
+    # Landlock confines files, not other processes. Without these a compromised same-UID child could read or
+    # patch its parent, steal its descriptors, or change its resource limits.
+    "process inspection": {
+        "ptrace": (101, 117),
+        "process_vm_readv": (310, 270),
+        "process_vm_writev": (311, 271),
+        "pidfd_open": (434, 434),
+        "pidfd_getfd": (438, 438),
+        "prlimit64": (302, 261),
+    },
+    # Signalling any same-UID process (kill(-1, SIGKILL) would take down the Celery pool). A child that must
+    # stop a helper does not signal it: the supervisor kills the whole process group.
+    "signals": {
+        "kill": (62, 129),
+        "tkill": (200, 130),
+        "tgkill": (234, 131),
+        "rt_sigqueueinfo": (129, 138),
+        "rt_tgsigqueueinfo": (297, 240),
+        "pidfd_send_signal": (424, 424),
+    },
+    # Landlock (before ABI 3) does not mediate truncation, and no ABI mediates mode, owner, extended attribute
+    # or timestamp changes. The child owns the same UID as the media volume, so these are denied outright.
+    "file mutation": {
+        "truncate": (76, 45),
+        "ftruncate": (77, 46),
+        "chmod": (90, None),
+        "fchmod": (91, 52),
+        "fchmodat": (268, 53),
+        "fchmodat2": (452, 452),
+        "chown": (92, None),
+        "fchown": (93, 55),
+        "lchown": (94, None),
+        "fchownat": (260, 54),
+        "setxattr": (188, 5),
+        "lsetxattr": (189, 6),
+        "fsetxattr": (190, 7),
+        "removexattr": (197, 14),
+        "lremovexattr": (198, 15),
+        "fremovexattr": (199, 16),
+        "utime": (132, None),
+        "utimes": (235, None),
+        "futimesat": (261, None),
+        "utimensat": (280, 88),
+    },
+}
+
+
+def _denied_numbers(index: int) -> tuple[int, ...]:
+    numbers: set[int] = set()
+    for group in _DENIED.values():
+        for pair in group.values():
+            number = pair[index]
+            if number is not None:
+                numbers.add(number)
+    return tuple(sorted(numbers))
+
+
 # machine -> (AUDIT_ARCH, denied syscall numbers, deny-all-x32-bit-calls)
 _ARCHES: dict[str, tuple[int, tuple[int, ...], bool]] = {
-    # network: socket socketpair connect bind listen accept accept4 sendto sendmsg sendmmsg io_uring_setup;
-    # process inspection: ptrace process_vm_readv process_vm_writev
-    "x86_64": (0xC000003E, (41, 42, 43, 44, 46, 49, 50, 53, 288, 307, 425, 101, 310, 311), True),
-    "aarch64": (0xC00000B7, (198, 199, 200, 201, 202, 203, 206, 211, 242, 269, 425, 117, 270, 271), False),
+    "x86_64": (0xC000003E, _denied_numbers(0), True),
+    "aarch64": (0xC00000B7, _denied_numbers(1), False),
 }
 
 
@@ -80,6 +154,8 @@ def build_seccomp_program(machine: str | None = None) -> bytes:
     instructions.append((_BPF_RET_K, 0, 0, _SECCOMP_RET_KILL_PROCESS))
     instructions.append((_BPF_LD_W_ABS, 0, 0, 0))  # syscall number
     checks: list[tuple[int, int]] = [(_BPF_JMP_JEQ_K, number) for number in denied]
+    if len(checks) > 250:  # a classic BPF conditional jump holds an 8-bit offset
+        raise SandboxUnavailable("The seccomp deny list is too long for one filter.")
     if deny_x32:
         checks.insert(0, (_BPF_JMP_JGE_K, _X32_SYSCALL_BIT))
     # layout after the checks: [ALLOW][DENY]; a hit at index i jumps over (remaining checks + ALLOW).
@@ -180,7 +256,9 @@ def default_read_paths(extra: tuple[str, ...] = ()) -> list[str]:
     return seen
 
 
-def install_landlock(*, read_paths: list[str], write_dirs: tuple[str, ...] = (), device_files: tuple[str, ...] = ()) -> None:
+def install_landlock(
+    *, read_paths: list[str], write_dirs: tuple[str, ...] = (), device_files: tuple[str, ...] = (), abi_limit: int | None = None
+) -> None:
     """Irreversible for this process and its descendants. Everything not listed becomes inaccessible
     (including `/proc`, which is how a same-UID child would read its parent's environment). Raises
     SandboxUnavailable when the kernel or the container's seccomp profile does not offer Landlock."""
@@ -193,6 +271,8 @@ def install_landlock(*, read_paths: list[str], write_dirs: tuple[str, ...] = (),
     abi = libc.syscall(_LL_CREATE_RULESET, None, 0, _LL_CREATE_RULESET_VERSION)
     if abi < 1:
         raise SandboxUnavailable("Landlock is not available (kernel support or container seccomp profile).")
+    if abi_limit is not None:  # tests: behave as an older kernel, to prove the seccomp layer stands alone
+        abi = min(abi, abi_limit)
     handled = _FS_ABI1_MASK
     if abi >= 2:
         handled |= _FS_REFER
@@ -393,7 +473,7 @@ def run_sandboxed_child(
                 timed_out = True
                 break
             if not selector.select(timeout=min(remaining, 0.5)):
-                if process.poll() is not None and not selector.select(timeout=0):
+                if _exited(process) and not selector.select(timeout=0):
                     break
                 continue
             data = os.read(process.stdout.fileno(), 65536)
@@ -406,8 +486,10 @@ def run_sandboxed_child(
             chunks.append(data)
     finally:
         selector.close()
-        if timed_out or overflow or aborted or process.poll() is None:
-            _kill_group(process)
+        # Always, not only on a timeout: a child that exits normally can leave a helper (the OCR engine) behind,
+        # and a child may not signal its own helpers (see `_DENIED`). Done before the child is reaped, so the
+        # group id cannot yet belong to an unrelated process.
+        _kill_group(process)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL cannot be ignored
@@ -418,6 +500,14 @@ def run_sandboxed_child(
             pass
         feeder.join(timeout=1)
     return ChildResult(process.returncode, b"".join(chunks), timed_out, overflow, aborted)
+
+
+def _exited(process: subprocess.Popen) -> bool:
+    """True once the child has terminated, without reaping it (so its process group id stays reserved)."""
+    try:
+        return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    except ChildProcessError:
+        return True
 
 
 def _kill_group(process: subprocess.Popen) -> None:

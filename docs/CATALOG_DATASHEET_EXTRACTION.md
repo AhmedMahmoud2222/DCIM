@@ -20,15 +20,21 @@ Every child gets: CPU and address-space rlimits, a file-size limit, no core dump
 Redis or signing secrets), a blocked Python `socket` module, and two kernel policies installed without
 privileges (so they work under Docker's default profile; a network or mount namespace would need `CAP_SYS_ADMIN`):
 
-- **seccomp-bpf** denies `socket`, `socketpair`, `connect`, `bind`, `listen`, `accept`, `accept4`, `sendto`,
-  `sendmsg`, `sendmmsg` and `io_uring_setup` with `EPERM`, and also `ptrace` and `process_vm_readv/writev`, so a
-  child cannot inspect or patch its parent. The filter is inherited by `exec`, so the `tesseract` binary cannot
-  open a connection either.
+- **seccomp-bpf** returns `EPERM` for four groups of syscalls (`_DENIED` in `sandbox.py`, x86_64 and aarch64):
+  network (`socket`, `connect`, `bind`, `accept`, `sendto`, `io_uring_setup` and relatives); inspecting other
+  processes (`ptrace`, `process_vm_*`, `pidfd_open`, `pidfd_getfd`, `prlimit64`); signalling (`kill`, `tkill`,
+  `tgkill`, `rt_sigqueueinfo`, `pidfd_send_signal`: a compromised child could otherwise run `kill(-1, SIGKILL)`
+  against the same-UID Celery pool); and file mutation Landlock does not mediate (truncation, `chmod`, `chown`,
+  extended attributes, timestamps). The filter is inherited by `exec`, so the `tesseract` binary is bound too.
+  Because a child cannot signal, the supervisor (`run_sandboxed_child`) kills the whole process group when the
+  child ends or times out, so no helper outlives its page.
 - **Landlock** is a filesystem policy. A child runs as the worker's UID, so environment scrubbing alone would
   leave `/proc/<ppid>/environ` (the worker's secrets) readable and the shared `/app/media` volume writable.
   The policy grants read and execute on the interpreter, system libraries, installed packages, the `app`
   package directory and the OCR engine's directory, and write only on the OCR child's private scratch
   directory (plus `/dev/null`). `/proc`, `/sys`, `/tmp`, the application root and the media volume are unreachable.
+  Landlock before ABI 3 does not mediate truncation; the seccomp group above covers it, so the guarantee does
+  not depend on the kernel's Landlock version.
 
 The children refuse to run when a policy cannot be installed: OCR reports `ocr_sandbox_unavailable`, the
 native and analysis stages report `sandbox_unavailable` (the seccomp filter is required for OCR only, because

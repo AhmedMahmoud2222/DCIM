@@ -4,7 +4,8 @@ sandboxed OCR. Exit codes are named by compose_smoke.OCR_EXIT_MESSAGES.
 20 the OCR engine is missing, 21 the seccomp network filter cannot be installed under this container's
 runtime profile, 22 a sandboxed child could still create a socket, 23 the real pipeline did not read a
 rendered scanned page, 24 the Landlock filesystem policy cannot be enforced under this container's runtime
-profile, 25 a sandboxed child could still read its parent's process environment."""
+profile, 25 a sandboxed child could still read its parent's process environment, 26 a sandboxed child could
+still signal or truncate other same-UID files and processes."""
 import io
 import os
 import subprocess
@@ -47,6 +48,36 @@ reader = subprocess.run(  # noqa: S603
 if reader.returncode != 0 or reader.stdout.strip() != "denied":
     print("parent environment readable: " + reader.stdout.strip()[:40])
     sys.exit(25)
+
+import tempfile  # noqa: E402
+
+target_fd, target_path = tempfile.mkstemp(prefix="ocr-probe-")
+os.close(target_fd)
+victim = subprocess.Popen(["/bin/sleep", "30"])  # noqa: S603
+try:
+    probe = subprocess.run(  # noqa: S603
+        [sys.executable, "-c",
+         "import os, signal, sys\n"
+         "from app.application.catalog_documents.extraction.sandbox import install_seccomp_no_network as i\n"
+         "i()\n"
+         "verdicts = []\n"
+         "for call in (lambda: os.kill(int(sys.argv[1]), signal.SIGTERM), lambda: os.truncate(sys.argv[2], 0),\n"
+         "             lambda: os.chmod(sys.argv[2], 0o000)):\n"
+         "    try:\n"
+         "        call(); verdicts.append('ALLOWED')\n"
+         "    except PermissionError:\n"
+         "        verdicts.append('denied')\n"
+         "print(','.join(verdicts))", str(victim.pid), target_path],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    alive = victim.poll() is None
+finally:
+    victim.kill()
+    victim.wait()
+    os.unlink(target_path)
+if probe.stdout.strip() != "denied,denied,denied" or not alive:
+    print("sandboxed child could still act on other processes or files: " + probe.stdout.strip()[:60])
+    sys.exit(26)
 
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 

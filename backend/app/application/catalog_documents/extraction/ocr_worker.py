@@ -168,21 +168,25 @@ def main() -> None:
             _verdict({"ok": False, "code": "ocr_failed"})
             return
 
+        # Popen, not subprocess.run: run() kills the engine itself on a timeout, and `kill` is denied inside the
+        # sandbox. On a timeout this child just reports it and exits; the supervisor kills the process group.
         try:
-            completed = subprocess.run(  # noqa: S603 - fixed argv; path and language come from settings, never the PDF
+            engine = subprocess.Popen(  # noqa: S603 - fixed argv; path and language come from settings, never the PDF
                 [tesseract_path, "page.png", "stdout", "-l", language, "--psm", "6", "tsv"],
                 cwd=workdir,
                 env={"PATH": "/usr/bin:/bin", "OMP_THREAD_LIMIT": "1", "LC_ALL": "C.UTF-8"},
-                capture_output=True,
-                timeout=tesseract_timeout,
-                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired:
-            _verdict({"ok": False, "code": "ocr_timeout"})
-            return
         except OSError:
             _verdict({"ok": False, "code": "ocr_unavailable"})
             return
+        try:
+            stdout_bytes, _stderr = engine.communicate(timeout=tesseract_timeout)
+        except subprocess.TimeoutExpired:
+            _verdict({"ok": False, "code": "ocr_timeout"})
+            os._exit(0)  # leave the engine for the supervisor's group kill; do not wait for it
+        completed = subprocess.CompletedProcess(engine.args, engine.returncode, stdout_bytes, b"")
         if completed.returncode != 0 or len(completed.stdout) > 20 * 1024 * 1024:
             _verdict({"ok": False, "code": "ocr_failed"})
             return

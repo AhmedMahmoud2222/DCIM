@@ -36,6 +36,7 @@ OCR_EXIT_MESSAGES = {
     23: "OCR FAILURE: the production pipeline did not read a rendered scanned page",
     24: "OCR SANDBOX FAILURE: the Landlock filesystem policy cannot be enforced in the celery-worker container (container runtime profile)",
     25: "OCR SANDBOX FAILURE: a sandboxed child could still read its parent's process environment",
+    26: "OCR SANDBOX FAILURE: a sandboxed child could still signal other processes or modify other files",
 }
 ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend", "clamav")
 

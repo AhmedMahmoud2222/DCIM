@@ -193,7 +193,7 @@ def test_ocr_timeout_on_a_mixed_document_keeps_the_native_result_and_marks_it_pa
 
 
 def test_ocr_engine_crash_is_reported_as_a_failure_not_an_exception(tmp_path):
-    engine = fake_tesseract(tmp_path, "import os, signal\nos.kill(os.getpid(), signal.SIGSEGV)")
+    engine = fake_tesseract(tmp_path, "import ctypes\nctypes.string_at(0)  # a real segmentation fault (kill is denied in the sandbox)")
     with pytest.raises(ExtractionFailure) as raised:
         run_pipeline(scanned_pdf([DATASHEET]), target_names=["CX-100"], settings=settings(catalog_ocr_tesseract_path=engine))
     assert raised.value.code == "ocr_failed"
@@ -456,3 +456,19 @@ print(" ".join(seen))
     )
     assert not report.exists(), "the engine wrote outside its scratch directory"
     assert result.pages_ocr == 1
+
+
+def test_an_ocr_timeout_leaves_no_engine_process_behind(tmp_path):
+    """Inside the sandbox the OCR child cannot kill its engine, so on a timeout the supervisor must."""
+    import subprocess
+
+    engine = fake_tesseract(tmp_path, "import time\ntime.sleep(300)")
+    with pytest.raises(ExtractionFailure) as raised:
+        run_pipeline(
+            scanned_pdf([DATASHEET]), target_names=["CX-100"],
+            settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=2),
+        )
+    assert raised.value.code == "ocr_timeout"
+    time.sleep(0.5)
+    listing = subprocess.run(["ps", "-eo", "stat,args"], capture_output=True, text=True).stdout.splitlines()
+    assert not [line for line in listing if engine in line and not line.startswith("Z")], "the engine outlived its page"
