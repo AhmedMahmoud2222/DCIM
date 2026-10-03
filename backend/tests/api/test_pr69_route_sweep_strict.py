@@ -10,7 +10,7 @@
      that is tested object by object in test_pr69_object_matrix_strict.py.
 
 The set of operations a fully-permissioned restricted user can get past the permission layer is pinned
-EXACTLY (REVIEWED_REACHABLE, 57 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
+EXACTLY (REVIEWED_REACHABLE, 58 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
 so does a reviewed route that disappears. The sweep itself is tested against a deliberate regression
 (a non-site-aware permission declared scope-aware)."""
 
@@ -35,6 +35,9 @@ REVIEWED_REACHABLE = {
     ("GET", "/api/v1/buildings"),
     ("GET", "/api/v1/catalog/revisions/compare"),
     ("GET", "/api/v1/catalog/revisions/{revision_id}"),
+    # PR-A (re-landed): lists the datasheets linked to a revision. Same global-catalog read dependency as the
+    # revision GET above; downloading the file needs catalog:document_download and is not in this set.
+    ("GET", "/api/v1/catalog/revisions/{revision_id}/documents"),
     ("GET", "/api/v1/catalog/revisions/{revision_id}/graphics/{side}/file"),
     ("GET", "/api/v1/catalog/revisions/{revision_id}/graphics/{side}/thumbnail"),
     ("GET", "/api/v1/cities"),
@@ -141,7 +144,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 57, "the reviewed reachable set is pinned at exactly 57 operations"
+    assert len(REVIEWED_REACHABLE) == 58, "the reviewed reachable set is pinned at exactly 58 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )
