@@ -12,11 +12,14 @@ logger = get_logger(__name__)
 class ApiError(Exception):
     """Base for domain-raised errors that map directly to a problem+json response."""
 
-    def __init__(self, *, status_code: int, title: str, detail: str, type_: str = "about:blank"):
+    def __init__(
+        self, *, status_code: int, title: str, detail: str, type_: str = "about:blank", headers: dict[str, str] | None = None
+    ):
         self.status_code = status_code
         self.title = title
         self.detail = detail
         self.type_ = type_
+        self.headers = headers
         super().__init__(detail)
 
 
@@ -66,7 +69,15 @@ class UnauthorizedCollectorError(ApiError):
         )
 
 
-def _problem(request: Request, *, status_code: int, title: str, detail: str, type_: str = "about:blank") -> JSONResponse:
+def _problem(
+    request: Request,
+    *,
+    status_code: int,
+    title: str,
+    detail: str,
+    type_: str = "about:blank",
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None)
     return JSONResponse(
         status_code=status_code,
@@ -79,13 +90,16 @@ def _problem(request: Request, *, status_code: int, title: str, detail: str, typ
             "request_id": request_id,
         },
         media_type="application/problem+json",
+        headers=headers,
     )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
-        return _problem(request, status_code=exc.status_code, title=exc.title, detail=exc.detail, type_=exc.type_)
+        return _problem(
+            request, status_code=exc.status_code, title=exc.title, detail=exc.detail, type_=exc.type_, headers=exc.headers
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:

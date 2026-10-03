@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application import auth_service
+from app.application import auth_service, login_throttle
 from app.application.audit_service import write_audit_log
 from app.application.rbac import AuthContext, get_auth_context
 from app.core.config import get_settings
@@ -75,7 +75,10 @@ def _require_csrf_match(request: Request, x_csrf_token: str | None) -> None:
 async def login(
     body: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ) -> AccessTokenResponse:
+    # The slot is taken before the password is verified, so concurrent guesses are bounded.
+    await login_throttle.reserve(body.email)
     user = await auth_service.authenticate(db, email=body.email, password=body.password)
+    await login_throttle.reset(body.email)
     access_token, refresh_token = await auth_service.issue_tokens(db, user=user)
     _set_auth_cookies(response, refresh_token=refresh_token)
 
