@@ -12,9 +12,13 @@ decision, never a timed sleep, to pin the interleaving:
 Waiting is done by polling pg_locks for a blocked advisory-lock request (or for T2 completing),
 which is the condition under test, with a generous timeout as a failure bound only.
 
-Scenario (from the review): actor holds every rack in site A and an empty selected-rack grant for
-site B; target holds selected rack R in A and an empty grant for B; equal permissions. R is in A, so
-the actor strictly outranks the target. After R moves to B the target sees R and the actor does not."""
+Scenario: actor and target hold equal permissions. The actor holds selected racks R and X at site A, the
+target holds selected rack R at A, and both hold an empty selected grant for site B. The actor strictly outranks
+the target because of X. Rack visibility follows the CURRENT placement of a selected grant (a rack granted at A
+that moves to B is hidden from the holder), so once X moves to B the actor's effective scope is {R} and equals
+the target's: the two are peers and the same administration must be refused. (An earlier version of this
+scenario relied on the target seeing the relocated rack; main's per-site grant rule removed that.)
+"""
 
 import asyncio
 import inspect
@@ -50,10 +54,11 @@ async def admin(auth_headers):
 async def scenario(client, admin, auth_headers):
     a = await _make_site(client, admin)
     b = await _make_site(client, admin, a["org"])
-    rack = await _make_rack(client, admin, auth_headers, a["room"])
-    actor_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"]), _site(b["site"], "selected")])
+    shared = await _make_rack(client, admin, auth_headers, a["room"])  # R: held by the actor and by the target
+    rack = await _make_rack(client, admin, auth_headers, a["room"])  # X: held only by the actor; relocating it ends the lead
+    actor_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"], "selected", [shared, rack]), _site(b["site"], "selected")])
     actor, actor_headers = await _group_user(client, admin, [actor_group])
-    target_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"], "selected", [rack]), _site(b["site"], "selected")])
+    target_group = await _group(client, admin, allow=BASE, sites=[_site(a["site"], "selected", [shared]), _site(b["site"], "selected")])
     target, _ = await _group_user(client, admin, [target_group])
     return SimpleNamespace(
         site_a=a["site"], site_b=b["site"], room_a=a["room"], room_b=b["room"], rack=rack, admin=admin,
@@ -146,7 +151,7 @@ async def test_relocation_cannot_commit_between_an_authority_decision_and_its_co
 
     assert not early, (
         "RACE: the relocation committed while the delegated-administration decision was still open, so T1 "
-        "committed using an authorization that no longer held (target now sees the rack, actor does not)"
+        "committed using an authorization that no longer held (the actor no longer strictly outranks the target)"
     )
     assert r1.status_code == 200, r1.text
     assert r2 is not None and r2.status_code == 200, r2.text  # the relocation itself is legitimate and still succeeds
@@ -250,7 +255,7 @@ async def test_mixed_authority_and_relocation_load_neither_deadlocks_nor_errors(
     """Lock-order check under load: authority writes and relocations of several racks interleave."""
     s, c = scenario, concurrent_client
     racks = [await _make_rack(c, admin, auth_headers, s.room_a) for _ in range(6)]
-    site = [_site(s.site_a), _site(s.site_b, "selected")]
+    site = [_site(s.site_a, "selected"), _site(s.site_b, "selected")]  # strictly below the actor, who holds selected racks at A
     lows = []
     for _ in range(6):
         low, _h = await _group_user(c, admin, [await _group(c, admin, allow=["rack:read"], sites=site)])

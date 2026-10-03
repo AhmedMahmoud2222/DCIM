@@ -13,6 +13,7 @@ from app.application.access_control import (
     AccessScope,
     EffectiveAccess,
     active_administrator_ids,
+    build_scope,
     load_effective_access,
     load_group_scopes,
     visible_rack_ids_query,
@@ -83,44 +84,42 @@ def assert_can_grant_permissions(ctx: AuthContext, codes: set[str]) -> None:
 
 
 async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope, *, current_only: bool = False) -> bool:
-    """True when everything `inner` can see, `outer` can see too: every site, every
-    `rack_scope=all` site, and every individually selected rack. Compared on granted
-    scope, so a wider rack scope inside a shared site is correctly reported as wider.
+    """True when everything `inner` can see, `outer` can see too: every site, every `rack_scope=all` site, and every
+    individually selected rack, compared PER SITE (a rack granted at site B never counts for the same rack at site A).
+    Compared on granted scope, so a wider rack scope inside a shared site is correctly reported as wider.
 
     A selected-rack grant can outlive the rack's placement (the rack moved to a site the grant's holder is not granted):
-    it confers nothing today but revives if the rack returns. The default comparison keeps those raw ids, so delegation
-    (group assignment, grant checks, post-state) never lets an actor confer a latent grant it does not hold itself.
-    `current_only=True` drops the stale ids of `inner` and is for the strict-outranking peer test only, where a stale
-    grant must not make a peer look lower."""
+    it confers nothing today but revives if the rack returns. The default comparison is AccessScope.contains on the raw
+    grants, so delegation (group assignment, grant checks, post-state) never lets an actor confer a latent grant it does
+    not hold itself. `current_only=True` drops the stale racks of `inner` first and is for the strict-outranking peer
+    test only, where a stale grant must not make a peer look lower."""
+    if not current_only:
+        return outer.contains(inner)
     if outer.unrestricted:
         return True
     if inner.unrestricted:
         return False
     if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
         return False
-    inner_racks = set(inner.rack_ids)
-    if current_only and inner_racks:
+    granted = {rack for racks in inner.selected_racks_by_site.values() for rack in racks}
+    current: set[uuid.UUID] = set()
+    if granted:
         inner_visible = visible_rack_ids_query(inner).subquery()
-        inner_racks = set(
-            (await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(inner_racks)))).scalars()
-        )
-    wanted = inner_racks - outer.rack_ids
-    if not wanted:
-        return True
-    visible_sub = visible_rack_ids_query(outer).subquery()
-    seen: set[uuid.UUID] = set(
-        (await db.execute(select(visible_sub.c.rack_id).where(visible_sub.c.rack_id.in_(wanted)))).scalars()
-    )
-    return wanted <= seen
+        current = set((await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(granted)))).scalars())
+    for site_id, racks in inner.selected_racks_by_site.items():
+        if site_id in outer.full_site_ids:
+            continue
+        if not (racks & current) <= outer.selected_racks_by_site.get(site_id, frozenset()):
+            return False
+    return True
 
 
 def scope_from_entries(entries: list[tuple[uuid.UUID, str, list[uuid.UUID]]]) -> AccessScope:
     """Builds the scope a set of (site_id, rack_scope, rack_ids) grants would confer."""
-    return AccessScope(
-        unrestricted=False,
-        site_ids=frozenset(site for site, _, _ in entries),
-        full_site_ids=frozenset(site for site, scope, _ in entries if scope == "all"),
-        rack_ids=frozenset(rack for _, scope, racks in entries if scope != "all" for rack in racks),
+    access_ids = [uuid.uuid4() for _ in entries]
+    return build_scope(
+        [(access_id, site_id, rack_scope) for access_id, (site_id, rack_scope, _racks) in zip(access_ids, entries, strict=True)],
+        {access_id: set(racks) for access_id, (_site_id, _scope, racks) in zip(access_ids, entries, strict=True)},
     )
 
 
