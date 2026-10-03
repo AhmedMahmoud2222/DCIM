@@ -83,7 +83,7 @@ function makeStatus(overrides: Partial<LatestPortStatus> = {}): LatestPortStatus
 }
 
 describe("FaceplateOverlay telemetry overlay", () => {
-  it("renders a healthy status ring-3 with no alert halo for an UP link", async () => {
+  it("renders a healthy status ring with no alert halo for an UP link", async () => {
     vi.mocked(catalogApi.getRevision).mockResolvedValue(makeRevision([makeGraphic([makeMarker()])]));
     vi.mocked(equipmentApi.getEquipmentPorts).mockResolvedValue({ ports: [makePort()], power_inlets: [] });
 
@@ -152,7 +152,7 @@ describe("FaceplateOverlay telemetry overlay", () => {
     expect(markerEl.getAttribute("aria-label")).toContain("1140 W");
   });
 
-  it("renders no telemetry ring-3 when no binding exists for the marker", async () => {
+  it("renders no telemetry ring when no binding exists for the marker", async () => {
     vi.mocked(catalogApi.getRevision).mockResolvedValue(makeRevision([makeGraphic([makeMarker()])]));
     vi.mocked(equipmentApi.getEquipmentPorts).mockResolvedValue({ ports: [makePort()], power_inlets: [] });
 
