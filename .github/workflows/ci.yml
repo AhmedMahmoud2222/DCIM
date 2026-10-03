@@ -374,7 +374,9 @@ jobs:
         if: always()
         run: |
           for pidfile in backend.pid frontend.pid celery-worker.pid; do
-            [ -f "$GITHUB_WORKSPACE/$pidfile" ] && kill "$(cat "$GITHUB_WORKSPACE/$pidfile")" 2>/dev/null || true
+            if [ -f "$GITHUB_WORKSPACE/$pidfile" ]; then
+              kill "$(cat "$GITHUB_WORKSPACE/$pidfile")" 2>/dev/null || true
+            fi
           done
 
   # Issue #26: does the full migrated backend suite actually pass on the runtimes

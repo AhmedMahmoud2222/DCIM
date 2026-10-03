@@ -5,13 +5,11 @@ on:
     branches: [main, 'claude/**', 'codex/**']
     paths:
       - '.github/scripts/verify_release_sha.py'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/deploy.yml'
-      - '.github/workflows/deploy-tools-test.yml'
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
       - 'scripts/deploy-docker-compose.sh'
       - 'docker-compose.yml'
       - 'docker-compose.production.yml'
-      - '.github/workflows/deployment-validation.yml'
       - 'backend/Dockerfile'
       - 'backend/pyproject.toml'
       - 'backend/alembic.ini'
@@ -24,13 +22,11 @@ on:
   pull_request:
     paths:
       - '.github/scripts/verify_release_sha.py'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/deploy.yml'
-      - '.github/workflows/deploy-tools-test.yml'
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
       - 'scripts/deploy-docker-compose.sh'
       - 'docker-compose.yml'
       - 'docker-compose.production.yml'
-      - '.github/workflows/deployment-validation.yml'
       - 'backend/Dockerfile'
       - 'backend/pyproject.toml'
       - 'backend/alembic.ini'
