@@ -62,7 +62,10 @@ try:
          "i()\n"
          "verdicts = []\n"
          "for call in (lambda: os.kill(int(sys.argv[1]), signal.SIGTERM), lambda: os.truncate(sys.argv[2], 0),\n"
-         "             lambda: os.chmod(sys.argv[2], 0o000)):\n"
+         "             lambda: os.chmod(sys.argv[2], 0o000),\n"
+         "             lambda: os.close(os.open(sys.argv[2], os.O_RDONLY | os.O_TRUNC)),\n"
+         "             lambda: os.setsid(),\n"
+         "             lambda: os.setpriority(os.PRIO_PROCESS, int(sys.argv[1]), 15)):\n"
          "    try:\n"
          "        call(); verdicts.append('ALLOWED')\n"
          "    except PermissionError:\n"
@@ -75,7 +78,7 @@ finally:
     victim.kill()
     victim.wait()
     os.unlink(target_path)
-if probe.stdout.strip() != "denied,denied,denied" or not alive:
+if probe.stdout.strip() != ",".join(["denied"] * 6) or not alive:
     print("sandboxed child could still act on other processes or files: " + probe.stdout.strip()[:60])
     sys.exit(26)
 

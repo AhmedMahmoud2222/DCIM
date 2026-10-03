@@ -160,7 +160,10 @@ def main() -> None:
             if picture is None:
                 _verdict({"ok": False, "code": "ocr_failed"})
                 return
-            picture.convert("L").save(os.path.join(workdir, "page.png"), format="PNG")
+            # O_EXCL without O_TRUNC: the sandbox denies truncating opens, which Pillow's own "w+b" open would use.
+            descriptor = os.open(os.path.join(workdir, "page.png"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                picture.convert("L").save(handle, format="PNG")
         except (MemoryError, Image.DecompressionBombError):
             _verdict({"ok": False, "code": "ocr_image_too_large"})
             return

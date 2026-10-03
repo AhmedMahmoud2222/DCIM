@@ -49,6 +49,7 @@ _EPERM = 1
 _BPF_LD_W_ABS = 0x20
 _BPF_JMP_JEQ_K = 0x15
 _BPF_JMP_JGE_K = 0x35
+_BPF_JMP_JSET_K = 0x45
 _BPF_RET_K = 0x06
 _X32_SYSCALL_BIT = 0x40000000
 
@@ -79,6 +80,48 @@ _DENIED: dict[str, dict[str, tuple[int | None, int | None]]] = {
         "pidfd_getfd": (438, 438),
         "prlimit64": (302, 261),
     },
+    # Linux lets a same-UID process change another's scheduling (nice, policy, CPU affinity, I/O priority), so a
+    # compromised child could starve the worker after it exits. Session and process-group changes are denied so a
+    # descendant cannot step outside the group the supervisor kills; namespaces and kcmp have no legitimate use here.
+    "process control": {
+        "sched_setattr": (314, 274),
+        "sched_setscheduler": (144, 119),
+        "sched_setparam": (142, 118),
+        "sched_setaffinity": (203, 122),
+        "setpriority": (141, 140),
+        "ioprio_set": (251, 30),
+        "setsid": (112, 157),
+        "setpgid": (109, 154),
+        "unshare": (272, 97),
+        "setns": (308, 268),
+        "kcmp": (312, 272),
+        "process_madvise": (440, 440),
+    },
+    # Kernel objects that outlive a process and are addressed by key or name, shared with every same-UID process:
+    # System V and POSIX IPC, the kernel keyring, and perf (which can profile other same-UID processes).
+    "shared kernel state": {
+        "shmget": (29, 194),
+        "shmat": (30, 196),
+        "shmctl": (31, 195),
+        "semget": (64, 190),
+        "semop": (65, 193),
+        "semtimedop": (220, 192),
+        "semctl": (66, 191),
+        "msgget": (68, 186),
+        "msgsnd": (69, 189),
+        "msgrcv": (70, 188),
+        "msgctl": (71, 187),
+        "mq_open": (240, 180),
+        "mq_unlink": (241, 181),
+        "mq_timedsend": (242, 182),
+        "mq_timedreceive": (243, 183),
+        "mq_notify": (244, 184),
+        "mq_getsetattr": (245, 185),
+        "keyctl": (250, 219),
+        "add_key": (248, 217),
+        "request_key": (249, 218),
+        "perf_event_open": (298, 241),
+    },
     # Signalling any same-UID process (kill(-1, SIGKILL) would take down the Celery pool). A child that must
     # stop a helper does not signal it: the supervisor kills the whole process group.
     "signals": {
@@ -92,6 +135,8 @@ _DENIED: dict[str, dict[str, tuple[int | None, int | None]]] = {
     # Landlock (before ABI 3) does not mediate truncation, and no ABI mediates mode, owner, extended attribute
     # or timestamp changes. The child owns the same UID as the media volume, so these are denied outright.
     "file mutation": {
+        "creat": (85, None),
+        "openat2": (437, 437),
         "truncate": (76, 45),
         "ftruncate": (77, 46),
         "chmod": (90, None),
@@ -126,6 +171,13 @@ def _denied_numbers(index: int) -> tuple[int, ...]:
     return tuple(sorted(numbers))
 
 
+_O_TRUNC = 0o1000
+# machine -> ((syscall number, index of its flags argument), ...) for calls that can truncate through open flags
+_OPEN_CALLS: dict[str, tuple[tuple[int, int], ...]] = {
+    "x86_64": ((2, 1), (257, 2)),
+    "aarch64": ((56, 2),),
+}
+
 # machine -> (AUDIT_ARCH, denied syscall numbers, deny-all-x32-bit-calls)
 _ARCHES: dict[str, tuple[int, tuple[int, ...], bool]] = {
     "x86_64": (0xC000003E, _denied_numbers(0), True),
@@ -153,8 +205,17 @@ def build_seccomp_program(machine: str | None = None) -> bytes:
     instructions.append((_BPF_JMP_JEQ_K, 1, 0, audit_arch))  # arch ok -> skip the kill
     instructions.append((_BPF_RET_K, 0, 0, _SECCOMP_RET_KILL_PROCESS))
     instructions.append((_BPF_LD_W_ABS, 0, 0, 0))  # syscall number
+    # Landlock before ABI 3 does not mediate truncation, and open(O_TRUNC) truncates without touching truncate(2).
+    # Each rule block is [JEQ nr][LD flags][JSET O_TRUNC -> DENY][LD nr]; the DENY target is patched below.
+    patch_at: list[int] = []
+    for number, flags_arg in _OPEN_CALLS.get(machine or platform.machine(), ()):
+        instructions.append((_BPF_JMP_JEQ_K, 0, 3, number))
+        instructions.append((_BPF_LD_W_ABS, 0, 0, 16 + 8 * flags_arg))
+        patch_at.append(len(instructions))
+        instructions.append((_BPF_JMP_JSET_K, 0, 0, _O_TRUNC))
+        instructions.append((_BPF_LD_W_ABS, 0, 0, 0))
     checks: list[tuple[int, int]] = [(_BPF_JMP_JEQ_K, number) for number in denied]
-    if len(checks) > 250:  # a classic BPF conditional jump holds an 8-bit offset
+    if len(checks) > 200:  # a classic BPF conditional jump holds an 8-bit offset
         raise SandboxUnavailable("The seccomp deny list is too long for one filter.")
     if deny_x32:
         checks.insert(0, (_BPF_JMP_JGE_K, _X32_SYSCALL_BIT))
@@ -163,7 +224,14 @@ def build_seccomp_program(machine: str | None = None) -> bytes:
         remaining = len(checks) - index - 1
         instructions.append((code, remaining + 1, 0, value))
     instructions.append((_BPF_RET_K, 0, 0, _SECCOMP_RET_ALLOW))
+    deny_index = len(instructions)
     instructions.append((_BPF_RET_K, 0, 0, _SECCOMP_RET_ERRNO | _EPERM))
+    for position in patch_at:
+        code, _jt, jf, value = instructions[position]
+        jump = deny_index - position - 1
+        if jump > 255:
+            raise SandboxUnavailable("The seccomp filter is too long for its jump offsets.")
+        instructions[position] = (code, jump, jf, value)
     return b"".join(_bpf(*instruction) for instruction in instructions)
 
 
@@ -511,10 +579,16 @@ def _exited(process: subprocess.Popen) -> bool:
 
 
 def _kill_group(process: subprocess.Popen) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+    # A descendant may fork while the first SIGKILL lands; repeat until the group is empty.
+    for _ in range(5):
         try:
-            process.kill()
-        except OSError:
-            pass
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except (PermissionError, OSError):
+            try:
+                process.kill()
+            except OSError:
+                pass
+            return
+        time.sleep(0.01)

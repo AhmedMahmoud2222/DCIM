@@ -20,14 +20,19 @@ Every child gets: CPU and address-space rlimits, a file-size limit, no core dump
 Redis or signing secrets), a blocked Python `socket` module, and two kernel policies installed without
 privileges (so they work under Docker's default profile; a network or mount namespace would need `CAP_SYS_ADMIN`):
 
-- **seccomp-bpf** returns `EPERM` for four groups of syscalls (`_DENIED` in `sandbox.py`, x86_64 and aarch64):
+- **seccomp-bpf** returns `EPERM` for six groups of syscalls (`_DENIED` in `sandbox.py`, x86_64 and aarch64):
   network (`socket`, `connect`, `bind`, `accept`, `sendto`, `io_uring_setup` and relatives); inspecting other
   processes (`ptrace`, `process_vm_*`, `pidfd_open`, `pidfd_getfd`, `prlimit64`); signalling (`kill`, `tkill`,
   `tgkill`, `rt_sigqueueinfo`, `pidfd_send_signal`: a compromised child could otherwise run `kill(-1, SIGKILL)`
-  against the same-UID Celery pool); and file mutation Landlock does not mediate (truncation, `chmod`, `chown`,
-  extended attributes, timestamps). The filter is inherited by `exec`, so the `tesseract` binary is bound too.
+  against the same-UID Celery pool); process control (scheduler, priority, CPU affinity and I/O priority changes,
+  `setsid`, `setpgid`, `unshare`, `setns`, `kcmp`); shared kernel state (System V and POSIX IPC, the keyring,
+  `perf_event_open`); and file mutation Landlock does not mediate (truncation, `chmod`, `chown`, extended
+  attributes, timestamps). `open` and `openat` carry an argument rule: any call with `O_TRUNC` is refused, because
+  a truncating open changes a file without calling `truncate`. `creat` and `openat2` are refused outright; the OCR
+  child writes its page image with `O_CREAT|O_EXCL`. The filter is inherited by `exec`, so the `tesseract` binary is bound too.
   Because a child cannot signal, the supervisor (`run_sandboxed_child`) kills the whole process group when the
-  child ends or times out, so no helper outlives its page.
+  child ends or times out, so no helper outlives its page. The kill repeats until the group is empty, and `setsid`/`setpgid` are denied so
+  a descendant cannot leave the group first.
 - **Landlock** is a filesystem policy. A child runs as the worker's UID, so environment scrubbing alone would
   leave `/proc/<ppid>/environ` (the worker's secrets) readable and the shared `/app/media` volume writable.
   The policy grants read and execute on the interpreter, system libraries, installed packages, the `app`
@@ -35,6 +40,11 @@ privileges (so they work under Docker's default profile; a network or mount name
   directory (plus `/dev/null`). `/proc`, `/sys`, `/tmp`, the application root and the media volume are unreachable.
   Landlock before ABI 3 does not mediate truncation; the seccomp group above covers it, so the guarantee does
   not depend on the kernel's Landlock version.
+
+Residual risk: the denylist is not a hard boundary. A child still shares a UID with the worker, can fork inside its
+process group until the supervisor kills it, and could use a syscall nobody has listed. Running extraction under a
+dedicated UID or in its own container would close that class; the current policy is defence in depth on top of the
+validated-PDF and bounded-parser layers.
 
 The children refuse to run when a policy cannot be installed: OCR reports `ocr_sandbox_unavailable`, the
 native and analysis stages report `sandbox_unavailable` (the seccomp filter is required for OCR only, because

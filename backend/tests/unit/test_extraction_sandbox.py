@@ -145,7 +145,9 @@ def test_the_only_writable_place_is_the_granted_scratch_directory(tmp_path):
     result = child("write_workdir", env={"TEST_WORKDIR": str(scratch)})
     assert result.stdout.decode().strip() == "wrote fine" and (scratch / "ok.txt").read_text() == "fine"
     outside = tmp_path / "elsewhere.txt"
-    assert child("write_outside", env={"TEST_WORKDIR": str(scratch), "TEST_PROBE": str(outside)}).stdout.decode().strip() == "denied"
+    assert (
+        child("write_outside", env={"TEST_WORKDIR": str(scratch), "TEST_PROBE": str(outside)}).stdout.decode().strip() == "denied"
+    )
 
 
 def test_the_libraries_the_workers_import_after_the_sandbox_still_load():
@@ -230,6 +232,87 @@ def test_truncation_is_refused_without_landlock_abi_3_because_seccomp_stands_alo
     target.write_text("original bytes")
     result = child("truncate_older_abi", env={"TEST_PROBE": str(target)})
     assert result.stdout.decode().strip() == f"blocked {errno.EPERM}" and target.read_text() == "original bytes"
+
+
+# ------------------------------------------------------------------------------ truncating opens, groups, scheduling (round 3)
+
+
+def test_control_a_read_only_open_with_o_trunc_truncates_under_landlock_abi_2_alone(tmp_path):
+    target = tmp_path / "stored.pdf"
+    target.write_text("original bytes")
+    result = child("control_open_trunc", env={"TEST_PROBE": str(target)})
+    assert result.stdout.decode().strip() == "control truncated" and target.read_text() == ""
+
+
+def test_every_truncating_open_form_is_denied_and_the_file_survives(tmp_path):
+    target = tmp_path / "stored.pdf"
+    target.write_text("original bytes")
+    lines = child("open_trunc", env={"TEST_PROBE": str(target)}).stdout.decode().splitlines()
+    verdicts = {line.split()[0]: line for line in lines}
+    for label in ("openat", "openat_rw", "creat", "open_raw", "openat_raw", "openat2_raw"):
+        assert verdicts[label].startswith(f"{label} blocked"), verdicts
+    assert verdicts["plain_read"] == "plain_read ok", "an ordinary read-only open must keep working"
+    assert target.read_text() == "original bytes"
+
+
+def test_a_truncating_open_is_refused_by_seccomp_alone_when_landlock_has_no_truncate_right(tmp_path):
+    target = tmp_path / "stored.pdf"
+    target.write_text("original bytes")
+    result = child("open_trunc_older_abi", env={"TEST_PROBE": str(target)})
+    assert result.stdout.decode().strip() == f"blocked {errno.EPERM}" and target.read_text() == "original bytes"
+
+
+def test_control_a_forked_descendant_can_leave_the_process_group_without_the_sandbox():
+    assert child("control_escape_group").stdout.decode().strip() == "control escaped"
+
+
+def test_a_descendant_cannot_leave_the_process_group_the_supervisor_kills():
+    lines = child("escape_group").stdout.decode().splitlines()
+    assert lines == [f"setsid blocked {errno.EPERM}", f"setpgid blocked {errno.EPERM}"], lines
+
+
+def _nice(pid: int) -> int:
+    import os as _os
+
+    return _os.getpriority(_os.PRIO_PROCESS, pid)
+
+
+def _sched_env(victim: dict[str, str]) -> dict[str, str]:
+    machine = platform.machine()
+    return {
+        **victim,
+        "TEST_NR_IOPRIO": "251" if machine == "x86_64" else "30",
+        "TEST_NR_SCHED_SETATTR": "314" if machine == "x86_64" else "274",
+    }
+
+
+def test_control_without_the_sandbox_a_child_can_renice_another_process(victim):
+    pid = int(victim["TEST_VICTIM_PID"])
+    before = _nice(pid)
+    assert child("control_sched", env=victim).stdout.decode().strip() == "control niceness 15"
+    assert _nice(pid) == 15 != before
+
+
+def test_a_sandboxed_child_cannot_change_the_scheduling_of_another_process(victim):
+    pid = int(victim["TEST_VICTIM_PID"])
+    before = _nice(pid)
+    lines = child("sched_mutations", env=_sched_env(victim)).stdout.decode().splitlines()
+    verdicts = {line.split()[0]: line for line in lines}
+    for label in ("setpriority", "sched_setaffinity", "sched_setscheduler", "ioprio_set", "sched_setattr"):
+        assert verdicts[label] == f"{label} blocked {errno.EPERM}", verdicts
+    assert _nice(pid) == before
+
+
+def test_shared_kernel_state_and_namespace_syscalls_are_denied_raw():
+    index = 0 if platform.machine() == "x86_64" else 1
+    numbers = [
+        str(pair[index])
+        for group in ("shared kernel state", "process control")
+        for name, pair in sandbox._DENIED[group].items()
+        if pair[index] is not None and name not in {"ioprio_set", "sched_setattr"}
+    ]
+    lines = child("raw_numbers", env={"TEST_NUMBERS": ",".join(numbers)}).stdout.decode().splitlines()
+    assert len(lines) == len(numbers) and all(line.endswith("blocked") for line in lines), lines
 
 
 def test_every_denied_syscall_group_is_present_for_both_architectures():

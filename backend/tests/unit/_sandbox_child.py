@@ -23,8 +23,40 @@ def main() -> None:
         os.kill(int(os.environ["TEST_VICTIM_PID"]), signal.SIGTERM)
         print("control ok")
         return None
+    if mode == "control_open_trunc":  # control: Landlock like ABI 2 alone; a read-only O_TRUNC open still truncates
+        from app.application.catalog_documents.extraction.sandbox import default_read_paths, install_landlock
+
+        install_landlock(read_paths=[*default_read_paths(), os.path.dirname(os.environ["TEST_PROBE"])], abi_limit=2)
+        os.close(os.open(os.environ["TEST_PROBE"], os.O_RDONLY | os.O_TRUNC))
+        print("control truncated")
+        return None
+    if mode == "open_trunc_older_abi":  # Landlock like ABI 2 plus the seccomp filter only: the filter must stand alone
+        from app.application.catalog_documents.extraction.sandbox import (
+            default_read_paths,
+            install_landlock,
+            install_seccomp_no_network,
+        )
+
+        install_landlock(read_paths=[*default_read_paths(), os.path.dirname(os.environ["TEST_PROBE"])], abi_limit=2)
+        install_seccomp_no_network()
+        try:
+            os.close(os.open(os.environ["TEST_PROBE"], os.O_RDONLY | os.O_TRUNC))
+            print("TRUNCATED")
+        except OSError as exc:
+            print("blocked", exc.errno)
+        return None
+    if mode == "control_escape_group":  # control: no sandbox, so a forked descendant can leave the process group
+        print("control", _forked_verdict(os.setsid))
+        return None
+    if mode == "control_sched":  # control: no sandbox, so a same-UID child can renice another process
+        pid = int(os.environ["TEST_VICTIM_PID"])
+        os.setpriority(os.PRIO_PROCESS, pid, 15)
+        print("control niceness", os.getpriority(os.PRIO_PROCESS, pid))
+        return None
     enter_sandbox(
-        cpu_seconds=3, address_space_bytes=512 * 1024 * 1024, require_seccomp=True,
+        cpu_seconds=3,
+        address_space_bytes=512 * 1024 * 1024,
+        require_seccomp=True,
         write_dirs=(workdir,) if workdir else (),
     )
     if mode == "read_victim_environ":
@@ -48,7 +80,7 @@ def main() -> None:
             print("denied")
     elif mode == "write_workdir":
         target = os.path.join(workdir or "", "ok.txt")
-        open(target, "w").write("fine")
+        open(target, "x").write("fine")  # "w" would pass O_TRUNC, which the filter denies
         print("wrote", open(target).read())
     elif mode == "list_media":
         try:
@@ -57,8 +89,11 @@ def main() -> None:
             print("denied")
     elif mode == "kill_victim":
         pid = int(os.environ["TEST_VICTIM_PID"])
-        for label, call in (("kill", lambda: os.kill(pid, signal.SIGTERM)), ("kill_all", lambda: os.kill(-1, 0)),
-                            ("killpg", lambda: os.killpg(os.getpgid(pid), signal.SIGTERM))):
+        for label, call in (
+            ("kill", lambda: os.kill(pid, signal.SIGTERM)),
+            ("kill_all", lambda: os.kill(-1, 0)),
+            ("killpg", lambda: os.killpg(os.getpgid(pid), signal.SIGTERM)),
+        ):
             try:
                 call()
                 print(label, "ALLOWED")
@@ -71,8 +106,12 @@ def main() -> None:
         pid = int(os.environ["TEST_VICTIM_PID"])
         arch = os.uname().machine
         numbers = {  # x86_64, aarch64
-            "tgkill": (234, 131), "tkill": (200, 130), "rt_sigqueueinfo": (129, 138), "pidfd_send_signal": (424, 424),
-            "pidfd_open": (434, 434), "prlimit64": (302, 261),
+            "tgkill": (234, 131),
+            "tkill": (200, 130),
+            "rt_sigqueueinfo": (129, 138),
+            "pidfd_send_signal": (424, 424),
+            "pidfd_open": (434, 434),
+            "prlimit64": (302, 261),
         }
         for name, (x86, arm) in numbers.items():
             number = x86 if arch == "x86_64" else arm
@@ -107,6 +146,56 @@ def main() -> None:
             print("TRUNCATED")
         except OSError as exc:
             print("blocked", exc.errno)
+    elif mode == "open_trunc":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        target = os.environ["TEST_PROBE"].encode()
+        o_trunc = os.O_TRUNC
+        for label, call in (
+            ("openat", lambda: os.open(target, os.O_RDONLY | o_trunc)),
+            ("openat_rw", lambda: os.open(target, os.O_RDWR | o_trunc)),
+            ("creat", lambda: libc.creat(target, 0o600)),
+            ("open_raw", lambda: libc.syscall(2, target, os.O_RDONLY | o_trunc, 0)),
+            ("openat_raw", lambda: libc.syscall(257, -100, target, os.O_RDONLY | o_trunc, 0)),
+            ("openat2_raw", lambda: libc.syscall(437, -100, target, 0, 0)),
+        ):
+            try:
+                result = call()
+                print(label, "OPENED" if result is None or result >= 0 else f"blocked {ctypes.get_errno()}")
+            except OSError as exc:
+                print(label, "blocked", exc.errno)
+        print("plain_read", "ok" if open(os.__file__, "rb").read() else "empty")
+    elif mode == "escape_group":
+        print("setsid", _forked_verdict(os.setsid))
+        print("setpgid", _forked_verdict(lambda: os.setpgid(0, 0)))
+    elif mode == "sched_mutations":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        pid = int(os.environ["TEST_VICTIM_PID"])
+        attr = ctypes.create_string_buffer(64)
+        calls = (
+            ("setpriority", lambda: os.setpriority(os.PRIO_PROCESS, pid, 15)),
+            ("sched_setaffinity", lambda: os.sched_setaffinity(pid, {0})),
+            ("sched_setscheduler", lambda: os.sched_setscheduler(pid, os.SCHED_BATCH, os.sched_param(0))),
+            ("ioprio_set", lambda: _raw(libc, int(os.environ["TEST_NR_IOPRIO"]), 1, pid, (3 << 13))),
+            ("sched_setattr", lambda: _raw(libc, int(os.environ["TEST_NR_SCHED_SETATTR"]), pid, attr, 0)),
+        )
+        for label, call in calls:
+            try:
+                call()
+                print(label, "CHANGED")
+            except OSError as exc:
+                print(label, "blocked", exc.errno)
+        print("niceness", os.getpriority(os.PRIO_PROCESS, pid))
+    elif mode == "raw_numbers":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        for number in os.environ["TEST_NUMBERS"].split(","):
+            result = libc.syscall(int(number), 0, 0, 0, 0, 0, 0)
+            print(number, "blocked" if result < 0 and ctypes.get_errno() == 1 else f"ALLOWED {result}")
     elif mode == "ptrace_parent":
         import ctypes
 
@@ -172,6 +261,32 @@ def main() -> None:
         time.sleep(60)
     elif mode == "ok":
         print('{"ok": true}')
+
+
+def _raw(libc, number: int, *args) -> None:
+    import ctypes
+
+    if libc.syscall(number, *args) < 0:
+        raise OSError(ctypes.get_errno(), "raw syscall refused")
+
+
+def _forked_verdict(operation) -> str:
+    """Runs `operation` in a forked descendant (the group leader cannot setsid) and reports how it ended."""
+    read_end, write_end = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_end)
+        try:
+            operation()
+            verdict = "escaped"
+        except OSError as exc:
+            verdict = f"blocked {exc.errno}"
+        os.write(write_end, verdict.encode())
+        os._exit(0)
+    os.close(write_end)
+    verdict = os.read(read_end, 100).decode()
+    os.waitpid(pid, 0)
+    return verdict
 
 
 def _read_victim_environ() -> None:
