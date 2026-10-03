@@ -46,6 +46,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/compose_smoke.py verify_clamav
+      - name: Verify sandboxed OCR (engine, seccomp network filter, pipeline) in the celery-worker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py verify_ocr_sandbox
       - name: Verify catalog_media is shared between backend and celery-worker
         shell: bash
         run: |

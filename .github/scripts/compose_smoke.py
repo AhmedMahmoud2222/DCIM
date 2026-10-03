@@ -19,6 +19,7 @@ PYTHON_SERVICES = ("migrate", "backend", "celery-worker", "celery-beat")
 MEDIA_DIR = "/app/media"
 CLAMAV_HEALTH_TIMEOUT = 600  # signature download on a cold runner can take minutes
 PROBE = ROOT / ".github" / "scripts" / "clamd_probe.py"
+OCR_PROBE = ROOT / ".github" / "scripts" / "ocr_sandbox_probe.py"
 # Exit codes of clamd_probe.py, which runs inside the backend container.
 SCANNER_EXIT_MESSAGES = {
     10: "SCANNER CONFIG FAILURE: backend is not configured for CATALOG_PDF_SCAN_MODE=required against clamav:3310",
@@ -26,6 +27,13 @@ SCANNER_EXIT_MESSAGES = {
     12: "SCANNER NETWORK FAILURE: backend ClamdScanner could not obtain a verdict from clamav:3310",
     13: "SCANNER FAILURE: clamd rejected or errored on a clean PDF payload",
     14: "SCANNER FAILURE: clamd accepted the EICAR test file as clean (signatures missing or scanner bypassed)",
+}
+# Exit codes of ocr_sandbox_probe.py, which runs inside the celery-worker container.
+OCR_EXIT_MESSAGES = {
+    20: "OCR FAILURE: the OCR engine is not installed in the celery-worker image",
+    21: "OCR SANDBOX FAILURE: the seccomp network filter cannot be installed in the celery-worker container (container runtime profile)",
+    22: "OCR SANDBOX FAILURE: a sandboxed child could still create a network socket",
+    23: "OCR FAILURE: the production pipeline did not read a rendered scanned page",
 }
 ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend", "clamav")
 
@@ -199,6 +207,17 @@ def verify_clamav():
         raise RuntimeError(f"{message} | {' '.join((result.stdout + result.stderr).split())[-300:]}")
     print("PASS: backend ClamdScanner (scan_mode=required) reached the Compose clamav container "
           f"{','.join(ips)}: {result.stdout.strip()}")
+
+
+def verify_ocr_sandbox():
+    cmd, env, _, _ = context()
+    if state(container(cmd, env, "celery-worker"), env, ".State.Status") != "running":
+        raise RuntimeError("OCR FAILURE: celery-worker is not running")
+    result = compose_exec(cmd, env, "celery-worker", ["python", "-"], stdin=OCR_PROBE.read_text())
+    if result.returncode:
+        message = OCR_EXIT_MESSAGES.get(result.returncode, f"OCR FAILURE: probe exited {result.returncode}")
+        raise RuntimeError(f"{message} | {' '.join((result.stdout + result.stderr).split())[-300:]}")
+    print(f"PASS: celery-worker runs sandboxed OCR: {result.stdout.strip()}")
 
 
 def media_write(cmd, env, service, name, token):
