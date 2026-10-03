@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import yaml
 
 path = Path('.github/workflows/deploy.yml')
@@ -22,3 +23,25 @@ gate_runs = ' '.join(step.get('run', '') for step in gate['jobs']['compose-smoke
 for command in ('compose_smoke.py verify_clamav', 'compose_smoke.py verify_shared_media'):
     assert command in gate_runs, f'deployment validation no longer runs {command}'
 print('Deployment validation runs the ClamAV and shared-media runtime checks')
+
+# Apply the supply-chain policy to step actions and reusable workflow jobs.
+def check_action_refs(node, workflow):
+    if isinstance(node, dict):
+        if 'uses' in node:
+            ref = node['uses']
+            assert isinstance(ref, str), (workflow, 'invalid action reference')
+            if not ref.startswith('./'):
+                assert re.fullmatch(r'[^@\s]+@[0-9a-f]{40}', ref), (
+                    workflow, 'external action must use a full commit SHA', ref
+                )
+        for value in node.values():
+            check_action_refs(value, workflow)
+    elif isinstance(node, list):
+        for value in node:
+            check_action_refs(value, workflow)
+
+
+for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
+    config = yaml.safe_load(workflow.read_text())
+    check_action_refs(config, str(workflow))
+print('All external workflow actions use full commit SHAs')
