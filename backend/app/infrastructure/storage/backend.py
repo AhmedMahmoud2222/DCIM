@@ -20,3 +20,13 @@ class StorageBackend(Protocol):
         ...
 
     def exists(self, key: str) -> bool: ...
+
+    def delete(self, key: str) -> None:
+        """Removes `key`; a missing key is not an error. Callers must only delete keys no
+        remaining database row references (content-addressed keys can be shared)."""
+        ...
+
+    def iter_keys(self) -> list[tuple[str, float]]:
+        """`(key, modified_epoch_seconds)` for every stored object. Used only by the
+        orphan sweep, which re-checks each key under its advisory lock before deleting."""
+        ...

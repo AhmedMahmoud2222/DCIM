@@ -41,6 +41,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/compose_smoke.py verify
+      - name: Verify ClamAV container health and production scanner path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py verify_clamav
+      - name: Verify catalog_media is shared between backend and celery-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py verify_shared_media
       - name: Sanitized diagnostics on failure
         if: failure()
         shell: bash
