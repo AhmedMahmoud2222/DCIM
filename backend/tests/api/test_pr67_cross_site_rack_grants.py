@@ -86,3 +86,24 @@ async def test_actor_cannot_confer_a_moved_rack_at_its_new_site_through_a_stale_
     resp = await client.put(f"/api/v1/groups/{group}/site-access", json={"sites": [_entry(b["site"], "selected", [rack_r])]}, headers=headers)
     assert resp.status_code == 403, resp.text
     assert (await client.get(f"/api/v1/groups/{group}", headers=admin)).json()["sites"] == []
+
+
+async def test_a_stale_grant_at_another_site_does_not_make_an_actor_outrank_a_peer(client, admin, auth_headers):
+    """Peer test, `current_only` path. The actor holds `selected [R]` at B (stale: R has moved to A) and `selected [R]` at
+    A. The target holds `selected [R]` at A and an empty grant at B. Their CURRENT visibility is identical, so they are
+    peers and the actor must not administer the target. Counting R as current at B because it is current somewhere made
+    the actor look wider (independent re-review of 0ae8aff)."""
+    a = await _make_site(client, admin)
+    b = await _make_site(client, admin, a["org"])
+    rack_r = await _make_rack(client, admin, auth_headers, b["room"])
+    stale_group = await _group(client, admin, allow=BASE, sites=[_entry(b["site"], "selected", [rack_r])])
+    moved = await client.post(f"/api/v1/racks/{rack_r}/move", json={"room_id": a["room"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)
+    assert moved.status_code == 200, moved.text
+    live_group = await _group(client, admin, allow=BASE, sites=[_entry(a["site"], "selected", [rack_r])])
+    _, actor_headers = await _group_user(client, admin, [stale_group, live_group])
+    target_group = await _group(client, admin, allow=BASE, sites=[_entry(a["site"], "selected", [rack_r]), _entry(b["site"], "selected", [])])
+    target, _ = await _group_user(client, admin, [target_group])
+    before = (await client.get(f"/api/v1/users/{target['id']}", headers=admin)).json()["full_name"]
+    resp = await client.patch(f"/api/v1/users/{target['id']}", json={"full_name": "peer-take"}, headers=actor_headers)
+    assert resp.status_code == 403, resp.text
+    assert (await client.get(f"/api/v1/users/{target['id']}", headers=admin)).json()["full_name"] == before

@@ -12,11 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.access_control import (
     AccessScope,
     EffectiveAccess,
+    _current_rack_sites,
     active_administrator_ids,
     build_scope,
     load_effective_access,
     load_group_scopes,
-    visible_rack_ids_query,
 )
 from app.application.authority_lock import ADMIN_INVARIANT_LOCK_NAME, acquire_authority_lock
 from app.application.rbac import AuthContext
@@ -102,14 +102,17 @@ async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScop
     if not inner.site_ids <= outer.site_ids or not inner.full_site_ids <= outer.full_site_ids:
         return False
     granted = {rack for racks in inner.selected_racks_by_site.values() for rack in racks}
-    current: set[uuid.UUID] = set()
+    placed: dict[uuid.UUID, uuid.UUID] = {}
     if granted:
-        inner_visible = visible_rack_ids_query(inner).subquery()
-        current = set((await db.execute(select(inner_visible.c.rack_id).where(inner_visible.c.rack_id.in_(granted)))).scalars())
+        placement = _current_rack_sites().subquery()
+        rows = await db.execute(select(placement.c.rack_id, placement.c.site_id).where(placement.c.rack_id.in_(granted)))
+        placed = {rack: site for rack, site in rows.all()}
     for site_id, racks in inner.selected_racks_by_site.items():
         if site_id in outer.full_site_ids:
             continue
-        if not (racks & current) <= outer.selected_racks_by_site.get(site_id, frozenset()):
+        # A selected grant is current only at the site the rack sits in now, so a rack granted at two sites counts at one.
+        current_here = {rack for rack in racks if placed.get(rack) == site_id}
+        if not current_here <= outer.selected_racks_by_site.get(site_id, frozenset()):
             return False
     return True
 
