@@ -12,21 +12,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import _current_rack_sites, is_scope_independent, load_group_scopes
+from app.application.access_control import (
+    _current_rack_sites,
+    is_scope_independent,
+    load_group_scopes,
+    visible_rack_ids_in_site,
+)
 from app.application.audit_service import write_audit_log
 from app.application.rbac import AuthContext, require_permission
 from app.application.user_admin_service import (
     ValidationFailed,
-    assert_actor_outranks_target,
+    assert_actor_outranks_users,
     assert_administrator_remains,
     assert_can_assign_group,
     assert_can_grant_permissions,
     assert_can_grant_sites,
     assert_can_modify_group,
     assert_group_visible,
+    assert_not_changing_own_membership,
+    assert_resulting_authority_within_actor,
+    begin_authority_change,
     clean_text,
     get_group_or_404,
+    group_scope,
     resolve_permission_codes,
+    scope_contains,
 )
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.domain.auth.models import (
@@ -94,7 +104,7 @@ class PermissionCatalogItem(BaseModel):
     unrestricted (global-role) users until that endpoint becomes site-aware."""
 
 
-async def _detail(db: AsyncSession, group: UserGroup) -> GroupDetailOut:
+async def _detail(db: AsyncSession, group: UserGroup, ctx: AuthContext | None = None) -> GroupDetailOut:
     from app.domain.location.models import Site
 
     members = list((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group.id))).scalars())
@@ -115,10 +125,15 @@ async def _detail(db: AsyncSession, group: UserGroup) -> GroupDetailOut:
     ).all()
     sites: list[SiteAccessOut] = []
     for access, site in site_rows:
+        if ctx is not None and not ctx.scope.allows_site(site.id):
+            continue  # a site-restricted actor never sees grants for sites outside their own scope
         racks = list(
             (await db.execute(select(UserGroupRackAccess.rack_id).where(UserGroupRackAccess.site_access_id == access.id)))
             .scalars()
         )
+        if ctx is not None and not ctx.scope.unrestricted:
+            allowed = set(await visible_rack_ids_in_site(db, ctx.scope, site.id))
+            racks = [r for r in racks if r in allowed]
         sites.append(
             SiteAccessOut(site_id=site.id, site_code=site.code, site_name=site.name, rack_scope=access.rack_scope, rack_ids=racks)
         )
@@ -129,6 +144,16 @@ async def _detail(db: AsyncSession, group: UserGroup) -> GroupDetailOut:
         deny_permissions=sorted(f"{r}:{a}" for r, a, e in perm_rows if e == "deny"),
         sites=sites,
     )
+
+
+async def _member_ids(db: AsyncSession, group_id: uuid.UUID) -> set[uuid.UUID]:
+    return set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
+
+
+async def _assert_not_member(ctx: AuthContext, db: AsyncSession, group_id: uuid.UUID) -> None:
+    """Self-escalation guard: members cannot rewrite the group that grants them access."""
+    if await db.get(UserGroupMember, (group_id, ctx.user.id)) is not None:
+        raise ForbiddenError("You cannot modify a group you are a member of.")
 
 
 @router.get("/permission-catalog", response_model=list[PermissionCatalogItem])
@@ -196,7 +221,7 @@ async def get_group(
 ) -> GroupDetailOut:
     group = await get_group_or_404(db, group_id)
     await assert_group_visible(db, ctx, group_id)
-    return await _detail(db, group)
+    return await _detail(db, group, ctx)
 
 
 @router.post("", response_model=GroupDetailOut, status_code=201)
@@ -222,7 +247,7 @@ async def create_group(
     )
     await db.commit()
     await db.refresh(group)
-    return await _detail(db, group)
+    return await _detail(db, group, ctx)
 
 
 @router.patch("/{group_id}", response_model=GroupDetailOut)
@@ -233,7 +258,9 @@ async def update_group(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
+    await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
     before = {"name": group.name, "description": group.description}
     if body.name is not None:
@@ -254,7 +281,7 @@ async def update_group(
         after={"name": group.name, "description": group.description},
     )
     await db.commit()
-    return await _detail(db, group)
+    return await _detail(db, group, ctx)
 
 
 @router.delete("/{group_id}", status_code=204)
@@ -264,11 +291,15 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> None:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
+    await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
     detail = await _detail(db, group)
+    survivors = await _member_ids(db, group_id)
     await db.delete(group)
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, survivors)
     try:
         await assert_administrator_remains(db)
     except ConflictError:
@@ -296,6 +327,7 @@ async def set_members(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
     target = set(body.user_ids)
@@ -305,11 +337,10 @@ async def set_members(
             raise NotFoundError("One or more users were not found.")
     current = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
     changed = target ^ current
-    if ctx.user.id in changed:
-        # Same rule as PATCH /users: nobody changes their own memberships.
-        raise ForbiddenError("You cannot change your own group memberships.")
-    for user_id in changed:
-        await assert_actor_outranks_target(db, ctx, user_id)
+    assert_not_changing_own_membership(ctx, changed)
+    await assert_actor_outranks_users(db, ctx, changed)
+    if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
+        raise ForbiddenError("You cannot modify a group that grants site or rack access beyond your own access.")
     if target - current:
         await assert_can_assign_group(db, ctx, group_id)
     for uid in target - current:
@@ -319,6 +350,7 @@ async def set_members(
         if member is not None:
             await db.delete(member)
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, changed)
     try:
         await assert_administrator_remains(db)
     except ConflictError:
@@ -331,7 +363,7 @@ async def set_members(
         before={"user_ids": sorted(str(u) for u in current)}, after={"user_ids": sorted(str(u) for u in target)},
     )
     await db.commit()
-    return await _detail(db, group)
+    return await _detail(db, group, ctx)
 
 
 class PermissionsIn(BaseModel):
@@ -354,7 +386,9 @@ async def set_permissions(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("group:manage")),
 ) -> GroupDetailOut:
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
+    await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
     allow = await resolve_permission_codes(db, body.allow)
     deny = await resolve_permission_codes(db, body.deny)
@@ -369,6 +403,7 @@ async def set_permissions(
     for perm in deny.values():
         db.add(UserGroupPermission(group_id=group_id, permission_id=perm.id, effect="deny"))
     await db.flush()
+    await assert_resulting_authority_within_actor(db, ctx, await _member_ids(db, group_id))
     try:
         await assert_administrator_remains(db)
     except ConflictError:
@@ -382,7 +417,7 @@ async def set_permissions(
         after={"allow": sorted(allow), "deny": sorted(deny)},
     )
     await db.commit()
-    return await _detail(db, group)
+    return await _detail(db, group, ctx)
 
 
 class SiteAccessIn(BaseModel):
@@ -420,10 +455,12 @@ async def set_site_access(
 ) -> GroupDetailOut:
     """Replaces the group's whole site/rack grant set. Every rack must currently be placed
     in the site it is granted under (cross-site rack grants are rejected)."""
+    ctx = await begin_authority_change(db, ctx, "group:manage")
     group = await get_group_or_404(db, group_id)
+    await _assert_not_member(ctx, db, group_id)
     await assert_can_modify_group(db, ctx, group_id)
     rack_ids = {r for s in body.sites for r in s.rack_ids}
-    await assert_can_grant_sites(db, ctx, [(s.site_id, s.rack_scope, s.rack_ids) for s in body.sites])
+    await assert_can_grant_sites(db, ctx, [(s.site_id, s.rack_scope, list(s.rack_ids)) for s in body.sites])
 
     if rack_ids:
         sub = _current_rack_sites().subquery()
@@ -449,6 +486,7 @@ async def set_site_access(
     except IntegrityError as exc:
         await db.rollback()
         raise ConflictError("Site access could not be saved; a site or rack no longer exists.") from exc
+    await assert_resulting_authority_within_actor(db, ctx, await _member_ids(db, group_id))
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
         db, actor_user_id=ctx.user.id, action="group.site_access.update", entity_type="group", entity_id=group.id,
@@ -459,4 +497,4 @@ async def set_site_access(
                          for s in body.sites]},
     )
     await db.commit()
-    return await _detail(db, group)
+    return await _detail(db, group, ctx)

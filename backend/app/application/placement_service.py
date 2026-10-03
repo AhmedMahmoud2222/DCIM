@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.authority_lock import acquire_placement_scope_lock
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 
 
@@ -55,7 +56,12 @@ async def move_rack(
     """Opens the first placement if none exists yet; otherwise closes the current one and
     opens a new one, atomically. Raises PlacementConflict if `if_match_version` is given
     and doesn't match, or if the row believed current was already closed by a concurrent
-    request."""
+    request.
+
+    Takes the shared authority/placement lock first (see authority_lock.py): the site a rack
+    sits in is part of every site-restricted user's data scope, so this write must not commit
+    while a delegated-administration decision that read the old placement is still open."""
+    await acquire_placement_scope_lock(db)
     current = await get_current_rack_placement(db, rack_id)
     if current is not None:
         locked = (
@@ -92,7 +98,8 @@ async def retire_rack_placement(
 ) -> RackPlacement | None:
     """Closes the current placement with no replacement. Returns None (idempotent no-op)
     if the rack was already unplaced — by this caller's prior attempt or a concurrent
-    one — never a 409 for that case."""
+    one — never a 409 for that case. Takes the same shared lock as `move_rack`."""
+    await acquire_placement_scope_lock(db)
     current = await get_current_rack_placement(db, rack_id)
     if current is None:
         return None

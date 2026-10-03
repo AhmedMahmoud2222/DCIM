@@ -312,14 +312,14 @@ async def test_concurrent_requests_cannot_remove_every_administrator(db_engine, 
             ha, hb = await _login(c, "admin-a@example.com"), await _login(c, "admin-b@example.com")
             deny_a = await _group(c, ha, deny=["user:manage"])
             deny_b = await _group(c, hb, deny=["user:manage"])
-            # Each request is individually safe (the actor stays an administrator); together they are not.
+            # Equal-authority administrators cannot change one another, even concurrently.
             first, second = await asyncio.gather(
                 c.put(f"/api/v1/groups/{deny_a}/members", json={"user_ids": [str(b.id)]}, headers=ha),
                 c.put(f"/api/v1/groups/{deny_b}/members", json={"user_ids": [str(a.id)]}, headers=hb),
             )
-        assert sorted([first.status_code, second.status_code]) == [200, 409]
+        assert [first.status_code, second.status_code] == [403, 403]
         committed = (await db_session.execute(text("SELECT count(*) FROM user_group_member"))).scalar_one()
-        assert committed == 1, "the losing request rolled back completely"
+        assert committed == 0, "neither peer request wrote a membership"
     finally:
         app.dependency_overrides.clear()
 
