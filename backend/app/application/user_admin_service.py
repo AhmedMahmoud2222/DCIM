@@ -361,6 +361,8 @@ async def assert_can_modify_group(db: AsyncSession, ctx: AuthContext, group_id: 
     """Changing a group changes every member's access, so the actor must strictly outrank all
     current members, and (if site-restricted) the group's own site grants must lie within
     the actor's scope. Closes cross-site group tampering and deny-group lockouts."""
+    # A group outside the actor's scope is reported as 404, never 403, so its existence is not disclosed.
+    await assert_group_visible(db, ctx, group_id)
     members = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
     await assert_actor_outranks_users(db, ctx, members)
     if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):

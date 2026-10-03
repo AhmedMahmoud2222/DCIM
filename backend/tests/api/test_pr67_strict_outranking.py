@@ -55,6 +55,15 @@ def _denied(resp):
     assert resp.status_code == 403, resp.text
 
 
+async def _group_write_denied(client, resp, actor_headers, group_id):
+    """A write on a group is refused with the status the actor's own read of that group would give: 404 when the group's
+    grants lie outside the actor's scope (main's scoped-administration rule, which never discloses such a group), else
+    403 from the outranking or containment check."""
+    visible = (await client.get(f"/api/v1/groups/{group_id}", headers=actor_headers)).status_code
+    expected = 404 if visible == 404 else 403
+    assert resp.status_code == expected, (expected, visible, resp.status_code, resp.text)
+
+
 async def _effective(client, admin, user_id):
     eff = (await client.get(f"/api/v1/users/{user_id}/effective-access", headers=admin)).json()
     return set(eff["permissions"]), {s["site_id"] for s in eff["sites"]}
@@ -171,7 +180,7 @@ async def test_wider_higher_or_incomparable_target_group_route_is_rejected(clien
     _, actor_spec, target_spec = case
     a = await _principal(client, admin, *actor_spec(world))
     t = await _principal(client, admin, *target_spec(world))
-    _denied(await GROUP_ROUTES[route](client, a["headers"], t["id"], t["group"]))
+    await _group_write_denied(client, await GROUP_ROUTES[route](client, a["headers"], t["id"], t["group"]), a["headers"], t["group"])
     assert t["id"] in (await client.get(f"/api/v1/groups/{t['group']}", headers=admin)).json()["member_ids"]
 
 
@@ -259,9 +268,10 @@ async def test_membership_that_would_widen_authority_beyond_the_actor_is_rejecte
         gid = await _group(client, admin, allow=["rack:read"], sites=[_entry(world["a"]), _entry(world["b"])])
     if surface == "group-route":
         resp = await client.put(f"/api/v1/groups/{gid}/members", json={"user_ids": [low["id"]]}, headers=a["headers"])
+        await _group_write_denied(client, resp, a["headers"], gid)
     else:
         resp = await client.patch(f"/api/v1/users/{low['id']}", json={"group_ids": [low["group"], gid]}, headers=a["headers"])
-    _denied(resp)
+        _denied(resp)
     perms, sites = await _effective(client, admin, low["id"])
     assert perms == {"rack:read"} and sites == {world["a"]}
 
@@ -409,7 +419,9 @@ async def test_a_stale_group_rack_grant_cannot_be_conferred_by_an_actor_who_does
     mv = await client.post(f"/api/v1/racks/{r2}/move", json={"room_id": other["room"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)
     assert mv.status_code == 200, mv.text
     # both delegation routes that would put `low` into G
-    _denied(await client.put(f"/api/v1/groups/{g}/members", json={"user_ids": [low["id"]]}, headers=actor["headers"]))
+    await _group_write_denied(
+        client, await client.put(f"/api/v1/groups/{g}/members", json={"user_ids": [low["id"]]}, headers=actor["headers"]), actor["headers"], g
+    )
     _denied(await client.patch(f"/api/v1/users/{low['id']}", json={"group_ids": [low["group"], g]}, headers=actor["headers"]))
     assert (await client.get(f"/api/v1/groups/{g}", headers=admin)).json()["member_ids"] == []
     # revival: the rack returns; `low` must still not see it
