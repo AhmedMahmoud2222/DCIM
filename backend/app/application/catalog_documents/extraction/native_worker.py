@@ -5,13 +5,15 @@ limits with the network blocked. It re-runs the PR-A structural validation first
 is treated as hostile, not as "already validated") and counts the pages it actually iterates,
 because the page tree's declared count is attacker-controlled.
 
-argv: max_bytes max_pages max_page_chars max_total_chars cpu_seconds address_space_bytes"""
+argv: max_bytes max_pages max_page_chars max_total_chars cpu_seconds address_space_bytes require_landlock"""
 
 import json
 import sys
 from typing import Any
 
-from app.application.catalog_documents.extraction.sandbox import enter_sandbox
+from pypdf import PdfReader
+
+from app.application.catalog_documents.extraction.sandbox import SandboxUnavailable, enter_sandbox
 from app.application.catalog_documents.pdf_validation import PdfRejected, validate_pdf
 
 
@@ -41,15 +43,18 @@ def _verdict(payload: dict[str, object]) -> None:
 
 def main() -> None:
     max_bytes, max_pages, max_page_chars, max_total_chars, cpu, address_space = (int(v) for v in sys.argv[1:7])
-    enter_sandbox(cpu_seconds=cpu, address_space_bytes=address_space, require_seccomp=False)
+    landlock = sys.argv[7] == "1"
+    try:
+        enter_sandbox(cpu_seconds=cpu, address_space_bytes=address_space, require_seccomp=False, require_landlock=landlock)
+    except SandboxUnavailable:
+        _verdict({"ok": False, "code": "sandbox_unavailable", "detail": ""})
+        return
     content = sys.stdin.buffer.read(max_bytes + 1)
     try:
         validate_pdf(content, max_bytes=max_bytes, max_pages=max_pages)
     except PdfRejected as exc:
         _verdict({"ok": False, "code": "document_rejected", "detail": exc.code})
         return
-
-    from pypdf import PdfReader
 
     pages: list[dict[str, object]] = []
     total = 0

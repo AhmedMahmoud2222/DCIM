@@ -347,6 +347,25 @@ async def test_a_stale_worker_loses_its_claim_and_writes_nothing(client, admin, 
     assert count == len(result.candidates) > 0
 
 
+async def test_a_worker_whose_heartbeat_finds_the_claim_gone_stops_and_leaves_the_job_alone(client, admin, scanner, dispatched):
+    from app.application.catalog_documents.extraction.pipeline import ClaimLost
+
+    _, document = await _document(client, admin, native_pdf([DATASHEET]))
+    job_id = uuid.UUID((await _request(client, admin, document["id"])).json()["id"])
+
+    def lose_the_claim(*_args, **_kwargs):
+        raise ClaimLost()
+
+    outcome = await asyncio.to_thread(
+        run_extraction_job, job_id, settings=get_settings(), storage=get_document_storage_backend(),
+        session_factory=get_sync_db, runner=lose_the_claim,
+    )
+    assert outcome == "lost_claim"
+    job = (await client.get(f"{BASE}/extraction-jobs/{job_id}", headers=admin)).json()
+    assert job["status"] == "running" and job["error_code"] is None  # not failed: its new owner decides
+    assert await _candidates(client, admin, str(job_id)) == []
+
+
 async def test_attempt_budget_ends_in_a_fixed_failure(client, admin, scanner, dispatched):
     _, document = await _document(client, admin, native_pdf([DATASHEET]))
     job_id = uuid.UUID((await _request(client, admin, document["id"])).json()["id"])

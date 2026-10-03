@@ -134,7 +134,8 @@ class OcrSandboxMessageTests(unittest.TestCase):
 
     def test_each_failure_class_is_named(self):
         for code, pattern in ((20, 'not installed'), (21, 'seccomp network filter cannot be installed'),
-                              (22, 'could still create a network socket'), (23, 'did not read a rendered scanned page')):
+                              (22, 'could still create a network socket'), (23, 'did not read a rendered scanned page'),
+                              (24, 'Landlock filesystem policy cannot be enforced'), (25, "read its parent's process environment")):
             with self.assertRaisesRegex(RuntimeError, pattern):
                 self.verify(code)
 

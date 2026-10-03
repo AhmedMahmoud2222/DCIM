@@ -34,6 +34,8 @@ OCR_EXIT_MESSAGES = {
     21: "OCR SANDBOX FAILURE: the seccomp network filter cannot be installed in the celery-worker container (container runtime profile)",
     22: "OCR SANDBOX FAILURE: a sandboxed child could still create a network socket",
     23: "OCR FAILURE: the production pipeline did not read a rendered scanned page",
+    24: "OCR SANDBOX FAILURE: the Landlock filesystem policy cannot be enforced in the celery-worker container (container runtime profile)",
+    25: "OCR SANDBOX FAILURE: a sandboxed child could still read its parent's process environment",
 }
 ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend", "clamav")
 

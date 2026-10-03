@@ -12,8 +12,9 @@ argument, language from settings, no shell). It never renders the page, so no PD
 action is executed. The child's environment holds no secrets (see `sandbox.run_sandboxed_child`).
 
 argv: page_number max_bytes max_pages tesseract_path language tesseract_timeout max_pixels max_chars
-      cpu_seconds address_space_bytes"""
+      cpu_seconds address_space_bytes require_landlock"""
 
+import io
 import json
 import os
 import shutil
@@ -22,6 +23,9 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+
+from PIL import Image
+from pypdf import PdfReader
 
 from app.application.catalog_documents.extraction.sandbox import SandboxUnavailable, enter_sandbox
 from app.application.catalog_documents.pdf_validation import PdfRejected, validate_pdf
@@ -102,6 +106,7 @@ def main() -> None:
         max_chars,
         cpu,
         address_space,
+        landlock,
     ) = (
         sys.argv[1],
         int(sys.argv[2]),
@@ -113,28 +118,33 @@ def main() -> None:
         int(sys.argv[8]),
         int(sys.argv[9]),
         int(sys.argv[10]),
+        sys.argv[11] == "1",
     )
-    try:
-        enter_sandbox(cpu_seconds=cpu, address_space_bytes=address_space, require_seccomp=True)
-    except SandboxUnavailable:
-        _verdict({"ok": False, "code": "ocr_sandbox_unavailable"})
-        return
-    content = sys.stdin.buffer.read(max_bytes + 1)
-    try:
-        validate_pdf(content, max_bytes=max_bytes, max_pages=max_pages)
-    except PdfRejected:
-        _verdict({"ok": False, "code": "document_rejected"})
-        return
-
-    import io
-
-    from PIL import Image
-    from pypdf import PdfReader
-
-    Image.MAX_IMAGE_PIXELS = max_pixels
+    # The scratch directory is created before the sandbox is entered (nothing from the PDF is read yet)
+    # and is the only place the policy lets this process write.
     workdir = tempfile.mkdtemp(prefix="dcim-ocr-")
     try:
         os.chmod(workdir, 0o700)
+        try:
+            enter_sandbox(
+                cpu_seconds=cpu,
+                address_space_bytes=address_space,
+                require_seccomp=True,
+                require_landlock=landlock,
+                read_paths=(os.path.dirname(os.path.realpath(tesseract_path)),),
+                write_dirs=(workdir,),
+            )
+        except SandboxUnavailable:
+            _verdict({"ok": False, "code": "ocr_sandbox_unavailable"})
+            return
+        content = sys.stdin.buffer.read(max_bytes + 1)
+        try:
+            validate_pdf(content, max_bytes=max_bytes, max_pages=max_pages)
+        except PdfRejected:
+            _verdict({"ok": False, "code": "document_rejected"})
+            return
+
+        Image.MAX_IMAGE_PIXELS = max_pixels
         try:
             reader = PdfReader(io.BytesIO(content), strict=False)
             index = int(page_number) - 1
@@ -177,6 +187,9 @@ def main() -> None:
             _verdict({"ok": False, "code": "ocr_failed"})
             return
         text, mean = _tsv_to_text(completed.stdout.decode("utf-8", errors="replace"), max_chars)
+        if not any(ch.isalnum() for ch in text):
+            _verdict({"ok": False, "code": "ocr_no_text"})  # blank or illegible page: not a successful read
+            return
         _verdict({"ok": True, "page": int(page_number), "text": text, "mean_confidence": round(mean, 2)})
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

@@ -15,7 +15,15 @@ from app.application.catalog_documents.extraction.candidates import EXTRACTOR_VE
 from app.application.catalog_documents.extraction.sandbox import ChildResult, run_sandboxed_child
 from app.core.config import Settings
 
-__all__ = ["EXTRACTOR_VERSION", "UNIT_REGISTRY_VERSION", "ExtractionFailure", "PipelineResult", "needs_ocr", "run_pipeline"]
+__all__ = [
+    "EXTRACTOR_VERSION",
+    "UNIT_REGISTRY_VERSION",
+    "ClaimLost",
+    "ExtractionFailure",
+    "PipelineResult",
+    "needs_ocr",
+    "run_pipeline",
+]
 
 _PKG = "app.application.catalog_documents.extraction"
 
@@ -35,6 +43,9 @@ FAILURE_MESSAGES = {
     "ocr_disabled": "Text recognition is disabled.",
     "ocr_sandbox_unavailable": "Text recognition cannot be isolated on this host, so it was not run.",
     "ocr_no_image": "The page has no image to recognise.",
+    "ocr_no_text": "Text recognition found no readable text on the page.",
+    "sandbox_unavailable": "The document reader cannot be isolated on this host (filesystem policy), so it was not run.",
+    "claim_lost": "Another worker took over this extraction.",
     "ocr_image_too_large": "The page image is larger than the configured limit.",
     "stored_object_missing": "The stored document file is missing.",
     "stored_object_mismatch": "The stored document file does not match its recorded checksum.",
@@ -47,6 +58,13 @@ class ExtractionFailure(Exception):
     def __init__(self, code: str):
         self.code = code if code in FAILURE_MESSAGES else "internal_error"
         super().__init__(self.code)
+
+
+class ClaimLost(ExtractionFailure):
+    """The lease heartbeat found that another worker owns the job. The run stops and writes nothing."""
+
+    def __init__(self) -> None:
+        super().__init__("claim_lost")
 
 
 @dataclass
@@ -72,6 +90,8 @@ def needs_ocr(page: dict[str, Any], settings: Settings) -> bool:
 
 
 def _json(result: ChildResult, *, timeout_code: str, crash_code: str, overflow_code: str) -> dict[str, Any]:
+    if result.aborted:
+        raise ClaimLost()
     if result.timed_out:
         raise ExtractionFailure(timeout_code)
     if result.output_overflow:
@@ -86,9 +106,19 @@ def _json(result: ChildResult, *, timeout_code: str, crash_code: str, overflow_c
 
 
 def run_pipeline(
-    content: bytes, *, target_names: list[str], settings: Settings, heartbeat: Callable[[], None] | None = None
+    content: bytes, *, target_names: list[str], settings: Settings, heartbeat: Callable[[], bool] | None = None
 ) -> PipelineResult:
-    beat = heartbeat or (lambda: None)
+    """`heartbeat` renews the job lease and returns False when the lease was lost. It runs between
+    stages and, through `tick`, every third of a lease while a child works, so a long stage can never
+    outlive the lease, whatever the configured timeouts."""
+    renew = heartbeat or (lambda: True)
+    tick_every = max(1.0, settings.catalog_extraction_lease_seconds / 3)
+    landlock = "1" if settings.catalog_extraction_require_landlock else "0"
+
+    def beat() -> None:
+        if not renew():
+            raise ClaimLost()
+
     cap = 4 * settings.catalog_extraction_max_total_chars + 2 * 1024 * 1024
     native = _json(
         run_sandboxed_child(
@@ -100,10 +130,13 @@ def run_pipeline(
                 str(settings.catalog_extraction_max_total_chars),
                 str(settings.catalog_extraction_native_cpu_seconds),
                 str(settings.catalog_extraction_address_space_bytes),
+                landlock,
             ],
             content,
             wall_seconds=settings.catalog_extraction_native_wall_seconds,
             stdout_cap_bytes=cap,
+            tick=renew,
+            tick_every=tick_every,
         ),
         timeout_code="native_timeout",
         crash_code="native_crashed",
@@ -142,7 +175,9 @@ def run_pipeline(
         else:
             for page_number in to_run:
                 beat()
-                outcome = _ocr_page(content, page_number, settings)
+                outcome = _ocr_page(content, page_number, settings, tick=renew, tick_every=tick_every)
+                if outcome.get("ok") and not any(ch.isalnum() for ch in str(outcome.get("text", ""))):
+                    outcome = {"ok": False, "code": "ocr_no_text"}  # a blank read is not a successful read
                 if outcome.get("ok"):
                     ocr_ok += 1
                     texts.append(
@@ -165,17 +200,23 @@ def run_pipeline(
     analysis = _json(
         run_sandboxed_child(
             f"{_PKG}.analysis_worker",
-            [str(settings.catalog_extraction_native_cpu_seconds), str(settings.catalog_extraction_address_space_bytes)],
+            [
+                str(settings.catalog_extraction_native_cpu_seconds),
+                str(settings.catalog_extraction_address_space_bytes),
+                landlock,
+            ],
             json.dumps({"pages": texts, "target_names": target_names}).encode("utf-8"),
             wall_seconds=settings.catalog_extraction_analysis_wall_seconds,
             stdout_cap_bytes=16 * 1024 * 1024,
+            tick=renew,
+            tick_every=tick_every,
         ),
         timeout_code="analysis_timeout",
         crash_code="analysis_failed",
         overflow_code="analysis_failed",
     )
     if not analysis.get("ok"):
-        raise ExtractionFailure("analysis_failed")
+        raise ExtractionFailure("sandbox_unavailable" if analysis.get("code") == "sandbox_unavailable" else "analysis_failed")
     candidates = [c for c in analysis["candidates"] if isinstance(c, dict)]
     warnings += [w for w in analysis.get("warnings", []) if isinstance(w, dict)]
 
@@ -209,7 +250,9 @@ def _ocr_unavailable_reason(settings: Settings) -> str | None:
     return None
 
 
-def _ocr_page(content: bytes, page_number: int, settings: Settings) -> dict[str, Any]:
+def _ocr_page(
+    content: bytes, page_number: int, settings: Settings, *, tick: Callable[[], bool], tick_every: float
+) -> dict[str, Any]:
     timeout = settings.catalog_ocr_page_timeout_seconds
     try:
         result = _json(
@@ -226,15 +269,20 @@ def _ocr_page(content: bytes, page_number: int, settings: Settings) -> dict[str,
                     str(settings.catalog_extraction_max_page_chars),
                     str(timeout + 15),
                     str(settings.catalog_extraction_address_space_bytes),
+                    "1" if settings.catalog_extraction_require_landlock else "0",
                 ],
                 content,
                 wall_seconds=timeout + 20,
                 stdout_cap_bytes=2 * 1024 * 1024,
+                tick=tick,
+                tick_every=tick_every,
             ),
             timeout_code="ocr_timeout",
             crash_code="ocr_failed",
             overflow_code="ocr_failed",
         )
+    except ClaimLost:
+        raise
     except ExtractionFailure as exc:
         return {"ok": False, "code": exc.code}
     return result

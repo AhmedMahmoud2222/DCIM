@@ -12,8 +12,63 @@ from app.application.catalog_documents.extraction.sandbox import enter_sandbox
 
 def main() -> None:
     mode = sys.argv[1]
-    enter_sandbox(cpu_seconds=3, address_space_bytes=512 * 1024 * 1024, require_seccomp=True)
-    if mode == "socket_python":
+    workdir = os.environ.get("TEST_WORKDIR")
+    if mode == "environ_without_landlock":  # control: the same read, with the filesystem policy left out
+        return _read_parent_environ_control()
+    enter_sandbox(
+        cpu_seconds=3, address_space_bytes=512 * 1024 * 1024, require_seccomp=True,
+        write_dirs=(workdir,) if workdir else (),
+    )
+    if mode == "read_parent_environ":
+        try:
+            open(f"/proc/{os.getppid()}/environ").read()
+            print("READ")
+        except OSError as exc:
+            print("denied", type(exc).__name__)
+    elif mode == "read_proc_self":
+        try:
+            open("/proc/self/environ").read()
+            print("READ")
+        except OSError:
+            print("denied")
+    elif mode == "read_outside":
+        try:
+            print("READ", open(os.environ["TEST_PROBE"]).read())
+        except OSError:
+            print("denied")
+    elif mode == "write_outside":
+        try:
+            open(os.environ["TEST_PROBE"], "w").write("tampered")
+            print("WROTE")
+        except OSError:
+            print("denied")
+    elif mode == "write_workdir":
+        target = os.path.join(workdir or "", "ok.txt")
+        open(target, "w").write("fine")
+        print("wrote", open(target).read())
+    elif mode == "list_media":
+        try:
+            print("LISTED", os.listdir(os.environ["TEST_PROBE"]))
+        except OSError:
+            print("denied")
+    elif mode == "ptrace_parent":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        result = libc.ptrace(16, os.getppid(), 0, 0)  # PTRACE_ATTACH
+        print("blocked" if result < 0 else "ATTACHED", ctypes.get_errno())
+    elif mode == "process_vm_readv":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        result = libc.syscall(310, os.getppid(), 0, 0, 0, 0, 0)
+        print("blocked" if result < 0 else "ALLOWED", ctypes.get_errno())
+    elif mode == "imports_still_work":
+        from PIL import Image  # noqa: F401
+        from pypdf import PdfReader  # noqa: F401
+
+        print("imported")
+    elif mode == "socket_python":
         import socket
 
         try:
@@ -56,6 +111,14 @@ def main() -> None:
         time.sleep(60)
     elif mode == "ok":
         print('{"ok": true}')
+
+
+def _read_parent_environ_control() -> None:
+    try:
+        open(f"/proc/{os.getppid()}/environ").read()
+        print("READ")
+    except OSError:
+        print("denied")
 
 
 if __name__ == "__main__":

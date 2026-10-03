@@ -14,7 +14,7 @@ import time
 import pytest
 
 from app.application.catalog_documents.extraction import ocr_worker, pipeline
-from app.application.catalog_documents.extraction.pipeline import ExtractionFailure, needs_ocr, run_pipeline
+from app.application.catalog_documents.extraction.pipeline import ClaimLost, ExtractionFailure, needs_ocr, run_pipeline
 from app.application.catalog_documents.extraction.sandbox import SandboxUnavailable, run_sandboxed_child
 from app.core.config import get_settings
 from tests._extraction_pdfs import (
@@ -244,7 +244,7 @@ def test_ocr_fails_closed_when_the_sandbox_cannot_be_installed(monkeypatch, caps
         raise SandboxUnavailable("no seccomp here")
 
     monkeypatch.setattr(ocr_worker, "enter_sandbox", refuse)
-    monkeypatch.setattr(sys, "argv", ["ocr_worker", "1", "1000", "5", "/bin/false", "eng", "5", "1000", "1000", "5", "1000000"])
+    monkeypatch.setattr(sys, "argv", ["ocr_worker", "1", "1000", "5", "/bin/false", "eng", "5", "1000", "1000", "5", "1000000", "1"])
     ocr_worker.main()
     assert json.loads(capsys.readouterr().out) == {"ok": False, "code": "ocr_sandbox_unavailable"}
 
@@ -353,3 +353,106 @@ def test_failure_messages_never_contain_paths_or_exception_text():
     for code, message in pipeline.FAILURE_MESSAGES.items():
         assert "/" not in message and "Traceback" not in message and "Error:" not in message, code
     assert ExtractionFailure("something unexpected").code == "internal_error"
+
+
+# ------------------------------------------------------------------------------ review findings (PR #98)
+
+
+def test_a_successful_ocr_run_that_reads_no_words_is_not_a_success(tmp_path):
+    """Blank or illegible scans make tesseract exit 0 with no words; that must not look like a read."""
+    engine = fake_tesseract(tmp_path, f'print("{TSV_HEADER}")')
+    with pytest.raises(ExtractionFailure) as raised:
+        run_pipeline(scanned_pdf([DATASHEET]), target_names=["CX-100"], settings=settings(catalog_ocr_tesseract_path=engine))
+    assert raised.value.code == "ocr_no_text"
+    mixed = run_pipeline(
+        mixed_pdf(["CX-100 Technical Specifications", "Typical power: 350 W"], DATASHEET), target_names=["CX-100"],
+        settings=settings(catalog_ocr_tesseract_path=engine),
+    )
+    assert mixed.outcome == "partial" and (mixed.pages_ocr, mixed.pages_ocr_failed) == (0, 1)
+    assert [w["code"] for w in mixed.warnings] == ["ocr_no_text"]
+    assert candidates_by_field(mixed)["power_typical_w"]["value_numeric"] == 350.0
+
+
+@needs_real_tesseract
+def test_a_blank_scanned_page_is_reported_as_unreadable_with_the_real_engine():
+    import io
+
+    from PIL import Image
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    pdf.drawImage(ImageReader(Image.new("L", (1200, 800), 255)), 20, 300, width=550, height=366)
+    pdf.showPage()
+    pdf.save()
+    with pytest.raises(ExtractionFailure) as raised:
+        run_pipeline(buffer.getvalue(), target_names=["CX-100"], settings=settings())
+    assert raised.value.code == "ocr_no_text"
+
+
+def test_every_child_stage_renews_the_lease_during_the_stage(monkeypatch):
+    """Each sandboxed stage is started with the heartbeat as its tick, every third of a lease, so a
+    long stage cannot outlive the lease whatever the configured timeouts are."""
+    seen: list[tuple[str, object, float]] = []
+    real = run_sandboxed_child
+
+    def spy(module, args, stdin_bytes, **kwargs):
+        seen.append((module.rsplit(".", 1)[-1], kwargs.get("tick"), kwargs.get("tick_every")))
+        return real(module, args, stdin_bytes, **kwargs)
+
+    monkeypatch.setattr(pipeline, "run_sandboxed_child", spy)
+    beats: list[int] = []
+    heartbeat = lambda: beats.append(1) or True  # noqa: E731
+    run_pipeline(
+        native_pdf([DATASHEET]), target_names=["CX-100"],
+        settings=settings(catalog_extraction_lease_seconds=60), heartbeat=heartbeat,
+    )
+    assert [name for name, _, _ in seen] == ["native_worker", "analysis_worker"]
+    assert all(tick is heartbeat and every == 20 for _, tick, every in seen)
+    assert beats, "the heartbeat also runs between stages"
+
+
+def test_a_lost_claim_aborts_the_pipeline_without_a_result(tmp_path):
+    engine = fake_tesseract(tmp_path, "import time\ntime.sleep(120)")
+    started = time.monotonic()
+    with pytest.raises(ClaimLost):
+        run_pipeline(
+            scanned_pdf([DATASHEET]), target_names=["CX-100"],
+            settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=100,
+                              catalog_extraction_lease_seconds=3),
+            heartbeat=lambda: False,
+        )
+    assert time.monotonic() - started < 60
+
+
+def test_the_scratch_directory_is_removed_and_the_engine_runs_inside_the_policy(tmp_path):
+    """The fake engine reports what the filesystem policy lets it see; the real engine runs the same way."""
+    report = tmp_path / "report.txt"
+    engine = fake_tesseract(
+        tmp_path,
+        f"""
+import os
+seen = []
+for probe in ("/proc/%d/environ" % os.getppid(), "/etc/hostname"):
+    try:
+        open(probe).read(); seen.append("read:" + probe.rsplit("/", 1)[-1])
+    except OSError:
+        seen.append("denied:" + probe.rsplit("/", 1)[-1])
+try:
+    open({str(report)!r}, "w").write("x"); seen.append("wrote-outside")
+except OSError:
+    seen.append("write-denied")
+print("{TSV_HEADER}")
+for w, word in enumerate(["Weight:", "12", "kg"], 1):
+    print(f"5\\t1\\t1\\t1\\t1\\t{{w}}\\t{{w * 60}}\\t40\\t50\\t20\\t90\\t{{word}}")
+print(" ".join(seen))
+""",
+    )
+    result = run_pipeline(
+        scanned_pdf([["CX-100 Technical Specifications"]]), target_names=["CX-100"],
+        settings=settings(catalog_ocr_tesseract_path=engine),
+    )
+    assert not report.exists(), "the engine wrote outside its scratch directory"
+    assert result.pages_ocr == 1

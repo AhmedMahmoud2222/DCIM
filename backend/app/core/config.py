@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     catalog_extraction_analysis_wall_seconds: float = Field(default=30.0, gt=0)
     catalog_extraction_lease_seconds: int = Field(default=300, ge=30)
     catalog_extraction_max_attempts: int = Field(default=3, ge=1)
+    # Filesystem policy (Landlock) for every extraction child: no read access to the worker's process
+    # environment or the media volume. Only turn off on a development host that has no Landlock.
+    catalog_extraction_require_landlock: bool = True
     catalog_ocr_enabled: bool = True
     catalog_ocr_tesseract_path: str = "/usr/bin/tesseract"
     catalog_ocr_language: str = Field(default="eng", pattern=r"^[a-z]{3}(\+[a-z]{3}){0,2}$")

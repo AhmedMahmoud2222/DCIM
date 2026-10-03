@@ -32,6 +32,7 @@ from app.application.catalog_documents.extraction.candidates import FIELD_KEYS
 from app.application.catalog_documents.extraction.pipeline import (
     EXTRACTOR_VERSION,
     UNIT_REGISTRY_VERSION,
+    ClaimLost,
     ExtractionFailure,
     PipelineResult,
     run_pipeline,
@@ -390,9 +391,9 @@ def run_extraction_job(
     if claim is None:
         return "skipped"
 
-    def heartbeat() -> None:
+    def heartbeat() -> bool:
         with session_factory() as beat_db:
-            renew_lease(beat_db, claim, settings=settings)
+            return renew_lease(beat_db, claim, settings=settings)
 
     try:
         try:
@@ -402,6 +403,10 @@ def run_extraction_job(
         if hashlib.sha256(content).hexdigest() != claim.document_sha256:
             raise ExtractionFailure("stored_object_mismatch")
         result = runner(content, target_names=claim.target_names, settings=settings, heartbeat=heartbeat)
+    except ClaimLost:
+        # Another worker owns the job now; this run writes nothing and leaves the job to it.
+        logger.warning("catalog_extraction_job_claim_lost", job_id=str(job_id))
+        return "lost_claim"
     except ExtractionFailure as failure:
         with session_factory() as db:
             _fail(db, claim, failure.code)

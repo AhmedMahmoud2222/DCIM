@@ -3,13 +3,14 @@ sandboxed OCR. Exit codes are named by compose_smoke.OCR_EXIT_MESSAGES.
 
 20 the OCR engine is missing, 21 the seccomp network filter cannot be installed under this container's
 runtime profile, 22 a sandboxed child could still create a socket, 23 the real pipeline did not read a
-rendered scanned page."""
+rendered scanned page, 24 the Landlock filesystem policy cannot be enforced under this container's runtime
+profile, 25 a sandboxed child could still read its parent's process environment."""
 import io
 import os
 import subprocess
 import sys
 
-from app.application.catalog_documents.extraction.sandbox import seccomp_available
+from app.application.catalog_documents.extraction.sandbox import landlock_available, seccomp_available
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -28,6 +29,24 @@ child = subprocess.run(  # noqa: S603
 if child.returncode != 0 or child.stdout.strip() != "-1":
     print("socket not denied: " + child.stdout.strip()[:40])
     sys.exit(22)
+
+if not landlock_available():
+    print("landlock unavailable")
+    sys.exit(24)
+reader = subprocess.run(  # noqa: S603
+    [sys.executable, "-c",
+     "import os\n"
+     "from app.application.catalog_documents.extraction.sandbox import install_landlock as i, default_read_paths as d\n"
+     "i(read_paths=d())\n"
+     "try:\n"
+     "    open('/proc/%d/environ' % os.getppid()).read(); print('READ')\n"
+     "except OSError:\n"
+     "    print('denied')"],
+    capture_output=True, text=True, timeout=30, check=False,
+)
+if reader.returncode != 0 or reader.stdout.strip() != "denied":
+    print("parent environment readable: " + reader.stdout.strip()[:40])
+    sys.exit(25)
 
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 

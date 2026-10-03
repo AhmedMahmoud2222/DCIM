@@ -17,12 +17,23 @@ catalog revision: applying an accepted value to a draft revision is a separate, 
 
 Every child gets: CPU and address-space rlimits, a file-size limit, no core dumps, its own session
 (a timeout kills the whole process group), a bounded stdout read, a scrubbed environment (no database,
-Redis or signing secrets), a blocked Python `socket` module, and a seccomp-bpf filter that denies
-`socket`, `socketpair`, `connect`, `bind`, `listen`, `accept`, `accept4`, `sendto`, `sendmsg`,
-`sendmmsg` and `io_uring_setup` with `EPERM`. The filter is inherited by `exec`, so the `tesseract`
-binary cannot open a connection either. `PR_SET_NO_NEW_PRIVS` makes this work without privileges, and
-Docker's default seccomp profile allows it. (A network namespace would need `CAP_SYS_ADMIN`.)
-The OCR child refuses to run (`ocr_sandbox_unavailable`) when the filter cannot be installed.
+Redis or signing secrets), a blocked Python `socket` module, and two kernel policies installed without
+privileges (so they work under Docker's default profile; a network or mount namespace would need `CAP_SYS_ADMIN`):
+
+- **seccomp-bpf** denies `socket`, `socketpair`, `connect`, `bind`, `listen`, `accept`, `accept4`, `sendto`,
+  `sendmsg`, `sendmmsg` and `io_uring_setup` with `EPERM`, and also `ptrace` and `process_vm_readv/writev`, so a
+  child cannot inspect or patch its parent. The filter is inherited by `exec`, so the `tesseract` binary cannot
+  open a connection either.
+- **Landlock** is a filesystem policy. A child runs as the worker's UID, so environment scrubbing alone would
+  leave `/proc/<ppid>/environ` (the worker's secrets) readable and the shared `/app/media` volume writable.
+  The policy grants read and execute on the interpreter, system libraries, installed packages, the `app`
+  package directory and the OCR engine's directory, and write only on the OCR child's private scratch
+  directory (plus `/dev/null`). `/proc`, `/sys`, `/tmp`, the application root and the media volume are unreachable.
+
+The children refuse to run when a policy cannot be installed: OCR reports `ocr_sandbox_unavailable`, the
+native and analysis stages report `sandbox_unavailable` (the seccomp filter is required for OCR only, because
+only OCR runs a native binary; Landlock is required for all three). `CATALOG_EXTRACTION_REQUIRE_LANDLOCK=false`
+waives only the Landlock requirement, for a development host without it; it is not for production.
 
 The PDF is treated as hostile again: the native and OCR children re-run the PR-A structural validation
 (active content, encryption, object-stream scan, page cap) before reading anything, and count the pages
@@ -85,6 +96,8 @@ The candidate list hides `other` values unless `include_other_models=true` or `m
 
 - One job per `(document, extractor_version)` (unique). A repeated request returns the existing job.
   A new extractor version adds a job; earlier jobs and candidates stay. The newest completed job is `is_current`.
+- The lease is renewed between stages and every third of a lease *while a child runs*, so no stage outlives
+  it whatever the timeouts are. A worker whose renewal finds the claim gone kills its child and writes nothing.
 - Claim: one compare-and-set `UPDATE` (queued, or running with an expired lease) writes a fresh
   `claim_token`. Completion, failure and lease renewal are fenced on that token; a worker that lost its
   claim writes nothing (its candidate inserts are in the same transaction as the fenced update).
@@ -101,8 +114,9 @@ A job ends `completed` (`outcome` `complete` or `partial`) or `failed` with a fi
 (`document_rejected`, `native_timeout`, `native_crashed`, `ocr_timeout`, `ocr_failed`,
 `ocr_sandbox_unavailable`, `stored_object_missing`, `stored_object_mismatch`, ...). Responses carry a fixed
 message per code. Exception text, child output, paths and document content are never stored in an error
-or written to a log (logs carry ids, codes and counts). A document that needed OCR, where no OCR page
-succeeded and nothing else was read, fails instead of reporting an empty "completed" result.
+or written to a log (logs carry ids, codes and counts). A page counts as OCR'd only if the engine read some text (a blank or illegible page is `ocr_no_text`). A document
+that needed OCR, where no OCR page succeeded and nothing else was read, fails instead of reporting an empty
+"completed" result.
 The stored PDF and the catalog revisions are only ever read.
 
 ## Authorization
@@ -121,6 +135,7 @@ The stored PDF and the catalog revisions are only ever read.
 - Compose: the existing `celery-worker` also consumes the `extraction` queue. Extraction shares worker
   slots with the outbox dispatcher; on a single-CPU host, run a dedicated worker with `-Q extraction -c 1`.
 - Deployment validation: `compose_smoke.py verify_ocr_sandbox` runs inside the worker container and checks
-  the engine, the seccomp filter under the container's runtime profile, that a sandboxed child cannot create
-  a socket, and one real OCR run through the pipeline.
+  the engine, the seccomp filter and the Landlock policy under the container's runtime profile, that a sandboxed
+  child can neither create a socket nor read its parent's process environment, and one real OCR run through
+  the pipeline.
 - Settings: `CATALOG_EXTRACTION_*` and `CATALOG_OCR_*` in `app/core/config.py`.
