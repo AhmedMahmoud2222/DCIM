@@ -66,9 +66,11 @@ for n, line in enumerate(lines, 1):
 
 
 def candidates_by_field(result):
-    return {c["field_key"]: c for c in result["candidates"]} if isinstance(result, dict) else {
-        c["field_key"]: c for c in result.candidates
-    }
+    return (
+        {c["field_key"]: c for c in result["candidates"]}
+        if isinstance(result, dict)
+        else {c["field_key"]: c for c in result.candidates}
+    )
 
 
 # ------------------------------------------------------------------------------ native
@@ -160,7 +162,8 @@ def test_ocr_with_a_fake_engine_is_deterministic(tmp_path):
 def test_ocr_page_limit_leaves_the_rest_unread_and_says_so(tmp_path):
     engine = fake_tesseract(tmp_path, TSV_SCRIPT)
     result = run_pipeline(
-        scanned_pdf([DATASHEET, DATASHEET, DATASHEET]), target_names=["CX-100"],
+        scanned_pdf([DATASHEET, DATASHEET, DATASHEET]),
+        target_names=["CX-100"],
         settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_max_pages=1),
     )
     assert result.pages_ocr == 1 and result.pages_ocr_failed == 2 and result.outcome == "partial"
@@ -175,7 +178,8 @@ def test_ocr_timeout_on_a_scanned_only_document_fails_with_a_fixed_code(tmp_path
     started = time.monotonic()
     with pytest.raises(ExtractionFailure) as raised:
         run_pipeline(
-            scanned_pdf([DATASHEET]), target_names=["CX-100"],
+            scanned_pdf([DATASHEET]),
+            target_names=["CX-100"],
             settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=2),
         )
     assert raised.value.code == "ocr_timeout" and time.monotonic() - started < 40
@@ -184,7 +188,8 @@ def test_ocr_timeout_on_a_scanned_only_document_fails_with_a_fixed_code(tmp_path
 def test_ocr_timeout_on_a_mixed_document_keeps_the_native_result_and_marks_it_partial(tmp_path):
     engine = fake_tesseract(tmp_path, "import time\ntime.sleep(120)")
     result = run_pipeline(
-        mixed_pdf(["CX-100 Technical Specifications", "Typical power: 350 W"], DATASHEET), target_names=["CX-100"],
+        mixed_pdf(["CX-100 Technical Specifications", "Typical power: 350 W"], DATASHEET),
+        target_names=["CX-100"],
         settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=2),
     )
     assert result.outcome == "partial" and result.pages_ocr_failed == 1
@@ -193,7 +198,9 @@ def test_ocr_timeout_on_a_mixed_document_keeps_the_native_result_and_marks_it_pa
 
 
 def test_ocr_engine_crash_is_reported_as_a_failure_not_an_exception(tmp_path):
-    engine = fake_tesseract(tmp_path, "import ctypes\nctypes.string_at(0)  # a real segmentation fault (kill is denied in the sandbox)")
+    engine = fake_tesseract(
+        tmp_path, "import ctypes\nctypes.string_at(0)  # a real segmentation fault (kill is denied in the sandbox)"
+    )
     with pytest.raises(ExtractionFailure) as raised:
         run_pipeline(scanned_pdf([DATASHEET]), target_names=["CX-100"], settings=settings(catalog_ocr_tesseract_path=engine))
     assert raised.value.code == "ocr_failed"
@@ -231,7 +238,9 @@ for w, word in enumerate(["Weight:", verdict, "kg"], 1):
 """
     try:
         result = run_pipeline(
-            scanned_pdf([DATASHEET]), target_names=["CX-100"], settings=settings(catalog_ocr_tesseract_path=fake_tesseract(tmp_path, body))
+            scanned_pdf([DATASHEET]),
+            target_names=["CX-100"],
+            settings=settings(catalog_ocr_tesseract_path=fake_tesseract(tmp_path, body)),
         )
     finally:
         listener.close()
@@ -239,23 +248,31 @@ for w, word in enumerate(["Weight:", verdict, "kg"], 1):
     assert accepted == [], "something reached the listener"
 
 
-def test_ocr_fails_closed_when_the_sandbox_cannot_be_installed(monkeypatch, capsys):
+def test_ocr_fails_closed_when_the_sandbox_cannot_be_installed(monkeypatch, capsys, tmp_path):
     def refuse(**_kwargs):
         raise SandboxUnavailable("no seccomp here")
 
     monkeypatch.setattr(ocr_worker, "enter_sandbox", refuse)
-    monkeypatch.setattr(sys, "argv", ["ocr_worker", "1", "1000", "5", "/bin/false", "eng", "5", "1000", "1000", "5", "1000000", "1"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ocr_worker", "1", "1000", "5", "/bin/false", "eng", "5", "1000", "1000", "5", "1000000", "1", str(tmp_path)],
+    )
     ocr_worker.main()
     assert json.loads(capsys.readouterr().out) == {"ok": False, "code": "ocr_sandbox_unavailable"}
 
 
 def test_ocr_disabled_and_missing_engine_are_reported_not_attempted(tmp_path):
-    for changes, code in (({"catalog_ocr_enabled": False}, "ocr_disabled"), ({"catalog_ocr_tesseract_path": "/nonexistent/tesseract"}, "ocr_unavailable")):
+    for changes, code in (
+        ({"catalog_ocr_enabled": False}, "ocr_disabled"),
+        ({"catalog_ocr_tesseract_path": "/nonexistent/tesseract"}, "ocr_unavailable"),
+    ):
         with pytest.raises(ExtractionFailure) as raised:
             run_pipeline(scanned_pdf([DATASHEET]), target_names=["CX-100"], settings=settings(**changes))
         assert raised.value.code == code
     result = run_pipeline(
-        mixed_pdf(["CX-100 Technical Specifications", "Weight: 12 kg"], DATASHEET), target_names=["CX-100"],
+        mixed_pdf(["CX-100 Technical Specifications", "Weight: 12 kg"], DATASHEET),
+        target_names=["CX-100"],
         settings=settings(catalog_ocr_enabled=False),
     )
     assert result.outcome == "partial" and result.warnings[0]["code"] == "ocr_disabled"
@@ -299,13 +316,20 @@ def test_a_content_stream_decompression_bomb_is_contained():
     must not happen: a hang, or a worker that grows without bound."""
     started = time.monotonic()
     limits = settings(
-        catalog_extraction_native_cpu_seconds=4, catalog_extraction_native_wall_seconds=12,
+        catalog_extraction_native_cpu_seconds=4,
+        catalog_extraction_native_wall_seconds=12,
         catalog_extraction_address_space_bytes=512 * 1024 * 1024,
     )
     try:
         result = run_pipeline(content_stream_bomb_pdf(2.0), target_names=["CX-100"], settings=limits)
     except ExtractionFailure as failure:
-        assert failure.code in {"native_memory", "native_crashed", "native_timeout", "native_parse_error", "native_output_too_large"}
+        assert failure.code in {
+            "native_memory",
+            "native_crashed",
+            "native_timeout",
+            "native_parse_error",
+            "native_output_too_large",
+        }
     else:
         assert result.candidates == [] and result.outcome == "partial"
         assert any(w["code"] in {"page_unreadable", "page_text_truncated"} for w in result.warnings)
@@ -315,7 +339,8 @@ def test_a_content_stream_decompression_bomb_is_contained():
 def test_a_huge_text_stream_is_truncated_and_reported():
     lines = [f"Spec line {i} Weight: {i % 7 + 1} kg" for i in range(1, 400)]
     result = run_pipeline(
-        native_pdf([lines[:45]] * 8), target_names=["CX-100"],
+        native_pdf([lines[:45]] * 8),
+        target_names=["CX-100"],
         settings=settings(catalog_extraction_max_page_chars=1000, catalog_extraction_max_total_chars=5000),
     )
     assert result.outcome == "partial"
@@ -365,7 +390,8 @@ def test_a_successful_ocr_run_that_reads_no_words_is_not_a_success(tmp_path):
         run_pipeline(scanned_pdf([DATASHEET]), target_names=["CX-100"], settings=settings(catalog_ocr_tesseract_path=engine))
     assert raised.value.code == "ocr_no_text"
     mixed = run_pipeline(
-        mixed_pdf(["CX-100 Technical Specifications", "Typical power: 350 W"], DATASHEET), target_names=["CX-100"],
+        mixed_pdf(["CX-100 Technical Specifications", "Typical power: 350 W"], DATASHEET),
+        target_names=["CX-100"],
         settings=settings(catalog_ocr_tesseract_path=engine),
     )
     assert mixed.outcome == "partial" and (mixed.pages_ocr, mixed.pages_ocr_failed) == (0, 1)
@@ -406,8 +432,10 @@ def test_every_child_stage_renews_the_lease_during_the_stage(monkeypatch):
     beats: list[int] = []
     heartbeat = lambda: beats.append(1) or True  # noqa: E731
     run_pipeline(
-        native_pdf([DATASHEET]), target_names=["CX-100"],
-        settings=settings(catalog_extraction_lease_seconds=60), heartbeat=heartbeat,
+        native_pdf([DATASHEET]),
+        target_names=["CX-100"],
+        settings=settings(catalog_extraction_lease_seconds=60),
+        heartbeat=heartbeat,
     )
     assert [name for name, _, _ in seen] == ["native_worker", "analysis_worker"]
     assert all(tick is heartbeat and every == 20 for _, tick, every in seen)
@@ -419,9 +447,11 @@ def test_a_lost_claim_aborts_the_pipeline_without_a_result(tmp_path):
     started = time.monotonic()
     with pytest.raises(ClaimLost):
         run_pipeline(
-            scanned_pdf([DATASHEET]), target_names=["CX-100"],
-            settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=100,
-                              catalog_extraction_lease_seconds=3),
+            scanned_pdf([DATASHEET]),
+            target_names=["CX-100"],
+            settings=settings(
+                catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=100, catalog_extraction_lease_seconds=3
+            ),
             heartbeat=lambda: False,
         )
     assert time.monotonic() - started < 60
@@ -451,7 +481,8 @@ print(" ".join(seen))
 """,
     )
     result = run_pipeline(
-        scanned_pdf([["CX-100 Technical Specifications"]]), target_names=["CX-100"],
+        scanned_pdf([["CX-100 Technical Specifications"]]),
+        target_names=["CX-100"],
         settings=settings(catalog_ocr_tesseract_path=engine),
     )
     assert not report.exists(), "the engine wrote outside its scratch directory"
@@ -465,10 +496,29 @@ def test_an_ocr_timeout_leaves_no_engine_process_behind(tmp_path):
     engine = fake_tesseract(tmp_path, "import time\ntime.sleep(300)")
     with pytest.raises(ExtractionFailure) as raised:
         run_pipeline(
-            scanned_pdf([DATASHEET]), target_names=["CX-100"],
+            scanned_pdf([DATASHEET]),
+            target_names=["CX-100"],
             settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=2),
         )
     assert raised.value.code == "ocr_timeout"
     time.sleep(0.5)
     listing = subprocess.run(["ps", "-eo", "stat,args"], capture_output=True, text=True).stdout.splitlines()
     assert not [line for line in listing if engine in line and not line.startswith("Z")], "the engine outlived its page"
+
+
+def test_an_ocr_timeout_removes_its_scratch_directory(tmp_path):
+    """The timeout path exits without running the child's cleanup, so it must remove the page image first."""
+    import glob
+    import tempfile
+
+    pattern = f"{tempfile.gettempdir()}/dcim-ocr-*"
+    before = set(glob.glob(pattern))
+    engine = fake_tesseract(tmp_path, "import time\ntime.sleep(300)")
+    with pytest.raises(ExtractionFailure) as raised:
+        run_pipeline(
+            scanned_pdf([DATASHEET]),
+            target_names=["CX-100"],
+            settings=settings(catalog_ocr_tesseract_path=engine, catalog_ocr_page_timeout_seconds=2),
+        )
+    assert raised.value.code == "ocr_timeout"
+    assert set(glob.glob(pattern)) - before == set(), "a timed-out page left its scratch directory behind"

@@ -21,7 +21,6 @@ import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 from typing import Any
 
 from PIL import Image
@@ -107,6 +106,7 @@ def main() -> None:
         cpu,
         address_space,
         landlock,
+        workdir,
     ) = (
         sys.argv[1],
         int(sys.argv[2]),
@@ -119,10 +119,10 @@ def main() -> None:
         int(sys.argv[9]),
         int(sys.argv[10]),
         sys.argv[11] == "1",
+        sys.argv[12],
     )
-    # The scratch directory is created before the sandbox is entered (nothing from the PDF is read yet)
-    # and is the only place the policy lets this process write.
-    workdir = tempfile.mkdtemp(prefix="dcim-ocr-")
+    # The supervisor creates the scratch directory and removes it afterwards (this process cannot delete the
+    # directory itself, and a timeout ends it without cleanup). It is the only place the policy lets this process write.
     try:
         os.chmod(workdir, 0o700)
         try:

@@ -7,6 +7,8 @@ ever copied into an error, so nothing unsafe can reach a response or a log throu
 
 import json
 import os
+import shutil
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -254,7 +256,10 @@ def _ocr_page(
     content: bytes, page_number: int, settings: Settings, *, tick: Callable[[], bool], tick_every: float
 ) -> dict[str, Any]:
     timeout = settings.catalog_ocr_page_timeout_seconds
+    # The OCR child may write only here and cannot delete the directory itself, so the supervisor owns it.
+    workdir = tempfile.mkdtemp(prefix="dcim-ocr-")
     try:
+        os.chmod(workdir, 0o700)
         result = _json(
             run_sandboxed_child(
                 f"{_PKG}.ocr_worker",
@@ -270,6 +275,7 @@ def _ocr_page(
                     str(timeout + 15),
                     str(settings.catalog_extraction_address_space_bytes),
                     "1" if settings.catalog_extraction_require_landlock else "0",
+                    workdir,
                 ],
                 content,
                 wall_seconds=timeout + 20,
@@ -285,4 +291,6 @@ def _ocr_page(
         raise
     except ExtractionFailure as exc:
         return {"ok": False, "code": exc.code}
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
     return result
