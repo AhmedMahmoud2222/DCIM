@@ -244,3 +244,24 @@ def test_validate_raster_image_rejects_oversized_content():
     oversized = b"\xff\xd8\xff" + b"\x00" * MAX_RASTER_FILE_SIZE_BYTES
     with pytest.raises(SvgRejected, match="size limit"):
         validate_raster_image(oversized, declared_format="jpeg")
+
+
+@pytest.mark.parametrize("container", [b"g", b"text", b"script", b"foreignObject"])
+def test_parser_rejects_depth_before_building_the_full_tree(monkeypatch, container):
+    from app.application import svg_sanitizer
+
+    starts = 0
+    original_start = svg_sanitizer._DepthLimitedTreeBuilder.start
+
+    def counted_start(self, tag, attrs):
+        nonlocal starts
+        starts += 1
+        return original_start(self, tag, attrs)
+
+    monkeypatch.setattr(svg_sanitizer._DepthLimitedTreeBuilder, "start", counted_start)
+    content = b"<svg>" + b"<" + container + b">" + b"<g>" * 100_000
+    content += b"</g>" * 100_000 + b"</" + container + b"></svg>"
+    with pytest.raises(SvgRejected, match="depth limit"):
+        sanitize_svg(content)
+    # Root plus depths 1..limit and the first refused element, independent of CPU speed.
+    assert starts == MAX_NESTING_DEPTH + 2
