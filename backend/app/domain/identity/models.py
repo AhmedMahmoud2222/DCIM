@@ -46,6 +46,11 @@ class ManagedAsset(Base, UUIDPkMixin, TimestampMixin):
     __table_args__ = (
         CheckConstraint(f"asset_type IN {ASSET_TYPES!r}", name="asset_type_allowed"),
         CheckConstraint(f"lifecycle_status IN {LIFECYCLE_STATUSES!r}", name="lifecycle_status_allowed"),
+        # Unknown historical/import dates remain NULL, including terminal states.
+        CheckConstraint(
+            "decommissioned_at IS NULL OR lifecycle_status IN ('decommissioned', 'removed')",
+            name="decommissioned_at_terminal",
+        ),
         UniqueConstraint("replaces_asset_id", name="uq_managed_asset_replaces_asset_id"),
         # Findings M2/M3 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
         # PHASE1_CORRECTION_REPORT.md): an asset cannot replace itself. Longer cycles
