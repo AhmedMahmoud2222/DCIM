@@ -10,6 +10,9 @@ on:
       - 'scripts/deploy-docker-compose.sh'
       - 'docker-compose.yml'
       - 'docker-compose.production.yml'
+      - '.github/workflows/deployment-validation.yml'
+      - '.github/scripts/compose_smoke.py'
+      - '.github/scripts/clamd_probe.py'
       - 'backend/Dockerfile'
       - 'backend/pyproject.toml'
       - 'backend/alembic.ini'
@@ -27,6 +30,9 @@ on:
       - 'scripts/deploy-docker-compose.sh'
       - 'docker-compose.yml'
       - 'docker-compose.production.yml'
+      - '.github/workflows/deployment-validation.yml'
+      - '.github/scripts/compose_smoke.py'
+      - '.github/scripts/clamd_probe.py'
       - 'backend/Dockerfile'
       - 'backend/pyproject.toml'
       - 'backend/alembic.ini'
@@ -45,7 +51,7 @@ jobs:
     name: Deployment tooling regressions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
@@ -87,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Require real Docker Engine and Compose

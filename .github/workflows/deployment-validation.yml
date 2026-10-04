@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate disposable credentials and project
         shell: bash
         run: |
@@ -41,6 +41,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/compose_smoke.py verify
+      - name: Verify ClamAV container health and production scanner path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py verify_clamav
+      - name: Verify catalog_media is shared between backend and celery-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/compose_smoke.py verify_shared_media
       - name: Sanitized diagnostics on failure
         if: failure()
         shell: bash

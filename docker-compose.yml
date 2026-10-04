@@ -84,6 +84,12 @@ services:
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY to one shared Fernet key in .env}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       CORS_ALLOWED_ORIGINS: '["http://localhost:5173","http://localhost:8080"]'
+      CATALOG_PDF_SCAN_MODE: ${CATALOG_PDF_SCAN_MODE:-required}
+      CLAMD_HOST: clamav
+    volumes:
+      # Shared by the API and the worker: catalog graphics and datasheet PDFs are written by
+      # one and read by the other, and must survive container replacement.
+      - catalog_media:/app/media
     ports:
       - "8000:8000"
     depends_on:
@@ -113,6 +119,12 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       NONCE_RETENTION_SECONDS: ${NONCE_RETENTION_SECONDS:-3600}
       HEARTBEAT_RETENTION_DAYS: ${HEARTBEAT_RETENTION_DAYS:-30}
+      CATALOG_PDF_SCAN_MODE: ${CATALOG_PDF_SCAN_MODE:-required}
+      CLAMD_HOST: clamav
+    volumes:
+      # Shared by the API and the worker: catalog graphics and datasheet PDFs are written by
+      # one and read by the other, and must survive container replacement.
+      - catalog_media:/app/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,6 +160,20 @@ services:
     # container-local storage instead of failing at startup with EACCES.
     command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
 
+  # Malware scanning for uploaded catalog datasheets (CATALOG_PDF_SCAN_MODE=required fails
+  # closed while this service is unreachable). The first start downloads signatures, which
+  # can take a few minutes; the healthcheck reports healthy once clamd answers.
+  clamav:
+    image: clamav/clamav:1.4
+    volumes:
+      - clamav_db:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
   frontend:
     build:
       context: ./frontend
@@ -158,3 +184,5 @@ services:
 
 volumes:
   postgres_data:
+  catalog_media:
+  clamav_db:

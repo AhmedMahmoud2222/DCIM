@@ -1,12 +1,12 @@
 """Guard decommission timestamps without inventing historical dates.
 
-Revision ID: 0032_asset_decommission_guard
-Revises: 0031_user_groups
+Revision ID: 0033_asset_decommission_guard
+Revises: 0032_catalog_documents
 """
 from alembic import op
 
-revision = "0032_asset_decommission_guard"
-down_revision = "0031_user_groups"
+revision = "0033_asset_decommission_guard"
+down_revision = "0032_catalog_documents"
 branch_labels = None
 depends_on = None
 
@@ -24,7 +24,7 @@ def upgrade() -> None:
                   AND lifecycle_status NOT IN ('decommissioned', 'removed')
             ) THEN
                 RAISE EXCEPTION 'managed_asset has non-terminal assets with decommissioned_at; '
-                    'audit and correct these rows explicitly before retrying migration 0032_asset_decommission_guard';
+                    'audit and correct these rows explicitly before retrying migration 0033_asset_decommission_guard';
             END IF;
         END $$;
     """)

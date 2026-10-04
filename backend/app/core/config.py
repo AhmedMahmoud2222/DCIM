@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,11 +64,31 @@ class Settings(BaseSettings):
     catalog_graphics_storage_root: str = "media/catalog/graphics"
     catalog_graphics_max_upload_bytes: int = 10 * 1024 * 1024
 
+    # DCIM01 PDF datasheet import (docs/plans/DCIM01_PDF_DATASHEET_IMPORT_PLAN_v2.md).
+    # Every limit is configurable; the defaults are the approved values.
+    catalog_documents_storage_root: str = "media/catalog/documents"
+    catalog_document_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+    catalog_document_max_pages: int = Field(default=100, ge=1)
+    catalog_document_staging_retention_days: int = Field(default=14, ge=1)
+    # `required` fails closed: an unreachable scanner rejects the upload. `optional` scans when
+    # the scanner answers and records `scan_status='skipped'` when it does not. `off` never
+    # scans. Production refuses to start with anything but `required` (see the validator).
+    catalog_pdf_scan_mode: Literal["required", "optional", "off"] = "required"
+    clamd_host: str = "clamav"
+    clamd_port: int = 3310
+    clamd_timeout_seconds: float = Field(default=30.0, gt=0)
+
     @field_validator("database_url")
     @classmethod
     def _validate_db_url(cls, v: str) -> str:
         PostgresDsn(v.replace("postgresql+asyncpg", "postgresql").replace("postgresql+psycopg", "postgresql"))
         return v
+
+    @model_validator(mode="after")
+    def _production_requires_malware_scanning(self) -> "Settings":
+        if self.environment == "production" and self.catalog_pdf_scan_mode != "required":
+            raise ValueError("catalog_pdf_scan_mode must be 'required' when ENVIRONMENT=production.")
+        return self
 
     @property
     def is_production(self) -> bool:
