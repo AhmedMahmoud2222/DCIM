@@ -21,6 +21,7 @@ from app.application.user_admin_service import (
     assert_administrator_remains,
     assert_can_assign_group,
     assert_can_assign_role,
+    assert_group_visible,
     assert_resulting_authority_within_actor,
     assert_user_visible,
     begin_authority_change,
@@ -106,13 +107,15 @@ async def _revoke_refresh_tokens(db: AsyncSession, user_id: uuid.UUID) -> None:
         token.revoked_at = now
 
 
-async def _load_groups(db: AsyncSession, group_ids: list[uuid.UUID]) -> list[UserGroup]:
+async def _load_groups(db: AsyncSession, ctx: AuthContext, group_ids: list[uuid.UUID]) -> list[UserGroup]:
     unique = list(dict.fromkeys(group_ids))
     if not unique:
         return []
     groups = list((await db.execute(select(UserGroup).where(UserGroup.id.in_(unique)))).scalars())
     if len(groups) != len(unique):
-        raise NotFoundError("One or more groups were not found.")
+        raise NotFoundError()
+    for group in groups:
+        await assert_group_visible(db, ctx, group.id)
     return groups
 
 
@@ -121,7 +124,7 @@ async def _set_memberships(
 ) -> tuple[set[uuid.UUID], set[uuid.UUID]]:
     if user.id == ctx.user.id:
         raise ForbiddenError("You cannot change your own group memberships.")
-    await _load_groups(db, new_ids)
+    await _load_groups(db, ctx, new_ids)
     current = set((await db.execute(select(UserGroupMember.group_id).where(UserGroupMember.user_id == user.id))).scalars())
     target = set(new_ids)
     for gid in target - current:
@@ -208,7 +211,7 @@ async def create_user(
             raise NotFoundError(f"Role {body.role_name!r} not found.")
         await assert_can_assign_role(db, ctx, role)
     group_ids = list(dict.fromkeys(body.group_ids))
-    await _load_groups(db, group_ids)
+    await _load_groups(db, ctx, group_ids)
     for gid in group_ids:
         await assert_can_assign_group(db, ctx, gid)
 

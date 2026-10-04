@@ -116,7 +116,7 @@ async def test_delegate_cannot_deny_real_administrators_through_group_members(cl
 
     resp = await client.put(f"/api/v1/groups/{deny}/members", json={"user_ids": [admin_id]}, headers=delegate)
 
-    assert resp.status_code == 403
+    assert resp.status_code == 404
     assert (await client.get("/api/v1/users", headers=admin)).status_code == 200
 
 
@@ -220,7 +220,7 @@ async def test_assigning_an_existing_wider_group_is_refused(client, admin, auth_
         "/api/v1/users", json={"email": "acc@example.com", "full_name": "A", "password": PW, "group_ids": [wide_group]}, headers=delegate
     )
 
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------- H4: groups and users are scoped objects

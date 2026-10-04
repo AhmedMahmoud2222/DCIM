@@ -181,6 +181,7 @@ async def group_grants(db: AsyncSession, group_id: uuid.UUID) -> tuple[set[str],
 async def assert_can_assign_group(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
     """Adding a user to a group hands them everything the group confers, so the actor must
     already hold all of it. Members of a group cannot manage that group's membership."""
+    await assert_group_visible(db, ctx, group_id)
     codes, _ = await group_grants(db, group_id)
     assert_can_grant_permissions(ctx, codes)
     if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
@@ -220,14 +221,14 @@ async def assert_administrator_remains(db: AsyncSession) -> None:
 async def get_user_or_404(db: AsyncSession, user_id: uuid.UUID) -> User:
     user = await db.get(User, user_id)
     if user is None:
-        raise NotFoundError(f"User {user_id} not found.")
+        raise NotFoundError()
     return user
 
 
 async def get_group_or_404(db: AsyncSession, group_id: uuid.UUID) -> UserGroup:
     group = await db.get(UserGroup, group_id)
     if group is None:
-        raise NotFoundError(f"Group {group_id} not found.")
+        raise NotFoundError()
     return group
 
 
@@ -271,7 +272,13 @@ async def assert_actor_outranks_users(db: AsyncSession, ctx: AuthContext, user_i
     others = user_ids - {ctx.user.id}
     if not others:
         return
-    for access in (await load_effective_access(db, list(others))).values():
+    targets = (await load_effective_access(db, list(others))).values()
+    # Mask all invisible targets before inspecting any target's permissions. This
+    # also keeps mixed membership batches indistinguishable from missing users.
+    for access in targets:
+        if not ctx.scope.unrestricted and not ctx.scope.contains(access.scope):
+            raise NotFoundError()
+    for access in targets:
         reason = await actor_strictly_outranks(db, ctx, access)
         if reason == "exceeds":
             raise ForbiddenError(
@@ -347,7 +354,7 @@ async def assert_user_visible(db: AsyncSession, ctx: AuthContext, target_user_id
         return
     access = (await load_effective_access(db, [target_user_id]))[target_user_id]
     if not ctx.scope.contains(access.scope):
-        raise NotFoundError(f"User {target_user_id} not found.")
+        raise NotFoundError()
 
 
 async def assert_group_visible(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:
@@ -356,7 +363,7 @@ async def assert_group_visible(db: AsyncSession, ctx: AuthContext, group_id: uui
         return
     scope = (await load_group_scopes(db, [group_id]))[group_id]
     if not ctx.scope.contains(scope):
-        raise NotFoundError(f"Group {group_id} not found.")
+        raise NotFoundError()
 
 
 async def assert_can_modify_group(db: AsyncSession, ctx: AuthContext, group_id: uuid.UUID) -> None:

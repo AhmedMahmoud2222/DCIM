@@ -100,7 +100,7 @@ async def test_rack_limited_admin_cannot_assign_a_group_with_wider_rack_scope(cl
         json={"email": f"n-{uuid.uuid4().hex[:6]}@example.com", "full_name": "N", "password": PW, "group_ids": [wide_group]},
         headers=limited["headers"],
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 async def test_rack_limited_admin_cannot_add_self_to_wider_group_through_group_route(client, admin, world):

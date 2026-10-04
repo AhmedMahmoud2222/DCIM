@@ -331,7 +331,7 @@ async def set_members(
     if target:
         found = set((await db.execute(select(User.id).where(User.id.in_(target)))).scalars())
         if found != target:
-            raise NotFoundError("One or more users were not found.")
+            raise NotFoundError()
     current = set((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group_id))).scalars())
     changed = target ^ current
     await assert_actor_outranks_users(db, ctx, changed)

@@ -7,7 +7,7 @@ and including, the actor's own.
 
 Every case is its own parametrized test (one route per test) so that an early assertion cannot mask
 an untested route when the rule is mutated. Each test builds persisted sites, racks, groups and users
-and sends valid payloads: a 403 therefore comes from the authority rule, not from a malformed request.
+and sends valid payloads: a 403/404 therefore comes from the authority or visibility rule, not from a malformed request.
 Concurrency tests live in tests/integration/test_pr67_authority_*.py; the two tests that call the
 lock helper directly live in tests/integration/test_pr67_authority_lock_protocol.py so that this
 file is pure HTTP and runs unchanged against #67's own head."""
@@ -170,7 +170,9 @@ async def test_wider_higher_or_incomparable_target_user_route_is_rejected(client
     _, actor_spec, target_spec = case
     a = await _principal(client, admin, *actor_spec(world))
     t = await _principal(client, admin, *target_spec(world))
-    _denied(await USER_ROUTES[route](client, a["headers"], t["id"], t["group"]))
+    resp = await USER_ROUTES[route](client, a["headers"], t["id"], t["group"])
+    expected = 404 if case[0] in {"wider-rack-scope", "wider-site-scope", "higher-in-both", "lower-permissions-but-other-site", "incomparable-scope"} else 403
+    assert resp.status_code == expected, resp.text
     await _assert_user_untouched(client, admin, t)
 
 
@@ -227,7 +229,7 @@ async def test_group_with_higher_member_cannot_be_modified(client, admin, world,
     a = await _principal(client, admin, BASE, [_entry(world["a"])])
     boss = await _principal(client, admin, [*BASE, "equipment:read"], [_entry(world["a"]), _entry(world["b"])])
     shared = await _shared_group_with(client, admin, world, [boss["id"]])
-    _denied(await GROUP_ROUTES[route](client, a["headers"], boss["id"], shared))
+    assert (await GROUP_ROUTES[route](client, a["headers"], boss["id"], shared)).status_code == 404
     assert (await client.get(f"/api/v1/groups/{shared}", headers=admin)).json()["member_ids"] == [boss["id"]]
 
 
@@ -271,7 +273,7 @@ async def test_membership_that_would_widen_authority_beyond_the_actor_is_rejecte
         await _group_write_denied(client, resp, a["headers"], gid)
     else:
         resp = await client.patch(f"/api/v1/users/{low['id']}", json={"group_ids": [low["group"], gid]}, headers=a["headers"])
-        _denied(resp)
+        assert resp.status_code == (404 if widening == "more-sites" else 403), resp.text
     perms, sites = await _effective(client, admin, low["id"])
     assert perms == {"rack:read"} and sites == {world["a"]}
 
@@ -422,7 +424,7 @@ async def test_a_stale_group_rack_grant_cannot_be_conferred_by_an_actor_who_does
     await _group_write_denied(
         client, await client.put(f"/api/v1/groups/{g}/members", json={"user_ids": [low["id"]]}, headers=actor["headers"]), actor["headers"], g
     )
-    _denied(await client.patch(f"/api/v1/users/{low['id']}", json={"group_ids": [low["group"], g]}, headers=actor["headers"]))
+    assert (await client.patch(f"/api/v1/users/{low['id']}", json={"group_ids": [low["group"], g]}, headers=actor["headers"])).status_code == 404
     assert (await client.get(f"/api/v1/groups/{g}", headers=admin)).json()["member_ids"] == []
     # revival: the rack returns; `low` must still not see it
     back = await client.post(f"/api/v1/racks/{r2}/move", json={"room_id": world["room_a"], "x_mm": 0, "y_mm": 0, "rotation_deg": 0}, headers=admin)

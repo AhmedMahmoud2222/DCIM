@@ -363,9 +363,9 @@ async def test_delegate_cannot_grant_sites_outside_own_scope(client, admin):
 async def test_delegate_cannot_administer_more_powerful_user(client, admin, make_user):
     _, _, dh = await _delegated_admin(client, admin)
     victim = await make_user("victim@example.com", PW, "Administrator")
-    assert (await client.patch(f"/api/v1/users/{victim.id}", json={"is_active": False}, headers=dh)).status_code == 403
-    assert (await client.patch(f"/api/v1/users/{victim.id}", json={"password": "x" * 20}, headers=dh)).status_code == 403
-    assert (await client.delete(f"/api/v1/users/{victim.id}", headers=dh)).status_code == 403
+    assert (await client.patch(f"/api/v1/users/{victim.id}", json={"is_active": False}, headers=dh)).status_code == 404
+    assert (await client.patch(f"/api/v1/users/{victim.id}", json={"password": "x" * 20}, headers=dh)).status_code == 404
+    assert (await client.delete(f"/api/v1/users/{victim.id}", headers=dh)).status_code == 404
 
 
 # ------------------------------------------------------------------ Last administrator
