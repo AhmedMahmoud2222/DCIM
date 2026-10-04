@@ -13,6 +13,8 @@
 | Operations / deployment team | [Operations](OPERATIONS.md) | Security, configuration, backup/restore, monitoring, health checks, rollback rehearsals and incident entry points |
 | Independent reviewer / auditor | [Audit status](AUDIT_STATUS.md) | Distinguishes original Phase 10 findings from PR #29 fixes, verified CI and pending review evidence |
 | Administrator / security reviewer | [User & group management](USER_GROUP_MANAGEMENT.md) | Users, groups, allow/deny permissions, site and rack access, effective-permission rules and safeguards |
+| Catalog administrator / security reviewer | [Catalog datasheet storage](CATALOG_DOCUMENTS.md) | Secure PDF upload, scanning, versioning and download of manufacturer datasheets |
+| Catalog administrator / security reviewer | [Catalog datasheet extraction](CATALOG_DATASHEET_EXTRACTION.md) | Sandboxed native and OCR extraction, candidate values with provenance, multi-model handling, job semantics and review |
 
 ## Product roadmap
 

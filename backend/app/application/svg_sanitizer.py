@@ -39,10 +39,10 @@ that is a genuine infrastructure control this implementation does not provide.""
 
 import re
 from dataclasses import dataclass, field
-from xml.etree.ElementTree import Element  # noqa: S405 — type only; parsing uses defusedxml exclusively
+from xml.etree.ElementTree import Element, TreeBuilder  # noqa: S405 — parsing uses defusedxml exclusively
 
 from defusedxml import DefusedXmlException
-from defusedxml.ElementTree import ParseError, fromstring
+from defusedxml.ElementTree import DefusedXMLParser, ParseError
 
 MAX_SVG_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_RASTER_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB — calibration-only, no parsing
@@ -80,6 +80,25 @@ class SvgRejected(Exception):
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(reason)
+
+
+class _DepthLimitedTreeBuilder(TreeBuilder):
+    """Reject excessive depth before allocating the rest of an attacker-controlled tree."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.depth = -1  # the document root is depth zero, matching _walk
+
+    def start(self, tag: str, attrs: dict[str, str]) -> Element:
+        self.depth += 1
+        if self.depth > MAX_NESTING_DEPTH:
+            raise SvgRejected(f"SVG nesting exceeds the {MAX_NESTING_DEPTH}-level depth limit")
+        return super().start(tag, attrs)
+
+    def end(self, tag: str) -> Element:
+        element = super().end(tag)
+        self.depth -= 1
+        return element
 
 
 def _looks_like_svg(content: bytes) -> bool:
@@ -121,7 +140,13 @@ def sanitize_svg(content: bytes) -> SanitizeResult:
         raise SvgRejected("file content does not appear to be SVG (magic-byte check failed)")
 
     try:
-        root = fromstring(content, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+        parser = DefusedXMLParser(
+            target=_DepthLimitedTreeBuilder(), forbid_dtd=True, forbid_entities=True, forbid_external=True
+        )
+        parser.feed(content)
+        root = parser.close()
+    except SvgRejected:
+        raise
     except DefusedXmlException as exc:
         raise SvgRejected(f"rejected by XML security controls: {exc}") from exc
     except ParseError as exc:

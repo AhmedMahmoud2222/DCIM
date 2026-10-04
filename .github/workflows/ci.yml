@@ -46,6 +46,8 @@ jobs:
       TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:dcim_dev_superuser_password@localhost:5432/dcim_test
       ENVIRONMENT: test
       PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
+      # The real-OCR extraction tests must run here, never silently skip (tests/unit/test_extraction_pipeline.py).
+      REQUIRE_REAL_OCR: "1"
       # Backend contract tests also validate the independently packaged Edge
       # scheduler constants; expose the repository root without installing the
       # Edge runtime into the backend distribution.
@@ -60,6 +62,12 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Install the OCR engine for the real-OCR extraction tests
+        # Not continue-on-error: REQUIRE_REAL_OCR=1 makes the tests fail, not skip, without it.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-eng
+          tesseract --version
       - name: Install clamd for the real-scanner tests
         # tests/integration/test_clamd_real.py runs the production scanner class against a real
         # clamd with a local EICAR signature database, and skips itself when clamd is missing.
@@ -448,6 +456,8 @@ jobs:
       TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:dcim_dev_superuser_password@localhost:5432/dcim_test
       ENVIRONMENT: test
       PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
+      # The real-OCR extraction tests must run here, never silently skip (tests/unit/test_extraction_pipeline.py).
+      REQUIRE_REAL_OCR: "1"
       PYTHONPATH: ${{ github.workspace }}
     defaults:
       run:
@@ -465,6 +475,12 @@ jobs:
         # The first place an unsupported runtime shows up: a dependency with no wheel and
         # no buildable sdist for this interpreter fails here, naming itself.
         run: pip install -e ".[dev]"
+      - name: Install the OCR engine for the real-OCR extraction tests
+        # Not continue-on-error: REQUIRE_REAL_OCR=1 makes the tests fail, not skip, without it.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-eng
+          tesseract --version
       - name: Report the resolved dependency set
         run: pip freeze
       - name: Provision least-privilege dcim_app role and database

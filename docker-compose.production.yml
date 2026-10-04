@@ -160,7 +160,7 @@ services:
         condition: service_completed_successfully
       bootstrap-privileges:
         condition: service_completed_successfully
-    command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance", "--prefetch-multiplier=1", "--max-tasks-per-child=100"]
+    command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance,extraction", "--prefetch-multiplier=1", "--max-tasks-per-child=100"]
     restart: unless-stopped
     networks:
       - dcim-internal
