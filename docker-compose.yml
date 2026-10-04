@@ -134,7 +134,7 @@ services:
         condition: service_completed_successfully
       bootstrap-privileges:
         condition: service_completed_successfully
-    command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance"]
+    command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance,extraction"]
 
   celery-beat:
     build:

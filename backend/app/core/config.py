@@ -78,6 +78,28 @@ class Settings(BaseSettings):
     clamd_port: int = 3310
     clamd_timeout_seconds: float = Field(default=30.0, gt=0)
 
+    # DCIM01 PDF datasheet import, PR-B: candidate extraction. Native text first; OCR only for pages
+    # with (almost) no native text. Everything that touches the PDF runs in a sandboxed child with
+    # these limits (see app/application/catalog_documents/extraction/sandbox.py).
+    catalog_extraction_native_wall_seconds: float = Field(default=45.0, gt=0)
+    catalog_extraction_native_cpu_seconds: int = Field(default=30, ge=1)
+    catalog_extraction_address_space_bytes: int = Field(default=1024 * 1024 * 1024, ge=64 * 1024 * 1024)
+    catalog_extraction_max_page_chars: int = Field(default=100_000, ge=1000)
+    catalog_extraction_max_total_chars: int = Field(default=1_500_000, ge=1000)
+    catalog_extraction_analysis_wall_seconds: float = Field(default=30.0, gt=0)
+    catalog_extraction_lease_seconds: int = Field(default=300, ge=30)
+    catalog_extraction_max_attempts: int = Field(default=3, ge=1)
+    # Filesystem policy (Landlock) for every extraction child: no read access to the worker's process
+    # environment or the media volume. Only turn off on a development host that has no Landlock.
+    catalog_extraction_require_landlock: bool = True
+    catalog_ocr_enabled: bool = True
+    catalog_ocr_tesseract_path: str = "/usr/bin/tesseract"
+    catalog_ocr_language: str = Field(default="eng", pattern=r"^[a-z]{3}(\+[a-z]{3}){0,2}$")
+    catalog_ocr_max_pages: int = Field(default=20, ge=0)
+    catalog_ocr_page_timeout_seconds: int = Field(default=60, ge=1)
+    catalog_ocr_max_image_pixels: int = Field(default=40_000_000, ge=1)
+    catalog_ocr_min_native_chars: int = Field(default=25, ge=0)
+
     @field_validator("database_url")
     @classmethod
     def _validate_db_url(cls, v: str) -> str:
