@@ -178,6 +178,22 @@ async def _load_document(db: AsyncSession, document_id: uuid.UUID) -> CatalogDoc
     return document
 
 
+async def require_draft_stage_access(db: AsyncSession, ctx: AuthContext, document_id: uuid.UUID) -> None:
+    """A document that is not linked to any published or retired revision is still draft-stage
+    material and needs `catalog:read_draft` on top of the caller's own document permission. Shared
+    by the file download and the extraction reads, so the two cannot disagree."""
+    non_draft = (
+        await db.execute(
+            select(CatalogRevisionDocument.id)
+            .join(CatalogModelRevision, CatalogModelRevision.id == CatalogRevisionDocument.catalog_model_revision_id)
+            .where(CatalogRevisionDocument.catalog_document_id == document_id, CatalogModelRevision.lifecycle_status != "draft")
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if non_draft is None and not ctx.has_permission("catalog:read_draft"):
+        raise ApiError(status_code=403, title="Forbidden", detail="Missing required permission: catalog:read_draft")
+
+
 # ------------------------------------------------------------------ Stage / list / read
 
 
@@ -245,16 +261,7 @@ async def download_document(
         raise ApiError(status_code=409, title="Conflict", detail="This document did not pass malware scanning.")
     if document.scan_status == "skipped" and get_settings().catalog_pdf_scan_mode == "required":
         raise ApiError(status_code=409, title="Conflict", detail="This document was stored without a malware scan.")
-    non_draft = (
-        await db.execute(
-            select(CatalogRevisionDocument.id)
-            .join(CatalogModelRevision, CatalogModelRevision.id == CatalogRevisionDocument.catalog_model_revision_id)
-            .where(CatalogRevisionDocument.catalog_document_id == document_id, CatalogModelRevision.lifecycle_status != "draft")
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if non_draft is None and not ctx.has_permission("catalog:read_draft"):
-        raise ApiError(status_code=403, title="Forbidden", detail="Missing required permission: catalog:read_draft")
+    await require_draft_stage_access(db, ctx, document_id)
     try:
         content = get_document_storage_backend().read(document.storage_key)
     except FileNotFoundError as exc:

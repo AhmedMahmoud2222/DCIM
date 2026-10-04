@@ -1,7 +1,7 @@
 # Asset decommission timestamp guard
 
 Issue #75's row-lock remediation shipped in PR #71. Revision
-`0033_asset_decommission_guard`, following `0032_catalog_documents`, adds the remaining
+`0034_asset_decommission_guard`, following `0033_catalog_extraction`, adds the remaining
 database guard:
 
 `decommissioned_at IS NULL OR lifecycle_status IN ('decommissioned', 'removed')`.

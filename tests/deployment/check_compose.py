@@ -17,6 +17,9 @@ assert 'dcim-internal' in s['clamav']['networks']
 for service in ('backend', 'celery-worker'):
     assert any(m['source'] == 'catalog_media' and m['target'] == '/app/media' for m in s[service]['volumes']), service
     assert s[service]['environment']['CATALOG_PDF_SCAN_MODE'] == 'required', service
+for service_name in ('celery-worker',):
+    command = s[service_name]['command']
+    assert 'extraction' in command[command.index('-Q') + 1].split(','), 'the worker must consume the extraction queue'
 assert cfg['networks']['dcim-internal']['driver'] == 'bridge'
 assert not cfg['networks']['dcim-internal'].get('internal', False)
 keys = {s[x]['environment']['CREDENTIAL_ENCRYPTION_KEY'] for x in ('migrate','backend','celery-worker','celery-beat')}

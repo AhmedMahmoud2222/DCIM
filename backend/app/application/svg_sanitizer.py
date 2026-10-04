@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from xml.etree.ElementTree import Element, TreeBuilder  # noqa: S405 — parsing uses defusedxml exclusively
 
 from defusedxml import DefusedXmlException
-from defusedxml.ElementTree import ParseError, XMLParser
+from defusedxml.ElementTree import DefusedXMLParser, ParseError
 
 MAX_SVG_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_RASTER_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB — calibration-only, no parsing
@@ -83,23 +83,19 @@ class SvgRejected(Exception):
 
 
 class _DepthLimitedTreeBuilder(TreeBuilder):
-    """Reject excessive nesting while parsing, before allocating the entire tree.
-
-    The SVG root is depth zero, matching the existing traversal limit. This also
-    bounds nested content inside stripped tags and text nodes before traversal.
-    """
+    """Reject excessive depth before allocating the rest of an attacker-controlled tree."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.depth = -1
+        self.depth = -1  # the document root is depth zero, matching _walk
 
-    def start(self, tag, attrs):
+    def start(self, tag: str, attrs: dict[str, str]) -> Element:
         self.depth += 1
         if self.depth > MAX_NESTING_DEPTH:
             raise SvgRejected(f"SVG nesting exceeds the {MAX_NESTING_DEPTH}-level depth limit")
         return super().start(tag, attrs)
 
-    def end(self, tag):
+    def end(self, tag: str) -> Element:
         element = super().end(tag)
         self.depth -= 1
         return element
@@ -144,8 +140,8 @@ def sanitize_svg(content: bytes) -> SanitizeResult:
         raise SvgRejected("file content does not appear to be SVG (magic-byte check failed)")
 
     try:
-        parser = XMLParser(
-            target=_DepthLimitedTreeBuilder(), forbid_dtd=True, forbid_entities=True, forbid_external=True,
+        parser = DefusedXMLParser(
+            target=_DepthLimitedTreeBuilder(), forbid_dtd=True, forbid_entities=True, forbid_external=True
         )
         parser.feed(content)
         root = parser.close()

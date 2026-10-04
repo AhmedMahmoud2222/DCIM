@@ -28,6 +28,7 @@ from app.domain.catalog.designer_models import (  # noqa: F401
     PowerSupplyTemplate,
 )
 from app.domain.catalog.document_models import CatalogDocument, CatalogRevisionDocument  # noqa: F401
+from app.domain.catalog.extraction_models import CatalogExtractionCandidate, CatalogExtractionJob  # noqa: F401
 from app.domain.catalog.models import (  # noqa: F401
     EquipmentModel,
     EquipmentModelRevision,

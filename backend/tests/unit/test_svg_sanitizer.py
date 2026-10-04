@@ -159,6 +159,21 @@ def test_sanitize_svg_rejects_extreme_nesting_depth_quickly_and_without_recursio
         assert time.monotonic() - t0 < 2.0, f"depth {depth} took too long to reject"
 
 
+def test_sanitize_svg_rejects_depth_before_parsing_the_remaining_input():
+    # A whole-tree parse reaches the malformed suffix first. The depth guard must
+    # stop at the first excessive opening tag, without building the rest of the tree.
+    content = b"<svg>" + b"<g>" * (MAX_NESTING_DEPTH + 1) + b"<broken"
+    with pytest.raises(SvgRejected, match="depth limit"):
+        sanitize_svg(content)
+
+
+def test_sanitize_svg_depth_limit_also_bounds_stripped_subtrees():
+    # A stripped subtree is still parsed before the sanitizer walks it.
+    content = b"<svg><script>" + b"<g>" * MAX_NESTING_DEPTH + b"</g>" * MAX_NESTING_DEPTH + b"</script></svg>"
+    with pytest.raises(SvgRejected, match="depth limit"):
+        sanitize_svg(content)
+
+
 def test_sanitize_svg_preserves_shape_order_after_switching_to_iterative_traversal():
     """The rewrite from a recursive to an iterative walk must not change the resulting
     shape order for any document that doesn't hit the new depth limit."""

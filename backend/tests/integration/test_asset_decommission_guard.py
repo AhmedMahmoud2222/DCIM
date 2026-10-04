@@ -15,7 +15,7 @@ from app.domain.identity.models import LIFECYCLE_STATUSES, ManagedAsset
 
 CONSTRAINT = "ck_managed_asset_decommissioned_at_terminal"
 STAMP = datetime(2026, 1, 1)
-MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0033_asset_decommission_guard.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0034_asset_decommission_guard.py"
 
 
 def _run_migration(connection, direction):
