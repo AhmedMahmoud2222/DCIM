@@ -116,7 +116,7 @@ async def test_delegate_cannot_deny_real_administrators_through_group_members(cl
 
     resp = await client.put(f"/api/v1/groups/{deny}/members", json={"user_ids": [admin_id]}, headers=delegate)
 
-    assert resp.status_code == 403
+    assert resp.status_code == 404
     assert (await client.get("/api/v1/users", headers=admin)).status_code == 200
 
 
@@ -220,7 +220,7 @@ async def test_assigning_an_existing_wider_group_is_refused(client, admin, auth_
         "/api/v1/users", json={"email": "acc@example.com", "full_name": "A", "password": PW, "group_ids": [wide_group]}, headers=delegate
     )
 
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------- H4: groups and users are scoped objects
@@ -312,14 +312,22 @@ async def test_concurrent_requests_cannot_remove_every_administrator(db_engine, 
             ha, hb = await _login(c, "admin-a@example.com"), await _login(c, "admin-b@example.com")
             deny_a = await _group(c, ha, deny=["user:manage"])
             deny_b = await _group(c, hb, deny=["user:manage"])
-            # Each request is individually safe (the actor stays an administrator); together they are not.
+            # Each request would be individually safe (the actor stays an administrator); together they are not.
+            # Since PR #67 two global Administrators are peers and cannot administer each other, so neither
+            # request is accepted: both are refused, nothing is written and both stay administrators. The
+            # last-administrator check itself is covered at helper level in test_user_groups.py, and the
+            # serialisation of authority changes in tests/integration/test_pr67_authority_serialization.py.
             first, second = await asyncio.gather(
                 c.put(f"/api/v1/groups/{deny_a}/members", json={"user_ids": [str(b.id)]}, headers=ha),
                 c.put(f"/api/v1/groups/{deny_b}/members", json={"user_ids": [str(a.id)]}, headers=hb),
             )
-        assert sorted([first.status_code, second.status_code]) == [200, 409]
+        assert [first.status_code, second.status_code] == [403, 403], (first.text, second.text)
         committed = (await db_session.execute(text("SELECT count(*) FROM user_group_member"))).scalar_one()
-        assert committed == 1, "the losing request rolled back completely"
+        assert committed == 0, "neither request wrote a membership"
+        active_admins = (
+            await db_session.execute(text("SELECT count(*) FROM app_user WHERE id IN (:a, :b) AND is_active"), {"a": a.id, "b": b.id})
+        ).scalar_one()
+        assert active_admins == 2, "both administrators remain"
     finally:
         app.dependency_overrides.clear()
 
