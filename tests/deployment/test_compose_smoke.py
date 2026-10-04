@@ -118,5 +118,31 @@ class ScannerMessageTests(unittest.TestCase):
                 smoke.verify_clamav()
 
 
+class OcrSandboxMessageTests(unittest.TestCase):
+    def test_every_probe_exit_code_has_a_named_failure(self):
+        probe = (SCRIPT.parent / 'ocr_sandbox_probe.py').read_text()
+        for code in smoke.OCR_EXIT_MESSAGES:
+            self.assertIn(f'sys.exit({code})', probe)
+        self.assertTrue(all(m.startswith('OCR') for m in smoke.OCR_EXIT_MESSAGES.values()))
+
+    def verify(self, code):
+        with mock.patch.object(smoke, 'context', return_value=(['docker'], {}, None, 'p')), \
+                mock.patch.object(smoke, 'container', return_value='cid'), \
+                mock.patch.object(smoke, 'state', return_value='running'), \
+                mock.patch.object(smoke, 'compose_exec', return_value=done(stdout='detail', code=code)):
+            smoke.verify_ocr_sandbox()
+
+    def test_each_failure_class_is_named(self):
+        for code, pattern in ((20, 'not installed'), (21, 'seccomp network filter cannot be installed'),
+                              (22, 'could still create a network socket'), (23, 'did not read a rendered scanned page'),
+                              (24, 'Landlock filesystem policy cannot be enforced'), (25, "read its parent's process environment"),
+                              (26, 'signal other processes or modify other files')):
+            with self.assertRaisesRegex(RuntimeError, pattern):
+                self.verify(code)
+
+    def test_success_passes(self):
+        self.verify(0)
+
+
 if __name__ == '__main__':
     unittest.main()

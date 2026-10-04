@@ -29,6 +29,7 @@ celery_app.conf.update(
         "reports": {},
         "notifications": {},
         "high_priority": {},
+        "extraction": {},
     },
     beat_schedule={
         "dispatch-outbox-events": {
@@ -51,6 +52,11 @@ celery_app.conf.update(
             "schedule": 86400.0,
             "options": {"queue": "maintenance"},
         },
+        "requeue-stuck-catalog-extraction-jobs": {
+            "task": "app.infrastructure.tasks.catalog_extraction.requeue_stuck_catalog_extraction_jobs",
+            "schedule": 60.0,
+            "options": {"queue": "default"},
+        },
         # SEC (Codex PR #50 review, ROUND 3, finding #1): half of
         # BULK_IMPORT_COMMIT_LEASE_SECONDS (app/application/bulk_import/limits.py), so a
         # commit stuck by a crashed worker is typically caught within about 1.5x the lease
@@ -70,6 +76,7 @@ celery_app.conf.imports = (
     "app.infrastructure.tasks.maintenance",
     "app.infrastructure.tasks.floorplan_import",
     "app.infrastructure.tasks.bulk_import",
+    "app.infrastructure.tasks.catalog_extraction",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
 # does not fit this project's layout (multiple task modules directly under
@@ -88,6 +95,7 @@ celery_app.conf.imports = (
 import app.db.models  # noqa: E402,F401
 import app.infrastructure.tasks.audit_partition_maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.bulk_import  # noqa: E402,F401
+import app.infrastructure.tasks.catalog_extraction  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
 import app.infrastructure.tasks.maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401

@@ -18,6 +18,10 @@ COPY app ./app
 RUN pip install --prefix=/install .
 
 FROM base AS runtime
+# OCR engine for scanned datasheets (Tesseract, Apache-2.0). It is only ever run by the sandboxed
+# OCR child (rlimits, no sockets: see app/application/catalog_documents/extraction/sandbox.py).
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /install /usr/local
 COPY app ./app
 COPY migrations ./migrations

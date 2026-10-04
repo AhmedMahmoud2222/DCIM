@@ -20,7 +20,7 @@ print('Workflow input handling and dependent record checks passed')
 # The deployment gate must keep exercising ClamAV and the shared media volume at runtime.
 gate = yaml.safe_load(Path('.github/workflows/deployment-validation.yml').read_text())
 gate_runs = ' '.join(step.get('run', '') for step in gate['jobs']['compose-smoke']['steps'])
-for command in ('compose_smoke.py verify_clamav', 'compose_smoke.py verify_shared_media'):
+for command in ('compose_smoke.py verify_clamav', 'compose_smoke.py verify_shared_media', 'compose_smoke.py verify_ocr_sandbox'):
     assert command in gate_runs, f'deployment validation no longer runs {command}'
 print('Deployment validation runs the ClamAV and shared-media runtime checks')
 
