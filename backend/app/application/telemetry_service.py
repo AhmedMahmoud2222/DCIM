@@ -111,7 +111,7 @@ async def ingest_reading(
 
         reading = await db.get(TelemetryReading, reading_id)
         assert reading is not None
-        await evaluate_reading(db, reading, legacy_value=float(raw_value * source_scale))
+        await evaluate_reading(db, reading)
         # A delayed edge replay for a day already compacted is incorporated into the
         # authoritative daily statistics; occurred_at, never receipt time, chooses it.
         from app.application.telemetry_retention import merge_late_reading

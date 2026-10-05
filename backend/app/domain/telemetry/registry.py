@@ -75,6 +75,7 @@ UNITS = {
     "in": UnitDefinition("in", "length", Decimal("0.0254")),
     "ft": UnitDefinition("ft", "length", Decimal("0.3048")),
     "kg": UnitDefinition("kg", "mass"),
+    "g": UnitDefinition("g", "mass", Decimal("0.001")),
     "lb": UnitDefinition("lb", "mass", Decimal("0.45359237")),
 }
 

@@ -6,6 +6,7 @@ reading has been inserted in the same transaction.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,9 +15,10 @@ from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.telemetry.models import TelemetryReading
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_value, validate_metric_unit
 
 
-def condition_matches(rule_type: str, threshold: float | None, value: float) -> bool:
+def condition_matches(rule_type: str, threshold: Decimal | float | None, value: Decimal | float) -> bool:
     if rule_type == "threshold_high":
         if threshold is None:
             raise ValueError("threshold rule lacks a threshold")
@@ -34,7 +36,36 @@ def subject_for(reading: TelemetryReading) -> str:
     return f"{reading.integration_id}:{reading.external_identifier}:{reading.metric}"
 
 
-async def evaluate_reading(db: AsyncSession, reading: TelemetryReading, *, legacy_value: float | None = None) -> None:
+def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal, str, str | None]:
+    """Compare in the rule's authored unit without reinterpreting its threshold.
+
+    Pre-registry rules have no unit: their historical contract is the mapping's
+    scaled source value, not an inferred canonical unit. New readings retain that
+    provenance. An explicit legacy rule unit instead pins the authored semantics.
+    """
+    if rule.metric != reading.metric:
+        raise ValueError("Alarm rule and reading metrics differ.")
+    if rule.registry_version is not None and rule.unit is None:
+        raise ValueError("Versioned alarm rule lacks an explicit threshold unit.")
+    if rule.unit is not None:
+        # Validate both dimensions and registry versions before comparing. A legacy
+        # explicit unit uses the active physical contract; its threshold is unchanged.
+        version = rule.registry_version if rule.registry_version is not None else REGISTRY_VERSION
+        validate_metric_unit(rule.metric, rule.unit, registry_version=version)
+        validate_metric_unit(rule.metric, reading.unit, registry_version=version)
+        if reading.registry_version is not None:
+            validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
+        return convert_value(Decimal(str(reading.value)), reading.unit, rule.unit), rule.unit, rule.registry_version
+    if reading.registry_version is None:
+        return Decimal(str(reading.value)), reading.unit, None
+    validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
+    if reading.raw_value is None or reading.raw_unit is None or reading.source_scale is None:
+        raise ValueError("Legacy alarm rule requires scaled-source telemetry provenance.")
+    validate_metric_unit(reading.metric, reading.raw_unit, registry_version=reading.registry_version)
+    return Decimal(str(reading.raw_value)) * Decimal(str(reading.source_scale)), reading.raw_unit, None
+
+
+async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
     """Open, retain, or clear alarms for one authoritative telemetry reading."""
     rules = (
         (
@@ -62,15 +93,15 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading, *, legac
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        comparison_value = float(reading.value)
-        comparison_unit = reading.unit
-        comparison_version = reading.registry_version
-        if rule.registry_version is None and legacy_value is not None:
-            comparison_value = legacy_value
-            comparison_unit = reading.raw_unit or reading.unit
-            comparison_version = None
-        matches = condition_matches(rule.rule_type, float(rule.threshold) if rule.threshold is not None else None,
-                                    comparison_value)
+        comparison_value, comparison_unit, comparison_version = comparison_for(rule, reading)
+        matches = condition_matches(rule.rule_type, rule.threshold, comparison_value)
+        comparison_details = {
+            "metric": reading.metric,
+            "unit": comparison_unit,
+            "registry_version": comparison_version,
+            "condition_occurred_at": reading.occurred_at.isoformat(),
+            "central_received_at": reading.received_at.isoformat(),
+        }
         # Collector delivery is at-least-once and may be out of occurrence order.
         # Never let an older reading overwrite a lifecycle decision made from a
         # newer observation.  The original occurred_at remains the operational
@@ -105,13 +136,7 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading, *, legac
                 status="ACTIVE",
                 opened_at=reading.occurred_at,
                 last_value=comparison_value,
-                details={
-                    "metric": reading.metric,
-                    "unit": comparison_unit,
-                    "registry_version": comparison_version,
-                    "condition_occurred_at": reading.occurred_at.isoformat(),
-                    "central_received_at": reading.received_at.isoformat(),
-                },
+                details=comparison_details,
             )
             db.add(alarm)
             await db.flush()
@@ -119,11 +144,13 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading, *, legac
         elif matches and open_alarm is not None:
             open_alarm.telemetry_reading_id = reading.id
             open_alarm.last_value = comparison_value
+            open_alarm.details = comparison_details
         elif not matches and open_alarm is not None:
             open_alarm.status = "CLEARED"
             open_alarm.cleared_at = reading.occurred_at
             open_alarm.telemetry_reading_id = reading.id
             open_alarm.last_value = comparison_value
+            open_alarm.details = comparison_details
             await _record_transition(db, open_alarm, "alarm.clear", "AlarmCleared")
 
 

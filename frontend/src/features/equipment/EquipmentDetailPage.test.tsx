@@ -130,4 +130,25 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     expect(screen.getByRole("img", { name: "Trend from 98 to 99 %" })).toBeInTheDocument();
     expect(screen.queryByText(/0\.98 avg/)).not.toBeInTheDocument();
   });
+  it("renders alarm history using presentation values and units", async () => {
+    vi.mocked(telemetryApi.getAlarmHistory).mockResolvedValue({ items: [
+      {
+        id: "availability-alarm", rule_id: "rule-1", integration_id: "integration-1", managed_asset_id: "eq-1",
+        subject_key: "availability", status: "CLEARED", opened_at: "2026-01-01T00:00:00Z",
+        acknowledged_at: null, cleared_at: "2026-01-01T01:00:00Z",
+        last_value: 1, unit: "1", presentation_value: 100, presentation_unit: "%",
+      },
+      {
+        id: "temperature-alarm", rule_id: "rule-2", integration_id: "integration-1", managed_asset_id: "eq-1",
+        subject_key: "temperature", status: "CLEARED", opened_at: "2026-01-01T00:00:00Z",
+        acknowledged_at: null, cleared_at: "2026-01-01T01:00:00Z",
+        last_value: 77, unit: "degF", presentation_value: 25, presentation_unit: "degC",
+      },
+    ], next_cursor: null });
+    renderWithProviders(<EquipmentDetailPage />, routeOptions);
+    expect(await screen.findByText("100%")).toBeInTheDocument();
+    expect(screen.getByText("25 degC")).toBeInTheDocument();
+    expect(screen.queryByText("77")).not.toBeInTheDocument();
+  });
+
 });

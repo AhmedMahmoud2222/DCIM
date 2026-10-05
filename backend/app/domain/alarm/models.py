@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -27,7 +28,7 @@ class AlarmRule(Base, UUIDPkMixin, TimestampMixin):
     integration_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("integration.id", ondelete="CASCADE"), nullable=False)
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     rule_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    threshold: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    threshold: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
     unit: Mapped[str | None] = mapped_column(String(32))
     registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default=REGISTRY_VERSION)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
@@ -54,5 +55,5 @@ class Alarm(Base, UUIDPkMixin):
     acknowledged_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("app_user.id", ondelete="SET NULL"))
     cleared_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    last_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    last_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
