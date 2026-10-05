@@ -12,8 +12,9 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
+from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION
 
-CANONICAL_METRICS = ("temperature_c", "humidity_percent", "power_kw", "load_percent", "availability")
+CANONICAL_METRICS = tuple(METRIC_REGISTRY)
 
 
 def telemetry_series_key(
@@ -50,6 +51,7 @@ class IntegrationMetricMapping(Base, UUIDPkMixin, TimestampMixin):
     canonical_metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     scale: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False, default=1)
+    registry_version: Mapped[str] = mapped_column(String(16), nullable=False, default=REGISTRY_VERSION)
     label: Mapped[str | None] = mapped_column(String(128))
 
 
@@ -73,6 +75,9 @@ class TelemetryReading(Base, UUIDPkMixin):
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    raw_value: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    raw_unit: Mapped[str | None] = mapped_column(String(32))
+    registry_version: Mapped[str] = mapped_column(String(16), nullable=False, default=REGISTRY_VERSION)
     occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

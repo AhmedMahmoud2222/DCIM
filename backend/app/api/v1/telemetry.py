@@ -39,6 +39,14 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.models import CANONICAL_METRICS, DailyTelemetryAggregate, IntegrationMetricMapping, TelemetryReading
+from app.domain.telemetry.registry import (
+    METRIC_REGISTRY,
+    REGISTRY_VERSION,
+    UnitDimensionMismatch,
+    UnknownMetric,
+    UnknownUnit,
+    validate_metric_unit,
+)
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 MAX_HISTORY_POINTS = 1000
@@ -77,6 +85,9 @@ class TelemetryOut(BaseModel):
     metric: str
     unit: str
     value: float
+    raw_value: float | None = None
+    raw_unit: str | None = None
+    registry_version: str = REGISTRY_VERSION
     occurred_at: datetime
     received_at: datetime
     expected_poll_interval_seconds: int | None = None
@@ -101,6 +112,27 @@ class MetricMappingIn(BaseModel):
 
 class MetricMappingOut(MetricMappingIn):
     id: uuid.UUID
+    registry_version: str = REGISTRY_VERSION
+
+
+class MetricRegistryOut(BaseModel):
+    version: str
+    metrics: dict[str, dict[str, str]]
+
+
+@router.get("/metric-registry", response_model=MetricRegistryOut)
+async def get_metric_registry(ctx=Depends(require_permission("telemetry:read"))) -> MetricRegistryOut:
+    return MetricRegistryOut(
+        version=REGISTRY_VERSION,
+        metrics={
+            key: {
+                "dimension": definition.dimension,
+                "canonical_unit": definition.canonical_unit,
+                "presentation_unit": definition.presentation_unit,
+            }
+            for key, definition in METRIC_REGISTRY.items()
+        },
+    )
 
 
 @router.post("/mappings", response_model=MetricMappingOut, status_code=201)
@@ -111,6 +143,12 @@ async def create_metric_mapping(
 ) -> MetricMappingOut:
     if body.canonical_metric not in CANONICAL_METRICS:
         raise ApiError(status_code=422, title="Invalid canonical metric", detail="Metric is not supported by the MVP catalog.")
+    try:
+        validate_metric_unit(body.canonical_metric, body.unit)
+    except UnknownUnit as exc:
+        raise ApiError(status_code=422, title="Invalid source unit", detail=str(exc)) from exc
+    except (UnitDimensionMismatch, UnknownMetric) as exc:
+        raise ApiError(status_code=422, title="Metric/unit mismatch", detail=str(exc)) from exc
     if body.managed_asset_id is not None and await db.get(ManagedAsset, body.managed_asset_id) is None:
         raise ApiError(status_code=422, title="Invalid managed asset", detail="managed_asset_id does not exist.")
     mapping = IntegrationMetricMapping(id=uuid.uuid4(), **body.model_dump())
@@ -134,7 +172,7 @@ async def create_metric_mapping(
         payload={"integration_id": str(mapping.integration_id), "canonical_metric": mapping.canonical_metric},
     )
     await db.commit()
-    return MetricMappingOut(id=mapping.id, **body.model_dump())
+    return MetricMappingOut(id=mapping.id, registry_version=mapping.registry_version, **body.model_dump())
 
 
 @router.get("/mappings", response_model=list[MetricMappingOut])
@@ -156,6 +194,7 @@ async def list_metric_mappings(
             unit=row.unit,
             scale=float(row.scale),
             label=row.label,
+            registry_version=row.registry_version,
         )
         for row in (await db.execute(stmt)).scalars().all()
     ]
@@ -284,6 +323,9 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         metric=row.metric,
         unit=row.unit,
         value=float(row.value),
+        raw_value=None if row.raw_value is None else float(row.raw_value),
+        raw_unit=row.raw_unit,
+        registry_version=row.registry_version,
         occurred_at=row.occurred_at,
         received_at=row.received_at,
         expected_poll_interval_seconds=poll_interval_seconds,

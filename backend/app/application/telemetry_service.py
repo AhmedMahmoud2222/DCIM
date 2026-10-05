@@ -8,6 +8,7 @@ from the MVP `TelemetryReading` pipeline above)."""
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -23,6 +24,7 @@ from app.domain.telemetry.mapping_models import (
     TelemetryLatestStatus,
 )
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading, telemetry_series_key
+from app.domain.telemetry.registry import convert_to_canonical
 
 
 class MetricMappingNotFound(ValueError):
@@ -57,6 +59,9 @@ async def ingest_reading(
     ).scalar_one_or_none()
     if mapping is None:
         raise MetricMappingNotFound("No metric mapping exists for this integration source identifier.")
+    raw_value = Decimal(str(value))
+    scaled_value = raw_value * Decimal(str(mapping.scale))
+    canonical = convert_to_canonical(mapping.canonical_metric, scaled_value, mapping.unit)
     received_at = datetime.now(UTC)
     statement = (
         insert(TelemetryReading)
@@ -68,12 +73,15 @@ async def ingest_reading(
             managed_asset_id=mapping.managed_asset_id,
             external_identifier=external_identifier,
             series_key=telemetry_series_key(
-                integration_id, mapping.managed_asset_id, external_identifier, mapping.canonical_metric, mapping.unit
+                integration_id, mapping.managed_asset_id, external_identifier, mapping.canonical_metric, canonical.unit
             ),
             dedup_key=dedup_key,
             metric=mapping.canonical_metric,
-            unit=mapping.unit,
-            value=value * float(mapping.scale),
+            unit=canonical.unit,
+            value=canonical.value,
+            raw_value=raw_value,
+            raw_unit=canonical.raw_unit,
+            registry_version=canonical.registry_version,
             occurred_at=occurred_at,
             received_at=received_at,
             attributes=attributes or {},

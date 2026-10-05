@@ -9,6 +9,9 @@ export interface TelemetryReading {
   metric: string;
   unit: string;
   value: number;
+  raw_value?: number | null;
+  raw_unit?: string | null;
+  registry_version?: string;
   occurred_at: string;
   received_at: string;
   expected_poll_interval_seconds?: number | null;
