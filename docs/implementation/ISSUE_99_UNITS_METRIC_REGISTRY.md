@@ -18,8 +18,12 @@ Do not merge until exact-head CI and independent architecture/data-integrity rev
 Extraction remains lossless: its candidates keep the manufacturer's `raw_value`,
 `raw_unit`, exact source text and page, and do not convert during parsing. Before #109
 applies an accepted candidate, it must call
-`convert_catalog_candidate(candidate.field_key, Decimal(str(candidate.value)), candidate.unit)`
-from the canonical registry. That executable field contract converts power fields to
+`convert_extracted_catalog_candidate(candidate)` from
+`app.application.catalog_documents.extraction.unit_handoff`. The adapter uses
+`value_numeric` only for finite scalar numeric candidates; missing numeric values,
+text candidates and populated `value_max` ranges are rejected for explicit selection.
+It preserves the parser's exact `raw_value` and `raw_unit` separately from the numeric
+source value and normalized source unit. That executable field contract converts power fields to
 W, dimensions to mm, and weights to kg while retaining extracted provenance. Missing,
 unknown or dimensionally incompatible units and fields are application errors;
 they must never be guessed. The executable parser-to-registry contract is covered with
@@ -39,3 +43,13 @@ Existing alarm rules also remain unversioned and compare their thresholds with t
 pre-registry scaled source quantity. New rules are explicitly v1 and use the metric's
 canonical unit. This prevents a historical Fahrenheit or watt threshold from silently
 changing meaning when new telemetry is stored canonically.
+
+
+Alarm comparison is dimension-safe: rules with explicit units compare converted
+stored readings in that authored unit without changing thresholds. Unversioned
+rules with no unit retain their historical per-source scaled quantity; canonical
+readings must provide raw value/unit/scale provenance to reconstruct that quantity.
+Missing provenance, unknown versions and incompatible explicit units are errors.
+Alarm value and unit/version metadata change together on active updates and clears.
+Events, equipment alarm history and dashboard alarms render presentation fields;
+CSV includes those fields alongside the stored value/unit for compatibility.
