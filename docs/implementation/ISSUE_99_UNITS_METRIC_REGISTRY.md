@@ -49,3 +49,11 @@ Alarm comparison converts each stored reading into the fixed rule unit. It never
 scales or canonicalizes the reading a second time, and source-unit changes cannot
 reinterpret thresholds. Alarm value and details change together in that unit.
 Clients render presentation fields; event CSV also retains stored values and units.
+
+
+Collector batches isolate each reading and all of its alarm work in a savepoint.
+Incompatible unit/version/provenance contracts return a per-record
+`INCOMPATIBLE_TELEMETRY_UNITS` rejection; valid peer records remain accepted and a
+rejected insert cannot become a duplicate on retry. Historical trends with mixed
+presentation units are explicitly withheld rather than plotted under one unit label;
+the individual history values and units remain visible.

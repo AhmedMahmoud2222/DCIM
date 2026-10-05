@@ -68,3 +68,52 @@ async def test_ingestion_opens_and_clears_in_authored_rule_units(
     assert reading.raw_unit == source_unit
     assert reading.source_scale == 10
     assert reading.registry_version == mapping_version
+
+
+async def test_batch_incompatible_legacy_units_reject_only_bad_record_and_roll_back_its_alarm_work(db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.api.v1.telemetry import TelemetryBatchIn, ingest_collector_telemetry
+
+    now = datetime.now(UTC)
+    collector = Collector(id=uuid.uuid4(), name=uuid.uuid4().hex, collector_type="central", status="active",
+                          secret_ciphertext="test", secret_rotated_at=now)
+    integration = Integration(id=uuid.uuid4(), name=uuid.uuid4().hex, integration_type="snmp", target_host="192.0.2.1",
+                              config={}, poll_interval_seconds=60)
+    db_session.add_all([collector, integration])
+    await db_session.flush()
+    good = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="good",
+                                    canonical_metric="temperature_c", unit="degF", scale=1)
+    bad = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="bad",
+                                   canonical_metric="temperature_c", unit="W", scale=1)
+    canonical = AlarmRule(id=uuid.uuid4(), integration_id=integration.id, metric="temperature_c", rule_type="threshold_high",
+                          threshold=Decimal("30"), unit="degC", name="canonical")
+    db_session.add_all([good, bad, canonical])
+    await db_session.flush()
+    await db_session.execute(text("UPDATE integration_metric_mapping SET registry_version = NULL WHERE integration_id = :id"),
+                             {"id": integration.id})
+    await db_session.refresh(good)
+    await db_session.refresh(bad)
+
+    async def assigned(_db, _integration_id):
+        return SimpleNamespace(collector_id=collector.id)
+
+    monkeypatch.setattr("app.application.collector_service.current_assignment", assigned)
+    body = TelemetryBatchIn(records=[
+        {"integration_id": integration.id, "source_identifier": source, "external_identifier": source,
+         "dedup_key": source, "occurred_at": now, "value": 95}
+        for source in ["bad", "good"]
+    ])
+    result = await ingest_collector_telemetry(db_session, collector=collector, body=body)
+    assert [(ack.dedup_key, ack.status, ack.error) for ack in result.results] == [
+        ("bad", "rejected", "INCOMPATIBLE_TELEMETRY_UNITS"), ("good", "accepted", None),
+    ]
+    readings = (await db_session.execute(select(TelemetryReading))).scalars().all()
+    assert len(readings) == 1
+    assert readings[0].dedup_key == "good"
+    alarms = (await db_session.execute(select(Alarm))).scalars().all()
+    assert len(alarms) == 1
+    assert alarms[0].telemetry_reading_id == readings[0].id
+    # Rejected inserts were rolled back, not silently persisted and ACKed duplicate on retry.
+    retry = await ingest_collector_telemetry(db_session, collector=collector, body=body)
+    assert [ack.status for ack in retry.results] == ["rejected", "duplicate"]

@@ -19,6 +19,10 @@ from app.domain.telemetry.models import TelemetryReading
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_value, validate_metric_unit
 
 
+class AlarmUnitCompatibilityError(ApiError):
+    """An explicit 422 when telemetry cannot preserve an alarm threshold's units."""
+
+
 def condition_matches(rule_type: str, threshold: Decimal | float | None, value: Decimal | float) -> bool:
     if rule_type == "threshold_high":
         if threshold is None:
@@ -56,7 +60,7 @@ def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal,
         if reading.registry_version is not None:
             validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
         return convert_value(Decimal(str(reading.value)), reading.unit, rule.unit), rule.unit, rule.registry_version
-    raise ApiError(status_code=422, title="Unresolved legacy alarm unit",
+    raise AlarmUnitCompatibilityError(status_code=422, title="Unresolved legacy alarm unit",
                    detail=f"Alarm rule {rule.id} requires an explicit threshold unit before evaluation.")
 
 
@@ -92,7 +96,7 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
         try:
             comparison_value, comparison_unit, comparison_version = comparison_for(rule, reading)
         except ValueError as error:
-            raise ApiError(status_code=422, title="Incompatible alarm telemetry units",
+            raise AlarmUnitCompatibilityError(status_code=422, title="Incompatible alarm telemetry units",
                            detail=f"Alarm rule {rule.id} cannot evaluate this metric/unit/registry combination.") from error
         matches = condition_matches(rule.rule_type, rule.threshold, comparison_value)
         comparison_details = {

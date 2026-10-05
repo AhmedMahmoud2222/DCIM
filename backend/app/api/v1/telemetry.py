@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.application.alarm_service import AlarmUnitCompatibilityError
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -44,6 +45,7 @@ from app.domain.telemetry.registry import (
     REGISTRY_VERSION,
     UnitDimensionMismatch,
     UnknownMetric,
+    UnknownRegistryVersion,
     UnknownUnit,
     convert_to_presentation,
     validate_metric_unit,
@@ -222,20 +224,25 @@ async def ingest_collector_telemetry(
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="NOT_ASSIGNED"))
             continue
         try:
-            outcome = await ingest_reading(
-                db,
-                collector_id=collector.id,
-                integration_id=record.integration_id,
-                dedup_key=record.dedup_key,
-                external_identifier=record.external_identifier,
-                source_identifier=record.source_identifier,
-                occurred_at=record.occurred_at,
-                value=record.value,
-                attributes=record.attributes,
-            )
+            # Alarm compatibility may fail after inserting a reading or updating
+            # another rule. Reject this record atomically without losing valid peers.
+            async with db.begin_nested():
+                outcome = await ingest_reading(
+                    db,
+                    collector_id=collector.id,
+                    integration_id=record.integration_id,
+                    dedup_key=record.dedup_key,
+                    external_identifier=record.external_identifier,
+                    source_identifier=record.source_identifier,
+                    occurred_at=record.occurred_at,
+                    value=record.value,
+                    attributes=record.attributes,
+                )
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="duplicate" if outcome.duplicate else "accepted"))
         except MetricMappingNotFound:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="UNKNOWN_METRIC_MAPPING"))
+        except (AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion):
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INCOMPATIBLE_TELEMETRY_UNITS"))
     await db.commit()
     return TelemetryBatchOut(results=results)
 

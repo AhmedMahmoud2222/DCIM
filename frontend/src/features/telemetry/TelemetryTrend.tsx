@@ -4,6 +4,9 @@ import { TelemetryReading } from "@/features/telemetry/api";
  * asks the browser to render an unbounded telemetry stream. */
 export function TelemetryTrend({ points }: { points: TelemetryReading[] }) {
   if (points.length < 2) return null;
+  if (new Set(points.map((point) => point.presentation_unit)).size > 1) {
+    return <p className="mb-3 text-xs text-slate-400">This history contains multiple units. Review the values and units below.</p>;
+  }
   const values = points.map((point) => point.presentation_value);
   const unit = points[0].presentation_unit;
   const min = Math.min(...values); const max = Math.max(...values); const range = max - min || 1;
