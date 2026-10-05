@@ -57,3 +57,7 @@ Incompatible unit/version/provenance contracts return a per-record
 rejected insert cannot become a duplicate on retry. Historical trends with mixed
 presentation units are explicitly withheld rather than plotted under one unit label;
 the individual history values and units remain visible.
+
+Versioned telemetry series use a `registry:<version>:` prefix. Legacy series keys
+remain byte-for-byte unchanged and start with the integration UUID. The namespaces
+cannot collide even when a previously unrestricted legacy unit ends in `:1`.

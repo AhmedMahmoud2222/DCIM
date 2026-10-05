@@ -16,3 +16,19 @@ def test_telemetry_record_preserves_occurrence_and_uses_explicit_dedup_key():
 
     assert record.dedup_key == "edge-1:42"
     assert record.occurred_at == occurred_at
+
+
+def test_versioned_series_namespace_cannot_collide_with_unrestricted_legacy_unit_text():
+    import uuid
+
+    from app.domain.telemetry.models import telemetry_series_key
+
+    integration_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    legacy = telemetry_series_key(integration_id, None, "sensor", "temperature_c", "degC:1")
+    canonical = telemetry_series_key(integration_id, None, "sensor", "temperature_c", "degC", "1")
+    assert legacy == f"{integration_id}:unmanaged:sensor:temperature_c:degC:1"
+    assert canonical != legacy
+    assert canonical.startswith(f"registry:1:{integration_id}:")
+    assert telemetry_series_key(integration_id, None, "sensor", "temperature_c", "degC", "2") != canonical
+    assert telemetry_series_key(integration_id, None, "another-sensor", "temperature_c", "degC", "1") != canonical
+    assert telemetry_series_key(integration_id, uuid.uuid4(), "sensor", "temperature_c", "degC", "1") != canonical

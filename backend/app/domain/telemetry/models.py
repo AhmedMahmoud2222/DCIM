@@ -30,7 +30,10 @@ def telemetry_series_key(
     """
     asset_component = str(managed_asset_id) if managed_asset_id is not None else "unmanaged"
     parts = (str(integration_id), asset_component, external_identifier, metric, unit)
-    return ":".join((*parts, registry_version)) if registry_version is not None else ":".join(parts)
+    # Legacy unit text was unrestricted and can itself end in ":1". Appending
+    # a version would collide with those keys. A prefix cannot collide with the
+    # UUID-first legacy namespace; existing historical keys remain unchanged.
+    return ":".join(("registry", registry_version, *parts)) if registry_version is not None else ":".join(parts)
 
 
 class IntegrationMetricMapping(Base, UUIDPkMixin, TimestampMixin):
