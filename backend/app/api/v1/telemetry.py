@@ -45,6 +45,7 @@ from app.domain.telemetry.registry import (
     UnitDimensionMismatch,
     UnknownMetric,
     UnknownUnit,
+    convert_to_presentation,
     validate_metric_unit,
 )
 
@@ -85,6 +86,8 @@ class TelemetryOut(BaseModel):
     metric: str
     unit: str
     value: float
+    presentation_unit: str
+    presentation_value: float
     raw_value: float | None = None
     raw_unit: str | None = None
     registry_version: str = REGISTRY_VERSION
@@ -97,6 +100,8 @@ class TelemetryHistoryOut(TelemetryOut):
     resolution: str = "raw"
     minimum_value: float | None = None
     maximum_value: float | None = None
+    presentation_minimum_value: float | None = None
+    presentation_maximum_value: float | None = None
     sample_count: int | None = None
 
 
@@ -315,6 +320,7 @@ async def metric_history(
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
+    presentation = convert_to_presentation(row.metric, row.value, row.unit)
     return TelemetryOut(
         id=row.id,
         integration_id=row.integration_id,
@@ -323,6 +329,8 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         metric=row.metric,
         unit=row.unit,
         value=float(row.value),
+        presentation_unit=presentation.unit,
+        presentation_value=float(presentation.value),
         raw_value=None if row.raw_value is None else float(row.raw_value),
         raw_unit=row.raw_unit,
         registry_version=row.registry_version,
@@ -338,6 +346,9 @@ def _history_raw(row: TelemetryReading) -> TelemetryHistoryOut:
 
 def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
     occurred_at = datetime.combine(row.day, datetime.min.time(), tzinfo=UTC)
+    average = convert_to_presentation(row.metric, row.average_value, row.unit)
+    minimum = convert_to_presentation(row.metric, row.minimum_value, row.unit)
+    maximum = convert_to_presentation(row.metric, row.maximum_value, row.unit)
     return TelemetryHistoryOut(
         id=row.id,
         integration_id=row.integration_id,
@@ -346,11 +357,15 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         metric=row.metric,
         unit=row.unit,
         value=float(row.average_value),
+        presentation_unit=average.unit,
+        presentation_value=float(average.value),
         occurred_at=occurred_at,
         received_at=occurred_at,
         resolution="daily",
         minimum_value=float(row.minimum_value),
         maximum_value=float(row.maximum_value),
+        presentation_minimum_value=float(minimum.value),
+        presentation_maximum_value=float(maximum.value),
         sample_count=row.sample_count,
     )
 

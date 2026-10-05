@@ -9,6 +9,8 @@ export interface TelemetryReading {
   metric: string;
   unit: string;
   value: number;
+  presentation_unit: string;
+  presentation_value: number;
   raw_value?: number | null;
   raw_unit?: string | null;
   registry_version?: string;
@@ -18,6 +20,8 @@ export interface TelemetryReading {
   resolution?: "raw" | "daily";
   minimum_value?: number | null;
   maximum_value?: number | null;
+  presentation_minimum_value?: number | null;
+  presentation_maximum_value?: number | null;
   sample_count?: number | null;
 }
 

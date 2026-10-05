@@ -47,6 +47,30 @@ def test_registry_is_versioned_and_exposes_explicit_presentation_units():
     assert METRIC_REGISTRY["availability"].dimension == "ratio"
 
 
+def test_canonical_availability_converts_to_explicit_percent_presentation():
+    from app.domain.telemetry.registry import convert_to_presentation
+
+    presented = convert_to_presentation("availability", Decimal("0.995"))
+
+    assert presented.value == Decimal("99.50000000")
+    assert presented.unit == "%"
+
+
+def test_catalog_candidate_handoff_validates_real_parser_output_by_dimension():
+    from app.application.catalog_documents.extraction.candidates import PageText, analyze_pages
+    from app.domain.telemetry.registry import validate_catalog_candidate_unit
+
+    result = analyze_pages(
+        [PageText(1, "MX-1 Technical Specifications\nRated power: 1.2 kW\nWidth: 30 cm\nWeight: 4 lb", "native")],
+        ["MX-1"],
+    )
+    dimensions = {"power_rated_w": "power", "width": "length", "weight": "mass"}
+
+    assert len(result.candidates) == 3
+    for candidate in result.candidates:
+        assert validate_catalog_candidate_unit(candidate.unit, dimensions[candidate.field_key]) == candidate.unit
+
+
 def test_sandboxed_catalog_extractor_declares_the_same_registry_contract_version():
     from app.application.catalog_documents.extraction.candidates import UNIT_REGISTRY_VERSION
     from app.domain.telemetry.registry import REGISTRY_VERSION

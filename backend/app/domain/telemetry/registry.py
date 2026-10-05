@@ -48,6 +48,12 @@ class CanonicalValue:
     registry_version: str = REGISTRY_VERSION
 
 
+@dataclass(frozen=True)
+class PresentationValue:
+    value: Decimal
+    unit: str
+
+
 UNITS = {
     "degC": UnitDefinition("degC", "temperature"),
     "degF": UnitDefinition("degF", "temperature", Decimal("0.5555555555555555555555555556"), Decimal("-32")),
@@ -143,3 +149,27 @@ def convert_to_canonical(metric: str, value: Decimal, source_unit: str) -> Canon
         raw_value=value,
         raw_unit=source_unit,
     )
+
+
+def convert_to_presentation(metric: str, value: Decimal, source_unit: str | None = None) -> PresentationValue:
+    """Render a stored canonical value without mutating or reinterpreting its source provenance."""
+    definition = METRIC_REGISTRY.get(metric)
+    if definition is None:
+        raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
+    unit = source_unit or definition.canonical_unit
+    validate_metric_unit(metric, unit)
+    return PresentationValue(
+        value=convert_value(value, unit, definition.presentation_unit),
+        unit=definition.presentation_unit,
+    )
+
+
+def validate_catalog_candidate_unit(unit: str | None, dimension: str) -> str:
+    """Executable handoff used when PR #109 applies a provenance-bearing extraction candidate."""
+    if unit is None:
+        raise UnknownUnit("Catalog extraction candidate has no unit.")
+    normalized = normalize_unit(unit)
+    actual_dimension = UNITS[normalized].dimension
+    if actual_dimension != dimension:
+        raise UnitDimensionMismatch(f"Catalog candidate requires dimension {dimension}; unit {unit!r} is {actual_dimension}.")
+    return normalized

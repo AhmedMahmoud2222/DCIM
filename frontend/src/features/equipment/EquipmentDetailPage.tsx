@@ -499,7 +499,7 @@ export function EquipmentDetailPage() {
             const stale = reading.expected_poll_interval_seconds != null && ageMs > reading.expected_poll_interval_seconds * 2_000;
             return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded-sm bg-slate-800/60 p-3 text-left hover:bg-slate-800">
               <p className="text-xs uppercase tracking-wide text-slate-400">{reading.metric}</p>
-              <p className="mt-1 text-xl font-semibold">{reading.value} <span className="text-sm text-slate-400">{reading.unit}</span></p>
+              <p className="mt-1 text-xl font-semibold">{reading.presentation_value} <span className="text-sm text-slate-400">{reading.presentation_unit}</span></p>
               <p className={stale ? "mt-1 text-xs text-yellow-400" : "mt-1 text-xs text-green-400"}>{stale ? "Stale" : "Current"} · occurred {new Date(reading.occurred_at).toLocaleString()}</p>
               {reading.received_at !== reading.occurred_at && <p className="mt-1 text-xs text-slate-400">received {new Date(reading.received_at).toLocaleString()}</p>}
             </button>;
@@ -518,7 +518,7 @@ export function EquipmentDetailPage() {
           {historyQuery.isError && <p className="text-sm text-red-400">Unable to load the selected history range.</p>}
           {historyQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No readings in this range.</p>}
           {historyQuery.data && <TelemetryTrend points={historyQuery.data} />}
-          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded-sm bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.value} avg (${point.minimum_value}–${point.maximum_value}, n=${point.sample_count})` : point.value} {point.unit} <span className="text-slate-400">{point.resolution ?? "raw"}</span></span></div>)}</div>
+          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded-sm bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.presentation_value} avg (${point.presentation_minimum_value}–${point.presentation_maximum_value}, n=${point.sample_count})` : point.presentation_value} {point.presentation_unit} <span className="text-slate-400">{point.resolution ?? "raw"}</span></span></div>)}</div>
         </div>
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4"><h2 className="mb-3 text-sm font-semibold text-slate-300">Alarm history</h2>
           {alarmHistoryQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}

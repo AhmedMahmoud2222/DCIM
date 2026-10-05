@@ -94,4 +94,33 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Network error");
   });
+
+  it("renders API presentation values instead of canonical storage values", async () => {
+    vi.mocked(telemetryApi.getLatestTelemetry).mockResolvedValue([
+      {
+        id: "reading-1", integration_id: "integration-1", managed_asset_id: "eq-1",
+        external_identifier: "availability", metric: "availability", unit: "1", value: 0.995,
+        presentation_unit: "%", presentation_value: 99.5,
+        occurred_at: "2026-01-01T00:00:00Z", received_at: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    vi.mocked(telemetryApi.getTelemetryHistory).mockResolvedValue([
+      {
+        id: "daily-1", integration_id: "integration-1", managed_asset_id: "eq-1",
+        external_identifier: "availability", metric: "availability", unit: "1", value: 0.98,
+        presentation_unit: "%", presentation_value: 98, resolution: "daily",
+        minimum_value: 0.97, maximum_value: 0.99,
+        presentation_minimum_value: 97, presentation_maximum_value: 99, sample_count: 24,
+        occurred_at: "2026-01-01T00:00:00Z", received_at: "2026-01-01T00:00:00Z",
+      },
+    ]);
+
+    renderWithProviders(<EquipmentDetailPage />, routeOptions);
+
+    expect(await screen.findByText("99.5")).toBeInTheDocument();
+    expect(screen.getByText("%")).toBeInTheDocument();
+    expect(screen.queryByText("0.995")).not.toBeInTheDocument();
+    expect(await screen.findByText(/98 avg \(97–99, n=24\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/0\.98 avg/)).not.toBeInTheDocument();
+  });
 });
