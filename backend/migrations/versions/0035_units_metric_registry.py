@@ -46,6 +46,32 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The old application interprets thresholds/readings in source mapping units.
+    # Removing registry metadata from live canonical data would silently change
+    # those semantics. Lock before checking so a concurrent write cannot race the
+    # check and column drops; no values or provenance are rewritten/discarded.
+    op.execute("""
+        LOCK TABLE integration_metric_mapping, telemetry_reading,
+            daily_telemetry_aggregate, alarm_rule IN ACCESS EXCLUSIVE MODE
+    """)
+    populated_registry = op.get_bind().scalar(sa.text("""
+        SELECT EXISTS (
+            SELECT 1 FROM integration_metric_mapping WHERE registry_version IS NOT NULL
+            UNION ALL
+            SELECT 1 FROM alarm_rule WHERE registry_version IS NOT NULL
+            UNION ALL
+            SELECT 1 FROM daily_telemetry_aggregate WHERE registry_version IS NOT NULL
+            UNION ALL
+            SELECT 1 FROM telemetry_reading
+            WHERE registry_version IS NOT NULL OR raw_value IS NOT NULL
+                OR raw_unit IS NOT NULL OR source_scale IS NOT NULL
+        )
+    """))
+    if populated_registry:
+        raise RuntimeError(
+            "Cannot downgrade 0035: registry telemetry, alarm configuration or raw provenance remains. "
+            "Preserve this metadata and establish an explicit legacy-compatible data contract before rollback."
+        )
     op.drop_column("alarm_rule", "registry_version")
     op.drop_column("alarm_rule", "unit")
     op.drop_column("daily_telemetry_aggregate", "registry_version")
