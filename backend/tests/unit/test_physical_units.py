@@ -56,6 +56,14 @@ def test_canonical_availability_converts_to_explicit_percent_presentation():
     assert presented.unit == "%"
 
 
+def test_presentation_boundary_accepts_numeric_values_returned_by_the_orm():
+    from app.domain.telemetry.registry import convert_to_presentation
+
+    presented = convert_to_presentation("availability", 0.995)
+
+    assert presented.value == Decimal("99.50000000")
+
+
 def test_catalog_candidate_handoff_validates_real_parser_output_by_dimension():
     from app.application.catalog_documents.extraction.candidates import PageText, analyze_pages
     from app.domain.telemetry.registry import validate_catalog_candidate_unit

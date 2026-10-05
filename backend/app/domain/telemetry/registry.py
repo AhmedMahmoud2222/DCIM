@@ -151,7 +151,7 @@ def convert_to_canonical(metric: str, value: Decimal, source_unit: str) -> Canon
     )
 
 
-def convert_to_presentation(metric: str, value: Decimal, source_unit: str | None = None) -> PresentationValue:
+def convert_to_presentation(metric: str, value: Decimal | float | int, source_unit: str | None = None) -> PresentationValue:
     """Render a stored canonical value without mutating or reinterpreting its source provenance."""
     definition = METRIC_REGISTRY.get(metric)
     if definition is None:
@@ -159,7 +159,7 @@ def convert_to_presentation(metric: str, value: Decimal, source_unit: str | None
     unit = source_unit or definition.canonical_unit
     validate_metric_unit(metric, unit)
     return PresentationValue(
-        value=convert_value(value, unit, definition.presentation_unit),
+        value=convert_value(Decimal(str(value)), unit, definition.presentation_unit),
         unit=definition.presentation_unit,
     )
 
