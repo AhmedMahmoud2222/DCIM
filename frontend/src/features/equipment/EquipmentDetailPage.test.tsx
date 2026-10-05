@@ -113,6 +113,12 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
         presentation_minimum_value: 97, presentation_maximum_value: 99, sample_count: 24,
         occurred_at: "2026-01-01T00:00:00Z", received_at: "2026-01-01T00:00:00Z",
       },
+      {
+        id: "daily-2", integration_id: "integration-1", managed_asset_id: "eq-1",
+        external_identifier: "availability", metric: "availability", unit: "1", value: 0.99,
+        presentation_unit: "%", presentation_value: 99, resolution: "daily",
+        occurred_at: "2026-01-02T00:00:00Z", received_at: "2026-01-02T00:00:00Z",
+      },
     ]);
 
     renderWithProviders(<EquipmentDetailPage />, routeOptions);
@@ -121,6 +127,7 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     expect(screen.getByText("%")).toBeInTheDocument();
     expect(screen.queryByText("0.995")).not.toBeInTheDocument();
     expect(await screen.findByText(/98 avg \(97–99, n=24\)/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Trend from 98 to 99 %" })).toBeInTheDocument();
     expect(screen.queryByText(/0\.98 avg/)).not.toBeInTheDocument();
   });
 });

@@ -34,7 +34,7 @@ def subject_for(reading: TelemetryReading) -> str:
     return f"{reading.integration_id}:{reading.external_identifier}:{reading.metric}"
 
 
-async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
+async def evaluate_reading(db: AsyncSession, reading: TelemetryReading, *, legacy_value: float | None = None) -> None:
     """Open, retain, or clear alarms for one authoritative telemetry reading."""
     rules = (
         (
@@ -62,9 +62,15 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        matches = condition_matches(
-            rule.rule_type, float(rule.threshold) if rule.threshold is not None else None, float(reading.value)
-        )
+        comparison_value = float(reading.value)
+        comparison_unit = reading.unit
+        comparison_version = reading.registry_version
+        if rule.registry_version is None and legacy_value is not None:
+            comparison_value = legacy_value
+            comparison_unit = reading.raw_unit or reading.unit
+            comparison_version = None
+        matches = condition_matches(rule.rule_type, float(rule.threshold) if rule.threshold is not None else None,
+                                    comparison_value)
         # Collector delivery is at-least-once and may be out of occurrence order.
         # Never let an older reading overwrite a lifecycle decision made from a
         # newer observation.  The original occurred_at remains the operational
@@ -98,10 +104,11 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 subject_key=subject_key,
                 status="ACTIVE",
                 opened_at=reading.occurred_at,
-                last_value=reading.value,
+                last_value=comparison_value,
                 details={
                     "metric": reading.metric,
-                    "unit": reading.unit,
+                    "unit": comparison_unit,
+                    "registry_version": comparison_version,
                     "condition_occurred_at": reading.occurred_at.isoformat(),
                     "central_received_at": reading.received_at.isoformat(),
                 },
@@ -111,12 +118,12 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
             await _record_transition(db, alarm, "alarm.open", "AlarmOpened")
         elif matches and open_alarm is not None:
             open_alarm.telemetry_reading_id = reading.id
-            open_alarm.last_value = reading.value
+            open_alarm.last_value = comparison_value
         elif not matches and open_alarm is not None:
             open_alarm.status = "CLEARED"
             open_alarm.cleared_at = reading.occurred_at
             open_alarm.telemetry_reading_id = reading.id
-            open_alarm.last_value = reading.value
+            open_alarm.last_value = comparison_value
             await _record_transition(db, open_alarm, "alarm.clear", "AlarmCleared")
 
 

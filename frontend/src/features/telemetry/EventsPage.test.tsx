@@ -20,6 +20,9 @@ const activeAlarm: Alarm = {
   acknowledged_at: null,
   cleared_at: null,
   last_value: 92,
+  unit: "%",
+  presentation_value: 92,
+  presentation_unit: "%",
 };
 
 const acknowledgedAlarm: Alarm = {

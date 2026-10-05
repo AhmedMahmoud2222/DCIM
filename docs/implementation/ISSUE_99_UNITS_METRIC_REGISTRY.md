@@ -18,15 +18,24 @@ Do not merge until exact-head CI and independent architecture/data-integrity rev
 Extraction remains lossless: its candidates keep the manufacturer's `raw_value`,
 `raw_unit`, exact source text and page, and do not convert during parsing. Before #109
 applies an accepted candidate, it must call
-`validate_catalog_candidate_unit(candidate.unit, expected_dimension)` and then
-`convert_value(candidate.value, candidate.unit, target_unit)` from the canonical
-registry. Missing, unknown or dimensionally incompatible units are application errors;
+`convert_catalog_candidate(candidate.field_key, Decimal(str(candidate.value)), candidate.unit)`
+from the canonical registry. That executable field contract converts power fields to
+W, dimensions to mm, and weights to kg while retaining extracted provenance. Missing,
+unknown or dimensionally incompatible units and fields are application errors;
 they must never be guessed. The executable parser-to-registry contract is covered with
 real extracted power, length and mass candidates, rather than only comparing registry
 version constants.
 
 Telemetry presentation follows the same boundary: APIs retain canonical `value` and
 `unit` and add `presentation_value` and `presentation_unit`. Existing rows migrated
-from main deliberately receive null raw provenance because their original source value
-and unit cannot be reconstructed honestly; newly ingested rows store raw and canonical
-values separately.
+from main deliberately retain a null registry version and null raw provenance because
+their original source value and unit cannot be reconstructed honestly. Read APIs return
+those historical values unchanged. New mappings are explicitly registry v1 and new
+readings store `raw_value`, `raw_unit`, and `source_scale` beside the canonical value.
+Canonicalization is exactly `(raw_value * source_scale)` followed by one unit conversion,
+and registry version participates in series identity.
+
+Existing alarm rules also remain unversioned and compare their thresholds with the
+pre-registry scaled source quantity. New rules are explicitly v1 and use the metric's
+canonical unit. This prevents a historical Fahrenheit or watt threshold from silently
+changing meaning when new telemetry is stored canonically.

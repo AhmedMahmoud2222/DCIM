@@ -25,6 +25,24 @@ def test_power_conversion_does_not_double_convert_canonical_input():
     assert converted.raw_unit == "kW"
 
 
+def test_source_scale_is_recorded_and_applied_before_one_unit_conversion():
+    from app.domain.telemetry.registry import convert_to_canonical
+
+    converted = convert_to_canonical("power_kw", Decimal("1250"), "W", source_scale=Decimal("1"))
+
+    assert converted.value == Decimal("1.25000000")
+    assert converted.raw_value == Decimal("1250")
+    assert converted.raw_unit == "W"
+    assert converted.source_scale == Decimal("1")
+
+
+def test_unknown_registry_version_is_not_silently_interpreted_as_current():
+    from app.domain.telemetry.registry import UnknownRegistryVersion, convert_to_presentation
+
+    with pytest.raises(UnknownRegistryVersion):
+        convert_to_presentation("power_kw", Decimal("1"), "kW", registry_version="future")
+
+
 def test_metric_rejects_unit_from_wrong_dimension():
     from app.domain.telemetry.registry import UnitDimensionMismatch, convert_to_canonical
 
@@ -77,6 +95,22 @@ def test_catalog_candidate_handoff_validates_real_parser_output_by_dimension():
     assert len(result.candidates) == 3
     for candidate in result.candidates:
         assert validate_catalog_candidate_unit(candidate.unit, dimensions[candidate.field_key]) == candidate.unit
+
+
+def test_catalog_candidate_handoff_converts_real_parser_output_to_apply_contract():
+    from app.application.catalog_documents.extraction.candidates import PageText, analyze_pages
+    from app.domain.telemetry.registry import convert_catalog_candidate
+
+    result = analyze_pages(
+        [PageText(1, "MX-1 Technical Specifications\nRated power: 1.2 kW\nWidth: 30 cm\nWeight: 4 lb", "native")],
+        ["MX-1"],
+    )
+    converted = {candidate.field_key: convert_catalog_candidate(candidate.field_key, Decimal(str(candidate.value)), candidate.unit)
+                 for candidate in result.candidates}
+
+    assert converted["power_rated_w"].value == Decimal("1200.00000000")
+    assert converted["width"].value == Decimal("300.00000000")
+    assert converted["weight"].value == Decimal("1.81436948")
 
 
 def test_sandboxed_catalog_extractor_declares_the_same_registry_contract_version():

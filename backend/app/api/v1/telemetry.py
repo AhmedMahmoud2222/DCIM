@@ -90,7 +90,8 @@ class TelemetryOut(BaseModel):
     presentation_value: float
     raw_value: float | None = None
     raw_unit: str | None = None
-    registry_version: str = REGISTRY_VERSION
+    registry_version: str | None = None
+    source_scale: float | None = None
     occurred_at: datetime
     received_at: datetime
     expected_poll_interval_seconds: int | None = None
@@ -117,7 +118,7 @@ class MetricMappingIn(BaseModel):
 
 class MetricMappingOut(MetricMappingIn):
     id: uuid.UUID
-    registry_version: str = REGISTRY_VERSION
+    registry_version: str | None = None
 
 
 class MetricRegistryOut(BaseModel):
@@ -156,7 +157,7 @@ async def create_metric_mapping(
         raise ApiError(status_code=422, title="Metric/unit mismatch", detail=str(exc)) from exc
     if body.managed_asset_id is not None and await db.get(ManagedAsset, body.managed_asset_id) is None:
         raise ApiError(status_code=422, title="Invalid managed asset", detail="managed_asset_id does not exist.")
-    mapping = IntegrationMetricMapping(id=uuid.uuid4(), **body.model_dump())
+    mapping = IntegrationMetricMapping(id=uuid.uuid4(), registry_version=REGISTRY_VERSION, **body.model_dump())
     db.add(mapping)
     await db.flush()
     await write_audit_log(
@@ -320,7 +321,10 @@ async def metric_history(
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
-    presentation = convert_to_presentation(row.metric, row.value, row.unit)
+    presentation = (
+        convert_to_presentation(row.metric, row.value, row.unit, registry_version=row.registry_version)
+        if row.registry_version is not None else None
+    )
     return TelemetryOut(
         id=row.id,
         integration_id=row.integration_id,
@@ -329,10 +333,11 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         metric=row.metric,
         unit=row.unit,
         value=float(row.value),
-        presentation_unit=presentation.unit,
-        presentation_value=float(presentation.value),
+        presentation_unit=presentation.unit if presentation is not None else row.unit,
+        presentation_value=float(presentation.value) if presentation is not None else float(row.value),
         raw_value=None if row.raw_value is None else float(row.raw_value),
         raw_unit=row.raw_unit,
+        source_scale=None if row.source_scale is None else float(row.source_scale),
         registry_version=row.registry_version,
         occurred_at=row.occurred_at,
         received_at=row.received_at,
@@ -346,9 +351,12 @@ def _history_raw(row: TelemetryReading) -> TelemetryHistoryOut:
 
 def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
     occurred_at = datetime.combine(row.day, datetime.min.time(), tzinfo=UTC)
-    average = convert_to_presentation(row.metric, row.average_value, row.unit)
-    minimum = convert_to_presentation(row.metric, row.minimum_value, row.unit)
-    maximum = convert_to_presentation(row.metric, row.maximum_value, row.unit)
+    if row.registry_version is None:
+        average = minimum = maximum = None
+    else:
+        average = convert_to_presentation(row.metric, row.average_value, row.unit, registry_version=row.registry_version)
+        minimum = convert_to_presentation(row.metric, row.minimum_value, row.unit, registry_version=row.registry_version)
+        maximum = convert_to_presentation(row.metric, row.maximum_value, row.unit, registry_version=row.registry_version)
     return TelemetryHistoryOut(
         id=row.id,
         integration_id=row.integration_id,
@@ -357,15 +365,16 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         metric=row.metric,
         unit=row.unit,
         value=float(row.average_value),
-        presentation_unit=average.unit,
-        presentation_value=float(average.value),
+        presentation_unit=average.unit if average is not None else row.unit,
+        presentation_value=float(average.value) if average is not None else float(row.average_value),
+        registry_version=row.registry_version,
         occurred_at=occurred_at,
         received_at=occurred_at,
         resolution="daily",
         minimum_value=float(row.minimum_value),
         maximum_value=float(row.maximum_value),
-        presentation_minimum_value=float(minimum.value),
-        presentation_maximum_value=float(maximum.value),
+        presentation_minimum_value=float(minimum.value) if minimum is not None else float(row.minimum_value),
+        presentation_maximum_value=float(maximum.value) if maximum is not None else float(row.maximum_value),
         sample_count=row.sample_count,
     )
 

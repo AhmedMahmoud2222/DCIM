@@ -82,21 +82,18 @@ async def test_populated_current_main_upgrade_preserves_history_and_adds_honest_
                 await conn.execute(
                     text("""
                         SELECT id, metric, unit, value, occurred_at, received_at, attributes,
-                               raw_value, raw_unit, registry_version
+                               raw_value, raw_unit, source_scale, registry_version
                         FROM telemetry_reading WHERE id = :id
                     """),
                     {"id": reading_id},
                 )
             ).one()
             assert tuple(after[:7]) == tuple(before)
-            assert tuple(after[7:]) == (None, None, "1")
-            assert (
-                await conn.scalar(
-                    text("SELECT registry_version FROM integration_metric_mapping WHERE id = :id"),
-                    {"id": mapping_id},
-                )
-                == "1"
-            )
+            assert tuple(after[7:]) == (None, None, None, None)
+            assert await conn.scalar(
+                text("SELECT registry_version FROM integration_metric_mapping WHERE id = :id"),
+                {"id": mapping_id},
+            ) is None
 
             new_reading_id = uuid.uuid4()
             await conn.execute(
@@ -104,10 +101,10 @@ async def test_populated_current_main_upgrade_preserves_history_and_adds_honest_
                     INSERT INTO telemetry_reading
                         (id, collector_id, integration_id, mapping_id, external_identifier,
                          series_key, dedup_key, metric, unit, value, raw_value, raw_unit,
-                         registry_version, occurred_at, received_at, attributes)
+                         source_scale, registry_version, occurred_at, received_at, attributes)
                     VALUES (:id, :collector_id, :integration_id, :mapping_id, 'sensor-2',
                             'new-series', 'new-dedup', 'temperature_c', 'degC', 25, 77, 'degF',
-                            '1', now(), now(), '{}'::jsonb)
+                            1, '1', now(), now(), '{}'::jsonb)
                 """),
                 {
                     "id": new_reading_id,

@@ -23,6 +23,10 @@ class UnitDimensionMismatch(ValueError):
     pass
 
 
+class UnknownRegistryVersion(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class UnitDefinition:
     symbol: str
@@ -45,6 +49,7 @@ class CanonicalValue:
     unit: str
     raw_value: Decimal
     raw_unit: str
+    source_scale: Decimal = Decimal("1")
     registry_version: str = REGISTRY_VERSION
 
 
@@ -101,6 +106,32 @@ METRIC_REGISTRY = {
     "load_percent": MetricDefinition("load_percent", "ratio", "%", "%"),
     "availability": MetricDefinition("availability", "ratio", "1", "%"),
 }
+REGISTRIES = {REGISTRY_VERSION: METRIC_REGISTRY}
+
+
+@dataclass(frozen=True)
+class CatalogFieldContract:
+    dimension: str
+    canonical_unit: str
+
+
+CATALOG_FIELD_CONTRACTS = {
+    "power_rated_w": CatalogFieldContract("power", "W"),
+    "power_typical_w": CatalogFieldContract("power", "W"),
+    "power_max_w": CatalogFieldContract("power", "W"),
+    "width": CatalogFieldContract("length", "mm"),
+    "height": CatalogFieldContract("length", "mm"),
+    "depth": CatalogFieldContract("length", "mm"),
+    "weight": CatalogFieldContract("mass", "kg"),
+    "shipping_weight": CatalogFieldContract("mass", "kg"),
+}
+
+
+def _registry(version: str) -> dict[str, MetricDefinition]:
+    try:
+        return REGISTRIES[version]
+    except KeyError as error:
+        raise UnknownRegistryVersion(f"Unknown unit registry version: {version!r}") from error
 
 
 def normalize_unit(unit: str) -> str:
@@ -125,8 +156,8 @@ def convert_value(value: Decimal, source_unit: str, target_unit: str) -> Decimal
     return converted.quantize(PRECISION, rounding=ROUND_HALF_EVEN)
 
 
-def validate_metric_unit(metric: str, source_unit: str) -> str:
-    definition = METRIC_REGISTRY.get(metric)
+def validate_metric_unit(metric: str, source_unit: str, *, registry_version: str = REGISTRY_VERSION) -> str:
+    definition = _registry(registry_version).get(metric)
     if definition is None:
         raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
     normalized = normalize_unit(source_unit)
@@ -138,26 +169,34 @@ def validate_metric_unit(metric: str, source_unit: str) -> str:
     return normalized
 
 
-def convert_to_canonical(metric: str, value: Decimal, source_unit: str) -> CanonicalValue:
-    definition = METRIC_REGISTRY.get(metric)
+def convert_to_canonical(
+    metric: str, value: Decimal, source_unit: str, *, source_scale: Decimal = Decimal("1"),
+    registry_version: str = REGISTRY_VERSION,
+) -> CanonicalValue:
+    definition = _registry(registry_version).get(metric)
     if definition is None:
         raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
-    normalized = validate_metric_unit(metric, source_unit)
+    normalized = validate_metric_unit(metric, source_unit, registry_version=registry_version)
     return CanonicalValue(
-        value=convert_value(value, normalized, definition.canonical_unit),
+        value=convert_value(value * source_scale, normalized, definition.canonical_unit),
         unit=definition.canonical_unit,
         raw_value=value,
         raw_unit=source_unit,
+        source_scale=source_scale,
+        registry_version=registry_version,
     )
 
 
-def convert_to_presentation(metric: str, value: Decimal | float | int, source_unit: str | None = None) -> PresentationValue:
+def convert_to_presentation(
+    metric: str, value: Decimal | float | int, source_unit: str | None = None, *,
+    registry_version: str = REGISTRY_VERSION,
+) -> PresentationValue:
     """Render a stored canonical value without mutating or reinterpreting its source provenance."""
-    definition = METRIC_REGISTRY.get(metric)
+    definition = _registry(registry_version).get(metric)
     if definition is None:
         raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
     unit = source_unit or definition.canonical_unit
-    validate_metric_unit(metric, unit)
+    validate_metric_unit(metric, unit, registry_version=registry_version)
     return PresentationValue(
         value=convert_value(Decimal(str(value)), unit, definition.presentation_unit),
         unit=definition.presentation_unit,
@@ -173,3 +212,19 @@ def validate_catalog_candidate_unit(unit: str | None, dimension: str) -> str:
     if actual_dimension != dimension:
         raise UnitDimensionMismatch(f"Catalog candidate requires dimension {dimension}; unit {unit!r} is {actual_dimension}.")
     return normalized
+
+
+def convert_catalog_candidate(field_key: str, value: Decimal, unit: str | None) -> CanonicalValue:
+    """#109 apply-boundary contract: validate an extracted field and retain its source provenance."""
+    try:
+        contract = CATALOG_FIELD_CONTRACTS[field_key]
+    except KeyError as error:
+        raise UnknownMetric(f"Catalog field has no unit contract: {field_key!r}") from error
+    normalized = validate_catalog_candidate_unit(unit, contract.dimension)
+    assert unit is not None
+    return CanonicalValue(
+        value=convert_value(value, normalized, contract.canonical_unit),
+        unit=contract.canonical_unit,
+        raw_value=value,
+        raw_unit=unit,
+    )

@@ -13,7 +13,8 @@ export interface TelemetryReading {
   presentation_value: number;
   raw_value?: number | null;
   raw_unit?: string | null;
-  registry_version?: string;
+  registry_version?: string | null;
+  source_scale?: number | null;
   occurred_at: string;
   received_at: string;
   expected_poll_interval_seconds?: number | null;
@@ -36,6 +37,9 @@ export interface Alarm {
   acknowledged_at: string | null;
   cleared_at: string | null;
   last_value: number;
+  unit: string | null;
+  presentation_value: number;
+  presentation_unit: string | null;
 }
 
 export interface AlarmHistoryPage { items: Alarm[]; next_cursor: string | null }

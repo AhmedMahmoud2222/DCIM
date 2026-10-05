@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
+from app.domain.telemetry.registry import REGISTRY_VERSION
 
 RULE_TYPES = ("threshold_high", "threshold_low", "availability_unavailable")
 ALARM_STATUSES = ("ACTIVE", "ACKNOWLEDGED", "CLEARED")
@@ -27,6 +28,8 @@ class AlarmRule(Base, UUIDPkMixin, TimestampMixin):
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     rule_type: Mapped[str] = mapped_column(String(32), nullable=False)
     threshold: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    unit: Mapped[str | None] = mapped_column(String(32))
+    registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default=REGISTRY_VERSION)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
     name: Mapped[str] = mapped_column(String(128), nullable=False)
 
