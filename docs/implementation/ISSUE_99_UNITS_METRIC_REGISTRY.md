@@ -39,17 +39,13 @@ readings store `raw_value`, `raw_unit`, and `source_scale` beside the canonical 
 Canonicalization is exactly `(raw_value * source_scale)` followed by one unit conversion,
 and registry version participates in series identity.
 
-Existing alarm rules also remain unversioned and compare their thresholds with the
-pre-registry scaled source quantity. New rules are explicitly v1 and use the metric's
-canonical unit. This prevents a historical Fahrenheit or watt threshold from silently
-changing meaning when new telemetry is stored canonically.
+Legacy numeric thresholds are never rewritten. Migration 0035 snapshots a unit only
+when mappings, readings and retained aggregates provide unambiguous unit evidence
+for the integration/metric. Conflicting or missing evidence leaves the unit
+unresolved and evaluation rejects with an explicit 422 error requiring a unit
+decision. Raw source units cannot establish an old threshold's authored unit.
 
-
-Alarm comparison is dimension-safe: rules with explicit units compare converted
-stored readings in that authored unit without changing thresholds. Unversioned
-rules with no unit retain their historical per-source scaled quantity; canonical
-readings must provide raw value/unit/scale provenance to reconstruct that quantity.
-Missing provenance, unknown versions and incompatible explicit units are errors.
-Alarm value and unit/version metadata change together on active updates and clears.
-Events, equipment alarm history and dashboard alarms render presentation fields;
-CSV includes those fields alongside the stored value/unit for compatibility.
+Alarm comparison converts each stored reading into the fixed rule unit. It never
+scales or canonicalizes the reading a second time, and source-unit changes cannot
+reinterpret thresholds. Alarm value and details change together in that unit.
+Clients render presentation fields; event CSV also retains stored values and units.

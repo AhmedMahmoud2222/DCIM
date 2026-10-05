@@ -76,6 +76,22 @@ async def test_populated_current_main_upgrade_preserves_history_and_adds_honest_
                 )
             ).one()
 
+            legacy_rule_id, ambiguous_rule_id = uuid.uuid4(), uuid.uuid4()
+            await conn.execute(text("""
+                INSERT INTO alarm_rule (id, integration_id, metric, rule_type, threshold, name)
+                VALUES (:id, :integration_id, 'temperature_c', 'threshold_high', 30, 'legacy temperature')
+            """), {"id": legacy_rule_id, "integration_id": integration_id})
+            for unit in ("W", "kW"):
+                await conn.execute(text("""
+                    INSERT INTO integration_metric_mapping
+                        (id, integration_id, source_identifier, canonical_metric, unit, scale)
+                    VALUES (:id, :integration_id, :source, 'power_kw', :unit, 1)
+                """), {"id": uuid.uuid4(), "integration_id": integration_id, "source": unit, "unit": unit})
+            await conn.execute(text("""
+                INSERT INTO alarm_rule (id, integration_id, metric, rule_type, threshold, name)
+                VALUES (:id, :integration_id, 'power_kw', 'threshold_high', 1000, 'ambiguous legacy power')
+            """), {"id": ambiguous_rule_id, "integration_id": integration_id})
+
             await conn.run_sync(_run_migration, "upgrade")
 
             after = (
@@ -94,6 +110,13 @@ async def test_populated_current_main_upgrade_preserves_history_and_adds_honest_
                 text("SELECT registry_version FROM integration_metric_mapping WHERE id = :id"),
                 {"id": mapping_id},
             ) is None
+
+            assert tuple((await conn.execute(text(
+                "SELECT threshold, unit, registry_version FROM alarm_rule WHERE id = :id"
+            ), {"id": legacy_rule_id})).one()) == (30, "celsius", None)
+            assert tuple((await conn.execute(text(
+                "SELECT threshold, unit, registry_version FROM alarm_rule WHERE id = :id"
+            ), {"id": ambiguous_rule_id})).one()) == (1000, None, None)
 
             new_reading_id = uuid.uuid4()
             await conn.execute(
@@ -121,5 +144,14 @@ async def test_populated_current_main_upgrade_preserves_history_and_adds_honest_
                     )
                 ).one()
             ) == (25, "degC", 77, "degF")
+            await conn.run_sync(_run_migration, "downgrade")
+            assert await conn.scalar(text("SELECT threshold FROM alarm_rule WHERE id = :id"),
+                                     {"id": legacy_rule_id}) == 30
+            assert tuple((await conn.execute(text("SELECT value, unit FROM telemetry_reading WHERE id = :id"),
+                                             {"id": new_reading_id})).one()) == (25, "degC")
+            await conn.run_sync(_run_migration, "upgrade")
+            # Removed provenance cannot be reconstructed; no made-up raw evidence.
+            assert await conn.scalar(text("SELECT raw_value FROM telemetry_reading WHERE id = :id"),
+                                     {"id": new_reading_id}) is None
         finally:
             await transaction.rollback()

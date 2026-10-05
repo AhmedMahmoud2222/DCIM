@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
+from app.core.errors import ApiError
 from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.telemetry.models import TelemetryReading
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_value, validate_metric_unit
@@ -37,11 +38,10 @@ def subject_for(reading: TelemetryReading) -> str:
 
 
 def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal, str, str | None]:
-    """Compare in the rule's authored unit without reinterpreting its threshold.
+    """Compare stored readings in the fixed threshold unit, without scaling again.
 
-    Pre-registry rules have no unit: their historical contract is the mapping's
-    scaled source value, not an inferred canonical unit. New readings retain that
-    provenance. An explicit legacy rule unit instead pins the authored semantics.
+    Migration pins only unambiguous legacy units. Unresolved units must be decided
+    explicitly; current raw source units cannot establish an old threshold's unit.
     """
     if rule.metric != reading.metric:
         raise ValueError("Alarm rule and reading metrics differ.")
@@ -56,13 +56,9 @@ def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal,
         if reading.registry_version is not None:
             validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
         return convert_value(Decimal(str(reading.value)), reading.unit, rule.unit), rule.unit, rule.registry_version
-    if reading.registry_version is None:
-        return Decimal(str(reading.value)), reading.unit, None
-    validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
-    if reading.raw_value is None or reading.raw_unit is None or reading.source_scale is None:
-        raise ValueError("Legacy alarm rule requires scaled-source telemetry provenance.")
-    validate_metric_unit(reading.metric, reading.raw_unit, registry_version=reading.registry_version)
-    return Decimal(str(reading.raw_value)) * Decimal(str(reading.source_scale)), reading.raw_unit, None
+    raise ApiError(status_code=422, title="Unresolved legacy alarm unit",
+                   detail=f"Alarm rule {rule.id} requires an explicit threshold unit before evaluation.")
+
 
 
 async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
@@ -93,7 +89,11 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        comparison_value, comparison_unit, comparison_version = comparison_for(rule, reading)
+        try:
+            comparison_value, comparison_unit, comparison_version = comparison_for(rule, reading)
+        except ValueError as error:
+            raise ApiError(status_code=422, title="Incompatible alarm telemetry units",
+                           detail=f"Alarm rule {rule.id} cannot evaluate this metric/unit/registry combination.") from error
         matches = condition_matches(rule.rule_type, rule.threshold, comparison_value)
         comparison_details = {
             "metric": reading.metric,

@@ -22,6 +22,9 @@ from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReadi
     ("temperature_c", "degF", "1", None, None, "80", 95, 77, "77", 77, "degF"),
     ("availability", "%", "1", None, None, "99", 100, 98, "98", 98, "%"),
     ("power_kw", "W", "1", "W", None, "1500", 2000, 1250, "1250", 1250, "W"),
+    ("power_kw", "kW", "1", "W", None, "1500", 2, 1.25, "1250", 1250, "W"),
+    ("temperature_c", "degC", "1", "degF", None, "80", 35, 25, "77", 77, "degF"),
+    ("availability", "1", "1", "%", None, "99", 1, 0.98, "98", 98, "%"),
     ("temperature_c", "degF", "1", "degF", None, "80", 95, 77, "77", 77, "degF"),
     ("availability", "%", "1", "%", None, "99", 100, 98, "98", 98, "%"),
 ])
@@ -39,10 +42,11 @@ async def test_ingestion_opens_and_clears_in_authored_rule_units(
     mapping = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="sensor",
                                        canonical_metric=metric, unit=source_unit, scale=10)
     rule = AlarmRule(id=uuid.uuid4(), integration_id=integration.id, metric=metric, rule_type="threshold_high",
-                     threshold=Decimal(threshold), unit=rule_unit, name="authored threshold")
+                     threshold=Decimal(threshold), unit=rule_unit or source_unit, name="authored threshold")
     db_session.add_all([mapping, rule])
     await db_session.flush()
-    # Match actual upgraded rows (NULL legacy versions), avoiding ORM insertion defaults.
+    # Match migrated rows: legacy versions stay NULL and unambiguous units are frozen,
+    # as proven by test_units_metric_registry_migration; avoid ORM insertion defaults.
     for table, row, version in [("integration_metric_mapping", mapping, mapping_version), ("alarm_rule", rule, rule_version)]:
         await db_session.execute(text(f"UPDATE {table} SET registry_version = :version WHERE id = :id"),
                                  {"id": row.id, "version": version})
