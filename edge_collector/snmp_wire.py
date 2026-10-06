@@ -191,7 +191,10 @@ def walk(
 ) -> WalkResult:
     """Walk `base_oid` with GETBULK. Stops at the end of the subtree or MIB view, refuses
     an agent whose OIDs do not strictly increase (a loop), and bounds the row count."""
+    if not 1 <= max_rows <= DEFAULT_WALK_ROWS:
+        raise ValueError("max_rows must be between 1 and 4096")
     rows: list[Varbind] = []
+    visited = 0
     cursor = base_oid
     last: tuple[int, ...] = oid_tuple(base_oid)
     while True:
@@ -205,6 +208,9 @@ def walk(
             if current <= last:
                 raise SNMPError("SNMP agent returned non-increasing OIDs")
             last = current
+            if visited >= max_rows:
+                return WalkResult(tuple(rows), True)
+            visited += 1
             if binding.is_exception:
                 continue
             if len(rows) >= max_rows:

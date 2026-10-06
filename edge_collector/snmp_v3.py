@@ -183,7 +183,11 @@ def _parse_message(datagram: bytes) -> _Message:
     tag, start, end = message.next()
     if not message.done:
         raise SNMPError("SNMPv3 message has trailing data")
-    if tag not in (0x30, 0x04):
+    if (
+        tag not in (0x30, 0x04) or flags_raw[0] & ~0x07
+        or bool(flags_raw[0] & FLAG_PRIV) != (tag == 0x04)
+        or not 0 <= boots < 2**31 or not 0 <= engine_time < 2**31
+    ):
         raise SNMPError("SNMPv3 message data has an unexpected tag")
     # encrypted: the OCTET STRING contents; plaintext: the whole ScopedPDU SEQUENCE element
     scoped = datagram[start:end] if tag == 0x04 else datagram[element_start:end]
@@ -194,19 +198,19 @@ def _parse_message(datagram: bytes) -> _Message:
     )
 
 
-def _parse_scoped(scoped: bytes) -> tuple[bytes, DecodedPdu]:
+def _parse_scoped(scoped: bytes) -> tuple[bytes, bytes, DecodedPdu]:
     outer = _Cursor(scoped)
     body = outer.sequence()
     if not outer.done:
         raise SNMPError("SNMPv3 scoped PDU has trailing data")
     context_engine_id = body.octets()
-    body.octets()  # contextName
+    context_name = body.octets()
     pdu_tag, start, end = body.next()
     if not body.done:
         raise SNMPError("SNMPv3 scoped PDU has trailing data")
     if pdu_tag not in (GET_RESPONSE, REPORT):
         raise SNMPError("SNMPv3 response is not a response or report PDU")
-    return context_engine_id, decode_pdu(pdu_tag, scoped[start:end])
+    return context_engine_id, context_name, decode_pdu(pdu_tag, scoped[start:end])
 
 
 def _encode_usm(engine_id: bytes, boots: int, engine_time: int, user: bytes, auth_params: bytes, priv_params: bytes) -> bytes:
@@ -342,7 +346,7 @@ class SNMPv3Session:
                 message = _parse_message(data)
                 if message.msg_id != msg_id or message.flags & (FLAG_AUTH | FLAG_PRIV):
                     return None
-                _context_engine, pdu_decoded = _parse_scoped(message.scoped)
+                _context_engine, _context_name, pdu_decoded = _parse_scoped(message.scoped)
             except SNMPError:
                 return None
             if pdu_decoded.pdu_tag != REPORT or not 5 <= len(message.engine_id) <= 32:
@@ -403,7 +407,7 @@ class SNMPv3Session:
                 scoped = decrypt_scoped_pdu(
                     engine.keys.priv_key, message.boots, message.time, message.priv_params, message.scoped
                 )
-            _context_engine, pdu = _parse_scoped(scoped)
+            context_engine, context_name, pdu = _parse_scoped(scoped)
         except (SNMPError, ValueError):
             return None
         if pdu.pdu_tag == REPORT:
@@ -411,7 +415,10 @@ class SNMPv3Session:
             if reason is None:
                 return None
             return _Report(reason, message.engine_id, message.boots, message.time, authenticated)
-        if not authenticated or pdu.request_id != request_id:
+        if (
+            not authenticated or not message.flags & FLAG_PRIV or pdu.request_id != request_id
+            or message.user != self._user or context_engine != engine.engine_id or context_name != self._context
+        ):
             return None
         if message.boots != engine.boots or abs(message.time - self._estimated_time(engine)) > TIME_WINDOW_SECONDS:
             return None
