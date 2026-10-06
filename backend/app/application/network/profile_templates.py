@@ -14,7 +14,8 @@ LLDP_SPEC = {
         "sys_name": 9, "sys_desc": 10, "sys_cap_supported": 11, "sys_cap_enabled": 12,
     },
     "index_fields": ["time_mark", "local_port_num", "rem_index"],
-    "local_port_table_oid": "1.0.8802.1.1.2.1.3.7.1",  # LLDP-MIB::lldpLocPortEntry
+    "local_port_table_oid": "1.0.8802.1.1.2.1.3.7.1",  # LLDP-MIB::lldpLocPortEntry, index = lldpLocPortNum
+    "local_port_columns": {"port_id_subtype": 2, "port_id": 3, "port_desc": 4},
     "management_address_table_oid": "1.0.8802.1.1.2.1.4.2.1",  # LLDP-MIB::lldpRemManAddrEntry
 }
 
@@ -26,7 +27,8 @@ CDP_SPEC = {
         "capabilities": 9, "native_vlan": 11, "duplex": 12,
     },
     "index_fields": ["if_index", "device_index"],
-    "local_port_table_oid": "1.3.6.1.2.1.31.1.1.1.1",  # IF-MIB::ifName
+    "local_port_table_oid": "1.3.6.1.2.1.31.1.1.1",  # IF-MIB::ifXEntry, index = ifIndex
+    "local_port_columns": {"if_name": 1, "if_alias": 18},
 }
 
 STANDARD_DISCOVERY_OIDS = {

@@ -14,6 +14,8 @@ import httpx
 
 from .queue import QueueRecord
 
+PERMANENT_REJECTION_CODES = frozenset({"INVALID_PAYLOAD"})
+
 
 class RetryableTransportError(RuntimeError):
     """A request did not produce a complete, trustworthy central acknowledgement."""
@@ -74,18 +76,36 @@ class CentralClient:
         if response.status_code != 204:
             raise RetryableTransportError(f"unexpected heartbeat status {response.status_code}")
 
+    def get_discovery_plan(self) -> list[dict[str, Any]]:
+        """The collector's assigned SNMP integrations with their secret-free profile plans."""
+        response = self._send("GET", f"/collectors/{self.collector_id}/discovery-plan", None)
+        try:
+            plan = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise MalformedResponseError("central discovery plan was not JSON") from error
+        if not isinstance(plan, list) or not all(isinstance(item, dict) for item in plan):
+            raise MalformedResponseError("central discovery plan has an unexpected shape")
+        return plan
+
     def _post(self, path: str, body: dict[str, Any]) -> httpx.Response:
-        raw_body = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return self._send("POST", path, body)
+
+    def _send(self, method: str, path: str, body: dict[str, Any] | None) -> httpx.Response:
+        raw_body = (
+            b"" if body is None
+            else json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        )
         timestamp = str(int(time.time()))
         nonce = secrets.token_urlsafe(24)
         message = f"{self.collector_id}.{timestamp}.{nonce}.".encode() + raw_body
         signature = hmac.new(self._secret.encode(), message, hashlib.sha256).hexdigest()
         try:
-            response = self._client.post(
+            response = self._client.request(
+                method,
                 path,
-                content=raw_body,
+                content=raw_body if body is not None else None,
                 headers={
-                    "Content-Type": "application/json",
+                    **({"Content-Type": "application/json"} if body is not None else {}),
                     "X-Collector-Id": str(self.collector_id),
                     "X-Collector-Timestamp": timestamp,
                     "X-Collector-Nonce": nonce,
@@ -110,6 +130,8 @@ class CentralClient:
                 "external_identifier": payload["external_identifier"],
                 "occurred_at": record.occurred_at.isoformat(),
                 "raw_attributes": payload.get("raw_attributes", {}),
+                # Absent for device observations queued by older collectors; Central defaults to "device".
+                **({"record_type": payload["record_type"]} if "record_type" in payload else {}),
             }
         except KeyError as error:
             raise ValueError(f"queue record missing central ingest field: {error.args[0]}") from error
@@ -133,7 +155,10 @@ class CentralClient:
             if status not in {"accepted", "duplicate", "rejected"}:
                 raise MalformedResponseError("central response has an unknown acknowledgement status")
             returned_ids.add(record_id)
-            if status in {"accepted", "duplicate"}:
+            # A permanently invalid record can never succeed on retry; dropping it locally
+            # (it is still counted by Central) keeps it from blocking the queue until expiry.
+            permanent = status == "rejected" and result.get("error_code") in PERMANENT_REJECTION_CODES
+            if status in {"accepted", "duplicate"} or permanent:
                 acknowledged.add(record_id)
         if returned_ids != record_ids:
             raise MalformedResponseError("central response omitted a record acknowledgement")

@@ -87,3 +87,10 @@ def device_record(integration_id: str, external_identifier: str, **raw) -> dict:
         "dedup_key": uuid.uuid4().hex, "integration_id": integration_id, "external_identifier": external_identifier,
         "occurred_at": "2026-01-01T00:00:00Z", "raw_attributes": raw,
     }
+
+
+async def signed_get(client, collector: dict, suffix: str):
+    from tests.api._phase8_helpers import sign_request
+
+    sig = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=b"")
+    return await client.get(f"/api/v1/collectors/{collector['id']}/{suffix}", headers=sig)

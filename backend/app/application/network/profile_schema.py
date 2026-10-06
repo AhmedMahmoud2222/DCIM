@@ -70,6 +70,7 @@ class NeighborProtocolSpec(_Strict):
     columns: dict[str, int] = Field(default_factory=dict, max_length=MAX_ITEMS)
     index_fields: list[str] = Field(default_factory=list, max_length=8)
     local_port_table_oid: str | None = None
+    local_port_columns: dict[str, int] = Field(default_factory=dict, max_length=16)
     management_address_table_oid: str | None = None
 
     @field_validator("table_oid", "local_port_table_oid", "management_address_table_oid")
@@ -77,7 +78,7 @@ class NeighborProtocolSpec(_Strict):
     def _oids(cls, v: str | None) -> str | None:
         return v if v is None else validate_oid(v)
 
-    @field_validator("columns")
+    @field_validator("columns", "local_port_columns")
     @classmethod
     def _columns(cls, v: dict[str, int]) -> dict[str, int]:
         for name, sub_id in v.items():
@@ -99,6 +100,8 @@ class NeighborProtocolSpec(_Strict):
     def _enabled_needs_table(self) -> "NeighborProtocolSpec":
         if self.enabled and (self.table_oid is None or not self.columns):
             raise ValueError("an enabled neighbor protocol requires table_oid and columns")
+        if self.local_port_columns and self.local_port_table_oid is None:
+            raise ValueError("local_port_columns requires local_port_table_oid")
         return self
 
 
