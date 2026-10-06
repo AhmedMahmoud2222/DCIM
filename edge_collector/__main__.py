@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from .client import CentralClient
 from .config import CollectorConfig
-from .credentials import LocalCredentialStore
+from .credentials import CredentialStoreError, LocalCredentialStore
 from .discovery_scheduler import ScheduledDiscovery
 from .discovery_sessions import local_session_factory
 from .queue import SQLiteQueue
@@ -36,7 +36,7 @@ def main() -> int:
     try:
         store = LocalCredentialStore.load(args.credentials)
         policy = SNMPTargetPolicy(allowed_networks=tuple(ipaddress.ip_network(n) for n in args.allow_network))
-    except Exception:
+    except (CredentialStoreError, ValueError):
         parser.error("invalid local credential file or network policy")
     client = CentralClient(args.central_url, args.collector_id, secret)
     queue = SQLiteQueue(CollectorConfig(args.database))

@@ -49,7 +49,7 @@ async def world(client, auth_headers):
     )
     user, headers = await _group_user(client, admin, [group])
     return {"admin": admin, "headers": headers, "user": user, "a1": a1, "a2": a2, "b1": b1, "b2": b2,
-            "inside": inside, "crossing": crossing, "outside": outside, "site_b": site_b}
+            "inside": inside, "crossing": crossing, "outside": outside, "site_a": site_a, "site_b": site_b, "rack_a": rack_a, "rack_b": rack_b}
 
 
 def leaked(blob: str, world: dict, *, supplied: tuple[str, ...] = ()) -> list[str]:
@@ -70,10 +70,10 @@ async def test_list_shows_only_cables_with_a_visible_endpoint_and_masks_the_far_
     assert visible["port"]["equipment_hostname"] == "a1-sw"
     assert leaked(response.text, world) == []
     filtered = await client.get(CABLES, params={"equipment_id": world["b1"]["id"]}, headers=world["headers"])
-    assert filtered.json()["total"] == 1  # only the partly visible cable; B-only cables never appear
-    assert leaked(filtered.text, world) == []
+    assert filtered.status_code == 404  # hidden IDs cannot identify the masked far endpoint
+    assert leaked(filtered.text, world, supplied=(world["b1"]["id"],)) == []
     by_port = await client.get(CABLES, params={"port_id": world["b2"]["port_by_name"]["p1"]}, headers=world["headers"])
-    assert by_port.json()["total"] == 0
+    assert by_port.status_code == 404
 
 
 async def test_direct_id_access_to_invisible_cables_is_a_404(client, world):
@@ -161,3 +161,45 @@ async def test_denied_cable_permission_overrides_an_allow(client, world):
     assert (await client.get(CABLES, headers=headers)).status_code == 200
     denied = await client.post(CABLES, json=cable_body(world["b1"]["port_by_name"]["p3"], world["b2"]["port_by_name"]["p3"]), headers=headers)
     assert denied.status_code == 403
+
+
+@pytest.mark.parametrize("scope_kind", ["site", "rack", "empty", "administrator"])
+async def test_asyncpg_uuid_direct_id_guards_do_not_widen_scope(db_session, world, scope_kind):
+    from asyncpg.pgproto.pgproto import UUID as DriverUUID
+    from sqlalchemy import literal
+    from sqlalchemy.sql.sqltypes import NullType
+
+    from app.application.access_control import AccessScope, ensure_equipment_access, ensure_rack_access
+    from app.core.errors import NotFoundError
+
+    # Reproduce the original inference failure using the actual driver class, not a mock.
+    raw_equipment = await db_session.scalar(text("SELECT id FROM equipment WHERE id = :id"), {"id": world["a1"]["id"]})
+    equipment_id = DriverUUID(str(raw_equipment))
+    rack_id = DriverUUID(world["rack_a"])
+    assert isinstance(literal(equipment_id).type, NullType)
+    site_id = uuid.UUID(world["site_a"]["site"])
+    plain_rack = uuid.UUID(world["rack_a"])
+    scope = {
+        "administrator": AccessScope(unrestricted=True),
+        "empty": AccessScope(unrestricted=False),
+        "site": AccessScope(unrestricted=False, site_ids=frozenset({site_id}), full_site_ids=frozenset({site_id})),
+        "rack": AccessScope(
+            unrestricted=False, site_ids=frozenset({site_id}), rack_ids=frozenset({plain_rack}),
+            selected_racks_by_site={site_id: frozenset({plain_rack})}),
+    }[scope_kind]
+    for guard, allowed_id, hidden_id in (
+        (ensure_equipment_access, equipment_id, DriverUUID(world["b1"]["id"])),
+        (ensure_rack_access, rack_id, DriverUUID(world["rack_b"])),
+    ):
+        if scope_kind == "empty":
+            with pytest.raises(NotFoundError):
+                await guard(db_session, scope, allowed_id)
+        else:
+            await guard(db_session, scope, allowed_id)
+        if scope_kind == "administrator":
+            await guard(db_session, scope, hidden_id)
+        else:
+            with pytest.raises(NotFoundError):
+                await guard(db_session, scope, hidden_id)
+            with pytest.raises(NotFoundError):
+                await guard(db_session, scope, DriverUUID(str(uuid.uuid4())))

@@ -125,7 +125,7 @@ async def test_an_existing_logical_connection_is_linked_never_overwritten(client
     linked = await create_cable(client, headers, b, a, label="LINKED")  # reversed ends still the same pair
     assert linked["port_connection_id"] is not None
     rows = await connections(db_session)
-    assert rows == [(uuid.UUID(a), uuid.UUID(b), "active", "LINKED")]
+    assert rows == [(uuid.UUID(a), uuid.UUID(b), "active", "OLD-LABEL")]
     await client.post(f"{CABLES}/{linked['id']}/install", json={}, headers=headers | if_match(1))
     removed = await client.post(f"{CABLES}/{linked['id']}/remove", json={}, headers=headers | if_match(2))
     assert removed.status_code == 200
@@ -330,3 +330,22 @@ async def test_creating_from_a_neighbor_also_needs_discovery_reconcile(client, a
     _user, headers = await _group_user(client, admin, [group])
     response = await client.post(f"{CABLES}/from-neighbor/{uuid.uuid4()}", json={"label": "x", "cable_type": "other"}, headers=headers)
     assert response.status_code in (403, 404)
+
+
+async def test_linking_existing_planned_connection_preserves_its_label_and_state(client, auth_headers, db_session):
+    headers = await auth_headers("Administrator")
+    left, right = await two_devices(client, headers)
+    a, b = left["port_by_name"]["Eth1/1"], right["port_by_name"]["Eth1/24"]
+    response = await client.post(
+        f"/api/v1/equipment/{left['id']}/ports/connect",
+        json={"port_id": a, "target_port_id": b, "cable_id": "LOGICAL", "status": "planned"}, headers=headers)
+    assert response.status_code == 201
+    cable = await create_cable(client, headers, a, b, label="PHYSICAL")
+    updated = await client.patch(
+        f"{CABLES}/{cable['id']}", json={"label": "RENAMED"}, headers=headers | if_match(1))
+    assert updated.status_code == 200
+    installed = await client.post(f"{CABLES}/{cable['id']}/install", json={}, headers=headers | if_match(2))
+    assert installed.status_code == 200
+    removed = await client.post(f"{CABLES}/{cable['id']}/remove", json={}, headers=headers | if_match(3))
+    assert removed.status_code == 200
+    assert await connections(db_session) == [(uuid.UUID(a), uuid.UUID(b), "planned", "LOGICAL")]

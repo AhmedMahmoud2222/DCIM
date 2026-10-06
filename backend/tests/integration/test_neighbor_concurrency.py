@@ -128,6 +128,15 @@ async def test_migration_downgrade_refuses_to_discard_operator_decisions(db_engi
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
+    cable_path = path.with_name("0039_cables.py")
+    cable_spec = importlib.util.spec_from_file_location("cables_migration", cable_path)
+    cable_module = importlib.util.module_from_spec(cable_spec)
+    cable_spec.loader.exec_module(cable_module)
+
+    def run_cables(connection, direction):
+        with Operations.context(MigrationContext.configure(connection)):
+            getattr(cable_module, direction)()
+
     def run(connection, direction):
         with Operations.context(MigrationContext.configure(connection)):
             getattr(module, direction)()
@@ -135,6 +144,8 @@ async def test_migration_downgrade_refuses_to_discard_operator_decisions(db_engi
     async with db_engine.connect() as conn:
         tx = await conn.begin()
         try:
+            # Respect reverse lineage: the cable FK must be removed before its parent table.
+            await conn.run_sync(run_cables, "downgrade")
             await conn.execute(text("""
                 INSERT INTO discovered_neighbor (id, integration_id, protocol, identity_key, first_seen_at, last_seen_at,
                     local_port_name, remote_chassis_ident, remote_port_ident, capabilities, raw_evidence, reconciliation_state)
@@ -147,6 +158,7 @@ async def test_migration_downgrade_refuses_to_discard_operator_decisions(db_engi
             assert await conn.scalar(text("SELECT to_regclass('discovered_neighbor')")) is None
             await conn.run_sync(run, "upgrade")
             assert await conn.scalar(text("SELECT count(*) FROM discovered_neighbor")) == 0
+            await conn.run_sync(run_cables, "upgrade")
         finally:
             await tx.rollback()
     del collector_id

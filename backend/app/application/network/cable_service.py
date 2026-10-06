@@ -117,7 +117,6 @@ async def _realize_port_connection(
 ) -> None:
     if existing is not None:
         cable.port_connection_created = False
-        existing.cable_id = cable.label[:64]
         connection = existing
     else:
         connection = PortConnection(
@@ -253,7 +252,7 @@ async def update_cable(
     for name in ("label", "cable_type", "connector_a", "connector_b", "length_m", "route_metadata", "notes"):
         if name in changes:
             setattr(cable, name, changes[name])
-    if "label" in changes and cable.port_connection_id is not None:
+    if "label" in changes and cable.port_connection_created and cable.port_connection_id is not None:
         connection = await db.get(PortConnection, cable.port_connection_id)
         if connection is not None:
             connection.cable_id = cable.label[:64]
@@ -280,7 +279,7 @@ async def install_cable(
     before = snapshot(cable)
     cable.status, cable.installed_at = "installed", installed_at or datetime.now(UTC)
     cable.version += 1
-    if cable.port_connection_id is not None:
+    if cable.port_connection_created and cable.port_connection_id is not None:
         connection = await db.get(PortConnection, cable.port_connection_id)
         if connection is not None and connection.status == "planned":
             connection.status = "active"

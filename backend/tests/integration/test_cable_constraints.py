@@ -236,3 +236,22 @@ async def test_migration_downgrade_refuses_to_discard_cables_and_round_trips_whe
             await add_cable(conn, "after-roundtrip", left["p2"], right["p2"], status="planned")
         finally:
             await tx.rollback()
+
+
+async def test_history_cannot_be_deleted_and_endpoints_cannot_be_replaced(db_engine, ports):
+    left, right = ports["left"], ports["right"]
+    async with db_engine.begin() as conn:
+        installed = await add_cable(conn, "immutable", left["p1"], right["p1"])
+    async with db_engine.connect() as conn:
+        with pytest.raises((IntegrityError, DBAPIError)):
+            await conn.execute(text("DELETE FROM cable_endpoint WHERE cable_id = :id"), {"id": installed})
+        await conn.rollback()
+        with pytest.raises((IntegrityError, DBAPIError)):
+            await conn.execute(text("DELETE FROM cable WHERE id = :id"), {"id": installed})
+        await conn.rollback()
+    async with db_engine.begin() as conn:
+        await conn.execute(text("UPDATE cable SET status = 'removed', removed_at = now() WHERE id = :id"), {"id": installed})
+    async with db_engine.connect() as conn:
+        with pytest.raises((IntegrityError, DBAPIError)):
+            await conn.execute(text("DELETE FROM cable WHERE id = :id"), {"id": installed})
+        await conn.rollback()

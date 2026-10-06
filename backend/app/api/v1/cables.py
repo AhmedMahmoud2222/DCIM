@@ -21,11 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import AccessScope, equipment_visible_clause
+from app.application.access_control import AccessScope, ensure_equipment_access, equipment_visible_clause
 from app.application.concurrency import require_if_match
 from app.application.network import cable_service, trace_service
 from app.application.rbac import AuthContext, require_permission
-from app.core.errors import ForbiddenError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.identity.models import ManagedAsset
 from app.domain.network.cable_models import CABLE_TYPES, Cable, CableEndpoint
 from app.domain.physical.models import Equipment
@@ -254,6 +254,14 @@ async def list_cables(
     port_id: uuid.UUID | None = None, equipment_id: uuid.UUID | None = None, page: Pagination = Depends(pagination_params),
     db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cable:read")),
 ) -> Page[CableOut]:
+    # Direct-ID filters must not become an oracle for a masked far endpoint.
+    if equipment_id is not None:
+        await ensure_equipment_access(db, ctx.scope, equipment_id)
+    if port_id is not None:
+        port = await db.get(EquipmentPort, port_id)
+        if port is None:
+            raise NotFoundError(f"EquipmentPort {port_id} not found.")
+        await cable_service.ensure_port_visible(db, ctx.scope, port, what="EquipmentPort", ref=port_id)
     visible_endpoint = (
         select(CableEndpoint.cable_id)
         .join(EquipmentPort, EquipmentPort.id == CableEndpoint.equipment_port_id)

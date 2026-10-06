@@ -89,7 +89,7 @@ class ScheduledDiscovery:
         plan = {}
         for item in result:
             if not isinstance(item, dict):
-                raise ValueError("invalid discovery plan")
+                raise TypeError("invalid discovery plan")
             key = item.get("integration_id")
             interval = item.get("poll_interval_seconds")
             if (

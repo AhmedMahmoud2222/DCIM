@@ -70,6 +70,12 @@ $$ LANGUAGE plpgsql
 _LIFECYCLE_GUARD = """
 CREATE FUNCTION cable_lifecycle_guard() RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.status <> 'planned' THEN
+            RAISE EXCEPTION 'installed and removed cable history cannot be deleted' USING ERRCODE = '23514';
+        END IF;
+        RETURN OLD;
+    END IF;
     IF OLD.status = 'removed' AND (
         NEW.status <> OLD.status OR NEW.label <> OLD.label OR NEW.cable_type <> OLD.cable_type
         OR NEW.installed_at IS DISTINCT FROM OLD.installed_at OR NEW.removed_at IS DISTINCT FROM OLD.removed_at
@@ -174,6 +180,20 @@ def upgrade() -> None:
     )
     op.create_index("ix_cable_endpoint_port", "cable_endpoint", ["equipment_port_id"])
 
+    op.execute("""
+        CREATE FUNCTION cable_endpoint_delete_guard() RETURNS trigger AS $
+        BEGIN
+            IF EXISTS (SELECT 1 FROM cable WHERE id = OLD.cable_id) THEN
+                RAISE EXCEPTION 'cable endpoints cannot be deleted or replaced' USING ERRCODE = '23514';
+            END IF;
+            RETURN OLD;
+        END;
+        $ LANGUAGE plpgsql
+    """)
+    op.execute(
+        "CREATE TRIGGER cable_endpoint_delete_guard BEFORE DELETE ON cable_endpoint "
+        "FOR EACH ROW EXECUTE FUNCTION cable_endpoint_delete_guard()"
+    )
     op.execute(_ENDPOINT_FUNCTION)
     op.execute(_ENDPOINT_IMMUTABLE)
     op.execute(_LIFECYCLE_GUARD)
@@ -189,7 +209,7 @@ def upgrade() -> None:
         "CREATE TRIGGER cable_endpoint_immutable BEFORE UPDATE ON cable_endpoint "
         "FOR EACH ROW EXECUTE FUNCTION cable_endpoint_immutable()"
     )
-    op.execute("CREATE TRIGGER cable_lifecycle_guard BEFORE UPDATE ON cable FOR EACH ROW EXECUTE FUNCTION cable_lifecycle_guard()")
+    op.execute("CREATE TRIGGER cable_lifecycle_guard BEFORE UPDATE OR DELETE ON cable FOR EACH ROW EXECUTE FUNCTION cable_lifecycle_guard()")
     _seed_permissions()
 
 
@@ -228,8 +248,10 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER cable_endpoint_immutable ON cable_endpoint")
     op.execute("DROP TRIGGER cable_endpoint_two_endpoints ON cable_endpoint")
     op.execute("DROP TRIGGER cable_two_endpoints ON cable")
+    op.execute("DROP TRIGGER cable_endpoint_delete_guard ON cable_endpoint")
     op.drop_table("cable_endpoint")
     op.drop_table("cable")
+    op.execute("DROP FUNCTION cable_endpoint_delete_guard()")
     op.execute("DROP FUNCTION cable_lifecycle_guard()")
     op.execute("DROP FUNCTION cable_endpoint_immutable()")
     op.execute("DROP FUNCTION cable_require_two_endpoints()")

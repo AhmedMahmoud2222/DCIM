@@ -337,6 +337,16 @@ async def test_concurrent_requests_cannot_remove_every_administrator(db_engine, 
 # scope-filtered in its handler, or serves non-site reference data. A new route appearing here
 # must be reviewed for scope handling, then added to this list.
 REVIEWED_SCOPE_AWARE_ROUTES = {
+    # Issue #101 object isolation is covered by test_cables_scope.py.
+    ("cables", "DELETE", "/cables/{cable_id}"),
+    ("cables", "GET", "/cables"),
+    ("cables", "GET", "/cables/{cable_id}"),
+    ("cables", "GET", "/topology/ports/{port_id}/trace"),
+    ("cables", "PATCH", "/cables/{cable_id}"),
+    ("cables", "POST", "/cables"),
+    ("cables", "POST", "/cables/from-neighbor/{neighbor_id}"),
+    ("cables", "POST", "/cables/{cable_id}/install"),
+    ("cables", "POST", "/cables/{cable_id}/remove"),
     ("catalog", "GET", "/equipment-models"),  # reference catalog, not site data
     ("catalog", "GET", "/equipment-models/{equipment_model_id}/revisions"),
     ("catalog", "GET", "/rack-models"),
