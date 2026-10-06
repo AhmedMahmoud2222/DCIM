@@ -21,7 +21,9 @@ DISCOVERY_OID_KEYS = (
 )
 MATCH_FIELDS = ("sys_object_id", "sys_descr", "model", "hardware_revision")
 MATCH_OPS = ("equals", "prefix", "contains", "in")
-_SECRET_NAME = re.compile(r"(secret|password|passwd|community|credential|token|privkey|authkey)", re.IGNORECASE)
+_SECRET_NAME = re.compile(
+    r"(secret|password|passwd|community|credential|token|privkey|authkey|apikey|privatekey|passphrase)", re.IGNORECASE
+)
 _VERSION_PATTERN = re.compile(r"^[0-9]+(\.[0-9]+){0,5}$")
 
 MAX_ITEMS = 64
@@ -285,7 +287,7 @@ def reject_secret_like_keys(document: object, path: str = "") -> None:
     """Profiles never carry secrets: refuse any key that looks like one, at any depth."""
     if isinstance(document, dict):
         for key, value in document.items():
-            if _SECRET_NAME.search(str(key)):
+            if _SECRET_NAME.search(re.sub(r"[_\-\s]", "", str(key))):
                 raise ValueError(f"profile content must not contain secret-like key {path}{key!r}")
             reject_secret_like_keys(value, f"{path}{key}.")
     elif isinstance(document, list):
