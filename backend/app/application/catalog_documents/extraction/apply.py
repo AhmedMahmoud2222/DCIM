@@ -22,6 +22,8 @@ FIELD_TARGETS = {
     "width": "width_value", "height": "height_value", "depth": "depth_value",
     "weight": "weight_value", "power_rated_w": "rated_power_w",
     "power_typical_w": "typical_power_w", "power_max_w": "max_power_w",
+    "rack_units": "rack_unit_height", "heat_dissipation": "heat_dissipation_btu_hr",
+    "airflow_direction": "airflow_direction",
 }
 BLOCKING_FLAGS = {
     "number_format_ambiguous", "unit_missing", "unit_unrecognized", "unit_dimension_mismatch",
@@ -35,6 +37,8 @@ def candidate_patch(candidate: CatalogExtractionCandidate, revision: CatalogMode
         raise ValueError(f"No supported scalar catalog field for {candidate.field_key}.")
     if BLOCKING_FLAGS.intersection(candidate.flags or []):
         raise ValueError("Resolve ambiguous numbers, axis order or missing units before applying.")
+    if candidate.field_key in {"rack_units", "heat_dissipation", "airflow_direction"}:
+        return _fixed_field_patch(candidate)
     canonical = convert_extracted_catalog_candidate(candidate)
     target = FIELD_TARGETS[candidate.field_key]
     unit_column = "dimension_unit" if candidate.field_key in {"width", "height", "depth"} else (
@@ -47,6 +51,8 @@ def candidate_patch(candidate: CatalogExtractionCandidate, revision: CatalogMode
             raise ValueError("Existing draft values have no unit; correct the draft before applying.")
     unit = unit or canonical.unit
     value = convert_value(canonical.value, canonical.unit, unit)
+    if value < 0:
+        raise ValueError("Catalog values cannot be negative, including values that round to zero.")
     scale = 3 if unit_column else 2
     value = value.quantize(Decimal(10) ** -scale, rounding=ROUND_HALF_EVEN)
     if value < 0 or (unit_column and value == 0) or value >= Decimal(10) ** (10 - scale):
@@ -54,12 +60,20 @@ def candidate_patch(candidate: CatalogExtractionCandidate, revision: CatalogMode
     patch: dict[str, Any] = {target: value}
     if unit_column:
         patch[unit_column] = unit
-    evidence = {
-        "candidate_id": str(candidate.id), "field_key": candidate.field_key, "target_field": target,
-        "raw_value": candidate.raw_value, "raw_unit": candidate.raw_unit,
+    evidence = _evidence(candidate, target, value, unit)
+    evidence.update({
         "source_value": str(canonical.source_value), "source_unit": canonical.source_unit,
         "canonical_value": str(canonical.value), "canonical_unit": canonical.unit,
-        "registry_version": canonical.registry_version, "applied_value": str(value), "applied_unit": unit,
+        "registry_version": canonical.registry_version, "conversion_contract": "registry-v1",
+    })
+    return patch, evidence
+
+
+def _evidence(candidate: CatalogExtractionCandidate, target: str, value: Any, unit: str | None) -> dict:
+    return {
+        "candidate_id": str(candidate.id), "field_key": candidate.field_key, "target_field": target,
+        "raw_value": candidate.raw_value, "raw_unit": candidate.raw_unit,
+        "applied_value": str(value), "applied_unit": unit,
         "source_text": candidate.source_text, "page_number": candidate.page_number,
         "method": candidate.method, "confidence": str(candidate.confidence), "flags": list(candidate.flags or []),
         "model_context": candidate.model_context, "model_match": candidate.model_match,
@@ -68,7 +82,43 @@ def candidate_patch(candidate: CatalogExtractionCandidate, revision: CatalogMode
         "reviewed_at": candidate.reviewed_at.isoformat() if candidate.reviewed_at else None,
         "review_note": candidate.review_note,
     }
-    return patch, evidence
+
+
+def _fixed_field_patch(candidate: CatalogExtractionCandidate) -> tuple[dict, dict]:
+    """Preserve existing inventory contracts; do not infer power semantics or enum meaning."""
+    target = FIELD_TARGETS[candidate.field_key]
+    if candidate.value_max is not None:
+        raise ValueError("Ranged candidates require manual entry with an explicit selection.")
+    value: Any
+    unit = candidate.unit
+    if candidate.field_key == "airflow_direction":
+        directions = {"front-to-back": "front_to_rear", "side-to-side": "side_to_side"}
+        if candidate.value_numeric is not None or candidate.value_text not in directions:
+            raise ValueError("This airflow direction has no exact supported catalog enum.")
+        value = directions[candidate.value_text]
+    else:
+        if candidate.value_numeric is None or candidate.value_text is not None:
+            raise ValueError("This catalog field requires a scalar numeric candidate.")
+        number = Decimal(str(candidate.value_numeric))
+        if not number.is_finite() or number < 0:
+            raise ValueError("Catalog values must be finite and nonnegative.")
+        if candidate.field_key == "rack_units":
+            if unit != "U" or number <= 0 or number != number.to_integral_value() or number > 2147483647:
+                raise ValueError("Rack height requires a positive integer in U.")
+            value = int(number)
+        else:
+            if unit != "BTU/hr":
+                raise ValueError("Heat dissipation requires BTU/hr; other units require an explicit conversion decision.")
+            value = number.quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+            if value >= Decimal("100000000"):
+                raise ValueError("Heat dissipation exceeds the catalog field's storage range.")
+    evidence = _evidence(candidate, target, value, unit)
+    evidence.update({
+        "source_value": str(candidate.value_text if candidate.value_text is not None else candidate.value_numeric),
+        "source_unit": candidate.unit, "canonical_value": str(value), "canonical_unit": unit,
+        "registry_version": REGISTRY_VERSION, "conversion_contract": "catalog-fixed-v1",
+    })
+    return {target: value}, evidence
 
 
 async def apply_candidates(

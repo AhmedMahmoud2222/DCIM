@@ -257,3 +257,25 @@ async def test_multiple_accepted_duplicates_same_field_are_refused(client, admin
     await db_session.rollback()
     row = await db_session.get(CatalogModelRevision, uuid.UUID(draft["id"]))
     assert row.typical_power_w is None and row.version == draft["version"]
+
+
+async def test_fixed_catalog_contracts_apply_with_source_evidence(client, admin, scanner, dispatched):
+    args = await setup(client, admin, ["CX-100 Specifications", "Rack units: 2 U", "Heat dissipation: 1195 BTU/hr", "Airflow: front to rear"])
+    assert {c["field_key"] for c in args[3]} == {"rack_units", "heat_dissipation", "airflow_direction"}
+    response = await apply(client, admin, *args)
+    assert response.status_code == 201, response.text
+    row = (await client.get(f"{BASE}/revisions/{args[0]['id']}", headers=admin)).json()
+    assert row["rack_unit_height"] == 2 and row["heat_dissipation_btu_hr"] == 1195
+    assert row["airflow_direction"] == "front_to_rear"
+    assert all(c["conversion_contract"] == "catalog-fixed-v1" for c in response.json()["candidates"])
+
+
+async def test_older_extraction_run_is_history_only(client, admin, scanner, dispatched, monkeypatch, db_session):
+    args = await setup(client, admin)
+    monkeypatch.setattr("app.application.catalog_documents.extraction.service.EXTRACTOR_VERSION", "new-test-extractor")
+    newer = await _extract(client, admin, args[1]["id"])
+    assert newer["is_current"]
+    assert (await apply(client, admin, *args)).status_code == 409
+    await db_session.rollback()
+    row = await db_session.get(CatalogModelRevision, uuid.UUID(args[0]["id"]))
+    assert row.typical_power_w is None and row.version == args[0]["version"]

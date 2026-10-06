@@ -6,7 +6,7 @@ import * as api from "@/features/catalog-designer/extractionApi";
 import { ApiError } from "@/lib/apiClient";
 import { CatalogModelRevisionDetail } from "@/types";
 
-const SUPPORTED = new Set(["width", "height", "depth", "weight", "power_rated_w", "power_typical_w", "power_max_w"]);
+const SUPPORTED = new Set(["width", "height", "depth", "weight", "power_rated_w", "power_typical_w", "power_max_w", "rack_units", "heat_dissipation", "airflow_direction"]);
 const BLOCKING = new Set(["number_format_ambiguous", "unit_missing", "unit_unrecognized", "unit_dimension_mismatch", "dimensions_order_unknown"]);
 
 export function DatasheetPanel({ revision, readOnly, onChanged }: {
@@ -116,7 +116,9 @@ function CandidateCard({ candidate: c, busy, canReview, canApply, selected, onSe
   onSelect: (checked: boolean) => void; onReview: (decision: string, note: string, confirmed: boolean) => void;
 }) {
   const [note, setNote] = useState(""); const [confirmed, setConfirmed] = useState(false);
-  const supported = SUPPORTED.has(c.field_key) && c.value_numeric !== null && c.value_max === null && c.value_text === null && !!c.unit && !c.flags.some(f => BLOCKING.has(f));
+  const airflow = c.field_key === "airflow_direction" && ["front-to-back", "side-to-side"].includes(c.value_text ?? "");
+  const scalar = c.value_numeric !== null && c.value_text === null && !!c.unit && (c.field_key !== "heat_dissipation" || c.unit === "BTU/hr");
+  const supported = SUPPORTED.has(c.field_key) && c.value_max === null && (airflow || scalar) && !c.flags.some(f => BLOCKING.has(f));
   return <article aria-label={`${c.field_key} candidate`} className="rounded border border-slate-600 p-3">
     <h3>{c.field_key} · {c.raw_value} {c.raw_unit} · {c.review_status}</h3>
     <p>Parsed: {c.value_text ?? c.value_numeric}{c.value_max !== null ? ` – ${c.value_max}` : ""} {c.unit} · Confidence: {Math.round(c.confidence * 100)}%</p>
