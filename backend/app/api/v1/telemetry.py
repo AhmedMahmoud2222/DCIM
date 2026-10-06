@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.application.alarm_service import AlarmUnitCompatibilityError
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -39,6 +40,16 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.models import CANONICAL_METRICS, DailyTelemetryAggregate, IntegrationMetricMapping, TelemetryReading
+from app.domain.telemetry.registry import (
+    METRIC_REGISTRY,
+    REGISTRY_VERSION,
+    UnitDimensionMismatch,
+    UnknownMetric,
+    UnknownRegistryVersion,
+    UnknownUnit,
+    convert_to_presentation,
+    validate_metric_unit,
+)
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 MAX_HISTORY_POINTS = 1000
@@ -77,6 +88,12 @@ class TelemetryOut(BaseModel):
     metric: str
     unit: str
     value: float
+    presentation_unit: str
+    presentation_value: float
+    raw_value: float | None = None
+    raw_unit: str | None = None
+    registry_version: str | None = None
+    source_scale: float | None = None
     occurred_at: datetime
     received_at: datetime
     expected_poll_interval_seconds: int | None = None
@@ -86,6 +103,8 @@ class TelemetryHistoryOut(TelemetryOut):
     resolution: str = "raw"
     minimum_value: float | None = None
     maximum_value: float | None = None
+    presentation_minimum_value: float | None = None
+    presentation_maximum_value: float | None = None
     sample_count: int | None = None
 
 
@@ -101,6 +120,27 @@ class MetricMappingIn(BaseModel):
 
 class MetricMappingOut(MetricMappingIn):
     id: uuid.UUID
+    registry_version: str | None = None
+
+
+class MetricRegistryOut(BaseModel):
+    version: str
+    metrics: dict[str, dict[str, str]]
+
+
+@router.get("/metric-registry", response_model=MetricRegistryOut)
+async def get_metric_registry(ctx=Depends(require_permission("telemetry:read"))) -> MetricRegistryOut:
+    return MetricRegistryOut(
+        version=REGISTRY_VERSION,
+        metrics={
+            key: {
+                "dimension": definition.dimension,
+                "canonical_unit": definition.canonical_unit,
+                "presentation_unit": definition.presentation_unit,
+            }
+            for key, definition in METRIC_REGISTRY.items()
+        },
+    )
 
 
 @router.post("/mappings", response_model=MetricMappingOut, status_code=201)
@@ -111,9 +151,15 @@ async def create_metric_mapping(
 ) -> MetricMappingOut:
     if body.canonical_metric not in CANONICAL_METRICS:
         raise ApiError(status_code=422, title="Invalid canonical metric", detail="Metric is not supported by the MVP catalog.")
+    try:
+        validate_metric_unit(body.canonical_metric, body.unit)
+    except UnknownUnit as exc:
+        raise ApiError(status_code=422, title="Invalid source unit", detail=str(exc)) from exc
+    except (UnitDimensionMismatch, UnknownMetric) as exc:
+        raise ApiError(status_code=422, title="Metric/unit mismatch", detail=str(exc)) from exc
     if body.managed_asset_id is not None and await db.get(ManagedAsset, body.managed_asset_id) is None:
         raise ApiError(status_code=422, title="Invalid managed asset", detail="managed_asset_id does not exist.")
-    mapping = IntegrationMetricMapping(id=uuid.uuid4(), **body.model_dump())
+    mapping = IntegrationMetricMapping(id=uuid.uuid4(), registry_version=REGISTRY_VERSION, **body.model_dump())
     db.add(mapping)
     await db.flush()
     await write_audit_log(
@@ -134,7 +180,7 @@ async def create_metric_mapping(
         payload={"integration_id": str(mapping.integration_id), "canonical_metric": mapping.canonical_metric},
     )
     await db.commit()
-    return MetricMappingOut(id=mapping.id, **body.model_dump())
+    return MetricMappingOut(id=mapping.id, registry_version=mapping.registry_version, **body.model_dump())
 
 
 @router.get("/mappings", response_model=list[MetricMappingOut])
@@ -156,6 +202,7 @@ async def list_metric_mappings(
             unit=row.unit,
             scale=float(row.scale),
             label=row.label,
+            registry_version=row.registry_version,
         )
         for row in (await db.execute(stmt)).scalars().all()
     ]
@@ -177,20 +224,25 @@ async def ingest_collector_telemetry(
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="NOT_ASSIGNED"))
             continue
         try:
-            outcome = await ingest_reading(
-                db,
-                collector_id=collector.id,
-                integration_id=record.integration_id,
-                dedup_key=record.dedup_key,
-                external_identifier=record.external_identifier,
-                source_identifier=record.source_identifier,
-                occurred_at=record.occurred_at,
-                value=record.value,
-                attributes=record.attributes,
-            )
+            # Alarm compatibility may fail after inserting a reading or updating
+            # another rule. Reject this record atomically without losing valid peers.
+            async with db.begin_nested():
+                outcome = await ingest_reading(
+                    db,
+                    collector_id=collector.id,
+                    integration_id=record.integration_id,
+                    dedup_key=record.dedup_key,
+                    external_identifier=record.external_identifier,
+                    source_identifier=record.source_identifier,
+                    occurred_at=record.occurred_at,
+                    value=record.value,
+                    attributes=record.attributes,
+                )
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="duplicate" if outcome.duplicate else "accepted"))
         except MetricMappingNotFound:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="UNKNOWN_METRIC_MAPPING"))
+        except (AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion):
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INCOMPATIBLE_TELEMETRY_UNITS"))
     await db.commit()
     return TelemetryBatchOut(results=results)
 
@@ -276,6 +328,10 @@ async def metric_history(
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
+    presentation = (
+        convert_to_presentation(row.metric, row.value, row.unit, registry_version=row.registry_version)
+        if row.registry_version is not None else None
+    )
     return TelemetryOut(
         id=row.id,
         integration_id=row.integration_id,
@@ -284,6 +340,12 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         metric=row.metric,
         unit=row.unit,
         value=float(row.value),
+        presentation_unit=presentation.unit if presentation is not None else row.unit,
+        presentation_value=float(presentation.value) if presentation is not None else float(row.value),
+        raw_value=None if row.raw_value is None else float(row.raw_value),
+        raw_unit=row.raw_unit,
+        source_scale=None if row.source_scale is None else float(row.source_scale),
+        registry_version=row.registry_version,
         occurred_at=row.occurred_at,
         received_at=row.received_at,
         expected_poll_interval_seconds=poll_interval_seconds,
@@ -296,6 +358,12 @@ def _history_raw(row: TelemetryReading) -> TelemetryHistoryOut:
 
 def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
     occurred_at = datetime.combine(row.day, datetime.min.time(), tzinfo=UTC)
+    if row.registry_version is None:
+        average = minimum = maximum = None
+    else:
+        average = convert_to_presentation(row.metric, row.average_value, row.unit, registry_version=row.registry_version)
+        minimum = convert_to_presentation(row.metric, row.minimum_value, row.unit, registry_version=row.registry_version)
+        maximum = convert_to_presentation(row.metric, row.maximum_value, row.unit, registry_version=row.registry_version)
     return TelemetryHistoryOut(
         id=row.id,
         integration_id=row.integration_id,
@@ -304,11 +372,16 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         metric=row.metric,
         unit=row.unit,
         value=float(row.average_value),
+        presentation_unit=average.unit if average is not None else row.unit,
+        presentation_value=float(average.value) if average is not None else float(row.average_value),
+        registry_version=row.registry_version,
         occurred_at=occurred_at,
         received_at=occurred_at,
         resolution="daily",
         minimum_value=float(row.minimum_value),
         maximum_value=float(row.maximum_value),
+        presentation_minimum_value=float(minimum.value) if minimum is not None else float(row.minimum_value),
+        presentation_maximum_value=float(maximum.value) if maximum is not None else float(row.maximum_value),
         sample_count=row.sample_count,
     )
 
