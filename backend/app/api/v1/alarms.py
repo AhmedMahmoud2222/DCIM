@@ -17,6 +17,7 @@ from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.alarm.models import ALARM_STATUSES, RULE_TYPES, Alarm, AlarmRule
+from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION, convert_to_presentation
 
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 
@@ -40,6 +41,9 @@ class AlarmOut(BaseModel):
     acknowledged_at: datetime | None
     cleared_at: datetime | None
     last_value: float
+    unit: str | None = None
+    presentation_value: float
+    presentation_unit: str | None = None
 
 
 class AlarmHistoryPage(BaseModel):
@@ -55,7 +59,12 @@ async def create_alarm_rule(
         from app.core.errors import ApiError
 
         raise ApiError(status_code=422, title="Invalid alarm rule", detail="Rule type and threshold are inconsistent.")
-    rule = AlarmRule(id=uuid.uuid4(), **body.model_dump())
+    definition = METRIC_REGISTRY.get(body.metric)
+    if definition is None:
+        from app.core.errors import ApiError
+        raise ApiError(status_code=422, title="Invalid alarm metric", detail="Metric is not in the active registry.")
+    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit, registry_version=REGISTRY_VERSION,
+                     **body.model_dump())
     db.add(rule)
     await db.flush()
     await write_audit_log(
@@ -155,6 +164,12 @@ async def acknowledge(
 
 
 def _out(row: Alarm) -> AlarmOut:
+    unit = row.details.get("unit")
+    version = row.details.get("registry_version")
+    presentation = None
+    metric = row.details.get("metric")
+    if metric and unit and version:
+        presentation = convert_to_presentation(metric, row.last_value, unit, registry_version=version)
     return AlarmOut(
         id=row.id,
         rule_id=row.rule_id,
@@ -166,6 +181,9 @@ def _out(row: Alarm) -> AlarmOut:
         acknowledged_at=row.acknowledged_at,
         cleared_at=row.cleared_at,
         last_value=float(row.last_value),
+        unit=unit,
+        presentation_value=float(presentation.value) if presentation is not None else float(row.last_value),
+        presentation_unit=presentation.unit if presentation is not None else unit,
     )
 
 

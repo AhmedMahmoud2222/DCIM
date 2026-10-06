@@ -19,9 +19,9 @@ function csvCell(value: string | number | null | undefined) {
 }
 
 function exportCsv(alarms: Alarm[], fileName: string) {
-  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "last_value", "integration_id", "managed_asset_id", "rule_id"];
+  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "presentation_value", "presentation_unit", "last_value", "unit", "integration_id", "managed_asset_id", "rule_id"];
   const rows = alarms.map((alarm) =>
-    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.last_value, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
+    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.presentation_value, alarm.presentation_unit, alarm.last_value, alarm.unit, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
       .map(csvCell)
       .join(","),
   );
@@ -258,7 +258,7 @@ export function EventsPage() {
                         {alarm.subject_key}
                         <p className="mt-0.5 font-mono text-[11px] text-slate-500">{alarm.id.slice(0, 8)}…</p>
                       </td>
-                      <td className="px-3 py-2">{alarm.last_value}</td>
+                      <td className="px-3 py-2">{alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{new Date(alarm.opened_at).toLocaleString()}</td>
                       <td className="px-3 py-2 text-slate-400">
                         {alarm.acknowledged_at ? new Date(alarm.acknowledged_at).toLocaleString() : "Unacknowledged"}
@@ -291,7 +291,7 @@ export function EventsPage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Event detail</p>
               <div className="mt-3 flex items-center gap-2">
                 <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
-                <span className="text-sm text-slate-400">last value {selected.last_value}</span>
+                <span className="text-sm text-slate-400">last value {selected.presentation_value}{selected.presentation_unit === "%" ? "%" : ` ${selected.presentation_unit ?? ""}`}</span>
               </div>
               <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.subject_key}</h2>
               <dl className="mt-4 space-y-2 text-sm">
