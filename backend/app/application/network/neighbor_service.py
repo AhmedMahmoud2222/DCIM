@@ -14,8 +14,9 @@ outbox event. Re-observation never alters a confirmed or rejected decision.
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
-from sqlalchemy import case, func, literal_column, select, update
+from sqlalchemy import Table, case, func, literal_column, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,10 +69,10 @@ async def ingest_neighbor(
         "remote_management_address": evidence.remote_management_address, "capabilities": evidence.capabilities,
         "native_vlan": evidence.native_vlan, "ttl_seconds": evidence.ttl_seconds, "raw_evidence": evidence.raw,
     }
-    table = DiscoveredNeighbor.__table__
+    table = cast(Table, DiscoveredNeighbor.__table__)
     insert = pg_insert(table).values(**values)
     newer = insert.excluded.last_seen_at >= table.c.last_seen_at
-    update_set = {name: case((newer, insert.excluded[name]), else_=table.c[name]) for name in _EVIDENCE_COLUMNS}
+    update_set: dict[str, Any] = {name: case((newer, insert.excluded[name]), else_=table.c[name]) for name in _EVIDENCE_COLUMNS}
     update_set["last_seen_at"] = func.greatest(table.c.last_seen_at, insert.excluded.last_seen_at)
     update_set["first_seen_at"] = func.least(table.c.first_seen_at, insert.excluded.first_seen_at)
     update_set["status"] = case((newer, "active"), else_=table.c.status)
@@ -120,8 +121,9 @@ async def apply_scan_marker(
             DiscoveredNeighbor.status == "active", DiscoveredNeighbor.last_seen_at < started,
         )
         .values(status="stale", updated_at=func.now())
+        .returning(DiscoveredNeighbor.id)
     )
-    return result.rowcount or 0
+    return len(result.all())
 
 
 def stale_after_seconds(poll_interval_seconds: int | None) -> int:

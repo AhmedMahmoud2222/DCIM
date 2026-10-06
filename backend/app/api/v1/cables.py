@@ -259,7 +259,7 @@ async def list_cables(
         .join(EquipmentPort, EquipmentPort.id == CableEndpoint.equipment_port_id)
         .where(equipment_visible_clause(ctx.scope, EquipmentPort.equipment_id))
     )
-    conditions = [Cable.id.in_(visible_endpoint)]
+    conditions: list = [Cable.id.in_(visible_endpoint)]
     if status:
         conditions.append(Cable.status == status)
     if cable_type:

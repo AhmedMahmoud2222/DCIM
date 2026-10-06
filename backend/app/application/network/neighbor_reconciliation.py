@@ -170,8 +170,8 @@ async def _remote_device(db: AsyncSession, neighbor: DiscoveredNeighbor) -> dict
     strong = {k: v for k, v in tiers.items() if k in ("management_address", "chassis_mac") and v}
     weak = tiers.get("system_name", [])
     evidence = {"tiers": {k: _ids(v) for k, v in tiers.items()}}
-    for tier, found in strong.items():
-        if len(found) > 1:
+    for tier, candidates in strong.items():
+        if len(candidates) > 1:
             return evidence | {"state": "ambiguous", "reason": f"several inventory items share this {tier.replace('_', ' ')}"}
     singles = {v[0] for v in strong.values()}
     if len(singles) > 1:

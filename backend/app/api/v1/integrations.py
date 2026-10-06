@@ -250,7 +250,7 @@ async def update_integration(
     check_version_match(expected=if_match_version, actual=integration.version)
 
     request_id, correlation_id = _request_ids(request)
-    before = {"enabled": integration.enabled, "poll_interval_seconds": integration.poll_interval_seconds}
+    before: dict = {"enabled": integration.enabled, "poll_interval_seconds": integration.poll_interval_seconds}
     if body.enabled is not None:
         integration.enabled = body.enabled
     if body.poll_interval_seconds is not None:

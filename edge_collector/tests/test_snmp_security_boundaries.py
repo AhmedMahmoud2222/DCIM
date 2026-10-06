@@ -3,8 +3,19 @@ import pytest
 
 from edge_collector import snmp_v3 as wire
 from edge_collector.snmp import SNMPTarget, _tlv
-from edge_collector.snmp_usm import SNMPv3Credentials, compute_mac, derive_keys, encrypt_scoped_pdu
-from edge_collector.snmp_wire import GET_RESPONSE, TAG_NO_SUCH_INSTANCE, Varbind, encode_pdu, walk
+from edge_collector.snmp_usm import (
+    SNMPv3Credentials,
+    compute_mac,
+    derive_keys,
+    encrypt_scoped_pdu,
+)
+from edge_collector.snmp_wire import (
+    GET_RESPONSE,
+    TAG_NO_SUCH_INSTANCE,
+    Varbind,
+    encode_pdu,
+    walk,
+)
 
 
 def response(*, private=True, user=b"poller", context=b"", context_engine=b"engine-id"):
