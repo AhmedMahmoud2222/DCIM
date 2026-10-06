@@ -23,16 +23,101 @@ from app.api.deps import get_db
 from app.api.v1.catalog_designer import _request_ids
 from app.api.v1.catalog_documents import require_draft_stage_access
 from app.application.audit_service import write_audit_log
+from app.application.catalog_documents.extraction.apply import apply_candidates
+from app.application.concurrency import require_if_match
+from app.application.outbox_service import write_outbox_event
 from app.application.catalog_documents.extraction.pipeline import FAILURE_MESSAGES
 from app.application.catalog_documents.extraction.service import request_extraction, retry_extraction, review_candidate
 from app.application.rbac import AuthContext, require_catalog_administrator, require_permission
 from app.core.config import Settings, get_settings
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
+from app.domain.catalog.application_models import CatalogExtractionApplication
 from app.domain.catalog.document_models import CatalogDocument
 from app.domain.catalog.extraction_models import CatalogExtractionCandidate, CatalogExtractionJob
 from app.infrastructure.tasks.catalog_extraction import dispatch_extraction_job
 
 router = APIRouter(prefix="/catalog", tags=["catalog-extraction"])
+
+
+class ExtractionApplyIn(BaseModel):
+    document_id: uuid.UUID
+    job_id: uuid.UUID
+    candidate_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    overwrite_existing: bool = False
+
+
+class ExtractionApplicationOut(BaseModel):
+    id: uuid.UUID
+    revision_id: uuid.UUID
+    document_id: uuid.UUID
+    job_id: uuid.UUID
+    actor_user_id: uuid.UUID
+    revision_version: int
+    document_sha256: str
+    extractor_version: str
+    extraction_unit_registry_version: str
+    before_values: dict[str, Any]
+    after_values: dict[str, Any]
+    candidates: list[dict[str, Any]]
+    applied_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+@router.post("/revisions/{revision_id}/extraction-applications", response_model=ExtractionApplicationOut, status_code=201)
+async def apply_extraction_to_draft(
+    revision_id: uuid.UUID, body: ExtractionApplyIn, request: Request,
+    db: AsyncSession = Depends(get_db), settings: Settings = Depends(get_settings),
+    if_match_version: int = Depends(require_if_match),
+    ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
+) -> ExtractionApplicationOut:
+    if not ctx.has_permission("catalog:read_draft") or not ctx.has_permission("catalog:document_download"):
+        raise ForbiddenError("Applying extraction requires draft-read and document-download permissions.")
+    actor_id = ctx.user.id
+    revision, before, after, evidence = await apply_candidates(
+        db, revision_id=revision_id, document_id=body.document_id, job_id=body.job_id,
+        candidate_ids=body.candidate_ids, if_match_version=if_match_version,
+        overwrite_existing=body.overwrite_existing, settings=settings,
+    )
+    job = await db.get(CatalogExtractionJob, body.job_id)
+    assert job is not None  # apply_candidates locked and validated the job in this transaction
+    application = CatalogExtractionApplication(
+        revision_id=revision.id, document_id=body.document_id, job_id=body.job_id,
+        actor_user_id=actor_id, revision_version=revision.version, document_sha256=job.document_sha256,
+        extractor_version=job.extractor_version, extraction_unit_registry_version=job.unit_registry_version,
+        before_values=before, after_values=after, candidates=evidence,
+    )
+    db.add(application)
+    await db.flush()
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db, actor_user_id=actor_id, action="catalog.extraction.apply", entity_type="catalog_model_revision",
+        entity_id=revision.id, request_id=request_id, correlation_id=correlation_id, before=before,
+        after={"application_id": str(application.id), "version": revision.version, "values": after,
+               "document_id": str(body.document_id), "job_id": str(body.job_id)},
+    )
+    await write_outbox_event(
+        db, event_type="CatalogModelRevisionDraftUpdated", aggregate_type="catalog_model_revision",
+        aggregate_id=revision.id, payload={"version": revision.version, "application_id": str(application.id)},
+        correlation_id=correlation_id,
+    )
+    await db.commit()
+    return ExtractionApplicationOut.model_validate(application)
+
+
+@router.get("/revisions/{revision_id}/extraction-applications", response_model=list[ExtractionApplicationOut])
+async def list_extraction_applications(
+    revision_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_permission("catalog:document_download")),
+) -> list[ExtractionApplicationOut]:
+    from app.api.v1.catalog_designer import _revision_read_dependency
+
+    # The same lifecycle-sensitive rule as reading the revision itself.
+    await _revision_read_dependency(revision_id=revision_id, db=db, ctx=ctx)
+    rows = (await db.execute(select(CatalogExtractionApplication).where(
+        CatalogExtractionApplication.revision_id == revision_id,
+    ).order_by(CatalogExtractionApplication.revision_version.desc()))).scalars()
+    return [ExtractionApplicationOut.model_validate(row) for row in rows]
 
 
 class ExtractionJobOut(BaseModel):

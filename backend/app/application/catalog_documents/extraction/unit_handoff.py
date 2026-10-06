@@ -7,8 +7,19 @@ coercing their text into a number would silently discard extraction evidence.
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.application.catalog_documents.extraction.candidates import Candidate
+from typing import Protocol
+
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_catalog_candidate
+
+
+class ScalarCandidate(Protocol):
+    field_key: str
+    value_numeric: float | None
+    value_max: float | None
+    value_text: str | None
+    unit: str | None
+    raw_value: str
+    raw_unit: str
 
 
 @dataclass(frozen=True)
@@ -22,7 +33,7 @@ class CatalogScalarValue:
     registry_version: str = REGISTRY_VERSION
 
 
-def convert_extracted_catalog_candidate(candidate: Candidate) -> CatalogScalarValue:
+def convert_extracted_catalog_candidate(candidate: ScalarCandidate) -> CatalogScalarValue:
     if candidate.value_max is not None:
         raise ValueError("Ranged catalog candidate requires an explicit range selection.")
     if candidate.value_numeric is None or candidate.value_text is not None:
