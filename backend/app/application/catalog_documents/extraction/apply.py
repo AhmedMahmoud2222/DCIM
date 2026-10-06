@@ -27,7 +27,7 @@ FIELD_TARGETS = {
 }
 BLOCKING_FLAGS = {
     "number_format_ambiguous", "unit_missing", "unit_unrecognized", "unit_dimension_mismatch",
-    "dimensions_order_unknown",
+    "dimensions_order_unknown", "multi_value_line",
 }
 
 

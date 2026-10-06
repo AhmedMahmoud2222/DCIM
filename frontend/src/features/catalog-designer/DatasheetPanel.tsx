@@ -7,7 +7,7 @@ import { ApiError } from "@/lib/apiClient";
 import { CatalogModelRevisionDetail } from "@/types";
 
 const SUPPORTED = new Set(["width", "height", "depth", "weight", "power_rated_w", "power_typical_w", "power_max_w", "rack_units", "heat_dissipation", "airflow_direction"]);
-const BLOCKING = new Set(["number_format_ambiguous", "unit_missing", "unit_unrecognized", "unit_dimension_mismatch", "dimensions_order_unknown"]);
+const BLOCKING = new Set(["number_format_ambiguous", "unit_missing", "unit_unrecognized", "unit_dimension_mismatch", "dimensions_order_unknown", "multi_value_line"]);
 
 export function DatasheetPanel({ revision, readOnly, onChanged }: {
   revision: CatalogModelRevisionDetail; readOnly: boolean; onChanged: () => void;

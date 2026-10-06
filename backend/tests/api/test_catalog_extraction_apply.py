@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -12,10 +13,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.application.catalog_documents.extraction.apply import apply_candidates
 from app.core.config import get_settings
 from app.core.errors import ConflictError
+from app.db.sync_session import get_sync_db
 from app.domain.audit.models import AuditLog
 from app.domain.catalog.application_models import CatalogExtractionApplication
 from app.domain.catalog.designer_models import CatalogModelRevision
 from app.domain.catalog.extraction_models import CatalogExtractionCandidate
+from app.infrastructure.storage import get_document_storage_backend
 from tests._extraction_pdfs import native_pdf
 from tests.api._document_helpers import make_draft
 from tests.api.test_catalog_extraction import _candidates, _document, _extract
@@ -142,7 +145,16 @@ async def test_preserves_authored_units_and_requires_explicit_overwrite(client, 
     ["CX-100 Technical Specifications", "Shipping weight: 20 kg"],
 ])
 async def test_invalid_candidate_batch_has_no_partial_writes(client, admin, scanner, dispatched, db_session, lines):
-    draft, document, job, candidates = await setup(client, admin, lines + ["Width: 440 mm"])
+    draft, document, job, candidates = await setup(client, admin, lines + ["Width: 440 mm"], accept=False)
+    # A quantity range can emerge as two scalar candidates sharing a conflict group.
+    # Review one endpoint deliberately; apply must still refuse the multi-value evidence.
+    invalid = [c for c in candidates if c["field_key"] != "width"]
+    chosen = next((c for c in invalid if c["unit"] is not None), invalid[0])
+    candidates = [next(c for c in candidates if c["field_key"] == "width"), chosen]
+    for candidate in candidates:
+        reviewed = await client.post(f"{BASE}/extraction-candidates/{candidate['id']}/review", headers=admin,
+                                     json={"decision": "accepted", "confirm_model_attribution": True})
+        assert reviewed.status_code == 200, reviewed.text
     assert (await apply(client, admin, draft, document, job, candidates)).status_code == 422
     await db_session.rollback()
     row = await db_session.get(CatalogModelRevision, uuid.UUID(draft["id"]))
@@ -279,3 +291,27 @@ async def test_older_extraction_run_is_history_only(client, admin, scanner, disp
     await db_session.rollback()
     row = await db_session.get(CatalogModelRevision, uuid.UUID(args[0]["id"]))
     assert row.typical_power_w is None and row.version == args[0]["version"]
+
+
+async def test_detached_applied_documents_keep_evidence_without_starving_purge(client, admin, scanner, dispatched):
+    from app.application.catalog_documents.service import _purge_expired_rows
+
+    args = await setup(client, admin)
+    applied = await apply(client, admin, *args)
+    assert applied.status_code == 201, applied.text
+    draft, document = args[:2]
+    detached = await client.delete(f"{BASE}/revisions/{draft['id']}/documents/{document['id']}",
+                                   headers={**admin, "If-Match": str(applied.json()["revision_version"])})
+    assert detached.status_code == 204, detached.text
+    _, unused = await _document(client, admin, native_pdf([["CX-100 Unused Specifications", "Weight: 11 kg"]]))
+
+    def purge():
+        with get_sync_db() as db:
+            return _purge_expired_rows(db, storage=get_document_storage_backend(), retention_days=14,
+                                      now=datetime.now(UTC) + timedelta(days=30), batch_size=1)
+
+    assert await asyncio.to_thread(purge) == 1
+    assert (await client.get(f"{BASE}/documents/{unused['id']}", headers=admin)).status_code == 404
+    assert (await client.get(f"{BASE}/documents/{document['id']}", headers=admin)).status_code == 200
+    history = await client.get(f"{BASE}/revisions/{draft['id']}/extraction-applications", headers=admin)
+    assert history.status_code == 200 and len(history.json()) == 1

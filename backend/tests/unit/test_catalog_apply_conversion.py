@@ -52,6 +52,7 @@ def test_exact_airflow_enum_mapping():
     candidate("weight", 1, "W"),
     candidate("weight", 1, "kg", value_max=2),
     candidate("weight", 1, "kg", flags=["number_format_ambiguous"]),
+    candidate("power_typical_w", 300, "W", flags=["multi_value_line", "conflict"]),
     candidate("shipping_weight", 1, "kg"),
     candidate("power_unspecified_w", 20, "W"),
     candidate("rack_units", 1.5, "U"),
