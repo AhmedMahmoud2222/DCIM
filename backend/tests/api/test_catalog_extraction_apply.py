@@ -15,6 +15,7 @@ from app.core.errors import ConflictError
 from app.domain.audit.models import AuditLog
 from app.domain.catalog.application_models import CatalogExtractionApplication
 from app.domain.catalog.designer_models import CatalogModelRevision
+from app.domain.catalog.extraction_models import CatalogExtractionCandidate
 from tests._extraction_pdfs import native_pdf
 from tests.api._document_helpers import make_draft
 from tests.api.test_catalog_extraction import _candidates, _document, _extract
@@ -200,3 +201,59 @@ async def test_postgresql_simultaneous_apply_one_winner(client, admin, scanner, 
         row = await db.get(CatalogModelRevision, uuid.UUID(draft["id"]))
         assert row.version == draft["version"] + 1
         assert row.width_value is None or Decimal(str(row.width_value)) > 0
+
+
+@pytest.mark.parametrize("retire", [False, True])
+async def test_published_and_retired_are_never_modified(client, admin, scanner, dispatched, db_session, retire):
+    draft, document, job, candidates = await setup(client, admin)
+    patched = await client.patch(f"{BASE}/revisions/{draft['id']}", headers={**admin, "If-Match": str(draft["version"])},
+                                 json={"dimension_unit": "mm", "width_value": 440, "height_value": 44, "depth_value": 600,
+                                       "rack_unit_height": 1, "weight_unit": "kg", "weight_value": 10})
+    assert patched.status_code == 200, patched.text
+    published = await client.post(f"{BASE}/revisions/{draft['id']}/publish", headers=admin)
+    assert published.status_code == 200, published.text
+    if retire:
+        published = await client.post(f"{BASE}/revisions/{draft['id']}/retire", headers=admin, json={"reason": "test"})
+        assert published.status_code == 200, published.text
+    draft["version"] = published.json()["version"]
+    assert (await apply(client, admin, draft, document, job, candidates, overwrite_existing=True)).status_code == 409
+    await db_session.rollback()
+    row = await db_session.get(CatalogModelRevision, uuid.UUID(draft["id"]))
+    assert row.typical_power_w is None and row.version == draft["version"]
+    assert row.lifecycle_status == ("retired" if retire else "published")
+
+
+async def test_pending_unconfirmed_and_other_model_candidates_refused(client, admin, scanner, dispatched, db_session):
+    draft, document, job, candidates = await setup(client, admin, ["Typical power: 200 W"], accept=False)
+    assert candidates
+    assert (await apply(client, admin, draft, document, job, candidates)).status_code == 409
+    await db_session.rollback()
+    # Review API must refuse implicit attribution; apply cannot bypass its decision.
+    candidate = candidates[0]
+    response = await client.post(f"{BASE}/extraction-candidates/{candidate['id']}/review", headers=admin,
+                                 json={"decision": "accepted"})
+    assert response.status_code == 422
+    await db_session.rollback()
+    assert (await apply(client, admin, draft, document, job, candidates)).status_code == 409
+    await db_session.rollback()
+    row = await db_session.get(CatalogModelRevision, uuid.UUID(draft["id"]))
+    assert row.typical_power_w is None
+
+
+async def test_multiple_accepted_duplicates_same_field_are_refused(client, admin, scanner, dispatched, db_session):
+    draft, document, job, candidates = await setup(client, admin)
+    original = next(c for c in candidates if c["field_key"] == "power_typical_w")
+    source = await db_session.get(CatalogExtractionCandidate, uuid.UUID(original["id"]))
+    copy = CatalogExtractionCandidate(
+        job_id=source.job_id, sequence=999, field_key=source.field_key, value_numeric=source.value_numeric,
+        unit=source.unit, raw_value=source.raw_value, raw_unit=source.raw_unit, source_text=source.source_text,
+        page_number=source.page_number, method=source.method, confidence=source.confidence, model_match="target",
+    )
+    db_session.add(copy)
+    await db_session.commit()
+    response = await client.post(f"{BASE}/extraction-candidates/{copy.id}/review", headers=admin, json={"decision": "accepted"})
+    assert response.status_code == 200, response.text
+    assert (await apply(client, admin, draft, document, job, [original, response.json()])).status_code == 409
+    await db_session.rollback()
+    row = await db_session.get(CatalogModelRevision, uuid.UUID(draft["id"]))
+    assert row.typical_power_w is None and row.version == draft["version"]

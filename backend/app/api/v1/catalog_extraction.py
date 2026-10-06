@@ -1,8 +1,8 @@
 """DCIM01 PDF datasheet import, PR-B: request an extraction of candidate values from a stored
 datasheet, follow the job, and review the candidates.
 
-Nothing here changes a catalog revision. A review decision is recorded on the candidate and audited;
-applying a value to a draft revision is a separate, later step that this API does not offer.
+Review records a decision without changing a revision. A separate explicit application operation
+copies accepted scalar values into a version-matched draft with immutable provenance.
 
 Authorization mirrors the datasheet itself, because candidates carry text copied from the file:
 - request / retry / review: `catalog:manage` plus Administrator, like every catalog write;
@@ -24,10 +24,10 @@ from app.api.v1.catalog_designer import _request_ids
 from app.api.v1.catalog_documents import require_draft_stage_access
 from app.application.audit_service import write_audit_log
 from app.application.catalog_documents.extraction.apply import apply_candidates
-from app.application.concurrency import require_if_match
-from app.application.outbox_service import write_outbox_event
 from app.application.catalog_documents.extraction.pipeline import FAILURE_MESSAGES
 from app.application.catalog_documents.extraction.service import request_extraction, retry_extraction, review_candidate
+from app.application.concurrency import require_if_match
+from app.application.outbox_service import write_outbox_event
 from app.application.rbac import AuthContext, require_catalog_administrator, require_permission
 from app.core.config import Settings, get_settings
 from app.core.errors import ForbiddenError, NotFoundError
@@ -94,7 +94,7 @@ async def apply_extraction_to_draft(
         db, actor_user_id=actor_id, action="catalog.extraction.apply", entity_type="catalog_model_revision",
         entity_id=revision.id, request_id=request_id, correlation_id=correlation_id, before=before,
         after={"application_id": str(application.id), "version": revision.version, "values": after,
-               "document_id": str(body.document_id), "job_id": str(body.job_id)},
+               "document_id": str(body.document_id), "job_id": str(body.job_id), "overwrite_existing": body.overwrite_existing},
     )
     await write_outbox_event(
         db, event_type="CatalogModelRevisionDraftUpdated", aggregate_type="catalog_model_revision",

@@ -6,7 +6,6 @@ coercing their text into a number would silently discard extraction evidence.
 
 from dataclasses import dataclass
 from decimal import Decimal
-
 from typing import Protocol
 
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_catalog_candidate

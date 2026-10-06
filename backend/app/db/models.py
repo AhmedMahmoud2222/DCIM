@@ -17,6 +17,7 @@ from app.domain.auth.models import (  # noqa: F401
     UserGroupSiteAccess,
 )
 from app.domain.bulk_import.models import BulkImportJob, BulkImportRow  # noqa: F401
+from app.domain.catalog.application_models import CatalogExtractionApplication  # noqa: F401
 from app.domain.catalog.designer_models import (  # noqa: F401
     CatalogGraphic,
     CatalogGraphicMarker,
@@ -29,7 +30,6 @@ from app.domain.catalog.designer_models import (  # noqa: F401
 )
 from app.domain.catalog.document_models import CatalogDocument, CatalogRevisionDocument  # noqa: F401
 from app.domain.catalog.extraction_models import CatalogExtractionCandidate, CatalogExtractionJob  # noqa: F401
-from app.domain.catalog.application_models import CatalogExtractionApplication  # noqa: F401
 from app.domain.catalog.models import (  # noqa: F401
     EquipmentModel,
     EquipmentModelRevision,

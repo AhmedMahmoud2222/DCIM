@@ -2,6 +2,7 @@
 
 import uuid
 from decimal import ROUND_HALF_EVEN, Decimal
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,7 @@ from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.catalog.designer_models import CatalogModelRevision
 from app.domain.catalog.document_models import CatalogDocument, CatalogRevisionDocument
 from app.domain.catalog.extraction_models import CatalogExtractionCandidate, CatalogExtractionJob
-from app.domain.telemetry.registry import convert_value
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_value
 
 # Semantically distinct fields must never be merged merely because their units match.
 FIELD_TARGETS = {
@@ -50,7 +51,7 @@ def candidate_patch(candidate: CatalogExtractionCandidate, revision: CatalogMode
     value = value.quantize(Decimal(10) ** -scale, rounding=ROUND_HALF_EVEN)
     if value < 0 or (unit_column and value == 0) or value >= Decimal(10) ** (10 - scale):
         raise ValueError("Converted value is outside the catalog field's storage range.")
-    patch = {target: value}
+    patch: dict[str, Any] = {target: value}
     if unit_column:
         patch[unit_column] = unit
     evidence = {
@@ -105,6 +106,8 @@ async def apply_candidates(
     ).order_by(CatalogExtractionJob.finished_at.desc(), CatalogExtractionJob.requested_at.desc()).limit(1))).scalar_one_or_none()
     if job.status != "completed" or current != job.id:
         raise ConflictError("Only the current completed extraction job can be applied.")
+    if job.unit_registry_version != REGISTRY_VERSION:
+        raise ConflictError("The extraction unit registry version is not supported by this apply operation.")
     if job.model_resolution in {"target_not_found", "ambiguous_target"}:
         raise ConflictError("The extraction did not resolve the target model safely.")
     candidates = list((await db.execute(select(CatalogExtractionCandidate).where(

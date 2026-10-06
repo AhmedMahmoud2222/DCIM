@@ -39,6 +39,8 @@ def upgrade() -> None:
         LANGUAGE plpgsql AS $$ BEGIN
             RAISE EXCEPTION 'Extraction application provenance is append-only' USING ERRCODE = '23514';
         END $$;
+    """)
+    op.execute("""
         CREATE TRIGGER trg_catalog_extraction_application_immutable
         BEFORE UPDATE OR DELETE ON catalog_extraction_application FOR EACH ROW
         EXECUTE FUNCTION fn_catalog_extraction_application_immutable();
