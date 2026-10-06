@@ -21,6 +21,10 @@ import { CollectorsPage } from "@/features/integrations/CollectorsPage";
 import { DiscoveryPage } from "@/features/integrations/DiscoveryPage";
 import { IntegrationsPage } from "@/features/integrations/IntegrationsPage";
 import { LocationsPage } from "@/features/locations/LocationsPage";
+import { CablesPage } from "@/features/network/CablesPage";
+import { NeighborReviewPage } from "@/features/network/NeighborReviewPage";
+import { ProfilesPage } from "@/features/network/ProfilesPage";
+import { TracePage } from "@/features/network/TracePage";
 import { InfrastructurePage } from "@/features/locations/InfrastructurePage";
 import { SiteDetailPage } from "@/features/locations/SiteDetailPage";
 import { ManagedAssetsPage } from "@/features/managed-assets/ManagedAssetsPage";
@@ -58,6 +62,10 @@ export function App() {
               <Route path="/collectors" element={<CollectorsPage />} />
               <Route path="/integrations" element={<IntegrationsPage />} />
               <Route path="/discovery" element={<DiscoveryPage />} />
+              <Route path="/discovery/neighbors" element={<NeighborReviewPage />} />
+              <Route path="/network/profiles" element={<ProfilesPage />} />
+              <Route path="/cables" element={<CablesPage />} />
+              <Route path="/topology/trace" element={<TracePage />} />
               <Route path="/admin/users" element={<UsersPage />} />
               <Route path="/admin/groups" element={<GroupsPage />} />
               <Route path="/admin/catalog" element={<CatalogHomePage />} />

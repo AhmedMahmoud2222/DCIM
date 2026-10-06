@@ -37,8 +37,10 @@ async def publish_revision(client, headers, port_names: list[str]) -> dict:
     return published.json()
 
 
-async def instantiate(client, headers, revision_id: str, *, hostname: str | None = None, ip_address: str | None = None) -> dict:
-    body = {"asset_tag": f"EQ-{uuid.uuid4().hex[:8]}", "catalog_model_revision_id": revision_id}
+async def instantiate(
+    client, headers, revision_id: str, *, hostname: str | None = None, ip_address: str | None = None, placement: dict | None = None
+) -> dict:
+    body = {"asset_tag": f"EQ-{uuid.uuid4().hex[:8]}", "catalog_model_revision_id": revision_id, **(placement or {})}
     if hostname:
         body["hostname"] = hostname
     if ip_address:

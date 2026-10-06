@@ -52,6 +52,7 @@ from app.domain.location.models import (  # noqa: F401
     Room,
     Site,
 )
+from app.domain.network.cable_models import Cable, CableEndpoint  # noqa: F401
 from app.domain.network.discovery_models import DiscoveredNeighbor  # noqa: F401
 from app.domain.network.profile_models import DeviceProfile, ProfileMetricMapping, VendorProfile  # noqa: F401
 from app.domain.outbox.models import OutboxEvent  # noqa: F401
