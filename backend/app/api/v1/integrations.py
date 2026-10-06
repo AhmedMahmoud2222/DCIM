@@ -18,6 +18,7 @@ from app.api.deps import get_db
 from app.application.audit_service import write_audit_log
 from app.application.collector_service import current_assignment, current_assignments_bulk
 from app.application.concurrency import check_version_match, require_if_match
+from app.application.network.profile_service import bind_integration_profile
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
@@ -68,6 +69,7 @@ class IntegrationIn(BaseModel):
     credential: str | None = Field(default=None, max_length=2000, description="Plaintext, write-only -- never returned.")
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS
     enabled: bool = True
+    device_profile_id: uuid.UUID | None = None
 
     @field_validator("config")
     @classmethod
@@ -97,6 +99,7 @@ class IntegrationOut(BaseModel):
     last_failure_at: datetime | None
     consecutive_failures: int
     has_credential: bool
+    device_profile_id: uuid.UUID | None = None
     assigned_collector_id: uuid.UUID | None
     version: int
 
@@ -119,6 +122,7 @@ def _build_out(integration: Integration, assignment: CollectorAssignment | None)
         last_failure_at=integration.last_failure_at,
         consecutive_failures=integration.consecutive_failures,
         has_credential=integration.credential_ciphertext is not None,
+        device_profile_id=integration.device_profile_id,
         assigned_collector_id=assignment.collector_id if assignment else None,
         version=integration.version,
     )
@@ -152,6 +156,8 @@ async def create_integration(
     )
     db.add(integration)
     await db.flush()
+    if body.device_profile_id is not None:
+        await bind_integration_profile(db, integration=integration, device_profile_id=body.device_profile_id)
     await write_audit_log(
         db,
         actor_user_id=ctx.user.id,
@@ -204,6 +210,9 @@ class IntegrationPatchIn(BaseModel):
     target_port: int | None = None
     config: dict | None = None
     credential: str | None = Field(default=None, max_length=2000, description="If provided, replaces the stored credential.")
+    device_profile_id: uuid.UUID | None = Field(
+        default=None, description="Explicit profile binding. Send null to unbind; omit to leave unchanged."
+    )
 
     @field_validator("config")
     @classmethod
@@ -246,6 +255,9 @@ async def update_integration(
         integration.config = body.config
     if body.credential is not None:
         integration.credential_ciphertext = encrypt_secret(body.credential)
+    if "device_profile_id" in body.model_fields_set:
+        before["device_profile_id"] = str(integration.device_profile_id) if integration.device_profile_id else None
+        await bind_integration_profile(db, integration=integration, device_profile_id=body.device_profile_id)
     integration.version += 1
 
     await write_audit_log(

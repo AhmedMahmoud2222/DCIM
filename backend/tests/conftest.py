@@ -61,6 +61,8 @@ _APP_TRUNCATE_TABLES = [
     "telemetry_reading",
     "integration_metric_mapping",
     "integration",
+    # Issue #101 network profiles: integration.device_profile_id references device_profile.
+    "vendor_profile",
     "collector",
     "power_node",  # utility_intake rows have neither managed_asset_id nor owning_asset_id
     # set, so they aren't reached by managed_asset's own CASCADE below — power_connection/

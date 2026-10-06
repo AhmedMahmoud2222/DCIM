@@ -28,6 +28,7 @@ class DiscoveredDeviceOut(BaseModel):
     status: str
     matched_managed_asset_id: uuid.UUID | None
     raw_attributes: dict
+    profile_match: dict | None = None
 
     model_config = {"from_attributes": True}
 
