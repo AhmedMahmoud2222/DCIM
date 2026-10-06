@@ -123,7 +123,7 @@ async def test_migration_downgrade_refuses_to_discard_operator_decisions(db_engi
     from alembic.operations import Operations
 
     collector_id, integration_id = await seed_integration(db_engine)
-    path = Path(__file__).resolve().parents[2] / "migrations/versions/0037_discovered_neighbors.py"
+    path = Path(__file__).resolve().parents[2] / "migrations/versions/0038_discovered_neighbors.py"
     spec = importlib.util.spec_from_file_location("neighbors_migration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

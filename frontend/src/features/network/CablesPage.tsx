@@ -63,8 +63,11 @@ export function CablesPage() {
     },
   });
   const action = useMutation({
-    mutationFn: ({ kind, cable }: { kind: "install" | "remove" | "delete"; cable: Cable }) =>
-      kind === "install" ? installCable(cable) : kind === "remove" ? removeCable(cable) : deleteCable(cable),
+    mutationFn: async ({ kind, cable }: { kind: "install" | "remove" | "delete"; cable: Cable }): Promise<void> => {
+      if (kind === "install") await installCable(cable);
+      else if (kind === "remove") await removeCable(cable);
+      else await deleteCable(cable);
+    },
     onSuccess: refresh,
   });
 

@@ -5,8 +5,8 @@ permission seed. Existing `port_connection` rows are neither read nor modified; 
 only ever realizes a connection later, through the service. Downgrade refuses to discard
 recorded cables (including removed-cable history).
 
-Revision ID: 0038_cables
-Revises: 0037_discovered_neighbors
+Revision ID: 0039_cables
+Revises: 0038_discovered_neighbors
 """
 
 import uuid as _uuid
@@ -16,8 +16,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "0038_cables"
-down_revision = "0037_discovered_neighbors"
+revision = "0039_cables"
+down_revision = "0038_discovered_neighbors"
 branch_labels = None
 depends_on = None
 

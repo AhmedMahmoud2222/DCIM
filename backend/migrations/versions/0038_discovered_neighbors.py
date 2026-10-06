@@ -4,8 +4,8 @@ Additive only: one new table. Existing `port_connection`/`discovered_device` row
 read, rewritten or reinterpreted. Downgrade refuses to discard collected evidence that an
 operator has already confirmed or rejected.
 
-Revision ID: 0037_discovered_neighbors
-Revises: 0036_network_profiles
+Revision ID: 0038_discovered_neighbors
+Revises: 0037_network_profiles
 """
 
 import sqlalchemy as sa
@@ -13,8 +13,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "0037_discovered_neighbors"
-down_revision = "0036_network_profiles"
+revision = "0038_discovered_neighbors"
+down_revision = "0037_network_profiles"
 branch_labels = None
 depends_on = None
 

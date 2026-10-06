@@ -11,7 +11,7 @@ from alembic.operations import Operations
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0036_network_profiles.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0037_network_profiles.py"
 
 
 def _run(connection, direction):

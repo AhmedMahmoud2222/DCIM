@@ -4,8 +4,8 @@ Purely additive: new tables, one nullable FK on `integration`, one nullable JSON
 `discovered_device`, and the `network_profile:read|manage` permission seed. No existing row
 is rewritten. Downgrade refuses to drop profile data that is still in use.
 
-Revision ID: 0036_network_profiles
-Revises: 0035_units_metric_registry
+Revision ID: 0037_network_profiles
+Revises: 0036_catalog_extraction_apply
 """
 
 import uuid as _uuid
@@ -15,8 +15,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "0036_network_profiles"
-down_revision = "0035_units_metric_registry"
+revision = "0037_network_profiles"
+down_revision = "0036_catalog_extraction_apply"
 branch_labels = None
 depends_on = None
 

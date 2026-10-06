@@ -20,7 +20,7 @@ from app.application.network.cable_service import create_cable
 from app.core.errors import ConflictError
 from tests.api._network_inventory import make_device
 
-MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0038_cables.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0039_cables.py"
 UNRESTRICTED = AccessScope(unrestricted=True)
 
 
