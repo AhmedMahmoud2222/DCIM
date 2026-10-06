@@ -129,6 +129,8 @@ jobs:
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
       - name: Run PostgreSQL retention hostile validation
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
+      - name: Validate extraction apply against PostgreSQL
+        run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
       - name: Run regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
 
@@ -224,6 +226,9 @@ jobs:
       # reaches a CLI argument — scripts/create_admin.py reads it from the environment —
       # so it stays out of argv, /proc and the step trace.
       E2E_ADMIN_EMAIL: e2e-admin@example.com
+      # Isolated browser fixture environment has no clamd sidecar. Scanner enforcement
+      # stays covered by API tests with the controllable scanner; production requires it.
+      CATALOG_PDF_SCAN_MODE: "off"
       E2E_ADMIN_PASSWORD: E2ePassw0rd!
       BACKEND_URL: http://127.0.0.1:8000
       BASE_URL: http://127.0.0.1:5173
@@ -310,7 +315,7 @@ jobs:
         # service, run in the foreground-backgrounded style as the backend/frontend above.
         working-directory: backend
         run: |
-          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance \
+          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction \
             > "$GITHUB_WORKSPACE/celery-worker.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/celery-worker.pid"
 
@@ -520,6 +525,8 @@ jobs:
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
       - name: Run PostgreSQL retention hostile validation
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
+      - name: Validate extraction apply against PostgreSQL
+        run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
       - name: Run regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
       - name: Run Edge Collector tests on this runtime

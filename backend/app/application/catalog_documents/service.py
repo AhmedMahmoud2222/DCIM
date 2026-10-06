@@ -23,6 +23,7 @@ from app.application.catalog_documents.pdf_validation import validate_pdf_isolat
 from app.core.config import Settings
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.core.logging import get_logger
+from app.domain.catalog.application_models import CatalogExtractionApplication
 from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision
 from app.domain.catalog.document_models import CatalogDocument, CatalogRevisionDocument
 from app.infrastructure.storage import StorageBackend
@@ -243,10 +244,11 @@ def _purge_expired_rows(
       and rewrites it."""
     cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
     linked = exists().where(CatalogRevisionDocument.catalog_document_id == CatalogDocument.id)
+    applied = exists().where(CatalogExtractionApplication.document_id == CatalogDocument.id)
     candidates = list(
         db.execute(
             select(CatalogDocument)
-            .where(CatalogDocument.uploaded_at < cutoff, ~linked)
+            .where(CatalogDocument.uploaded_at < cutoff, ~linked, ~applied)
             .order_by(CatalogDocument.uploaded_at)
             .limit(batch_size)
             .with_for_update(skip_locked=True)
