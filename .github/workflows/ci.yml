@@ -129,6 +129,8 @@ jobs:
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
       - name: Run PostgreSQL retention hostile validation
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
+      - name: Validate extraction apply against PostgreSQL
+        run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
       - name: Run regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
 
@@ -523,6 +525,8 @@ jobs:
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
       - name: Run PostgreSQL retention hostile validation
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
+      - name: Validate extraction apply against PostgreSQL
+        run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
       - name: Run regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
       - name: Run Edge Collector tests on this runtime
