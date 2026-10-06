@@ -116,6 +116,7 @@ async def compact_eligible_raw(
                     minimum_value=minimum_value,
                     maximum_value=maximum_value,
                     sample_count=sample_count,
+                    registry_version=first.registry_version,
                 )
             )
         else:
