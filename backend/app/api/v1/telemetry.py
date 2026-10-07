@@ -40,6 +40,7 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.models import CANONICAL_METRICS, DailyTelemetryAggregate, IntegrationMetricMapping, TelemetryReading
+from app.domain.telemetry.numeric import InvalidTelemetryValue
 from app.domain.telemetry.registry import (
     METRIC_REGISTRY,
     REGISTRY_VERSION,
@@ -241,6 +242,11 @@ async def ingest_collector_telemetry(
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="duplicate" if outcome.duplicate else "accepted"))
         except MetricMappingNotFound:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="UNKNOWN_METRIC_MAPPING"))
+        except InvalidTelemetryValue:
+            # NaN/Infinity or a value (raw, scaled or canonical) outside NUMERIC(18, 8).
+            # Deterministic per-record rejection: the savepoint already discarded this
+            # record, valid peers persist, and a retry is rejected again (never "duplicate").
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INVALID_TELEMETRY_VALUE"))
         except (AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion):
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INCOMPATIBLE_TELEMETRY_UNITS"))
     await db.commit()
