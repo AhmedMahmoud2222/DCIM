@@ -28,6 +28,7 @@ from app.application.bulk_import.templates import build_rack_template
 from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
 from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.idempotency import (
+    ClaimRef,
     IdempotencyConflict,
     IdempotencyStillProcessing,
     complete_claim,
@@ -154,7 +155,7 @@ async def create_rack(
             assert outcome.cached.response_body is not None
             return RackOut(**outcome.cached.response_body)
         claim = outcome.claim
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         if await db.get(RackModelRevision, body.model_revision_id) is None:
@@ -201,8 +202,8 @@ async def create_rack(
         return out
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 

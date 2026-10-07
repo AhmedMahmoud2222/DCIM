@@ -392,7 +392,7 @@ class IngestBatchOut(BaseModel):
     results: list[IngestRecordResult]
 
 
-async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record_index: int) -> None:
+async def _release_claim_safely(db: AsyncSession, claim_ref: idem.ClaimRef, *, record_index: int) -> None:
     """`idem.release_claim()` runs its own DELETE + COMMIT (idempotency.py's
     `release_claim`) -- either can itself fail (lock contention, connection loss, a
     stale/duplicate delete racing this one). Left uncaught, that new exception would
@@ -426,7 +426,7 @@ async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record
     endpoint's own docstring) already covers replaying the rest safely, since every
     record is idempotent on its own `dedup_key`."""
     try:
-        await idem.release_claim(db, claim_id)
+        await idem.release_claim(db, claim_ref)
     except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
         try:
             await db.rollback()
@@ -502,7 +502,7 @@ async def ingest_batch(
             continue
 
         assert outcome.claim is not None
-        claim_id = outcome.claim.id
+        claim_ref = idem.ClaimRef.of(outcome.claim)
         # Finding I4: a failed record must not corrupt the SESSION-wide ORM state that
         # later records (and the request-scoped `collector` object obtained once via
         # Depends(get_current_collector) before this loop began) still depend on. A
@@ -552,7 +552,7 @@ async def ingest_batch(
             # retry of just this record can succeed later. `ApiError.detail` is always
             # a hand-written, safe-for-collectors message (the only one raised in this
             # block today is the "Not Assigned" 403 above) -- safe to return as-is.
-            await _release_claim_safely(db, claim_id, record_index=len(results))
+            await _release_claim_safely(db, claim_ref, record_index=len(results))
             results.append(
                 IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error_code="NOT_ASSIGNED", error=exc.detail)
             )
@@ -562,7 +562,7 @@ async def ingest_batch(
             # Exception messages, tracebacks and request-derived identifiers may contain
             # credentials, SQL parameters or raw telemetry. Log only fixed fields and
             # the record position; generic ACKs retain the existing retry contract.
-            await _release_claim_safely(db, claim_id, record_index=len(results))
+            await _release_claim_safely(db, claim_ref, record_index=len(results))
             logger.error(
                 "ingest_batch_record_processing_failed",
                 error_code="INTERNAL_PROCESSING_ERROR", record_index=len(results),
