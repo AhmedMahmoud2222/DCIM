@@ -91,11 +91,16 @@ def test_retry_policy_is_exponential_capped_and_jittered_within_bounds():
 
 
 def test_central_payload_refusal_is_a_permanent_status_not_a_retry(tmp_path):
-    import httpx
     import uuid
+
+    import httpx
     import pytest
 
-    from edge_collector.client import CentralClient, PermanentPayloadError, RetryableTransportError
+    from edge_collector.client import (
+        CentralClient,
+        PermanentPayloadError,
+        RetryableTransportError,
+    )
 
     def respond(status):
         client = CentralClient("http://central.test/api/v1", uuid.uuid4(), "s", transport=httpx.MockTransport(lambda r: httpx.Response(status)))

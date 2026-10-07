@@ -446,7 +446,7 @@ def test_hostile_lldp_row_never_exceeds_the_central_serialized_limit():
     scans = collect_neighbors(FakeWalker(mib), PLAN)
     assert scans[0].observations, "the hostile row is still a neighbor"
     records = _queue_records(scans)
-    assert _wire_size(records) and max(_wire_size(records)) <= 7_000 < 8_192
+    assert _wire_size(records) and max(_wire_size(records)) <= 7_000
     marker = next(r for r in records if r.payload["record_type"] == "neighbor_scan")
     assert marker.payload["raw_attributes"]["complete"] is True  # nothing was dropped, only evidence trimmed
 
