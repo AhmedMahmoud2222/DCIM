@@ -19,12 +19,16 @@ engine = create_async_engine(
     future=True,
 )
 
-AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
-
 _LAST_CONNECTION_KEY = "dcim_last_sync_connection"
 
 
-@event.listens_for(SyncSession, "after_begin")
+class TrackedSyncSession(SyncSession):
+    """The sync session behind `AsyncSessionLocal`. A dedicated subclass keeps the `after_begin`
+    listener below scoped to request sessions, so no other `Session` in the process (workers,
+    scripts, tests) is affected by it."""
+
+
+@event.listens_for(TrackedSyncSession, "after_begin")
 def _remember_connection(session: SyncSession, transaction: object, connection: Connection) -> None:
     """Issue #51: remember the low-level connection each session transaction begins on, in the
     session's own public `info` dict. `get_db()`'s cleanup needs a connection reference to
@@ -35,6 +39,11 @@ def _remember_connection(session: SyncSession, transaction: object, connection: 
     `Connection` object is closed, and a closed one is never touched, so it cannot affect a
     pooled connection another request has since been handed."""
     session.info[_LAST_CONNECTION_KEY] = connection
+
+
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine, expire_on_commit=False, autoflush=False, sync_session_class=TrackedSyncSession
+)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
