@@ -25,6 +25,7 @@ from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.equipment_instantiation_service import (
     InstantiationRejected,
     InvalidPortTarget,
+    PortConnectionOwnedByCable,
     PortNotFound,
     connect_port,
     instantiate_equipment,
@@ -731,6 +732,9 @@ async def connect_port_endpoint(
     except InvalidPortTarget as exc:
         await db.rollback()
         raise ApiError(status_code=422, title="Invalid Port Target", detail=exc.detail) from exc
+    except PortConnectionOwnedByCable as exc:
+        await db.rollback()
+        raise ConflictError(exc.detail) from exc
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
