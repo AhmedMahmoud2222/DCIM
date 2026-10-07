@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { to: "/discovery/neighbors", label: "Neighbors", permission: "discovery:read" },
   { to: "/network/profiles", label: "Network Profiles", permission: "network_profile:read" },
   { to: "/cables", label: "Cables", permission: "cable:read" },
+  { to: "/topology/pass-throughs", label: "Pass-throughs", permission: "cable:read" },
   { to: "/topology/trace", label: "Trace", permission: "cable:read" },
 ] as ReadonlyArray<{ to: string; label: string; permission?: string }>;
 

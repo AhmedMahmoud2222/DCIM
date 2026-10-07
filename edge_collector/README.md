@@ -42,3 +42,10 @@ Troubleshooting: check Central assignment/enabled status, selected active profil
 numeric target address and CIDR policy, local credential UUID/version and file permissions,
 then UDP reachability. Do not enable payload/credential debug logging. Offline delivery
 continues to use the bounded durable queue and existing backoff.
+
+## Interoperability
+
+`edge_collector/interop` runs this SNMPv3 stack against an independent implementation (pysnmp) over loopback: every supported
+authentication/privacy combination, failure modes, time-window resynchronisation, an LLDP/CDP discovery walk and a check that no
+secret appears on the wire. See `edge_collector/interop/README.md`. The supported-profile matrix, including which entries are
+not yet validated on hardware, is in `docs/implementation/ISSUE_101_SUPPORTED_PROFILES.md`.

@@ -22,6 +22,7 @@ import { DiscoveryPage } from "@/features/integrations/DiscoveryPage";
 import { IntegrationsPage } from "@/features/integrations/IntegrationsPage";
 import { LocationsPage } from "@/features/locations/LocationsPage";
 import { CablesPage } from "@/features/network/CablesPage";
+import { PassThroughsPage } from "@/features/network/PassThroughsPage";
 import { NeighborReviewPage } from "@/features/network/NeighborReviewPage";
 import { ProfilesPage } from "@/features/network/ProfilesPage";
 import { TracePage } from "@/features/network/TracePage";
@@ -65,6 +66,7 @@ export function App() {
               <Route path="/discovery/neighbors" element={<NeighborReviewPage />} />
               <Route path="/network/profiles" element={<ProfilesPage />} />
               <Route path="/cables" element={<CablesPage />} />
+              <Route path="/topology/pass-throughs" element={<PassThroughsPage />} />
               <Route path="/topology/trace" element={<TracePage />} />
               <Route path="/admin/users" element={<UsersPage />} />
               <Route path="/admin/groups" element={<GroupsPage />} />

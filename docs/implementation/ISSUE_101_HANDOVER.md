@@ -1,4 +1,4 @@
-# Issue #101 handover (v1)
+# Issue #101 handover (v2)
 
 Branch: `feature/r3-network-profiles-discovery-101`. Base: `main@754484d9`. Do not merge, do not close #101.
 
@@ -24,5 +24,11 @@ PostgreSQL 16 and Redis locally. Environment: `DATABASE_URL`, `TEST_ADMIN_DATABA
 
 ## Caveats
 - Central never sends secrets to the edge. SNMP credentials live in a local 0600 JSON file. No edge runtime loop calls `run_discovery_cycle` yet.
-- Trace is single hop; no patch-panel pass-through.
+- Trace follows cables and pass-throughs across any number of patch panels (bounded at 32 links). Remaining limits are in `ISSUE_101_NETWORK_PROFILES_DISCOVERY.md` section 4.
 - Nothing from Slices D and E has been through CI or independent review.
+
+## Update after the independent reviews (v2)
+- Review B1 to B4 (ingest poisoning, unseen proposal confirmation, legacy connect overwriting a cable's connection, bind versus retire race) were fixed in `6a486cb` and `b14e167` with regression tests.
+- Review B5: multi-hop tracing through patch panels is implemented (migration 0040, `pass_through_service`, `trace.v2`). Review B6: an interoperability harness against pysnmp and the supported-profile matrix were added. See `ISSUE_101_NETWORK_PROFILES_DISCOVERY.md` and `ISSUE_101_SUPPORTED_PROFILES.md`.
+- The earlier "Not finished" list and the "no edge runtime loop calls run_discovery_cycle" caveat above describe the state when this note was first written and no longer apply; the scheduler and the browser flow exist.
+- Still open: no physical device has been validated; SNMPv2c remains available; the review's non-blocking findings are tracked in the pull request.

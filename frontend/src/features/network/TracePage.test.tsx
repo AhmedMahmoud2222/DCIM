@@ -43,6 +43,47 @@ describe("TracePage", () => {
     expect(screen.getByText("Eth1/24")).toBeInTheDocument();
   });
 
+  it("shows a multi-hop path through two patch panels in order", async () => {
+    const panel = (host: string, name: string): api.TracePortView => ({ ...start, port_id: `${host}-${name}`, port_name: name, equipment_hostname: host, equipment_asset_tag: `EQ-${host}` });
+    const cable = (label: string) => ({ kind: "cable" as const, cable: { id: label, label, cable_type: "copper_utp", status: "installed", length_m: null, source: "manual", installed_at: null, removed_at: null } });
+    vi.mocked(api.traceFromPort).mockResolvedValue(result({
+      path: [
+        { link: cable("C-1"), hop: { restricted: false, remote: panel("pp-1", "Front01") },
+          pass_through: { id: "t1", label: "ROW-1", from_port_id: "pp-1-Front01", to: panel("pp-1", "Rear01") } },
+        { link: cable("C-2"), hop: { restricted: false, remote: panel("pp-2", "Front01") },
+          pass_through: { id: "t2", label: null, from_port_id: "pp-2-Front01", to: panel("pp-2", "Rear01") } },
+        { link: cable("C-3"), hop: { restricted: false, remote } },
+      ],
+      hop_count: 3, max_hops: 32,
+    }));
+    render();
+    const path = await screen.findByTestId("trace-path");
+    const order = ["edge-sw-1", "C-1", "pp-1", "Passes through", "ROW-1", "Rear01", "C-2", "pp-2", "C-3", "core-sw-1"];
+    const text = path.textContent ?? "";
+    let from = 0;
+    for (const token of order) {
+      const at = text.indexOf(token, from);
+      expect(at, `${token} appears in order`).toBeGreaterThanOrEqual(from);
+      from = at;
+    }
+    expect(screen.getAllByTestId("trace-link")).toHaveLength(3);
+    expect(screen.getAllByTestId("trace-pass-through")).toHaveLength(2);
+    expect(screen.getByTestId("trace-termination")).toHaveTextContent("End of path");
+    expect(screen.getByTestId("trace-termination")).toHaveTextContent("3 link(s)");
+  });
+
+  it.each([
+    ["cycle_detected", "Loop detected"],
+    ["hop_limit", "Hop limit reached"],
+    ["broken_topology", "inconsistent"],
+    ["restricted", "edge of your access scope"],
+    ["no_link", "Open end"],
+  ] as const)("explains the %s termination", async (terminated, text) => {
+    vi.mocked(api.traceFromPort).mockResolvedValue(result({ terminated }));
+    render();
+    expect(await screen.findByTestId("trace-termination")).toHaveTextContent(text);
+  });
+
   it("keeps discovery evidence in its own non-authoritative section", async () => {
     vi.mocked(api.traceFromPort).mockResolvedValue(result({
       evidence: {

@@ -23,11 +23,12 @@ from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.access_control import AccessScope, ensure_equipment_access, equipment_visible_clause
 from app.application.concurrency import require_if_match
-from app.application.network import cable_service, trace_service
+from app.application.network import cable_service, pass_through_service, trace_service
 from app.application.rbac import AuthContext, require_permission
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.identity.models import ManagedAsset
 from app.domain.network.cable_models import CABLE_TYPES, Cable, CableEndpoint
+from app.domain.network.pass_through_models import PortPassThrough, PortPassThroughMember
 from app.domain.physical.models import Equipment
 from app.domain.physical.ports import EquipmentPort
 
@@ -367,11 +368,120 @@ async def delete_cable(
     return Response(status_code=204)
 
 
+# ----------------------------------------------------------------------------- pass-throughs
+class PassThroughIn(BaseModel):
+    port_a_id: uuid.UUID
+    port_b_id: uuid.UUID
+    label: str | None = Field(default=None, max_length=64)
+
+
+class PassThroughOut(BaseModel):
+    id: uuid.UUID
+    equipment_id: uuid.UUID
+    equipment_hostname: str | None
+    label: str | None
+    version: int
+    created_at: datetime
+    ports: list[PortRef]
+
+
+async def _serialize_pass_throughs(db: AsyncSession, items: list[PortPassThrough]) -> list[PassThroughOut]:
+    if not items:
+        return []
+    rows = (
+        await db.execute(
+            select(PortPassThroughMember.pass_through_id, EquipmentPort, Equipment.hostname, ManagedAsset.asset_tag)
+            .join(EquipmentPort, EquipmentPort.id == PortPassThroughMember.equipment_port_id)
+            .join(Equipment, Equipment.id == EquipmentPort.equipment_id)
+            .join(ManagedAsset, ManagedAsset.id == Equipment.id)
+            .where(PortPassThroughMember.pass_through_id.in_([i.id for i in items]))
+            .order_by(EquipmentPort.sort_order, EquipmentPort.display_name, EquipmentPort.id)
+        )
+    ).all()
+    ports: dict[uuid.UUID, list[PortRef]] = {}
+    hostnames: dict[uuid.UUID, str | None] = {}
+    for pass_through_id, port, hostname, asset_tag in rows:
+        hostnames[pass_through_id] = hostname
+        ports.setdefault(pass_through_id, []).append(PortRef(
+            port_id=port.id, port_name=port.display_name, media_type=port.media_type, equipment_id=port.equipment_id,
+            equipment_hostname=hostname, equipment_asset_tag=asset_tag,
+        ))
+    return [
+        PassThroughOut(
+            id=i.id, equipment_id=i.equipment_id, equipment_hostname=hostnames.get(i.id), label=i.label, version=i.version,
+            created_at=i.created_at, ports=ports.get(i.id, []),
+        )
+        for i in items
+    ]
+
+
+@router.post("/pass-throughs", response_model=PassThroughOut, status_code=201)
+async def create_pass_through(
+    body: PassThroughIn, request: Request, db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_permission("cable:manage")),
+) -> PassThroughOut:
+    """Record that a signal entering one port of a device leaves through another (patch-panel front 01 <-> rear 01)."""
+    request_id, correlation_id = _request_ids(request)
+    item = await pass_through_service.create_pass_through(
+        db, scope=ctx.scope, port_a_id=body.port_a_id, port_b_id=body.port_b_id, label=body.label,
+        actor_user_id=ctx.user.id, request_id=request_id, correlation_id=correlation_id,
+    )
+    await db.commit()
+    return (await _serialize_pass_throughs(db, [item]))[0]
+
+
+@router.get("/pass-throughs", response_model=Page[PassThroughOut])
+async def list_pass_throughs(
+    equipment_id: uuid.UUID | None = None, page: Pagination = Depends(pagination_params), db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(require_permission("cable:read")),
+) -> Page[PassThroughOut]:
+    if equipment_id is not None:
+        await ensure_equipment_access(db, ctx.scope, equipment_id)
+    conditions: list = [equipment_visible_clause(ctx.scope, PortPassThrough.equipment_id)]
+    if equipment_id is not None:
+        conditions.append(PortPassThrough.equipment_id == equipment_id)
+    total = (await db.execute(select(func.count()).select_from(PortPassThrough).where(*conditions))).scalar_one()
+    items = list(
+        (
+            await db.execute(
+                select(PortPassThrough).where(*conditions).order_by(PortPassThrough.created_at, PortPassThrough.id)
+                .limit(page.limit).offset(page.offset)
+            )
+        ).scalars()
+    )
+    return Page[PassThroughOut](
+        items=await _serialize_pass_throughs(db, items), total=total, limit=page.limit, offset=page.offset,
+    )
+
+
+@router.get("/pass-throughs/{pass_through_id}", response_model=PassThroughOut)
+async def get_pass_through(
+    pass_through_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cable:read")),
+) -> PassThroughOut:
+    item = await pass_through_service.get_pass_through(db, scope=ctx.scope, pass_through_id=pass_through_id)
+    return (await _serialize_pass_throughs(db, [item]))[0]
+
+
+@router.delete("/pass-throughs/{pass_through_id}", status_code=204)
+async def delete_pass_through(
+    pass_through_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    if_match_version: int = Depends(require_if_match), ctx: AuthContext = Depends(require_permission("cable:manage")),
+) -> Response:
+    request_id, correlation_id = _request_ids(request)
+    await pass_through_service.delete_pass_through(
+        db, scope=ctx.scope, pass_through_id=pass_through_id, expected_version=if_match_version, actor_user_id=ctx.user.id,
+        request_id=request_id, correlation_id=correlation_id,
+    )
+    await db.commit()
+    return Response(status_code=204)
+
+
 @router.get("/topology/ports/{port_id}/trace")
 async def trace_port(
     port_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cable:read")),
 ) -> dict:
-    """device -> port -> cable -> remote port -> remote device, with discovery evidence reported separately."""
+    """Start port -> link -> arrival port -> (pass-through -> link)* -> end, bounded and loop-safe (`trace.v2`).
+    Discovery evidence is reported separately and never traversed."""
     return await trace_service.trace_port(db, scope=ctx.scope, port_id=port_id)
 
 

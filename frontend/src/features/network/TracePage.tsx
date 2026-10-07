@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { TracePortView, traceFromPort, TraceResult } from "@/features/network/api";
+import { TracePortView, traceFromPort, TraceResult, TraceStep, TraceTermination } from "@/features/network/api";
 import { PortPicker } from "@/features/network/PortPicker";
 import { ApiError } from "@/lib/apiClient";
 
@@ -12,6 +12,36 @@ const AGREEMENT_TEXT: Record<TraceResult["evidence"]["agreement"], { text: strin
   no_evidence: { text: "No discovery evidence for this link", style: "bg-slate-700 text-slate-300" },
   undocumented_adjacency: { text: "Discovery sees a neighbor but no cable is recorded", style: "bg-amber-900 text-amber-200" },
 };
+
+const TERMINATION_TEXT: Record<TraceTermination, { text: string; style: string }> = {
+  end_of_path: { text: "End of path: the last port has no pass-through.", style: "bg-green-900 text-green-200" },
+  no_link: { text: "Open end: nothing is connected beyond this point.", style: "bg-slate-700 text-slate-300" },
+  restricted: { text: "Stopped at the edge of your access scope.", style: "bg-amber-900 text-amber-200" },
+  cycle_detected: { text: "Loop detected: the path returns to a port it already passed.", style: "bg-red-900 text-red-200" },
+  hop_limit: { text: "Hop limit reached: the path is longer than the trace follows.", style: "bg-amber-900 text-amber-200" },
+  broken_topology: { text: "The recorded topology is inconsistent here, so the trace stopped.", style: "bg-red-900 text-red-200" },
+};
+
+function LinkBox({ step }: { step: TraceStep }) {
+  return (
+    <div className="rounded-sm border border-dashed border-slate-600 px-3 py-2 text-center text-xs" data-testid="trace-link">
+      {step.link.kind === "cable" && step.link.cable && (
+        <>
+          <div className="font-mono text-slate-100">{step.link.cable.label}</div>
+          <div className="text-slate-400">{step.link.cable.cable_type} · {step.link.cable.status}</div>
+          {step.link.cable.source === "discovery_confirmed" && <div className="text-emerald-300">from confirmed discovery</div>}
+        </>
+      )}
+      {step.link.kind === "port_connection" && (
+        <>
+          <div className="text-slate-100">Logical connection</div>
+          <div className="text-amber-300">{step.link.note}</div>
+        </>
+      )}
+      {step.link.kind === "cable" && !step.link.cable && <div className="text-slate-400">Cable</div>}
+    </div>
+  );
+}
 
 function PortBox({ title, port }: { title: string; port: TracePortView }) {
   return (
@@ -30,14 +60,13 @@ export function TracePage() {
   const [picker, setPicker] = useState({ equipmentId: "", portId });
   const trace = useQuery({ queryKey: ["network", "trace", portId], queryFn: () => traceFromPort(portId), enabled: portId !== "" });
   const result = trace.data;
-  const step = result?.path[0];
 
   return (
     <div>
       <h1 className="mb-1 text-lg font-semibold">Connection Trace</h1>
       <p className="mb-4 max-w-3xl text-sm text-slate-400">
-        Follow device → port → cable → remote port → remote device. What discovery observed is shown separately and is never merged
-        into the recorded path.
+        Follow a port over its cable to the far port, through any patch-panel pass-through, and on to the next cable until the path
+        ends. What discovery observed is shown separately and is never merged into the recorded path.
       </p>
 
       <div className="mb-6 max-w-md space-y-2">
@@ -57,32 +86,46 @@ export function TracePage() {
 
       {result && (
         <div className="space-y-6">
-          <section aria-label="Recorded path" className="flex flex-wrap items-center gap-3">
-            <PortBox title="From" port={result.start} />
-            {step && (
-              <div className="rounded-sm border border-dashed border-slate-600 px-3 py-2 text-center text-xs" data-testid="trace-link">
-                {step.link.kind === "cable" && step.link.cable && (
-                  <>
-                    <div className="font-mono text-slate-100">{step.link.cable.label}</div>
-                    <div className="text-slate-400">{step.link.cable.cable_type} · {step.link.cable.status}</div>
-                    {step.link.cable.source === "discovery_confirmed" && <div className="text-emerald-300">from confirmed discovery</div>}
-                  </>
-                )}
-                {step.link.kind === "port_connection" && (
-                  <>
-                    <div className="text-slate-100">Logical connection</div>
-                    <div className="text-amber-300">{step.link.note}</div>
-                  </>
-                )}
-              </div>
-            )}
-            {step?.hop && !step.hop.restricted && step.hop.remote && <PortBox title="To" port={step.hop.remote} />}
-            {step?.hop?.restricted && (
-              <div className="rounded-sm border border-slate-700 bg-slate-900 p-3 text-xs italic text-slate-400">
-                Remote end is outside your access scope.
-              </div>
-            )}
-            {result.terminated === "no_link" && <p className="text-xs italic text-slate-400">This port has no recorded cable or connection.</p>}
+          <section aria-label="Recorded path">
+            <ol className="flex flex-wrap items-center gap-3" data-testid="trace-path">
+              <li><PortBox title="From" port={result.start} /></li>
+              {result.path.map((step, index) => (
+                <Fragment key={index}>
+                  <li data-testid="trace-step" aria-label={`Hop ${index + 1}`}><LinkBox step={step} /></li>
+                  {step.hop && !step.hop.restricted && step.hop.remote && (
+                    <li>
+                      <PortBox title={index === result.path.length - 1 && !step.pass_through ? "To" : `Hop ${index + 1}`} port={step.hop.remote} />
+                      {step.hop.cycle && <div className="mt-1 text-[10px] text-red-300">already visited</div>}
+                    </li>
+                  )}
+                  {step.hop?.restricted && (
+                    <li className="rounded-sm border border-slate-700 bg-slate-900 p-3 text-xs italic text-slate-400">
+                      Remote end is outside your access scope.
+                    </li>
+                  )}
+                  {step.pass_through && (
+                    <li data-testid="trace-pass-through">
+                      <div className="rounded-sm border border-slate-600 bg-slate-800 px-3 py-2 text-center text-xs">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Passes through</div>
+                        {step.pass_through.label && <div className="font-mono text-slate-100">{step.pass_through.label}</div>}
+                      </div>
+                    </li>
+                  )}
+                  {step.pass_through && (
+                    <li><PortBox title="Continues on" port={step.pass_through.to} /></li>
+                  )}
+                </Fragment>
+              ))}
+            </ol>
+            <p className="mt-3 flex flex-wrap items-center gap-2 text-xs" data-testid="trace-termination">
+              <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${TERMINATION_TEXT[result.terminated].style}`}>
+                {TERMINATION_TEXT[result.terminated].text}
+              </span>
+              {result.path.length === 0 && result.terminated === "no_link" && (
+                <span className="italic text-slate-400">This port has no recorded cable or connection.</span>
+              )}
+              <span className="text-slate-500">{result.hop_count ?? result.path.length} link(s)</span>
+            </p>
           </section>
 
           {result.previous_cables.length > 0 && (

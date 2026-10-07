@@ -225,3 +225,93 @@ async def test_rack_selected_scope_denies_other_racks_in_the_same_site(client, w
     denied = await client.patch(f"{CABLES}/{other_rack['id']}", json={"notes": "x"}, headers=headers | if_match(1))
     assert denied.status_code == 404
     assert (await client.get(CABLES, params={"equipment_id": c1["id"]}, headers=headers)).status_code == 404
+
+
+# ------------------------------------------------------------------ multi-hop trace and pass-throughs (Issue #101 B5)
+async def _pp(client, admin, revision_id, site, rack, u, hostname):
+    return await place(client, admin, revision_id, site, rack, u, hostname)
+
+
+async def _pass_through(client, admin, a, b, label=None):
+    response = await client.post("/api/v1/pass-throughs", json={"port_a_id": a, "port_b_id": b, "label": label}, headers=admin)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.fixture
+async def hops_world(client, world):
+    """a1.p3 -[H1]- hpp(site B).p1 =pt= hpp.p2 -[H2]- a2.p3   (hidden middle)
+    a2.p2 -[V1]- vpp(site A).p1 =pt= vpp.p2 -[V2]- b2.p2   (visible middle, hidden end)"""
+    admin = world["admin"]
+    revision = await publish_revision(client, admin, ["p1", "p2", "p3"])
+    hpp = await _pp(client, admin, revision["id"], world["site_b"], world["rack_b"], 5, "hidden-pp")
+    vpp = await _pp(client, admin, revision["id"], world["site_a"], world["rack_a"], 5, "visible-pp")
+    pt_hidden = await _pass_through(client, admin, hpp["port_by_name"]["p1"], hpp["port_by_name"]["p2"], "HIDDEN-PT")
+    pt_visible = await _pass_through(client, admin, vpp["port_by_name"]["p1"], vpp["port_by_name"]["p2"], "VISIBLE-PT")
+    h1 = await create_cable(client, admin, world["a1"]["port_by_name"]["p3"], hpp["port_by_name"]["p1"], label="H1", status="installed")
+    h2 = await create_cable(client, admin, hpp["port_by_name"]["p2"], world["a2"]["port_by_name"]["p3"], label="H2", status="installed")
+    v1 = await create_cable(client, admin, world["a2"]["port_by_name"]["p2"], vpp["port_by_name"]["p1"], label="V1", status="installed")
+    v2 = await create_cable(client, admin, vpp["port_by_name"]["p2"], world["b2"]["port_by_name"]["p2"], label="V2", status="installed")
+    return {**world, "hpp": hpp, "vpp": vpp, "pt_hidden": pt_hidden, "pt_visible": pt_visible, "cables": (h1, h2, v1, v2)}
+
+
+def _hidden_markers(w: dict) -> list[str]:
+    hpp = w["hpp"]
+    return [hpp["id"], "hidden-pp", hpp["asset_tag"], *hpp["port_by_name"].values(), w["pt_hidden"]["id"], "HIDDEN-PT"]
+
+
+async def test_trace_stops_at_a_hidden_intermediate_device_without_leaking_it(client, hops_world):
+    w = hops_world
+    start = w["a1"]["port_by_name"]["p3"]
+    response = await client.get(f"/api/v1/topology/ports/{start}/trace", headers=w["headers"])
+    assert response.status_code == 200
+    trace = response.json()
+    assert trace["terminated"] == "restricted" and trace["hop_count"] == 1
+    assert trace["path"][0]["hop"] == {"restricted": True, "remote": None} and trace["path"][0]["pass_through"] is None
+    assert [m for m in _hidden_markers(w) if m in response.text] == []
+    assert w["a2"]["port_by_name"]["p3"] not in response.text  # the visible far end behind the hidden hop is not enumerable
+    # the administrator still sees the whole path
+    full = (await client.get(f"/api/v1/topology/ports/{start}/trace", headers=w["admin"])).json()
+    assert full["terminated"] == "end_of_path" and [x["hop"]["remote"]["equipment_hostname"] for x in full["path"]] == ["hidden-pp", "a2-sw"]
+    # and the same boundary holds from the other side
+    other = await client.get(f"/api/v1/topology/ports/{w['a2']['port_by_name']['p3']}/trace", headers=w["headers"])
+    assert other.json()["terminated"] == "restricted" and [m for m in _hidden_markers(w) if m in other.text] == []
+
+
+async def test_trace_returns_the_visible_part_and_stops_at_a_hidden_end(client, hops_world):
+    w = hops_world
+    response = await client.get(f"/api/v1/topology/ports/{w['a2']['port_by_name']['p2']}/trace", headers=w["headers"])
+    trace = response.json()
+    assert trace["terminated"] == "restricted" and trace["hop_count"] == 2
+    first, second = trace["path"]
+    assert first["hop"]["remote"]["equipment_hostname"] == "visible-pp" and first["pass_through"]["label"] == "VISIBLE-PT"
+    assert second["hop"] == {"restricted": True, "remote": None}
+    assert leaked(response.text, w) == []
+    assert w["pt_hidden"]["id"] not in response.text
+
+
+async def test_hidden_pass_through_and_hidden_ports_are_404_everywhere(client, hops_world):
+    w = hops_world
+    headers = w["headers"]
+    pt = w["pt_hidden"]["id"]
+    assert (await client.get(f"/api/v1/pass-throughs/{pt}", headers=headers)).status_code == 404
+    assert (await client.delete(f"/api/v1/pass-throughs/{pt}", headers=headers | if_match(1))).status_code == 404
+    assert (await client.get(f"/api/v1/topology/ports/{w['hpp']['port_by_name']['p1']}/trace", headers=headers)).status_code == 404
+    listed = await client.get("/api/v1/pass-throughs", headers=headers)
+    assert [i["label"] for i in listed.json()["items"]] == ["VISIBLE-PT"] and listed.json()["total"] == 1
+    assert (await client.get("/api/v1/pass-throughs", params={"equipment_id": w["hpp"]["id"]}, headers=headers)).status_code == 404
+    create = await client.post(
+        "/api/v1/pass-throughs", json={"port_a_id": w["hpp"]["port_by_name"]["p3"], "port_b_id": w["a1"]["port_by_name"]["p1"]}, headers=headers)
+    supplied = w["hpp"]["port_by_name"]["p3"]  # the 404 may repeat what the caller sent, nothing else
+    assert create.status_code == 404 and [m for m in _hidden_markers(w) if m in create.text and m != supplied] == []
+    assert (await client.get(f"/api/v1/pass-throughs/{pt}", headers=w["admin"])).status_code == 200  # nothing changed
+
+
+async def test_a_viewer_style_user_cannot_manage_pass_throughs(client, world):
+    # the restricted group in `world` holds cable:manage for site A only; mutation outside it is refused above,
+    # inside it the relationship is allowed
+    admin = world["admin"]
+    revision = await publish_revision(client, admin, ["p1", "p2"])
+    pp = await _pp(client, admin, revision["id"], world["site_a"], world["rack_a"], 7, "mine-pp")
+    body = {"port_a_id": pp["port_by_name"]["p1"], "port_b_id": pp["port_by_name"]["p2"]}
+    assert (await client.post("/api/v1/pass-throughs", json=body, headers=world["headers"])).status_code == 201

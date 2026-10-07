@@ -272,15 +272,56 @@ export interface TraceEvidence {
   remote_port_ident: string;
 }
 
+export type TraceTermination =
+  | "end_of_path"
+  | "no_link"
+  | "restricted"
+  | "cycle_detected"
+  | "hop_limit"
+  | "broken_topology";
+
+export interface TracePassThrough {
+  id: string;
+  label: string | null;
+  from_port_id: string;
+  to: TracePortView;
+}
+
+export interface TraceStep {
+  link: { kind: "cable" | "port_connection" | "none"; cable?: TraceCable; cable_label?: string | null; note?: string; status?: string };
+  hop: { restricted: boolean; remote: TracePortView | null; cycle?: boolean } | null;
+  /** How the signal continues inside the arrival device; the next step starts from `to`. */
+  pass_through?: TracePassThrough | null;
+}
+
 export interface TraceResult {
   start: TracePortView;
-  path: Array<{
-    link: { kind: "cable" | "port_connection" | "none"; cable?: TraceCable; cable_label?: string | null; note?: string; status?: string };
-    hop: { restricted: boolean; remote: TracePortView | null } | null;
-  }>;
-  terminated: "end_of_path" | "no_link" | "restricted";
+  path: TraceStep[];
+  terminated: TraceTermination;
+  hop_count?: number;
+  max_hops?: number;
+  terminated_reason?: string | null;
   evidence: { authoritative: false; neighbors: TraceEvidence[]; agreement: "agrees" | "disagrees" | "no_evidence" | "undocumented_adjacency" };
   previous_cables: TraceCable[];
+  format?: string;
 }
 
 export const traceFromPort = (portId: string) => apiFetch<TraceResult>(`/topology/ports/${portId}/trace`);
+
+// ------------------------------------------------------------------ pass-throughs
+export interface PassThrough {
+  id: string;
+  equipment_id: string;
+  equipment_hostname: string | null;
+  label: string | null;
+  version: number;
+  created_at: string;
+  ports: Array<{ port_id: string; port_name: string; media_type: string; equipment_id: string; equipment_hostname: string | null; equipment_asset_tag: string }>;
+}
+
+export const listPassThroughs = (equipmentId?: string) =>
+  apiFetch<Page<PassThrough>>(`/pass-throughs?limit=200${equipmentId ? `&equipment_id=${equipmentId}` : ""}`);
+export const createPassThrough = (body: { port_a_id: string; port_b_id: string; label?: string | null }) =>
+  apiFetch<PassThrough>("/pass-throughs", { method: "POST", body: JSON.stringify(body) });
+export const deletePassThrough = (item: PassThrough) =>
+  apiFetch<void>(`/pass-throughs/${item.id}`, { method: "DELETE", ifMatch: item.version });

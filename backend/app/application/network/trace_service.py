@@ -1,4 +1,17 @@
-"""Port-to-port trace: device -> port -> cable -> remote port -> remote device.
+"""End-to-end port trace: start port -> link -> arrival port -> (pass-through -> next link ->)* -> end.
+
+A *link* is a live physical cable (planned or installed; removed cables are history and are
+never followed) or, when a port has no cable, a logical `PortConnection`. A *pass-through*
+(`port_pass_through`, e.g. patch-panel front <-> rear) is the authoritative way a signal
+continues through a device: at every arrival port the trace looks for a pass-through and, if
+there is one, continues from its partner port over that port's own link. Nothing is guessed:
+LLDP/CDP evidence is never traversed, and the trace only reads.
+
+Traversal is deterministic and bounded: at most `MAX_HOPS` links, a visited-port set stops
+loops, and inconsistent data ends the trace with a stable `terminated` value instead of an
+error. Terminations: `end_of_path` (arrived at a port with no pass-through), `no_link` (the
+start port, or the far side of the last pass-through, has no link), `restricted` (the next
+equipment is outside the caller's scope), `cycle_detected`, `hop_limit`, `broken_topology`.
 
 Authoritative links (cables, then logical port connections) and discovery evidence are
 reported in separate sections and never merged: `evidence` is what LLDP/CDP *saw*, and
@@ -20,10 +33,12 @@ from app.core.errors import NotFoundError
 from app.domain.identity.models import ManagedAsset
 from app.domain.network.cable_models import Cable, CableEndpoint
 from app.domain.network.discovery_models import DiscoveredNeighbor
+from app.domain.network.pass_through_models import PortPassThrough, PortPassThroughMember
 from app.domain.physical.models import Equipment
 from app.domain.physical.ports import EquipmentPort, PortConnection
 
 MAX_PREVIOUS_CABLES = 5
+MAX_HOPS = 32
 MAX_EVIDENCE = 20
 
 
@@ -103,6 +118,76 @@ async def _evidence(db: AsyncSession, scope: AccessScope, port_ids: list[uuid.UU
     return out
 
 
+class _Broken(Exception):
+    """Stored topology is inconsistent; the trace ends with `broken_topology`."""
+
+
+async def _next_link(db: AsyncSession, port_id: uuid.UUID) -> tuple[dict, uuid.UUID] | None:
+    """The authoritative link leaving `port_id`: its live cable, else a logical connection."""
+    live = (
+        await db.execute(
+            select(Cable, CableEndpoint)
+            .join(CableEndpoint, CableEndpoint.cable_id == Cable.id)
+            .where(Cable.is_live.is_(True), CableEndpoint.equipment_port_id == port_id)
+            .order_by(Cable.id)
+        )
+    ).all()
+    if len(live) > 1:
+        raise _Broken("a port has more than one live cable")
+    if live:
+        cable, near = live[0]
+        ends = (await db.execute(select(CableEndpoint).where(CableEndpoint.cable_id == cable.id))).scalars().all()
+        others = [end for end in ends if end.id != near.id]
+        if len(ends) != 2 or len(others) != 1:
+            raise _Broken("a cable does not have exactly two endpoints")
+        far = others[0]
+        return (
+            {"kind": "cable", "cable": _cable_view(cable), "near_end": near.end_label, "far_end": far.end_label,
+             "port_connection_id": str(cable.port_connection_id) if cable.port_connection_id else None},
+            far.equipment_port_id,
+        )
+    connections = (
+        await db.execute(
+            select(PortConnection)
+            .where(
+                PortConnection.target_port_id.is_not(None),
+                or_(PortConnection.source_port_id == port_id, PortConnection.target_port_id == port_id),
+            )
+            .order_by(PortConnection.id)
+            .limit(2)
+        )
+    ).scalars().all()
+    if len(connections) > 1:
+        raise _Broken("a port has more than one logical connection")
+    if not connections:
+        return None
+    connection = connections[0]
+    remote = connection.target_port_id if connection.source_port_id == port_id else connection.source_port_id
+    assert remote is not None
+    return (
+        {"kind": "port_connection", "port_connection_id": str(connection.id), "status": connection.status,
+         "cable_label": connection.cable_id, "note": "logical connection without a recorded physical cable"},
+        remote,
+    )
+
+
+async def _pass_through(db: AsyncSession, port_id: uuid.UUID) -> tuple[PortPassThrough, uuid.UUID] | None:
+    """The pass-through `port_id` belongs to and the port the signal continues on."""
+    member = (
+        await db.execute(select(PortPassThroughMember).where(PortPassThroughMember.equipment_port_id == port_id))
+    ).scalar_one_or_none()
+    if member is None:
+        return None
+    pair = (
+        await db.execute(select(PortPassThroughMember).where(PortPassThroughMember.pass_through_id == member.pass_through_id))
+    ).scalars().all()
+    partners = [m.equipment_port_id for m in pair if m.equipment_port_id != port_id]
+    parent = await db.get(PortPassThrough, member.pass_through_id)
+    if parent is None or len(pair) != 2 or len(partners) != 1:
+        raise _Broken("a pass-through does not join exactly two ports")
+    return parent, partners[0]
+
+
 async def trace_port(db: AsyncSession, *, scope: AccessScope, port_id: uuid.UUID) -> dict:
     start = await db.get(EquipmentPort, port_id)
     if start is None:
@@ -111,52 +196,68 @@ async def trace_port(db: AsyncSession, *, scope: AccessScope, port_id: uuid.UUID
         raise NotFoundError(f"EquipmentPort {port_id} not found.")
     start_view = await _port_view(db, port_id)
 
-    live = (
-        await db.execute(
-            select(Cable, CableEndpoint)
-            .join(CableEndpoint, CableEndpoint.cable_id == Cable.id)
-            .where(Cable.is_live.is_(True), CableEndpoint.equipment_port_id == port_id)
-        )
-    ).first()
-    link: dict = {"kind": "none"}
-    remote_port_id: uuid.UUID | None = None
-    if live is not None:
-        cable, near = live
-        far = (
-            await db.execute(select(CableEndpoint).where(CableEndpoint.cable_id == cable.id, CableEndpoint.id != near.id))
-        ).scalar_one()
-        remote_port_id = far.equipment_port_id
-        link = {"kind": "cable", "cable": _cable_view(cable), "near_end": near.end_label, "far_end": far.end_label,
-                "port_connection_id": str(cable.port_connection_id) if cable.port_connection_id else None}
-    else:
-        connection = (
-            await db.execute(
-                select(PortConnection).where(
-                    PortConnection.target_port_id.is_not(None),
-                    or_(PortConnection.source_port_id == port_id, PortConnection.target_port_id == port_id),
-                )
-            )
-        ).scalars().first()
-        if connection is not None:
-            remote_port_id = connection.target_port_id if connection.source_port_id == port_id else connection.source_port_id
-            link = {"kind": "port_connection", "port_connection_id": str(connection.id), "status": connection.status,
-                    "cable_label": connection.cable_id, "note": "logical connection without a recorded physical cable"}
+    path: list[dict] = []
+    visited: set[uuid.UUID] = {port_id}
+    current = port_id
+    terminated = "no_link"
+    reason: str | None = None
+    first_remote: uuid.UUID | None = None
+    try:
+        while True:
+            step = await _next_link(db, current)
+            if step is None:
+                terminated = "no_link"
+                break
+            if len(path) >= MAX_HOPS:
+                terminated = "hop_limit"
+                break
+            link, remote_id = step
+            remote = await db.get(EquipmentPort, remote_id)
+            if remote is None:
+                raise _Broken("a link ends at a port that no longer exists")
+            if not await _is_visible(db, scope, remote.equipment_id):
+                path.append({"link": link, "hop": {"restricted": True, "remote": None}, "pass_through": None})
+                terminated = "restricted"
+                break
+            element: dict = {"link": link, "hop": {"restricted": False, "remote": await _port_view(db, remote_id)},
+                             "pass_through": None}
+            path.append(element)
+            if first_remote is None:
+                first_remote = remote_id
+            if remote_id in visited:
+                element["hop"]["cycle"] = True
+                terminated = "cycle_detected"
+                break
+            visited.add(remote_id)
+            continuation = await _pass_through(db, remote_id)
+            if continuation is None:
+                terminated = "end_of_path"
+                break
+            parent, partner_id = continuation
+            partner = await db.get(EquipmentPort, partner_id)
+            if partner is None or partner.equipment_id != remote.equipment_id:
+                raise _Broken("a pass-through leaves its device")
+            element["pass_through"] = {
+                "id": str(parent.id), "label": parent.label, "from_port_id": str(remote_id),
+                "to": await _port_view(db, partner_id),
+            }
+            if partner_id in visited:
+                terminated = "cycle_detected"
+                break
+            visited.add(partner_id)
+            current = partner_id
+    except _Broken as error:
+        terminated, reason = "broken_topology", str(error)
 
-    hop: dict | None = None
-    if remote_port_id is not None:
-        remote_equipment = (await db.get(EquipmentPort, remote_port_id)).equipment_id  # type: ignore[union-attr]
-        if await _is_visible(db, scope, remote_equipment):
-            hop = {"restricted": False, "remote": await _port_view(db, remote_port_id)}
-        else:
-            hop = {"restricted": True, "remote": None}
-
-    ports_for_evidence = [port_id] + ([remote_port_id] if remote_port_id and hop and not hop["restricted"] else [])
+    remote_port_id = first_remote
+    first_hop = path[0]["hop"] if path else None
+    ports_for_evidence = [port_id] + ([remote_port_id] if remote_port_id and first_hop and not first_hop["restricted"] else [])
     evidence = await _evidence(db, scope, ports_for_evidence)
     agreement = "no_evidence"
-    if evidence and remote_port_id is not None and hop and not hop["restricted"]:
+    if evidence and remote_port_id is not None and first_hop and not first_hop["restricted"]:
         pair = {str(port_id), str(remote_port_id)}
         links = [{e["local_port_id"], e["remote_port_id"]} for e in evidence if e["local_port_id"] and e["remote_port_id"]]
-        agreement = "agrees" if any(link == pair for link in links) else ("disagrees" if links else "no_evidence")
+        agreement = "agrees" if any(candidate == pair for candidate in links) else ("disagrees" if links else "no_evidence")
     elif evidence and remote_port_id is None:
         agreement = "undocumented_adjacency"
 
@@ -169,12 +270,14 @@ async def trace_port(db: AsyncSession, *, scope: AccessScope, port_id: uuid.UUID
             .limit(MAX_PREVIOUS_CABLES)
         )
     ).scalars().all()
-    terminated = "no_link" if remote_port_id is None else ("restricted" if hop and hop["restricted"] else "end_of_path")
     return {
         "start": start_view,
-        "path": [{"link": link, "hop": hop}] if remote_port_id is not None else [],
+        "path": path,
+        "hop_count": len(path),
+        "max_hops": MAX_HOPS,
         "terminated": terminated,
+        "terminated_reason": reason,
         "evidence": {"authoritative": False, "neighbors": evidence, "agreement": agreement},
         "previous_cables": [_cable_view(c) for c in previous],
-        "format": "trace.v1",
+        "format": "trace.v2",
     }
