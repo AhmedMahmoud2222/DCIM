@@ -590,7 +590,7 @@ async def ingest_batch(
             results.append(IngestRecordResult(dedup_key=record.dedup_key, status="accepted"))
         except InvalidNeighborPayload:
             # Permanent: retrying the same bytes cannot succeed, so the collector may drop it.
-            await _release_claim_safely(db, claim_id, record_index=len(results))
+            await _release_claim_safely(db, claim_ref, record_index=len(results))
             results.append(
                 IngestRecordResult(
                     dedup_key=record.dedup_key, status="rejected", error_code="INVALID_PAYLOAD",
