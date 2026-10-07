@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
-from app.application.concurrency import check_version_match, parse_if_match, require_if_match
+from app.application.concurrency import check_version_match, lock_versioned_row, parse_if_match, require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.power_capacity import (
     derive_node_capacity_exceptions,
@@ -509,10 +509,7 @@ async def update_power_connection(
     connection_id: uuid.UUID, body: PowerConnectionUpdate, request: Request, db: AsyncSession = Depends(get_db),
     if_match_version: int = Depends(require_if_match), ctx=Depends(require_permission("power:manage")),
 ) -> PowerConnectionOut:
-    connection = await db.get(PowerConnection, connection_id)
-    if connection is None:
-        raise NotFoundError(f"PowerConnection {connection_id} not found.")
-    check_version_match(expected=if_match_version, actual=connection.version)
+    connection = await lock_versioned_row(db, PowerConnection, connection_id, expected_version=if_match_version)
 
     before = {
         "connection_type": connection.connection_type, "phase": connection.phase, "voltage": connection.voltage,

@@ -26,7 +26,7 @@ from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_rack_template
 from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.idempotency import (
     IdempotencyConflict,
     IdempotencyStillProcessing,
@@ -309,10 +309,7 @@ async def update_rack(
     ctx=Depends(require_permission("rack:manage")),
 ) -> RackOut:
     await ensure_rack_access(db, ctx.scope, rack_id)
-    rack = await db.get(Rack, rack_id)
-    if rack is None:
-        raise NotFoundError(f"Rack {rack_id} not found.")
-    check_version_match(expected=if_match_version, actual=rack.version)
+    rack = await lock_versioned_row(db, Rack, rack_id, expected_version=if_match_version)
 
     before = {"name": rack.name, "owner": rack.owner, "notes": rack.notes, "version": rack.version}
     if body.name is not None:
