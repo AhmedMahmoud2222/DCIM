@@ -159,7 +159,7 @@ jobs:
   # The independently packaged Edge Collector runtime (edge_collector/). It is deliberately
   # not installed into the backend distribution — the backend job only exposes its scheduler
   # constants on PYTHONPATH for a contract test — so its own suite needs a job of its own.
-  # It is pure standard library plus httpx, which is why this job is this short.
+  # It is pure standard library plus httpx and cryptography (SNMPv3 AES), which is why this job is this short.
   edge-collector:
     runs-on: ubuntu-latest
     env:
@@ -176,13 +176,38 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install Edge Collector test dependencies
-        run: pip install "httpx>=0.27.0" "pytest>=8.3.0" "ruff>=0.6.0"
+        run: pip install "./edge_collector[test]"
       - name: Lint (ruff)
         run: ruff check edge_collector
       - name: Run Edge Collector tests
         # tests/test_snmp.py binds a real UDP socket on 127.0.0.1 and speaks real BER to
         # the collector; it needs no privileges and no external agent.
         run: pytest -q edge_collector/tests
+
+  # Issue #101: the real Edge Collector SNMPv3 stack against an independent implementation (pysnmp)
+  # over loopback. A dedicated job so the normal Edge job does not need pysnmp. No privileges,
+  # hardware or external network; it fails if any algorithm combination, failure mode or wire-secrecy
+  # check behaves differently from what edge_collector/interop/README.md states.
+  edge-interop:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+        with:
+          python-version: "3.12"
+      - name: Install the Edge Collector and the reference agent
+        run: pip install ./edge_collector -r edge_collector/interop/requirements.txt
+      - name: Run the interoperability harness
+        run: python -m edge_collector.interop.run_interop --json interop-results.json
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: snmpv3-interop-results
+          path: interop-results.json
+          if-no-files-found: ignore
 
   # Issue #26: the browser suite, on its own PostgreSQL 16 and Redis 7. Deliberately
   # separate from the `backend` job rather than bolted onto it — that job validates

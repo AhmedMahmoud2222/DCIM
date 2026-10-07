@@ -18,10 +18,11 @@ from app.api.deps import get_db
 from app.application.audit_service import write_audit_log
 from app.application.collector_service import current_assignment, current_assignments_bulk
 from app.application.concurrency import lock_versioned_row, require_if_match
+from app.application.network.integration_security import SnmpV3In, credential_kind, resolve_snmp_security
+from app.application.network.profile_service import bind_integration_profile
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
-from app.core.secrets import encrypt_secret
 from app.domain.integration.models import CollectorAssignment, Integration
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -66,8 +67,10 @@ class IntegrationIn(BaseModel):
     target_port: int | None = None
     config: dict = Field(default_factory=dict)
     credential: str | None = Field(default=None, max_length=2000, description="Plaintext, write-only -- never returned.")
+    snmpv3: SnmpV3In | None = Field(default=None, description="Write-only SNMPv3 authPriv credential -- never returned.")
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS
     enabled: bool = True
+    device_profile_id: uuid.UUID | None = None
 
     @field_validator("config")
     @classmethod
@@ -97,6 +100,8 @@ class IntegrationOut(BaseModel):
     last_failure_at: datetime | None
     consecutive_failures: int
     has_credential: bool
+    credential_kind: str = "none"
+    device_profile_id: uuid.UUID | None = None
     assigned_collector_id: uuid.UUID | None
     version: int
 
@@ -119,6 +124,8 @@ def _build_out(integration: Integration, assignment: CollectorAssignment | None)
         last_failure_at=integration.last_failure_at,
         consecutive_failures=integration.consecutive_failures,
         has_credential=integration.credential_ciphertext is not None,
+        credential_kind=credential_kind(integration.integration_type, integration.config, integration.credential_ciphertext),
+        device_profile_id=integration.device_profile_id,
         assigned_collector_id=assignment.collector_id if assignment else None,
         version=integration.version,
     )
@@ -137,6 +144,10 @@ async def create_integration(
     ctx=Depends(require_permission("integration:manage")),
 ) -> IntegrationOut:
     request_id, correlation_id = _request_ids(request)
+    config, ciphertext = resolve_snmp_security(
+        integration_type=body.integration_type, existing_config=None, existing_ciphertext=None, new_config=body.config,
+        credential=body.credential, snmpv3=body.snmpv3,
+    )
     integration = Integration(
         id=uuid.uuid4(),
         name=body.name,
@@ -145,13 +156,15 @@ async def create_integration(
         enabled=body.enabled,
         target_host=body.target_host,
         target_port=body.target_port,
-        config=body.config,
-        credential_ciphertext=encrypt_secret(body.credential) if body.credential else None,
+        config=config,
+        credential_ciphertext=ciphertext,
         poll_interval_seconds=body.poll_interval_seconds,
         version=1,
     )
     db.add(integration)
     await db.flush()
+    if body.device_profile_id is not None:
+        await bind_integration_profile(db, integration=integration, device_profile_id=body.device_profile_id)
     await write_audit_log(
         db,
         actor_user_id=ctx.user.id,
@@ -204,6 +217,10 @@ class IntegrationPatchIn(BaseModel):
     target_port: int | None = None
     config: dict | None = None
     credential: str | None = Field(default=None, max_length=2000, description="If provided, replaces the stored credential.")
+    snmpv3: SnmpV3In | None = Field(default=None, description="If provided, replaces the stored SNMPv3 credential.")
+    device_profile_id: uuid.UUID | None = Field(
+        default=None, description="Explicit profile binding. Send null to unbind; omit to leave unchanged."
+    )
 
     @field_validator("config")
     @classmethod
@@ -230,7 +247,7 @@ async def update_integration(
     integration = await lock_versioned_row(db, Integration, integration_id, expected_version=if_match_version)
 
     request_id, correlation_id = _request_ids(request)
-    before = {"enabled": integration.enabled, "poll_interval_seconds": integration.poll_interval_seconds}
+    before: dict = {"enabled": integration.enabled, "poll_interval_seconds": integration.poll_interval_seconds}
     if body.enabled is not None:
         integration.enabled = body.enabled
     if body.poll_interval_seconds is not None:
@@ -239,10 +256,15 @@ async def update_integration(
         integration.target_host = body.target_host
     if body.target_port is not None:
         integration.target_port = body.target_port
-    if body.config is not None:
-        integration.config = body.config
-    if body.credential is not None:
-        integration.credential_ciphertext = encrypt_secret(body.credential)
+    if body.config is not None or body.credential is not None or body.snmpv3 is not None:
+        integration.config, integration.credential_ciphertext = resolve_snmp_security(
+            integration_type=integration.integration_type, existing_config=integration.config,
+            existing_ciphertext=integration.credential_ciphertext, new_config=body.config, credential=body.credential,
+            snmpv3=body.snmpv3,
+        )
+    if "device_profile_id" in body.model_fields_set:
+        before["device_profile_id"] = str(integration.device_profile_id) if integration.device_profile_id else None
+        await bind_integration_profile(db, integration=integration, device_profile_id=body.device_profile_id)
     integration.version += 1
 
     await write_audit_log(

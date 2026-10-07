@@ -44,7 +44,11 @@ from app.domain.location.models import Building, City, Country, Floor, Room, Sit
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 
 SCOPE_AWARE_PERMISSIONS = frozenset(
-    {"organization:read", "location:read", "rack:read", "rack:manage", "rack:place", "equipment:read"}
+    {
+        "organization:read", "location:read", "rack:read", "rack:manage", "rack:place", "equipment:read",
+        # Issue #101: cables and traces are filtered by the visibility of their endpoint equipment.
+        "cable:read", "cable:manage",
+    }
 )
 UNSCOPED_ADMIN_RESOURCES = frozenset({"user", "group"})
 
@@ -411,7 +415,7 @@ async def ensure_room_access(db: AsyncSession, scope: AccessScope, room_id: uuid
 async def ensure_rack_access(db: AsyncSession, scope: AccessScope, rack_id: uuid.UUID) -> None:
     if scope.unrestricted:
         return
-    lit = literal(rack_id)
+    lit = literal(uuid.UUID(str(rack_id)))  # see ensure_equipment_access: asyncpg's UUID subclass has no inferable bind type
     if (await db.execute(select(lit).where(lit.in_(visible_rack_ids_query(scope))))).first() is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
 
@@ -419,7 +423,9 @@ async def ensure_rack_access(db: AsyncSession, scope: AccessScope, rack_id: uuid
 async def ensure_equipment_access(db: AsyncSession, scope: AccessScope, equipment_id: uuid.UUID) -> None:
     if scope.unrestricted:
         return
-    lit = literal(equipment_id)
+    # asyncpg returns its own UUID subclass for ids loaded from the database; `literal()` cannot infer a
+    # bind type for that subclass and PostgreSQL then rejects the statement as ambiguous. Coerce to a plain UUID.
+    lit = literal(uuid.UUID(str(equipment_id)))
     hit = (await db.execute(select(lit).where(equipment_visible_clause(scope, lit)))).first()
     if hit is None:
         raise NotFoundError(f"Equipment {equipment_id} not found.")

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dcim-edge-collector"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27.0", "cryptography>=43.0.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3.0", "ruff>=0.6.0"]
+
+[project.scripts]
+dcim-edge-collector = "edge_collector.__main__:main"
+
+[tool.setuptools]
+packages = ["edge_collector"]
+package-dir = {edge_collector = "."}
+
+[tool.setuptools.package-data]
+edge_collector = ["migrations/*.sql"]

@@ -4,6 +4,7 @@ from app.api.v1 import (
     alarms,
     auth,
     bulk_import,
+    cables,
     catalog,
     catalog_designer,
     catalog_documents,
@@ -19,6 +20,7 @@ from app.api.v1 import (
     integrations,
     locations,
     managed_assets,
+    network_profiles,
     power,
     racks,
     settings,
@@ -48,6 +50,8 @@ api_router.include_router(power.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(collectors.router)
 api_router.include_router(integrations.router)
+api_router.include_router(cables.router)
+api_router.include_router(network_profiles.router)
 api_router.include_router(discovery.router)
 api_router.include_router(telemetry.router)
 api_router.include_router(impact.router)
