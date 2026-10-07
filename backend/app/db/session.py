@@ -1,6 +1,9 @@
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import event
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session as SyncSession
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -17,6 +20,21 @@ engine = create_async_engine(
 )
 
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+_LAST_CONNECTION_KEY = "dcim_last_sync_connection"
+
+
+@event.listens_for(SyncSession, "after_begin")
+def _remember_connection(session: SyncSession, transaction: object, connection: Connection) -> None:
+    """Issue #51: remember the low-level connection each session transaction begins on, in the
+    session's own public `info` dict. `get_db()`'s cleanup needs a connection reference to
+    invalidate when rollback/close fail, but its snapshot (`session.connection()`) is itself an
+    awaited call that can fail on the very connection that is broken. This reference is taken
+    when the transaction starts, so it exists regardless of what fails later. It is only ever
+    used while the connection is still open: after a normal commit/rollback/close the
+    `Connection` object is closed, and a closed one is never touched, so it cannot affect a
+    pooled connection another request has since been handed."""
+    session.info[_LAST_CONNECTION_KEY] = connection
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -115,7 +133,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.rollback()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
             logger.error("db_session_cleanup_rollback_failed")
-            await _invalidate_snapshotted_connection(connection, event="db_session_cleanup_invalidate_failed")
+            await _invalidate_after_failure(session, connection, event="db_session_cleanup_invalidate_failed")
         raise
     finally:
         connection = await _safe_snapshot_connection_for_invalidation(
@@ -125,7 +143,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
         except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
             logger.error("db_session_cleanup_close_failed")
-            await _invalidate_snapshotted_connection(connection, event="db_session_cleanup_close_invalidate_failed")
+            await _invalidate_after_failure(session, connection, event="db_session_cleanup_close_invalidate_failed")
 
 
 async def _snapshot_connection_for_invalidation(session: AsyncSession) -> AsyncConnection | None:
@@ -163,5 +181,23 @@ async def _invalidate_snapshotted_connection(connection: AsyncConnection | None,
         return
     try:
         await connection.invalidate()
+    except Exception:  # noqa: BLE001 -- best-effort; must never mask a pending exception.
+        logger.error(event)
+
+
+async def _invalidate_after_failure(session: AsyncSession, snapshot: AsyncConnection | None, *, event: str) -> None:
+    """Invalidates the connection behind a failed rollback/close. Prefers the pre-failure
+    snapshot; when the snapshot itself failed (Issue #51), falls back to the connection
+    remembered when the session's transaction began. Never raises."""
+    if snapshot is not None:
+        await _invalidate_snapshotted_connection(snapshot, event=event)
+        return
+    remembered = session.info.get(_LAST_CONNECTION_KEY)
+    if remembered is None or remembered.closed:
+        return  # nothing checked out, or the connection was already released normally
+    try:
+        # `run_sync` only provides the greenlet context `Connection.invalidate()` needs; the
+        # session's own (possibly corrupted) transaction state is never consulted.
+        await session.run_sync(lambda _sync_session: remembered.invalidate())
     except Exception:  # noqa: BLE001 -- best-effort; must never mask a pending exception.
         logger.error(event)
