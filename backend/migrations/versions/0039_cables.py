@@ -181,14 +181,14 @@ def upgrade() -> None:
     op.create_index("ix_cable_endpoint_port", "cable_endpoint", ["equipment_port_id"])
 
     op.execute("""
-        CREATE FUNCTION cable_endpoint_delete_guard() RETURNS trigger AS $
+        CREATE FUNCTION cable_endpoint_delete_guard() RETURNS trigger AS $$
         BEGIN
             IF EXISTS (SELECT 1 FROM cable WHERE id = OLD.cable_id) THEN
                 RAISE EXCEPTION 'cable endpoints cannot be deleted or replaced' USING ERRCODE = '23514';
             END IF;
             RETURN OLD;
         END;
-        $ LANGUAGE plpgsql
+        $$ LANGUAGE plpgsql
     """)
     op.execute(
         "CREATE TRIGGER cable_endpoint_delete_guard BEFORE DELETE ON cable_endpoint "
