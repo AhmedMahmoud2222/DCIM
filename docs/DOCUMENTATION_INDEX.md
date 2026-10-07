@@ -49,4 +49,5 @@ Other original architecture review and phase implementation artifacts are preser
 3. **Update this index and the README** when adding a new phase/module, public API, CLI command or operational requirement.
 4. **Write dated addenda** rather than silently changing historic audit evidence. If a historical audit missed a defect, retain the original baseline and record the later finding with the introducing and fixing commits.
 5. **Verify commands** against the workflow, Compose services and scripts at the same commit; do not invent paths, service names, test counts or future roadmap completion dates.
-6. After PR #29 merges, **change the current-status pointers to the new main merge SHA and post-merge CI run**. Until then, the README and this index document the PR integration branch, not the default branch's released state.
+6. After each merge to `main` that changes delivered scope, **change the current-status pointers to the new main SHA and its post-merge CI run**. PR #29 merged on 2026-09-26; the README and [project status](PROJECT_STATUS.md) now describe `main` at `7364e68` (2026-10-07).
+7. Current stabilization evidence: [stabilization pass report v1](STABILIZATION_PASS_2026-10-07_v1.md) and [scoped RBAC route matrix v1](RBAC_SCOPED_OPERATIONS_MATRIX_v1.md).

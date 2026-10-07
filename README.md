@@ -2,7 +2,7 @@
 
 **In-house Data Center Infrastructure Management (DCIM)** — FastAPI/PostgreSQL backend, React/TypeScript frontend and an independently packaged Edge Collector. The repository has progressed beyond Phase 1: the foundation, operational rack/power/telemetry modules, driver/collector functionality and Phase 10A–10C catalog, equipment/cabling and live overlay/failure-impact features are present in source.
 
-> **Status at this documentation baseline (2026-09-26):** Phase 10A, 10B and 10C feature PRs (#16, #20–#23) are merged to `main`. The subsequent CI/security/integration corrections are in [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29), which was **open and unmerged** when this documentation branch was created. This documentation branch is based on PR #29's reviewed source at `c2d60b34f0ccc546c809a1d3ff15c11befb79a26`. Until #29 and this documentation are merged into `main`, the public/default-branch README can still show the old Phase 1 description. Source merge and green CI do **not** establish production deployment or a completed independent security certification.
+> **Status at this documentation baseline (2026-10-07, README revision v2):** `main` is `7364e68626d5b27f1698d0d7268d74a0026dedb3`. Its post-merge [CI run 37565234006](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/37565234006) and [Deployment validation run 37565233967](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/37565233967) succeeded. PR #29 merged on 2026-09-26 (`39151d8`) and is no longer pending. Delivered R2 functionality (bulk import, user and group management with site/rack scope, catalog datasheet storage, extraction and apply, canonical units and metric registry) is merged to `main`. R1 staging acceptance has not happened. R3 work (#101 in draft PR #110, and #102 to #107 in draft PRs #111 to #116) is **not merged**. The deployment workflow validates configuration only. No persistent staging or production deployment is recorded in GitHub, so no deployed SHA exists. Green CI does **not** establish production readiness or independent security certification. See [current implementation status](docs/PROJECT_STATUS.md).
 
 [Current implementation status](docs/PROJECT_STATUS.md) · [Architecture overview](docs/ARCHITECTURE_OVERVIEW.md) · [Development and testing](docs/DEVELOPMENT_AND_TESTING.md) · [Operations and deployment](docs/OPERATIONS.md) · [Documentation index](docs/DOCUMENTATION_INDEX.md)
 
@@ -18,13 +18,14 @@
 | Phase 10A — Asset Catalog | Versioned manufacturer/model/revision lifecycle, Administrator authoring UI, graphics and marker editor, template management, draft/publish/retire controls | [PR #16](https://github.com/AhmedMahmoud2222/DCIM/pull/16), [#20](https://github.com/AhmedMahmoud2222/DCIM/pull/20), [#21](https://github.com/AhmedMahmoud2222/DCIM/pull/21) |
 | Phase 10B — Physical instantiation | Published-catalog equipment instantiation, port/power-inlet snapshots, cabling and rack-elevation faceplates | [PR #22](https://github.com/AhmedMahmoud2222/DCIM/pull/22) |
 | Phase 10C — Live status and impact | Port/inlet telemetry bindings, cached latest status, rack marker overlays, bounded power/network failure-impact simulation | [PR #23](https://github.com/AhmedMahmoud2222/DCIM/pull/23) |
-| Post-Phase-10 integration | Strictly timestamp-ordered latest-status upsert, SNMP BER test hardening and outer-datagram validation, expanded CI | [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) — pending merge |
+| Post-Phase-10 integration | Strictly timestamp-ordered latest-status upsert, SNMP BER test hardening and outer-datagram validation, expanded CI | [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29), merged 2026-09-26 as `39151d8` |
+| R2 delivered functionality | Excel bulk import ([#50](https://github.com/AhmedMahmoud2222/DCIM/pull/50)), user/group management with site and rack scope ([#59](https://github.com/AhmedMahmoud2222/DCIM/pull/59), hardened by `e319392`), catalog datasheet storage, extraction and reviewed apply (`1ba8d17`, `19f91af`, `825c3e4`), canonical units and metric registry (`754484d`), decommission guard (`4000a60`), telemetry value validation (`dfbd2f1`), atomic `If-Match` concurrency (`7364e68`) | Merged to `main`; see [project status](docs/PROJECT_STATUS.md) for the assurance boundary |
 
 The code and documentation describe **implemented source**, not a production SLA, live industrial integration, complete vendor coverage or autonomous/self-healing operation. Phase 0 sections in `ARCHITECTURE_REVIEW.md` are retained as dated historical design material; use the current-state addenda and the documents linked above to interpret the actual repository.
 
 ## Technology and repository layout
 
-- **Backend:** Python 3.11–3.14 (CI matrix on PR #29), FastAPI, SQLAlchemy async, PostgreSQL 16, Alembic, Redis 7 and Celery.
+- **Backend:** Python 3.11 (primary CI job) and 3.12 to 3.14 (blocking full-suite jobs), FastAPI, SQLAlchemy async, PostgreSQL 16, Alembic, Redis 7 and Celery.
 - **Frontend:** React 18, TypeScript, Vite, Tailwind, TanStack Query; Vitest unit tests and Playwright browser tests.
 - **Edge Collector:** separate `edge_collector/` source and tests, including real loopback UDP SNMP protocol tests.
 - **Top-level layout:** `backend/`, `frontend/`, `edge_collector/`, `.github/workflows/ci.yml`, historical phase reports and `docs/` for current guidance.
@@ -35,7 +36,7 @@ Use a dedicated **development database**. Never use the sample passwords or CI f
 
 ### Prerequisites
 
-Python 3.11 is the baseline used by the primary backend CI job. On PR #29, full migrated suites also passed on Python 3.12, 3.13 and final 3.14, all configured as blocking jobs. Install Node.js 22+, PostgreSQL 16 and Redis 7. Docker Compose is an alternative to installing services locally.
+Python 3.11 is the baseline used by the primary backend CI job. Full migrated suites also run on Python 3.12, 3.13 and 3.14 as separate CI jobs. Install Node.js 22+, PostgreSQL 16 and Redis 7. Docker Compose is an alternative to installing services locally.
 
 ### Local backend
 
@@ -92,11 +93,11 @@ docker compose up --build
 docker compose exec backend python scripts/create_admin.py --email admin@example.com --name "Admin User"
 ```
 
-Keep a protected recovery copy of the key: database ciphertext alone is insufficient for recovery. Rotation requires coordinated re-encryption, not just editing `.env`; see [operations](docs/OPERATIONS.md). Configuration validation passed; **fresh container startup and readiness remain unverified in the review workspace because no Docker daemon is available**. Complete the operations checks before deployment.
+Keep a protected recovery copy of the key: database ciphertext alone is insufficient for recovery. Rotation requires coordinated re-encryption, not just editing `.env`; see [operations](docs/OPERATIONS.md). The `Compose smoke` job in the Deployment validation workflow builds and starts the full stack on a disposable CI runner and checks readiness, ClamAV, the OCR sandbox and shared media. That proves the Compose definition, not a persistent staging or production environment. Complete the operations checks before deployment.
 
 ## Test and quality gates
 
-The PR #29 workflow has **seven** jobs: primary backend on 3.11, full migrated backend suites on 3.12/3.13/3.14, frontend (dependency audit, Vitest, TypeScript, ESLint and build), Edge Collector and isolated PostgreSQL/Redis-backed Playwright E2E. All seven passed on the reviewed PR head `c2d60b3` in [Actions run #80](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654). These checks are branch evidence until PR #29 is merged.
+The CI workflow (`.github/workflows/ci.yml`) has **seven** jobs: primary backend on 3.11 (lint, mypy, Alembic single-head gate, migrations with a downgrade and re-upgrade round trip, retention and regression tests), full migrated backend suites on 3.12, 3.13 and 3.14, frontend (dependency audit, Vitest, TypeScript, ESLint and build), Edge Collector and isolated PostgreSQL/Redis-backed Playwright E2E. A separate Deployment validation workflow runs `Compose smoke` and a `Deployment validation gate` job. All of them succeeded on `main` at `7364e68` (links in the status block above). Only `backend` and `frontend` are currently required by the branch ruleset; see [stabilization report](docs/STABILIZATION_PASS_2026-10-07_v1.md).
 
 ```bash
 # First export the test environment and bootstrap dcim_test as described in
