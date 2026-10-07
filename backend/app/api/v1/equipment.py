@@ -21,7 +21,7 @@ from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_equipment_template
 from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.equipment_instantiation_service import (
     InstantiationRejected,
     InvalidPortTarget,
@@ -330,10 +330,7 @@ async def update_equipment(
     if_match_version: int = Depends(require_if_match),
     ctx=Depends(require_permission("equipment:manage")),
 ) -> EquipmentOut:
-    equipment = await db.get(Equipment, equipment_id)
-    if equipment is None:
-        raise NotFoundError(f"Equipment {equipment_id} not found.")
-    check_version_match(expected=if_match_version, actual=equipment.version)
+    equipment = await lock_versioned_row(db, Equipment, equipment_id, expected_version=if_match_version)
 
     before = {"hostname": equipment.hostname, "owner": equipment.owner, "version": equipment.version}
     for field in ("hostname", "owner", "service", "environment", "notes"):

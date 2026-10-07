@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.application.audit_service import write_audit_log
 from app.application.collector_service import current_assignment, current_assignments_bulk
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.network.integration_security import SnmpV3In, credential_kind, resolve_snmp_security
 from app.application.network.profile_service import bind_integration_profile
 from app.application.outbox_service import write_outbox_event
@@ -244,10 +244,7 @@ async def update_integration(
     if_match_version: int = Depends(require_if_match),
     ctx=Depends(require_permission("integration:manage")),
 ) -> IntegrationOut:
-    integration = await db.get(Integration, integration_id)
-    if integration is None:
-        raise NotFoundError(f"Integration {integration_id} not found.")
-    check_version_match(expected=if_match_version, actual=integration.version)
+    integration = await lock_versioned_row(db, Integration, integration_id, expected_version=if_match_version)
 
     request_id, correlation_id = _request_ids(request)
     before: dict = {"enabled": integration.enabled, "poll_interval_seconds": integration.poll_interval_seconds}

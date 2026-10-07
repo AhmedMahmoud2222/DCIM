@@ -48,7 +48,7 @@ async def world(client, auth_headers):
         sites=[{"site_id": site_a["site"], "rack_scope": "all", "rack_ids": []}],
     )
     user, headers = await _group_user(client, admin, [group])
-    return {"admin": admin, "headers": headers, "user": user, "a1": a1, "a2": a2, "b1": b1, "b2": b2,
+    return {"admin": admin, "headers": headers, "user": user, "a1": a1, "room_a": site_a["room"], "site_a_id": site_a["site"], "a2": a2, "b1": b1, "b2": b2,
             "inside": inside, "crossing": crossing, "outside": outside, "site_a": site_a, "site_b": site_b, "rack_a": rack_a, "rack_b": rack_b}
 
 
@@ -203,3 +203,25 @@ async def test_asyncpg_uuid_direct_id_guards_do_not_widen_scope(db_session, worl
                 await guard(db_session, scope, hidden_id)
             with pytest.raises(NotFoundError):
                 await guard(db_session, scope, DriverUUID(str(uuid.uuid4())))
+
+
+async def test_rack_selected_scope_denies_other_racks_in_the_same_site(client, world, auth_headers):
+    """A grant on one rack must not expose cables, ports or traces of a neighbouring rack at the same site."""
+    admin = world["admin"]
+    rack_a2 = await _make_rack(client, admin, auth_headers, world["room_a"])
+    revision = await publish_revision(client, admin, ["p1", "p2"])
+    c1 = await place(client, admin, revision["id"], {"room": world["room_a"]}, rack_a2, 1, "c1-sw")
+    c2 = await place(client, admin, revision["id"], {"room": world["room_a"]}, rack_a2, 3, "c2-sw")
+    other_rack = await create_cable(client, admin, c1["port_by_name"]["p1"], c2["port_by_name"]["p1"], label="OTHER-RACK", status="installed")
+    group = await _group(
+        client, admin, allow=["cable:read", "cable:manage"],
+        sites=[{"site_id": world["site_a_id"], "rack_scope": "selected", "rack_ids": [world["rack_a"]]}],
+    )
+    _user, headers = await _group_user(client, admin, [group])
+    listing = await client.get(CABLES, headers=headers)
+    assert {c["label"] for c in listing.json()["items"]} == {"IN-A", "CROSS"}
+    assert (await client.get(f"{CABLES}/{other_rack['id']}", headers=headers)).status_code == 404
+    assert (await client.get(f"/api/v1/topology/ports/{c1['port_by_name']['p1']}/trace", headers=headers)).status_code == 404
+    denied = await client.patch(f"{CABLES}/{other_rack['id']}", json={"notes": "x"}, headers=headers | if_match(1))
+    assert denied.status_code == 404
+    assert (await client.get(CABLES, params={"equipment_id": c1["id"]}, headers=headers)).status_code == 404

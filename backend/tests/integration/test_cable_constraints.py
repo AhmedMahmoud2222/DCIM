@@ -255,3 +255,43 @@ async def test_history_cannot_be_deleted_and_endpoints_cannot_be_replaced(db_eng
         with pytest.raises((IntegrityError, DBAPIError)):
             await conn.execute(text("DELETE FROM cable WHERE id = :id"), {"id": installed})
         await conn.rollback()
+
+
+async def test_migrations_preserve_existing_logical_connections_and_integrations(db_engine, ports, db_session):
+    """Populated pre-#101 style data survives a full 0039 -> 0037 -> 0039 round trip untouched."""
+    await db_session.rollback()
+    left, right = ports["left"], ports["right"]
+    connection_id, integration_id = uuid.uuid4(), uuid.uuid4()
+    async with db_engine.connect() as conn:
+        tx = await conn.begin()
+        try:
+            await conn.execute(text(
+                "INSERT INTO port_connection (id, source_port_id, target_port_id, cable_id, status) "
+                "VALUES (:id, :a, :b, 'LEGACY-7', 'active')"), {"id": connection_id, "a": left["p1"], "b": right["p1"]})
+            await conn.execute(text(
+                "INSERT INTO integration (id, name, integration_type, enabled, target_host, config, poll_interval_seconds, "
+                "consecutive_failures, version) VALUES (:id, 'legacy-int', 'snmp', true, '192.0.2.9', '{\"version\": \"v2c\"}', 300, 0, 4)"),
+                {"id": integration_id})
+            before_pc = (await conn.execute(text("SELECT * FROM port_connection WHERE id = :id"), {"id": connection_id})).one()
+            before_int = (await conn.execute(text(
+                "SELECT name, config, version, credential_ciphertext FROM integration WHERE id = :id"), {"id": integration_id})).one()
+            for name in ("0039_cables.py", "0038_discovered_neighbors.py", "0037_network_profiles.py"):
+                await conn.run_sync(_run_file, MIGRATION.parent / name, "downgrade")
+            assert await conn.scalar(text("SELECT to_regclass('device_profile')")) is None
+            for name in ("0037_network_profiles.py", "0038_discovered_neighbors.py", "0039_cables.py"):
+                await conn.run_sync(_run_file, MIGRATION.parent / name, "upgrade")
+            assert (await conn.execute(text("SELECT * FROM port_connection WHERE id = :id"), {"id": connection_id})).one() == before_pc
+            after_int = (await conn.execute(text(
+                "SELECT name, config, version, credential_ciphertext FROM integration WHERE id = :id"), {"id": integration_id})).one()
+            assert after_int == before_int
+            assert await conn.scalar(text("SELECT device_profile_id FROM integration WHERE id = :id"), {"id": integration_id}) is None
+        finally:
+            await tx.rollback()
+
+
+def _run_file(connection, path, direction):
+    spec = importlib.util.spec_from_file_location(f"mig_{path.stem}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with Operations.context(MigrationContext.configure(connection)):
+        getattr(module, direction)()

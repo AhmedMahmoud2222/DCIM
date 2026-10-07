@@ -96,7 +96,8 @@ async def create_vendor(
 async def get_vendor(db: AsyncSession, vendor_id: uuid.UUID, *, for_update: bool = False) -> VendorProfile:
     stmt = select(VendorProfile).where(VendorProfile.id == vendor_id)
     if for_update:
-        stmt = stmt.with_for_update()
+        # populate_existing: the version compared afterwards must be the post-lock, committed one.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     vendor = (await db.execute(stmt)).scalar_one_or_none()
     if vendor is None:
         raise NotFoundError(f"VendorProfile {vendor_id} not found.")
@@ -218,7 +219,7 @@ def _validate_device_against_vendor(vendor: VendorProfile, content: DeviceProfil
 async def get_device(db: AsyncSession, device_id: uuid.UUID, *, for_update: bool = False) -> DeviceProfile:
     stmt = select(DeviceProfile).where(DeviceProfile.id == device_id)
     if for_update:
-        stmt = stmt.with_for_update()
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     device = (await db.execute(stmt)).scalar_one_or_none()
     if device is None:
         raise NotFoundError(f"DeviceProfile {device_id} not found.")
