@@ -10,7 +10,7 @@
      that is tested object by object in test_pr69_object_matrix_strict.py.
 
 The set of operations a fully-permissioned restricted user can get past the permission layer is pinned
-EXACTLY (REVIEWED_REACHABLE, 68 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
+EXACTLY (REVIEWED_REACHABLE, 72 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
 so does a reviewed route that disappears. The sweep itself is tested against a deliberate regression
 (a non-site-aware permission declared scope-aware)."""
 
@@ -39,6 +39,11 @@ REVIEWED_REACHABLE = {
     ("POST", "/api/v1/cables/from-neighbor/{neighbor_id}"),
     ("POST", "/api/v1/cables/{cable_id}/install"),
     ("POST", "/api/v1/cables/{cable_id}/remove"),
+    # Issue #101 B5: pass-throughs; hidden equipment is a 404 (test_cables_scope.py).
+    ("DELETE", "/api/v1/pass-throughs/{pass_through_id}"),
+    ("GET", "/api/v1/pass-throughs"),
+    ("GET", "/api/v1/pass-throughs/{pass_through_id}"),
+    ("POST", "/api/v1/pass-throughs"),
     # HMAC identity/assignment checks are exercised by test_discovery_plan.py.
     ("GET", "/api/v1/collectors/{collector_id}/discovery-plan"),
     ("DELETE", "/api/v1/groups/{group_id}"),
@@ -156,7 +161,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 68, "the reviewed reachable set is pinned at exactly 68 operations"
+    assert len(REVIEWED_REACHABLE) == 72, "the reviewed reachable set is pinned at exactly 72 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )

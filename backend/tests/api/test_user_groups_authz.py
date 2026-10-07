@@ -347,6 +347,11 @@ REVIEWED_SCOPE_AWARE_ROUTES = {
     ("cables", "POST", "/cables/from-neighbor/{neighbor_id}"),
     ("cables", "POST", "/cables/{cable_id}/install"),
     ("cables", "POST", "/cables/{cable_id}/remove"),
+    # Issue #101 B5: pass-throughs are scope-checked on the equipment of their ports; see test_cables_scope.py.
+    ("cables", "DELETE", "/pass-throughs/{pass_through_id}"),
+    ("cables", "GET", "/pass-throughs"),
+    ("cables", "GET", "/pass-throughs/{pass_through_id}"),
+    ("cables", "POST", "/pass-throughs"),
     ("catalog", "GET", "/equipment-models"),  # reference catalog, not site data
     ("catalog", "GET", "/equipment-models/{equipment_model_id}/revisions"),
     ("catalog", "GET", "/rack-models"),
