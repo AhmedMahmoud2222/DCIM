@@ -91,8 +91,24 @@ async def ingest_neighbor(
     if neighbor.reconciliation_state in OPEN_RECONCILIATION_STATES and (
         created or neighbor.match_evidence.get("fingerprint") != fingerprint(neighbor)
     ):
+        shown = _reviewable_state(neighbor)
         await apply_match(db, neighbor)
+        if not created and _reviewable_state(neighbor) != shown:
+            # What an operator may already be reviewing changed, so any `If-Match` taken from the
+            # old view must stop matching (the row is locked by the upsert until this commits).
+            neighbor.version += 1
+            await db.flush()
     return neighbor, created
+
+
+def _reviewable_state(neighbor: DiscoveredNeighbor) -> tuple[Any, ...]:
+    """The parts of an open neighbor an operator's decision rests on."""
+    evidence = neighbor.match_evidence or {}
+    proposal = evidence.get("proposal") or {}
+    return (
+        neighbor.reconciliation_state, proposal.get("local_port_id"), proposal.get("remote_port_id"),
+        evidence.get("fingerprint"),
+    )
 
 
 async def apply_match(db: AsyncSession, neighbor: DiscoveredNeighbor) -> DiscoveredNeighbor:
@@ -163,6 +179,7 @@ def _snapshot(neighbor: DiscoveredNeighbor) -> dict:
 async def confirm_neighbor(
     db: AsyncSession, *, neighbor_id: uuid.UUID, local_port_id: uuid.UUID | None, remote_port_id: uuid.UUID | None,
     expected_version: int, reason: str | None, actor_user_id: uuid.UUID, request_id: str | None, correlation_id: str | None,
+    expected_proposal: tuple[uuid.UUID, uuid.UUID] | None = None,
 ) -> DiscoveredNeighbor:
     """Link the neighbor to two inventory ports. With no ports given, the stored proposal
     is used; an operator may also name ports explicitly to resolve an ambiguous or
@@ -174,6 +191,11 @@ async def confirm_neighbor(
     if neighbor.reconciliation_state == "rejected":
         raise ConflictError("A rejected neighbor must be reopened (revoke) before it can be confirmed.")
     proposal = (neighbor.match_evidence or {}).get("proposal") or {}
+    if expected_proposal is not None and expected_proposal != (
+        uuid.UUID(proposal["local_port_id"]) if proposal.get("local_port_id") else None,
+        uuid.UUID(proposal["remote_port_id"]) if proposal.get("remote_port_id") else None,
+    ):
+        raise ConflictError("The proposal changed since it was displayed; review the neighbor again. Nothing was changed.")
     chosen_local = local_port_id or (uuid.UUID(proposal["local_port_id"]) if proposal.get("local_port_id") else None)
     chosen_remote = remote_port_id or (uuid.UUID(proposal["remote_port_id"]) if proposal.get("remote_port_id") else None)
     if chosen_local is None or chosen_remote is None:

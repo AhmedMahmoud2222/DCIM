@@ -65,13 +65,22 @@ export function NeighborReviewPage() {
 
   const decision = useMutation({
     mutationFn: ({ action, neighbor, explicit }: { action: "confirm" | "reject" | "revoke" | "rematch"; neighbor: Neighbor; explicit?: boolean }) => {
-      const body = { reason: reason || null, ...(explicit ? { local_port_id: localPort || null, remote_port_id: remotePort || null } : {}) };
+      const proposal = neighbor.match_evidence.proposal;
+      const body = {
+        reason: reason || null,
+        ...(explicit ? { local_port_id: localPort || null, remote_port_id: remotePort || null } : {}),
+        ...(action === "confirm" && !explicit && proposal
+          ? { expected_local_port_id: proposal.local_port_id, expected_remote_port_id: proposal.remote_port_id }
+          : {}),
+      };
       if (action === "confirm") return confirmNeighbor(neighbor, body);
       if (action === "reject") return rejectNeighbor(neighbor, body);
       if (action === "revoke") return revokeNeighbor(neighbor, body);
       return rematchNeighbor(neighbor);
     },
     onSuccess: refresh,
+    // A refusal (409: the neighbor or its proposal changed) must show the current evidence, not the stale view.
+    onError: refresh,
   });
   const cable = useMutation({
     mutationFn: (neighbor: Neighbor) =>

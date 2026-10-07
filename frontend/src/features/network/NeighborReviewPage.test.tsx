@@ -50,6 +50,22 @@ describe("NeighborReviewPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Confirm proposal" }));
     await waitFor(() => expect(api.confirmNeighbor).toHaveBeenCalledTimes(1));
     expect(vi.mocked(api.confirmNeighbor).mock.calls[0][0]).toMatchObject({ id: "n1", version: 4 });
+    const proposal = proposed.match_evidence.proposal!;
+    expect(vi.mocked(api.confirmNeighbor).mock.calls[0][1]).toMatchObject({
+      expected_local_port_id: proposal.local_port_id, expected_remote_port_id: proposal.remote_port_id,
+    });
+  });
+
+  it("reloads the neighbor after a 409 so the operator reviews the changed proposal", async () => {
+    vi.mocked(api.listNeighbors).mockResolvedValue(page(neighbor()));
+    const { ApiError } = await vi.importActual<typeof import("@/lib/apiClient")>("@/lib/apiClient");
+    vi.mocked(api.confirmNeighbor).mockRejectedValue(new ApiError(409, "Conflict", "The proposal changed since it was displayed", null));
+    renderWithProviders(<NeighborReviewPage />, { user: RECONCILER });
+    await userEvent.click(await screen.findByRole("button", { name: /Review neighbor/ }));
+    const before = vi.mocked(api.listNeighbors).mock.calls.length;
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm proposal" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("proposal changed");
+    await waitFor(() => expect(vi.mocked(api.listNeighbors).mock.calls.length).toBeGreaterThan(before));
   });
 
   it("sends the explicitly named ports for a manual resolution", async () => {

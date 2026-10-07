@@ -67,3 +67,20 @@ async def test_two_requests_with_the_same_if_match_cannot_both_win(client, auth_
     assert version == resource["version"] + 1
     audit = await _scalar(db_engine, "SELECT count(*) FROM audit_log WHERE entity_id = :id AND action NOT LIKE '%.create'", id=resource["id"])
     assert audit == 1  # the loser wrote no history
+
+
+async def test_legacy_connect_and_cable_creation_for_one_port_cannot_both_win(client, auth_headers, db_engine, race):  # noqa: F811
+    """Issue #101 review B3: `connect_port` takes the topology lock, so it serialises with cable operations."""
+    headers = await auth_headers("Administrator")
+    left = await make_device(client, headers, ["p1"], hostname="topo-l")
+    right = await make_device(client, headers, ["p1", "p2"], hostname="topo-r")
+    a, b, c = left["port_by_name"]["p1"], right["port_by_name"]["p1"], right["port_by_name"]["p2"]
+    calls = [
+        ("POST", CABLES, {"json": {"label": "TOPO-1", "cable_type": "copper_utp", "endpoint_a_port_id": a, "endpoint_b_port_id": b}, "headers": headers}),
+        ("POST", f"/api/v1/equipment/{left['id']}/ports/connect", {"json": {"port_id": a, "target_port_id": c}, "headers": headers}),
+    ]
+    responses = await race("SELECT pg_advisory_xact_lock(hashtext('dcim.network_topology'))", {}, calls)
+    assert sorted(r.status_code for r in responses) == [201, 409], [r.text for r in responses]
+    cables = await _scalar(db_engine, "SELECT count(*) FROM cable WHERE label = 'TOPO-1'")
+    target = await _scalar(db_engine, "SELECT target_port_id FROM port_connection WHERE source_port_id = :a", a=a)
+    assert str(target) == (b if cables == 1 else c)  # the surviving connection agrees with the surviving cable

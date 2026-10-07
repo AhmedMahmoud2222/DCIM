@@ -387,3 +387,109 @@ async def test_rbac_for_neighbor_review(client, auth_headers):
             assert response.status_code in ((409, 422) if may_decide else (403,)), (role, action, response.status_code)
     anonymous = await client.get(NEIGHBORS)
     assert anonymous.status_code == 401
+
+
+async def test_oversize_neighbor_records_are_rejected_per_record_not_per_batch(client, auth_headers):
+    """Issue #101 review B1: one hostile peer's record must not make Central refuse the whole batch."""
+    headers = await auth_headers("Administrator")
+    collector, integration = await collector_with_integration(client, headers)
+    hostile = neighbor_record(integration["id"], chassis="hostile-sw")
+    hostile["raw_attributes"]["neighbor"]["remote"]["system_description"] = "\U0001f600" * 4000  # 12 escaped bytes each
+    huge_marker = scan_marker(integration["id"], started="2026-01-01T00:00:00Z", finished="2026-01-01T00:00:05Z")
+    huge_marker["raw_attributes"]["padding"] = "x" * 9000
+    good = neighbor_record(integration["id"], chassis="good-sw")
+    response = await signed_post(client, collector, "ingest", {"batch_id": "mixed", "records": [hostile, huge_marker, good]})
+    assert response.status_code == 200  # not a batch-level 422
+    results = response.json()["results"]
+    assert [(r["status"], r.get("error_code")) for r in results] == [
+        ("rejected", "INVALID_PAYLOAD"), ("rejected", "INVALID_PAYLOAD"), ("accepted", None),
+    ]
+    assert [n["remote_chassis_ident"] for n in await list_neighbors(client, headers)] == ["good-sw"]
+    # Deterministic: replaying the identical batch yields the identical per-record outcome.
+    replay = await signed_post(client, collector, "ingest", {"batch_id": "mixed", "records": [hostile, huge_marker, good]})
+    assert [(r["status"], r.get("error_code")) for r in replay.json()["results"]][:2] == [("rejected", "INVALID_PAYLOAD")] * 2
+
+
+async def test_oversize_device_record_still_fails_the_batch_validation(client, auth_headers):
+    """Device records keep their existing batch-level 422; only neighbor records moved to per-record checks."""
+    headers = await auth_headers("Administrator")
+    collector, integration = await collector_with_integration(client, headers)
+    record = {
+        "dedup_key": uuid.uuid4().hex, "integration_id": integration["id"], "external_identifier": "10.0.0.9",
+        "occurred_at": "2026-01-01T00:00:00Z", "raw_attributes": {"blob": "x" * 20_000},
+    }
+    response = await signed_post(client, collector, "ingest", {"batch_id": "dev", "records": [record]})
+    assert response.status_code == 422
+
+
+async def _proposed(client, headers, db_session, **record):
+    local, remote, collector, integration = await scenario(client, headers, db_session)
+    base = {"chassis": "00:50:56:3a:1b:2c", "port": "Eth1/24", "system_name": "core-sw-1", "management_address": "10.0.0.1"}
+    await ingest_records(client, collector, [neighbor_record(integration["id"], **(base | record))])
+    return local, remote, collector, integration
+
+
+async def _cable_and_link_counts(db_session):
+    cables = (await db_session.execute(text("SELECT count(*) FROM cable"))).scalar_one()
+    connections = (await db_session.execute(text("SELECT count(*) FROM port_connection"))).scalar_one()
+    linked = (await db_session.execute(text("SELECT count(*) FROM discovered_neighbor WHERE local_port_id IS NOT NULL"))).scalar_one()
+    return cables, connections, linked
+
+
+async def test_a_proposal_that_changes_after_review_cannot_be_confirmed_with_the_old_version(client, auth_headers, db_session):
+    """Issue #101 review B2: ingest re-matching used to rewrite the proposal without bumping the version."""
+    headers = await auth_headers("Administrator")
+    local, remote, collector, integration = await _proposed(client, headers, db_session)
+    other = await make_device(client, headers, ["Eth1/24"], hostname="core-sw-2", ip_address="10.0.0.2")
+    (seen,) = await list_neighbors(client, headers)
+    assert seen["reconciliation_state"] == "proposed"
+    assert seen["match_evidence"]["proposal"]["remote_port_id"] == remote["port_by_name"]["Eth1/24"]
+
+    # The same peer (same chassis and port) now advertises another device's management address:
+    # not an identity change, so the same row is re-matched and the proposal it showed is gone.
+    await ingest_records(client, collector, [neighbor_record(
+        integration["id"], chassis="00:50:56:3a:1b:2c", port="Eth1/24", system_name="core-sw-2", management_address="10.0.0.2",
+        occurred_at="2026-01-01T00:05:00Z")])
+    (changed,) = await list_neighbors(client, headers)
+    assert changed["id"] == seen["id"]
+    assert (changed["reconciliation_state"], changed["match_evidence"].get("proposal")) != (
+        seen["reconciliation_state"], seen["match_evidence"].get("proposal"))
+    assert changed["version"] > seen["version"]
+    assert other["port_by_name"]["Eth1/24"] != remote["port_by_name"]["Eth1/24"]
+
+    stale = await client.post(f"{NEIGHBORS}/{seen['id']}/confirm", json={}, headers=headers | decide(seen["version"]))
+    assert stale.status_code == 409
+    assert await _cable_and_link_counts(db_session) == (0, 0, 0)  # the unseen proposal created no topology
+    (after,) = await list_neighbors(client, headers)
+    assert after["local_port_id"] is None and after["reconciliation_state"] != "confirmed"
+
+
+async def test_confirming_binds_to_the_proposal_the_operator_saw(client, auth_headers, db_session):
+    headers = await auth_headers("Administrator")
+    local, remote, collector, integration = await _proposed(client, headers, db_session)
+    (row,) = await list_neighbors(client, headers)
+    seen = row["match_evidence"]["proposal"]
+    wrong = {"expected_local_port_id": seen["local_port_id"], "expected_remote_port_id": remote["port_by_name"]["Eth1/23"]}
+    mismatch = await client.post(f"{NEIGHBORS}/{row['id']}/confirm", json=wrong, headers=headers | decide(row["version"]))
+    assert mismatch.status_code == 409
+    half = await client.post(
+        f"{NEIGHBORS}/{row['id']}/confirm", json={"expected_local_port_id": seen["local_port_id"]}, headers=headers | decide(row["version"]))
+    assert half.status_code == 422
+    assert await _cable_and_link_counts(db_session) == (0, 0, 0)
+    ok = await client.post(
+        f"{NEIGHBORS}/{row['id']}/confirm",
+        json={"expected_local_port_id": seen["local_port_id"], "expected_remote_port_id": seen["remote_port_id"]},
+        headers=headers | decide(row["version"]),
+    )
+    assert ok.status_code == 200 and ok.json()["reconciliation_state"] == "confirmed"
+
+
+async def test_an_unchanged_reobservation_keeps_the_version_the_operator_holds(client, auth_headers, db_session):
+    headers = await auth_headers("Administrator")
+    local, remote, collector, integration = await _proposed(client, headers, db_session)
+    (row,) = await list_neighbors(client, headers)
+    await ingest_records(client, collector, [neighbor_record(
+        integration["id"], chassis="00:50:56:3a:1b:2c", port="Eth1/24", system_name="core-sw-1", management_address="10.0.0.1",
+        occurred_at="2026-01-01T00:05:00Z", scan_id="scan-2")])
+    (again,) = await list_neighbors(client, headers)
+    assert again["version"] == row["version"]  # a routine poll must not invalidate every open review

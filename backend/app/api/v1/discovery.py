@@ -16,7 +16,7 @@ from app.application.concurrency import require_if_match
 from app.application.discovery_service import accept_reconciliation, reject_reconciliation
 from app.application.network import neighbor_service
 from app.application.rbac import require_permission
-from app.core.errors import NotFoundError
+from app.core.errors import ApiError, NotFoundError
 from app.domain.integration.models import DiscoveredDevice, Integration, ReconciliationDiff
 from app.domain.network.discovery_models import DiscoveredNeighbor
 
@@ -196,6 +196,9 @@ class NeighborDecisionIn(BaseModel):
     local_port_id: uuid.UUID | None = None
     remote_port_id: uuid.UUID | None = None
     reason: str | None = Field(default=None, max_length=1000)
+    # Confirming a displayed proposal: the ports the operator saw. A changed proposal returns 409.
+    expected_local_port_id: uuid.UUID | None = None
+    expected_remote_port_id: uuid.UUID | None = None
 
 
 @router.post("/neighbors/{neighbor_id}/rematch", response_model=NeighborOut)
@@ -217,10 +220,19 @@ async def confirm_neighbor(
     if_match_version: int = Depends(require_if_match), ctx=Depends(require_permission("discovery:reconcile")),
 ) -> NeighborOut:
     request_id, correlation_id = _request_ids(request)
+    if (body.expected_local_port_id is None) != (body.expected_remote_port_id is None):
+        raise ApiError(
+            status_code=422, title="Invalid Proposal",
+            detail="Name both expected_local_port_id and expected_remote_port_id, or neither.",
+        )
+    expected = (
+        (body.expected_local_port_id, body.expected_remote_port_id)
+        if body.expected_local_port_id is not None and body.expected_remote_port_id is not None else None
+    )
     await neighbor_service.confirm_neighbor(
-        db, neighbor_id=neighbor_id, local_port_id=body.local_port_id, remote_port_id=body.remote_port_id,
-        expected_version=if_match_version, reason=body.reason, actor_user_id=ctx.user.id, request_id=request_id,
-        correlation_id=correlation_id,
+        db, expected_proposal=expected, neighbor_id=neighbor_id, local_port_id=body.local_port_id,
+        remote_port_id=body.remote_port_id, expected_version=if_match_version, reason=body.reason,
+        actor_user_id=ctx.user.id, request_id=request_id, correlation_id=correlation_id,
     )
     await db.commit()
     return await _load_neighbor_out(db, neighbor_id)

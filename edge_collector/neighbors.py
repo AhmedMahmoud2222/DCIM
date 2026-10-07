@@ -424,6 +424,39 @@ def collect_neighbors(walker: Walker, plan: Mapping[str, Any]) -> list[NeighborS
     return scans
 
 
+# Central rejects a `raw_attributes` blob whose default `json.dumps` form exceeds 8192 bytes. Hostile
+# peers can inflate the form with astral or undecodable characters (6-12 escaped bytes each), so the
+# edge enforces the bound on exactly that serialization, with margin, before anything is queued.
+MAX_ATTRIBUTES_BYTES = 7_000
+_SHRINK_STEPS: tuple[tuple[str, ...], ...] = (
+    ("raw",), ("system_description",), ("port_description",), ("platform",), ("system_name",),
+)
+
+
+def _attributes_size(attributes: Mapping[str, Any]) -> int:
+    return len(json.dumps(attributes))
+
+
+def fit_observation(observation: Mapping[str, Any], *, scan_id: str) -> dict[str, Any] | None:
+    """Return the `raw_attributes` for one neighbor, shrunk to the serialized bound.
+
+    Evidence is dropped in order of least value (raw columns, then free text). Identity
+    fields are never altered, so a neighbor that still does not fit returns None and the caller
+    counts it as malformed instead of emitting a record Central would refuse.
+    """
+    candidate: dict[str, Any] = {**observation, "remote": dict(observation["remote"])}
+    attributes = {"scan_id": scan_id, "neighbor": candidate}
+    for step in ((), *_SHRINK_STEPS):
+        for key in step:
+            if key == "raw":
+                candidate["raw"] = {}
+            else:
+                candidate["remote"][key] = None
+        if _attributes_size(attributes) <= MAX_ATTRIBUTES_BYTES:
+            return attributes
+    return None
+
+
 def build_queue_records(
     scans: list[NeighborScan], *, integration_id: str, external_identifier: str, scan_id: str,
     scan_started_at: datetime, scan_finished_at: datetime,
@@ -438,7 +471,12 @@ def build_queue_records(
     for scan in scans:
         if scan.failure is not None:
             continue
+        oversize = 0
         for observation in scan.observations:
+            attributes = fit_observation(observation, scan_id=scan_id)
+            if attributes is None:
+                oversize += 1
+                continue
             identity = "|".join((
                 integration_id, scan_id, scan.protocol, str(observation["local_port"].get("ref")),
                 observation["remote"]["chassis_id"], observation["remote"]["port_id"],
@@ -448,7 +486,7 @@ def build_queue_records(
                 occurred_at=scan_started_at,
                 payload={
                     "integration_id": integration_id, "external_identifier": external_identifier,
-                    "record_type": "neighbor", "raw_attributes": {"scan_id": scan_id, "neighbor": observation},
+                    "record_type": "neighbor", "raw_attributes": attributes,
                 },
             ))
         records.append(QueueRecord(
@@ -459,7 +497,8 @@ def build_queue_records(
                 "record_type": "neighbor_scan",
                 "raw_attributes": {
                     "scan_id": scan_id, "protocol": scan.protocol, "scan_started_at": scan_started_at.isoformat(),
-                    "complete": scan.complete, "observed_count": len(scan.observations), "malformed_rows": scan.malformed_rows,
+                    "complete": scan.complete and not oversize, "observed_count": len(scan.observations) - oversize,
+                    "malformed_rows": scan.malformed_rows + oversize,
                 },
             },
         ))

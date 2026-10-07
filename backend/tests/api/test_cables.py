@@ -349,3 +349,60 @@ async def test_linking_existing_planned_connection_preserves_its_label_and_state
     removed = await client.post(f"{CABLES}/{cable['id']}/remove", json={}, headers=headers | if_match(3))
     assert removed.status_code == 200
     assert await connections(db_session) == [(uuid.UUID(a), uuid.UUID(b), "planned", "LOGICAL")]
+
+
+async def _connect(client, headers, equipment_id, source, target, **extra):
+    return await client.post(
+        f"/api/v1/equipment/{equipment_id}/ports/connect", json={"port_id": source, "target_port_id": target, **extra}, headers=headers)
+
+
+async def test_legacy_connect_cannot_retarget_a_connection_a_live_cable_owns(client, auth_headers, db_session):
+    """Issue #101 review B3: the legacy connect API used to rewrite a cable's connection in place."""
+    headers = await auth_headers("Administrator")
+    left, right = await two_devices(client, headers)
+    a, b, c = left["port_by_name"]["Eth1/1"], right["port_by_name"]["Eth1/24"], right["port_by_name"]["Eth1/23"]
+    for status in ("planned", "installed"):
+        cable = await create_cable(client, headers, a, b, label=f"OWN-{status}", status=status)
+        before = await connections(db_session)
+        refused = await _connect(client, headers, left["id"], a, c, cable_id="HIJACK", status="active")
+        assert refused.status_code == 409, refused.text
+        assert "OWN-" in refused.json()["detail"]
+        same = await _connect(client, headers, left["id"], a, b, cable_id="RELABEL")  # even the same target: the cable owns the row
+        assert same.status_code == 409
+        assert await connections(db_session) == before  # A<->B intact, label and status untouched
+        assert (await client.get(f"{CABLES}/{cable['id']}", headers=headers)).json()["port_connection_id"] == cable["port_connection_id"]
+        removed = await client.post(f"{CABLES}/{cable['id']}/remove", json={}, headers=headers | if_match(cable["version"]))
+        assert removed.status_code == 200, removed.text
+        assert await connections(db_session) == []  # a removed cable frees the port for the legacy API again
+        free = await _connect(client, headers, left["id"], a, c)
+        assert free.status_code == 201
+        await db_session.execute(text("DELETE FROM port_connection"))
+        await db_session.commit()
+
+
+async def test_removing_a_cable_never_deletes_a_connection_that_diverged_from_it(client, auth_headers, db_session):
+    headers = await auth_headers("Administrator")
+    left, right = await two_devices(client, headers)
+    a, b, c = left["port_by_name"]["Eth1/1"], right["port_by_name"]["Eth1/24"], right["port_by_name"]["Eth1/23"]
+    planned = await create_cable(client, headers, a, b, label="DIV-1")
+    # State the legacy API could produce before the guard (or any out-of-band change): the row now says A -> C.
+    await db_session.execute(
+        text("UPDATE port_connection SET target_port_id = :c, cable_id = 'OPERATOR-OWN' WHERE id = :id"),
+        {"c": uuid.UUID(c), "id": uuid.UUID(planned["port_connection_id"])})
+    await db_session.commit()
+    deleted = await client.delete(f"{CABLES}/{planned['id']}", headers=headers | if_match(planned["version"]))
+    assert deleted.status_code == 204, deleted.text
+    assert await connections(db_session) == [(uuid.UUID(a), uuid.UUID(c), "planned", "OPERATOR-OWN")]
+    audit = (await db_session.execute(text("SELECT after FROM audit_log WHERE action = 'cable.delete'"))).scalars().all()
+    assert audit and audit[-1]["port_connection"] == "kept_diverged"
+
+    installed = await create_cable(client, headers, left["port_by_name"]["Eth1/2"], right["port_by_name"]["Eth1/24"], label="DIV-2", status="installed")
+    await db_session.execute(
+        text("UPDATE port_connection SET target_port_id = :c WHERE id = :id"),
+        {"c": uuid.UUID(c), "id": uuid.UUID(installed["port_connection_id"])})
+    await db_session.commit()
+    removed = await client.post(f"{CABLES}/{installed['id']}/remove", json={}, headers=headers | if_match(installed["version"]))
+    assert removed.status_code == 200
+    assert len(await connections(db_session)) == 2  # both the operator's rows survive
+    removed_audit = (await db_session.execute(text("SELECT after FROM audit_log WHERE action = 'cable.remove'"))).scalars().all()
+    assert removed_audit[-1]["port_connection"] == "kept_diverged"

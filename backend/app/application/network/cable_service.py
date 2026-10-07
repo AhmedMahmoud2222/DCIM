@@ -296,14 +296,31 @@ async def install_cable(
     return cable
 
 
-async def _release_connection(db: AsyncSession, cable: Cable) -> None:
+async def _release_connection(db: AsyncSession, cable: Cable) -> str:
+    """Undo the logical connection this cable created, and only that one.
+
+    The row is deleted only while it still joins exactly the cable's two endpoint ports. If
+    something else retargeted it in the meantime it now belongs to someone else's topology, so
+    it is kept and only unlinked. Returns "none", "released" or "kept_diverged" for the audit row.
+    """
     if cable.port_connection_id is None or not cable.port_connection_created:
-        return
+        return "none"
     connection = await db.get(PortConnection, cable.port_connection_id)
     cable.port_connection_id = None
     await db.flush()
-    if connection is not None:
-        await db.delete(connection)
+    if connection is None:
+        return "none"
+    endpoint_ports = set(
+        (await db.execute(select(CableEndpoint.equipment_port_id).where(CableEndpoint.cable_id == cable.id))).scalars().all()
+    )
+    still_the_cables_link = (
+        connection.target_power_node_id is None and connection.target_port_id is not None
+        and {connection.source_port_id, connection.target_port_id} == endpoint_ports and len(endpoint_ports) == 2
+    )
+    if not still_the_cables_link:
+        return "kept_diverged"
+    await db.delete(connection)
+    return "released"
 
 
 async def remove_cable(
@@ -321,13 +338,14 @@ async def remove_cable(
     if cable.installed_at is not None and when < cable.installed_at:
         raise _invalid("removed_at cannot precede installed_at.")
     before = snapshot(cable)
-    await _release_connection(db, cable)
+    released = await _release_connection(db, cable)
     cable.status, cable.removed_at = "removed", when
     cable.version += 1
     await db.flush()
     await write_audit_log(
         db, actor_user_id=actor_user_id, action="cable.remove", entity_type="cable", entity_id=cable.id,
-        request_id=request_id, correlation_id=correlation_id, before=before, after=snapshot(cable), reason=reason,
+        request_id=request_id, correlation_id=correlation_id, before=before,
+        after=snapshot(cable) | {"port_connection": released}, reason=reason,
     )
     await write_outbox_event(
         db, event_type="CableRemoved", aggregate_type="cable", aggregate_id=cable.id, payload={"label": cable.label},
@@ -350,10 +368,10 @@ async def delete_cable(
     if cable.status != "planned":
         raise ConflictError("Only a planned cable can be deleted; retire an installed cable instead.")
     before = snapshot(cable)
-    await _release_connection(db, cable)
+    released = await _release_connection(db, cable)
     await db.delete(cable)
     await db.flush()
     await write_audit_log(
         db, actor_user_id=actor_user_id, action="cable.delete", entity_type="cable", entity_id=cable_id,
-        request_id=request_id, correlation_id=correlation_id, before=before,
+        request_id=request_id, correlation_id=correlation_id, before=before, after={"port_connection": released},
     )

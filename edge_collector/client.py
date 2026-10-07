@@ -15,10 +15,19 @@ import httpx
 from .queue import QueueRecord
 
 PERMANENT_REJECTION_CODES = frozenset({"INVALID_PAYLOAD"})
+PERMANENT_PAYLOAD_STATUSES = frozenset({400, 413, 422})
 
 
 class RetryableTransportError(RuntimeError):
     """A request did not produce a complete, trustworthy central acknowledgement."""
+
+
+class PermanentPayloadError(RetryableTransportError):
+    """Central refused the request body itself (400/413/422); resending the same bytes cannot succeed.
+
+    Subclasses the retryable error so callers that only retry (heartbeat, plan fetch) keep working;
+    the delivery loop catches it first and isolates the offending record instead of looping on it.
+    """
 
 
 class MalformedResponseError(RetryableTransportError):
@@ -116,6 +125,8 @@ class CentralClient:
             raise RetryableTransportError("central transport unavailable") from error
         if response.status_code == 429 or response.status_code >= 500:
             raise RetryableTransportError(f"central returned retryable status {response.status_code}")
+        if response.status_code in PERMANENT_PAYLOAD_STATUSES:
+            raise PermanentPayloadError(f"central rejected the request payload with status {response.status_code}")
         if not 200 <= response.status_code < 300:
             raise RetryableTransportError(f"central returned unexpected status {response.status_code}")
         return response

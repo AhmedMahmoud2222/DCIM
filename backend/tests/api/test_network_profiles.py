@@ -205,3 +205,38 @@ async def test_templates_are_listed_and_creatable(client, auth_headers):
     device = await client.post(f"{BASE}/vendors/{vendor.json()['id']}/devices", json=template["devices"][0], headers=admin)
     assert device.status_code == 201
     assert (await client.get(f"{BASE}/templates/nope", headers=headers)).status_code == 404
+
+
+async def test_profile_updates_cannot_strand_a_bound_integration(client, auth_headers):
+    """Issue #101 review B4: a vendor or device change that would invalidate a live binding is a 409."""
+    headers = await auth_headers("Administrator")
+    vendor = await create_vendor(client, headers)
+    device = await create_device(client, headers, vendor["id"], capabilities={
+        "metrics": True, "lldp": True, "cdp": True, "snmp_versions": ["v2c", "v3"]})
+    integration = await create_integration(client, headers, integration_type="snmp", config={"version": "v2c"})
+    bound = await client.patch(
+        f"/api/v1/integrations/{integration['id']}", json={"device_profile_id": device["id"]}, headers=headers | _if_match(1))
+    assert bound.status_code == 200, bound.text
+
+    vendor_body = {k: v for k, v in vendor_doc(vendor["code"]).items() if k != "code"}
+    dropped_protocol = await client.put(
+        f"{BASE}/vendors/{vendor['id']}", json=vendor_body | {"supported_protocols": ["icmp"], "neighbor_discovery": {}},
+        headers=headers | _if_match(vendor["version"]))
+    assert dropped_protocol.status_code in (409, 422), dropped_protocol.text
+    no_lldp = {**vendor_body["neighbor_discovery"], "lldp": {**vendor_body["neighbor_discovery"]["lldp"], "enabled": False}}
+    dropped_table = await client.put(
+        f"{BASE}/vendors/{vendor['id']}", json=vendor_body | {"neighbor_discovery": no_lldp}, headers=headers | _if_match(vendor["version"]))
+    assert dropped_table.status_code == 409 and "bound" in dropped_table.json()["detail"]
+
+    device_body = {k: v for k, v in device_doc(device["code"]).items() if k != "code"}
+    v3_only = await client.put(
+        f"{BASE}/devices/{device['id']}", json=device_body | {"capabilities": {**device_body["capabilities"], "snmp_versions": ["v3"]}},
+        headers=headers | _if_match(device["version"]))
+    assert v3_only.status_code == 409 and "bound SNMP" in v3_only.json()["detail"]
+
+    harmless = await client.put(
+        f"{BASE}/devices/{device['id']}", json=device_body | {"priority": 7, "capabilities": device_body["capabilities"]},
+        headers=headers | _if_match(device["version"]))
+    assert harmless.status_code == 200  # unrelated edits stay possible
+    retire = await client.post(f"{BASE}/devices/{device['id']}/retire", headers=headers | _if_match(harmless.json()["version"]))
+    assert retire.status_code == 409  # still bound

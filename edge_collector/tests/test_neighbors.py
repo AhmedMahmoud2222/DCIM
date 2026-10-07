@@ -419,3 +419,63 @@ def test_client_fetches_and_validates_the_discovery_plan():
         bad = CentralClient("http://central.test", collector_id, "s", transport=httpx.MockTransport(lambda r, p=payload: httpx.Response(200, json=p)))
         with pytest.raises(MalformedResponseError):
             bad.get_discovery_plan()
+
+
+# --------------------------------------------- hostile peers cannot make an oversize record
+def _wire_size(records):
+    return [len(json.dumps(r.payload["raw_attributes"])) for r in records if r.payload["record_type"] == "neighbor"]
+
+
+def _queue_records(scans):
+    started, finished = datetime(2026, 1, 1, 12, 0, tzinfo=UTC), datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
+    return build_queue_records(
+        scans, integration_id="int-1", external_identifier="10.0.0.1", scan_id="scan-1", scan_started_at=started,
+        scan_finished_at=finished,
+    )
+
+
+def test_hostile_lldp_row_never_exceeds_the_central_serialized_limit():
+    mib: dict[str, tuple[int, bytes]] = {}
+    hostile_text = ("\U0001f600" * 255).encode()  # each astral character escapes to 12 bytes under ensure_ascii
+    lldp_row(
+        mib, chassis_id_subtype=integer(7), chassis_id=octets("c" * 200), port_id_subtype=integer(7), port_id=octets("p" * 200),
+        port_desc=octets(hostile_text), sys_name=octets(hostile_text), sys_desc=octets(hostile_text * 2),
+        sys_cap_enabled=octets(bytes([0b00101000])),
+    )
+    mib[f"{LLDP_TABLE}.9.1000.7.2"] = octets(b"\xff" * 255)
+    scans = collect_neighbors(FakeWalker(mib), PLAN)
+    assert scans[0].observations, "the hostile row is still a neighbor"
+    records = _queue_records(scans)
+    assert _wire_size(records) and max(_wire_size(records)) <= 7_000 < 8_192
+    marker = next(r for r in records if r.payload["record_type"] == "neighbor_scan")
+    assert marker.payload["raw_attributes"]["complete"] is True  # nothing was dropped, only evidence trimmed
+
+
+def test_hostile_cdp_row_never_exceeds_the_central_serialized_limit():
+    mib: dict[str, tuple[int, bytes]] = {}
+    cdp_row(
+        mib, address_type=integer(1), address=octets(bytes([10, 9, 8, 7])), version=octets(b"\xff" * 255 + ("\U0001f600" * 255).encode()),
+        device_id=octets(b"\xfe" * 255), device_port=octets(b"\xfd" * 255), platform=octets(("\U0001f600" * 255).encode()),
+        capabilities=octets(bytes([0, 0, 0, 0x28])), native_vlan=integer(42),
+    )
+    mib[f"{IFX}.1.3"] = octets("\U0001f600" * 255)
+    scans = collect_neighbors(FakeWalker(mib), PLAN)
+    records = _queue_records(scans)
+    assert all(size <= 7_000 for size in _wire_size(records))
+
+
+def test_a_neighbor_whose_identity_alone_is_oversize_is_dropped_and_the_scan_is_incomplete():
+    big = {
+        "protocol": "cdp", "local_port": {"name": "é" * 255, "ref": "3"},
+        "remote": {"chassis_id": "\U0001f600" * 255, "chassis_id_subtype": "cdp_device_id", "port_id": "\U0001f600" * 255,
+                   "port_id_subtype": "interface_name", "port_description": None, "system_name": None, "system_description": None,
+                   "platform": None, "management_address": None},
+        "capabilities": [], "native_vlan": None, "ttl_seconds": None, "raw": {},
+    }
+    from edge_collector.neighbors import NeighborScan, fit_observation
+
+    assert fit_observation(big, scan_id="s") is None
+    records = _queue_records([NeighborScan("cdp", (big,), 0, True)])
+    assert [r.payload["record_type"] for r in records] == ["neighbor_scan"]
+    marker = records[0].payload["raw_attributes"]
+    assert marker["complete"] is False and marker["malformed_rows"] == 1 and marker["observed_count"] == 0

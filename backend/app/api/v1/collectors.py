@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Literal, TypeVar
 
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -356,6 +356,10 @@ MAX_BATCH_RECORDS = 500
 MAX_RAW_ATTRIBUTES_BYTES = 8192
 
 
+def _attributes_within_bound(attributes: dict) -> bool:
+    return len(json.dumps(attributes)) <= MAX_RAW_ATTRIBUTES_BYTES
+
+
 class IngestRecordIn(BaseModel):
     dedup_key: str = Field(max_length=255)
     integration_id: uuid.UUID
@@ -365,12 +369,14 @@ class IngestRecordIn(BaseModel):
     # Issue #101: collectors that predate neighbor discovery omit this and stay "device".
     record_type: Literal["device", "neighbor", "neighbor_scan"] = "device"
 
-    @field_validator("raw_attributes")
-    @classmethod
-    def _bound_raw_attributes_size(cls, v: dict) -> dict:
-        if len(json.dumps(v)) > MAX_RAW_ATTRIBUTES_BYTES:
+    @model_validator(mode="after")
+    def _bound_device_attributes_size(self) -> "IngestRecordIn":
+        # Device records keep the batch-level 422. Neighbor records are checked per record in
+        # `ingest_batch` instead: one hostile LLDP/CDP peer must not make Central refuse (and the
+        # edge re-send) a whole batch that also carries other devices' data.
+        if self.record_type == "device" and not _attributes_within_bound(self.raw_attributes):
             raise ValueError(f"raw_attributes must serialize to at most {MAX_RAW_ATTRIBUTES_BYTES} bytes")
-        return v
+        return self
 
 
 class IngestBatchIn(BaseModel):
@@ -486,6 +492,15 @@ async def ingest_batch(
 
     results: list[IngestRecordResult] = []
     for record in body.records:
+        if record.record_type != "device" and not _attributes_within_bound(record.raw_attributes):
+            # Permanent and deterministic: no claim is taken and nothing is stored.
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected", error_code="INVALID_PAYLOAD",
+                    error="The record is too large and will not be retried.",
+                )
+            )
+            continue
         request_hash = idem.hash_request_body(record.model_dump(mode="json"))
         # Findings I2/I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): `get_or_claim` itself
         # can raise (a reused dedup_key with a different payload, or a claim still

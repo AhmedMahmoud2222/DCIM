@@ -93,11 +93,15 @@ async def create_vendor(
     return vendor
 
 
-async def get_vendor(db: AsyncSession, vendor_id: uuid.UUID, *, for_update: bool = False) -> VendorProfile:
+async def get_vendor(
+    db: AsyncSession, vendor_id: uuid.UUID, *, for_update: bool = False, share: bool = False,
+) -> VendorProfile:
+    """`share` takes a KEY-SHARE-compatible read lock: a binder or device writer that validated this vendor
+    keeps it from being retired or re-defined until it commits. Lock order is always device, then vendor."""
     stmt = select(VendorProfile).where(VendorProfile.id == vendor_id)
-    if for_update:
-        # populate_existing: the version compared afterwards must be the post-lock, committed one.
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    if for_update or share:
+        # populate_existing: what is validated afterwards must be the post-lock, committed state.
+        stmt = stmt.with_for_update(read=share and not for_update).execution_options(populate_existing=True)
     vendor = (await db.execute(stmt)).scalar_one_or_none()
     if vendor is None:
         raise NotFoundError(f"VendorProfile {vendor_id} not found.")
@@ -114,6 +118,7 @@ async def update_vendor(
     check_version_match(expected=expected_version, actual=vendor.version)
     reject_secret_like_keys(content.model_dump())
     await _assert_prefixes_unclaimed(db, content.sys_object_id_prefixes, exclude_id=vendor.id)
+    await _assert_bound_integrations_stay_valid(db, vendor=vendor, content=content)
     before = _vendor_snapshot(vendor)
     vendor.name = content.name
     vendor.description = content.description
@@ -130,6 +135,39 @@ async def update_vendor(
         after=_vendor_snapshot(vendor),
     )
     return vendor
+
+
+async def _assert_bound_integrations_stay_valid(
+    db: AsyncSession, *, vendor: VendorProfile, content: VendorProfileContent,
+) -> None:
+    """A vendor change may not strand an integration already bound to one of its device profiles.
+
+    Binding holds a share lock on the vendor until it commits, so this check (made under the vendor's
+    update lock) sees every committed binding and a concurrent bind waits and re-validates afterwards.
+    """
+    rows = (
+        await db.execute(
+            select(Integration.integration_type, DeviceProfile)
+            .join(DeviceProfile, Integration.device_profile_id == DeviceProfile.id)
+            .where(DeviceProfile.vendor_profile_id == vendor.id)
+        )
+    ).all()
+    new_spec = content.neighbor_discovery.model_dump(exclude_none=True)
+    stranded = 0
+    for integration_type, device in rows:
+        behavior = device.neighbor_behavior or {}
+        loses_protocol = integration_type not in content.supported_protocols
+        loses_neighbor_table = any(
+            (behavior.get(proto) or {}).get("enabled") and not (new_spec.get(proto) or {}).get("enabled")
+            for proto in ("lldp", "cdp")
+        )
+        if loses_protocol or loses_neighbor_table:
+            stranded += 1
+    if stranded:
+        raise ConflictError(
+            f"{stranded} integration(s) bound to this vendor's device profiles would no longer be valid "
+            "(a protocol or neighbor-discovery definition they use is being removed); rebind or unbind them first."
+        )
 
 
 async def retire_vendor(
@@ -216,14 +254,36 @@ def _validate_device_against_vendor(vendor: VendorProfile, content: DeviceProfil
         raise _unprocessable("snmp_versions declared but the vendor profile does not support the snmp protocol.")
 
 
-async def get_device(db: AsyncSession, device_id: uuid.UUID, *, for_update: bool = False) -> DeviceProfile:
+async def get_device(
+    db: AsyncSession, device_id: uuid.UUID, *, for_update: bool = False, share: bool = False,
+) -> DeviceProfile:
     stmt = select(DeviceProfile).where(DeviceProfile.id == device_id)
-    if for_update:
-        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    if for_update or share:
+        stmt = stmt.with_for_update(read=share and not for_update).execution_options(populate_existing=True)
     device = (await db.execute(stmt)).scalar_one_or_none()
     if device is None:
         raise NotFoundError(f"DeviceProfile {device_id} not found.")
     return device
+
+
+async def _assert_bound_integrations_support(
+    db: AsyncSession, *, device: DeviceProfile, content: DeviceProfileContent,
+) -> None:
+    """New capabilities may not exclude the SNMP version a bound integration already uses."""
+    declared = content.capabilities.snmp_versions
+    if not declared:
+        return
+    configs = (
+        await db.execute(
+            select(Integration.config).where(Integration.device_profile_id == device.id, Integration.integration_type == "snmp")
+        )
+    ).scalars().all()
+    used = [(config or {}).get("version") for config in configs]
+    stranded = sum(1 for version in used if version and version not in declared)
+    if stranded:
+        raise ConflictError(
+            f"{stranded} bound SNMP integration(s) use a version this update no longer declares; rebind or unbind them first."
+        )
 
 
 async def update_device(
@@ -234,8 +294,9 @@ async def update_device(
     if device.status == "retired":
         raise ConflictError("A retired device profile is immutable.")
     check_version_match(expected=expected_version, actual=device.version)
-    vendor = await get_vendor(db, device.vendor_profile_id)
+    vendor = await get_vendor(db, device.vendor_profile_id, share=True)
     _validate_device_against_vendor(vendor, content)
+    await _assert_bound_integrations_support(db, device=device, content=content)
     before = _device_snapshot(device)
     _apply_device_content(device, content)
     device.version += 1
@@ -391,10 +452,15 @@ async def bind_integration_profile(
     if device_profile_id is None:
         integration.device_profile_id = None
         return
-    device = await get_device(db, device_profile_id)
+    # Share locks, device then vendor, held to commit: a concurrent retire or redefinition of either waits for
+    # this bind (and then refuses, because the binding is visible), and a bind that loses the race
+    # re-reads the retired state here instead of validating a stale identity-map copy.
+    device = await get_device(db, device_profile_id, share=True)
     if device.status != "active":
         raise ConflictError("A retired device profile cannot be bound to an integration.")
-    vendor = await get_vendor(db, device.vendor_profile_id)
+    vendor = await get_vendor(db, device.vendor_profile_id, share=True)
+    if vendor.status != "active":
+        raise ConflictError("The vendor profile of this device profile is retired.")
     if integration.integration_type not in vendor.supported_protocols:
         raise _unprocessable(
             f"Vendor profile '{vendor.code}' does not support the '{integration.integration_type}' protocol."

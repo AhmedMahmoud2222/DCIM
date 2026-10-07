@@ -150,6 +150,9 @@ export interface NeighborDecision {
   local_port_id?: string | null;
   remote_port_id?: string | null;
   reason?: string | null;
+  // The proposal the operator was looking at; Central answers 409 if it has since changed.
+  expected_local_port_id?: string | null;
+  expected_remote_port_id?: string | null;
 }
 
 const decide = (neighbor: Neighbor, action: string, body: NeighborDecision = {}) =>
