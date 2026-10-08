@@ -21,6 +21,7 @@ from app.api.v1 import (
     locations,
     managed_assets,
     network_profiles,
+    operations,
     power,
     power_analytics,
     power_protection,
@@ -48,6 +49,7 @@ api_router.include_router(racks.router)
 api_router.include_router(equipment.router)
 api_router.include_router(floor_plans.router)
 api_router.include_router(spatial.router)
+api_router.include_router(operations.router)
 api_router.include_router(power.router)
 api_router.include_router(power_protection.router)
 api_router.include_router(power_analytics.router)

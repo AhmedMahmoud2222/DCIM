@@ -175,4 +175,6 @@ async def test_the_sweep_detects_a_route_that_wrongly_becomes_reachable(client, 
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
     leaked = sorted(reachable - REVIEWED_REACHABLE)
-    assert leaked and all("/alarms" in path for _, path in leaked), leaked
+    # Every route guarded by alarm:read must show up: the alarm API itself and, since Issue #103, the correlation
+    # incident reads that are gated by the same permission.
+    assert leaked and all("/alarms" in path or "/operations/incidents" in path for _, path in leaked), leaked
