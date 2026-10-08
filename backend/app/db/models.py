@@ -61,6 +61,7 @@ from app.domain.outbox.models import OutboxEvent  # noqa: F401
 from app.domain.physical.models import Equipment, Rack  # noqa: F401
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection  # noqa: F401
 from app.domain.placement.models import EquipmentPlacement, RackPlacement  # noqa: F401
+from app.domain.power.analytics_models import PowerReportJob, PowerUtilizationSnapshot  # noqa: F401
 from app.domain.power.models import (  # noqa: F401
     PDU,
     UPS,
@@ -70,6 +71,7 @@ from app.domain.power.models import (  # noqa: F401
     PowerConnection,
     PowerNode,
     PowerPanel,
+    ProtectionDevice,
 )
 from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401
 from app.domain.telemetry.mapping_models import PortTelemetryBinding, TelemetryLatestStatus  # noqa: F401
