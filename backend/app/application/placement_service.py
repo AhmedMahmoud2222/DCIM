@@ -63,6 +63,7 @@ async def move_rack(
     while a delegated-administration decision that read the old placement is still open."""
     await acquire_placement_scope_lock(db)
     current = await get_current_rack_placement(db, rack_id)
+    next_version = 1
     if current is not None:
         locked = (
             await db.execute(
@@ -76,6 +77,10 @@ async def move_rack(
         if if_match_version is not None and locked.version != if_match_version:
             raise PlacementConflict(current=locked)
         locked.effective_to = datetime.now(UTC)
+        # Placement versions are monotonic per rack, not per row: a fresh row restarting at 1 would let a stale
+        # If-Match (or an import's placement_version) captured before a concurrent move match the *new* row
+        # (ABA) and silently move the rack back.
+        next_version = locked.version + 1
         await db.flush()
 
     new_placement = RackPlacement(
@@ -84,7 +89,7 @@ async def move_rack(
         x_mm=x_mm,
         y_mm=y_mm,
         rotation_deg=rotation_deg,
-        version=1,
+        version=next_version,
         effective_from=datetime.now(UTC),
         effective_to=None,
     )

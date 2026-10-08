@@ -207,6 +207,26 @@ export interface EquipmentInstantiateResult extends Equipment {
 
 export const FLOOR_PLAN_STATUSES = ["draft", "active", "superseded"] as const;
 
+export interface Calibration {
+  id: string;
+  sequence: number;
+  method: "declared_units" | "two_point" | "room_dimension" | "manual_scale";
+  source_units: string;
+  mm_per_unit: number;
+  origin_x: number;
+  origin_y: number;
+  y_axis: "up" | "down";
+  rotation_quadrants: number;
+  error_bound_mm: number | null;
+  relative_error: number | null;
+  confidence: "high" | "medium" | "low";
+  reference: Record<string, unknown>;
+  warnings: string[];
+  job_id: string | null;
+  supersedes_id: string | null;
+  created_at: string;
+}
+
 export interface FloorPlan {
   id: string;
   room_id: string;
@@ -219,6 +239,7 @@ export interface FloorPlan {
   room_height_mm: number | null;
   version: number;
   created_at: string;
+  current_calibration: Calibration | null;
 }
 
 export interface ImportJob {
@@ -227,14 +248,18 @@ export interface ImportJob {
   status: string;
   original_filename: string;
   file_size_bytes: number;
+  file_hash?: string;
+  detected_format?: string | null;
   rejection_reason: string | null;
   created_at: string;
+  deduplicated?: boolean;
 }
 
 export interface ImportDiagnostics {
   job_id: string;
   source_format: string | null;
   parser_name: string | null;
+  parser_version?: string | null;
   objects_discovered: number;
   objects_classified: number;
   racks_detected: number;
@@ -244,17 +269,131 @@ export interface ImportDiagnostics {
   ambiguous_count: number;
   confirmed_count: number;
   duration_ms: number | null;
+  source_units?: string | null;
+  units_trusted?: boolean | null;
+  y_axis?: "up" | "down" | null;
+  source_bbox?: { min_x: number; min_y: number; max_x: number; max_y: number } | null;
+  candidate_count?: number;
+  sir_sha256?: string | null;
+  failure_code?: string | null;
+}
+
+export type CandidateShape = "rect" | "circle" | "text" | "polygon" | "polyline" | "line";
+
+/** Geometry in the drawing's *source* coordinates (not millimetres) — see ImportCandidate.canonical. */
+export interface CandidateGeometry {
+  shape_type: CandidateShape;
+  x?: number;
+  y?: number;
+  cx?: number;
+  cy?: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  rotation_deg?: number;
+  points?: [number, number][];
+  text?: string | null;
+  layer?: string;
+  source_ref?: string;
+}
+
+export interface MatchEvidence {
+  code: string;
+  detail: string;
+  score?: number;
+  weight?: number;
+  phase?: "match";
+}
+
+export type MatchStatus = "not_applicable" | "unmatched" | "matched" | "ambiguous" | "conflict" | "duplicate";
+
+export interface CanonicalGeometry {
+  geometry_type: string;
+  x_mm: number;
+  y_mm: number;
+  width_mm: number | null;
+  height_mm: number | null;
+  rotation_deg: number;
+  geometry_data: { points: [number, number][] } | null;
 }
 
 export interface ImportCandidate {
   id: string;
   job_id: string;
-  raw_geometry: { shape_type: string; x: number; y: number; width?: number; height?: number; radius?: number; text?: string };
+  version: number;
+  raw_geometry: CandidateGeometry;
+  effective_geometry: CandidateGeometry;
+  canonical: CanonicalGeometry | null;
   suggested_object_type: string | null;
+  effective_object_type: string | null;
   suggested_label: string | null;
+  effective_label: string | null;
   confidence: number | null;
+  evidence: MatchEvidence[];
+  match_status: MatchStatus;
+  match_score: number | null;
+  matched_asset_id: string | null;
+  matched_asset_name: string | null;
+  duplicate_of_spatial_object_id: string | null;
+  reconciled_calibration_id: string | null;
+  source_ref: string | null;
+  correction: Record<string, unknown> | null;
+  can_undo: boolean;
   status: string;
   resulting_spatial_object_id: string | null;
+}
+
+export interface SourceGeometry {
+  job_id: string;
+  source_format: string;
+  source_units: string;
+  units_trusted: boolean;
+  y_axis: "up" | "down";
+  bbox: { min_x: number; min_y: number; max_x: number; max_y: number } | null;
+  layers: string[];
+  sir_sha256: string;
+  entities: {
+    kind: string;
+    ref: string;
+    layer?: string;
+    cx?: number;
+    cy?: number;
+    width?: number;
+    height?: number;
+    radius?: number;
+    rotation_deg?: number;
+    points?: [number, number][];
+    text?: string;
+  }[];
+  total_entities: number;
+  truncated: boolean;
+}
+
+export interface CalibrationRequest {
+  method: Calibration["method"];
+  job_id: string;
+  origin?: [number, number];
+  rotation_degrees?: 0 | 90 | 180 | 270;
+  p1?: [number, number];
+  p2?: [number, number];
+  distance_mm?: number;
+  tolerance_mm?: number;
+  pick_tolerance_src?: number;
+  src_width?: number;
+  real_width_mm?: number;
+  src_height?: number;
+  real_height_mm?: number;
+  mm_per_unit?: number;
+}
+
+export interface AcceptCandidateRequest {
+  object_type?: string;
+  label?: string;
+  matched_asset_id?: string;
+  link_placement?: boolean;
+  apply_position?: boolean;
+  placement_version?: number;
+  boundary_exception_reason?: string;
 }
 
 // ------------------------------------------------------------------- Bulk import
@@ -320,8 +459,10 @@ export interface SpatialObject {
   width_mm: number | null;
   height_mm: number | null;
   rotation_deg: number;
+  geometry_data?: { points: [number, number][] } | null;
   label: string | null;
   source: string;
+  provenance?: Record<string, unknown> | null;
 }
 
 /** Additive (3D layout increment): rack-mounted equipment placed within one of a
@@ -348,6 +489,12 @@ export interface RoomRack {
   spatial_object_id: string | null;
   // Additive (3D layout increment): the rack's own U capacity.
   height_u: number;
+  // Issue #104: authoritative physical dimensions (catalog revision) and position state.
+  width_mm?: number | null;
+  depth_mm?: number | null;
+  height_mm?: number | null;
+  position_state?: "placed" | "missing";
+  placement_version?: number;
 }
 
 export interface RoomEquipment {
@@ -356,6 +503,25 @@ export interface RoomEquipment {
   hostname: string | null;
   placement_type: string;
   spatial_object_id: string | null;
+  x_mm?: number | null;
+  y_mm?: number | null;
+  rotation_deg?: number | null;
+  width_mm?: number | null;
+  depth_mm?: number | null;
+  height_mm?: number | null;
+  position_state?: "placed" | "missing";
+  dimensions_state?: "complete" | "partial" | "missing";
+}
+
+export interface SpatialCalibrationSummary {
+  id: string;
+  method: Calibration["method"];
+  source_units: string;
+  mm_per_unit: number;
+  error_bound_mm: number | null;
+  relative_error: number | null;
+  confidence: Calibration["confidence"];
+  created_at: string;
 }
 
 export interface RoomSpatialView {
@@ -372,6 +538,45 @@ export interface RoomSpatialView {
   // Additive (3D layout increment): rack-mounted equipment, omitted from
   // `equipment` by design — see RoomRackEquipment.
   rack_equipment: RoomRackEquipment[];
+  // Issue #104
+  calibration?: SpatialCalibrationSummary | null;
+  boundary?: SpatialObject | null;
+  rack_unit_mm?: number;
+  layout_state?: "validated" | "incomplete";
+  incomplete_reasons?: string[];
+}
+
+export type OverlayKind = "power" | "network" | "environment";
+export type OverlayState = "normal" | "warning" | "critical" | "unavailable";
+
+export interface OverlayItem {
+  asset_id: string;
+  asset_kind: "rack" | "equipment";
+  state: OverlayState;
+  reason: string;
+  // power
+  redundancy?: string;
+  interrupting_devices?: string[];
+  feed_node_ids?: string[];
+  // network
+  installed_cables?: number;
+  planned_cables?: number;
+  cable_ids?: string[];
+  peer_asset_ids?: string[];
+  discovered_unconfirmed?: number;
+  // environment
+  metric?: string | null;
+  value?: number | null;
+  unit?: string | null;
+  occurred_at?: string | null;
+  age_seconds?: number | null;
+  data_quality?: "measured" | "stale" | "missing" | string;
+}
+
+export interface RoomOverlays {
+  room_id: string;
+  generated_at: string;
+  overlays: Partial<Record<OverlayKind, { source: string; items: OverlayItem[]; truncated: boolean; estimated_values?: boolean }>>;
 }
 
 // --------------------------------------------------------------------- Power

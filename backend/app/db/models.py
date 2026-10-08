@@ -40,6 +40,7 @@ from app.domain.floorplan_import.models import (  # noqa: F401
     FloorPlanImportCandidate,
     FloorPlanImportDiagnostics,
     FloorPlanImportJob,
+    FloorPlanImportSir,
 )
 from app.domain.idempotency.models import IdempotencyKey  # noqa: F401
 from app.domain.identity.models import ManagedAsset  # noqa: F401
@@ -84,7 +85,7 @@ from app.domain.power.models import (  # noqa: F401
     PowerPanel,
     ProtectionDevice,
 )
-from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401
+from app.domain.spatial.models import FloorPlan, FloorPlanCalibration, SpatialLayer, SpatialObject  # noqa: F401
 from app.domain.telemetry.mapping_models import PortTelemetryBinding, TelemetryLatestStatus  # noqa: F401
 from app.domain.telemetry.models import (  # noqa: F401
     DailyTelemetryAggregate,

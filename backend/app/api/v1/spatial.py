@@ -6,22 +6,25 @@ owned by `racks`/`equipment`/`floor_plans` into the single combined shape the 2D
 floor-plan viewer needs, and creates nothing of its own."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.rbac import require_permission
-from app.core.errors import NotFoundError
-from app.domain.catalog.models import RackModelRevision
+from app.application import spatial_overlays
+from app.application.rbac import AuthContext, get_auth_context, require_permission
+from app.application.spatial_import.boundary import load_boundary_object
+from app.core.errors import ApiError, ForbiddenError, NotFoundError
+from app.domain.catalog.models import EquipmentModelRevision, RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.location.models import Room
 from app.domain.physical.models import Equipment, Rack
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
-from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject
+from app.domain.spatial.models import FloorPlan, FloorPlanCalibration, SpatialLayer, SpatialObject
 
 router = APIRouter(prefix="/spatial", tags=["spatial"])
 
@@ -39,6 +42,13 @@ class RoomRackOut(BaseModel):
     # already existed, this is read from the same RackModelRevision the 2D rack
     # elevation view (`GET /racks/{id}/elevation`) already uses.
     height_u: int
+    # Issue #104: authoritative physical dimensions from the rack's catalog revision (never a CSS constant).
+    # `height_mm` is height_u x the EIA-310 rack unit (44.45 mm); frame/plinth overhead is not invented.
+    width_mm: int | None = None
+    depth_mm: int | None = None
+    height_mm: int | None = None
+    position_state: str = "placed"  # placed | missing (no authoritative x/y)
+    placement_version: int = 1
 
     model_config = {"from_attributes": True}
 
@@ -52,6 +62,16 @@ class RoomEquipmentOut(BaseModel):
     hostname: str | None
     placement_type: str
     spatial_object_id: uuid.UUID | None
+    # Issue #104: floor/wall/ceiling-mounted equipment position comes from its linked spatial object and
+    # footprint from its catalog revision; any missing piece is reported, never defaulted.
+    x_mm: int | None = None
+    y_mm: int | None = None
+    rotation_deg: int | None = None
+    width_mm: int | None = None
+    depth_mm: int | None = None
+    height_mm: int | None = None
+    position_state: str = "missing"  # placed | missing
+    dimensions_state: str = "missing"  # complete | partial | missing
 
     model_config = {"from_attributes": True}
 
@@ -86,6 +106,23 @@ class SpatialObjectOut(BaseModel):
     geometry_data: dict | None
     label: str | None
     source: str
+    provenance: dict | None = None
+
+    model_config = {"from_attributes": True}
+
+
+RACK_UNIT_MM = 44.45
+
+
+class SpatialCalibrationOut(BaseModel):
+    id: uuid.UUID
+    method: str
+    source_units: str
+    mm_per_unit: float
+    error_bound_mm: float | None
+    relative_error: float | None
+    confidence: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -104,6 +141,12 @@ class RoomSpatialViewOut(BaseModel):
     # Additive (3D layout increment): rack-mounted equipment for the racks above,
     # omitted from `equipment` by design (§8) — see RoomRackEquipmentOut.
     rack_equipment: list[RoomRackEquipmentOut]
+    # Issue #104
+    calibration: SpatialCalibrationOut | None = None
+    boundary: SpatialObjectOut | None = None
+    rack_unit_mm: float = RACK_UNIT_MM
+    layout_state: str = "incomplete"  # validated | incomplete
+    incomplete_reasons: list[str] = []
 
 
 @router.get("/rooms/{room_id}/view", response_model=RoomSpatialViewOut)
@@ -136,7 +179,9 @@ async def get_room_spatial_view(
         RoomRackOut(
             id=rack.id, asset_tag=asset.asset_tag, name=rack.name, x_mm=placement.x_mm, y_mm=placement.y_mm,
             rotation_deg=placement.rotation_deg, spatial_object_id=placement.spatial_object_id,
-            height_u=model_revision.height_u,
+            height_u=model_revision.height_u, width_mm=model_revision.width_mm, depth_mm=model_revision.depth_mm,
+            height_mm=round(model_revision.height_u * RACK_UNIT_MM), placement_version=placement.version,
+            position_state="placed" if placement.x_mm is not None and placement.y_mm is not None else "missing",
         )
         for placement, rack, asset, model_revision in rack_rows
     ]
@@ -144,9 +189,11 @@ async def get_room_spatial_view(
 
     equipment_rows = (
         await db.execute(
-            select(EquipmentPlacement, Equipment, ManagedAsset)
+            select(EquipmentPlacement, Equipment, ManagedAsset, EquipmentModelRevision, SpatialObject)
             .join(Equipment, Equipment.id == EquipmentPlacement.equipment_id)
             .join(ManagedAsset, ManagedAsset.id == EquipmentPlacement.equipment_id)
+            .join(EquipmentModelRevision, EquipmentModelRevision.id == Equipment.model_revision_id)
+            .outerjoin(SpatialObject, SpatialObject.id == EquipmentPlacement.spatial_object_id)
             .where(
                 EquipmentPlacement.room_id == room_id,
                 EquipmentPlacement.effective_to.is_(None),
@@ -154,13 +201,26 @@ async def get_room_spatial_view(
             )
         )
     ).all()
-    equipment = [
-        RoomEquipmentOut(
-            id=equipment.id, asset_tag=asset.asset_tag, hostname=equipment.hostname,
-            placement_type=placement.placement_type, spatial_object_id=placement.spatial_object_id,
+    equipment: list[RoomEquipmentOut] = []
+    for placement, equipment_row, asset, revision, spatial_object in equipment_rows:
+        width, depth = revision.width_mm, revision.depth_mm
+        height = round(revision.height_u * RACK_UNIT_MM) if revision.height_u else None
+        known = [v is not None for v in (width, depth, height)]
+        rotation = placement.rotation_deg
+        if rotation is None and spatial_object is not None:
+            rotation = spatial_object.rotation_deg
+        equipment.append(
+            RoomEquipmentOut(
+                id=equipment_row.id, asset_tag=asset.asset_tag, hostname=equipment_row.hostname,
+                placement_type=placement.placement_type, spatial_object_id=placement.spatial_object_id,
+                x_mm=spatial_object.x_mm if spatial_object is not None else None,
+                y_mm=spatial_object.y_mm if spatial_object is not None else None,
+                rotation_deg=rotation,
+                width_mm=width, depth_mm=depth, height_mm=height,
+                position_state="placed" if spatial_object is not None else "missing",
+                dimensions_state="complete" if all(known) else ("partial" if any(known) else "missing"),
+            )
         )
-        for placement, equipment, asset in equipment_rows
-    ]
 
     rack_equipment: list[RoomRackEquipmentOut] = []
     if room_rack_ids:
@@ -192,7 +252,14 @@ async def get_room_spatial_view(
             )
 
     objects: list[SpatialObjectOut] = []
+    calibration_out: SpatialCalibrationOut | None = None
+    boundary_out: SpatialObjectOut | None = None
     if active_floor_plan is not None:
+        if active_floor_plan.current_calibration_id is not None:
+            calibration_row = await db.get(FloorPlanCalibration, active_floor_plan.current_calibration_id)
+            calibration_out = SpatialCalibrationOut.model_validate(calibration_row) if calibration_row is not None else None
+        boundary_row = await load_boundary_object(db, active_floor_plan.id)
+        boundary_out = SpatialObjectOut.model_validate(boundary_row) if boundary_row is not None else None
         object_rows = (
             await db.execute(
                 select(SpatialObject)
@@ -202,7 +269,23 @@ async def get_room_spatial_view(
         ).scalars().all()
         objects = [SpatialObjectOut.model_validate(obj) for obj in object_rows]
 
-    from datetime import UTC
+    reasons: list[str] = []
+    if active_floor_plan is None:
+        reasons.append("no_active_floor_plan")
+    else:
+        if calibration_out is None:
+            reasons.append("no_calibration")
+        if boundary_out is None:
+            reasons.append("no_room_boundary")
+    missing_rack_position = [r for r in racks if r.position_state == "missing"]
+    if missing_rack_position:
+        reasons.append(f"rack_position_missing:{len(missing_rack_position)}")
+    floor_unplaced = [e for e in equipment if e.position_state == "missing"]
+    if floor_unplaced:
+        reasons.append(f"equipment_position_missing:{len(floor_unplaced)}")
+    floor_no_dims = [e for e in equipment if e.dimensions_state != "complete"]
+    if floor_no_dims:
+        reasons.append(f"equipment_dimensions_missing:{len(floor_no_dims)}")
 
     return RoomSpatialViewOut(
         room_id=room.id,
@@ -216,4 +299,49 @@ async def get_room_spatial_view(
         equipment=equipment,
         objects=objects,
         rack_equipment=rack_equipment,
+        calibration=calibration_out,
+        boundary=boundary_out,
+        layout_state="validated" if not reasons else "incomplete",
+        incomplete_reasons=reasons,
     )
+
+
+OVERLAY_KINDS = {
+    "power": ("power:read", spatial_overlays.power_overlay),
+    "network": ("cable:read", spatial_overlays.network_overlay),
+    "environment": ("telemetry:read", spatial_overlays.environment_overlay),
+}
+
+
+class RoomOverlaysOut(BaseModel):
+    room_id: uuid.UUID
+    generated_at: datetime
+    overlays: dict[str, Any]
+
+
+@router.get("/rooms/{room_id}/overlays", response_model=RoomOverlaysOut)
+async def get_room_overlays(
+    room_id: uuid.UUID,
+    kinds: str = Query(default="power,network,environment", description="comma-separated: power, network, environment"),
+    db: AsyncSession = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> RoomOverlaysOut:
+    """Operational state for the 2D/3D twin, keyed by the same asset ids as the view. Needs spatial:read plus the
+    permission of each requested overlay (power:read / cable:read / telemetry:read); a kind the caller may not read
+    is a 403, not a silent omission. spatial:read is not site-scope-aware, so a site-restricted user holds no
+    effective spatial:read and cannot reach this endpoint at all (fail closed)."""
+    if not ctx.has_permission("spatial:read"):
+        raise ForbiddenError("Missing required permission: spatial:read")
+    requested = [k.strip() for k in kinds.split(",") if k.strip()]
+    unknown = [k for k in requested if k not in OVERLAY_KINDS]
+    if unknown or not requested:
+        raise ApiError(status_code=422, title="Validation Error", detail=f"kinds must be a subset of {sorted(OVERLAY_KINDS)}.")
+    for kind in requested:
+        permission = OVERLAY_KINDS[kind][0]
+        if not ctx.has_permission(permission):
+            raise ForbiddenError(f"Missing required permission for the {kind} overlay: {permission}")
+    if await db.get(Room, room_id) is None:
+        raise NotFoundError(f"Room {room_id} not found.")
+    assets = await spatial_overlays.load_room_assets(db, room_id)
+    overlays = {kind: await OVERLAY_KINDS[kind][1](db, assets) for kind in dict.fromkeys(requested)}
+    return RoomOverlaysOut(room_id=room_id, generated_at=datetime.now(UTC), overlays=overlays)
