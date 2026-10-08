@@ -16,6 +16,7 @@ from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
 from app.application.idempotency import (
+    ClaimRef,
     IdempotencyConflict,
     IdempotencyStillProcessing,
     complete_claim,
@@ -97,7 +98,7 @@ async def create_managed_asset(
     # Captured now, before any rollback can expire `claim`'s attributes — accessing an
     # expired ORM attribute triggers an implicit lazy-load, which cannot run outside an
     # awaited context and would raise MissingGreenlet inside the except block below.
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         asset = ManagedAsset(asset_type=body.asset_type, asset_tag=body.asset_tag, serial_number=body.serial_number)
@@ -132,8 +133,8 @@ async def create_managed_asset(
         return out
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 

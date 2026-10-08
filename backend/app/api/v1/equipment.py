@@ -34,6 +34,7 @@ from app.application.equipment_instantiation_service import (
     list_port_connections,
 )
 from app.application.idempotency import (
+    ClaimRef,
     IdempotencyConflict,
     IdempotencyStillProcessing,
     complete_claim,
@@ -198,7 +199,7 @@ async def create_equipment(
             assert outcome.cached.response_body is not None
             return EquipmentOut(**outcome.cached.response_body)
         claim = outcome.claim
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         if await db.get(EquipmentModelRevision, body.model_revision_id) is None:
@@ -232,8 +233,8 @@ async def create_equipment(
         return out
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 
@@ -590,7 +591,7 @@ async def instantiate_equipment_endpoint(
             assert outcome.cached.response_body is not None
             return EquipmentInstantiateOut(**outcome.cached.response_body)
         claim = outcome.claim
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         if body.placement_type == "rack_mounted":
@@ -653,8 +654,8 @@ async def instantiate_equipment_endpoint(
         current = exc.current
         current_version = current.version if current is not None else None
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         detail = (
             f"Requested placement conflicts with existing equipment; current version={current_version}."
             if current is not None
@@ -663,8 +664,8 @@ async def instantiate_equipment_endpoint(
         raise ConflictError(detail=detail) from exc
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 
