@@ -153,3 +153,69 @@ async def assert_link_allowed(
 class DeviceView:
     power_node_id: uuid.UUID
     rated_kw: float
+
+
+async def inlet_path_status(
+    db: AsyncSession, inlet_node_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[bool, list[str]]]:
+    """For each inlet node: (has a live path to a source, labels of interrupting devices found upstream).
+
+    Read-only and bounded. A device is interrupting when it is open or tripped, or out of service. An
+    `unknown` state is not interrupting. Retired nodes and non-active connections cut a path. A path is
+    live when the walk reaches a source-type node (utility, generator, UPS, panel, PDU) that is not
+    itself interrupting."""
+    from app.application.power_graph import MAX_TRAVERSAL_NODES
+    from app.application.power_rollup import ROOT_TYPES
+    from app.domain.power.models import PowerConnection
+
+    result: dict[uuid.UUID, tuple[bool, list[str]]] = {}
+    for inlet_id in inlet_node_ids:
+        seen = {inlet_id}
+        frontier = {inlet_id}
+        live = False
+        blockers: set[str] = set()
+        while frontier and len(seen) <= MAX_TRAVERSAL_NODES:
+            edges = (
+                await db.execute(
+                    select(PowerConnection.source_node_id, PowerConnection.target_node_id).where(
+                        PowerConnection.effective_to.is_(None), PowerConnection.status == "active",
+                        PowerConnection.target_node_id.in_(frontier),
+                    )
+                )
+            ).all()
+            parent_ids = {s for s, _ in edges} - seen
+            nodes = {
+                n.id: n
+                for n in (
+                    await db.execute(select(PowerNode).where(PowerNode.id.in_(frontier | parent_ids)))
+                ).scalars()
+            }
+            devices = {
+                d.power_node_id: d
+                for d in (
+                    await db.execute(select(ProtectionDevice).where(ProtectionDevice.power_node_id.in_(frontier | parent_ids)))
+                ).scalars()
+            }
+            has_parent = {t for _, t in edges}
+            next_frontier: set[uuid.UUID] = set()
+            for nid in frontier:
+                node = nodes.get(nid)
+                dev = devices.get(nid)
+                if node is None or node.retired_at is not None:
+                    continue
+                if dev is not None and (dev.state in ("open", "tripped") or dev.status == "out_of_service"):
+                    blockers.add(node.label)
+                    continue
+                if nid not in has_parent:
+                    if node.node_type in ROOT_TYPES:
+                        live = True
+                    continue
+            for s, t in edges:
+                if t in frontier and s not in seen:
+                    next_frontier.add(s)
+            seen |= next_frontier
+            frontier = next_frontier
+            if live:
+                break
+        result[inlet_id] = (live, sorted(blockers))
+    return result
