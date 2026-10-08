@@ -313,6 +313,15 @@ OVERLAY_KINDS = {
 }
 
 
+def _overlay_permitted(ctx: AuthContext, kind: str) -> bool:
+    # Literal codes keep the static permission allow-list check able to see them.
+    if kind == "power":
+        return ctx.has_permission("power:read")
+    if kind == "network":
+        return ctx.has_permission("cable:read")
+    return ctx.has_permission("telemetry:read")
+
+
 class RoomOverlaysOut(BaseModel):
     room_id: uuid.UUID
     generated_at: datetime
@@ -337,9 +346,8 @@ async def get_room_overlays(
     if unknown or not requested:
         raise ApiError(status_code=422, title="Validation Error", detail=f"kinds must be a subset of {sorted(OVERLAY_KINDS)}.")
     for kind in requested:
-        permission = OVERLAY_KINDS[kind][0]
-        if not ctx.has_permission(permission):
-            raise ForbiddenError(f"Missing required permission for the {kind} overlay: {permission}")
+        if not _overlay_permitted(ctx, kind):
+            raise ForbiddenError(f"Missing required permission for the {kind} overlay: {OVERLAY_KINDS[kind][0]}")
     if await db.get(Room, room_id) is None:
         raise NotFoundError(f"Room {room_id} not found.")
     assets = await spatial_overlays.load_room_assets(db, room_id)
