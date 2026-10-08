@@ -29,6 +29,7 @@ import { TracePage } from "@/features/network/TracePage";
 import { InfrastructurePage } from "@/features/locations/InfrastructurePage";
 import { SiteDetailPage } from "@/features/locations/SiteDetailPage";
 import { ManagedAssetsPage } from "@/features/managed-assets/ManagedAssetsPage";
+import { PowerAnalyticsPage } from "@/features/power/PowerAnalyticsPage";
 import { PowerTopologyPage } from "@/features/power/PowerTopologyPage";
 import { RackDetailPage } from "@/features/racks/RackDetailPage";
 import { RacksPage } from "@/features/racks/RacksPage";
@@ -60,6 +61,7 @@ export function App() {
               <Route path="/floor-plans/3d-layout" element={<Layout3DPage />} />
               <Route path="/events" element={<EventsPage />} />
               <Route path="/power" element={<PowerTopologyPage />} />
+              <Route path="/power/analytics" element={<PowerAnalyticsPage />} />
               <Route path="/collectors" element={<CollectorsPage />} />
               <Route path="/integrations" element={<IntegrationsPage />} />
               <Route path="/discovery" element={<DiscoveryPage />} />

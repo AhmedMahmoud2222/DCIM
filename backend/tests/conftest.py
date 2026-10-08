@@ -46,6 +46,8 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 # managed_asset/room automatically. Only the catalog tables (no FK back to either) need
 # to be listed explicitly.
 _APP_TRUNCATE_TABLES = [
+    "power_report_job",
+    "power_utilization_snapshot",
     "idempotency_key",
     "outbox_event",
     # Bulk-import pipeline (app/domain/bulk_import/models.py) — no FK back to

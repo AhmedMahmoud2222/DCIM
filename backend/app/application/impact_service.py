@@ -28,6 +28,7 @@ from app.application.power_graph import (
     GraphTraversalBounded,
     get_downstream_node_ids,
 )
+from app.application.power_protection import inlet_path_status
 from app.domain.identity.models import ManagedAsset
 from app.domain.physical.models import Equipment
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection
@@ -139,7 +140,13 @@ async def simulate_power_node_failure(db: AsyncSession, node_id: uuid.UUID) -> I
     lost_redundancy_paths: list[str] = []
     for equipment_id, impacted in impacted_by_equipment.items():
         equipment, asset = equipment_rows[equipment_id]
-        surviving = [i for i in all_inlets_by_equipment[equipment_id] if i.power_node_id not in candidate_ids]
+        surviving_all = [i for i in all_inlets_by_equipment[equipment_id] if i.power_node_id not in candidate_ids]
+        # A feed that an open, tripped or out-of-service protection device already cuts off does not keep
+        # the equipment running, so it is not a survivor. Without positive evidence of an interruption the
+        # feed still counts, which keeps the earlier behaviour for unmodeled paths.
+        path_status = await inlet_path_status(db, [i.power_node_id for i in surviving_all])
+        surviving = [i for i in surviving_all if not path_status[i.power_node_id][1]]
+        cut_off_by = sorted({b for i in surviving_all for b in path_status[i.power_node_id][1]})
         hop = 1 if any(i.power_node_id in direct_children for i in impacted) else 2
         label = equipment.hostname or asset.asset_tag
         impacted_labels = ", ".join(i.label for i in impacted)
@@ -149,6 +156,8 @@ async def simulate_power_node_failure(db: AsyncSession, node_id: uuid.UUID) -> I
             lost_redundancy_paths.append(message)
         else:
             message = f"{label} loses all modeled power feeds ({impacted_labels}) — full outage"
+            if surviving_all:
+                message += "; its other feed is already interrupted" + (f" by {', '.join(cut_off_by)}" if cut_off_by else "")
             impact_type = "power_loss"
         item = ImpactedEquipment(
             equipment_id=equipment_id, asset_tag=asset.asset_tag, hostname=equipment.hostname, service=equipment.service,

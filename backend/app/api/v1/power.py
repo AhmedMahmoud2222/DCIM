@@ -37,6 +37,7 @@ from app.application.power_graph import (
     lock_node_pair_in_canonical_order,
     with_connection_mutation_lock,
 )
+from app.application.power_protection import assert_link_allowed
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.core.logging import get_logger
@@ -411,6 +412,11 @@ async def create_power_connection(
             if source.retired_at is not None or target.retired_at is not None:
                 raise ApiError(status_code=422, title="Node Retired", detail="Cannot connect a retired PowerNode.")
 
+            await assert_link_allowed(
+                db, source=source, target=target, rated_current_a=body.rated_current_a, voltage=body.voltage,
+                phase=body.phase,
+            )
+
             # Retained beneath the advisory lock for its own same-pair deadlock-avoidance
             # guarantee (§13a); no longer the sole mechanism protecting cross-pair
             # cycles, since the advisory lock above already fully serializes this
@@ -525,6 +531,13 @@ async def update_power_connection(
         connection.rated_current_a = body.rated_current_a
     if body.status is not None:
         connection.status = body.status
+    src_node = await db.get(PowerNode, connection.source_node_id)
+    dst_node = await db.get(PowerNode, connection.target_node_id)
+    if src_node is not None and dst_node is not None:
+        await assert_link_allowed(
+            db, source=src_node, target=dst_node, rated_current_a=connection.rated_current_a,
+            voltage=connection.voltage, phase=connection.phase,
+        )
     connection.version += 1
     await db.flush()
 
