@@ -6,17 +6,24 @@ reading has been inserted in the same transaction.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
+from app.core.errors import ApiError
 from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.telemetry.models import TelemetryReading
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_value, validate_metric_unit
 
 
-def condition_matches(rule_type: str, threshold: float | None, value: float) -> bool:
+class AlarmUnitCompatibilityError(ApiError):
+    """An explicit 422 when telemetry cannot preserve an alarm threshold's units."""
+
+
+def condition_matches(rule_type: str, threshold: Decimal | float | None, value: Decimal | float) -> bool:
     if rule_type == "threshold_high":
         if threshold is None:
             raise ValueError("threshold rule lacks a threshold")
@@ -32,6 +39,30 @@ def condition_matches(rule_type: str, threshold: float | None, value: float) -> 
 
 def subject_for(reading: TelemetryReading) -> str:
     return f"{reading.integration_id}:{reading.external_identifier}:{reading.metric}"
+
+
+def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal, str, str | None]:
+    """Compare stored readings in the fixed threshold unit, without scaling again.
+
+    Migration pins only unambiguous legacy units. Unresolved units must be decided
+    explicitly; current raw source units cannot establish an old threshold's unit.
+    """
+    if rule.metric != reading.metric:
+        raise ValueError("Alarm rule and reading metrics differ.")
+    if rule.registry_version is not None and rule.unit is None:
+        raise ValueError("Versioned alarm rule lacks an explicit threshold unit.")
+    if rule.unit is not None:
+        # Validate both dimensions and registry versions before comparing. A legacy
+        # explicit unit uses the active physical contract; its threshold is unchanged.
+        version = rule.registry_version if rule.registry_version is not None else REGISTRY_VERSION
+        validate_metric_unit(rule.metric, rule.unit, registry_version=version)
+        validate_metric_unit(rule.metric, reading.unit, registry_version=version)
+        if reading.registry_version is not None:
+            validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
+        return convert_value(Decimal(str(reading.value)), reading.unit, rule.unit), rule.unit, rule.registry_version
+    raise AlarmUnitCompatibilityError(status_code=422, title="Unresolved legacy alarm unit",
+                   detail=f"Alarm rule {rule.id} requires an explicit threshold unit before evaluation.")
+
 
 
 async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
@@ -62,9 +93,19 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        matches = condition_matches(
-            rule.rule_type, float(rule.threshold) if rule.threshold is not None else None, float(reading.value)
-        )
+        try:
+            comparison_value, comparison_unit, comparison_version = comparison_for(rule, reading)
+        except ValueError as error:
+            raise AlarmUnitCompatibilityError(status_code=422, title="Incompatible alarm telemetry units",
+                           detail=f"Alarm rule {rule.id} cannot evaluate this metric/unit/registry combination.") from error
+        matches = condition_matches(rule.rule_type, rule.threshold, comparison_value)
+        comparison_details = {
+            "metric": reading.metric,
+            "unit": comparison_unit,
+            "registry_version": comparison_version,
+            "condition_occurred_at": reading.occurred_at.isoformat(),
+            "central_received_at": reading.received_at.isoformat(),
+        }
         # Collector delivery is at-least-once and may be out of occurrence order.
         # Never let an older reading overwrite a lifecycle decision made from a
         # newer observation.  The original occurred_at remains the operational
@@ -98,25 +139,22 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 subject_key=subject_key,
                 status="ACTIVE",
                 opened_at=reading.occurred_at,
-                last_value=reading.value,
-                details={
-                    "metric": reading.metric,
-                    "unit": reading.unit,
-                    "condition_occurred_at": reading.occurred_at.isoformat(),
-                    "central_received_at": reading.received_at.isoformat(),
-                },
+                last_value=comparison_value,
+                details=comparison_details,
             )
             db.add(alarm)
             await db.flush()
             await _record_transition(db, alarm, "alarm.open", "AlarmOpened")
         elif matches and open_alarm is not None:
             open_alarm.telemetry_reading_id = reading.id
-            open_alarm.last_value = reading.value
+            open_alarm.last_value = comparison_value
+            open_alarm.details = comparison_details
         elif not matches and open_alarm is not None:
             open_alarm.status = "CLEARED"
             open_alarm.cleared_at = reading.occurred_at
             open_alarm.telemetry_reading_id = reading.id
-            open_alarm.last_value = reading.value
+            open_alarm.last_value = comparison_value
+            open_alarm.details = comparison_details
             await _record_transition(db, open_alarm, "alarm.clear", "AlarmCleared")
 
 

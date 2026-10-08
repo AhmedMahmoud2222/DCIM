@@ -16,13 +16,14 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.application.catalog_documents.malware_scan import MalwareScanner, ScanOutcome, scan_with_policy
 from app.application.catalog_documents.pdf_validation import validate_pdf_isolated
 from app.core.config import Settings
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.core.logging import get_logger
+from app.domain.catalog.application_models import CatalogExtractionApplication
 from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision
 from app.domain.catalog.document_models import CatalogDocument, CatalogRevisionDocument
 from app.infrastructure.storage import StorageBackend
@@ -243,11 +244,19 @@ def _purge_expired_rows(
       and rewrites it."""
     cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
     linked = exists().where(CatalogRevisionDocument.catalog_document_id == CatalogDocument.id)
+    applied = exists().where(CatalogExtractionApplication.document_id == CatalogDocument.id)
+    # A predecessor is judged against the rows that exist when the candidates are selected, in this one statement. If it
+    # were judged per row inside the loop below, whether it is purged in this pass would depend on whether its successor
+    # happened to be processed (and deleted) first, i.e. on the physical row order of equal timestamps. A version
+    # becomes eligible on the pass after its successor is gone.
+    successor = aliased(CatalogDocument)
+    superseded = exists().where(successor.supersedes_document_id == CatalogDocument.id)
     candidates = list(
         db.execute(
             select(CatalogDocument)
-            .where(CatalogDocument.uploaded_at < cutoff, ~linked)
-            .order_by(CatalogDocument.uploaded_at)
+            .where(CatalogDocument.uploaded_at < cutoff, ~linked, ~applied, ~superseded)
+            # Total order, so equal timestamps cannot change which rows a batch limit selects.
+            .order_by(CatalogDocument.uploaded_at, CatalogDocument.version_number, CatalogDocument.id)
             .limit(batch_size)
             .with_for_update(skip_locked=True)
         ).scalars()

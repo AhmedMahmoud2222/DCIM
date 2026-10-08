@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.application.svg_sanitizer import MAX_RASTER_FILE_SIZE_BYTES, MAX_SVG_FILE_SIZE_BYTES
-from app.core.errors import ApiError, NotFoundError
+from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.floorplan_import.models import FloorPlanImportCandidate, FloorPlanImportDiagnostics, FloorPlanImportJob
 from app.domain.location.models import Room
 from app.domain.spatial.models import OBJECT_TYPES, FloorPlan, SpatialLayer, SpatialObject
@@ -127,16 +127,34 @@ async def activate_floor_plan(
     """§8: "exactly one ACTIVE FloorPlan at a time; prior ones retained, status=superseded".
     The partial unique index (migration 0004) is the hard guarantee; this supersedes
     whatever was previously active for the room in the same transaction."""
-    floor_plan = await db.get(FloorPlan, floor_plan_id)
-    if floor_plan is None:
+    # Concurrency: the invariant spans rows (one active plan per room), so a lock on the
+    # plan alone is not enough: two *different* plans of one room would each lock only
+    # themselves. Serialize per room instead (FOR NO KEY UPDATE on the Room row, which
+    # does not block FK checks from inserting plans), then lock the plan and compare
+    # If-Match against its post-lock version. The partial unique index remains as defense
+    # in depth; the controlled 409s below mean it should never be what rejects a request.
+    candidate = await db.get(FloorPlan, floor_plan_id)
+    if candidate is None:
         raise NotFoundError(f"FloorPlan {floor_plan_id} not found.")
-    check_version_match(expected=if_match_version, actual=floor_plan.version)
-
-    previously_active = (
+    observed_active_id = (
         await db.execute(
-            select(FloorPlan).where(FloorPlan.room_id == floor_plan.room_id, FloorPlan.status == "active")
+            select(FloorPlan.id).where(FloorPlan.room_id == candidate.room_id, FloorPlan.status == "active")
         )
     ).scalar_one_or_none()
+    await db.execute(select(Room.id).where(Room.id == candidate.room_id).with_for_update(key_share=True))
+    floor_plan = await lock_versioned_row(db, FloorPlan, floor_plan_id, expected_version=if_match_version)
+    previously_active = (
+        await db.execute(
+            select(FloorPlan)
+            .where(FloorPlan.room_id == floor_plan.room_id, FloorPlan.status == "active")
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if (previously_active.id if previously_active is not None else None) != observed_active_id:
+        # The room's active plan changed while this request waited for the room lock: the
+        # caller decided against state that is no longer current.
+        raise ConflictError(detail="This room's active floor plan was changed by another request; reload and retry.")
     if previously_active is not None and previously_active.id != floor_plan.id:
         previously_active.status = "superseded"
         previously_active.version += 1
