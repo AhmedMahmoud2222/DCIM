@@ -288,7 +288,7 @@ async def upload_floor_plan_file(
     db: AsyncSession = Depends(get_db),
     file: UploadFile = File(...),
     ctx=Depends(require_permission("floor_plan:import")),
-) -> FloorPlanImportJob:
+) -> FloorPlanImportJob | ImportJobOut:
     """Untrusted input (§10a) — never trusted by extension; content is sniffed and size-capped before
     anything parses it, and a declared extension/Content-Type that names a *different* known spatial format
     than the content is rejected. SVG, PNG and JPEG are handled as before; DXF and VSDX are parsed only in the
@@ -317,8 +317,7 @@ async def upload_floor_plan_file(
 
     existing = await _existing_live_job(db, floor_plan_id, file_hash)
     if existing is not None:
-        existing.deduplicated = True
-        return existing
+        return ImportJobOut.model_validate(existing).model_copy(update={"deduplicated": True})
 
     job = FloorPlanImportJob(
         floor_plan_id=floor_plan_id, uploaded_by_user_id=ctx.user.id, status="queued",
@@ -334,8 +333,7 @@ async def upload_floor_plan_file(
         existing = await _existing_live_job(db, floor_plan_id, file_hash)
         if existing is None:
             raise
-        existing.deduplicated = True
-        return existing
+        return ImportJobOut.model_validate(existing).model_copy(update={"deduplicated": True})
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
@@ -1022,7 +1020,8 @@ async def accept_import_candidate(
     validate_coordinate("x_mm", canonical["x_mm"])
     validate_coordinate("y_mm", canonical["y_mm"])
 
-    matched_id = body.matched_asset_id or (uuid.UUID(candidate.correction["matched_asset_id"]) if (candidate.correction or {}).get("matched_asset_id") else None)
+    staged_match = (candidate.correction or {}).get("matched_asset_id")
+    matched_id = body.matched_asset_id or (uuid.UUID(staged_match) if staged_match else None)
     if (matched_id or body.link_placement or body.apply_position) and object_type not in ("rack", "equipment"):
         raise ApiError(status_code=422, title="Validation Error", detail="Only rack and equipment candidates can be matched to an authoritative asset.")
     if (body.link_placement or body.apply_position) and matched_id is None:

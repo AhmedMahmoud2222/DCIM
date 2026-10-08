@@ -198,7 +198,8 @@ async def reconcile_job(
         )
     ).all()
     for source_ref, object_id in accepted_rows:
-        seen_refs[source_ref] = str(object_id)
+        if source_ref is not None:
+            seen_refs[source_ref] = str(object_id)
 
     results: dict[str, MatchResult] = {}
     touched: dict[str, FloorPlanImportCandidate] = {}
