@@ -52,6 +52,16 @@ celery_app.conf.update(
             "schedule": 86400.0,
             "options": {"queue": "maintenance"},
         },
+        "snapshot-power-utilization": {
+            "task": "app.infrastructure.tasks.power_analytics.snapshot_power_utilization",
+            "schedule": 3600.0,
+            "options": {"queue": "maintenance"},
+        },
+        "requeue-stuck-power-report-jobs": {
+            "task": "app.infrastructure.tasks.power_analytics.requeue_stuck_power_reports",
+            "schedule": 300.0,
+            "options": {"queue": "maintenance"},
+        },
         "requeue-stuck-catalog-extraction-jobs": {
             "task": "app.infrastructure.tasks.catalog_extraction.requeue_stuck_catalog_extraction_jobs",
             "schedule": 60.0,
@@ -77,6 +87,7 @@ celery_app.conf.imports = (
     "app.infrastructure.tasks.floorplan_import",
     "app.infrastructure.tasks.bulk_import",
     "app.infrastructure.tasks.catalog_extraction",
+    "app.infrastructure.tasks.power_analytics",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
 # does not fit this project's layout (multiple task modules directly under
@@ -99,3 +110,4 @@ import app.infrastructure.tasks.catalog_extraction  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
 import app.infrastructure.tasks.maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401
+import app.infrastructure.tasks.power_analytics  # noqa: E402,F401

@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
 from app.domain.location.models import Building, Floor, Room
-from app.domain.physical.ports import EquipmentPowerInlet
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.power.models import (
     PDU,
@@ -74,11 +73,8 @@ async def resolve_node_site(db: AsyncSession, node: PowerNode) -> uuid.UUID | No
             room_id = (await db.execute(select(model.room_id).where(model.id == asset_id))).scalar_one_or_none()
             if room_id is not None:
                 return await _room_site(db, room_id)
-    if t == "equipment_power_input":
-        equipment_id = (
-            await db.execute(select(EquipmentPowerInlet.equipment_id).where(EquipmentPowerInlet.power_node_id == node.id))
-        ).scalar_one_or_none()
-        return await _placed_site(db, equipment_id) if equipment_id is not None else None
+    if t == "equipment_power_input" and node.owning_asset_id is not None:
+        return await _placed_site(db, node.owning_asset_id)
     if asset_id is not None and t in ("pdu", "pdu_outlet"):
         return await _placed_site(db, asset_id)
     return None
