@@ -57,6 +57,17 @@ from app.domain.network.cable_models import Cable, CableEndpoint  # noqa: F401
 from app.domain.network.discovery_models import DiscoveredNeighbor  # noqa: F401
 from app.domain.network.pass_through_models import PortPassThrough, PortPassThroughMember  # noqa: F401
 from app.domain.network.profile_models import DeviceProfile, ProfileMetricMapping, VendorProfile  # noqa: F401
+from app.domain.operations.models import (  # noqa: F401
+    CollectorState,
+    CollectorTransition,
+    CorrelationIncident,
+    CorrelationIncidentMember,
+    ItsmConnection,
+    ItsmTicket,
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationPolicy,
+)
 from app.domain.outbox.models import OutboxEvent  # noqa: F401
 from app.domain.physical.models import Equipment, Rack  # noqa: F401
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection  # noqa: F401

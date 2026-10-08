@@ -340,7 +340,7 @@ jobs:
         # service, run in the foreground-backgrounded style as the backend/frontend above.
         working-directory: backend
         run: |
-          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction,reports \
+          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction,reports,notifications \
             > "$GITHUB_WORKSPACE/celery-worker.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/celery-worker.pid"
 

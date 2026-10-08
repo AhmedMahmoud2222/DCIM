@@ -62,6 +62,16 @@ celery_app.conf.update(
             "schedule": 300.0,
             "options": {"queue": "maintenance"},
         },
+        "sweep-collector-health": {
+            "task": "app.infrastructure.tasks.notifications.sweep_collector_health",
+            "schedule": 60.0,
+            "options": {"queue": "maintenance"},
+        },
+        "redispatch-due-notifications": {
+            "task": "app.infrastructure.tasks.notifications.redispatch_due_notifications",
+            "schedule": 30.0,
+            "options": {"queue": "notifications"},
+        },
         "requeue-stuck-catalog-extraction-jobs": {
             "task": "app.infrastructure.tasks.catalog_extraction.requeue_stuck_catalog_extraction_jobs",
             "schedule": 60.0,
@@ -88,6 +98,7 @@ celery_app.conf.imports = (
     "app.infrastructure.tasks.bulk_import",
     "app.infrastructure.tasks.catalog_extraction",
     "app.infrastructure.tasks.power_analytics",
+    "app.infrastructure.tasks.notifications",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
 # does not fit this project's layout (multiple task modules directly under
@@ -109,5 +120,6 @@ import app.infrastructure.tasks.bulk_import  # noqa: E402,F401
 import app.infrastructure.tasks.catalog_extraction  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
 import app.infrastructure.tasks.maintenance  # noqa: E402,F401
+import app.infrastructure.tasks.notifications  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401
 import app.infrastructure.tasks.power_analytics  # noqa: E402,F401
