@@ -19,7 +19,17 @@ down_revision = "0042_power_protection_reports"
 branch_labels = None
 depends_on = None
 
-_TABLES = ("collector_state", "collector_transition", "correlation_incident", "correlation_member", "notification_channel", "notification_policy", "notification_delivery", "itsm_connection", "itsm_ticket",)
+_TABLES = (  # dependants first
+    "itsm_ticket",
+    "itsm_connection",
+    "notification_delivery",
+    "notification_policy",
+    "notification_channel",
+    "correlation_member",
+    "correlation_incident",
+    "collector_transition",
+    "collector_state",
+)
 
 
 def upgrade() -> None:

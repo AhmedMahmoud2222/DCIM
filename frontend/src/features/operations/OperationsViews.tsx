@@ -145,7 +145,17 @@ function IncidentPanel({ id }: { id: string }) {
   const qc = useQueryClient();
   const canAlarm = useHasPermission("alarm:manage");
   const canIntegrate = useHasPermission("integration:manage");
-  const q = useQuery({ queryKey: ["ops", "incident", id], queryFn: () => getIncident(id) });
+  const q = useQuery({
+    queryKey: ["ops", "incident", id],
+    queryFn: () => getIncident(id),
+    staleTime: 0,
+    // Delivery and ticket sync run in the background, so keep refreshing while any of them is unfinished.
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      const open = (s: string) => ["pending", "sending", "retry", "syncing"].includes(s);
+      return d && (d.notifications.some((n) => open(n.status)) || d.tickets.some((t) => open(t.status))) ? 3000 : false;
+    },
+  });
   const connections = useQuery({ queryKey: ["ops", "itsm"], queryFn: listItsmConnections });
   const [connectionId, setConnectionId] = useState("");
   const refresh = () => qc.invalidateQueries({ queryKey: ["ops"] });
