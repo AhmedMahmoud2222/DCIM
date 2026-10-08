@@ -255,6 +255,11 @@ jobs:
       # stays covered by API tests with the controllable scanner; production requires it.
       CATALOG_PDF_SCAN_MODE: "off"
       E2E_ADMIN_PASSWORD: E2ePassw0rd!
+      # Issue #103: the notification/ITSM E2E talks to a local mock provider on loopback. Production keeps
+      # the deny-by-default outbound policy (https only, empty allowlist, no loopback).
+      OUTBOUND_ALLOW_HTTP: "true"
+      OUTBOUND_ALLOW_LOOPBACK: "true"
+      OUTBOUND_ALLOWED_PORTS: "[18089]"
       BACKEND_URL: http://127.0.0.1:8000
       BASE_URL: http://127.0.0.1:5173
       PYTHONPATH: ${{ github.workspace }}
@@ -340,7 +345,7 @@ jobs:
         # service, run in the foreground-backgrounded style as the backend/frontend above.
         working-directory: backend
         run: |
-          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction,reports \
+          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction,reports,notifications \
             > "$GITHUB_WORKSPACE/celery-worker.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/celery-worker.pid"
 

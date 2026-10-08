@@ -46,6 +46,15 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 # managed_asset/room automatically. Only the catalog tables (no FK back to either) need
 # to be listed explicitly.
 _APP_TRUNCATE_TABLES = [
+    "itsm_ticket",
+    "itsm_connection",
+    "notification_delivery",
+    "notification_policy",
+    "notification_channel",
+    "correlation_member",
+    "correlation_incident",
+    "collector_transition",
+    "collector_state",
     "power_report_job",
     "power_utilization_snapshot",
     "idempotency_key",

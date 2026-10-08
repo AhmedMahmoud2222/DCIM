@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     # deployment's configuration. Lets a REST integration target 127.0.0.1/::1.
     rest_integration_allow_loopback: bool = False
 
+    # Issue #103: outbound notification webhooks and ITSM calls share one deny-by-default policy. The
+    # allowlist is empty by default, so no provider is reachable until an operator names its network.
+    # HTTPS only unless outbound_allow_http is set (development and tests); redirects are never followed
+    # and ambient proxy variables are ignored (see app/application/outbound_http.py).
+    outbound_allowed_networks: list[str] = Field(default_factory=list)
+    outbound_allowed_ports: list[int] = Field(default_factory=lambda: [443])
+    outbound_allow_http: bool = False
+    outbound_allow_loopback: bool = False
+    outbound_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    outbound_max_response_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
+
     # MVP monitoring-policy defaults. Retention is a controlled job, never an
     # immediate destructive side effect of changing configuration.
     default_poll_interval_seconds: int = 300
