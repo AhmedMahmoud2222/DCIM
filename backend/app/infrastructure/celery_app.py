@@ -67,8 +67,18 @@ celery_app.conf.update(
             "schedule": 60.0,
             "options": {"queue": "maintenance"},
         },
+        "correlate-events": {
+            "task": "app.infrastructure.tasks.notifications.correlate_events",
+            "schedule": 60.0,
+            "options": {"queue": "maintenance"},
+        },
         "redispatch-due-notifications": {
             "task": "app.infrastructure.tasks.notifications.redispatch_due_notifications",
+            "schedule": 30.0,
+            "options": {"queue": "notifications"},
+        },
+        "redispatch-due-itsm-tickets": {
+            "task": "app.infrastructure.tasks.itsm.redispatch_due_tickets",
             "schedule": 30.0,
             "options": {"queue": "notifications"},
         },
@@ -99,6 +109,7 @@ celery_app.conf.imports = (
     "app.infrastructure.tasks.catalog_extraction",
     "app.infrastructure.tasks.power_analytics",
     "app.infrastructure.tasks.notifications",
+    "app.infrastructure.tasks.itsm",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
 # does not fit this project's layout (multiple task modules directly under
@@ -119,6 +130,7 @@ import app.infrastructure.tasks.audit_partition_maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.bulk_import  # noqa: E402,F401
 import app.infrastructure.tasks.catalog_extraction  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
+import app.infrastructure.tasks.itsm  # noqa: E402,F401
 import app.infrastructure.tasks.maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.notifications  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401

@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from app.application import collector_health_sweep, notification_service
+from app.application import collector_health_sweep, correlation_service, itsm_service, notification_service
 from app.core.logging import get_logger
 from app.infrastructure.celery_app import celery_app
 from app.infrastructure.tasks.async_runner import run_with_session
@@ -49,6 +49,21 @@ def sweep_collector_health() -> int:
         results = await collector_health_sweep.sweep_collector_states(db)
         count["n"] = len(results)
         notification_service.dispatch_pending(db)
+
+    run_with_session(_body)
+    return count["n"]
+
+
+@celery_app.task(name="app.infrastructure.tasks.notifications.correlate_events")
+def correlate_events() -> int:
+    """Scheduled correlation over committed alarms and transitions; queues notifications and tickets."""
+    count = {"n": 0}
+
+    async def _body(db) -> None:
+        summary = await correlation_service.correlate(db)
+        count["n"] = len(summary.created) + len(summary.extended)
+        notification_service.dispatch_pending(db)
+        itsm_service.dispatch_pending_tickets(db)
 
     run_with_session(_body)
     return count["n"]
