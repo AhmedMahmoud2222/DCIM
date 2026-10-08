@@ -8,6 +8,7 @@ from the MVP `TelemetryReading` pipeline above)."""
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -23,6 +24,8 @@ from app.domain.telemetry.mapping_models import (
     TelemetryLatestStatus,
 )
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading, telemetry_series_key
+from app.domain.telemetry.numeric import InvalidTelemetryValue, ensure_storable
+from app.domain.telemetry.registry import convert_to_canonical
 
 
 class MetricMappingNotFound(ValueError):
@@ -57,6 +60,27 @@ async def ingest_reading(
     ).scalar_one_or_none()
     if mapping is None:
         raise MetricMappingNotFound("No metric mapping exists for this integration source identifier.")
+    # Explicit numeric boundary: every persisted quantity is checked against NUMERIC(18, 8)
+    # here, so PostgreSQL overflow is never the validation mechanism.
+    raw_value = ensure_storable(Decimal(str(value)), "source value")
+    source_scale = Decimal(str(mapping.scale))
+    if mapping.registry_version is None:
+        # Rows/mappings created before the registry retain their historic meaning.
+        stored_value = ensure_storable(raw_value * source_scale, "scaled value")
+        stored_unit = mapping.unit
+        registry_version = None
+    else:
+        ensure_storable(raw_value * source_scale, "scaled value")
+        try:
+            canonical = convert_to_canonical(
+                mapping.canonical_metric, raw_value, mapping.unit,
+                source_scale=source_scale, registry_version=mapping.registry_version,
+            )
+        except InvalidOperation as error:
+            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
+        stored_value = ensure_storable(canonical.value, "canonical value")
+        stored_unit = canonical.unit
+        registry_version = canonical.registry_version
     received_at = datetime.now(UTC)
     statement = (
         insert(TelemetryReading)
@@ -68,12 +92,17 @@ async def ingest_reading(
             managed_asset_id=mapping.managed_asset_id,
             external_identifier=external_identifier,
             series_key=telemetry_series_key(
-                integration_id, mapping.managed_asset_id, external_identifier, mapping.canonical_metric, mapping.unit
+                integration_id, mapping.managed_asset_id, external_identifier, mapping.canonical_metric, stored_unit,
+                registry_version,
             ),
             dedup_key=dedup_key,
             metric=mapping.canonical_metric,
-            unit=mapping.unit,
-            value=value * float(mapping.scale),
+            unit=stored_unit,
+            value=stored_value,
+            raw_value=raw_value,
+            raw_unit=mapping.unit,
+            source_scale=source_scale,
+            registry_version=registry_version,
             occurred_at=occurred_at,
             received_at=received_at,
             attributes=attributes or {},

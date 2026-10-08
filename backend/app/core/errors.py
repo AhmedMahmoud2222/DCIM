@@ -95,6 +95,18 @@ def _problem(
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    from app.application.idempotency import IdempotencyClaimLost
+
+    @app.exception_handler(IdempotencyClaimLost)
+    async def _idempotency_claim_lost_handler(request: Request, exc: IdempotencyClaimLost) -> JSONResponse:
+        # The claim was reclaimed while this (slow) request was running; its transaction was
+        # rolled back and the replacement owner performs the write. Retrying replays it.
+        return _problem(
+            request, status_code=503, title="Request Superseded",
+            detail="This request was superseded by a retry of the same Idempotency-Key. Retry shortly.",
+            headers={"Retry-After": "1"},
+        )
+
     @app.exception_handler(ApiError)
     async def _api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         return _problem(
