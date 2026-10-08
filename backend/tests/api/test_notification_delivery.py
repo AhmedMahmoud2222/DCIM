@@ -243,7 +243,9 @@ async def test_real_transport_pins_validated_address_sets_host_and_never_follows
 
     r = await outbound_request("POST", "http://localhost/hook", content=b"{}", transport=httpx.MockTransport(handler))
     assert r.status_code == 302 and len(seen) == 1  # the redirect target was never requested
-    assert seen[0].url.host == "127.0.0.1" and seen[0].headers["host"] == "localhost"
+    # "localhost" resolves to ::1 on some hosts and 127.0.0.1 on others; either way the dialled address is the
+    # validated literal and the original name travels in the Host header.
+    assert seen[0].url.host in ("127.0.0.1", "::1") and seen[0].headers["host"] == "localhost"
 
 
 @pytest.mark.asyncio
