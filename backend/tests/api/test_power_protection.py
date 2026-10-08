@@ -170,7 +170,7 @@ async def test_permissions_and_unknown_ids(client, auth_headers):
     _, ups_asset = await make_ups(client, mgr, room_a)
     dev = (await client.post(f"{P}/protection-devices", json=device_body(ups_asset, site_a), headers=mgr)).json()
     viewer = await auth_headers("Viewer")
-    assert (await client.get(f"{P}/protection-devices/{dev['id']}", headers=viewer)).status_code in (200, 403)
+    assert (await client.get(f"{P}/protection-devices/{dev['id']}", headers=viewer)).status_code == 200
     w = await client.post(f"{P}/protection-devices", json=device_body(ups_asset, site_a), headers=viewer)
     assert w.status_code == 403
     s = await client.post(f"{P}/protection-devices/{dev['id']}/state", json={"state": "open"}, headers={**viewer, "If-Match": "1"})
