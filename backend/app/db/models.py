@@ -36,6 +36,14 @@ from app.domain.catalog.models import (  # noqa: F401
     RackModel,
     RackModelRevision,
 )
+from app.domain.cooling.models import (  # noqa: F401
+    ContainmentElement,
+    CoolingGroup,
+    CoolingUnit,
+    CoolingUnitZone,
+    EnvironmentalSensor,
+    ThermalZone,
+)
 from app.domain.floorplan_import.models import (  # noqa: F401
     FloorPlanImportCandidate,
     FloorPlanImportDiagnostics,

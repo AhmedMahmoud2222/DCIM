@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.power_capacity import equipment_power_summary
 from app.application.power_protection import inlet_path_status
+from app.application.thermal.environment import INVALID, MEASURED_FRESH, classify_reading
 from app.domain.alarm.models import Alarm
 from app.domain.integration.models import Integration
 from app.domain.network.cable_models import Cable, CableEndpoint
@@ -30,7 +31,6 @@ from app.domain.telemetry.models import TelemetryReading
 
 MAX_OVERLAY_ASSETS = 500
 ENVIRONMENT_METRICS = ("temperature_c", "humidity_percent")
-FRESH_POLL_MULTIPLE = 3
 _SEVERITY = {"critical": 3, "warning": 2, "normal": 1, "unavailable": 0}
 
 
@@ -216,16 +216,22 @@ async def environment_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str,
     ) if asset_ids else set()
     items: list[dict[str, Any]] = []
     for (asset_id, metric), (reading, interval) in latest.items():
-        age = (now - reading.occurred_at).total_seconds()
-        fresh = age <= max(interval, 1) * FRESH_POLL_MULTIPLE
+        # One freshness rule for every environmental view (app/application/thermal/environment.py).
+        freshness, age = classify_reading(reading.occurred_at, now, interval)
+        fresh = freshness == MEASURED_FRESH
+        quality = "invalid" if freshness == INVALID else ("measured" if fresh else "stale")
         items.append(
             {
                 "asset_id": str(asset_id), "asset_kind": "rack" if asset_id in assets.rack_ids else "equipment", "metric": metric,
                 "value": float(reading.value), "unit": reading.unit, "occurred_at": reading.occurred_at.isoformat(),
-                "age_seconds": int(age), "expected_poll_interval_seconds": interval,
-                "data_quality": "measured" if fresh else "stale",
+                "age_seconds": age, "expected_poll_interval_seconds": interval,
+                "data_quality": quality,
                 "state": "critical" if asset_id in alarmed else ("normal" if fresh else "warning"),
-                "reason": "Active alarm on this asset." if asset_id in alarmed else ("Fresh measured value." if fresh else "Reading is older than three poll intervals."),
+                "reason": "Active alarm on this asset." if asset_id in alarmed else (
+                    "Fresh measured value." if fresh else (
+                        "Reading timestamp is in the future." if freshness == INVALID else "Reading is older than three poll intervals."
+                    )
+                ),
             }
         )
     reported = {uuid.UUID(i["asset_id"]) for i in items}

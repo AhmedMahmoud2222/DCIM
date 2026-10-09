@@ -80,6 +80,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "network_profile:manage",
         "cable:read",
         "cable:manage",
+        "cooling:read",
+        "cooling:manage",
     ],
     "DCIM Manager": [
         "organization:read",
@@ -124,6 +126,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "network_profile:manage",
         "cable:read",
         "cable:manage",
+        "cooling:read",
+        "cooling:manage",
     ],
     "Engineer": [
         "organization:read",
@@ -158,6 +162,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "network_profile:read",
         "cable:read",
         "cable:manage",
+        "cooling:read",
+        "cooling:manage",
     ],
     "Operator": [
         "organization:read",
@@ -181,6 +187,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "catalog:read",
         "network_profile:read",
         "cable:read",
+        "cooling:read",
     ],
     "Viewer": [
         "organization:read",
@@ -201,6 +208,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         "catalog:read",
         "network_profile:read",
         "cable:read",
+        "cooling:read",
     ],
 }
 """Every role that can write a resource also explicitly holds read on it — permission

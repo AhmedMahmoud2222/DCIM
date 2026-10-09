@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -26,7 +27,7 @@ from app.application.idempotency import (
 )
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
-from app.core.errors import ApiError, NotFoundError
+from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.identity.models import ALLOWED_LIFECYCLE_TRANSITIONS, ASSET_TYPES, ManagedAsset
 
 router = APIRouter(prefix="/managed-assets", tags=["managed-assets"])
@@ -203,7 +204,14 @@ async def transition_lifecycle(
         # The existing column is TIMESTAMP WITHOUT TIME ZONE. Store naive UTC to
         # match that contract; asyncpg rejects an aware datetime for this column.
         asset.decommissioned_at = datetime.now(UTC).replace(tzinfo=None)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # Issue #105: the database refuses to retire a cooling unit that is still related to a thermal zone.
+        await db.rollback()
+        if "restrict_violation" in str(exc.orig) or "still related to thermal zones" in str(exc.orig):
+            raise ConflictError(detail="Cooling unit still has thermal-zone relationships; remove them first.") from exc
+        raise
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(

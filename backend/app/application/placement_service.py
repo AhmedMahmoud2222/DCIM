@@ -148,8 +148,14 @@ async def move_equipment(
     mounting_method: str | None = None,
     orientation: str | None = None,
     if_match_version: int | None = None,
+    x_mm: int | None = None,
+    y_mm: int | None = None,
+    position_calibration_id: uuid.UUID | None = None,
 ) -> EquipmentPlacement:
+    """`x_mm` / `y_mm` (Issue #105) carry a room-local position for assets such as environmental sensors and cooling
+    units that have no drawn SpatialObject; each close-then-open row keeps its own coordinates."""
     current = await get_current_equipment_placement(db, equipment_id)
+    next_version = 1
     if current is not None:
         locked = (
             await db.execute(
@@ -163,6 +169,8 @@ async def move_equipment(
         if if_match_version is not None and locked.version != if_match_version:
             raise PlacementConflict(current=locked)
         locked.effective_to = datetime.now(UTC)
+        # Monotonic per asset (same reasoning as move_rack): a restart at 1 would let a stale If-Match match the new row.
+        next_version = locked.version + 1
         await db.flush()
 
     u_range = Range(u_start, u_end, bounds="[)") if u_start is not None and u_end is not None else None
@@ -176,7 +184,10 @@ async def move_equipment(
         rotation_deg=rotation_deg,
         mounting_method=mounting_method,
         orientation=orientation,
-        version=1,
+        x_mm=x_mm,
+        y_mm=y_mm,
+        position_calibration_id=position_calibration_id,
+        version=next_version,
         effective_from=datetime.now(UTC),
         effective_to=None,
     )

@@ -36,6 +36,7 @@ from app.application.telemetry_service import (
     record_latest_status,
 )
 from app.core.errors import ApiError
+from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
@@ -160,6 +161,14 @@ async def create_metric_mapping(
         raise ApiError(status_code=422, title="Metric/unit mismatch", detail=str(exc)) from exc
     if body.managed_asset_id is not None and await db.get(ManagedAsset, body.managed_asset_id) is None:
         raise ApiError(status_code=422, title="Invalid managed asset", detail="managed_asset_id does not exist.")
+    if body.managed_asset_id is not None:
+        # Issue #105: an environmental sensor may only be mapped to the metrics its kind can measure.
+        sensor = await db.get(EnvironmentalSensor, body.managed_asset_id)
+        if sensor is not None and body.canonical_metric not in SENSOR_KIND_METRICS[sensor.sensor_kind]:
+            raise ApiError(
+                status_code=422, title="Metric not supported by sensor",
+                detail=f"A {sensor.sensor_kind} sensor can be mapped to {list(SENSOR_KIND_METRICS[sensor.sensor_kind])}.",
+            )
     mapping = IntegrationMetricMapping(id=uuid.uuid4(), registry_version=REGISTRY_VERSION, **body.model_dump())
     db.add(mapping)
     await db.flush()
