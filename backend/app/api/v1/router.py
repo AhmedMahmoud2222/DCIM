@@ -10,6 +10,7 @@ from app.api.v1 import (
     catalog_documents,
     catalog_extraction,
     collectors,
+    cooling,
     dashboard,
     discovery,
     equipment,
@@ -29,6 +30,7 @@ from app.api.v1 import (
     settings,
     spatial,
     telemetry,
+    thermal,
     users,
 )
 
@@ -49,6 +51,8 @@ api_router.include_router(racks.router)
 api_router.include_router(equipment.router)
 api_router.include_router(floor_plans.router)
 api_router.include_router(spatial.router)
+api_router.include_router(cooling.router)
+api_router.include_router(thermal.router)
 api_router.include_router(operations.router)
 api_router.include_router(power.router)
 api_router.include_router(power_protection.router)

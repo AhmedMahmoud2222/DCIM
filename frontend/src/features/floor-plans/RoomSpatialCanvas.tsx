@@ -1,10 +1,13 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import type { OverlayKind, RoomOverlays, RoomSpatialView, SpatialObject } from "@/types";
 import { STATE_COLORS, STATE_LABEL, STATE_SYMBOL, describeOverlay, overlayIndex } from "./overlayStyle";
 import { SceneChrome } from "./SceneChrome";
 import {
+  type BoundsMm,
   type Point,
+  type Viewport,
   explainIncomplete,
   fitViewport,
   formatLength,
@@ -44,12 +47,21 @@ export function RoomSpatialCanvas({
   overlays = null,
   showGrid = true,
   canvasWidthPx = DEFAULT_CANVAS_WIDTH_PX,
+  renderUnderlay,
+  renderLayers,
+  extraLegend,
 }: {
   view: RoomSpatialView;
   overlay?: OverlayKind | "none";
   overlays?: RoomOverlays | null;
   showGrid?: boolean;
   canvasWidthPx?: number;
+  /** Extra SVG drawn in the same calibrated millimetre space on top of racks and equipment (Issue #105 thermal layers).
+   * It receives the viewport so it shares the one scale; it never changes how racks or equipment are positioned. */
+  renderLayers?: (scene: { vp: Viewport; bounds: BoundsMm }) => ReactNode;
+  /** Same space, drawn beneath objects, racks and equipment (so it can never intercept their clicks). */
+  renderUnderlay?: (scene: { vp: Viewport; bounds: BoundsMm }) => ReactNode;
+  extraLegend?: ReactNode;
 }) {
   const { bounds, source } = sceneBounds(view);
   const states = overlayIndex(overlays, overlay);
@@ -108,6 +120,7 @@ export function RoomSpatialCanvas({
         className="max-w-full rounded-sm border border-slate-800 bg-slate-950"
       >
         <SceneChrome vp={vp} bounds={bounds} showGrid={showGrid} />
+        {renderUnderlay?.({ vp, bounds })}
 
         {view.objects.map((o) => {
           const style = OBJECT_STYLE[o.object_type] ?? OBJECT_STYLE.imported_shape;
@@ -203,8 +216,10 @@ export function RoomSpatialCanvas({
             </g>
           );
         })}
+        {renderLayers?.({ vp, bounds })}
       </svg>
 
+      {extraLegend}
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 bg-blue-700" /> Rack at catalog width × depth (white edge = front)

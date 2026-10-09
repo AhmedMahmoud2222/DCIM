@@ -14,6 +14,18 @@ from sqlalchemy import text
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0044_spatial_digital_twin.py"
 
 
+MIGRATION_0045 = Path(__file__).resolve().parents[2] / "migrations/versions/0045_cooling_thermal.py"
+
+
+def _run_0045_downgrade(connection):
+    """0045 (Issue #105) sits on top of 0044 and references floor_plan_calibration, so it must be undone first."""
+    spec = importlib.util.spec_from_file_location("cooling_thermal_migration_for_0044", MIGRATION_0045)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with Operations.context(MigrationContext.configure(connection)):
+        module.downgrade()
+
+
 def _run(connection, direction):
     spec = importlib.util.spec_from_file_location("spatial_digital_twin_migration", MIGRATION)
     module = importlib.util.module_from_spec(spec)
@@ -70,6 +82,7 @@ async def test_populated_upgrade_is_additive_enforces_invariants_and_refuses_des
                 await conn.execute(text("INSERT INTO app_user (id, email, full_name, password_hash, is_active) VALUES (:i, :e, 'M', 'x', true)"), {"i": user_id, "e": f"m-{user_id}@example.com"})
 
             # ---- current-main shape: downgrade the (empty, in this transaction) 0044 objects, then populate
+            await conn.run_sync(_run_0045_downgrade)  # empty here: nothing from Issue #105 exists in this transaction
             await conn.run_sync(_run, "downgrade")
             layer, obj, job, cand = (uuid.uuid4() for _ in range(4))
             await conn.execute(text("INSERT INTO floor_plan (id, room_id, revision_number, status, version) VALUES (:i, :r, 1, 'draft', 1)"), {"i": legacy_plan, "r": room})
@@ -133,5 +146,6 @@ async def test_single_alembic_head_and_one_migration_after_0043():
     config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "migrations"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0044_spatial_digital_twin"]
+    assert len(script.get_heads()) == 1  # still a single head; 0045 (Issue #105) now sits on top of 0044
+    assert script.get_revision("0045_cooling_thermal").down_revision == "0044_spatial_digital_twin"
     assert script.get_revision("0044_spatial_digital_twin").down_revision == "0043_ops_correlation_itsm"

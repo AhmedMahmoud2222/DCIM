@@ -29,6 +29,42 @@ REFUSED_FOR_EVERYONE = {("POST", "/api/v1/auth/refresh"), ("POST", "/api/v1/auth
 #   the reviewed site-aware modules (isolation proven in the object matrix), global reference catalogs,
 #   HMAC-authenticated collector endpoints (a separate trust boundary), and import jobs (per-object, see PR #68).
 REVIEWED_REACHABLE = {
+    # Issue #105 (reviewed): every cooling / thermal route is scope-filtered in its handler -- configuration needs the whole site,
+    # sensors use the equipment visibility clause, thermal views filter sensors before interpolation. See test_thermal_scope.py.
+    ("DELETE", "/api/v1/cooling/relations/{relation_id}"),
+    ("DELETE", "/api/v1/cooling/sensors/{sensor_id}/placement"),
+    ("DELETE", "/api/v1/cooling/units/{unit_id}/placement"),
+    ("DELETE", "/api/v1/cooling/zones/{zone_id}/containment-elements/{element_id}"),
+    ("GET", "/api/v1/cooling/groups"),
+    ("GET", "/api/v1/cooling/groups/{group_id}"),
+    ("GET", "/api/v1/cooling/relations"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/airflow"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/capacity"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/environment"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/exceptions"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/heat-map"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/layout"),
+    ("GET", "/api/v1/cooling/sensors"),
+    ("GET", "/api/v1/cooling/sensors/{sensor_id}"),
+    ("GET", "/api/v1/cooling/units"),
+    ("GET", "/api/v1/cooling/units/{unit_id}"),
+    ("GET", "/api/v1/cooling/zones"),
+    ("GET", "/api/v1/cooling/zones/{zone_id}"),
+    ("PATCH", "/api/v1/cooling/groups/{group_id}"),
+    ("PATCH", "/api/v1/cooling/sensors/{sensor_id}"),
+    ("PATCH", "/api/v1/cooling/units/{unit_id}"),
+    ("PATCH", "/api/v1/cooling/zones/{zone_id}"),
+    ("POST", "/api/v1/cooling/groups"),
+    ("POST", "/api/v1/cooling/groups/{group_id}/retire"),
+    ("POST", "/api/v1/cooling/relations"),
+    ("POST", "/api/v1/cooling/sensors"),
+    ("POST", "/api/v1/cooling/units"),
+    ("POST", "/api/v1/cooling/units/{unit_id}/retire"),
+    ("POST", "/api/v1/cooling/zones"),
+    ("POST", "/api/v1/cooling/zones/{zone_id}/containment-elements"),
+    ("POST", "/api/v1/cooling/zones/{zone_id}/retire"),
+    ("PUT", "/api/v1/cooling/sensors/{sensor_id}/placement"),
+    ("PUT", "/api/v1/cooling/units/{unit_id}/placement"),
     # Issue #101: both-endpoint mutation checks and masked reads; test_cables_scope.py.
     ("DELETE", "/api/v1/cables/{cable_id}"),
     ("GET", "/api/v1/cables"),
@@ -161,7 +197,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 72, "the reviewed reachable set is pinned at exactly 72 operations"
+    assert len(REVIEWED_REACHABLE) == 106, "the reviewed reachable set is pinned at exactly 106 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )

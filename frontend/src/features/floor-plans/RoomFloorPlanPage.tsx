@@ -23,6 +23,7 @@ import {
   uploadFloorPlanFile,
 } from "@/features/floor-plans/api";
 import { CalibrationPanel } from "@/features/floor-plans/CalibrationPanel";
+import { CoolingEnvironmentPanel } from "@/features/cooling/CoolingEnvironmentPanel";
 import { CandidateReview } from "@/features/floor-plans/CandidateReview";
 import { ImportReviewCanvas, type PickMode } from "@/features/floor-plans/ImportReviewCanvas";
 import { OVERLAY_KINDS } from "@/features/floor-plans/overlayStyle";
@@ -58,6 +59,7 @@ export function RoomFloorPlanPage() {
   const [picks, setPicks] = useState<Point[]>([]);
   const [origin, setOrigin] = useState<Point | null>(null);
   const [overlay, setOverlay] = useState<OverlayKind | "none">("none");
+  const [planMode, setPlanMode] = useState<"layout" | "cooling">("layout");
   const [grid, setGrid] = useGridSettings();
   const [actionError, setActionError] = useState<string | null>(null);
   const [boundaryWidth, setBoundaryWidth] = useState("");
@@ -473,8 +475,15 @@ export function RoomFloorPlanPage() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-slate-300">Scaled 2D layout (active revision)</h2>
           <div className="flex flex-wrap items-center gap-4">
-            <GridControls settings={grid} onChange={setGrid} idPrefix="verify" />
-            <label className="text-xs text-slate-400">
+            <div role="group" aria-label="Plan mode" className="flex overflow-hidden rounded-sm border border-slate-700 text-xs">
+              {([["layout", "Layout"], ["cooling", "Cooling & environment"]] as const).map(([mode, label]) => (
+                <button key={mode} type="button" aria-pressed={planMode === mode} onClick={() => setPlanMode(mode)} className={`px-2.5 py-1 ${planMode === mode ? "bg-blue-700 text-white" : "bg-slate-900 text-slate-300 hover:bg-slate-800"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {planMode === "layout" && <GridControls settings={grid} onChange={setGrid} idPrefix="verify" />}
+            {planMode === "layout" && <label className="text-xs text-slate-400">
               Overlay{" "}
               <select aria-label="Operational overlay" value={overlay} onChange={(e) => setOverlay(e.target.value as OverlayKind | "none")} className="rounded-sm border border-slate-700 bg-slate-950 px-1 py-0.5 text-xs">
                 <option value="none">none</option>
@@ -484,13 +493,13 @@ export function RoomFloorPlanPage() {
                   </option>
                 ))}
               </select>
-            </label>
+            </label>}
             <Link to={`/floor-plans/3d-layout?room=${roomId}`} className="rounded-sm border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800">
               Open 3D twin
             </Link>
           </div>
         </div>
-        {overlay !== "none" && (
+        {planMode === "layout" && overlay !== "none" && (
           <p className="mb-2 text-xs text-slate-500" data-testid="overlay-source">
             {OVERLAY_KINDS.find((k) => k.id === overlay)?.source}
             {overlaysQuery.isLoading && " · loading…"}
@@ -506,7 +515,11 @@ export function RoomFloorPlanPage() {
                 ? `Active revision ${spatialViewQuery.data.active_floor_plan_revision}`
                 : "No active floor plan for this room yet. Activate a revision to publish its geometry; placed racks are shown meanwhile."}
             </p>
-            <RoomSpatialCanvas view={spatialViewQuery.data} overlay={overlay} overlays={overlaysQuery.data ?? null} showGrid={grid.showGrid} />
+            {planMode === "cooling" && roomId ? (
+              <CoolingEnvironmentPanel roomId={roomId} view={spatialViewQuery.data} />
+            ) : (
+              <RoomSpatialCanvas view={spatialViewQuery.data} overlay={overlay} overlays={overlaysQuery.data ?? null} showGrid={grid.showGrid} />
+            )}
           </>
         )}
       </div>

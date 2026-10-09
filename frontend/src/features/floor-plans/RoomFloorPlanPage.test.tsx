@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RoomFloorPlanPage } from "@/features/floor-plans/RoomFloorPlanPage";
+import * as coolingApi from "@/features/cooling/api";
+import { airflow, capacity, exceptions, heatMap, layout as coolingLayout } from "@/features/cooling/fixtures";
 import * as api from "@/features/floor-plans/api";
 import * as racksApi from "@/features/racks/api";
 import { ApiError } from "@/lib/apiClient";
@@ -11,6 +13,7 @@ import type { Calibration, FloorPlan, ImportCandidate, ImportDiagnostics, Import
 
 vi.mock("@/features/floor-plans/api");
 vi.mock("@/features/racks/api");
+vi.mock("@/features/cooling/api");
 
 const page = <T,>(items: T[]): Page<T> => ({ items, total: items.length, limit: 200, offset: 0 });
 const room: Room = { id: "room-1", floor_id: "f", code: "A", name: "Hall A", room_type: "hall", version: 1 };
@@ -175,5 +178,32 @@ describe("RoomFloorPlanPage workflow", () => {
     await waitFor(() => expect(api.getRoomOverlays).toHaveBeenCalledWith("room-1", ["power"]));
     expect(await screen.findByRole("link", { name: /Rack Rack A.*power: Critical/ })).toBeInTheDocument();
     expect(screen.getByTestId("overlay-source")).toHaveTextContent("Power topology and protection-device state");
+  });
+
+  it("switches the scaled plan into the Cooling & environment mode without leaving the spatial page", async () => {
+    vi.mocked(api.getRoomSpatialView).mockResolvedValue(view({ room_width_mm: 6000, room_height_mm: 4000, active_floor_plan_id: "fp-1", active_floor_plan_revision: 1 }));
+    vi.mocked(coolingApi.getHeatMap).mockResolvedValue(heatMap());
+    vi.mocked(coolingApi.getCoolingLayout).mockResolvedValue(coolingLayout);
+    vi.mocked(coolingApi.getRoomAirflow).mockResolvedValue(airflow);
+    vi.mocked(coolingApi.getRoomCapacity).mockResolvedValue(capacity());
+    vi.mocked(coolingApi.getRoomExceptions).mockResolvedValue(exceptions());
+    const user = userEvent.setup();
+    mountPage();
+    const verify = await screen.findByTestId("verify-2d");
+    await within(verify).findByTestId("spatial-2d");
+    expect(coolingApi.getHeatMap).not.toHaveBeenCalled(); // nothing thermal is fetched until the mode is chosen
+    const modes = within(verify).getByRole("group", { name: "Plan mode" });
+    expect(within(modes).getByRole("button", { name: "Layout" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(within(modes).getByRole("button", { name: "Cooling & environment" }));
+
+    expect(await within(verify).findByTestId("cooling-panel")).toBeInTheDocument();
+    expect(await within(verify).findByTestId("map-state-badge")).toHaveTextContent("Healthy");
+    // the same calibrated 2D plan (racks, scale chrome) is still the base the thermal layers are drawn on
+    expect(within(verify).getByTestId("rack-rack-a")).toBeInTheDocument();
+    expect(within(verify).getByTestId("scene-chrome")).toBeInTheDocument();
+    expect(coolingApi.getHeatMap).toHaveBeenCalledWith("room-1", "temperature_c");
+    await user.click(within(modes).getByRole("button", { name: "Layout" }));
+    expect(within(verify).queryByTestId("cooling-panel")).not.toBeInTheDocument();
   });
 });

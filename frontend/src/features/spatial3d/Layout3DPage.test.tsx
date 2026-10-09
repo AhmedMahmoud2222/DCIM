@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Layout3DPage } from "@/features/spatial3d/Layout3DPage";
+import * as coolingApi from "@/features/cooling/api";
+import { heatMap, layout as coolingLayout, partialMap } from "@/features/cooling/fixtures";
 import * as floorPlansApi from "@/features/floor-plans/api";
 import * as racksApi from "@/features/racks/api";
 import { renderWithProviders } from "@/test/renderWithProviders";
@@ -10,6 +12,7 @@ import type { Page, Room, RoomOverlays, RoomSpatialView } from "@/types";
 
 vi.mock("@/features/floor-plans/api");
 vi.mock("@/features/racks/api");
+vi.mock("@/features/cooling/api");
 
 const room: Room = { id: "room-1", floor_id: "floor-1", code: "A", name: "DC-1 Hall A", room_type: "hall", version: 1 };
 
@@ -192,6 +195,52 @@ describe("Layout3DPage", () => {
     await user.selectOptions(screen.getByLabelText("Operational overlay"), "environment");
     await user.click(screen.getByRole("button", { name: /Select rack Rack A1/ }));
     expect(await screen.findByTestId("selected-overlay")).toHaveTextContent("No data for this asset");
+  });
+
+  it("adds a thermal layer on the floor plane at the same scale, with interpolated and measured elements kept apart", async () => {
+    vi.mocked(coolingApi.getHeatMap).mockResolvedValue(heatMap());
+    vi.mocked(coolingApi.getCoolingLayout).mockResolvedValue(coolingLayout);
+    const user = userEvent.setup();
+    renderWithProviders(<Layout3DPage />);
+    await screen.findByTestId("cuboid-rack-1");
+    expect(screen.queryByTestId("thermal-3d")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Thermal layer"), "temperature_c");
+
+    const thermal = await screen.findByTestId("thermal-3d");
+    await waitFor(() => expect(thermal.querySelectorAll('[data-provenance="interpolated"]').length).toBeGreaterThan(10));
+    expect(thermal.querySelectorAll('g[data-provenance="measured"]')).toHaveLength(4);
+    expect(coolingApi.getHeatMap).toHaveBeenCalledWith("room-1", "temperature_c");
+    expect(thermal.querySelector('[data-zone-kind="hot_aisle"]')).toHaveAttribute("data-containment", "contained");
+    expect(thermal.querySelectorAll("[data-unit-id]")).toHaveLength(2);
+    expect(screen.getByTestId("thermal-3d-state")).toHaveTextContent("Healthy · 4 fresh, 0 stale, 0 missing");
+    expect(screen.getByTestId("thermal-3d-panel")).toHaveTextContent("not validated CFD");
+    expect(screen.getByTestId("legend-range")).toBeInTheDocument();
+    // the scene's racks are still there at their authoritative position
+    expect(screen.getByTestId("cuboid-rack-1")).toHaveAttribute("data-x-mm", "900");
+  });
+
+  it("3D thermal layer lists stale and missing sensors in text and does not call the map healthy", async () => {
+    vi.mocked(coolingApi.getHeatMap).mockResolvedValue(partialMap());
+    vi.mocked(coolingApi.getCoolingLayout).mockResolvedValue(coolingLayout);
+    const user = userEvent.setup();
+    renderWithProviders(<Layout3DPage />);
+    await screen.findByTestId("cuboid-rack-1");
+    await user.selectOptions(screen.getByLabelText("Thermal layer"), "temperature_c");
+    expect(await screen.findByTestId("thermal-3d-state")).toHaveTextContent("Partial · 2 fresh, 1 stale, 1 missing");
+    const list = screen.getByTestId("thermal-3d-sensors");
+    expect(within(list).getByText(/Stale 3: Measured, stale/)).toBeInTheDocument();
+    expect(within(list).getByText(/Missing 4: Missing, no value, never/)).toBeInTheDocument();
+  });
+
+  it("3D thermal layer reports a load failure as an alert", async () => {
+    vi.mocked(coolingApi.getHeatMap).mockRejectedValue(new Error("nope"));
+    vi.mocked(coolingApi.getCoolingLayout).mockResolvedValue(coolingLayout);
+    const user = userEvent.setup();
+    renderWithProviders(<Layout3DPage />);
+    await screen.findByTestId("cuboid-rack-1");
+    await user.selectOptions(screen.getByLabelText("Thermal layer"), "humidity_percent");
+    expect(await screen.findByText("Could not load the heat map.")).toHaveAttribute("role", "alert");
   });
 
   it("shows an error state when the spatial view fails to load", async () => {
