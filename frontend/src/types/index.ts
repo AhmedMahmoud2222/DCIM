@@ -751,6 +751,13 @@ export interface CapacityZone {
     electrical_kw_lower_bound?: number | null;
     thermal_kw_lower_bound?: number | null;
     lower_bound_note?: string | null;
+    placed_equipment_count?: number | null;
+    modelled_equipment_count?: number | null;
+    unknown_demand_equipment_count?: number;
+    unmodelled_equipment_count?: number;
+    missing_demand_equipment_count?: number;
+    unattributed_floor_equipment_count?: number;
+    incomplete_reasons?: string[];
     quality: string | null;
     rack_count: number;
     unassigned_rack_count: number;
@@ -760,9 +767,12 @@ export interface CapacityZone {
     electrical_to_thermal_factor: number;
   };
   headroom_kw: number | null;
+  headroom_verified?: boolean;
+  headroom_upper_bound_kw?: number | null;
+  headroom_basis?: string;
   utilization_pct: number | null;
   level: "ok" | "warning" | "critical" | "unknown" | "not_configured";
-  redundancy: { state: RedundancyState; pools: { scope: string; reason: string | null; n_plus_1_verified: boolean | null }[] };
+  redundancy: { state: RedundancyState; pools: { scope: string; reason: string | null; n_plus_1_verified: boolean | null; verification_unavailable_reason?: string | null }[] };
   plant: { note: string; units: CapacityUnit[]; installed_rated_kw: number | null; available_kw: number | null };
 }
 

@@ -123,23 +123,33 @@ async def test_a_known_zero_demand_is_a_genuine_zero_load(world):
     assert z["headroom_kw"] == 200.0 and z["level"] == "ok" and z["redundancy"]["state"] == "redundant"
 
 
-async def test_equipment_outside_the_room_or_without_a_power_feed_is_not_part_of_the_load(world, client):
+async def test_equipment_without_a_power_feed_is_unknown_demand_not_zero_and_other_rooms_do_not_count(world, client):
+    """Superseded expectation: an unfed item used to be silently ignored, so 40 kW of 2 placed items read as a complete load."""
     other_room = await _second_room(world)
     await equipment(world, demand_kw=40.0)
-    await equipment(world, room=other_room)  # unknown demand, but in another room: not this room's load
-    await equipment(world, powered=False)  # not in the power roll-up at all: existing power semantics, not counted missing
+    await equipment(world, room=other_room)  # another room: not this room's population at all
     z = await room_capacity(world)
     assert z["thermal_load"]["state"] == "known" and z["thermal_load"]["electrical_kw"] == 40.0
+    await equipment(world, powered=False)  # placed here, no power-input model: its demand is unknown
+    z = await room_capacity(world)
+    assert z["thermal_load"]["state"] == "incomplete" and z["thermal_load"]["thermal_kw"] is None
+    assert z["thermal_load"]["thermal_kw_lower_bound"] == 40.0 and z["thermal_load"]["unmodelled_equipment_count"] == 1
+    assert z["headroom_kw"] is None and z["redundancy"]["state"] == "redundant_unverified"
 
 
-async def test_a_retired_power_feed_is_not_part_of_the_load(world):
+async def test_a_retired_power_feed_makes_its_equipment_unmodelled_and_decommissioning_removes_it_from_the_population(world):
     await equipment(world, demand_kw=40.0)
-    gone = await equipment(world)  # unknown demand
-    assert_load_is_unknown(await room_capacity(world))
+    gone = await equipment(world, demand_kw=10.0)
+    assert (await room_capacity(world))["thermal_load"]["state"] == "known"
     await world["db"].execute(text("UPDATE power_node SET retired_at = now() WHERE id = :i"), {"i": gone["feed_id"]})
     await world["db"].commit()
     z = await room_capacity(world)
-    assert z["thermal_load"]["state"] == "known" and z["thermal_load"]["electrical_kw"] == 40.0
+    assert z["thermal_load"]["state"] == "incomplete" and z["thermal_load"]["unmodelled_equipment_count"] == 1  # still placed, now unmodelled
+    for status in ("installed", "active", "decommissioned"):
+        r = await world["client"].post(f"/api/v1/managed-assets/{gone['id']}/lifecycle-transition", json={"to_status": status}, headers=world["admin"])
+        assert r.status_code == 200, r.text
+    z = await room_capacity(world)
+    assert z["thermal_load"]["state"] == "known" and z["thermal_load"]["electrical_kw"] == 40.0  # a decommissioned item is not heat load
 
 
 async def test_incomplete_demand_never_certifies_headroom_or_n_plus_1_even_when_capacity_is_huge(world):

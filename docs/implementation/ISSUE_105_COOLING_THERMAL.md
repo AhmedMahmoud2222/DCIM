@@ -1,6 +1,6 @@
 # Issue #105: cooling model, environmental heat maps and airflow visualization
 
-Document version: 1.2
+Document version: 1.3
 Base: `main@eaf0fa01a7ea9cac263f8fce4d7311ed2ba311f6` (includes #99, #101 to #104). Migration: `0045_cooling_thermal`.
 
 **A #105 heat map is an operational interpolation/visualization, not validated CFD.** Interpolated cells are never
@@ -79,15 +79,41 @@ Chillers are reported separately (`plant`) and never added to room headroom (the
 Thermal load = #102 electrical IT load x 1.0, stated in every result; no COP, PUE or efficiency factor. Zones with geometry
 count racks whose footprint centre is inside; unassigned or load-less racks make the load `incomplete`.
 
-Load completeness. The #102 roll-up sums only equipment with a known demand, so a scope whose demand is unknown reports
-`load_kw = 0` with `quality = "missing"`, and one unknown item among known ones reports a smaller sum with quality `mixed`. The roll-up
-therefore also returns `missing_demand_count` per scope. The thermal load is `known` only when that count is 0 for every relevant scope
-(whole room: the room scope; rectangle/polygon zone: every rack inside and no unassigned rack). Otherwise it is `incomplete`:
-`electrical_kw` and `thermal_kw` are null, `load_complete` is false, and the known part is exposed only as `electrical_kw_lower_bound` /
-`thermal_kw_lower_bound` with a note that it is not a load. A room with no modelled equipment is `unknown`. A measured demand of exactly
-0 kW is a genuine known zero. Incomplete or unknown load gives no headroom or utilisation (level `unknown`), no N+1 verification
-(`redundant_unverified`) and a `capacity_inputs_incomplete` exception. Equipment outside the room, equipment without a power feed and
-retired power nodes are outside the roll-up, so they are neither load nor missing demand.
+Load completeness (v1.3). "Known" is judged against the equipment PLACED in the room, not against the equipment that already has a
+power model. Earlier versions only looked at the #102 roll-up, so a room with 10 placed servers of which 2 were modelled reported a
+complete load, a numeric headroom and verified N+1.
+
+*Placed IT equipment* is a ManagedAsset of subtype `equipment` with a CURRENT placement (`effective_to IS NULL`) in the room. A
+rack-mounted item belongs to the room its rack currently sits in (falling back to its own placement room, as the roll-up loader does).
+Superseded placements, equipment in other rooms, sensors, cooling units and other asset subtypes are not part of the population.
+Equipment whose lifecycle is `decommissioned` or `removed` is excluded; every other lifecycle state, including `planned` and
+`reserved`, counts, because no existing domain rule says such an item draws no power. Retire or remove it to take it out.
+
+*Known demand*: the item is in the roll-up (it owns an `equipment_power_input` node in the site) and has a measured, stale
+(last-known) or nameplate-estimated demand. A stale reading keeps its existing treatment: it is last-known demand and the load
+reports `quality: stale`. Redundant (A/B) inputs of one machine are one item and one demand; they are not added twice. A modelled
+item with no live feed is "unserved" (#102 semantics) and contributes no heat, unchanged.
+
+*Unknown demand*: (a) placed but not in the roll-up, i.e. no power-input model (`unmodelled_equipment_count`); (b) in the roll-up but
+no demand figure (`missing_demand_equipment_count`). Neither is ever zero. For a zone with geometry, floor-standing equipment cannot be
+attributed to a zone area and makes the zone incomplete (`unattributed_floor_equipment_count`), and a rack in the zone with an
+unmodelled item is incomplete.
+
+Any unknown demand makes the load `incomplete`: `electrical_kw` / `thermal_kw` are null and `load_complete` is false; the known part
+is exposed only as `electrical_kw_lower_bound` / `thermal_kw_lower_bound` with a note that it is not a load; `placed_equipment_count`,
+`modelled_equipment_count`, `unknown_demand_equipment_count` and `incomplete_reasons` explain why. Headroom is then `null`
+(`headroom_verified: false`); `headroom_upper_bound_kw` = available - known part is the most headroom there can be, because the real
+load is at least the known part. It never feeds the level, utilisation or N+1. Redundancy stays `redundant_unverified`, the pool reports
+`verification_unavailable_reason: incomplete_load` (versus `capacity_unknown`), and the exceptions view raises
+`capacity_inputs_incomplete` with the unknown count.
+
+A room with no placed equipment is `unknown` (`incomplete_reasons: ["no_equipment_placed"]`), not a known zero. The domain model has
+no per-room attestation that the inventory is complete, so an empty room cannot be told apart from one nobody has inventoried.
+
+*Verified headroom and verified N+1* therefore require: every placed item has a known demand; every serving unit's availability and
+capacity are known; for N+1, at least two available units whose capacity left after losing the largest covers the load.
+Complete power-model coverage is a prerequisite for a verified room load. Operators should treat `unmodelled_equipment_count > 0` as
+a data-quality task (model the feed or retire the item). This view is accounting, not measured heat output and not CFD.
 
 Headroom = available - thermal load. Utilisation warns at 80 %, critical at 95 % or negative headroom.
 Redundancy pool = cooling-group members (load = every zone the group serves, counted once) or the zone's ungrouped units:

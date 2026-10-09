@@ -173,6 +173,32 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
   );
 }
 
+/** A load is a number only when it is complete. An incomplete one says how many placed items have no known demand and shows
+ * the known part as "at least", never as the room total. */
+function loadText(z: CapacityZone): string {
+  const load = z.thermal_load;
+  if (load.thermal_kw != null) return `${load.thermal_kw} kW (${load.quality ?? "quality unknown"})`;
+  const state = load.state.replace(/_/g, " ");
+  const unknown = load.unknown_demand_equipment_count ?? 0;
+  const placed = load.placed_equipment_count;
+  const parts = [`unknown (${state})`];
+  if (unknown > 0) parts.push(`${unknown}${placed != null ? ` of ${placed}` : ""} placed equipment without a known demand`);
+  if (load.thermal_kw_lower_bound != null) parts.push(`at least ${load.thermal_kw_lower_bound} kW known, not a total`);
+  return parts.join(", ");
+}
+
+function headroomText(z: CapacityZone): string {
+  if (z.headroom_kw != null) return `${z.headroom_kw} kW (${z.utilization_pct}% used)`;
+  if (z.headroom_upper_bound_kw != null) return `not calculable (unverified), at most ${z.headroom_upper_bound_kw} kW`;
+  return "not calculable";
+}
+
+function redundancyText(z: CapacityZone): string {
+  const base = z.redundancy.state.replace(/_/g, " ");
+  const incomplete = z.redundancy.pools.some((p) => p.verification_unavailable_reason === "incomplete_load");
+  return incomplete ? `${base} (N+1 not verified: load incomplete)` : base;
+}
+
 export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view: RoomSpatialView }) {
   const [metric, setMetric] = useState<ThermalMetric>("temperature_c");
   const [toggles, setToggles] = useState<ThermalLayerToggles>({ heat: true, sensors: true, airflow: true, zones: true, units: true });
@@ -276,9 +302,9 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
                       <td>{z.available_units} / {z.unit_count}</td>
                       <td>{z.installed_rated_kw != null ? `${z.installed_rated_kw} kW${z.installed_rated_complete ? "" : " (some unknown)"}` : "unknown"}</td>
                       <td>{z.available_kw != null ? `${z.available_kw} kW${z.available_complete ? "" : " (some unknown)"}` : "unknown"}</td>
-                      <td data-testid="load-cell">{z.thermal_load.thermal_kw != null ? `${z.thermal_load.thermal_kw} kW (${z.thermal_load.quality ?? "quality unknown"})` : `unknown (${z.thermal_load.state.replace(/_/g, " ")})${z.thermal_load.thermal_kw_lower_bound != null ? `, at least ${z.thermal_load.thermal_kw_lower_bound} kW known, not a total` : ""}`}</td>
-                      <td data-testid="headroom-cell">{z.headroom_kw != null ? `${z.headroom_kw} kW (${z.utilization_pct}% used)` : "not calculable"}</td>
-                      <td>{z.redundancy.state.replace(/_/g, " ")}</td>
+                      <td data-testid="load-cell">{loadText(z)}</td>
+                      <td data-testid="headroom-cell">{headroomText(z)}</td>
+                      <td data-testid="redundancy-cell">{redundancyText(z)}</td>
                       <td><span className={`rounded-sm px-1.5 py-0.5 ${LEVEL_STYLE[z.level]}`}><span aria-hidden="true">{LEVEL_GLYPH[z.level]}</span> {z.level.replace(/_/g, " ")}</span></td>
                     </tr>
                   ))}
