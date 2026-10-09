@@ -7,8 +7,21 @@ mutates discovered or authoritative inventory state.
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import cast
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, event, insert, update
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Table,
+    UniqueConstraint,
+    event,
+    insert,
+    update,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.orm.attributes import set_committed_value
@@ -257,10 +270,10 @@ def _seed_first_revision(_mapper, connection, mapping: IntegrationMetricMapping)
     without a revision as ambiguous, never as an implicitly trusted contract.
     """
     values = revision_values(mapping, revision=1, provenance="authored", effective_from=datetime.now(UTC))
-    connection.execute(insert(IntegrationMetricMappingRevision.__table__).values(**values))
+    revision_table = cast(Table, IntegrationMetricMappingRevision.__table__)
+    mapping_table = cast(Table, IntegrationMetricMapping.__table__)
+    connection.execute(insert(revision_table).values(**values))
     connection.execute(
-        update(IntegrationMetricMapping.__table__)
-        .where(IntegrationMetricMapping.__table__.c.id == mapping.id)
-        .values(current_revision_id=values["id"])
+        update(mapping_table).where(mapping_table.c.id == mapping.id).values(current_revision_id=values["id"])
     )
     set_committed_value(mapping, "current_revision_id", values["id"])
