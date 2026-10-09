@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.api._spatial_helpers import concurrent_client
-from tests.api._thermal_helpers import C, activate, make_sensor, make_unit, make_world, make_zone, relate, seed_plan
+from tests.api._thermal_helpers import C, activate, make_sensor, make_unit, make_world, make_zone, seed_plan
 
 
 @pytest.fixture

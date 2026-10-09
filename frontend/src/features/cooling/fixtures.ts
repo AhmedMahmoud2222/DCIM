@@ -91,7 +91,7 @@ export const airflow: RoomAirflow = {
     { id: "u2", kind: "cooling_supply", name: "CRAC-2", unit_kind: "crac", x_mm: 5500, y_mm: 3600, position_exact: true, direction_deg: null, direction_provenance: "configured", magnitude_provenance: "none", magnitude_m3_s: null, state: "configured", drawable: false, not_drawable_reasons: ["no_configured_direction", "no_design_airflow"] },
     { id: "f1", kind: "sensor_airflow", name: "Flow 1", x_mm: 3000, y_mm: 2000, position_exact: true, direction_deg: 90, direction_provenance: "configured", magnitude_provenance: "measured", volume_flow: sensor({ sensor_id: "f1", name: "Flow 1", metric: "airflow_m3_s", value: 1.25, presentation_value: 4500, presentation_unit: "m3/h", unit: "m3/s" }), velocity: null, state: "measured_fresh", drawable: true, not_drawable_reasons: [] },
   ],
-  provenance_summary: { measured_magnitude: 1, configured_design: 1, modelled: 0 },
+  provenance_summary: { measured_magnitude: 1, configured_design: 1, modelled: 0, not_drawable: 1 },
   note: "No modelled airflow is generated in Issue #105. Streamlines and predicted flow belong to the CFD work package (#106).",
   disclaimer: "Arrows show configured direction and either measured or design magnitude at a point. They are not a CFD result.",
 };

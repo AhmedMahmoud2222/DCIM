@@ -222,6 +222,7 @@ export function ThermalMarkerLayers({
             const text = `${measured ? (stale ? "measured, stale" : "measured") : "configured design"} ${magnitude}`;
             return (
               <g key={e.id} role="button" tabIndex={0} aria-label={`Airflow at ${e.name}: ${text}, direction ${e.direction_deg} degrees (configured)`} data-airflow-id={e.id} data-provenance={measured ? "measured" : "configured"} onClick={() => onSelect({ kind: "airflow", id: e.id })} onKeyDown={keyActivate(() => onSelect({ kind: "airflow", id: e.id }))} style={{ cursor: "pointer" }}>
+                <line x1={px} y1={py} x2={px + dx} y2={py + dy} stroke="transparent" strokeWidth={14} data-hit-area="airflow" />
                 <line x1={px} y1={py} x2={px + dx} y2={py + dy} stroke={stroke} strokeWidth={selected ? 4 : 2.5} strokeDasharray={measured && !stale ? undefined : "6 3"} markerEnd={`url(#${arrowId})`} />
                 <text x={px + dx / 2 + 4} y={py + dy / 2 - 4} fontSize={9} fill={stroke} paintOrder="stroke" stroke="#020617" strokeWidth={3} pointerEvents="none">
                   {text}
@@ -243,6 +244,8 @@ export function ThermalMarkerLayers({
             const label = describeSensor(p);
             return (
               <g key={p.sensor_id} role="button" tabIndex={0} aria-label={label} aria-pressed={selected} data-sensor-id={p.sensor_id} data-state={p.state} data-provenance="measured" data-used-in-field={p.used_in_field ? "true" : "false"} onClick={() => onSelect({ kind: "sensor", id: p.sensor_id })} onKeyDown={keyActivate(() => onSelect({ kind: "sensor", id: p.sensor_id }))} style={{ cursor: "pointer" }}>
+                {/* generous transparent hit area: hollow (stale / missing) markers would otherwise let clicks fall through to the field */}
+                <rect x={px - 12} y={py - 12} width={72} height={24} fill="transparent" data-hit-area="sensor" />
                 {p.state === "invalid" ? (
                   <path d={`M ${px} ${py - 9} L ${px + 9} ${py + 7} L ${px - 9} ${py + 7} Z`} fill="#4c1d95" stroke={meta.colour} strokeWidth={2} />
                 ) : (

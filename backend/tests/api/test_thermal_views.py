@@ -20,7 +20,6 @@ from tests.api._thermal_helpers import (
     relate,
     seed_plan,
 )
-from tests.api.test_user_groups import _make_site
 
 CORNERS = [(1000, 1000, 20.0), (5000, 1000, 30.0), (1000, 3000, 24.0), (5000, 3000, 26.0)]
 
@@ -34,7 +33,7 @@ async def world(client, auth_headers, db_session):
 
 async def four_sensors(client, world, metric="temperature_c", *, kind="temperature", ages=(5, 5, 5, 5), poll=60, values=None):
     sensors = []
-    for i, (x, y, value) in enumerate(CORNERS):
+    for i, (x, y, _value) in enumerate(CORNERS):
         sensor = await make_sensor(client, world["admin"], world["site"], world["room"], x, y, sensor_kind=kind, name=f"S{i}")
         if ages[i] is not None:
             await world["seed"].reading(sensor["id"], metric, (values or [v for _, _, v in CORNERS])[i], age_seconds=ages[i], poll=poll)
@@ -304,7 +303,8 @@ async def test_airflow_elements_carry_provenance_and_nothing_is_fabricated(clien
     assert measured["volume_flow"]["value"] == 1.25 and measured["velocity"]["value"] == 2.5
     assert by_name["Blind"]["drawable"] is False and "no_configured_direction" in by_name["Blind"]["not_drawable_reasons"]
     assert by_name["Silent"]["drawable"] is False and "no_measured_magnitude" in by_name["Silent"]["not_drawable_reasons"] and by_name["Silent"]["state"] == "missing"
-    assert body["provenance_summary"]["modelled"] == 0 and "CFD" in body["note"] and silent["id"]
+    assert body["provenance_summary"] == {"measured_magnitude": 1, "configured_design": 1, "modelled": 0, "not_drawable": 3}  # drawn: Flow + the CRAH with a direction
+    assert "CFD" in body["note"] and silent["id"]
     assert all(e["magnitude_provenance"] != "modelled" and e["direction_provenance"] != "modelled" for e in body["elements"])
 
 

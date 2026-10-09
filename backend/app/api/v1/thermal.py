@@ -103,7 +103,7 @@ async def get_layout(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx
             for r in rel_rows
             if r.cooling_unit_id in visible_units or ctx.scope.unrestricted
         ]
-    sensors = {}
+    sensors: dict[uuid.UUID, dict] = {}
     for metric in ("temperature_c", "humidity_percent", "airflow_m3_s", "differential_pressure_pa"):
         snap = await load_room_sensor_snapshot(db, room_id=room_id, metric=metric, scope=ctx.scope, roles=SENSOR_ROLES)
         for p in snap.points:

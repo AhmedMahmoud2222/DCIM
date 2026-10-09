@@ -126,10 +126,12 @@ async def build_airflow(
         )
     return {
         "room_id": str(room_id), "generated_at": now.isoformat(), "elements": elements,
+        # counts describe what is drawn; an element that lacks a direction or a magnitude is counted separately
         "provenance_summary": {
-            "measured_magnitude": sum(1 for e in elements if e.get("magnitude_provenance") == "measured"),
-            "configured_design": sum(1 for e in elements if e.get("magnitude_provenance") == "configured_design"),
+            "measured_magnitude": sum(1 for e in elements if e["drawable"] and e.get("magnitude_provenance") == "measured"),
+            "configured_design": sum(1 for e in elements if e["drawable"] and e.get("magnitude_provenance") == "configured_design"),
             "modelled": 0,
+            "not_drawable": sum(1 for e in elements if not e["drawable"]),
         },
         "note": NO_MODELLED_NOTE,
         "disclaimer": "Arrows show configured direction and either measured or design magnitude at a point. They are not a CFD result "

@@ -15,7 +15,7 @@ from app.application.thermal import airflow, capacity, exceptions, heatmap
 from app.application.thermal.environment import load_room_sensor_snapshot
 from app.core.errors import NotFoundError
 from tests.api._phase2_helpers import create_rack
-from tests.api._thermal_helpers import C, TelemetrySeeder, make_sensor, make_unit, make_world, make_zone, relate, seed_plan
+from tests.api._thermal_helpers import C, TelemetrySeeder, make_sensor, make_unit, make_zone, relate, seed_plan
 from tests.api.test_user_groups import _group, _group_user, _make_site
 
 SERVICE_CALLS = {

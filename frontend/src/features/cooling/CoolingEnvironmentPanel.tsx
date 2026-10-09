@@ -314,7 +314,7 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
       </details>
       {airflowQuery.data && (
         <p className="text-xs text-slate-500" data-testid="airflow-note">
-          Airflow: {airflowQuery.data.provenance_summary.measured_magnitude} measured, {airflowQuery.data.provenance_summary.configured_design} configured design, {airflowQuery.data.provenance_summary.modelled} modelled. {airflowQuery.data.note}
+          Airflow: {airflowQuery.data.provenance_summary.measured_magnitude} measured, {airflowQuery.data.provenance_summary.configured_design} configured design, {airflowQuery.data.provenance_summary.modelled} modelled; {airflowQuery.data.provenance_summary.not_drawable} not drawn (no direction or magnitude configured). {airflowQuery.data.note}
         </p>
       )}
     </div>

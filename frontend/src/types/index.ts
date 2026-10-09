@@ -710,7 +710,7 @@ export interface RoomAirflow {
   room_id: string;
   generated_at: string;
   elements: AirflowElement[];
-  provenance_summary: { measured_magnitude: number; configured_design: number; modelled: number };
+  provenance_summary: { measured_magnitude: number; configured_design: number; modelled: number; not_drawable: number };
   note: string;
   disclaimer: string;
 }

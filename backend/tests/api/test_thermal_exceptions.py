@@ -7,7 +7,17 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import text
 
-from tests.api._thermal_helpers import C, TelemetrySeeder, activate, make_sensor, make_unit, make_world, make_zone, relate, seed_plan
+from tests.api._thermal_helpers import (
+    C,
+    TelemetrySeeder,
+    activate,
+    make_sensor,
+    make_unit,
+    make_world,
+    make_zone,
+    relate,
+    seed_plan,
+)
 
 
 @pytest.fixture

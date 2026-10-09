@@ -99,7 +99,7 @@ async def test_populated_upgrade_enforces_invariants_and_refuses_destructive_dow
             codes = {tuple(r) for r in (await conn.execute(text("SELECT p.action, r.name FROM permission p JOIN role_permission rp ON rp.permission_id = p.id JOIN role r ON r.id = rp.role_id WHERE p.resource = 'cooling'"))).all()}
             assert codes == {("read", n) for n in ("Administrator", "DCIM Manager", "Engineer", "Operator", "Viewer")} | {("manage", n) for n in ("Administrator", "DCIM Manager", "Engineer")}
 
-            crah, crac, chiller, pdu = await asset(conn, "crah"), await asset(conn, "crac"), await asset(conn, "chiller"), await asset(conn, "pdu")
+            crah, crac, pdu = await asset(conn, "crah"), await asset(conn, "crac"), await asset(conn, "pdu")
             sensor = await asset(conn, "sensor")
             group_b = uuid.uuid4()
             await conn.execute(text("INSERT INTO cooling_group (id, site_id, name) VALUES (:i, :s, 'B-group')"), {"i": group_b, "s": site_b})

@@ -167,7 +167,7 @@ describe("CoolingEnvironmentPanel", () => {
     expect(detail).toHaveTextContent("Measured");
     expect(detail).toHaveTextContent("Modelled");
     expect(detail).toHaveTextContent("No. This is not a CFD result.");
-    expect(screen.getByTestId("airflow-note")).toHaveTextContent("1 measured, 1 configured design, 0 modelled");
+    expect(screen.getByTestId("airflow-note")).toHaveTextContent("1 measured, 1 configured design, 0 modelled; 1 not drawn");
   });
 
   it("layer toggles remove the matching SVG layers", async () => {
