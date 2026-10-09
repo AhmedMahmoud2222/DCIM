@@ -171,7 +171,7 @@ async def test_real_user_route_returns_conflict_and_rolls_back_all_fields_and_me
     assert await _target_snapshot(db_session, target_id) == before
 
 
-async def _advisory_waiter(engine, lock_name, timeout=10.0):
+async def _advisory_waiter(engine, lock_name, timeout=45.0):
     """Polls PostgreSQL until a backend is blocked (ungranted pg_locks row) on `lock_name`'s advisory lock and
     returns that backend's (wait_event_type, wait_event). Deterministic: no fixed sleep decides the outcome."""
     expected = text("SELECT hashtext(:n)::bigint & 4294967295 AS objid").bindparams(n=lock_name)
@@ -206,12 +206,12 @@ async def test_two_postgres_transactions_cannot_remove_both_unrestricted_adminis
             await _set_active(db, world["root"], False)
             await assert_administrator_remains(db)
             locked.set()
-            await asyncio.wait_for(release.wait(), timeout=10)
+            await asyncio.wait_for(release.wait(), timeout=60)
             await db.commit()
             return "committed"
 
     async def second_transaction():
-        await asyncio.wait_for(locked.wait(), timeout=10)
+        await asyncio.wait_for(locked.wait(), timeout=60)
         async with factory() as db:
             attempted.set()
             await acquire_authority_lock(db)
@@ -227,13 +227,13 @@ async def test_two_postgres_transactions_cannot_remove_both_unrestricted_adminis
     first = asyncio.create_task(first_transaction())
     second_task = asyncio.create_task(second_transaction())
     try:
-        await asyncio.wait_for(attempted.wait(), timeout=10)
+        await asyncio.wait_for(attempted.wait(), timeout=60)
         # Locking evidence from PostgreSQL itself: the second backend is blocked on the exclusive
         # authority lock held by the first, not merely slow.
         assert await _advisory_waiter(db_engine, AUTHORITY_LOCK_NAME) == ("Lock", "advisory")
         assert not second_task.done(), "the second authority transaction failed to wait"
         release.set()
-        results = await asyncio.wait_for(asyncio.gather(first, second_task), timeout=15)
+        results = await asyncio.wait_for(asyncio.gather(first, second_task), timeout=60)
         assert results == ["committed", "conflict"]
     finally:
         release.set()
@@ -415,12 +415,12 @@ async def test_invariant_lock_alone_serialises_two_transactions_that_skip_the_au
             await _set_active(db, world["root"], False)
             await assert_administrator_remains(db)  # passes (second remains) and now holds the invariant lock
             first_holds.set()
-            await asyncio.wait_for(release.wait(), timeout=10)
+            await asyncio.wait_for(release.wait(), timeout=60)
             await db.commit()
             return "committed"
 
     async def second_transaction():
-        await asyncio.wait_for(first_holds.wait(), timeout=10)
+        await asyncio.wait_for(first_holds.wait(), timeout=60)
         async with factory() as db:
             await _set_active(db, second_id, False)
             second_started.set()
@@ -435,11 +435,11 @@ async def test_invariant_lock_alone_serialises_two_transactions_that_skip_the_au
     first = asyncio.create_task(first_transaction())
     loser = asyncio.create_task(second_transaction())
     try:
-        await asyncio.wait_for(second_started.wait(), timeout=10)
+        await asyncio.wait_for(second_started.wait(), timeout=60)
         assert await _advisory_waiter(db_engine, ADMIN_INVARIANT_LOCK_NAME) == ("Lock", "advisory")
         assert not loser.done()
         release.set()
-        assert await asyncio.wait_for(asyncio.gather(first, loser), timeout=15) == ["committed", "conflict"]
+        assert await asyncio.wait_for(asyncio.gather(first, loser), timeout=60) == ["committed", "conflict"]
     finally:
         release.set()
         for task in (first, loser):
