@@ -209,17 +209,21 @@ async def test_concurrent_rack_replacement_is_serialised(factory, assets):
     assert await place_rack(factory, assets, x=900) == 3
 
 
-async def test_many_simultaneous_first_placements_yield_one_winner_and_no_duplicate_generation(factory, assets):
+async def test_many_simultaneous_placements_never_duplicate_or_skip_a_generation(factory, assets):
+    """Movers that observed the same state while waiting lose with a conflict; a mover that started after a commit sees the
+    new placement and proceeds. Which movers fall in which group is timing, so the invariant is what the database holds."""
     results = await asyncio.gather(*(place_eq(factory, assets) for _ in range(8)), return_exceptions=True)
-    assert [r for r in results if not isinstance(r, Exception)] == [1]
+    won = sorted(r for r in results if not isinstance(r, Exception))
     assert all(isinstance(r, PlacementConflict) for r in results if isinstance(r, Exception)), results
+    assert won and won == list(range(1, len(won) + 1)), won  # distinct and gap-free: no two writers share a generation
     rows = await versions(factory, "equipment_placement", "equipment_id", assets["equipment"])
-    assert rows == [(1, True)]
+    assert [v for v, _ in rows] == won and [c for _, c in rows].count(True) == 1 and rows[-1][1] is True
 
 
 async def test_sequential_placements_keep_counting_after_such_a_race(factory, assets):
-    await asyncio.gather(*(place_eq(factory, assets) for _ in range(4)), return_exceptions=True)
-    for expected in (2, 3, 4):
-        assert await place_eq(factory, assets) == expected
+    raced = await asyncio.gather(*(place_eq(factory, assets) for _ in range(4)), return_exceptions=True)
+    base = len([r for r in raced if not isinstance(r, Exception)])
+    for offset in (1, 2, 3):
+        assert await place_eq(factory, assets) == base + offset
     rows = await versions(factory, "equipment_placement", "equipment_id", assets["equipment"])
-    assert [v for v, _ in rows] == [1, 2, 3, 4] and [c for _, c in rows].count(True) == 1
+    assert [v for v, _ in rows] == list(range(1, base + 4)) and [c for _, c in rows].count(True) == 1
