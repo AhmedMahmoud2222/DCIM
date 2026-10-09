@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from app.domain.alarms.models import Alarm, AlarmRule
+from app.domain.alarm.models import Alarm, AlarmRule
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -111,7 +111,7 @@ async def test_a_pinned_late_reading_survives_compaction_and_aggregates_in_its_o
     rev1 = mapping.current_revision_id
     await append_mapping_revision(db_session, mapping.id, unit="degC")
     now = datetime.now(UTC)
-    old = now - timedelta(days=400)
+    old = (now - timedelta(days=400)).replace(hour=3, minute=0)  # fixed mid-day: all samples share one UTC day
     await _ingest(db_session, collector, integration, value=68, mapping_revision_id=rev1, occurred_at=old)
     await _ingest(db_session, collector, integration, value=86, mapping_revision_id=rev1, occurred_at=old + timedelta(hours=1))
     await compact_eligible_raw(db_session, now=now)
@@ -121,6 +121,7 @@ async def test_a_pinned_late_reading_survives_compaction_and_aggregates_in_its_o
     # A third pinned sample arriving after compaction merges in its original meaning too.
     late = await _ingest(db_session, collector, integration, value=104, mapping_revision_id=rev1, occurred_at=old + timedelta(hours=2))
     assert late.reading_id is not None
+    await db_session.flush()
     await db_session.refresh(aggregate)
     assert aggregate.sample_count == 3 and float(aggregate.maximum_value) == pytest.approx(40)
 

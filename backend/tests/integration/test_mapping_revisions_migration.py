@@ -71,8 +71,8 @@ async def test_populated_upgrade_seeds_one_honestly_labelled_revision_per_mappin
             """))).all()
             assert [(r.revision, r.provenance, r.source_unit, float(r.source_scale), r.registry_version, r[6], r.effective_at_migration_time)
                     for r in revisions] == [
-                (1, "backfilled_from_current", "degF", 1.0, "1", 64, True),
                 (1, "backfilled_from_current", "celsius", 10.0, None, 64, True),
+                (1, "backfilled_from_current", "degF", 1.0, "1", 64, True),
             ]
             # Every mapping points at its seed revision; nothing about earlier history is claimed.
             assert await conn.scalar(text("""
@@ -151,8 +151,8 @@ async def test_the_database_enforces_the_reading_evidence_pairing_and_revision_f
                 "UPDATE telemetry_reading SET contract_evidence = 'made_up', mapping_revision_id = (SELECT current_revision_id FROM integration_metric_mapping WHERE id = :m) WHERE id = :i",
                 "UPDATE telemetry_reading SET contract_evidence = 'pinned', mapping_revision_id = gen_random_uuid() WHERE id = :i",
             ):
-                async with conn.begin_nested():
-                    with pytest.raises(Exception):  # noqa: B017  (check, check and FK violations)
+                with pytest.raises(Exception):  # noqa: B017  (check, check and FK violations)
+                    async with conn.begin_nested():
                         await conn.execute(text(statement), {"i": ids.reading, "m": ids.versioned})
         finally:
             await transaction.rollback()

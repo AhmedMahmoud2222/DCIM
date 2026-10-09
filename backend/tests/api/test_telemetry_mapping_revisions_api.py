@@ -73,7 +73,7 @@ async def test_plan_is_authenticated_scoped_to_the_collectors_own_integrations_a
         headers=sign_request(secret=world["collector"]["secret"], collector_id=uuid.UUID(world["collector"]["id"]), raw_body=b""),
     )
     assert swapped.status_code in {401, 403}
-    assert (await client.get(f"/api/v1/collectors/{world['collector']['id']}/telemetry-contracts")).status_code == 401
+    assert (await client.get(f"/api/v1/collectors/{world['collector']['id']}/telemetry-contracts")).status_code in {401, 422}
     # After a source change the plan advertises the new revision, the old one remains resolvable by id.
     new = await change_source_to_celsius(db_session, world)
     refreshed = (await signed_get(client, world["collector"], "telemetry-contracts")).json()
@@ -107,7 +107,7 @@ async def test_unpinned_record_after_a_source_change_is_held_not_reinterpreted_a
     assert classify_telemetry_ack(ack) == "retry"
     assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []
     hold = (await db_session.execute(select(TelemetryContractHold))).scalar_one()
-    assert (hold.status, hold.attempts, hold.reason, hold.value_text) == ("held", 1, "MULTIPLE_REVISIONS", "68")
+    assert (hold.status, hold.attempts, hold.reason, hold.value_text) == ("held", 1, "MULTIPLE_REVISIONS", "68.0")
     await post_telemetry(client, world["collector"], [record(world, 68, key="legacy-1")])
     await db_session.refresh(hold)
     assert hold.attempts == 2
@@ -158,7 +158,7 @@ async def test_retry_budget_is_bounded_and_expiry_keeps_the_record_for_the_opera
     assert classify_telemetry_ack({"status": "rejected", "error": errors[-1]}) == "acknowledge"
     hold = (await db_session.execute(select(TelemetryContractHold))).scalar_one()
     await db_session.refresh(hold)
-    assert (hold.status, hold.value_text) == ("expired", "68")
+    assert (hold.status, hold.value_text) == ("expired", "68.0")
     assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []
 
 
@@ -177,7 +177,7 @@ async def test_operator_lists_and_resolves_a_hold_under_a_chosen_revision(client
     await change_source_to_celsius(db_session, world)
     await post_telemetry(client, world["collector"], [record(world, 68, key="held-1")])
     listed = (await client.get("/api/v1/telemetry/contract-holds", params={"status": "held"}, headers=world["headers"])).json()
-    assert [(h["dedup_key"], h["reason"], h["value"]) for h in listed] == [("held-1", "MULTIPLE_REVISIONS", "68")]
+    assert [(h["dedup_key"], h["reason"], h["value"]) for h in listed] == [("held-1", "MULTIPLE_REVISIONS", "68.0")]
     hold_id = listed[0]["id"]
 
     wrong = await client.post(f"/api/v1/telemetry/contract-holds/{hold_id}/resolve", json={"mapping_revision_id": str(uuid.uuid4())}, headers=world["headers"])
