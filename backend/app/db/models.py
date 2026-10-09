@@ -98,6 +98,8 @@ from app.domain.telemetry.mapping_models import PortTelemetryBinding, TelemetryL
 from app.domain.telemetry.models import (  # noqa: F401
     DailyTelemetryAggregate,
     IntegrationMetricMapping,
+    IntegrationMetricMappingRevision,
     MonitoringPolicy,
+    TelemetryContractHold,
     TelemetryReading,
 )

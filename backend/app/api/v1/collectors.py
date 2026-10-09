@@ -689,3 +689,61 @@ async def discovery_plan(
             )
         )
     return out
+
+
+class TelemetryContractOut(BaseModel):
+    """One immutable conversion contract the collector pins onto readings it acquires (Issue #128 / G1)."""
+
+    integration_id: uuid.UUID
+    source_identifier: str
+    mapping_revision_id: uuid.UUID
+    revision: int
+    canonical_metric: str
+    source_unit: str
+    source_scale: str
+    registry_version: str | None
+    conversion_hash: str
+    provenance: str
+    effective_from: datetime
+
+
+MAX_TELEMETRY_CONTRACTS = 5000
+
+
+@router.get("/{collector_id}/telemetry-contracts", response_model=list[TelemetryContractOut])
+async def telemetry_contracts(
+    collector_id: uuid.UUID, db: AsyncSession = Depends(get_db), collector: Collector = Depends(get_current_collector),
+) -> list[TelemetryContractOut]:
+    """The current mapping revision of every metric mapping on this collector's assigned, enabled integrations.
+
+    A collector copies `mapping_revision_id` onto each telemetry record at acquisition and replays it unchanged, so a
+    later mapping change cannot reinterpret a queued sample. Secret-free; bounded and deterministically ordered.
+    """
+    if collector.id != collector_id:
+        raise UnauthorizedCollectorError("Signed collector identity does not match the URL path.")
+    from app.domain.integration.models import CollectorAssignment, Integration
+    from app.domain.telemetry.models import IntegrationMetricMapping, IntegrationMetricMappingRevision
+
+    rows = (
+        await db.execute(
+            select(IntegrationMetricMappingRevision)
+            .join(IntegrationMetricMapping, IntegrationMetricMapping.current_revision_id == IntegrationMetricMappingRevision.id)
+            .join(Integration, Integration.id == IntegrationMetricMapping.integration_id)
+            .join(CollectorAssignment, CollectorAssignment.integration_id == Integration.id)
+            .where(
+                CollectorAssignment.collector_id == collector_id, CollectorAssignment.effective_to.is_(None),
+                Integration.enabled.is_(True),
+            )
+            .order_by(IntegrationMetricMappingRevision.integration_id, IntegrationMetricMappingRevision.source_identifier)
+            .limit(MAX_TELEMETRY_CONTRACTS)
+        )
+    ).scalars().all()
+    return [
+        TelemetryContractOut(
+            integration_id=row.integration_id, source_identifier=row.source_identifier, mapping_revision_id=row.id,
+            revision=row.revision, canonical_metric=row.canonical_metric, source_unit=row.source_unit,
+            source_scale=format(row.source_scale, "f"), registry_version=row.registry_version,
+            conversion_hash=row.conversion_hash, provenance=row.provenance, effective_from=row.effective_from,
+        )
+        for row in rows
+    ]
