@@ -25,7 +25,9 @@ incomplete while floor-standing equipment is placed in the room (no zone area ca
 Load completeness (Issue #105 follow-up). "Known" means every piece of IT equipment physically placed in the room is accounted
 for, not merely every piece that already has a power model. The relevant population is the equipment (ManagedAsset subtype
 `equipment`; cooling units and sensors are other subtypes) with a CURRENT placement in the room (a rack-mounted item belongs to
-the room its rack currently sits in), whose lifecycle is not decommissioned/removed. Each such item is exactly one of:
+the room its rack currently sits in), whose lifecycle makes it OPERATIONAL: installed, active or maintenance. planned and reserved
+items are not yet present and decommissioned/removed items are gone, so they are outside the load (neither heat nor unknown); the
+roll-up counts modelled items whatever their lifecycle, so their share is taken back out. Each operational item is exactly one of:
   known demand       it is in the power roll-up and has a measured, stale or nameplate-estimated demand
   unknown demand     it is in the roll-up but has no demand figure, OR it has no power-input model at all (unmodelled)
 Unknown demand is never zero. Any unknown makes the load `incomplete`: totals are null, the known part is only a labelled lower
@@ -52,7 +54,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import AccessScope
-from app.application.power_rollup import DEFAULT_CRITICAL_PCT, DEFAULT_WARNING_PCT
+from app.application.power_rollup import DEFAULT_CRITICAL_PCT, DEFAULT_WARNING_PCT, _classify_quality
 from app.application.power_rollup_loader import rollup_for_site
 from app.application.thermal.environment import assert_room_visible, scope_sees_site_assets
 from app.application.thermal.interpolation import point_in_polygon
@@ -185,6 +187,7 @@ class ZoneLoad:
     unmodelled_equipment_count: int = 0
     missing_demand_equipment_count: int = 0
     unattributed_floor_equipment_count: int = 0
+    pending_equipment_count: int = 0  # placed here but planned/reserved: not yet physically present, so not in the load
     incomplete_reasons: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -201,6 +204,7 @@ class ZoneLoad:
             "unmodelled_equipment_count": self.unmodelled_equipment_count,
             "missing_demand_equipment_count": self.missing_demand_equipment_count,
             "unattributed_floor_equipment_count": self.unattributed_floor_equipment_count,
+            "pending_equipment_count": self.pending_equipment_count,
             "incomplete_reasons": list(self.incomplete_reasons),
             "assumption": LOAD_ASSUMPTION, "electrical_to_thermal_factor": ELECTRICAL_TO_THERMAL_FACTOR,
         }
@@ -224,46 +228,85 @@ def _quality_of(qualities: list[str]) -> str | None:
     return next(iter(unique)) if len(unique) == 1 else "mixed"
 
 
+# Lifecycle policy for the OPERATIONAL thermal-load population (see docs v1.4):
+#   planned, reserved        not yet physically present: allocated a place, but not installed, so no heat today
+#   installed, active        physically present: counted (installed = staged/commissioning, which may already be energised)
+#   maintenance              physically present and possibly powered: counted; a de-energised modelled item is "unserved"
+#   decommissioned, removed  gone: never counted
+# The rule excludes by name, so a lifecycle state added later is counted until someone decides otherwise (never silently dropped).
+PENDING_LIFECYCLE_STATUSES = ("planned", "reserved")
 RETIRED_LIFECYCLE_STATUSES = ("decommissioned", "removed")
+NON_OPERATIONAL_LIFECYCLE_STATUSES = PENDING_LIFECYCLE_STATUSES + RETIRED_LIFECYCLE_STATUSES
 
 
 @dataclass
 class RoomEquipment:
-    """Relevant IT equipment currently placed in one room."""
+    """Equipment currently placed in one room, split by whether it is part of the operational thermal-load population."""
 
-    by_rack: dict[uuid.UUID, set[uuid.UUID]] = field(default_factory=dict)
-    floor: set[uuid.UUID] = field(default_factory=set)
+    by_rack: dict[uuid.UUID, set[uuid.UUID]] = field(default_factory=dict)  # operational, rack-mounted
+    floor: set[uuid.UUID] = field(default_factory=set)  # operational, floor-standing
+    excluded: dict[uuid.UUID, uuid.UUID | None] = field(default_factory=dict)  # not operational -> rack id (None = floor)
+    pending: set[uuid.UUID] = field(default_factory=set)  # the planned/reserved subset of `excluded`
 
     @property
     def all_ids(self) -> set[uuid.UUID]:
         return set().union(*self.by_rack.values()) | self.floor if self.by_rack else set(self.floor)
 
+    def excluded_in_rack(self, rack_id: uuid.UUID) -> set[uuid.UUID]:
+        return {i for i, r in self.excluded.items() if r == rack_id}
+
 
 async def load_room_equipment(db: AsyncSession, room_id: uuid.UUID) -> RoomEquipment:
     """Current placements only (effective_to IS NULL), so history never counts. A rack-mounted item belongs to the room of its
     rack's current placement, falling back to its own placement room exactly like the power roll-up loader does. Sensors and
-    cooling units also use equipment_placement; joining `Equipment` keeps them out."""
+    cooling units also use equipment_placement; joining `Equipment` keeps them out. Lifecycle decides whether the item is part
+    of the operational population (see NON_OPERATIONAL_LIFECYCLE_STATUSES)."""
     rack_room = select(RackPlacement.rack_id, RackPlacement.room_id).where(RackPlacement.effective_to.is_(None)).subquery()
     rows = (
         await db.execute(
-            select(EquipmentPlacement.equipment_id, EquipmentPlacement.rack_id)
+            select(EquipmentPlacement.equipment_id, EquipmentPlacement.rack_id, ManagedAsset.lifecycle_status)
             .join(Equipment, Equipment.id == EquipmentPlacement.equipment_id)
             .join(ManagedAsset, ManagedAsset.id == Equipment.id)
             .outerjoin(rack_room, rack_room.c.rack_id == EquipmentPlacement.rack_id)
             .where(
                 EquipmentPlacement.effective_to.is_(None),
-                ManagedAsset.lifecycle_status.not_in(RETIRED_LIFECYCLE_STATUSES),
                 func.coalesce(rack_room.c.room_id, EquipmentPlacement.room_id) == room_id,
             )
         )
     ).all()
     population = RoomEquipment()
-    for equipment_id, rack_id in rows:
-        if rack_id is None:
+    for equipment_id, rack_id, lifecycle in rows:
+        if lifecycle in NON_OPERATIONAL_LIFECYCLE_STATUSES:
+            population.excluded[equipment_id] = rack_id
+            if lifecycle in PENDING_LIFECYCLE_STATUSES:
+                population.pending.add(equipment_id)
+        elif rack_id is None:
             population.floor.add(equipment_id)
         else:
             population.by_rack.setdefault(rack_id, set()).add(equipment_id)
     return population
+
+
+def _without_excluded(rollup: Any, scope_load: float, scope_missing: int, scope_count: int, scope_quality: str, remaining: set[uuid.UUID], excluded: set[uuid.UUID]) -> tuple[float, int, int, str]:
+    """The #102 roll-up counts every modelled item with a feed, whatever its lifecycle. When items that are not operational
+    (planned/reserved/retired) sit in the scope, take their share back out so a planned server with a nameplate figure adds no
+    heat and a planned server without demand adds no unknown. Returns (load_kw, missing_count, equipment_count, quality)."""
+    known = getattr(rollup, "equipment", None) or {}
+    gone = [known[i] for i in excluded if i in known]
+    if not gone:
+        return scope_load, scope_missing, scope_count, scope_quality
+    load = scope_load - sum(r.demand_kw for r in gone if r.served and r.demand_kw is not None)
+    missing = scope_missing - sum(1 for r in gone if r.demand_kw is None)
+    counts = [0, 0, 0, 0]
+    for i in remaining:
+        r = known.get(i)
+        if r is None:
+            continue
+        if r.demand_kw is None:
+            counts[3] += 1
+        elif r.served:
+            counts[{"measured": 0, "stale": 1, "estimated": 2, "missing": 3}[r.quality]] += 1
+    return max(round(load, 6), 0.0), max(missing, 0), scope_count - len(gone), _classify_quality(*counts)
 
 
 def _modelled(rollup: Any, ids: set[uuid.UUID]) -> set[uuid.UUID]:
@@ -287,19 +330,28 @@ async def _zone_load(
         placed = population.all_ids
         modelled = _modelled(rollup, placed)
         unmodelled = len(placed) - len(modelled)
-        if not placed and (room is None or room.equipment_count == 0):
+        pending = len(population.pending)
+        in_rollup_but_excluded = len([i for i in population.excluded if i in (getattr(rollup, "equipment", None) or {})])
+        operational_in_rollup = (room.equipment_count - in_rollup_but_excluded) if room is not None else 0
+        if not placed and operational_in_rollup <= 0:
             return ZoneLoad(
-                state="unknown", placed_equipment_count=0, modelled_equipment_count=0, incomplete_reasons=["no_equipment_placed"],
-                basis="whole room; no IT equipment is placed in this room, and an empty room cannot be told apart from one nobody has inventoried",
+                state="unknown", placed_equipment_count=0, modelled_equipment_count=0, pending_equipment_count=pending,
+                incomplete_reasons=["only_planned_or_reserved_equipment_placed" if pending else "no_equipment_placed"],
+                basis="whole room; no operational IT equipment is placed in this room"
+                + (f" ({pending} planned or reserved item(s) are not yet present)" if pending else "")
+                + ", and an empty room cannot be told apart from one nobody has inventoried",
             )
-        missing = room.missing_demand_count if room is not None else 0
-        known_kw = room.load_kw if room is not None else 0.0
-        quality = room.quality if room is not None else None
+        if room is not None:
+            known_kw, missing, _count, quality = _without_excluded(
+                rollup, room.load_kw, room.missing_demand_count, room.equipment_count, room.quality, placed, set(population.excluded)
+            )
+        else:
+            known_kw, missing, quality = 0.0, 0, None
         unknown_total = unmodelled + missing
         counts: dict[str, Any] = {
             "placed_equipment_count": len(placed), "modelled_equipment_count": len(modelled),
             "unknown_demand_equipment_count": unknown_total, "unmodelled_equipment_count": unmodelled,
-            "missing_demand_equipment_count": missing,
+            "missing_demand_equipment_count": missing, "pending_equipment_count": pending,
         }
         basis = "whole room (all racks and floor equipment)"
         if unknown_total > 0:
@@ -313,10 +365,9 @@ async def _zone_load(
                 f"({unmodelled} without a power-input model, {missing} modelled without a demand figure)",
                 **counts,
             )
-        assert room is not None
         return ZoneLoad(
-            state="known", electrical_kw=round(room.load_kw, 3), thermal_kw=round(room.load_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3),
-            quality=room.quality, rack_count=len(rack_rows), basis=basis, **counts,
+            state="known", electrical_kw=round(known_kw, 3), thermal_kw=round(known_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3),
+            quality=quality, rack_count=len(rack_rows), basis=basis, **counts,
         )
     inside: list[uuid.UUID] = []
     unassigned = 0
@@ -329,22 +380,27 @@ async def _zone_load(
     known_part: list[float] = []  # load of every modelled rack, complete or not: the lower bound
     qualities: list[str] = []
     missing_racks = 0
-    placed_total = modelled_total = unmodelled_total = missing_demand_total = 0
+    placed_total = modelled_total = unmodelled_total = missing_demand_total = pending_total = 0
     for rack_id in sorted(inside, key=str):
         scoped = rollup.racks.get(rack_id)
         in_rack = population.by_rack.get(rack_id, set())
+        gone = population.excluded_in_rack(rack_id)
+        pending_total += len(gone & population.pending)
         rack_modelled = _modelled(rollup, in_rack)
         placed_total += len(in_rack)
         modelled_total += len(rack_modelled)
         unmodelled_total += len(in_rack) - len(rack_modelled)
         if scoped is not None:
-            known_part.append(scoped.load_kw)
-            missing_demand_total += scoped.missing_demand_count
-        if scoped is None or scoped.quality == "missing" or scoped.missing_demand_count > 0 or len(in_rack) > len(rack_modelled):
+            rack_kw, rack_missing, _rack_count, rack_quality = _without_excluded(
+                rollup, scoped.load_kw, scoped.missing_demand_count, scoped.equipment_count, scoped.quality, in_rack, gone
+            )
+            known_part.append(rack_kw)
+            missing_demand_total += rack_missing
+        if scoped is None or rack_quality == "missing" or rack_missing > 0 or len(in_rack) > len(rack_modelled):
             missing_racks += 1
         else:
-            loads.append(scoped.load_kw)
-            qualities.append(scoped.quality)
+            loads.append(rack_kw)
+            qualities.append(rack_quality)
     floor = len(population.floor)  # floor-standing items have no rack, so no zone rectangle can claim them
     reasons = []
     if unassigned:
@@ -361,6 +417,7 @@ async def _zone_load(
         "placed_equipment_count": placed_total, "modelled_equipment_count": modelled_total,
         "unknown_demand_equipment_count": unmodelled_total + missing_demand_total, "unmodelled_equipment_count": unmodelled_total,
         "missing_demand_equipment_count": missing_demand_total, "unattributed_floor_equipment_count": floor,
+        "pending_equipment_count": pending_total,
     }
     basis = "racks whose footprint centre lies inside the zone; floor-standing equipment cannot be attributed to a zone area"
     if not reasons:

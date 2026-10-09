@@ -349,6 +349,14 @@ describe("CoolingEnvironmentPanel", () => {
     expect(within(row).getByTestId("redundancy-cell")).toHaveTextContent(/^redundant$/);
   });
 
+  it("says how many planned or reserved items were left out of the load, and still shows a verified load", async () => {
+    mockAll({ cap: capacity([zone({ thermal_load: { ...zone().thermal_load, pending_equipment_count: 3 } })]) });
+    renderPanel();
+    const row = within(await screen.findByTestId("capacity-table")).getAllByRole("row")[1];
+    expect(within(row).getByTestId("load-cell")).toHaveTextContent("60 kW (measured) · 3 planned or reserved not counted");
+    expect(within(row).getByTestId("headroom-cell")).toHaveTextContent("100 kW (37.5% used)");
+  });
+
   it("renders without any alarm information when the caller lacks alarm:read", async () => {
     const withheld = heatMap({ thresholds: [], thresholds_withheld: true });
     for (const s of withheld.sensors) delete (s as { active_alarm_count?: number }).active_alarm_count;

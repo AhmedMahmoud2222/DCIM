@@ -150,6 +150,8 @@ test("cooling assets -> sensors -> telemetry -> aisles -> maps -> measured vs in
   const eqModel = await api.post("/equipment-models", { manufacturer: "Acme", model_name: `EM-${sfx}` });
   const eqRevision = await api.post(`/equipment-models/${eqModel.id}/revisions`, {});
   const server = await api.post("/equipment", { asset_tag: `SRV-${sfx}`, model_revision_id: eqRevision.id, hostname: `srv-${sfx}` });
+  // only operational equipment (installed/active/maintenance) is part of the thermal-load population; a planned server is not heat yet
+  for (const status of ["installed", "active"]) await api.post(`/managed-assets/${server.id}/lifecycle-transition`, { to_status: status });
   await api.post(`/equipment/${server.id}/move`, { placement_type: "rack_mounted", room_id: room.id, rack_id: rack.id, u_start: 1, u_end: 3, side: "front" });
   const ups = await api.post("/power/upses", { asset_tag: `UPS-${sfx}`, name: "UPS", room_id: room.id, capacity_kva: 50 });
   const feed = await api.post("/power/equipment-feeds", { equipment_asset_id: server.id, label: "Feed A" });

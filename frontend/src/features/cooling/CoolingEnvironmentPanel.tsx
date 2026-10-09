@@ -177,14 +177,16 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
  * the known part as "at least", never as the room total. */
 function loadText(z: CapacityZone): string {
   const load = z.thermal_load;
-  if (load.thermal_kw != null) return `${load.thermal_kw} kW (${load.quality ?? "quality unknown"})`;
+  const pending = load.pending_equipment_count ?? 0;
+  const pendingNote = pending > 0 ? ` · ${pending} planned or reserved not counted` : "";
+  if (load.thermal_kw != null) return `${load.thermal_kw} kW (${load.quality ?? "quality unknown"})${pendingNote}`;
   const state = load.state.replace(/_/g, " ");
   const unknown = load.unknown_demand_equipment_count ?? 0;
   const placed = load.placed_equipment_count;
   const parts = [`unknown (${state})`];
   if (unknown > 0) parts.push(`${unknown}${placed != null ? ` of ${placed}` : ""} placed equipment without a known demand`);
   if (load.thermal_kw_lower_bound != null) parts.push(`at least ${load.thermal_kw_lower_bound} kW known, not a total`);
-  return parts.join(", ");
+  return parts.join(", ") + pendingNote;
 }
 
 function headroomText(z: CapacityZone): string {

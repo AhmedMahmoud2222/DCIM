@@ -35,11 +35,32 @@ async def world(client, auth_headers, db_session):
     }
 
 
-async def equipment(world, *, room: str | None = None, powered: bool = True, demand_kw: float | None = None) -> dict:
-    """A piece of equipment placed in a room, optionally fed by a live power path and optionally reporting demand."""
+LIFECYCLE_PATH = {
+    "planned": [], "installed": ["installed"], "active": ["installed", "active"], "maintenance": ["installed", "maintenance"],
+    "decommissioned": ["installed", "active", "decommissioned"],
+    "decommissioned_from_active": ["decommissioned"],
+}
+
+
+async def set_lifecycle(world, asset_id: str, lifecycle: str) -> None:
+    """Move an asset to `lifecycle` through the real transition endpoint. `reserved` has no inbound transition in the lifecycle
+    graph (planned/reserved only lead to installed/removed), so it is written directly, as an administrator import would."""
+    if lifecycle == "reserved":
+        await world["db"].execute(text("UPDATE managed_asset SET lifecycle_status = 'reserved' WHERE id = :i"), {"i": asset_id})
+        await world["db"].commit()
+        return
+    for status in LIFECYCLE_PATH[lifecycle]:
+        r = await world["client"].post(f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": status}, headers=world["admin"])
+        assert r.status_code == 200, r.text
+
+
+async def equipment(world, *, room: str | None = None, powered: bool = True, demand_kw: float | None = None, lifecycle: str = "active") -> dict:
+    """A piece of equipment placed in a room, optionally fed by a live power path and optionally reporting demand. It is
+    ACTIVE by default: only operational equipment is part of the thermal-load population."""
     client, admin = world["client"], world["admin"]
     engineer = await world["auth_headers"]("Engineer")
     item = await create_equipment(client, engineer, world["auth_headers"])
+    await set_lifecycle(world, item["id"], lifecycle)
     moved = await client.post(f"/api/v1/equipment/{item['id']}/move", json={"placement_type": "floor_standing", "room_id": room or world["room"]}, headers=engineer)
     assert moved.status_code == 200, moved.text
     if powered:
@@ -145,9 +166,7 @@ async def test_a_retired_power_feed_makes_its_equipment_unmodelled_and_decommiss
     await world["db"].commit()
     z = await room_capacity(world)
     assert z["thermal_load"]["state"] == "incomplete" and z["thermal_load"]["unmodelled_equipment_count"] == 1  # still placed, now unmodelled
-    for status in ("installed", "active", "decommissioned"):
-        r = await world["client"].post(f"/api/v1/managed-assets/{gone['id']}/lifecycle-transition", json={"to_status": status}, headers=world["admin"])
-        assert r.status_code == 200, r.text
+    await set_lifecycle(world, gone["id"], "decommissioned_from_active")
     z = await room_capacity(world)
     assert z["thermal_load"]["state"] == "known" and z["thermal_load"]["electrical_kw"] == 40.0  # a decommissioned item is not heat load
 

@@ -1,6 +1,6 @@
 # Issue #105: cooling model, environmental heat maps and airflow visualization
 
-Document version: 1.3
+Document version: 1.4
 Base: `main@eaf0fa01a7ea9cac263f8fce4d7311ed2ba311f6` (includes #99, #101 to #104). Migration: `0045_cooling_thermal`.
 
 **A #105 heat map is an operational interpolation/visualization, not validated CFD.** Interpolated cells are never
@@ -79,15 +79,38 @@ Chillers are reported separately (`plant`) and never added to room headroom (the
 Thermal load = #102 electrical IT load x 1.0, stated in every result; no COP, PUE or efficiency factor. Zones with geometry
 count racks whose footprint centre is inside; unassigned or load-less racks make the load `incomplete`.
 
-Load completeness (v1.3). "Known" is judged against the equipment PLACED in the room, not against the equipment that already has a
+Load completeness (v1.3, lifecycle policy added in v1.4). "Known" is judged against the equipment PLACED in the room, not against the equipment that already has a
 power model. Earlier versions only looked at the #102 roll-up, so a room with 10 placed servers of which 2 were modelled reported a
 complete load, a numeric headroom and verified N+1.
 
 *Placed IT equipment* is a ManagedAsset of subtype `equipment` with a CURRENT placement (`effective_to IS NULL`) in the room. A
 rack-mounted item belongs to the room its rack currently sits in (falling back to its own placement room, as the roll-up loader does).
 Superseded placements, equipment in other rooms, sensors, cooling units and other asset subtypes are not part of the population.
-Equipment whose lifecycle is `decommissioned` or `removed` is excluded; every other lifecycle state, including `planned` and
-`reserved`, counts, because no existing domain rule says such an item draws no power. Retire or remove it to take it out.
+
+*Operational population (v1.4).* Only equipment that is physically present counts toward the current thermal load. The lifecycle
+graph (`planned`, `installed`, `active`, `reserved`, `maintenance`, `decommissioned`, `removed`) is applied like this:
+
+| Lifecycle | In the operational population? | Why |
+|---|---|---|
+| `planned` | no | allocated a place, not installed: dissipates no heat today |
+| `reserved` | no | same; its only inbound path in the graph is administrator write, and it can only move on to `installed` or `removed` |
+| `installed` | yes | physically present; this is the staged/commissioning state and may already be energised |
+| `active` | yes | in service |
+| `maintenance` | yes | physically present and possibly powered. A modelled item known to be de-energised is "unserved" in the roll-up and adds no heat |
+| `decommissioned`, `removed` | no | gone |
+
+The rule excludes by name (planned, reserved, decommissioned, removed), so a lifecycle state added later is counted until someone
+decides otherwise; it is never silently dropped. Excluded items are not zero-demand members of the load, they are outside it:
+a planned server with a nameplate figure adds no heat, and a planned or reserved server without a power model or demand is not an
+unknown. The roll-up (#102) counts every modelled item regardless of lifecycle, so the capacity view takes the share of non-operational
+items back out of the room and rack totals before judging completeness. The number of planned or reserved items placed in the room is
+returned as `pending_equipment_count` so operators can see what is not counted. When the only placed equipment is planned or reserved,
+the load is `unknown` with `incomplete_reasons: ["only_planned_or_reserved_equipment_placed"]`.
+
+Limitations of lifecycle-based classification: lifecycle states describe the asset record, not the electrical state. An `installed`
+or `maintenance` item may be racked but switched off (counted as unknown demand until modelled or retired), and a `planned` item that
+was in fact racked and energised early is not counted until its record is advanced. Neither can be settled without a measured or
+modelled power state, which this view does not invent.
 
 *Known demand*: the item is in the roll-up (it owns an `equipment_power_input` node in the site) and has a measured, stale
 (last-known) or nameplate-estimated demand. A stale reading keeps its existing treatment: it is last-known demand and the load
@@ -106,6 +129,15 @@ is exposed only as `electrical_kw_lower_bound` / `thermal_kw_lower_bound` with a
 load is at least the known part. It never feeds the level, utilisation or N+1. Redundancy stays `redundant_unverified`, the pool reports
 `verification_unavailable_reason: incomplete_load` (versus `capacity_unknown`), and the exceptions view raises
 `capacity_inputs_incomplete` with the unknown count.
+
+*Geometry zones and floor-standing equipment (known limitation).* A floor-standing item has a room and no position inside it, so no
+rectangle or polygon can claim it. While operational floor-standing equipment is placed in the room, EVERY zone that has geometry
+is `incomplete` (`unattributed_floor_equipment_count`, reason `floor_equipment_not_attributable_to_a_zone_area`), even a zone far from
+the item. This is deliberately conservative: attributing the item would need a position that the domain does not store for
+equipment, and guessing one would be an invented number. Whole-room zones are unaffected because they cover every item. Possible
+future corrections (not implemented, they need an owner decision): record a floor position for equipment, or let an operator
+assign floor equipment to a zone. A rack with no equipment recorded (empty, or holding only planned items) is likewise unknown in a
+geometry zone, as before.
 
 A room with no placed equipment is `unknown` (`incomplete_reasons: ["no_equipment_placed"]`), not a known zero. The domain model has
 no per-room attestation that the inventory is complete, so an empty room cannot be told apart from one nobody has inventoried.

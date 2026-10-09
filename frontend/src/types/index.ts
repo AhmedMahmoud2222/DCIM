@@ -757,6 +757,7 @@ export interface CapacityZone {
     unmodelled_equipment_count?: number;
     missing_demand_equipment_count?: number;
     unattributed_floor_equipment_count?: number;
+    pending_equipment_count?: number;
     incomplete_reasons?: string[];
     quality: string | null;
     rack_count: number;

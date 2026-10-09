@@ -11,6 +11,7 @@ from tests.api.test_thermal_load_completeness import (  # noqa: F401  (fixture r
     _second_room,
     equipment,
     room_capacity,
+    set_lifecycle,
     world,
 )
 
@@ -178,9 +179,7 @@ async def test_decommissioned_equipment_and_non_it_assets_are_not_part_of_the_po
     sensor = await make_sensor(client, admin, world["site"]["site"], world["room"], 1000, 1000)  # sensors share equipment_placement
     assert sensor["id"]
     assert (await room_capacity(world))["thermal_load"]["placed_equipment_count"] == 2  # the sensor and the cooling units are not IT load
-    for status in ("installed", "active", "decommissioned"):
-        r = await client.post(f"/api/v1/managed-assets/{ghost['id']}/lifecycle-transition", json={"to_status": status}, headers=admin)
-        assert r.status_code == 200, r.text
+    await set_lifecycle(world, ghost["id"], "decommissioned_from_active")
     load = (await room_capacity(world))["thermal_load"]
     assert load["state"] == "known" and load["placed_equipment_count"] == 1
 
