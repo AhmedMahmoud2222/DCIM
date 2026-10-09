@@ -77,6 +77,19 @@ UNITS = {
     "kg": UnitDefinition("kg", "mass"),
     "g": UnitDefinition("g", "mass", Decimal("0.001")),
     "lb": UnitDefinition("lb", "mass", Decimal("0.45359237")),
+    # Issue #105: airflow volume, airflow velocity and differential pressure. Scales are exact
+    # (1 CFM = 0.3048^3 / 60 m3/s; 1 ft/min = 0.3048 / 60 m/s) except the conventional inch of water
+    # (ISO 80000-4: 249.08891 Pa), which is the conventional value rather than a temperature-specific one.
+    "m3/s": UnitDefinition("m3/s", "volumetric_flow"),
+    "m3/h": UnitDefinition("m3/h", "volumetric_flow", Decimal("0.0002777777777777777777777778")),
+    "L/s": UnitDefinition("L/s", "volumetric_flow", Decimal("0.001")),
+    "CFM": UnitDefinition("CFM", "volumetric_flow", Decimal("0.00047194744320")),
+    "m/s": UnitDefinition("m/s", "velocity"),
+    "ft/min": UnitDefinition("ft/min", "velocity", Decimal("0.00508")),
+    "km/h": UnitDefinition("km/h", "velocity", Decimal("0.2777777777777777777777777778")),
+    "Pa": UnitDefinition("Pa", "pressure"),
+    "kPa": UnitDefinition("kPa", "pressure", Decimal("1000")),
+    "inH2O": UnitDefinition("inH2O", "pressure", Decimal("249.08891")),
 }
 
 UNIT_ALIASES = {
@@ -98,6 +111,13 @@ UNIT_ALIASES = {
     "volt": "V",
     "amps": "A",
     "amp": "A",
+    "cfm": "CFM",
+    "l/s": "L/s",
+    "fpm": "ft/min",
+    "pascal": "Pa",
+    "pascals": "Pa",
+    "inwc": "inH2O",
+    "inh2o": "inH2O",
 }
 
 METRIC_REGISTRY = {
@@ -106,6 +126,14 @@ METRIC_REGISTRY = {
     "power_kw": MetricDefinition("power_kw", "power", "kW", "kW"),
     "load_percent": MetricDefinition("load_percent", "ratio", "%", "%"),
     "availability": MetricDefinition("availability", "ratio", "1", "%"),
+    # Issue #105 cooling / environment metrics. Added to registry version 1 because no existing key, unit or
+    # stored value changes meaning; historical rows are untouched.
+    "supply_air_temperature_c": MetricDefinition("supply_air_temperature_c", "temperature", "degC", "degC"),
+    "return_air_temperature_c": MetricDefinition("return_air_temperature_c", "temperature", "degC", "degC"),
+    "airflow_m3_s": MetricDefinition("airflow_m3_s", "volumetric_flow", "m3/s", "m3/h"),
+    "airflow_velocity_m_s": MetricDefinition("airflow_velocity_m_s", "velocity", "m/s", "m/s"),
+    "differential_pressure_pa": MetricDefinition("differential_pressure_pa", "pressure", "Pa", "Pa"),
+    "cooling_output_kw": MetricDefinition("cooling_output_kw", "power", "kW", "kW"),
 }
 REGISTRIES = {REGISTRY_VERSION: METRIC_REGISTRY}
 

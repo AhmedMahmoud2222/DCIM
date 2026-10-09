@@ -16,13 +16,28 @@ caller's intent. A second workflow attempting a *move* still surfaces the confli
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.authority_lock import acquire_placement_scope_lock
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
+
+
+async def _lock_asset_placement(db: AsyncSession, kind: str, asset_id: uuid.UUID) -> None:
+    """Serialises every placement writer of ONE asset (transaction-scoped advisory lock).
+
+    Version generation looks at the asset's whole placement history, including the case where no row is current
+    (first placement, re-placement after an unplace). Row locks on the current row cannot serialise those, because
+    there may be no current row to lock, so two concurrent first-placements would both read "no history" and both
+    allocate the same generation. Taking this lock before reading the history makes `max(version) + 1` safe.
+
+    Lock order: AUTHORITY(S) (racks only, see authority_lock.py) -> this lock -> placement row locks. Nothing else
+    waits for this lock while holding a row lock another placement writer needs."""
+    key = f"dcim.placement.{kind}.{asset_id}"
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
 
 
 @dataclass
@@ -33,6 +48,25 @@ class PlacementConflict(Exception):
     surface in a 409 response body."""
 
     current: RackPlacement | EquipmentPlacement | None
+
+
+def _require_unchanged_while_waiting(
+    observed: RackPlacement | EquipmentPlacement | None, current: RackPlacement | EquipmentPlacement | None
+) -> None:
+    """A mover decided what to do from the placement it observed. If another writer replaced, created or closed that
+    placement while this one waited for the per-asset lock, the decision is stale: the loser gets a conflict
+    (ARCHITECTURE_REVIEW.md 7c, "zero rows after unblock") instead of silently stacking a second move on top. The
+    same rule covers two concurrent first placements and a concurrent re-placement."""
+    if (observed.id if observed else None) != (current.id if current else None):
+        raise PlacementConflict(current=current)
+
+
+async def _next_version(
+    db: AsyncSession, model: type[RackPlacement] | type[EquipmentPlacement], key_col: Any, asset_id: uuid.UUID
+) -> int:
+    """Highest version ever issued to this asset (closed rows included) plus one. Callers hold `_lock_asset_placement`."""
+    highest = (await db.execute(select(func.max(model.version)).where(key_col == asset_id))).scalar_one_or_none()
+    return (highest or 0) + 1
 
 
 # --------------------------------------------------------------------------- Rack
@@ -62,8 +96,14 @@ async def move_rack(
     sits in is part of every site-restricted user's data scope, so this write must not commit
     while a delegated-administration decision that read the old placement is still open."""
     await acquire_placement_scope_lock(db)
+    observed = await get_current_rack_placement(db, rack_id)  # what this caller decided to change, read BEFORE any wait
+    await _lock_asset_placement(db, "rack", rack_id)
     current = await get_current_rack_placement(db, rack_id)
-    next_version = 1
+    _require_unchanged_while_waiting(observed, current)
+    if current is None and if_match_version is not None:
+        # A token can only describe a placement that exists. Unplaced + a token means the token comes from an earlier
+        # generation (or never existed): it must not be honoured, whatever number it carries.
+        raise PlacementConflict(current=None)
     if current is not None:
         locked = (
             await db.execute(
@@ -77,11 +117,11 @@ async def move_rack(
         if if_match_version is not None and locked.version != if_match_version:
             raise PlacementConflict(current=locked)
         locked.effective_to = datetime.now(UTC)
-        # Placement versions are monotonic per rack, not per row: a fresh row restarting at 1 would let a stale
-        # If-Match (or an import's placement_version) captured before a concurrent move match the *new* row
-        # (ABA) and silently move the rack back.
-        next_version = locked.version + 1
         await db.flush()
+    # Placement versions are strictly monotonic per rack across its WHOLE history (not per row, not per current
+    # row): a fresh row restarting at 1, after a move or after an unplace, would let a stale If-Match (or an
+    # import's placement_version) captured earlier match the *new* row (ABA) and silently move the rack back.
+    next_version = await _next_version(db, RackPlacement, RackPlacement.rack_id, rack_id)
 
     new_placement = RackPlacement(
         rack_id=rack_id,
@@ -105,6 +145,7 @@ async def retire_rack_placement(
     if the rack was already unplaced — by this caller's prior attempt or a concurrent
     one — never a 409 for that case. Takes the same shared lock as `move_rack`."""
     await acquire_placement_scope_lock(db)
+    await _lock_asset_placement(db, "rack", rack_id)
     current = await get_current_rack_placement(db, rack_id)
     if current is None:
         return None
@@ -148,8 +189,18 @@ async def move_equipment(
     mounting_method: str | None = None,
     orientation: str | None = None,
     if_match_version: int | None = None,
+    x_mm: int | None = None,
+    y_mm: int | None = None,
+    position_calibration_id: uuid.UUID | None = None,
 ) -> EquipmentPlacement:
+    """`x_mm` / `y_mm` (Issue #105) carry a room-local position for assets such as environmental sensors and cooling
+    units that have no drawn SpatialObject; each close-then-open row keeps its own coordinates."""
+    observed = await get_current_equipment_placement(db, equipment_id)  # read BEFORE any wait, see move_rack
+    await _lock_asset_placement(db, "equipment", equipment_id)
     current = await get_current_equipment_placement(db, equipment_id)
+    _require_unchanged_while_waiting(observed, current)
+    if current is None and if_match_version is not None:
+        raise PlacementConflict(current=None)  # see move_rack: a token cannot describe a placement that does not exist
     if current is not None:
         locked = (
             await db.execute(
@@ -164,6 +215,7 @@ async def move_equipment(
             raise PlacementConflict(current=locked)
         locked.effective_to = datetime.now(UTC)
         await db.flush()
+    next_version = await _next_version(db, EquipmentPlacement, EquipmentPlacement.equipment_id, equipment_id)
 
     u_range = Range(u_start, u_end, bounds="[)") if u_start is not None and u_end is not None else None
     new_placement = EquipmentPlacement(
@@ -176,7 +228,10 @@ async def move_equipment(
         rotation_deg=rotation_deg,
         mounting_method=mounting_method,
         orientation=orientation,
-        version=1,
+        x_mm=x_mm,
+        y_mm=y_mm,
+        position_calibration_id=position_calibration_id,
+        version=next_version,
         effective_from=datetime.now(UTC),
         effective_to=None,
     )
@@ -188,6 +243,7 @@ async def move_equipment(
 async def retire_equipment_placement(
     db: AsyncSession, *, equipment_id: uuid.UUID, if_match_version: int | None = None
 ) -> EquipmentPlacement | None:
+    await _lock_asset_placement(db, "equipment", equipment_id)
     current = await get_current_equipment_placement(db, equipment_id)
     if current is None:
         return None

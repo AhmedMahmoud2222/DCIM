@@ -48,6 +48,9 @@ SCOPE_AWARE_PERMISSIONS = frozenset(
         "organization:read", "location:read", "rack:read", "rack:manage", "rack:place", "equipment:read",
         # Issue #101: cables and traces are filtered by the visibility of their endpoint equipment.
         "cable:read", "cable:manage",
+        # Issue #105: cooling configuration is filtered by site (units, groups, zones need full-site scope) and
+        # sensor data by the same site/rack visibility clause used for equipment, before any aggregation.
+        "cooling:read", "cooling:manage",
     }
 )
 UNSCOPED_ADMIN_RESOURCES = frozenset({"user", "group"})

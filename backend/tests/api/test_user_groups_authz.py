@@ -337,6 +337,42 @@ async def test_concurrent_requests_cannot_remove_every_administrator(db_engine, 
 # scope-filtered in its handler, or serves non-site reference data. A new route appearing here
 # must be reviewed for scope handling, then added to this list.
 REVIEWED_SCOPE_AWARE_ROUTES = {
+    # Issue #105 cooling / thermal (reviewed): configuration needs the whole site (_site_visible); sensors use the equipment
+    # visibility clause; thermal views filter sensors by scope before interpolation and withhold site-level data from rack-limited callers.
+    ("cooling", "DELETE", "/cooling/relations/{relation_id}"),
+    ("cooling", "DELETE", "/cooling/sensors/{sensor_id}/placement"),
+    ("cooling", "DELETE", "/cooling/units/{unit_id}/placement"),
+    ("cooling", "DELETE", "/cooling/zones/{zone_id}/containment-elements/{element_id}"),
+    ("cooling", "GET", "/cooling/groups"),
+    ("cooling", "GET", "/cooling/groups/{group_id}"),
+    ("cooling", "GET", "/cooling/relations"),
+    ("cooling", "GET", "/cooling/sensors"),
+    ("cooling", "GET", "/cooling/sensors/{sensor_id}"),
+    ("cooling", "GET", "/cooling/units"),
+    ("cooling", "GET", "/cooling/units/{unit_id}"),
+    ("cooling", "GET", "/cooling/zones"),
+    ("cooling", "GET", "/cooling/zones/{zone_id}"),
+    ("cooling", "PATCH", "/cooling/groups/{group_id}"),
+    ("cooling", "PATCH", "/cooling/sensors/{sensor_id}"),
+    ("cooling", "PATCH", "/cooling/units/{unit_id}"),
+    ("cooling", "PATCH", "/cooling/zones/{zone_id}"),
+    ("cooling", "POST", "/cooling/groups"),
+    ("cooling", "POST", "/cooling/groups/{group_id}/retire"),
+    ("cooling", "POST", "/cooling/relations"),
+    ("cooling", "POST", "/cooling/sensors"),
+    ("cooling", "POST", "/cooling/units"),
+    ("cooling", "POST", "/cooling/units/{unit_id}/retire"),
+    ("cooling", "POST", "/cooling/zones"),
+    ("cooling", "POST", "/cooling/zones/{zone_id}/containment-elements"),
+    ("cooling", "POST", "/cooling/zones/{zone_id}/retire"),
+    ("cooling", "PUT", "/cooling/sensors/{sensor_id}/placement"),
+    ("cooling", "PUT", "/cooling/units/{unit_id}/placement"),
+    ("thermal", "GET", "/cooling/rooms/{room_id}/airflow"),
+    ("thermal", "GET", "/cooling/rooms/{room_id}/capacity"),
+    ("thermal", "GET", "/cooling/rooms/{room_id}/environment"),
+    ("thermal", "GET", "/cooling/rooms/{room_id}/exceptions"),
+    ("thermal", "GET", "/cooling/rooms/{room_id}/heat-map"),
+    ("thermal", "GET", "/cooling/rooms/{room_id}/layout"),
     # Issue #101 object isolation is covered by test_cables_scope.py.
     ("cables", "DELETE", "/cables/{cable_id}"),
     ("cables", "GET", "/cables"),
@@ -420,4 +456,6 @@ def test_dynamic_permission_checks_are_confined_to_reviewed_modules():
     }
     # bulk_import: jobs are restricted to their uploader (_assert_job_visible).
     # catalog_designer: conditional catalog:* codes, which restricted users never hold.
-    assert dynamic <= {"bulk_import.py", "catalog_designer.py"}, dynamic
+    # thermal: `_holds` applies a granted-but-scope-inactive spatial/telemetry/power/alarm code only because every query
+    # behind the thermal views is filtered by the caller's site/rack scope before interpolation or aggregation.
+    assert dynamic <= {"bulk_import.py", "catalog_designer.py", "thermal.py"}, dynamic

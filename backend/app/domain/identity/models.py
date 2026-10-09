@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
 
-ASSET_TYPES = ("rack", "equipment", "pdu", "ups", "generator", "power_panel", "sensor", "cable")
+ASSET_TYPES = ("rack", "equipment", "pdu", "ups", "generator", "power_panel", "sensor", "cable", "crac", "crah", "chiller")
 
 LIFECYCLE_STATUSES = (
     "planned",
