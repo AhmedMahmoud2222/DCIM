@@ -28,6 +28,7 @@ from app.domain.network.discovery_models import DiscoveredNeighbor
 from app.domain.physical.ports import EquipmentPort
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.telemetry.models import TelemetryReading
+from app.domain.telemetry.registry import METRIC_REGISTRY
 
 MAX_OVERLAY_ASSETS = 500
 ENVIRONMENT_METRICS = ("temperature_c", "humidity_percent")
@@ -219,6 +220,10 @@ async def environment_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str,
         # One freshness rule for every environmental view (app/application/thermal/environment.py).
         freshness, age = classify_reading(reading.occurred_at, now, interval)
         fresh = freshness == MEASURED_FRESH
+        # A stored unit that is not the metric's canonical unit is never reinterpreted: same rule as the thermal views.
+        unit_ok = reading.unit == METRIC_REGISTRY[metric].canonical_unit
+        if not unit_ok:
+            freshness, fresh = INVALID, False
         quality = "invalid" if freshness == INVALID else ("measured" if fresh else "stale")
         items.append(
             {
@@ -229,7 +234,7 @@ async def environment_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str,
                 "state": "critical" if asset_id in alarmed else ("normal" if fresh else "warning"),
                 "reason": "Active alarm on this asset." if asset_id in alarmed else (
                     "Fresh measured value." if fresh else (
-                        "Reading timestamp is in the future." if freshness == INVALID else "Reading is older than three poll intervals."
+                        ("Reading unit is not the canonical unit." if not unit_ok else "Reading timestamp is in the future.") if freshness == INVALID else "Reading is older than three poll intervals."
                     )
                 ),
             }

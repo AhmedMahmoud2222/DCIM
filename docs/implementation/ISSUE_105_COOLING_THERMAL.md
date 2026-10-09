@@ -1,6 +1,6 @@
 # Issue #105: cooling model, environmental heat maps and airflow visualization
 
-Document version: 1.0
+Document version: 1.1
 Base: `main@eaf0fa01a7ea9cac263f8fce4d7311ed2ba311f6` (includes #99, #101 to #104). Migration: `0045_cooling_thermal`.
 
 **A #105 heat map is an operational interpolation/visualization, not validated CFD.** Interpolated cells are never
@@ -26,8 +26,9 @@ Database triggers enforce: placed asset and room share a site; unit and zone sha
 cannot be decommissioned or removed (also through the generic lifecycle endpoint); relationships take share locks so a
 concurrent retire cannot interleave with a new relationship.
 
-Catalog (manufacturer/model) linkage for cooling units is deferred: the catalog has no cooling model type yet, so unit
-footprints are not modelled and markers are drawn unscaled and labelled as such.
+Catalog (manufacturer/model) linkage for cooling units is deferred: the catalog has no cooling model type yet. No footprint is
+invented: units appear as fixed-size markers that are explicitly labelled "footprint not modelled, not to scale" in the 2D and 3D views,
+in their tooltips and in the details panel, and are never drawn as dimensionally accurate equipment.
 
 ## 2. Canonical metrics and units (registry version 1, additive)
 `supply_air_temperature_c`, `return_air_temperature_c` (degC), `airflow_m3_s` (m3/s, shown m3/h), `airflow_velocity_m_s` (m/s),
@@ -36,7 +37,7 @@ Existing keys and stored rows are unchanged; raw value and unit provenance is ke
 metrics its kind measures.
 
 ## 3. Current-value contract and freshness
-One function (`classify_reading`) decides freshness for every view, including the legacy `environment_overlay`.
+One function (`classify_reading`) decides freshness for every view, including the #104 `environment_overlay` (which also flags a non-canonical stored unit as invalid, like the thermal views); `test_environment_freshness_policy.py` pins both views to the same answers at the 3 x poll boundary and for different poll intervals.
 fresh: age <= max(poll interval, 1) x 3. stale: older. missing: placed, expected, no reading received by the snapshot instant.
 invalid: unit differs from the canonical unit (never reinterpreted) or timestamp more than 120 s in the future.
 A snapshot (`as_of`, default now) considers readings received by that instant and judges freshness at that instant.
@@ -65,6 +66,9 @@ Arrows are static, so there is nothing to suppress for reduced motion.
 ## 6. Capacity, headroom and redundancy
 Air-side capacity is CRAC + CRAH. Available = unit lifecycle installed/active AND operating status online/standby; effective
 capacity = configured if set, else rated; unknown stays unknown and makes dependent totals "incomplete" (headroom is then withheld).
+An operating status of `unknown` is missing information, not a unit that is down: the zone's available capacity is then unknown (null), the
+level is `unknown` and the pool reports `availability_unknown`; only units all *known* to be down give a real 0 kW and `no_available_unit`.
+If no available unit has a known capacity, available and installed totals are null, never 0.
 Chillers are reported separately (`plant`) and never added to room headroom (they feed CRAH coils).
 Thermal load = #102 electrical IT load x 1.0, stated in every result; no COP, PUE or efficiency factor. Zones with geometry
 count racks whose footprint centre is inside; unassigned or load-less racks make the load `incomplete`.
@@ -79,12 +83,21 @@ metric already work). Derived on request, never persisted: stale/missing/invalid
 cooling unit, headroom breach, redundancy lost, single unit, incomplete capacity inputs, no cooling assigned, zone without fresh sensors.
 
 ## 8. Authorization
-New codes `cooling:read` (all roles) and `cooling:manage` (Administrator, DCIM Manager, Engineer). Views also need spatial:read /
-telemetry:read as listed in `thermal.py`; thermal load needs power:read; alarms need alarm:read; source integration identity
-needs integration:read. The cooling codes are not site-scope-aware, so site-restricted callers are refused (fail closed).
-Services are nevertheless scope-aware (sensors are filtered with the existing equipment visibility clause before interpolation, counts,
-quality and provenance are computed from the visible set only, hidden rooms are 404, restricted scopes get load withheld) and are
-attacked directly in tests so a future scope-aware grant cannot leak.
+Codes: `cooling:read` (all roles) and `cooling:manage` (Administrator, DCIM Manager, Engineer). Both are in
+`SCOPE_AWARE_PERMISSIONS`, so a site- or rack-scoped user keeps them and reaches the endpoints; every route is listed in the
+reviewed route sets of `test_user_groups_authz.py` and `test_pr69_route_sweep_strict.py`.
+
+| Scope of the caller | What the endpoints return |
+|---|---|
+| Unrestricted | everything |
+| Whole site (`rack_scope=all`) | that site's units, groups, zones, relations, sensors, capacity (with thermal load), maps; another site's room, sensor, unit, zone or group is a 404, identical to a non-existent id |
+| Selected racks | only sensors the equipment visibility clause shows (rack-mounted in a granted rack); maps, counts, min/max, quality and provenance are computed from those sensors only; site-level configuration (units, groups, zones, relations, capacity, airflow units) is invisible; no write operation |
+
+Filtering happens in SQL while the sensor set is selected, before interpolation, counting or aggregation, so a hidden sensor cannot be
+inferred from a map. Writes need the whole site. `spatial:read`, `telemetry:read`, `power:read` and `alarm:read` are not scope-aware;
+inside the thermal views a granted but scope-inactive code counts (the data behind it is already scope-filtered), while an explicit
+deny or a missing grant still blocks. `integration:read` (source identity in responses) is never taken from the inactive set.
+Hidden-site and hidden-rack cases are tested through HTTP (`test_thermal_scope.py`) and directly on the services (`test_thermal_authz.py`).
 
 ## 9. Concurrency and history
 Mutations use If-Match on the subtype `version`. Placement is close-then-open with monotonic versions. Retire is refused while

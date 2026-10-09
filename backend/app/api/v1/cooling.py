@@ -16,12 +16,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, false, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.application.access_control import equipment_visible_clause
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import lock_versioned_row, parse_if_match, require_if_match
 from app.application.outbox_service import write_outbox_event
@@ -38,6 +39,7 @@ from app.application.spatial_validation import (
     validate_u_range_against_rack_capacity,
 )
 from app.application.thermal.capacity import room_site_id
+from app.application.thermal.environment import scope_sees_site_assets
 from app.application.thermal.zone_geometry import (
     ZoneShape,
     active_floor_plan,
@@ -87,7 +89,18 @@ def _ids(request: Request) -> tuple[str | None, str | None]:
 
 
 def _site_visible(ctx: AuthContext, site_id: uuid.UUID) -> bool:
-    return ctx.scope.allows_site(site_id)
+    """Site-level cooling configuration (units, groups, zones, relations) belongs to a caller who holds the whole site;
+    a caller limited to selected racks sees none of it (rack-less assets are not theirs), exactly like equipment."""
+    return scope_sees_site_assets(ctx.scope, site_id)
+
+
+def _sensor_visible_clause(ctx: AuthContext):
+    """Sensors: visible with the whole site, or when the existing equipment clause says the sensor sits in a visible
+    rack. Evaluated in SQL so lists, counts and pagination never include a hidden sensor."""
+    if ctx.scope.unrestricted:
+        return true()
+    whole_site = EnvironmentalSensor.site_id.in_(ctx.scope.full_site_ids) if ctx.scope.full_site_ids else false()
+    return or_(whole_site, equipment_visible_clause(ctx.scope, EnvironmentalSensor.id))
 
 
 async def _require_site(db: AsyncSession, ctx: AuthContext, site_id: uuid.UUID) -> None:
@@ -291,7 +304,7 @@ async def list_groups(
     if site_id is not None:
         stmt = stmt.where(CoolingGroup.site_id == site_id)
     if not ctx.scope.unrestricted:
-        stmt = stmt.where(CoolingGroup.site_id.in_(ctx.scope.site_ids))
+        stmt = stmt.where(CoolingGroup.site_id.in_(ctx.scope.full_site_ids))
     if not include_retired:
         stmt = stmt.where(CoolingGroup.retired.is_(False))
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
@@ -507,7 +520,7 @@ async def list_units(
             EquipmentPlacement.room_id == room_id, EquipmentPlacement.effective_to.is_(None)
         )
     if not ctx.scope.unrestricted:
-        stmt = stmt.where(CoolingUnit.site_id.in_(ctx.scope.site_ids))
+        stmt = stmt.where(CoolingUnit.site_id.in_(ctx.scope.full_site_ids))
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.order_by(CoolingUnit.name, CoolingUnit.id).limit(page.limit).offset(page.offset))).all()
     return Page(items=[await _unit_out(db, u, a) for u, a in rows], total=total, limit=page.limit, offset=page.offset)
@@ -699,11 +712,13 @@ async def _sensor_out(db: AsyncSession, ctx: AuthContext, sensor: EnvironmentalS
     )
 
 
-async def _visible_sensor(db: AsyncSession, ctx: AuthContext, sensor_id: uuid.UUID) -> tuple[EnvironmentalSensor, ManagedAsset]:
-    row = (
-        await db.execute(select(EnvironmentalSensor, ManagedAsset).join(ManagedAsset, ManagedAsset.id == EnvironmentalSensor.id).where(EnvironmentalSensor.id == sensor_id))
-    ).first()
-    if row is None or not _site_visible(ctx, row[0].site_id):
+async def _visible_sensor(db: AsyncSession, ctx: AuthContext, sensor_id: uuid.UUID, *, write: bool = False) -> tuple[EnvironmentalSensor, ManagedAsset]:
+    stmt = select(EnvironmentalSensor, ManagedAsset).join(ManagedAsset, ManagedAsset.id == EnvironmentalSensor.id).where(EnvironmentalSensor.id == sensor_id)
+    if not write:
+        stmt = stmt.where(_sensor_visible_clause(ctx))
+    row = (await db.execute(stmt)).first()
+    # a hidden sensor is indistinguishable from a missing one; changing one needs the whole site
+    if row is None or (write and not _site_visible(ctx, row[0].site_id)):
         raise NotFoundError(f"Sensor {sensor_id} not found.")
     return row[0], row[1]
 
@@ -752,7 +767,7 @@ async def list_sensors(
             EquipmentPlacement.room_id == room_id, EquipmentPlacement.effective_to.is_(None)
         )
     if not ctx.scope.unrestricted:
-        stmt = stmt.where(EnvironmentalSensor.site_id.in_(ctx.scope.site_ids))
+        stmt = stmt.where(_sensor_visible_clause(ctx))
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (await db.execute(stmt.order_by(EnvironmentalSensor.name, EnvironmentalSensor.id).limit(page.limit).offset(page.offset))).all()
     return Page(items=[await _sensor_out(db, ctx, s, a) for s, a in rows], total=total, limit=page.limit, offset=page.offset)
@@ -769,7 +784,7 @@ async def update_sensor(
     sensor_id: uuid.UUID, body: SensorPatch, request: Request, if_match: int = Depends(require_if_match),
     db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> SensorOut:
-    _, asset = await _visible_sensor(db, ctx, sensor_id)
+    _, asset = await _visible_sensor(db, ctx, sensor_id, write=True)
     sensor = await lock_versioned_row(db, EnvironmentalSensor, sensor_id, expected_version=if_match, label="Sensor")
     changes = body.model_dump(exclude_unset=True)
     for non_null in ("name", "measurement_role"):
@@ -793,7 +808,7 @@ async def place_sensor(
     sensor_id: uuid.UUID, body: PlacementIn, request: Request, if_match: str | None = None, db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> PlacementOut:
-    sensor, asset = await _visible_sensor(db, ctx, sensor_id)
+    sensor, asset = await _visible_sensor(db, ctx, sensor_id, write=True)
     if asset.lifecycle_status in ("decommissioned", "removed"):
         raise ConflictError(detail="A retired sensor cannot be placed.")
     placement = await _place_asset(
@@ -811,7 +826,7 @@ async def unplace_sensor(
     sensor_id: uuid.UUID, request: Request, if_match: str | None = None, db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> None:
-    sensor, _ = await _visible_sensor(db, ctx, sensor_id)
+    sensor, _ = await _visible_sensor(db, ctx, sensor_id, write=True)
     await _unplace(db, request, ctx, sensor.id, parse_if_match(if_match))
 
 
@@ -878,6 +893,15 @@ class ZoneOut(BaseModel):
     elements: list[ContainmentElementOut] = []
 
 
+def _element_kind(value: str) -> Literal["boundary", "opening"]:
+    # the element_kind_allowed CHECK constraint guarantees one of these two; anything else is corrupt data, not a response to guess at
+    if value == "boundary":
+        return "boundary"
+    if value == "opening":
+        return "opening"
+    raise ValueError(f"unexpected containment element kind {value!r}")
+
+
 async def _zone_out(db: AsyncSession, zone: ThermalZone) -> ZoneOut:
     elements = (await db.execute(select(ContainmentElement).where(ContainmentElement.thermal_zone_id == zone.id).order_by(ContainmentElement.created_at, ContainmentElement.id))).scalars().all()
     shape = ZoneShape(zone.geometry_type, zone.x_mm, zone.y_mm, zone.width_mm, zone.height_mm, zone.points)
@@ -892,7 +916,7 @@ async def _zone_out(db: AsyncSession, zone: ThermalZone) -> ZoneOut:
         id=zone.id, room_id=zone.room_id, name=zone.name, zone_kind=zone.zone_kind, containment=zone.containment, geometry_type=zone.geometry_type,
         x_mm=zone.x_mm, y_mm=zone.y_mm, width_mm=zone.width_mm, height_mm=zone.height_mm, points=zone.points, notes=zone.notes,
         retired=zone.retired, version=zone.version, geometry_validation=validation,
-        elements=[ContainmentElementOut(id=e.id, thermal_zone_id=e.thermal_zone_id, element_kind=e.element_kind, x1_mm=e.x1_mm, y1_mm=e.y1_mm, x2_mm=e.x2_mm, y2_mm=e.y2_mm, label=e.label) for e in elements],
+        elements=[ContainmentElementOut(id=e.id, thermal_zone_id=e.thermal_zone_id, element_kind=_element_kind(e.element_kind), x1_mm=e.x1_mm, y1_mm=e.y1_mm, x2_mm=e.x2_mm, y2_mm=e.y2_mm, label=e.label) for e in elements],
     )
 
 
@@ -996,7 +1020,7 @@ async def update_zone(
             raise ApiError(status_code=422, title="Validation Error", detail="Containment applies to hot or cold aisles only.")
         zone.containment = changes["containment"]
         if zone.containment == "none":
-            await db.execute(ContainmentElement.__table__.delete().where(ContainmentElement.thermal_zone_id == zone.id))
+            await db.execute(delete(ContainmentElement).where(ContainmentElement.thermal_zone_id == zone.id))
     if "name" in changes:
         zone.name = changes["name"].strip()
     if "notes" in changes:

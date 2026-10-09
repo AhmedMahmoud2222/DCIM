@@ -25,9 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.rbac import AuthContext, get_auth_context
+from app.application.rbac import AuthContext, require_permission
 from app.application.thermal import airflow, capacity, exceptions, heatmap
-from app.application.thermal.environment import DEFAULT_MAP_ROLES, load_room_sensor_snapshot
+from app.application.thermal.environment import DEFAULT_MAP_ROLES, load_room_sensor_snapshot, scope_sees_site_assets
 from app.application.thermal.heatmap import load_room_extent, parse_as_of, serialize_point
 from app.core.errors import ApiError, ForbiddenError, NotFoundError
 from app.domain.cooling.models import ContainmentElement, CoolingUnitZone, ThermalZone
@@ -42,14 +42,20 @@ ENVIRONMENT_METRICS = (
 SENSOR_ROLES = ("ambient", "rack_inlet", "rack_exhaust", "supply_air", "return_air", "other")
 
 
+def _holds(ctx: AuthContext, code: str) -> bool:
+    """A permission the caller was granted. For a site-restricted caller a granted code that is not itself scope-aware
+    (spatial:read, telemetry:read, power:read, alarm:read) is reported inactive; it still counts here because every
+    query behind these views is filtered by the caller's site/rack scope BEFORE any interpolation or aggregation, so it
+    can only reveal data the caller may see. An explicit deny removes the code entirely and still blocks."""
+    return ctx.has_permission(code) or (not ctx.scope.unrestricted and code in ctx.inactive_permissions)
+
+
 def _need(ctx: AuthContext, *codes: str) -> None:
     for code in codes:
-        # literal checks per code keep the static permission allow-list test able to see every code used
-        if code == "cooling:read" and not ctx.has_permission("cooling:read"):
-            raise ForbiddenError("Missing required permission: cooling:read")
-        if code == "spatial:read" and not ctx.has_permission("spatial:read"):
+        # literal codes keep the static permission allow-list test able to see every code used
+        if code == "spatial:read" and not _holds(ctx, "spatial:read"):
             raise ForbiddenError("Missing required permission: spatial:read")
-        if code == "telemetry:read" and not ctx.has_permission("telemetry:read"):
+        if code == "telemetry:read" and not _holds(ctx, "telemetry:read"):
             raise ForbiddenError("Missing required permission: telemetry:read")
 
 
@@ -75,12 +81,17 @@ def _include_source(ctx: AuthContext) -> bool:
 
 
 @router.get("/{room_id}/layout")
-async def get_layout(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)) -> dict:
+async def get_layout(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:read"))) -> dict:
     """Cooling units, sensors (positions only, no values), zones, containment and unit-zone relationships for a room."""
-    _need(ctx, "cooling:read", "spatial:read")
-    await _require_room(db, ctx, room_id)
-    extent = await load_room_extent(db, room_id)
-    zones = (await db.execute(select(ThermalZone).where(ThermalZone.room_id == room_id, ThermalZone.retired.is_(False)).order_by(ThermalZone.name, ThermalZone.id))).scalars().all()
+    _need(ctx, "spatial:read")
+    extent = await load_room_extent(db, room_id, ctx.scope)
+    site_id = await _require_room(db, ctx, room_id)
+    # zones and relationships are site-level configuration: whole-site callers only (a rack-limited caller sees sensors only)
+    zones = (
+        (await db.execute(select(ThermalZone).where(ThermalZone.room_id == room_id, ThermalZone.retired.is_(False)).order_by(ThermalZone.name, ThermalZone.id))).scalars().all()
+        if scope_sees_site_assets(ctx.scope, site_id)
+        else []
+    )
     elements: dict[uuid.UUID, list[dict]] = {}
     if zones:
         for e in (await db.execute(select(ContainmentElement).where(ContainmentElement.thermal_zone_id.in_([z.id for z in zones])).order_by(ContainmentElement.id))).scalars():
@@ -145,11 +156,11 @@ async def get_environment(
     as_of: datetime | None = Query(default=None, description="Snapshot instant (UTC); defaults to now and never exceeds it."),
     sensor_roles: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_permission("cooling:read")),
 ) -> dict:
     """Current value of every expected sensor for one metric, with freshness state. The single current-value contract
     behind the heat maps and the environment overlay."""
-    _need(ctx, "cooling:read", "spatial:read", "telemetry:read")
+    _need(ctx, "spatial:read", "telemetry:read")
     if metric not in ENVIRONMENT_METRICS:
         raise ApiError(status_code=422, title="Validation Error", detail=f"metric must be one of {list(ENVIRONMENT_METRICS)}.")
     await _require_room(db, ctx, room_id)
@@ -181,10 +192,10 @@ async def get_heat_map(
     max_skew_seconds: int | None = Query(default=None, ge=60, le=3600),
     sensor_roles: str | None = Query(default=None, description="comma-separated measurement roles; default ambient,rack_inlet,other"),
     db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_permission("cooling:read")),
 ) -> dict:
     """Operational interpolation of sensor readings for the calibrated room (IDW, documented). Not validated CFD."""
-    _need(ctx, "cooling:read", "spatial:read", "telemetry:read")
+    _need(ctx, "spatial:read", "telemetry:read")
     await _require_room(db, ctx, room_id)
     now = datetime.now(UTC)
     return await heatmap.build_heat_map(
@@ -194,25 +205,24 @@ async def get_heat_map(
 
 
 @router.get("/{room_id}/airflow")
-async def get_airflow(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)) -> dict:
-    _need(ctx, "cooling:read", "spatial:read", "telemetry:read")
+async def get_airflow(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:read"))) -> dict:
+    _need(ctx, "spatial:read", "telemetry:read")
     await _require_room(db, ctx, room_id)
     return await airflow.build_airflow(db, room_id=room_id, scope=ctx.scope, include_source=_include_source(ctx))
 
 
 @router.get("/{room_id}/capacity")
-async def get_capacity(room_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)) -> dict:
-    _need(ctx, "cooling:read")
+async def get_capacity(room_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:read"))) -> dict:
     await _require_room(db, ctx, room_id)
-    return await capacity.build_room_capacity(db, room_id=room_id, scope=ctx.scope, can_read_power=ctx.has_permission("power:read"))
+    return await capacity.build_room_capacity(db, room_id=room_id, scope=ctx.scope, can_read_power=_holds(ctx, "power:read"))
 
 
 @router.get("/{room_id}/exceptions")
-async def get_exceptions(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)) -> dict:
-    _need(ctx, "cooling:read", "telemetry:read")
+async def get_exceptions(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:read"))) -> dict:
+    _need(ctx, "telemetry:read")
     await _require_room(db, ctx, room_id)
-    result = await exceptions.build_exceptions(db, room_id=room_id, scope=ctx.scope, can_read_power=ctx.has_permission("power:read"))
-    if not ctx.has_permission("alarm:read"):
+    result = await exceptions.build_exceptions(db, room_id=room_id, scope=ctx.scope, can_read_power=_holds(ctx, "power:read"))
+    if not _holds(ctx, "alarm:read"):
         result["items"] = [i for i in result["items"] if i["source"] != "alarm"]
         result["counts"] = {}
         for item in result["items"]:

@@ -28,6 +28,7 @@ from app.application.thermal.environment import (
     SensorPoint,
     assert_room_visible,
     load_room_sensor_snapshot,
+    scope_sees_site_assets,
 )
 from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.cooling.models import ThermalZone
@@ -63,7 +64,7 @@ async def build_exceptions(
     db: AsyncSession, *, room_id: uuid.UUID, scope: AccessScope, can_read_power: bool, now: datetime | None = None
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    await assert_room_visible(db, room_id, scope)
+    site_id = await assert_room_visible(db, room_id, scope)
     items: list[dict[str, Any]] = []
 
     by_sensor: dict[uuid.UUID, dict[str, SensorPoint]] = {}
@@ -121,7 +122,13 @@ async def build_exceptions(
         if placement.x_mm is None:
             items.append(_item("cooling_unit_not_located", "info", "cooling_unit", unit.id, f"{unit.name} has no position on the floor plan."))
 
-    capacity = await build_room_capacity(db, room_id=room_id, scope=scope, can_read_power=can_read_power, now=now)
+    # site-level configuration (zones, capacity) is only part of the view for a caller who holds the whole site
+    whole_site = scope_sees_site_assets(scope, site_id)
+    capacity: dict[str, Any] = (
+        await build_room_capacity(db, room_id=room_id, scope=scope, can_read_power=can_read_power, now=now)
+        if whole_site
+        else {"zones": [], "thresholds": {"warning_utilization_pct": 0, "critical_utilization_pct": 0}}
+    )
     for zone in capacity["zones"]:
         over = zone["headroom_kw"] is not None and zone["utilization_pct"] is not None and (
             zone["headroom_kw"] < 0 or zone["utilization_pct"] >= capacity["thresholds"]["warning_utilization_pct"]
@@ -141,7 +148,7 @@ async def build_exceptions(
         if zone["level"] == "not_configured":
             items.append(_item("no_cooling_assigned", "warning", "thermal_zone", zone["zone_id"], f"{zone['name']}: no CRAC/CRAH is assigned."))
 
-    zones = (await db.execute(select(ThermalZone).where(ThermalZone.room_id == room_id, ThermalZone.retired.is_(False)))).scalars().all()
+    zones = (await db.execute(select(ThermalZone).where(ThermalZone.room_id == room_id, ThermalZone.retired.is_(False)))).scalars().all() if whole_site else []
     temp = {sid: m["temperature_c"] for sid, m in by_sensor.items() if "temperature_c" in m}
 
     for zone in sorted(zones, key=lambda z: str(z.id)):

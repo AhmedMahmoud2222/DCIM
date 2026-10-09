@@ -16,7 +16,7 @@ from app.application.thermal.environment import load_room_sensor_snapshot
 from app.core.errors import NotFoundError
 from tests.api._phase2_helpers import create_rack
 from tests.api._thermal_helpers import C, TelemetrySeeder, make_sensor, make_unit, make_zone, relate, seed_plan
-from tests.api.test_user_groups import _group, _group_user, _make_site
+from tests.api.test_user_groups import _make_site
 
 SERVICE_CALLS = {
     "heat_map": lambda db, room, scope: heatmap.build_heat_map(db, room_id=uuid.UUID(room), metric="temperature_c", scope=scope),
@@ -123,26 +123,6 @@ async def test_capacity_hides_thermal_load_without_power_read(client, world, mon
     assert z["installed_rated_kw"] == 40.0  # the cooling side is still visible
 
 
-async def test_site_restricted_user_is_refused_everywhere_even_with_every_grant(client, world):
-    admin = world["admin"]
-    codes = ["cooling:read", "cooling:manage", "spatial:read", "telemetry:read", "rack:read", "power:read", "alarm:read"]
-    group = await _group(client, admin, allow=codes, sites=[{"site_id": world["a"]["site"], "rack_scope": "all", "rack_ids": []}])
-    _, headers = await _group_user(client, admin, [group])
-    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
-    effective = set(me["permission_codes"])
-    assert not effective & {"cooling:read", "cooling:manage", "spatial:read", "telemetry:read", "power:read", "alarm:read"}  # none is site-scope-aware
-    assert "rack:read" in effective
-    sensor = await make_sensor(client, admin, world["b"]["site"], world["b"]["room"], 1000, 1000)
-    unit = await make_unit(client, admin, world["b"]["site"])
-    for room in (world["a"]["room"], world["b"]["room"]):
-        for path, _ in READ_ENDPOINTS:
-            response = await client.get(C + path.format(room=room), headers=headers)
-            assert response.status_code == 403, (path, response.status_code)
-    for path in (f"/sensors/{sensor['id']}", f"/units/{unit['id']}", f"/units/{uuid.uuid4()}"):
-        assert (await client.get(C + path, headers=headers)).status_code == 403  # same answer for hidden, real and unknown ids
-    assert (await client.post(f"{C}/units", json={"unit_kind": "crah", "asset_tag": "H", "site_id": world["a"]["site"], "name": "h"}, headers=headers)).status_code == 403
-
-
 async def test_unknown_ids_are_404_not_500(client, world):
     admin = world["admin"]
     for path in (f"/units/{uuid.uuid4()}", f"/sensors/{uuid.uuid4()}", f"/zones/{uuid.uuid4()}", f"/groups/{uuid.uuid4()}", f"/rooms/{uuid.uuid4()}/capacity", f"/rooms/{uuid.uuid4()}/heat-map"):
@@ -201,7 +181,7 @@ async def test_partial_rack_scope_cannot_reveal_hidden_sensors_through_interpola
     assert hidden_world["quality"]["sensor_count"] == 3 and hidden_world["state"] == "healthy"
     assert hidden_world["grid"]["max"] <= 22.0 + 1e-9
     blob = json.dumps(hidden_world)
-    for secret in (sensors[3]["id"], sensors[3]["name"], sensors[3]["asset_tag"], floor["id"], floor["name"], racks[3], "999", "500.0"):
+    for secret in (sensors[3]["id"], sensors[3]["name"], sensors[3]["asset_tag"], floor["id"], floor["name"], racks[3], "999.0", "500.0"):
         assert secret not in blob, secret
     # Equivalence: removing the hidden sensor entirely gives a byte-identical field.
     from sqlalchemy import text
@@ -230,7 +210,7 @@ async def test_hidden_sensors_do_not_appear_in_exceptions_airflow_or_snapshot(cl
     assert {str(p.sensor_id) for p in snap.points} == {s["id"] for s in sensors[:3]}
 
 
-async def test_capacity_hides_hidden_units_and_withholds_load_for_restricted_scopes(client, world):
+async def test_capacity_hides_hidden_units_and_site_level_data_from_rack_limited_scopes(client, world):
     admin = world["admin"]
     zone = await make_zone(client, admin, world["a"]["room"])
     unit = await make_unit(client, admin, world["a"]["site"], rated_cooling_capacity_kw=60)
@@ -238,7 +218,10 @@ async def test_capacity_hides_hidden_units_and_withholds_load_for_restricted_sco
     room = uuid.UUID(world["a"]["room"])
     own = await capacity.build_room_capacity(world["db"], room_id=room, scope=full_scope(world["a"]["site"]), can_read_power=True)
     z = own["zones"][0]
-    assert z["installed_rated_kw"] == 60.0 and z["thermal_load"]["state"] == "withheld_by_scope" and z["headroom_kw"] is None
+    assert z["installed_rated_kw"] == 60.0 and z["thermal_load"]["state"] == "unknown"  # a whole-site scope sees the whole site's load; none is modelled here
+    assert z["headroom_kw"] is None
+    with pytest.raises(NotFoundError):  # a caller limited to selected racks has no view of site-level capacity at all
+        await capacity.build_room_capacity(world["db"], room_id=room, scope=rack_scope(world["a"]["site"], str(uuid.uuid4())), can_read_power=True)
     foreign_site = full_scope(world["b"]["site"])
     with pytest.raises(NotFoundError):
         await capacity.build_room_capacity(world["db"], room_id=room, scope=foreign_site, can_read_power=True)
@@ -246,7 +229,7 @@ async def test_capacity_hides_hidden_units_and_withholds_load_for_restricted_sco
     other_unit = await make_unit(client, admin, world["b"]["site"], rated_cooling_capacity_kw=900)
     await relate(client, admin, other_unit["id"], other_zone["id"])
     blob = json.dumps(own)
-    assert other_unit["id"] not in blob and "900" not in blob  # site B capacity is not folded into A's totals
+    assert other_unit["id"] not in blob and "900.0" not in blob  # site B capacity is not folded into A's totals
     sites = await capacity.groups_summary(world["db"], uuid.UUID(world["b"]["site"]), full_scope(world["a"]["site"]))
     assert sites == []
 

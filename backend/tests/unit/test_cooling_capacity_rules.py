@@ -67,3 +67,12 @@ def test_worst_state_across_pools_and_known_sums():
     assert worst_pool_state([]) == "not_configured"
     assert sum_known([1.0, None, 2.0]) == (3.0, False)
     assert sum_known([1.0, 2.0]) == (3.0, True)
+
+
+def test_unknown_availability_is_insufficient_data_not_zero_capacity():
+    unknown = evaluate_pool([unit(status="unknown"), unit(status="unknown")], 10.0)
+    assert unknown["state"] == "unavailable" and unknown["reason"] == "availability_unknown"
+    down = evaluate_pool([unit(status="offline"), unit(status="fault")], 10.0)
+    assert down["state"] == "unavailable" and down["reason"] == "no_available_unit"
+    mixed = evaluate_pool([unit(status="unknown"), unit(status="offline")], 10.0)
+    assert mixed["reason"] == "availability_unknown"  # one unit might be up: do not claim zero capacity

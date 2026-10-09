@@ -21,15 +21,39 @@ function hallDxf(): Buffer {
   return Buffer.from(`0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`);
 }
 
-type Api = { post: (path: string, data: unknown, extra?: Record<string, string>) => Promise<any>; get: (path: string) => Promise<any>; patch: (path: string, data: unknown, version: number) => Promise<any>; put: (path: string, data: unknown) => Promise<any>; headers: Record<string, string> };
+/** The fields of API responses this spec reads. Everything else the API returns is deliberately not typed here. */
+interface Entity {
+  id: string;
+  version: number;
+  status: string;
+  secret: string;
+  access_token: string;
+  items: Entity[];
+}
+interface HeatMapJson {
+  state: string;
+  grid: { value_provenance: string };
+  sensors: { name: string; state: string; value_provenance: string }[];
+}
+interface TelemetryAcks {
+  results: { status: string }[];
+}
+
+type Api = {
+  post: <T = Entity>(path: string, data: unknown, extra?: Record<string, string>) => Promise<T>;
+  get: <T = Entity>(path: string) => Promise<T>;
+  patch: <T = Entity>(path: string, data: unknown, version: number) => Promise<T>;
+  put: <T = Entity>(path: string, data: unknown) => Promise<T>;
+  headers: Record<string, string>;
+};
 
 async function connect(request: APIRequestContext): Promise<Api> {
   const login = await request.post("/api/v1/auth/login", { data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } });
   expect(login.ok()).toBeTruthy();
   const headers = { Authorization: `Bearer ${(await login.json()).access_token}` };
-  const check = async (r: Awaited<ReturnType<APIRequestContext["post"]>>, what: string) => {
+  const check = async <T>(r: Awaited<ReturnType<APIRequestContext["post"]>>, what: string): Promise<T> => {
     expect(r.ok(), `${what}: ${r.status()} ${await r.text()}`).toBeTruthy();
-    return r.status() === 204 ? null : r.json();
+    return (r.status() === 204 ? null : await r.json()) as T;
   };
   return {
     headers,
@@ -96,7 +120,7 @@ async function collectorFor(request: APIRequestContext, api: Api, sfx: string) {
         data: Buffer.from(raw),
       });
       expect(response.ok(), await response.text()).toBeTruthy();
-      expect((await response.json()).results.map((r: any) => r.status)).toEqual(readings.map(() => "accepted"));
+      expect(((await response.json()) as TelemetryAcks).results.map((r) => r.status)).toEqual(readings.map(() => "accepted"));
     },
   };
 }
@@ -175,15 +199,15 @@ test("cooling assets -> sensors -> telemetry -> aisles -> maps -> measured vs in
   await collector.send(readings);
 
   // ---------------------------------------------------------------- API contract of the same data the browser is about to render
-  const map = await api.get(`/cooling/rooms/${room.id}/heat-map`);
+  const map = await api.get<HeatMapJson>(`/cooling/rooms/${room.id}/heat-map`);
   expect(map.state).toBe("partial");
   expect(map.grid.value_provenance).toBe("interpolated");
-  expect(map.sensors.map((s: any) => [s.name, s.state, s.value_provenance]).sort()).toEqual([
+  expect(map.sensors.map((s) => [s.name, s.state, s.value_provenance]).sort()).toEqual([
     ["T1", "measured_fresh", "measured"], ["T2", "measured_fresh", "measured"], ["T3", "measured_fresh", "measured"],
     ["T4-stale", "measured_stale", "measured"], ["T5-silent", "missing", "none"],
   ]);
   let stored = 0;
-  for (const asset of [t1, t2, t3, t4, t5, flow, server]) stored += (await api.get(`/telemetry/latest?managed_asset_id=${asset.id}&limit=100`)).length;
+  for (const asset of [t1, t2, t3, t4, t5, flow, server]) stored += (await api.get<unknown[]>(`/telemetry/latest?managed_asset_id=${asset.id}&limit=100`)).length;
   expect(stored).toBe(readings.length); // exactly what the collector sent: building the map wrote nothing back into telemetry
 
   // ---------------------------------------------------------------- the browser: Cooling & environment mode of the calibrated 2D plan
@@ -299,22 +323,29 @@ test("cooling assets -> sensors -> telemetry -> aisles -> maps -> measured vs in
   await shot(page, "cooling-3d-thermal");
 });
 
-test("a site-restricted user cannot reach any thermal view or cooling configuration", async ({ request }) => {
+test("a site-scoped user sees their own site's thermal views and nothing of another site", async ({ request }) => {
   const api = await connect(request);
   const sfx = Math.random().toString(36).slice(2, 8);
-  const { site, room } = await calibratedRoom(request, api, sfx);
-  const group = await api.post("/groups", { name: `e2e-105-restricted-${sfx}` });
-  await api.put(`/groups/${group.id}/permissions`, { allow: ["cooling:read", "cooling:manage", "spatial:read", "telemetry:read", "rack:read"], deny: [] });
-  await api.put(`/groups/${group.id}/site-access`, { sites: [{ site_id: site.id, rack_scope: "all", rack_ids: [] }] });
+  const own = await calibratedRoom(request, api, `${sfx}a`);
+  const other = await calibratedRoom(request, api, `${sfx}b`);
+  const hiddenSensor = await api.post("/cooling/sensors", { asset_tag: `SN-hidden-${sfx}`, site_id: other.site.id, name: "Hidden sensor", sensor_kind: "temperature" });
+  const hiddenUnit = await api.post("/cooling/units", { unit_kind: "crah", asset_tag: `CU-hidden-${sfx}`, site_id: other.site.id, name: "Hidden unit", rated_cooling_capacity_kw: 900 });
+  const group = await api.post("/groups", { name: `e2e-105-scoped-${sfx}` });
+  const codes = ["cooling:read", "cooling:manage", "spatial:read", "telemetry:read", "power:read", "rack:read"];
+  await api.put(`/groups/${group.id}/permissions`, { allow: codes, deny: [] });
+  await api.put(`/groups/${group.id}/site-access`, { sites: [{ site_id: own.site.id, rack_scope: "all", rack_ids: [] }] });
   const email = `e2e-105-${sfx}@example.com`;
-  const password = "Restricted-Passw0rd!";
-  await api.post("/users", { email, full_name: "Restricted", password, group_ids: [group.id] });
-  const token = (await (await request.post("/api/v1/auth/login", { data: { email, password } })).json()).access_token;
+  const password = "Scoped-Passw0rd!";
+  await api.post("/users", { email, full_name: "Scoped", password, group_ids: [group.id] });
+  const token = ((await (await request.post("/api/v1/auth/login", { data: { email, password } })).json()) as Entity).access_token;
   const headers = { Authorization: `Bearer ${token}` };
   for (const path of ["layout", "environment", "heat-map", "airflow", "capacity", "exceptions"]) {
-    const response = await request.get(`/api/v1/cooling/rooms/${room.id}/${path}`, { headers });
-    expect(response.status(), path).toBe(403);
+    expect((await request.get(`/api/v1/cooling/rooms/${own.room.id}/${path}`, { headers })).status(), `own ${path}`).toBe(200);
+    expect((await request.get(`/api/v1/cooling/rooms/${other.room.id}/${path}`, { headers })).status(), `other ${path}`).toBe(404);
   }
-  expect((await request.get("/api/v1/cooling/units", { headers })).status()).toBe(403);
-  expect((await request.post("/api/v1/cooling/zones", { headers, data: { room_id: room.id, name: "x", zone_kind: "served_zone" } })).status()).toBe(403);
+  expect((await request.get(`/api/v1/cooling/sensors/${hiddenSensor.id}`, { headers })).status()).toBe(404);
+  expect((await request.get(`/api/v1/cooling/units/${hiddenUnit.id}`, { headers })).status()).toBe(404);
+  const units = (await (await request.get("/api/v1/cooling/units", { headers })).json()) as { total: number };
+  expect(units.total).toBe(0);
+  expect((await request.post("/api/v1/cooling/zones", { headers, data: { room_id: other.room.id, name: "x", zone_kind: "served_zone" } })).status()).toBe(404);
 });

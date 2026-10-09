@@ -297,6 +297,25 @@ describe("CoolingEnvironmentPanel", () => {
     expect(await screen.findByTestId("sensors-empty")).toHaveTextContent("No temperature sensor is placed in this room.");
   });
 
+  it("never produces duplicate React keys when many cells, ticks and sensors share the same value", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const base = heatMap();
+    const flat = { ...base.grid!, min: 20, max: 20, values: base.grid!.values.map((v) => (v == null ? null : 20)) };
+    mockAll({
+      map: heatMap({
+        grid: flat,
+        sensors: [1, 2, 3, 4].map((n) => ({ ...base.sensors[0], sensor_id: `same-${n}`, name: `Same ${n}`, x_mm: 1000 * n, value: 20, presentation_value: 20 })),
+      }),
+    });
+    renderPanel();
+    expect(await screen.findByTestId("legend-ticks")).toBeInTheDocument();
+    expect(screen.getByTestId("legend-ticks").querySelectorAll("li")).toHaveLength(5); // five ticks, all showing 20
+    await waitFor(() => expect(screen.getByTestId("sensor-layer").querySelectorAll("[data-sensor-id]")).toHaveLength(4));
+    const keyWarnings = errors.mock.calls.filter((call) => String(call[0]).includes("same key"));
+    errors.mockRestore();
+    expect(keyWarnings).toEqual([]);
+  });
+
   it("has no autoplay animation: airflow arrows are static, so reduced-motion is respected by construction", async () => {
     renderPanel();
     const layer = await screen.findByTestId("airflow-layer");

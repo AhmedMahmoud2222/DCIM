@@ -61,6 +61,12 @@ def classify_reading(occurred_at: datetime, now: datetime, poll_interval_seconds
     return (MEASURED_FRESH if fresh else MEASURED_STALE), int(age)
 
 
+def scope_sees_site_assets(scope: AccessScope, site_id: uuid.UUID | None) -> bool:
+    """Site-level cooling configuration (units, groups, zones, capacity) is visible only to a caller with the whole
+    site. A caller limited to selected racks sees rack-less assets of no site, matching `equipment_visible_clause`."""
+    return scope.unrestricted or (site_id is not None and site_id in scope.full_site_ids)
+
+
 async def assert_room_visible(db: AsyncSession, room_id: uuid.UUID, scope: AccessScope) -> uuid.UUID:
     """The room's site id, or NotFound when the room does not exist or its site is outside `scope`. Every service entry
     point calls this first, so a hidden room is indistinguishable from a missing one even when a caller skips the
@@ -240,7 +246,7 @@ async def load_room_sensor_snapshot(
             .distinct(TelemetryReading.managed_asset_id)
         )
     ).all()
-    latest = {r.managed_asset_id: (r, interval, name) for r, interval, name in latest_rows}
+    latest = {r.managed_asset_id: (r, interval, name) for r, interval, name in latest_rows if r.managed_asset_id is not None}
 
     alarms: dict[uuid.UUID, int] = {}
     for aid, _alarm_id in (
@@ -250,7 +256,8 @@ async def load_room_sensor_snapshot(
             .where(Alarm.managed_asset_id.in_(ids), Alarm.status.in_(("ACTIVE", "ACKNOWLEDGED")), AlarmRule.metric == metric)
         )
     ).all():
-        alarms[aid] = alarms.get(aid, 0) + 1
+        if aid is not None:  # the query filters on managed_asset_id IN (ids), so NULL cannot occur; this narrows the type
+            alarms[aid] = alarms.get(aid, 0) + 1
 
     for point in snapshot.points:
         point.active_alarm_count = alarms.get(point.sensor_id, 0)

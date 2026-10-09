@@ -447,3 +447,32 @@ async def test_cooling_group_pools_units_across_zones_for_n_plus_1(client, world
     zones = {z["name"]: z for z in (await capacity(client, world))["zones"]}
     assert zones["Left"]["redundancy"]["state"] == "degraded" and zones["Left"]["redundancy"]["pools"][0]["reason"] == "insufficient_n_plus_1_capacity"
     assert zones["Left"]["headroom_kw"] == 30.0  # this zone alone is fine; the shared pool is what lost its spare
+
+
+async def test_unknown_availability_or_capacity_is_never_reported_as_zero(client, world, monkeypatch):
+    zone = await make_zone(client, world["admin"], world["room"])
+    fake_rollup(monkeypatch, rooms={uuid.UUID(world["room"]): scope_result(10.0)})
+    a = await make_unit(client, world["admin"], world["site"], rated_cooling_capacity_kw=50, name="StatusUnknown")  # operating_status defaults to online in helper? set explicitly below
+    await activate(client, world["admin"], a["id"])
+    await client.patch(f"{C}/units/{a['id']}", json={"operating_status": "unknown"}, headers={**world["admin"], "If-Match": "1"})
+    await relate(client, world["admin"], a["id"], zone["id"])
+    z = (await capacity(client, world))["zones"][0]
+    # the status of the only unit is unknown: neither "50 kW available" nor "0 kW available" is true
+    assert z["available_kw"] is None and z["available_complete"] is False and z["headroom_kw"] is None and z["level"] == "unknown"
+    assert z["redundancy"]["state"] == "unavailable" and z["redundancy"]["pools"][0]["reason"] == "availability_unknown"
+    await client.patch(f"{C}/units/{a['id']}", json={"operating_status": "fault"}, headers={**world["admin"], "If-Match": "2"})
+    z = (await capacity(client, world))["zones"][0]
+    assert z["available_kw"] == 0.0 and z["level"] == "critical" and z["redundancy"]["pools"][0]["reason"] == "no_available_unit"  # known down: genuinely zero
+    await client.patch(f"{C}/units/{a['id']}", json={"operating_status": "online", "rated_cooling_capacity_kw": None}, headers={**world["admin"], "If-Match": "3"})
+    z = (await capacity(client, world))["zones"][0]
+    assert z["available_kw"] is None and z["installed_rated_kw"] is None and z["headroom_kw"] is None and z["level"] == "unknown"  # online but capacity unknown
+
+
+async def test_configured_capacity_unknown_falls_back_to_rated_and_load_unknown_blocks_headroom(client, world, monkeypatch):
+    zone = await make_zone(client, world["admin"], world["room"])
+    unit = await active_unit(client, world, rated_cooling_capacity_kw=80, name="OnlyRated")
+    await relate(client, world["admin"], unit["id"], zone["id"])
+    fake_rollup(monkeypatch, rooms={})
+    z = (await capacity(client, world))["zones"][0]
+    assert z["available_kw"] == 80.0 and z["available_complete"] is True  # configured unknown => the rated figure applies
+    assert z["thermal_load"]["state"] == "unknown" and z["thermal_load"]["thermal_kw"] is None and z["headroom_kw"] is None and z["utilization_pct"] is None

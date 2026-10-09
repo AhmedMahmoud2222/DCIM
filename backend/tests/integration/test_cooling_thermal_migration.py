@@ -86,15 +86,22 @@ async def test_populated_upgrade_enforces_invariants_and_refuses_destructive_dow
             assert await scalar(conn, "SELECT count(*) FROM permission WHERE resource = 'cooling'") == 0
             legacy_sensor = await asset(conn, "sensor")
             legacy_equipment = await asset(conn, "equipment")
-            await conn.execute(text("INSERT INTO equipment_placement (id, equipment_id, placement_type, room_id, effective_from, version) VALUES (gen_random_uuid(), :e, 'floor_standing', :r, now(), 1)"), {"e": legacy_equipment, "r": room_a})
+            # pre-#105 placement history: one closed row and one current row, with non-trivial versions and timestamps
+            await conn.execute(text("INSERT INTO equipment_placement (id, equipment_id, placement_type, room_id, rotation_deg, effective_from, effective_to, version) VALUES (gen_random_uuid(), :e, 'floor_standing', :r, 90, '2026-01-01T00:00:00+00', '2026-02-01T00:00:00+00', 1)"), {"e": legacy_equipment, "r": room_a})
+            await conn.execute(text("INSERT INTO equipment_placement (id, equipment_id, placement_type, room_id, rotation_deg, mounting_method, effective_from, version) VALUES (gen_random_uuid(), :e, 'floor_standing', :r, 180, 'bolted', '2026-02-01T00:00:00+00', 7)"), {"e": legacy_equipment, "r": room_a})
+            placement_sql = "SELECT id, equipment_id, placement_type, room_id, rack_id, u_range, side, spatial_object_id, rotation_deg, mounting_method, orientation, version, effective_from, effective_to, occupies_front, occupies_rear FROM equipment_placement ORDER BY effective_from"
+            placements_before = [tuple(r) for r in (await conn.execute(text(placement_sql))).all()]
+            assert len(placements_before) == 2
             await must_fail(conn, "INSERT INTO managed_asset (id, asset_type, asset_tag, lifecycle_status, external_ids) VALUES (gen_random_uuid(), 'crac', 'pre', 'active', '{}'::jsonb)", "violates check constraint")
             before = tuple((await conn.execute(text("SELECT id, asset_type, lifecycle_status FROM managed_asset WHERE id = :i"), {"i": legacy_sensor})).one())
 
             # ---- upgrade over the populated schema
             await conn.run_sync(_run, "upgrade")
             assert tuple((await conn.execute(text("SELECT id, asset_type, lifecycle_status FROM managed_asset WHERE id = :i"), {"i": legacy_sensor})).one()) == before
-            placement = (await conn.execute(text("SELECT x_mm, y_mm, position_calibration_id FROM equipment_placement WHERE equipment_id = :e"), {"e": legacy_equipment})).one()
-            assert tuple(placement) == (None, None, None), "existing placements gain empty, nullable position columns"
+            assert [tuple(r) for r in (await conn.execute(text(placement_sql))).all()] == placements_before, "every pre-#105 placement column is unchanged"
+            new_columns = (await conn.execute(text("SELECT x_mm, y_mm, position_calibration_id FROM equipment_placement"))).all()
+            assert [tuple(r) for r in new_columns] == [(None, None, None)] * 2, "existing placements gain empty, nullable position columns"
+            assert await scalar(conn, "SELECT count(*) FROM equipment_placement WHERE effective_to IS NULL AND equipment_id = :e", e=legacy_equipment) == 1
             assert await scalar(conn, "SELECT count(*) FROM environmental_sensor") == 0  # a legacy bare sensor asset needs no backfill
             codes = {tuple(r) for r in (await conn.execute(text("SELECT p.action, r.name FROM permission p JOIN role_permission rp ON rp.permission_id = p.id JOIN role r ON r.id = rp.role_id WHERE p.resource = 'cooling'"))).all()}
             assert codes == {("read", n) for n in ("Administrator", "DCIM Manager", "Engineer", "Operator", "Viewer")} | {("manage", n) for n in ("Administrator", "DCIM Manager", "Engineer")}
@@ -188,8 +195,11 @@ async def test_populated_upgrade_enforces_invariants_and_refuses_destructive_dow
             assert await scalar(conn, "SELECT count(*) FROM permission WHERE resource = 'cooling'") == 0
             assert await scalar(conn, "SELECT count(*) FROM information_schema.columns WHERE table_name = 'equipment_placement' AND column_name IN ('x_mm', 'y_mm', 'position_calibration_id')") == 0
             assert await scalar(conn, "SELECT count(*) FROM managed_asset WHERE id = :i", i=legacy_sensor) == 1, "legacy rows survive the round trip"
+            old_shape = "SELECT id, equipment_id, placement_type, room_id, rack_id, u_range, side, spatial_object_id, rotation_deg, mounting_method, orientation, version, effective_from, effective_to FROM equipment_placement ORDER BY effective_from"
+            assert len((await conn.execute(text(old_shape))).all()) == 2
             await conn.run_sync(_run, "upgrade")
             assert await scalar(conn, "SELECT count(*) FROM permission WHERE resource = 'cooling'") == 2
             assert await scalar(conn, "SELECT count(*) FROM managed_asset WHERE id = :i", i=legacy_sensor) == 1
+            assert [tuple(r) for r in (await conn.execute(text(placement_sql))).all()] == placements_before, "placement history survives downgrade and re-upgrade"
         finally:
             await transaction.rollback()

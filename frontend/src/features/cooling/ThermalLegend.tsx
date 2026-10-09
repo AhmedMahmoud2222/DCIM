@@ -16,8 +16,9 @@ export function ThermalLegend({ map }: { map: HeatMap | null | undefined }) {
           <>
             <div className="h-3 w-full max-w-xs rounded-sm border border-slate-700" style={{ background: gradient(map.metric) }} role="img" aria-label={`Colour scale from ${bounds.min} to ${bounds.max} ${unit}`} />
             <ol className="mt-1 flex max-w-xs justify-between" data-testid="legend-ticks">
-              {legendTicks(bounds.min, bounds.max).map((t) => (
-                <li key={t}>{t}</li>
+              {legendTicks(bounds.min, bounds.max).map((t, i) => (
+                // position on the scale is the identity: a flat field repeats the same value at every position
+                <li key={`tick-${i}`}>{t}</li>
               ))}
             </ol>
             <p className="mt-1" data-testid="legend-range">

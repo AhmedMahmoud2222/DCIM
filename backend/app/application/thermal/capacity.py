@@ -43,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application.access_control import AccessScope
 from app.application.power_rollup import DEFAULT_CRITICAL_PCT, DEFAULT_WARNING_PCT
 from app.application.power_rollup_loader import rollup_for_site
-from app.application.thermal.environment import assert_room_visible
+from app.application.thermal.environment import assert_room_visible, scope_sees_site_assets
 from app.application.thermal.interpolation import point_in_polygon
 from app.domain.catalog.models import RackModelRevision
 from app.domain.cooling.models import (
@@ -110,7 +110,9 @@ def evaluate_pool(units: list[UnitIn], load_kw: float | None) -> dict[str, Any]:
     if provisioned == 0:
         return {**result, "state": "not_configured"}
     if not available:
-        return {**result, "state": "unavailable", "reason": "no_available_unit"}
+        # unknown operating status is "insufficient data", distinct from units that are known to be down
+        reason = "availability_unknown" if any(u.operating_status == "unknown" for u in units) else "no_available_unit"
+        return {**result, "state": "unavailable", "reason": reason}
     if provisioned == 1:
         return {**result, "state": "single_unit"}
     caps = [u.effective_kw for u in available]
@@ -162,6 +164,9 @@ class ZoneLoad:
 
 def zone_contains(zone: ThermalZone, x: float, y: float) -> bool:
     if zone.geometry_type == "rect":
+        # the DB check geometry_shape_consistent guarantees all four are set for a rect; an unset one means the zone cannot contain anything
+        if zone.x_mm is None or zone.y_mm is None or zone.width_mm is None or zone.height_mm is None:
+            return False
         return zone.x_mm <= x <= zone.x_mm + zone.width_mm and zone.y_mm <= y <= zone.y_mm + zone.height_mm
     if zone.geometry_type == "polygon" and zone.points:
         return point_in_polygon(x, y, [(float(p[0]), float(p[1])) for p in zone.points])
@@ -177,11 +182,11 @@ def _quality_of(qualities: list[str]) -> str | None:
 
 async def _zone_load(
     db: AsyncSession, zone: ThermalZone, rollup: Any, rack_rows: list[tuple[uuid.UUID, float | None, float | None]],
-    *, can_read_power: bool, scope: AccessScope,
+    *, can_read_power: bool, scope: AccessScope, site_id: uuid.UUID,
 ) -> ZoneLoad:
     if not can_read_power:
         return ZoneLoad(state="not_permitted", basis="power:read is required to see thermal load")
-    if not scope.unrestricted:
+    if not scope_sees_site_assets(scope, site_id):
         return ZoneLoad(state="withheld_by_scope", basis="load depends on racks outside the caller's scope")
     if rollup is None:
         return ZoneLoad(state="unknown", basis="no power roll-up available")
@@ -262,6 +267,10 @@ async def build_room_capacity(
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     site_id = await assert_room_visible(db, room_id, scope)
+    if not scope_sees_site_assets(scope, site_id):
+        from app.core.errors import NotFoundError
+
+        raise NotFoundError(f"Room {room_id} has no cooling configuration visible to this caller.")
     zones = list(
         (
             await db.execute(
@@ -299,7 +308,7 @@ async def build_room_capacity(
 
     serving: dict[uuid.UUID, list[UnitIn]] = defaultdict(list)
     for zone_id, _kind, semantics, unit, lifecycle in rel_rows:
-        if scope.allows_site(unit.site_id):
+        if scope_sees_site_assets(scope, unit.site_id):
             serving[zone_id].append(to_in(unit, lifecycle, semantics))
 
     group_ids = {u.group_id for units in serving.values() for u in units if u.group_id is not None}
@@ -313,7 +322,7 @@ async def build_room_capacity(
                 .where(CoolingUnit.cooling_group_id.in_(group_ids), CoolingUnit.unit_kind.in_(AIR_SIDE_KINDS))
             )
         ).all():
-            if scope.allows_site(unit.site_id):
+            if scope_sees_site_assets(scope, unit.site_id) and unit.cooling_group_id is not None:  # selected by group_id IN (...), never NULL
                 group_members[unit.cooling_group_id].append(to_in(unit, lifecycle))
         for unit_id, zone_id in (
             await db.execute(
@@ -325,10 +334,10 @@ async def build_room_capacity(
                 if any(m.id == unit_id for m in members):
                     group_zone_ids[gid].add(zone_id)
 
-    rollup = await rollup_for_site(db, site_id, now) if can_read_power and scope.unrestricted else None
+    rollup = await rollup_for_site(db, site_id, now) if can_read_power else None  # the caller sees the whole site (checked above)
     rack_rows = await _rack_centres(db, room_id)
     zone_loads: dict[uuid.UUID, ZoneLoad] = {
-        z.id: await _zone_load(db, z, rollup, rack_rows, can_read_power=can_read_power, scope=scope) for z in zones
+        z.id: await _zone_load(db, z, rollup, rack_rows, can_read_power=can_read_power, scope=scope, site_id=site_id) for z in zones
     }
     # Zones outside this room that a pooled group also serves (needed for the pool's total load).
     outside_ids = {zid for zs in group_zone_ids.values() for zid in zs} - set(zone_loads)
@@ -336,7 +345,7 @@ async def build_room_capacity(
         {z.id: z for z in (await db.execute(select(ThermalZone).where(ThermalZone.id.in_(outside_ids)))).scalars()} if outside_ids else {}
     )
     for zid, z in outside_zones.items():
-        zone_loads[zid] = await _zone_load(db, z, rollup, await _rack_centres(db, z.room_id), can_read_power=can_read_power, scope=scope)
+        zone_loads[zid] = await _zone_load(db, z, rollup, await _rack_centres(db, z.room_id), can_read_power=can_read_power, scope=scope, site_id=site_id)
 
     plant_rel = (
         await db.execute(
@@ -348,7 +357,7 @@ async def build_room_capacity(
     ).all()
     chillers: dict[uuid.UUID, list[UnitIn]] = defaultdict(list)
     for zone_id, unit, lifecycle, semantics in plant_rel:
-        if scope.allows_site(unit.site_id):
+        if scope_sees_site_assets(scope, unit.site_id):
             chillers[zone_id].append(to_in(unit, lifecycle, semantics))
 
     worst = "ok"
@@ -356,8 +365,8 @@ async def build_room_capacity(
         air = [u for u in serving.get(zone.id, []) if u.kind in AIR_SIDE_KINDS]
         load = zone_loads[zone.id]
         pools: dict[uuid.UUID | None, list[UnitIn]] = defaultdict(list)
-        for unit in air:
-            pools[unit.group_id].append(unit)
+        for air_unit in air:
+            pools[air_unit.group_id].append(air_unit)
         pool_results: list[dict[str, Any]] = []
         for pool_gid, pool_members in sorted(pools.items(), key=lambda kv: str(kv[0])):
             if pool_gid is None:
@@ -375,13 +384,18 @@ async def build_room_capacity(
         rated_kw, rated_complete = sum_known([u.rated_kw for u in air])
         avail_units = [u for u in air if u.available]
         available_kw, available_complete = sum_known([u.effective_kw for u in avail_units])
+        # An operating status of "unknown" is missing information, not a unit that is known to be down: while any unit's
+        # availability is unknown, the available total is only a lower bound and must not be used for headroom.
+        availability_known = all(u.operating_status != "unknown" for u in air)
+        available_complete = available_complete and availability_known
+        no_known_capacity = bool(avail_units) and all(u.effective_kw is None for u in avail_units)
         thermal = load.thermal_kw if load.state == "known" else None
         headroom = round(available_kw - thermal, 3) if thermal is not None and available_complete and air else None
         utilization = round(100.0 * thermal / available_kw, 1) if thermal is not None and available_complete and available_kw > 0 else None
         if not air:
             level = "not_configured"
-        elif not avail_units:
-            level = "critical"
+        elif not avail_units and availability_known:
+            level = "critical"  # every unit is known to be unavailable: genuinely zero capacity
         elif headroom is None:
             level = "unknown"
         elif headroom < 0 or (utilization is not None and utilization >= DEFAULT_CRITICAL_PCT):
@@ -390,7 +404,8 @@ async def build_room_capacity(
             level = "warning"
         else:
             level = "ok"
-        if redundancy_state in ("unavailable", "degraded") and level in ("ok", "unknown"):
+        insufficient_data = any(p.get("reason") == "availability_unknown" for p in pool_results)
+        if redundancy_state in ("unavailable", "degraded") and level in ("ok", "unknown") and not insufficient_data:
             level = "warning" if redundancy_state == "degraded" else "critical"
         chiller_units = chillers.get(zone.id, [])
         plant_available, plant_complete = sum_known([u.effective_kw for u in chiller_units if u.available])
@@ -399,16 +414,18 @@ async def build_room_capacity(
             {
                 "zone_id": str(zone.id), "name": zone.name, "geometry": "whole_room" if zone.geometry_type is None else zone.geometry_type,
                 "units": [_unit_out(u, "serves") for u in sorted(air, key=lambda u: str(u.id))],
-                "installed_rated_kw": rated_kw if air else None, "installed_rated_complete": rated_complete and bool(air),
-                "available_kw": available_kw if air else None, "available_complete": available_complete and bool(air),
+                "installed_rated_kw": rated_kw if any(u.rated_kw is not None for u in air) else None, "installed_rated_complete": rated_complete and bool(air),
+                "available_kw": available_kw if air and not no_known_capacity and (avail_units or availability_known) else None,
+                "available_complete": available_complete and bool(air),
                 "available_units": len(avail_units), "unit_count": len(air),
                 "thermal_load": load.as_dict(), "headroom_kw": headroom, "utilization_pct": utilization, "level": level,
                 "redundancy": {"state": redundancy_state, "pools": pool_results},
                 "plant": {
                     "note": "Chillers feed CRAH coils; their capacity is never added to room headroom.",
                     "units": [_unit_out(u, "serves") for u in sorted(chiller_units, key=lambda u: str(u.id))],
-                    "installed_rated_kw": plant_rated if chiller_units else None, "installed_rated_complete": plant_rated_complete and bool(chiller_units),
-                    "available_kw": plant_available if chiller_units else None, "available_complete": plant_complete and bool(chiller_units),
+                    "installed_rated_kw": plant_rated if any(u.rated_kw is not None for u in chiller_units) else None, "installed_rated_complete": plant_rated_complete and bool(chiller_units),
+                    "available_kw": plant_available if chiller_units and any(u.effective_kw is not None for u in chiller_units if u.available) else None,
+                    "available_complete": plant_complete and bool(chiller_units),
                 },
             }
         )
@@ -420,12 +437,13 @@ async def build_room_capacity(
 
 
 async def groups_summary(db: AsyncSession, site_id: uuid.UUID, scope: AccessScope) -> list[dict[str, Any]]:
-    if not scope.allows_site(site_id):
+    if not scope_sees_site_assets(scope, site_id):
         return []
     groups = (
         await db.execute(select(CoolingGroup).where(CoolingGroup.site_id == site_id, CoolingGroup.retired.is_(False)).order_by(CoolingGroup.name))
     ).scalars().all()
-    members = defaultdict(list)
-    for unit in (await db.execute(select(CoolingUnit).where(CoolingUnit.site_id == site_id, CoolingUnit.cooling_group_id.is_not(None)))).scalars():
-        members[unit.cooling_group_id].append(str(unit.id))
+    members: dict[uuid.UUID, list[str]] = defaultdict(list)
+    for member in (await db.execute(select(CoolingUnit).where(CoolingUnit.site_id == site_id, CoolingUnit.cooling_group_id.is_not(None)))).scalars():
+        if member.cooling_group_id is not None:
+            members[member.cooling_group_id].append(str(member.id))
     return [{"id": str(g.id), "name": g.name, "member_ids": sorted(members.get(g.id, [])), "version": g.version} for g in groups]
