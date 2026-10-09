@@ -326,7 +326,7 @@ def fake_rollup(monkeypatch, racks=None, rooms=None):
 
 
 def scope_result(load_kw, quality="measured"):
-    return SimpleNamespace(load_kw=load_kw, quality=quality)
+    return SimpleNamespace(load_kw=load_kw, quality=quality, equipment_count=1, missing_demand_count=0)
 
 
 async def active_unit(client, world, **extra):

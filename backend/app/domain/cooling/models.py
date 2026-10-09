@@ -178,7 +178,7 @@ class ThermalZone(Base, UUIDPkMixin, TimestampMixin):
         CheckConstraint("containment = 'none' OR zone_kind IN ('hot_aisle', 'cold_aisle')", name="containment_only_on_aisles"),
         CheckConstraint("geometry_type IS NOT NULL OR zone_kind = 'served_zone'", name="geometry_required_except_served_zone"),
         CheckConstraint(
-            "geometry_type IS NULL OR (geometry_type = 'rect' AND x_mm IS NOT NULL AND y_mm IS NOT NULL AND width_mm > 0 AND height_mm > 0 "
+            "geometry_type IS NULL OR (geometry_type = 'rect' AND x_mm IS NOT NULL AND y_mm IS NOT NULL AND width_mm IS NOT NULL AND width_mm > 0 AND height_mm IS NOT NULL AND height_mm > 0 "
             "AND points IS NULL) OR (geometry_type = 'polygon' AND points IS NOT NULL AND x_mm IS NULL AND y_mm IS NULL "
             "AND width_mm IS NULL AND height_mm IS NULL)",
             name="geometry_shape_consistent",

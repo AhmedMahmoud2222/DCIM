@@ -608,7 +608,7 @@ export interface ThermalSensorPoint {
   age_seconds: number | null;
   expected_poll_interval_seconds: number | null;
   invalid_reason: string | null;
-  active_alarm_count: number;
+  active_alarm_count?: number; // absent when the caller lacks alarm:read
   used_in_field: boolean;
   excluded_reason: string | null;
   source: { integration_id: string; integration_name: string } | null;
@@ -683,6 +683,7 @@ export interface HeatMap {
   sensors: ThermalSensorPoint[];
   source_set: { contributing_sensor_ids: string[]; as_of: string };
   thresholds: HeatMapThreshold[];
+  thresholds_withheld?: boolean;
   truncated: boolean;
 }
 
@@ -744,8 +745,12 @@ export interface CapacityZone {
   unit_count: number;
   thermal_load: {
     state: "known" | "incomplete" | "unknown" | "withheld_by_scope" | "not_permitted";
+    load_complete?: boolean;
     electrical_kw: number | null;
     thermal_kw: number | null;
+    electrical_kw_lower_bound?: number | null;
+    thermal_kw_lower_bound?: number | null;
+    lower_bound_note?: string | null;
     quality: string | null;
     rack_count: number;
     unassigned_rack_count: number;

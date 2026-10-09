@@ -61,7 +61,8 @@ def _item(kind: str, severity: str, subject_type: str, subject_id: Any, message:
 
 
 async def build_exceptions(
-    db: AsyncSession, *, room_id: uuid.UUID, scope: AccessScope, can_read_power: bool, now: datetime | None = None
+    db: AsyncSession, *, room_id: uuid.UUID, scope: AccessScope, can_read_power: bool, include_alarms: bool = False,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     site_id = await assert_room_visible(db, room_id, scope)
@@ -99,7 +100,7 @@ async def build_exceptions(
                 items.append(_item("sensor_not_located", "info", "sensor", sensor_id, f"{p.name} has no resolvable location, so it is not on the map.", metric=metric))
 
     ids = list(by_sensor)
-    if ids:
+    if ids and include_alarms:  # without alarm:read the alarm tables are never read
         for alarm, rule in (
             await db.execute(
                 select(Alarm, AlarmRule).join(AlarmRule, AlarmRule.id == Alarm.rule_id)

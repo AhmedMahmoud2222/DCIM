@@ -88,8 +88,8 @@ async def test_sensor_moves_use_the_same_monotonic_versions(client, auth_headers
     await seed_plan(db_session, site["room"])
     sensor = await make_sensor(client, admin, site["site"], site["room"], 100, 100)
     url = f"{C}/sensors/{sensor['id']}/placement"
-    assert (await client.put(url, json={"room_id": site["room"], "x_mm": 200, "y_mm": 100}, headers=admin, params={"if_match": 1})).status_code == 200
-    assert (await client.put(url, json={"room_id": site["room"], "x_mm": 300, "y_mm": 100}, headers=admin, params={"if_match": 1})).status_code == 409
-    assert (await client.put(url, json={"room_id": site["room"], "x_mm": 300, "y_mm": 100}, headers=admin, params={"if_match": 2})).status_code == 200
+    assert (await client.put(url, json={"room_id": site["room"], "x_mm": 200, "y_mm": 100}, headers={**admin, "If-Match": "1"})).status_code == 200
+    assert (await client.put(url, json={"room_id": site["room"], "x_mm": 300, "y_mm": 100}, headers={**admin, "If-Match": "1"})).status_code == 409
+    assert (await client.put(url, json={"room_id": site["room"], "x_mm": 300, "y_mm": 100}, headers={**admin, "If-Match": "2"})).status_code == 200
     assert [(v, c) for v, c, _ in await versions(db_session, sensor["id"])] == [(1, False), (2, False), (3, True)]
     assert uuid.UUID(sensor["id"])

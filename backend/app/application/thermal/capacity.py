@@ -143,9 +143,15 @@ def sum_known(values: list[float | None]) -> tuple[float, bool]:
 
 @dataclass
 class ZoneLoad:
+    # known: every relevant demand is known, so electrical_kw / thermal_kw are complete totals.
+    # incomplete: at least one relevant demand is unknown; electrical_kw / thermal_kw stay None and only the
+    #   explicitly labelled `*_lower_bound` fields carry the known part. They are NOT a load and feed no headroom.
+    # unknown | withheld_by_scope | not_permitted: nothing usable.
     state: str  # known | incomplete | unknown | withheld_by_scope | not_permitted
     electrical_kw: float | None = None
     thermal_kw: float | None = None
+    electrical_kw_lower_bound: float | None = None
+    thermal_kw_lower_bound: float | None = None
     quality: str | None = None
     rack_count: int = 0
     rack_ids: list[str] = field(default_factory=list)
@@ -155,7 +161,11 @@ class ZoneLoad:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "state": self.state, "electrical_kw": self.electrical_kw, "thermal_kw": self.thermal_kw, "quality": self.quality,
+            "state": self.state, "load_complete": self.state == "known",
+            "electrical_kw": self.electrical_kw, "thermal_kw": self.thermal_kw,
+            "electrical_kw_lower_bound": self.electrical_kw_lower_bound, "thermal_kw_lower_bound": self.thermal_kw_lower_bound,
+            "lower_bound_note": "Known demand only; equipment with unknown demand is not included. Not a load." if self.state == "incomplete" else None,
+            "quality": self.quality,
             "rack_count": self.rack_count, "unassigned_rack_count": self.unassigned_rack_count,
             "missing_load_rack_count": self.missing_load_rack_count, "basis": self.basis,
             "assumption": LOAD_ASSUMPTION, "electrical_to_thermal_factor": ELECTRICAL_TO_THERMAL_FACTOR,
@@ -194,9 +204,20 @@ async def _zone_load(
         room = rollup.rooms.get(zone.room_id)
         if room is None:
             return ZoneLoad(state="unknown", basis="whole room; no power modelled for this room")
+        basis = "whole room (all racks and floor equipment)"
+        if room.equipment_count == 0:
+            return ZoneLoad(state="unknown", basis="whole room; no equipment with power data is modelled in this room")
+        if room.missing_demand_count > 0:
+            # Missing demand contributes 0 to load_kw, so load_kw is only a lower bound. Never present it as the load.
+            return ZoneLoad(
+                state="incomplete", electrical_kw_lower_bound=round(room.load_kw, 3),
+                thermal_kw_lower_bound=round(room.load_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3), quality=room.quality,
+                rack_count=len(rack_rows), missing_load_rack_count=room.missing_demand_count,
+                basis=f"{basis}; {room.missing_demand_count} equipment item(s) have no known electrical demand",
+            )
         return ZoneLoad(
             state="known", electrical_kw=round(room.load_kw, 3), thermal_kw=round(room.load_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3),
-            quality=room.quality, rack_count=len([1 for r in rack_rows]), basis="whole room (all racks and floor equipment)",
+            quality=room.quality, rack_count=len(rack_rows), basis=basis,
         )
     inside: list[uuid.UUID] = []
     unassigned = 0
@@ -206,20 +227,30 @@ async def _zone_load(
         elif zone_contains(zone, cx, cy):
             inside.append(rack_id)
     loads: list[float] = []
+    known_part: list[float] = []  # load of every modelled rack, complete or not: the lower bound
     qualities: list[str] = []
     missing = 0
     for rack_id in sorted(inside, key=str):
         scoped = rollup.racks.get(rack_id)
-        if scoped is None or scoped.quality == "missing":
+        if scoped is not None:
+            known_part.append(scoped.load_kw)
+        if scoped is None or scoped.quality == "missing" or scoped.missing_demand_count > 0:
             missing += 1
         else:
             loads.append(scoped.load_kw)
             qualities.append(scoped.quality)
     electrical = round(sum(loads), 3)
     state = "known" if not (unassigned or missing) else "incomplete"
+    if state == "known":
+        return ZoneLoad(
+            state=state, electrical_kw=electrical, thermal_kw=round(electrical * ELECTRICAL_TO_THERMAL_FACTOR, 3),
+            quality=_quality_of(qualities), rack_count=len(inside), rack_ids=[str(r) for r in sorted(inside, key=str)],
+            unassigned_rack_count=unassigned, missing_load_rack_count=missing,
+            basis="racks whose footprint centre lies inside the zone (floor equipment not counted)",
+        )
     return ZoneLoad(
-        state=state, electrical_kw=electrical if loads or state == "known" else None,
-        thermal_kw=round(electrical * ELECTRICAL_TO_THERMAL_FACTOR, 3) if loads or state == "known" else None,
+        state=state, electrical_kw_lower_bound=round(sum(known_part), 3) if known_part else None,
+        thermal_kw_lower_bound=round(sum(known_part) * ELECTRICAL_TO_THERMAL_FACTOR, 3) if known_part else None,
         quality=_quality_of(qualities), rack_count=len(inside), rack_ids=[str(r) for r in sorted(inside, key=str)],
         unassigned_rack_count=unassigned, missing_load_rack_count=missing,
         basis="racks whose footprint centre lies inside the zone (floor equipment not counted)",

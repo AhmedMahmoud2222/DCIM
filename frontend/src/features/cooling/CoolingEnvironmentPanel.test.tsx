@@ -321,4 +321,48 @@ describe("CoolingEnvironmentPanel", () => {
     const layer = await screen.findByTestId("airflow-layer");
     expect(layer.querySelectorAll("animate, animateTransform, animateMotion, style")).toHaveLength(0);
   });
+  it("shows an incomplete load as unknown with a labelled lower bound, never as a total", async () => {
+    mockAll({
+      cap: capacity([
+        zone({
+          thermal_load: { ...zone().thermal_load, state: "incomplete", load_complete: false, electrical_kw: null, thermal_kw: null, thermal_kw_lower_bound: 30, electrical_kw_lower_bound: 30, quality: "mixed", missing_load_rack_count: 1 },
+          headroom_kw: null, utilization_pct: null, level: "unknown", redundancy: { state: "redundant_unverified", pools: [{ scope: "zone_units", reason: null, n_plus_1_verified: null }] },
+        }),
+      ]),
+    });
+    renderPanel();
+    const table = await screen.findByTestId("capacity-table");
+    const row = within(table).getAllByRole("row")[1];
+    expect(within(row).getByTestId("load-cell")).toHaveTextContent("unknown (incomplete), at least 30 kW known, not a total");
+    expect(within(row).getByTestId("load-cell")).not.toHaveTextContent(/^30 kW \(/);
+    expect(within(row).getByTestId("headroom-cell")).toHaveTextContent("not calculable");
+    expect(row).toHaveTextContent("redundant unverified");
+  });
+
+  it("renders without any alarm information when the caller lacks alarm:read", async () => {
+    const withheld = heatMap({ thresholds: [], thresholds_withheld: true });
+    for (const s of withheld.sensors) delete (s as { active_alarm_count?: number }).active_alarm_count;
+    mockAll({ map: withheld });
+    renderPanel();
+    expect(await screen.findByTestId("map-state-badge")).toHaveTextContent("Temperature map: Healthy");
+    expect(screen.queryByTestId("legend-thresholds")).not.toBeInTheDocument();
+    expect(screen.queryByText(/active alarm|Alarms/i)).not.toBeInTheDocument();
+  });
+
+  it("keys threshold rows by rule, value and unit so legacy-unit rules never collide", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockAll({
+      map: heatMap({
+        thresholds: [
+          { rule_type: "threshold_high", threshold: 80, unit: "degF", name: "High F" },
+          { rule_type: "threshold_high", threshold: 80, unit: "degC", name: "High C" },
+        ],
+      }),
+    });
+    renderPanel();
+    const list = await screen.findByTestId("legend-thresholds");
+    expect(list.querySelectorAll("li")).toHaveLength(2);
+    expect(errors.mock.calls.filter((c) => String(c[0]).includes("same key"))).toHaveLength(0);
+    errors.mockRestore();
+  });
 });

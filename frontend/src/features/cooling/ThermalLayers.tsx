@@ -255,7 +255,7 @@ export function ThermalMarkerLayers({
                   {p.state === "measured_fresh" ? "" : meta.glyph}
                 </text>
                 {!p.position_exact && <circle cx={px} cy={py} r={11} fill="none" stroke="#94a3b8" strokeWidth={1} strokeDasharray="1 3" />}
-                {p.active_alarm_count > 0 && (
+                {(p.active_alarm_count ?? 0) > 0 && (
                   <g pointerEvents="none">
                     <circle cx={px + 8} cy={py - 8} r={5} fill="#7f1d1d" stroke="#ef4444" />
                     <text x={px + 8} y={py - 5} fontSize={8} fill="#fecaca" textAnchor="middle">!</text>

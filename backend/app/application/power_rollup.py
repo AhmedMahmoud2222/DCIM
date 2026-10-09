@@ -127,6 +127,10 @@ class ScopeResult:
     utilization_pct: float | None
     quality: str
     equipment_count: int
+    # Equipment in scope whose demand is unknown. Such equipment adds nothing to `load_kw`, so a scope with
+    # missing_demand_count > 0 reports only a LOWER BOUND on its load; `quality` alone cannot tell "mixed because some
+    # demand is missing" from "mixed measured/stale".
+    missing_demand_count: int = 0
 
 
 @dataclass
@@ -348,7 +352,7 @@ def compute_rollup(
                 unserved += r.demand_kw
         return ScopeResult(
             scope, ident, round(load, 6), round(alloc, 6), round(unserved, 6), None, None, None, None,
-            _classify_quality(*counts), len(items),
+            _classify_quality(*counts), len(items), counts[3],
         )
 
     racks: dict[uuid.UUID, ScopeResult] = {}

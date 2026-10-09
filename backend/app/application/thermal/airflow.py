@@ -77,12 +77,13 @@ def _sensor_element(volume: SensorPoint | None, velocity: SensorPoint | None, in
 
 
 async def build_airflow(
-    db: AsyncSession, *, room_id: uuid.UUID, scope: AccessScope, include_source: bool = False, now: datetime | None = None
+    db: AsyncSession, *, room_id: uuid.UUID, scope: AccessScope, include_source: bool = False,
+    include_alarms: bool = False, now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     await assert_room_visible(db, room_id, scope)
-    volume_snap = await load_room_sensor_snapshot(db, room_id=room_id, metric="airflow_m3_s", scope=scope, now=now, roles=AIRFLOW_ROLES)
-    velocity_snap = await load_room_sensor_snapshot(db, room_id=room_id, metric="airflow_velocity_m_s", scope=scope, now=now, roles=AIRFLOW_ROLES)
+    volume_snap = await load_room_sensor_snapshot(db, room_id=room_id, metric="airflow_m3_s", scope=scope, now=now, roles=AIRFLOW_ROLES, include_alarms=include_alarms)
+    velocity_snap = await load_room_sensor_snapshot(db, room_id=room_id, metric="airflow_velocity_m_s", scope=scope, now=now, roles=AIRFLOW_ROLES, include_alarms=include_alarms)
     volume = {p.sensor_id: p for p in volume_snap.points}
     velocity = {p.sensor_id: p for p in velocity_snap.points}
     elements: list[dict[str, Any]] = [

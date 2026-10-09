@@ -156,6 +156,21 @@ async def test_populated_upgrade_enforces_invariants_and_refuses_destructive_dow
             await must_fail(conn, "INSERT INTO thermal_zone (id, room_id, name, zone_kind, geometry_type, x_mm, y_mm, width_mm, height_mm) VALUES (gen_random_uuid(), :r, 'neg', 'hot_aisle', 'rect', 0, 0, -5, 10)", "geometry_shape_consistent", r=room_a)
             await must_fail(conn, "INSERT INTO thermal_zone (id, room_id, name, zone_kind, geometry_type, x_mm, y_mm, width_mm, height_mm, points) VALUES (gen_random_uuid(), :r, 'mixed', 'hot_aisle', 'rect', 0, 0, 5, 10, CAST('[[0,0],[1,1],[2,0]]' AS jsonb))", "geometry_shape_consistent", r=room_a)
             await must_fail(conn, "INSERT INTO thermal_zone (id, room_id, name, zone_kind, geometry_type) VALUES (gen_random_uuid(), :r, 'poly', 'hot_aisle', 'polygon')", "geometry_shape_consistent", r=room_a)
+            # B5: a CHECK passes on NULL, so every mandatory rectangle component must be rejected when it is NULL on its own
+            for column_list, values in (
+                ("x_mm, y_mm, width_mm, height_mm", "NULL, 0, 5, 10"), ("x_mm, y_mm, width_mm, height_mm", "0, NULL, 5, 10"),
+                ("x_mm, y_mm, width_mm, height_mm", "0, 0, NULL, 10"), ("x_mm, y_mm, width_mm, height_mm", "0, 0, 5, NULL"),
+                ("x_mm, y_mm, width_mm", "0, 0, 5"), ("x_mm, y_mm, height_mm", "0, 0, 10"),
+                ("x_mm, y_mm, width_mm, height_mm", "0, 0, 0, 10"), ("x_mm, y_mm, width_mm, height_mm", "0, 0, 5, 0"),
+            ):
+                await must_fail(
+                    conn, f"INSERT INTO thermal_zone (id, room_id, name, zone_kind, geometry_type, {column_list}) VALUES (gen_random_uuid(), :r, 'rect-null', 'hot_aisle', 'rect', {values})",
+                    "geometry_shape_consistent", r=room_a,
+                )
+            await conn.execute(text("INSERT INTO thermal_zone (id, room_id, name, zone_kind, geometry_type, x_mm, y_mm, width_mm, height_mm) VALUES (gen_random_uuid(), :r, 'rect-ok', 'hot_aisle', 'rect', 0, 0, 5, 10)"), {"r": room_a})
+            for column in ("x_mm", "y_mm", "width_mm", "height_mm"):
+                await must_fail(conn, f"UPDATE thermal_zone SET {column} = NULL WHERE name = 'rect-ok'", "geometry_shape_consistent")
+            await conn.execute(text("DELETE FROM thermal_zone WHERE name = 'rect-ok'"))
             await must_fail(conn, "INSERT INTO containment_element (thermal_zone_id, element_kind, x1_mm, y1_mm, x2_mm, y2_mm) VALUES (:z, 'boundary', 5, 5, 5, 5)", "check constraint", z=zone_a)
 
             await must_fail(conn, "INSERT INTO cooling_unit_zone (cooling_unit_id, thermal_zone_id, relation_kind) VALUES (:u, :z, 'serves')", "different sites", u=crah, z=zone_b)

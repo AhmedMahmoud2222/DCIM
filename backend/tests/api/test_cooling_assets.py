@@ -81,7 +81,7 @@ async def test_patch_cannot_make_configured_exceed_rated(client, world):
 
 async def test_unit_placement_uses_calibrated_coordinates_and_keeps_history(client, world, db_session):
     unit = await make_unit(client, world["admin"], world["site"])
-    place = lambda body, v=None: client.put(f"{C}/units/{unit['id']}/placement", json=body, headers=world["admin"], params={"if_match": v} if v else None)  # noqa: E731
+    place = lambda body, v=None: client.put(f"{C}/units/{unit['id']}/placement", json=body, headers={**world["admin"], **({"If-Match": str(v)} if v else {})})  # noqa: E731
     first = await place({"room_id": world["room"], "x_mm": 500, "y_mm": 600, "rotation_deg": 90})
     assert first.status_code == 200 and first.json()["position_calibration_id"] is not None and first.json()["version"] == 1
     moved = await place({"room_id": world["room"], "x_mm": 900, "y_mm": 1000}, "1")
@@ -188,7 +188,7 @@ async def test_sensor_is_a_managed_asset_and_metric_mapping_is_validated_against
 async def test_sensor_placement_history_and_rack_mounting(client, world, db_session):
     sensor = await make_sensor(client, world["admin"], world["site"], world["room"], 1000, 1000)
     url = f"{C}/sensors/{sensor['id']}/placement"
-    moved = await client.put(url, json={"room_id": world["room"], "x_mm": 2000, "y_mm": 1500}, headers=world["admin"], params={"if_match": 1})
+    moved = await client.put(url, json={"room_id": world["room"], "x_mm": 2000, "y_mm": 1500}, headers={**world["admin"], "If-Match": "1"})
     assert moved.status_code == 200
     rows = (await db_session.execute(text("SELECT x_mm, y_mm FROM equipment_placement WHERE equipment_id = :i ORDER BY effective_from"), {"i": sensor["id"]})).all()
     assert [(r.x_mm, r.y_mm) for r in rows] == [(1000, 1000), (2000, 1500)]

@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, false, func, or_, select, true
 from sqlalchemy.exc import IntegrityError
@@ -567,7 +567,7 @@ async def update_unit(
 @router.put("/units/{unit_id}/placement", response_model=PlacementOut)
 async def place_unit(
     unit_id: uuid.UUID, body: PlacementIn, request: Request, db: AsyncSession = Depends(get_db),
-    if_match: str | None = None, ctx: AuthContext = Depends(require_permission("cooling:manage")),
+    if_match: str | None = Header(default=None, alias="If-Match"), ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> PlacementOut:
     unit, asset = await _visible_unit(db, ctx, unit_id)
     if asset.lifecycle_status in ("decommissioned", "removed"):
@@ -584,7 +584,7 @@ async def place_unit(
 
 @router.delete("/units/{unit_id}/placement", status_code=204)
 async def unplace_unit(
-    unit_id: uuid.UUID, request: Request, if_match: str | None = None, db: AsyncSession = Depends(get_db),
+    unit_id: uuid.UUID, request: Request, if_match: str | None = Header(default=None, alias="If-Match"), db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> None:
     unit, _ = await _visible_unit(db, ctx, unit_id)
@@ -805,7 +805,7 @@ async def update_sensor(
 
 @router.put("/sensors/{sensor_id}/placement", response_model=PlacementOut)
 async def place_sensor(
-    sensor_id: uuid.UUID, body: PlacementIn, request: Request, if_match: str | None = None, db: AsyncSession = Depends(get_db),
+    sensor_id: uuid.UUID, body: PlacementIn, request: Request, if_match: str | None = Header(default=None, alias="If-Match"), db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> PlacementOut:
     sensor, asset = await _visible_sensor(db, ctx, sensor_id, write=True)
@@ -823,7 +823,7 @@ async def place_sensor(
 
 @router.delete("/sensors/{sensor_id}/placement", status_code=204)
 async def unplace_sensor(
-    sensor_id: uuid.UUID, request: Request, if_match: str | None = None, db: AsyncSession = Depends(get_db),
+    sensor_id: uuid.UUID, request: Request, if_match: str | None = Header(default=None, alias="If-Match"), db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> None:
     sensor, _ = await _visible_sensor(db, ctx, sensor_id, write=True)

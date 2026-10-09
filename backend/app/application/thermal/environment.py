@@ -108,7 +108,8 @@ class SensorPoint:
     integration_id: uuid.UUID | None = None
     integration_name: str | None = None
     invalid_reason: str | None = None
-    active_alarm_count: int = 0
+    # None = alarm information was not requested (caller lacks alarm:read) and must not be serialized
+    active_alarm_count: int | None = None
 
     @property
     def located(self) -> bool:
@@ -149,8 +150,12 @@ async def load_room_sensor_snapshot(
     now: datetime | None = None,
     as_of: datetime | None = None,
     roles: tuple[str, ...] = DEFAULT_MAP_ROLES,
+    include_alarms: bool = False,
 ) -> SensorSnapshot:
-    """Every expected sensor in `room_id` that measures `metric` and that `scope` may see, with its latest reading at
+    """`include_alarms` is the caller's effective `alarm:read`. When False no alarm row is read at all, so no alarm-derived
+    value (count, rule, status) can reach any serializer.
+
+    Every expected sensor in `room_id` that measures `metric` and that `scope` may see, with its latest reading at
     or before `as_of`. Freshness is judged against `as_of` (the snapshot instant), so a historical snapshot is
     not reported stale merely because it is old; `as_of` defaults to and is capped at `now`."""
     now = now or datetime.now(UTC)
@@ -249,18 +254,20 @@ async def load_room_sensor_snapshot(
     latest = {r.managed_asset_id: (r, interval, name) for r, interval, name in latest_rows if r.managed_asset_id is not None}
 
     alarms: dict[uuid.UUID, int] = {}
-    for aid, _alarm_id in (
-        await db.execute(
-            select(Alarm.managed_asset_id, Alarm.id)
-            .join(AlarmRule, AlarmRule.id == Alarm.rule_id)
-            .where(Alarm.managed_asset_id.in_(ids), Alarm.status.in_(("ACTIVE", "ACKNOWLEDGED")), AlarmRule.metric == metric)
-        )
-    ).all():
-        if aid is not None:  # the query filters on managed_asset_id IN (ids), so NULL cannot occur; this narrows the type
-            alarms[aid] = alarms.get(aid, 0) + 1
+    if include_alarms:
+        for aid, _alarm_id in (
+            await db.execute(
+                select(Alarm.managed_asset_id, Alarm.id)
+                .join(AlarmRule, AlarmRule.id == Alarm.rule_id)
+                .where(Alarm.managed_asset_id.in_(ids), Alarm.status.in_(("ACTIVE", "ACKNOWLEDGED")), AlarmRule.metric == metric)
+            )
+        ).all():
+            if aid is not None:  # the query filters on managed_asset_id IN (ids), so NULL cannot occur; this narrows the type
+                alarms[aid] = alarms.get(aid, 0) + 1
 
     for point in snapshot.points:
-        point.active_alarm_count = alarms.get(point.sensor_id, 0)
+        if include_alarms:
+            point.active_alarm_count = alarms.get(point.sensor_id, 0)
         hit = latest.get(point.sensor_id)
         if hit is None:
             point.state = MISSING

@@ -37,7 +37,7 @@ async def test_simultaneous_sensor_moves_leave_exactly_one_current_placement(cli
     sensor = await make_sensor(client, world["admin"], world["site"], world["room"], 1000, 1000)
     async with concurrent_client() as c:
         results = await asyncio.gather(
-            *(c.put(f"{C}/sensors/{sensor['id']}/placement", json={"room_id": world["room"], "x_mm": 1000 + i * 100, "y_mm": 2000}, headers=world["admin"], params={"if_match": 1}) for i in range(6))
+            *(c.put(f"{C}/sensors/{sensor['id']}/placement", json={"room_id": world["room"], "x_mm": 1000 + i * 100, "y_mm": 2000}, headers={**world["admin"], "If-Match": "1"}) for i in range(6))
         )
     assert statuses(results) == [200] + [409] * 5
     rows = (await world["db"].execute(text("SELECT x_mm, effective_to IS NULL AS current, version FROM equipment_placement WHERE equipment_id = :i ORDER BY effective_from, version"), {"i": sensor["id"]})).all()

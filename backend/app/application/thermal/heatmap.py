@@ -110,7 +110,7 @@ def coverage_class(percent: float) -> str:
 
 
 def serialize_point(p: SensorPoint, *, include_source: bool, excluded_reason: str | None = None) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "sensor_id": str(p.sensor_id), "asset_tag": p.asset_tag, "name": p.name, "sensor_kind": p.sensor_kind,
         "measurement_role": p.measurement_role, "metric": p.metric, "placement_type": p.placement_type,
         "rack_id": str(p.rack_id) if p.rack_id else None,
@@ -120,11 +120,14 @@ def serialize_point(p: SensorPoint, *, include_source: bool, excluded_reason: st
         "value": p.value, "unit": p.unit, "presentation_value": p.presentation_value, "presentation_unit": p.presentation_unit,
         "occurred_at": p.occurred_at.isoformat() if p.occurred_at else None, "age_seconds": p.age_seconds,
         "expected_poll_interval_seconds": p.poll_interval_seconds, "invalid_reason": p.invalid_reason,
-        "active_alarm_count": p.active_alarm_count, "used_in_field": excluded_reason is None and p.usable_for_field,
+        "used_in_field": excluded_reason is None and p.usable_for_field,
         "excluded_reason": excluded_reason,
         "source": {"integration_id": str(p.integration_id), "integration_name": p.integration_name}
         if include_source and p.integration_id is not None else None,
     }
+    if p.active_alarm_count is not None:  # only present when the caller may read alarms
+        out["active_alarm_count"] = p.active_alarm_count
+    return out
 
 
 async def _thresholds(db: AsyncSession, snapshot: SensorSnapshot) -> list[dict[str, Any]]:
@@ -153,6 +156,7 @@ async def build_heat_map(
     metric: str,
     scope: AccessScope,
     include_source: bool = False,
+    include_alarms: bool = False,
     now: datetime | None = None,
     as_of: datetime | None = None,
     cell_mm: int | None = None,
@@ -165,7 +169,7 @@ async def build_heat_map(
     now = now or datetime.now(UTC)
     skew_limit = max(MIN_MAX_SKEW_SECONDS, min(MAX_MAX_SKEW_SECONDS, max_skew_seconds or DEFAULT_MAX_SKEW_SECONDS))
     extent = await load_room_extent(db, room_id, scope)
-    snapshot = await load_room_sensor_snapshot(db, room_id=room_id, metric=metric, scope=scope, now=now, as_of=as_of, roles=roles)
+    snapshot = await load_room_sensor_snapshot(db, room_id=room_id, metric=metric, scope=scope, now=now, as_of=as_of, roles=roles, include_alarms=include_alarms)
     definition = METRIC_REGISTRY[metric]
 
     reasons: list[str] = list(extent.reasons)
@@ -256,7 +260,8 @@ async def build_heat_map(
             "contributing_sensor_ids": sorted(str(p.sensor_id) for p in candidates) if field_grid else [],
             "as_of": snapshot.as_of.isoformat(),
         },
-        "thresholds": await _thresholds(db, snapshot),
+        "thresholds": await _thresholds(db, snapshot) if include_alarms else [],
+        "thresholds_withheld": not include_alarms,
         "truncated": snapshot.truncated,
     }
 

@@ -114,7 +114,7 @@ async def test_unavailable_cooling_unit_and_capacity_conditions(client, world, m
     await relate(client, admin, unit["id"], zone["id"])
 
     async def _rollup(db, site_id, now, freshness_seconds=900):
-        return SimpleNamespace(racks={}, rooms={uuid.UUID(room): SimpleNamespace(load_kw=30.0, quality="measured")})
+        return SimpleNamespace(racks={}, rooms={uuid.UUID(room): SimpleNamespace(load_kw=30.0, quality="measured", equipment_count=1, missing_demand_count=0)})
 
     monkeypatch.setattr("app.application.thermal.capacity.rollup_for_site", _rollup)
     body = await exceptions(client, world)
@@ -135,14 +135,14 @@ async def test_unavailable_cooling_unit_and_capacity_conditions(client, world, m
     assert ("cooling_redundancy_lost", zone["id"]) in kinds(body)  # but 30 kW does not fit in the 20 kW left after losing the 50 kW unit
 
     async def _heavier(db, site_id, now, freshness_seconds=900):
-        return SimpleNamespace(racks={}, rooms={uuid.UUID(room): SimpleNamespace(load_kw=60.0, quality="measured")})
+        return SimpleNamespace(racks={}, rooms={uuid.UUID(room): SimpleNamespace(load_kw=60.0, quality="measured", equipment_count=1, missing_demand_count=0)})
 
     monkeypatch.setattr("app.application.thermal.capacity.rollup_for_site", _heavier)
     warn = next(i for i in (await exceptions(client, world))["items"] if i["type"] == "capacity_headroom_breach")
     assert warn["severity"] == "warning" and warn["headroom_kw"] == 10.0 and warn["utilization_pct"] == 85.7
 
     async def _overload(db, site_id, now, freshness_seconds=900):
-        return SimpleNamespace(racks={}, rooms={uuid.UUID(room): SimpleNamespace(load_kw=80.0, quality="measured")})
+        return SimpleNamespace(racks={}, rooms={uuid.UUID(room): SimpleNamespace(load_kw=80.0, quality="measured", equipment_count=1, missing_demand_count=0)})
 
     monkeypatch.setattr("app.application.thermal.capacity.rollup_for_site", _overload)
     crit = next(i for i in (await exceptions(client, world))["items"] if i["type"] == "capacity_headroom_breach")

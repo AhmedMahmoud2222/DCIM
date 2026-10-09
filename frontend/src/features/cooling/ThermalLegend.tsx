@@ -31,7 +31,7 @@ export function ThermalLegend({ map }: { map: HeatMap | null | undefined }) {
         {map && map.thresholds.length > 0 && (
           <ul className="mt-1" data-testid="legend-thresholds">
             {map.thresholds.map((t) => (
-              <li key={`${t.rule_type}-${t.threshold}`}>
+              <li key={`${t.rule_type}-${t.threshold}-${t.unit ?? ""}`}>
                 {t.rule_type === "threshold_high" ? "High" : "Low"} alarm threshold {t.threshold} {t.unit ?? unit} ({t.name})
               </li>
             ))}

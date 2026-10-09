@@ -167,7 +167,7 @@ async def get_environment(
     now = datetime.now(UTC)
     snapshot = await load_room_sensor_snapshot(
         db, room_id=room_id, metric=metric, scope=ctx.scope, now=now, as_of=parse_as_of(as_of, now),
-        roles=_roles(sensor_roles) if sensor_roles else SENSOR_ROLES,
+        roles=_roles(sensor_roles) if sensor_roles else SENSOR_ROLES, include_alarms=_holds(ctx, "alarm:read"),
     )
     include_source = _include_source(ctx)
     definition = METRIC_REGISTRY[metric]
@@ -199,7 +199,7 @@ async def get_heat_map(
     await _require_room(db, ctx, room_id)
     now = datetime.now(UTC)
     return await heatmap.build_heat_map(
-        db, room_id=room_id, metric=metric, scope=ctx.scope, include_source=_include_source(ctx), now=now, as_of=parse_as_of(as_of, now),
+        db, room_id=room_id, metric=metric, scope=ctx.scope, include_source=_include_source(ctx), include_alarms=_holds(ctx, "alarm:read"), now=now, as_of=parse_as_of(as_of, now),
         cell_mm=cell_mm, radius_mm=radius_mm, max_skew_seconds=max_skew_seconds, roles=_roles(sensor_roles),
     )
 
@@ -208,7 +208,7 @@ async def get_heat_map(
 async def get_airflow(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:read"))) -> dict:
     _need(ctx, "spatial:read", "telemetry:read")
     await _require_room(db, ctx, room_id)
-    return await airflow.build_airflow(db, room_id=room_id, scope=ctx.scope, include_source=_include_source(ctx))
+    return await airflow.build_airflow(db, room_id=room_id, scope=ctx.scope, include_source=_include_source(ctx), include_alarms=_holds(ctx, "alarm:read"))
 
 
 @router.get("/{room_id}/capacity")
@@ -221,11 +221,10 @@ async def get_capacity(room_id: uuid.UUID, request: Request, db: AsyncSession = 
 async def get_exceptions(room_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(require_permission("cooling:read"))) -> dict:
     _need(ctx, "telemetry:read")
     await _require_room(db, ctx, room_id)
-    result = await exceptions.build_exceptions(db, room_id=room_id, scope=ctx.scope, can_read_power=_holds(ctx, "power:read"))
-    if not _holds(ctx, "alarm:read"):
-        result["items"] = [i for i in result["items"] if i["source"] != "alarm"]
-        result["counts"] = {}
-        for item in result["items"]:
-            result["counts"][item["severity"]] = result["counts"].get(item["severity"], 0) + 1
+    can_read_alarms = _holds(ctx, "alarm:read")
+    result = await exceptions.build_exceptions(
+        db, room_id=room_id, scope=ctx.scope, can_read_power=_holds(ctx, "power:read"), include_alarms=can_read_alarms,
+    )
+    if not can_read_alarms:
         result["alarms_omitted"] = "alarm:read is required to include persistent alarms"
     return result

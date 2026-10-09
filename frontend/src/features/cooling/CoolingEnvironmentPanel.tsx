@@ -117,7 +117,7 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
           <dt className="text-slate-500">Position</dt><dd>{p.x_mm != null ? `${Math.round(p.x_mm)}, ${Math.round(p.y_mm ?? 0)} mm${p.position_exact ? "" : " · approximate (rack footprint)"}` : "not recorded"}</dd>
           <dt className="text-slate-500">Role / kind</dt><dd>{p.measurement_role} · {p.sensor_kind}</dd>
           <dt className="text-slate-500">In the field</dt><dd data-testid="detail-used">{p.used_in_field ? "Yes, contributes to the interpolation" : `No (${explainExclusion(p.excluded_reason) || "not contributing"})`}</dd>
-          {p.active_alarm_count > 0 && (<><dt className="text-slate-500">Alarms</dt><dd className="text-red-300">{p.active_alarm_count} active</dd></>)}
+          {(p.active_alarm_count ?? 0) > 0 && (<><dt className="text-slate-500">Alarms</dt><dd className="text-red-300">{p.active_alarm_count} active</dd></>)}
           {p.source && (<><dt className="text-slate-500">Source</dt><dd>{p.source.integration_name}</dd></>)}
         </dl>
       );
@@ -276,7 +276,7 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
                       <td>{z.available_units} / {z.unit_count}</td>
                       <td>{z.installed_rated_kw != null ? `${z.installed_rated_kw} kW${z.installed_rated_complete ? "" : " (some unknown)"}` : "unknown"}</td>
                       <td>{z.available_kw != null ? `${z.available_kw} kW${z.available_complete ? "" : " (some unknown)"}` : "unknown"}</td>
-                      <td data-testid="load-cell">{z.thermal_load.thermal_kw != null ? `${z.thermal_load.thermal_kw} kW (${z.thermal_load.quality ?? "quality unknown"})` : `unknown (${z.thermal_load.state.replace(/_/g, " ")})`}</td>
+                      <td data-testid="load-cell">{z.thermal_load.thermal_kw != null ? `${z.thermal_load.thermal_kw} kW (${z.thermal_load.quality ?? "quality unknown"})` : `unknown (${z.thermal_load.state.replace(/_/g, " ")})${z.thermal_load.thermal_kw_lower_bound != null ? `, at least ${z.thermal_load.thermal_kw_lower_bound} kW known, not a total` : ""}`}</td>
                       <td data-testid="headroom-cell">{z.headroom_kw != null ? `${z.headroom_kw} kW (${z.utilization_pct}% used)` : "not calculable"}</td>
                       <td>{z.redundancy.state.replace(/_/g, " ")}</td>
                       <td><span className={`rounded-sm px-1.5 py-0.5 ${LEVEL_STYLE[z.level]}`}><span aria-hidden="true">{LEVEL_GLYPH[z.level]}</span> {z.level.replace(/_/g, " ")}</span></td>
