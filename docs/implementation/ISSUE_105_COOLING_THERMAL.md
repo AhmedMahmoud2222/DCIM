@@ -23,7 +23,9 @@ Placement uses the shared `equipment_placement` (close-then-open history). It ga
 history (ABA safe): a writer takes a per-asset advisory lock (`pg_advisory_xact_lock`, key `dcim.placement.<kind>.<asset id>`) and
 allocates `max(version over every row of the asset) + 1`, so place, unplace and re-place never restarts at 1 and two concurrent
 first placements cannot share a generation. The lock order is AUTHORITY(S) (racks only), then this lock, then the placement row locks.
-The rack and equipment services share the mechanism.
+The rack and equipment services share the mechanism. A mover reads the placement it intends to change before waiting for the lock;
+if another writer created, replaced or closed that placement meanwhile, the waiting mover gets a conflict (409), exactly as the #104
+"zero rows after unblock" rule requires, instead of stacking a second move on top.
 A position needs an active, calibrated floor plan and must lie inside the approved room boundary. Rack-mounted sensors take
 their position from the rack footprint centre and are reported as approximate (`position_exact=false`).
 Database triggers enforce: placed asset and room share a site; unit and zone share a site; a unit still related to a zone

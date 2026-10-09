@@ -155,9 +155,11 @@ async def test_concurrent_first_placements_are_serialised_and_never_share_a_gene
         await asyncio.sleep(1.0)
         assert not second.done(), "B must be blocked on the per-asset lock until A commits"
         await a.commit()
-    assert await asyncio.wait_for(second, 10) == 2
+    # B observed "unplaced" before waiting; A created the placement meanwhile, so B loses with a conflict (never a second v1)
+    with pytest.raises(PlacementConflict):
+        await asyncio.wait_for(second, 10)
     rows = await versions(factory, "equipment_placement", "equipment_id", assets["equipment"])
-    assert rows == [(1, False), (2, True)]
+    assert rows == [(1, True)]
 
 
 async def test_concurrent_replacement_after_unplace_is_serialised(factory, assets):
@@ -170,9 +172,11 @@ async def test_concurrent_replacement_after_unplace_is_serialised(factory, asset
         await asyncio.sleep(1.0)
         assert not rival.done()
         await a.commit()
-    assert await asyncio.wait_for(rival, 10) == 3
+    with pytest.raises(PlacementConflict):
+        await asyncio.wait_for(rival, 10)
     rows = await versions(factory, "equipment_placement", "equipment_id", assets["equipment"])
-    assert [v for v, _ in rows] == [1, 2, 3] and [c for _, c in rows].count(True) == 1
+    assert [v for v, _ in rows] == [1, 2] and [c for _, c in rows].count(True) == 1
+    assert await place_eq(factory, assets) == 3  # a later caller that observes the new state proceeds with the next generation
 
 
 async def test_a_waiting_stale_writer_loses_cleanly_after_the_winner_commits(factory, assets):
@@ -198,13 +202,24 @@ async def test_concurrent_rack_replacement_is_serialised(factory, assets):
         await asyncio.sleep(1.0)
         assert not rival.done()
         await a.commit()
-    assert await asyncio.wait_for(rival, 10) == 3
+    with pytest.raises(PlacementConflict):
+        await asyncio.wait_for(rival, 10)
     rows = await versions(factory, "rack_placement", "rack_id", assets["rack"])
-    assert [v for v, _ in rows] == [1, 2, 3] and [c for _, c in rows].count(True) == 1
+    assert [v for v, _ in rows] == [1, 2] and [c for _, c in rows].count(True) == 1
+    assert await place_rack(factory, assets, x=900) == 3
 
 
-async def test_many_simultaneous_placements_never_duplicate_a_generation(factory, assets):
+async def test_many_simultaneous_first_placements_yield_one_winner_and_no_duplicate_generation(factory, assets):
     results = await asyncio.gather(*(place_eq(factory, assets) for _ in range(8)), return_exceptions=True)
-    assert not [r for r in results if isinstance(r, Exception)], results
+    assert [r for r in results if not isinstance(r, Exception)] == [1]
+    assert all(isinstance(r, PlacementConflict) for r in results if isinstance(r, Exception)), results
     rows = await versions(factory, "equipment_placement", "equipment_id", assets["equipment"])
-    assert [v for v, _ in rows] == list(range(1, 9)) and [c for _, c in rows].count(True) == 1
+    assert rows == [(1, True)]
+
+
+async def test_sequential_placements_keep_counting_after_such_a_race(factory, assets):
+    await asyncio.gather(*(place_eq(factory, assets) for _ in range(4)), return_exceptions=True)
+    for expected in (2, 3, 4):
+        assert await place_eq(factory, assets) == expected
+    rows = await versions(factory, "equipment_placement", "equipment_id", assets["equipment"])
+    assert [v for v, _ in rows] == [1, 2, 3, 4] and [c for _, c in rows].count(True) == 1

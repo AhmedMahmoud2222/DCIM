@@ -50,6 +50,17 @@ class PlacementConflict(Exception):
     current: RackPlacement | EquipmentPlacement | None
 
 
+def _require_unchanged_while_waiting(
+    observed: RackPlacement | EquipmentPlacement | None, current: RackPlacement | EquipmentPlacement | None
+) -> None:
+    """A mover decided what to do from the placement it observed. If another writer replaced, created or closed that
+    placement while this one waited for the per-asset lock, the decision is stale: the loser gets a conflict
+    (ARCHITECTURE_REVIEW.md 7c, "zero rows after unblock") instead of silently stacking a second move on top. The
+    same rule covers two concurrent first placements and a concurrent re-placement."""
+    if (observed.id if observed else None) != (current.id if current else None):
+        raise PlacementConflict(current=current)
+
+
 async def _next_version(
     db: AsyncSession, model: type[RackPlacement] | type[EquipmentPlacement], key_col: Any, asset_id: uuid.UUID
 ) -> int:
@@ -85,8 +96,10 @@ async def move_rack(
     sits in is part of every site-restricted user's data scope, so this write must not commit
     while a delegated-administration decision that read the old placement is still open."""
     await acquire_placement_scope_lock(db)
+    observed = await get_current_rack_placement(db, rack_id)  # what this caller decided to change, read BEFORE any wait
     await _lock_asset_placement(db, "rack", rack_id)
     current = await get_current_rack_placement(db, rack_id)
+    _require_unchanged_while_waiting(observed, current)
     if current is None and if_match_version is not None:
         # A token can only describe a placement that exists. Unplaced + a token means the token comes from an earlier
         # generation (or never existed): it must not be honoured, whatever number it carries.
@@ -182,8 +195,10 @@ async def move_equipment(
 ) -> EquipmentPlacement:
     """`x_mm` / `y_mm` (Issue #105) carry a room-local position for assets such as environmental sensors and cooling
     units that have no drawn SpatialObject; each close-then-open row keeps its own coordinates."""
+    observed = await get_current_equipment_placement(db, equipment_id)  # read BEFORE any wait, see move_rack
     await _lock_asset_placement(db, "equipment", equipment_id)
     current = await get_current_equipment_placement(db, equipment_id)
+    _require_unchanged_while_waiting(observed, current)
     if current is None and if_match_version is not None:
         raise PlacementConflict(current=None)  # see move_rack: a token cannot describe a placement that does not exist
     if current is not None:
