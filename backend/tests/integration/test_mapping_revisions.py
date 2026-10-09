@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from app.domain.alarm.models import Alarm, AlarmRule
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -23,6 +22,7 @@ from app.application.telemetry_service import (
     UnknownMappingRevision,
     ingest_reading,
 )
+from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry import registry
 from app.domain.telemetry.models import (

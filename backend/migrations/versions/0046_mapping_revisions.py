@@ -13,10 +13,11 @@ the mapping row as it stands now with `effective_from` = this migration's time; 
 in force when any earlier reading was measured, and no earlier telemetry_reading is touched or reinterpreted
 (NULL revision + NULL evidence means "stored before revision pinning").
 
-Locks: the two foreign keys and the CHECK constraints on telemetry_reading are added NOT VALID and then
-VALIDATEd, so the large table is held only under the brief ACCESS EXCLUSIVE needed to add nullable columns
-(metadata only) and SHARE ROW EXCLUSIVE for ADD CONSTRAINT ... NOT VALID, and the full scans run under
-SHARE UPDATE EXCLUSIVE, which does not block reads or writes.
+Locks: telemetry_reading is the last table altered, so the ACCESS EXCLUSIVE lock Alembic holds to commit covers
+only metadata work: two nullable columns (no rewrite) and a foreign key and two CHECK constraints added NOT VALID
+(no scan). The constraints therefore stay NOT VALID: they are enforced for every new or updated row, and every
+existing row has both columns NULL, which satisfies them. An operator may run
+ALTER TABLE telemetry_reading VALIDATE CONSTRAINT <name> later (SHARE UPDATE EXCLUSIVE, no write blocking).
 
 Downgrade refuses once anything beyond the seed exists: an authored revision, a second revision, a reading that
 carries a revision or evidence, or a hold row.
@@ -100,24 +101,6 @@ def upgrade() -> None:
         ["current_revision_id"], ["id"],
     )
 
-    op.add_column("telemetry_reading", sa.Column("mapping_revision_id", postgresql.UUID(as_uuid=True), nullable=True))
-    op.add_column("telemetry_reading", sa.Column("contract_evidence", sa.String(32), nullable=True))
-    op.execute("""
-        ALTER TABLE telemetry_reading ADD CONSTRAINT fk_telemetry_reading_mapping_revision
-        FOREIGN KEY (mapping_revision_id) REFERENCES integration_metric_mapping_revision (id) ON DELETE RESTRICT NOT VALID
-    """)
-    op.execute(f"""
-        ALTER TABLE telemetry_reading ADD CONSTRAINT ck_telemetry_reading_contract_evidence_allowed
-        CHECK (contract_evidence IS NULL OR contract_evidence IN {EVIDENCE!r}) NOT VALID
-    """)
-    op.execute("""
-        ALTER TABLE telemetry_reading ADD CONSTRAINT ck_telemetry_reading_revision_matches_evidence
-        CHECK ((mapping_revision_id IS NULL) = (contract_evidence IS NULL)) NOT VALID
-    """)
-    op.execute("ALTER TABLE telemetry_reading VALIDATE CONSTRAINT fk_telemetry_reading_mapping_revision")
-    op.execute("ALTER TABLE telemetry_reading VALIDATE CONSTRAINT ck_telemetry_reading_contract_evidence_allowed")
-    op.execute("ALTER TABLE telemetry_reading VALIDATE CONSTRAINT ck_telemetry_reading_revision_matches_evidence")
-
     op.create_table(
         "telemetry_contract_hold",
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), nullable=False),
@@ -185,6 +168,22 @@ def upgrade() -> None:
             sa.text("UPDATE integration_metric_mapping SET current_revision_id = :rev WHERE id = :id"),
             {"rev": revision_id, "id": row.id},
         )
+
+    # telemetry_reading is altered last, so its ACCESS EXCLUSIVE lock (held to commit) spans only metadata work.
+    op.add_column("telemetry_reading", sa.Column("mapping_revision_id", postgresql.UUID(as_uuid=True), nullable=True))
+    op.add_column("telemetry_reading", sa.Column("contract_evidence", sa.String(32), nullable=True))
+    op.execute("""
+        ALTER TABLE telemetry_reading ADD CONSTRAINT fk_telemetry_reading_mapping_revision
+        FOREIGN KEY (mapping_revision_id) REFERENCES integration_metric_mapping_revision (id) ON DELETE RESTRICT NOT VALID
+    """)
+    op.execute(f"""
+        ALTER TABLE telemetry_reading ADD CONSTRAINT ck_telemetry_reading_contract_evidence_allowed
+        CHECK (contract_evidence IS NULL OR contract_evidence IN {EVIDENCE!r}) NOT VALID
+    """)
+    op.execute("""
+        ALTER TABLE telemetry_reading ADD CONSTRAINT ck_telemetry_reading_revision_matches_evidence
+        CHECK ((mapping_revision_id IS NULL) = (contract_evidence IS NULL)) NOT VALID
+    """)
 
 
 def downgrade() -> None:
