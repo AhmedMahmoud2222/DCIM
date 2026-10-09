@@ -22,6 +22,8 @@ import {
 import { ApiError } from "@/lib/apiClient";
 import { CatalogModelRevisionDetail, ValidationSummary } from "@/types";
 
+import { DatasheetPanel } from "@/features/catalog-designer/DatasheetPanel";
+
 const LIFECYCLE_COLORS: Record<string, string> = {
   draft: "bg-slate-700 text-slate-200",
   published: "bg-green-700 text-green-100",
@@ -96,6 +98,8 @@ export function RevisionEditorPage() {
       {deleteMutation.isError && <p className="mb-4 text-sm text-red-400">{(deleteMutation.error as Error).message}</p>}
 
       <ScalarFieldsSection revision={revision} readOnly={!canEditDraft} onSaved={invalidate} />
+
+      <DatasheetPanel key={revision.id} revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
 
       <TemplateEditors revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
 

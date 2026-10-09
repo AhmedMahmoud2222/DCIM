@@ -172,6 +172,12 @@ class Integration(Base, UUIDPkMixin, TimestampMixin):
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     credential_ciphertext: Mapped[str | None] = mapped_column(String(4000))
     poll_interval_seconds: Mapped[int] = mapped_column(nullable=False, default=60)
+    # Issue #101: the explicitly bound device profile (app/domain/network/profile_models.py).
+    # Never set by the matcher itself; an operator binds it. RESTRICT so a bound profile can
+    # only be retired, never deleted.
+    device_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("device_profile.id", ondelete="RESTRICT"), index=True
+    )
 
     # Observability (master prompt §13): last poll/success/failure, kept here (not
     # derived from a telemetry table this phase does not own) since these describe the
@@ -233,6 +239,10 @@ class DiscoveredDevice(Base, UUIDPkMixin):
     last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     raw_attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
+    # Issue #101: advisory profile-matcher outcome computed from the device facts in
+    # `raw_attributes` ({"state", "vendor_profile_id", "device_profile_id", "candidates"...}).
+    # Evidence only; an operator binds a profile to the Integration explicitly.
+    profile_match: Mapped[dict | None] = mapped_column(JSONB)
     matched_managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"))
 
 

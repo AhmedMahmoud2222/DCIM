@@ -26,8 +26,9 @@ from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_rack_template
 from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.idempotency import (
+    ClaimRef,
     IdempotencyConflict,
     IdempotencyStillProcessing,
     complete_claim,
@@ -38,6 +39,7 @@ from app.application.idempotency import (
 from app.application.outbox_service import write_outbox_event
 from app.application.placement_service import PlacementConflict, get_current_rack_placement, move_rack, retire_rack_placement
 from app.application.rbac import require_permission
+from app.application.spatial_import.boundary import assert_rack_within_room_boundary
 from app.application.spatial_validation import validate_coordinate, validate_rotation_degrees
 from app.core.errors import ApiError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.catalog.models import RackModelRevision
@@ -63,6 +65,8 @@ class RackIn(BaseModel):
     x_mm: int | None = None
     y_mm: int | None = None
     rotation_deg: int | None = None
+    # Issue #104: explicit, audited override when the footprint leaves the room's approved boundary.
+    boundary_exception_reason: str | None = Field(default=None, max_length=500)
 
 
 class RackUpdate(BaseModel):
@@ -77,6 +81,9 @@ class RackPlacementOut(BaseModel):
     y_mm: int | None
     rotation_deg: int | None
     effective_from: datetime
+    # Issue #104: the optimistic-concurrency token for moves and the linked drawn shape (if any).
+    version: int = 1
+    spatial_object_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 
@@ -99,6 +106,7 @@ class RackMoveIn(BaseModel):
     x_mm: int | None = None
     y_mm: int | None = None
     rotation_deg: int | None = None
+    boundary_exception_reason: str | None = Field(default=None, max_length=500)
 
 
 async def _serialize_rack(db: AsyncSession, rack: Rack, asset: ManagedAsset) -> RackOut:
@@ -128,6 +136,10 @@ async def create_rack(
     validate_coordinate("x_mm", body.x_mm)
     validate_coordinate("y_mm", body.y_mm)
     validate_rotation_degrees(body.rotation_deg)
+    create_boundary_exception = await assert_rack_within_room_boundary(
+        db, model_revision_id=body.model_revision_id, room_id=body.room_id, x_mm=body.x_mm, y_mm=body.y_mm,
+        rotation_deg=body.rotation_deg, label=body.name, exception_reason=body.boundary_exception_reason,
+    )
     if not ctx.scope.unrestricted:
         # A site-restricted user may only create racks directly inside a site they can access;
         # an unplaced rack belongs to no site and would be unreachable for them.
@@ -154,7 +166,7 @@ async def create_rack(
             assert outcome.cached.response_body is not None
             return RackOut(**outcome.cached.response_body)
         claim = outcome.claim
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         if await db.get(RackModelRevision, body.model_revision_id) is None:
@@ -173,7 +185,7 @@ async def create_rack(
         await write_audit_log(
             db, actor_user_id=ctx.user.id, action="rack.create", entity_type="rack", entity_id=rack.id,
             request_id=request_id, correlation_id=correlation_id,
-            after={"asset_tag": asset.asset_tag, "name": rack.name},
+            after={"asset_tag": asset.asset_tag, "name": rack.name, "boundary_exception": create_boundary_exception},
         )
         await write_outbox_event(
             db, event_type="RackCreated", aggregate_type="rack", aggregate_id=rack.id,
@@ -201,8 +213,8 @@ async def create_rack(
         return out
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 
@@ -309,10 +321,7 @@ async def update_rack(
     ctx=Depends(require_permission("rack:manage")),
 ) -> RackOut:
     await ensure_rack_access(db, ctx.scope, rack_id)
-    rack = await db.get(Rack, rack_id)
-    if rack is None:
-        raise NotFoundError(f"Rack {rack_id} not found.")
-    check_version_match(expected=if_match_version, actual=rack.version)
+    rack = await lock_versioned_row(db, Rack, rack_id, expected_version=if_match_version)
 
     before = {"name": rack.name, "owner": rack.owner, "notes": rack.notes, "version": rack.version}
     if body.name is not None:
@@ -358,6 +367,10 @@ async def move_rack_endpoint(
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
+    move_boundary_exception = await assert_rack_within_room_boundary(
+        db, model_revision_id=rack.model_revision_id, room_id=body.room_id, x_mm=body.x_mm, y_mm=body.y_mm,
+        rotation_deg=body.rotation_deg, label=rack.name, exception_reason=body.boundary_exception_reason,
+    )
 
     if_match_version = int(if_match.strip().strip('"')) if if_match else None
     try:
@@ -384,7 +397,8 @@ async def move_rack_endpoint(
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
         db, actor_user_id=ctx.user.id, action="rack.move", entity_type="rack", entity_id=rack_id,
-        request_id=request_id, correlation_id=correlation_id, after={"room_id": str(body.room_id)},
+        request_id=request_id, correlation_id=correlation_id,
+        after={"room_id": str(body.room_id), "boundary_exception": move_boundary_exception},
     )
     await write_outbox_event(
         db, event_type="RackMoved", aggregate_type="rack", aggregate_id=rack_id,

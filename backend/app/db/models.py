@@ -17,6 +17,7 @@ from app.domain.auth.models import (  # noqa: F401
     UserGroupSiteAccess,
 )
 from app.domain.bulk_import.models import BulkImportJob, BulkImportRow  # noqa: F401
+from app.domain.catalog.application_models import CatalogExtractionApplication  # noqa: F401
 from app.domain.catalog.designer_models import (  # noqa: F401
     CatalogGraphic,
     CatalogGraphicMarker,
@@ -39,6 +40,7 @@ from app.domain.floorplan_import.models import (  # noqa: F401
     FloorPlanImportCandidate,
     FloorPlanImportDiagnostics,
     FloorPlanImportJob,
+    FloorPlanImportSir,
 )
 from app.domain.idempotency.models import IdempotencyKey  # noqa: F401
 from app.domain.identity.models import ManagedAsset  # noqa: F401
@@ -52,10 +54,26 @@ from app.domain.location.models import (  # noqa: F401
     Room,
     Site,
 )
+from app.domain.network.cable_models import Cable, CableEndpoint  # noqa: F401
+from app.domain.network.discovery_models import DiscoveredNeighbor  # noqa: F401
+from app.domain.network.pass_through_models import PortPassThrough, PortPassThroughMember  # noqa: F401
+from app.domain.network.profile_models import DeviceProfile, ProfileMetricMapping, VendorProfile  # noqa: F401
+from app.domain.operations.models import (  # noqa: F401
+    CollectorState,
+    CollectorTransition,
+    CorrelationIncident,
+    CorrelationIncidentMember,
+    ItsmConnection,
+    ItsmTicket,
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationPolicy,
+)
 from app.domain.outbox.models import OutboxEvent  # noqa: F401
 from app.domain.physical.models import Equipment, Rack  # noqa: F401
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection  # noqa: F401
 from app.domain.placement.models import EquipmentPlacement, RackPlacement  # noqa: F401
+from app.domain.power.analytics_models import PowerReportJob, PowerUtilizationSnapshot  # noqa: F401
 from app.domain.power.models import (  # noqa: F401
     PDU,
     UPS,
@@ -65,8 +83,9 @@ from app.domain.power.models import (  # noqa: F401
     PowerConnection,
     PowerNode,
     PowerPanel,
+    ProtectionDevice,
 )
-from app.domain.spatial.models import FloorPlan, SpatialLayer, SpatialObject  # noqa: F401
+from app.domain.spatial.models import FloorPlan, FloorPlanCalibration, SpatialLayer, SpatialObject  # noqa: F401
 from app.domain.telemetry.mapping_models import PortTelemetryBinding, TelemetryLatestStatus  # noqa: F401
 from app.domain.telemetry.models import (  # noqa: F401
     DailyTelemetryAggregate,

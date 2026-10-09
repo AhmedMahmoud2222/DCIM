@@ -12,12 +12,14 @@ from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
+from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION
 
-CANONICAL_METRICS = ("temperature_c", "humidity_percent", "power_kw", "load_percent", "availability")
+CANONICAL_METRICS = tuple(METRIC_REGISTRY)
 
 
 def telemetry_series_key(
-    integration_id: uuid.UUID, managed_asset_id: uuid.UUID | None, external_identifier: str, metric: str, unit: str
+    integration_id: uuid.UUID, managed_asset_id: uuid.UUID | None, external_identifier: str, metric: str, unit: str,
+    registry_version: str | None = None,
 ) -> str:
     """Return the immutable identity used by raw and downsampled telemetry.
 
@@ -27,7 +29,11 @@ def telemetry_series_key(
     and unit therefore all participate in the durable series identity.
     """
     asset_component = str(managed_asset_id) if managed_asset_id is not None else "unmanaged"
-    return ":".join((str(integration_id), asset_component, external_identifier, metric, unit))
+    parts = (str(integration_id), asset_component, external_identifier, metric, unit)
+    # Legacy unit text was unrestricted and can itself end in ":1". Appending
+    # a version would collide with those keys. A prefix cannot collide with the
+    # UUID-first legacy namespace; existing historical keys remain unchanged.
+    return ":".join(("registry", registry_version, *parts)) if registry_version is not None else ":".join(parts)
 
 
 class IntegrationMetricMapping(Base, UUIDPkMixin, TimestampMixin):
@@ -50,6 +56,7 @@ class IntegrationMetricMapping(Base, UUIDPkMixin, TimestampMixin):
     canonical_metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     scale: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False, default=1)
+    registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default=REGISTRY_VERSION)
     label: Mapped[str | None] = mapped_column(String(128))
 
 
@@ -73,6 +80,10 @@ class TelemetryReading(Base, UUIDPkMixin):
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    raw_value: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    raw_unit: Mapped[str | None] = mapped_column(String(32))
+    source_scale: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default=REGISTRY_VERSION)
     occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -102,6 +113,7 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
     minimum_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
     maximum_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
     sample_count: Mapped[int] = mapped_column(nullable=False)
+    registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class MonitoringPolicy(Base):

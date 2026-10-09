@@ -46,6 +46,17 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 # managed_asset/room automatically. Only the catalog tables (no FK back to either) need
 # to be listed explicitly.
 _APP_TRUNCATE_TABLES = [
+    "itsm_ticket",
+    "itsm_connection",
+    "notification_delivery",
+    "notification_policy",
+    "notification_channel",
+    "correlation_member",
+    "correlation_incident",
+    "collector_transition",
+    "collector_state",
+    "power_report_job",
+    "power_utilization_snapshot",
     "idempotency_key",
     "outbox_event",
     # Bulk-import pipeline (app/domain/bulk_import/models.py) — no FK back to
@@ -61,6 +72,8 @@ _APP_TRUNCATE_TABLES = [
     "telemetry_reading",
     "integration_metric_mapping",
     "integration",
+    # Issue #101 network profiles: integration.device_profile_id references device_profile.
+    "vendor_profile",
     "collector",
     "power_node",  # utility_intake rows have neither managed_asset_id nor owning_asset_id
     # set, so they aren't reached by managed_asset's own CASCADE below — power_connection/

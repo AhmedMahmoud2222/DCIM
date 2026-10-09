@@ -8,10 +8,10 @@ NEVER the user JWT)."""
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,9 @@ from app.application.collector_service import (
 )
 from app.application.discovery_service import ingest_discovery
 from app.application.idempotency import IdempotencyConflict, IdempotencyStillProcessing
+from app.application.network.neighbor_evidence import InvalidNeighborPayload
+from app.application.network.neighbor_service import apply_scan_marker, ingest_neighbor
+from app.application.network.profile_service import build_plan
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, NotFoundError, UnauthorizedCollectorError
 from app.core.logging import get_logger
@@ -353,19 +356,27 @@ MAX_BATCH_RECORDS = 500
 MAX_RAW_ATTRIBUTES_BYTES = 8192
 
 
+def _attributes_within_bound(attributes: dict) -> bool:
+    return len(json.dumps(attributes)) <= MAX_RAW_ATTRIBUTES_BYTES
+
+
 class IngestRecordIn(BaseModel):
     dedup_key: str = Field(max_length=255)
     integration_id: uuid.UUID
     external_identifier: str = Field(max_length=255)
     occurred_at: datetime
     raw_attributes: dict = Field(default_factory=dict)
+    # Issue #101: collectors that predate neighbor discovery omit this and stay "device".
+    record_type: Literal["device", "neighbor", "neighbor_scan"] = "device"
 
-    @field_validator("raw_attributes")
-    @classmethod
-    def _bound_raw_attributes_size(cls, v: dict) -> dict:
-        if len(json.dumps(v)) > MAX_RAW_ATTRIBUTES_BYTES:
+    @model_validator(mode="after")
+    def _bound_device_attributes_size(self) -> "IngestRecordIn":
+        # Device records keep the batch-level 422. Neighbor records are checked per record in
+        # `ingest_batch` instead: one hostile LLDP/CDP peer must not make Central refuse (and the
+        # edge re-send) a whole batch that also carries other devices' data.
+        if self.record_type == "device" and not _attributes_within_bound(self.raw_attributes):
             raise ValueError(f"raw_attributes must serialize to at most {MAX_RAW_ATTRIBUTES_BYTES} bytes")
-        return v
+        return self
 
 
 class IngestBatchIn(BaseModel):
@@ -392,7 +403,7 @@ class IngestBatchOut(BaseModel):
     results: list[IngestRecordResult]
 
 
-async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record_index: int) -> None:
+async def _release_claim_safely(db: AsyncSession, claim_ref: idem.ClaimRef, *, record_index: int) -> None:
     """`idem.release_claim()` runs its own DELETE + COMMIT (idempotency.py's
     `release_claim`) -- either can itself fail (lock contention, connection loss, a
     stale/duplicate delete racing this one). Left uncaught, that new exception would
@@ -426,7 +437,7 @@ async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record
     endpoint's own docstring) already covers replaying the rest safely, since every
     record is idempotent on its own `dedup_key`."""
     try:
-        await idem.release_claim(db, claim_id)
+        await idem.release_claim(db, claim_ref)
     except Exception:  # noqa: BLE001 -- must never leak upstream unsanitized; see docstring.
         try:
             await db.rollback()
@@ -438,6 +449,17 @@ async def _release_claim_safely(db: AsyncSession, claim_id: uuid.UUID, *, record
                 detail="The database connection became unusable while processing this batch; retry the entire batch.",
             ) from None
         logger.error("ingest_batch_claim_release_failed", record_index=record_index)
+
+
+def _parse_scan_marker(attributes: dict) -> dict:
+    protocol, started, complete = attributes.get("protocol"), attributes.get("scan_started_at"), attributes.get("complete")
+    if protocol not in ("lldp", "cdp") or not isinstance(complete, bool) or not isinstance(started, str):
+        raise InvalidNeighborPayload("scan marker is invalid")
+    try:
+        parsed = datetime.fromisoformat(started)
+    except ValueError as exc:
+        raise InvalidNeighborPayload("scan marker is invalid") from exc
+    return {"protocol": protocol, "scan_started_at": parsed, "complete": complete}
 
 
 @router.post("/{collector_id}/ingest", response_model=IngestBatchOut)
@@ -470,6 +492,15 @@ async def ingest_batch(
 
     results: list[IngestRecordResult] = []
     for record in body.records:
+        if record.record_type != "device" and not _attributes_within_bound(record.raw_attributes):
+            # Permanent and deterministic: no claim is taken and nothing is stored.
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected", error_code="INVALID_PAYLOAD",
+                    error="The record is too large and will not be retried.",
+                )
+            )
+            continue
         request_hash = idem.hash_request_body(record.model_dump(mode="json"))
         # Findings I2/I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): `get_or_claim` itself
         # can raise (a reused dedup_key with a different payload, or a claim still
@@ -502,7 +533,7 @@ async def ingest_batch(
             continue
 
         assert outcome.claim is not None
-        claim_id = outcome.claim.id
+        claim_ref = idem.ClaimRef.of(outcome.claim)
         # Finding I4: a failed record must not corrupt the SESSION-wide ORM state that
         # later records (and the request-scoped `collector` object obtained once via
         # Depends(get_current_collector) before this loop began) still depend on. A
@@ -533,18 +564,39 @@ async def ingest_batch(
                             f"for integration {record.integration_id}."
                         ),
                     )
-                enriched_attrs = dict(record.raw_attributes)
-                enriched_attrs["occurred_at"] = record.occurred_at.isoformat()
-                enriched_attrs["received_at"] = datetime.now(UTC).isoformat()
-                await ingest_discovery(
-                    db, integration_id=record.integration_id, external_identifier=record.external_identifier,
-                    raw_attributes=enriched_attrs, correlation_id=None, causation_id=body.batch_id,
-                )
+                if record.record_type == "neighbor":
+                    await ingest_neighbor(
+                        db, collector_id=collector_id, integration_id=record.integration_id,
+                        occurred_at=record.occurred_at, raw_attributes=record.raw_attributes,
+                    )
+                elif record.record_type == "neighbor_scan":
+                    marker = _parse_scan_marker(record.raw_attributes)
+                    await apply_scan_marker(
+                        db, integration_id=record.integration_id, protocol=marker["protocol"],
+                        scan_started_at=marker["scan_started_at"], complete=marker["complete"],
+                    )
+                else:
+                    enriched_attrs = dict(record.raw_attributes)
+                    enriched_attrs["occurred_at"] = record.occurred_at.isoformat()
+                    enriched_attrs["received_at"] = datetime.now(UTC).isoformat()
+                    await ingest_discovery(
+                        db, integration_id=record.integration_id, external_identifier=record.external_identifier,
+                        raw_attributes=enriched_attrs, correlation_id=None, causation_id=body.batch_id,
+                    )
                 await idem.complete_claim(db, outcome.claim, response_status=200, response_body={"status": "accepted"})
             # The savepoint above released cleanly (no exception) -- persist it for
             # real and make it visible to other sessions/requests.
             await db.commit()
             results.append(IngestRecordResult(dedup_key=record.dedup_key, status="accepted"))
+        except InvalidNeighborPayload:
+            # Permanent: retrying the same bytes cannot succeed, so the collector may drop it.
+            await _release_claim_safely(db, claim_ref, record_index=len(results))
+            results.append(
+                IngestRecordResult(
+                    dedup_key=record.dedup_key, status="rejected", error_code="INVALID_PAYLOAD",
+                    error="The record could not be interpreted and will not be retried.",
+                )
+            )
         except ApiError as exc:
             # The nested transaction has already been rolled back to its savepoint by
             # the `async with` block above (automatic on exception), so only this
@@ -552,7 +604,7 @@ async def ingest_batch(
             # retry of just this record can succeed later. `ApiError.detail` is always
             # a hand-written, safe-for-collectors message (the only one raised in this
             # block today is the "Not Assigned" 403 above) -- safe to return as-is.
-            await _release_claim_safely(db, claim_id, record_index=len(results))
+            await _release_claim_safely(db, claim_ref, record_index=len(results))
             results.append(
                 IngestRecordResult(dedup_key=record.dedup_key, status="rejected", error_code="NOT_ASSIGNED", error=exc.detail)
             )
@@ -562,7 +614,7 @@ async def ingest_batch(
             # Exception messages, tracebacks and request-derived identifiers may contain
             # credentials, SQL parameters or raw telemetry. Log only fixed fields and
             # the record position; generic ACKs retain the existing retry contract.
-            await _release_claim_safely(db, claim_id, record_index=len(results))
+            await _release_claim_safely(db, claim_ref, record_index=len(results))
             logger.error(
                 "ingest_batch_record_processing_failed",
                 error_code="INTERNAL_PROCESSING_ERROR", record_index=len(results),
@@ -586,3 +638,54 @@ async def ingest_telemetry_batch(
     if collector.id != collector_id:
         raise UnauthorizedCollectorError("Signed collector identity does not match the URL path.")
     return await ingest_collector_telemetry(db, collector=collector, body=_parse_body(request, TelemetryBatchIn))
+
+
+class PlanIntegrationOut(BaseModel):
+    integration_id: uuid.UUID
+    target_host: str
+    target_port: int | None
+    snmp_version: str | None
+    snmpv3: dict | None
+    poll_interval_seconds: int
+    plan: dict | None
+
+
+MAX_PLAN_INTEGRATIONS = 500
+
+
+@router.get("/{collector_id}/discovery-plan", response_model=list[PlanIntegrationOut])
+async def discovery_plan(
+    collector_id: uuid.UUID, db: AsyncSession = Depends(get_db), collector: Collector = Depends(get_current_collector),
+) -> list[PlanIntegrationOut]:
+    """What this collector must execute: its currently assigned, enabled SNMP integrations
+    with the resolved, **secret-free** profile plan (OIDs, neighbor tables, metric
+    mappings) and the non-secret SNMPv3 descriptor. Credentials never travel here; the edge
+    holds them locally. Only integrations assigned to the signing collector are returned."""
+    if collector.id != collector_id:
+        raise UnauthorizedCollectorError("Signed collector identity does not match the URL path.")
+    from app.domain.integration.models import CollectorAssignment, Integration
+
+    rows = (
+        await db.execute(
+            select(Integration)
+            .join(CollectorAssignment, CollectorAssignment.integration_id == Integration.id)
+            .where(
+                CollectorAssignment.collector_id == collector_id, CollectorAssignment.effective_to.is_(None),
+                Integration.enabled.is_(True), Integration.integration_type == "snmp",
+            )
+            .order_by(Integration.name)
+            .limit(MAX_PLAN_INTEGRATIONS)
+        )
+    ).scalars().all()
+    out = []
+    for integration in rows:
+        config = integration.config or {}
+        out.append(
+            PlanIntegrationOut(
+                integration_id=integration.id, target_host=integration.target_host, target_port=integration.target_port,
+                snmp_version=config.get("version"), snmpv3=config.get("snmpv3"),
+                poll_interval_seconds=integration.poll_interval_seconds,
+                plan=await build_plan(db, integration.device_profile_id) if integration.device_profile_id else None,
+            )
+        )
+    return out
