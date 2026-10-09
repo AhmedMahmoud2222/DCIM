@@ -249,3 +249,56 @@ async def test_existing_authentication_and_restricted_scope_fail_closed(client, 
         assert (await client.get("/api/v1/telemetry/history", headers=restricted, params=params)).status_code == 403
         client.cookies.clear()
         assert (await client.get("/api/v1/telemetry/history", params=params)).status_code == 401
+
+
+async def test_history_during_compaction_commit_uses_one_snapshot(client, auth_headers, db_session, db_engine, series, monkeypatch):
+    integration, add = series
+    headers = await auth_headers()
+    await policy(db_session, 90)
+    old = NOW - timedelta(days=200)
+    await add(old, 10)
+    await add(old + timedelta(hours=1), 30)
+    await db_session.commit()
+    original_execute = db_session.execute
+    compacted = False
+
+    async def execute_then_compact(statement, *args, **kwargs):
+        nonlocal compacted
+        result = await original_execute(statement, *args, **kwargs)
+        # Commit after history's first evidence SELECT, before it can issue a
+        # second. Two independently snapshotted queries would duplicate evidence.
+        if not compacted and "telemetry_reading" in str(statement):
+            compacted = True
+            factory = async_sessionmaker(db_engine, expire_on_commit=False)
+            async with factory() as worker:
+                assert await compact_eligible_raw(worker, now=NOW) == 1
+                await worker.commit()
+        return result
+
+    monkeypatch.setattr(db_session, "execute", execute_then_compact)
+    points = await history(client, headers, integration)
+    assert compacted and samples(points) == 2
+    assert [p["resolution"] for p in points] == ["raw", "raw"]
+    # A subsequent HTTP request sees the committed daily representation, once.
+    points = await history(client, headers, integration)
+    assert len(points) == 1 and points[0]["sample_count"] == 2 and points[0]["value"] == 20
+
+
+async def test_daily_bucket_range_and_raw_endpoints_are_compatible(client, auth_headers, db_session, series):
+    integration, add = series
+    headers = await auth_headers()
+    await policy(db_session, 90)
+    old = (NOW - timedelta(days=200)).replace(hour=0)
+    await add(old + timedelta(hours=1), 10)
+    await add(old + timedelta(hours=23), 30)
+    await compact_eligible_raw(db_session, now=NOW)
+    await db_session.commit()
+    points = await history(client, headers, integration, start=(old + timedelta(hours=12)).isoformat(),
+                           end=(old + timedelta(hours=13)).isoformat())
+    assert len(points) == 1 and points[0]["sample_count"] == 2
+    assert datetime.fromisoformat(points[0]["occurred_at"]) == old
+    for delta in (-1, 0, 1, 2):
+        await add(NOW + timedelta(seconds=delta), delta)
+    await db_session.commit()
+    points = await history(client, headers, integration, start=NOW.isoformat(), end=(NOW + timedelta(seconds=1)).isoformat())
+    assert [p["value"] for p in points] == [0, 1]
