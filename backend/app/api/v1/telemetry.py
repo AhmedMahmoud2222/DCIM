@@ -11,11 +11,11 @@ shapes would be worse than the small amount of namespacing added here (the same
 power/models.py's `utility_intake` node-type addition)."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import DateTime, and_, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -23,6 +23,7 @@ from app.application.alarm_service import AlarmUnitCompatibilityError
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
+from app.application.telemetry_retention import as_utc, utc_day
 from app.application.telemetry_service import (
     BindingNotFound,
     InvalidBindingTarget,
@@ -304,42 +305,60 @@ async def metric_history(
         raise ApiError(
             status_code=422, title="Telemetry series required", detail="integration_id or managed_asset_id is required."
         )
+    start, end = as_utc(start), as_utc(end)
     if start >= end:
         raise ApiError(status_code=422, title="Invalid time range", detail="start must be before end.")
-    cutoff = datetime.now(UTC) - timedelta(days=365)
     raw_stmt = (
-        select(TelemetryReading)
+        select(
+            TelemetryReading.id.label("id"),
+            TelemetryReading.occurred_at.label("occurred_at"),
+            literal("raw").label("resolution"),
+        )
         .where(
             TelemetryReading.metric == metric,
             TelemetryReading.occurred_at >= start,
             TelemetryReading.occurred_at <= end,
-            TelemetryReading.occurred_at >= cutoff,
         )
-        .order_by(TelemetryReading.occurred_at.asc())
-        .limit(limit)
     )
     if integration_id is not None:
         raw_stmt = raw_stmt.where(TelemetryReading.integration_id == integration_id)
     if managed_asset_id is not None:
         raw_stmt = raw_stmt.where(TelemetryReading.managed_asset_id == managed_asset_id)
     daily_stmt = (
-        select(DailyTelemetryAggregate)
+        select(
+            DailyTelemetryAggregate.id.label("id"),
+            func.timezone("UTC", cast(DailyTelemetryAggregate.day, DateTime())).label("occurred_at"),
+            literal("daily").label("resolution"),
+        )
         .where(
             DailyTelemetryAggregate.metric == metric,
-            DailyTelemetryAggregate.day >= start.date(),
-            DailyTelemetryAggregate.day <= end.date(),
-            DailyTelemetryAggregate.day < cutoff.date(),
+            DailyTelemetryAggregate.day >= utc_day(start),
+            DailyTelemetryAggregate.day <= utc_day(end),
         )
-        .order_by(DailyTelemetryAggregate.day.asc())
-        .limit(limit)
     )
     if integration_id is not None:
         daily_stmt = daily_stmt.where(DailyTelemetryAggregate.integration_id == integration_id)
     if managed_asset_id is not None:
         daily_stmt = daily_stmt.where(DailyTelemetryAggregate.managed_asset_id == managed_asset_id)
-    raw = [_history_raw(row) for row in (await db.execute(raw_stmt)).scalars().all()]
-    daily = [_history_daily(row) for row in (await db.execute(daily_stmt)).scalars().all()]
-    return sorted([*daily, *raw], key=lambda item: item.occurred_at)[:limit]
+    # See telemetry_retention's storage contract: never suppress raw rows merely
+    # because their day has an aggregate. SKIP LOCKED compaction may be partial.
+    # A single statement prevents READ COMMITTED snapshots straddling compaction
+    # (two separate selects could miss evidence or read it twice).
+    points = union_all(raw_stmt, daily_stmt).subquery()
+    bounded = (
+        select(points).order_by(points.c.occurred_at, points.c.resolution, points.c.id).limit(limit).subquery()
+    )
+    stmt = (
+        select(TelemetryReading, DailyTelemetryAggregate)
+        .select_from(bounded)
+        .outerjoin(TelemetryReading, and_(bounded.c.resolution == "raw", TelemetryReading.id == bounded.c.id))
+        .outerjoin(DailyTelemetryAggregate, and_(bounded.c.resolution == "daily", DailyTelemetryAggregate.id == bounded.c.id))
+        .order_by(bounded.c.occurred_at, bounded.c.resolution, bounded.c.id)
+    )
+    # Preserve the API's whole-day daily buckets (including a start day's midnight
+    # bucket for an intraday start); raw endpoints remain inclusive.
+    return [_history_raw(raw) if raw is not None else _history_daily(daily) for raw, daily in (await db.execute(stmt)).all()]
+
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
