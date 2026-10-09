@@ -2,12 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type KeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { getCoolingLayout, getHeatMap } from "@/features/cooling/api";
+import { ThermalLegend } from "@/features/cooling/ThermalLegend";
+import { MAP_STATE_META, SENSOR_STATE_META, describeSensor, explainReason, metricLabel } from "@/features/cooling/thermalMath";
 import { getRoomOverlays, getRoomSpatialView } from "@/features/floor-plans/api";
 import { OVERLAY_KINDS, STATE_COLORS, STATE_LABEL, STATE_SYMBOL, describeOverlay, overlayIndex } from "@/features/floor-plans/overlayStyle";
 import { explainIncomplete, formatLength, niceGridInterval } from "@/features/floor-plans/spatialMath";
 import { listRooms } from "@/features/racks/api";
 import { type SceneBox, buildScene, occupiesFace, uRangeToPlacement } from "./layout3dMath";
-import type { OverlayItem, OverlayKind, RoomRackEquipment } from "@/types";
+import { ThermalFloor3D } from "./ThermalFloor3D";
+import type { OverlayItem, OverlayKind, RoomRackEquipment, ThermalMetric } from "@/types";
 
 const PAN_STEP_PX = 40;
 const ZOOM_STEP = 0.05;
@@ -144,6 +148,24 @@ export function Layout3DPage() {
     refetchInterval: 30_000,
   });
   const states = useMemo(() => overlayIndex(overlays.data, overlay), [overlays.data, overlay]);
+  const [thermal, setThermal] = useState<ThermalMetric | "none">("none");
+  const thermalMap = useQuery({
+    queryKey: ["cooling", activeRoom, "heat-map", thermal, "3d"],
+    queryFn: () => getHeatMap(activeRoom, thermal as ThermalMetric),
+    enabled: !!activeRoom && thermal !== "none",
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const thermalLayout = useQuery({
+    queryKey: ["cooling", activeRoom, "layout", "3d"],
+    queryFn: () => getCoolingLayout(activeRoom),
+    enabled: !!activeRoom && thermal !== "none",
+    staleTime: 0,
+    refetchOnMount: "always",
+    retry: false,
+  });
   const scene = useMemo(() => (view.data ? buildScene(view.data) : null), [view.data]);
   const [selected, setSelected] = useState<{ kind: "rack" | "equipment"; id: string } | null>(null);
   const [yaw, setYaw] = useState(-28);
@@ -268,6 +290,19 @@ export function Layout3DPage() {
             </select>
           </label>
           <label className="block text-sm">
+            <span className="mb-1 block text-slate-400">Thermal layer</span>
+            <select
+              aria-label="Thermal layer"
+              className="rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100"
+              value={thermal}
+              onChange={(event) => setThermal(event.target.value as ThermalMetric | "none")}
+            >
+              <option value="none">none</option>
+              <option value="temperature_c">Temperature heat map</option>
+              <option value="humidity_percent">Humidity heat map</option>
+            </select>
+          </label>
+          <label className="block text-sm">
             <span className="mb-1 block text-slate-400">Overlay</span>
             <select
               aria-label="Operational overlay"
@@ -371,6 +406,7 @@ export function Layout3DPage() {
                         <polygon points={scene.boundaryPx.map((p) => p.join(",")).join(" ")} fill="rgb(56 189 248 / .06)" stroke="#38bdf8" strokeWidth={2} />
                       </svg>
                     )}
+                    {thermal !== "none" && <ThermalFloor3D scene={scene} map={thermalMap.data} layout={thermalLayout.data} />}
                     {scene.racks.map((box) => (
                       <Cuboid
                         key={box.id}
@@ -526,6 +562,31 @@ export function Layout3DPage() {
                 </p>
               )}
 
+              {thermal !== "none" && (
+                <div className="mt-4 border-t border-slate-800 pt-3 text-xs text-slate-400" data-testid="thermal-3d-panel">
+                  <p className="mb-1 font-medium text-slate-300">{metricLabel(thermal)} heat map</p>
+                  {thermalMap.isLoading && <p role="status">Loading…</p>}
+                  {thermalMap.isError && <p role="alert" className="text-red-400">Could not load the heat map.</p>}
+                  {thermalMap.data && (
+                    <>
+                      <p data-testid="thermal-3d-state" data-map-state={thermalMap.data.state}>
+                        <span aria-hidden="true">{MAP_STATE_META[thermalMap.data.state].glyph}</span> {MAP_STATE_META[thermalMap.data.state].label} · {thermalMap.data.quality.fresh_count} fresh, {thermalMap.data.quality.stale_count} stale, {thermalMap.data.quality.missing_count} missing · as of {new Date(thermalMap.data.as_of).toLocaleTimeString()}
+                      </p>
+                      {thermalMap.data.state_reasons.map((r) => (
+                        <p key={r} className="text-yellow-400">{explainReason(r)}</p>
+                      ))}
+                      <p className="mt-1">{thermalMap.data.disclaimer}</p>
+                      <ul className="mt-1 space-y-0.5" data-testid="thermal-3d-sensors">
+                        {thermalMap.data.sensors.map((p) => (
+                          <li key={p.sensor_id}><span aria-hidden="true">{SENSOR_STATE_META[p.state].glyph}</span> {describeSensor(p)}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  <ThermalLegend map={thermalMap.data} />
+                </div>
+              )}
+
               {overlay !== "none" && (
                 <div className="mt-4 border-t border-slate-800 pt-3 text-xs text-slate-400" data-testid="overlay-legend">
                   <p className="mb-1 font-medium text-slate-300">{OVERLAY_KINDS.find((k) => k.id === overlay)?.label} overlay</p>
@@ -542,8 +603,8 @@ export function Layout3DPage() {
                 </div>
               )}
               <p className="mt-4 text-xs text-slate-600">
-                Layers: room boundary · racks · floor-standing equipment · rack-mounted equipment on rack faces. Cooling and airflow modelling are not part of
-                this view. Racks with no room placement anywhere are not listed; check the{" "}
+                Layers: room boundary · racks · floor-standing equipment · rack-mounted equipment on rack faces · optional thermal layer (interpolated
+                heat map, sensors, cooling units; not CFD). Racks with no room placement anywhere are not listed; check the{" "}
                 <Link to="/racks" className="text-blue-400 hover:underline">
                   Racks
                 </Link>{" "}
