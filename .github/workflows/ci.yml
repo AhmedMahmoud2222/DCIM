@@ -120,6 +120,14 @@ jobs:
           test "$(alembic heads | wc -l)" -eq 1
       - name: Bootstrap privileged retention role
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
+      - name: Validate unrestricted administrator and delegated authority safeguards
+        run: >-
+          pytest -q tests/api/test_sec63_unrestricted_admin_invariant.py
+          tests/api/test_pr59_delegation_boundary.py
+          tests/api/test_pr67_cross_site_rack_grants.py
+          tests/api/test_pr67_post_state_and_self_membership.py
+          tests/api/test_user_groups.py
+          tests/integration/test_pr67_authority_lock_protocol.py
       - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
         # app/application/drivers/icmp.py opens a genuine SOCK_RAW/IPPROTO_ICMP socket
         # (documented there as a real operational requirement, not silently assumed) --
