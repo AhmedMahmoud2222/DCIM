@@ -172,20 +172,20 @@ async def test_real_user_route_returns_conflict_and_rolls_back_all_fields_and_me
 
 
 async def _advisory_waiter(engine, lock_name, timeout=10.0):
-    """Polls pg_stat_activity until a backend is blocked on an advisory lock, and returns the lock's
-    classid/objid as proof it is `lock_name`'s lock. Deterministic: no fixed sleep decides the outcome."""
+    """Polls PostgreSQL until a backend is blocked (ungranted pg_locks row) on `lock_name`'s advisory lock and
+    returns that backend's (wait_event_type, wait_event). Deterministic: no fixed sleep decides the outcome."""
     expected = text("SELECT hashtext(:n)::bigint & 4294967295 AS objid").bindparams(n=lock_name)
     deadline = asyncio.get_running_loop().time() + timeout
     async with engine.connect() as conn:
         want = (await conn.execute(expected)).scalar_one()
         while asyncio.get_running_loop().time() < deadline:
             rows = (await conn.execute(text(
-                "SELECT l.objid, a.query FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+                "SELECT l.objid, a.wait_event_type, a.wait_event FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
                 "WHERE l.locktype = 'advisory' AND NOT l.granted AND a.datname = current_database()"
             ))).all()
-            for objid, query in rows:
+            for objid, wait_event_type, wait_event in rows:
                 if int(objid) == int(want):
-                    return query
+                    return wait_event_type, wait_event
             await asyncio.sleep(0.05)
     raise AssertionError(f"no backend became blocked on the {lock_name!r} advisory lock")
 
@@ -230,8 +230,7 @@ async def test_two_postgres_transactions_cannot_remove_both_unrestricted_adminis
         await asyncio.wait_for(attempted.wait(), timeout=10)
         # Locking evidence from PostgreSQL itself: the second backend is blocked on the exclusive
         # authority lock held by the first, not merely slow.
-        waiting_query = await _advisory_waiter(db_engine, AUTHORITY_LOCK_NAME)
-        assert "pg_advisory_xact_lock" in waiting_query
+        assert await _advisory_waiter(db_engine, AUTHORITY_LOCK_NAME) == ("Lock", "advisory")
         assert not second_task.done(), "the second authority transaction failed to wait"
         release.set()
         results = await asyncio.wait_for(asyncio.gather(first, second_task), timeout=15)
@@ -437,8 +436,7 @@ async def test_invariant_lock_alone_serialises_two_transactions_that_skip_the_au
     loser = asyncio.create_task(second_transaction())
     try:
         await asyncio.wait_for(second_started.wait(), timeout=10)
-        waiting_query = await _advisory_waiter(db_engine, ADMIN_INVARIANT_LOCK_NAME)
-        assert "pg_advisory_xact_lock" in waiting_query
+        assert await _advisory_waiter(db_engine, ADMIN_INVARIANT_LOCK_NAME) == ("Lock", "advisory")
         assert not loser.done()
         release.set()
         assert await asyncio.wait_for(asyncio.gather(first, loser), timeout=15) == ["committed", "conflict"]
