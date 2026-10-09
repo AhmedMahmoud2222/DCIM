@@ -439,7 +439,10 @@ async def is_user_admin(access: EffectiveAccess | None) -> bool:
 
 
 async def active_administrator_ids(db: AsyncSession) -> list[uuid.UUID]:
-    """Active users who can still manage both users and groups (the 'administrators')."""
+    """Active unrestricted users with both effective management permissions."""
     active = list((await db.execute(select(User.id).where(User.is_active.is_(True)))).scalars())
     accesses = await load_effective_access(db, active)
-    return [uid for uid, acc in accesses.items() if {"user:manage", "group:manage"} <= acc.permission_codes]
+    return [
+        uid for uid, acc in accesses.items()
+        if acc.scope.unrestricted and {"user:manage", "group:manage"} <= acc.permission_codes
+    ]
