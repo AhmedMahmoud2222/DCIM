@@ -207,14 +207,15 @@ async def assert_can_assign_role(db: AsyncSession, ctx: AuthContext, role: Role)
 async def assert_administrator_remains(db: AsyncSession) -> None:
     """Last-administrator protection: after any change that could remove `user:manage` or
     `group:manage` from someone (deactivate/delete/membership/permission/role changes),
-    at least one active user must still hold both. Runs inside the caller's transaction
+    at least one active unrestricted user must still effectively hold both. Runs inside the caller's transaction
     after flush; the caller rolls back on failure. A transaction-scoped advisory lock
     serialises concurrent admin-affecting changes so two requests cannot each see the other
     administrator still present and both proceed."""
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:name))"), {"name": ADMIN_INVARIANT_LOCK_NAME})
     if not await active_administrator_ids(db):
         raise ConflictError(
-            "This change would leave no active administrator (a user holding both user:manage and group:manage)."
+            "This change would leave no active unrestricted administrator "
+            "(a user effectively holding both user:manage and group:manage)."
         )
 
 
