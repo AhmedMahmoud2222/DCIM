@@ -12,14 +12,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .neighbors import Walker, build_queue_records, collect_neighbors
 from .queue import SQLiteQueue
 from .snmp import SNMPTarget
 
-UTC = timezone.utc
 SessionFactory = Callable[[Mapping[str, Any], SNMPTarget], Walker]
 
 

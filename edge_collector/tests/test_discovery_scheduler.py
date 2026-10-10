@@ -1,5 +1,5 @@
 """Exercise runtime -> scheduler -> real discovery runner -> durable SQLite queue."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Event
 
 import pytest
@@ -62,7 +62,7 @@ def test_runtime_schedules_real_cycle_and_buffers_on_the_queue_thread(tmp_path):
         runtime.run_once()  # enqueue scan results on this thread
         assert walker.calls == ["1.3.6.1", "1.3.6.2"]
         assert queue.metrics().count == 2
-        assert {r.payload["record_type"] for r in queue.list_due(datetime.now(timezone.utc))} == {"neighbor_scan"}
+        assert {r.payload["record_type"] for r in queue.list_due(datetime.now(UTC))} == {"neighbor_scan"}
         assert scheduler._future is None
         scheduler.tick(queue)
         assert len(walker.calls) == 2  # not due: no unbounded polling

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -31,7 +31,6 @@ from edge_collector.snmp_wire import (
     oid_tuple,
 )
 
-UTC = timezone.utc
 LLDP_TABLE = "1.0.8802.1.1.2.1.4.1.1"
 LLDP_LOCAL = "1.0.8802.1.1.2.1.3.7.1"
 LLDP_ADDR = "1.0.8802.1.1.2.1.4.2.1"

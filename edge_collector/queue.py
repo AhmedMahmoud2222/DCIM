@@ -4,13 +4,12 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .config import CollectorConfig
 
-UTC = timezone.utc
 MIGRATION_VERSION = 1
 MIGRATION_FILE = Path(__file__).with_name("migrations") / "001_initial.sql"
 
