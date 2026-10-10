@@ -1,8 +1,16 @@
-"""Transactional raw-telemetry compaction; alarm history is intentionally excluded."""
+"""Telemetry storage contract (alarm history is intentionally excluded).
+
+Policy controls when complete UTC days become eligible for compaction, not history
+visibility. Stored raw rows and daily aggregates own disjoint samples: aggregate
+updates and deletion of exactly the consumed raw rows commit atomically. A partial
+compaction or late arrival can therefore leave both representations for one series
+and day. History must read both in ONE PostgreSQL statement/snapshot, without a
+policy-age filter or day-level anti-join (which would discard unconsumed samples).
+"""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +18,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.telemetry.models import DailyTelemetryAggregate, MonitoringPolicy, TelemetryReading
 
 RAW_RETENTION_DAYS = 365
+
+
+def as_utc(value: datetime) -> datetime:
+    """Interpret timezone-less API timestamps as UTC, independent of server timezone."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def utc_day(value: datetime) -> date:
+    return as_utc(value).date()
+
+
+async def compaction_cutover(
+    db: AsyncSession, *, now: datetime | None = None, retention_days: int | None = None
+) -> date:
+    """Days strictly before this UTC date may transfer ownership from raw to daily."""
+    return utc_day((as_utc(now) if now is not None else datetime.now(UTC))
+                   - timedelta(days=await _retention_days(db, retention_days)))
 
 
 async def _retention_days(db: AsyncSession, configured: int | None) -> int:
@@ -23,12 +48,11 @@ async def merge_late_reading(
     db: AsyncSession, reading: TelemetryReading, *, now: datetime | None = None, retention_days: int | None = None
 ) -> bool:
     """Merge a post-compaction edge replay into an existing day without reopening raw data."""
-    now = now or datetime.now(UTC)
-    cutoff = now - timedelta(days=await _retention_days(db, retention_days))
+    cutoff = await compaction_cutover(db, now=now, retention_days=retention_days)
     # A day is compacted only after the whole UTC calendar day has aged out.
-    if reading.occurred_at.date() >= cutoff.date():
+    if utc_day(reading.occurred_at) >= cutoff:
         return False
-    day = reading.occurred_at.date()
+    day = utc_day(reading.occurred_at)
     aggregate = (
         await db.execute(
             select(DailyTelemetryAggregate)
@@ -52,21 +76,21 @@ async def merge_late_reading(
 async def compact_eligible_raw(
     db: AsyncSession, *, now: datetime | None = None, retention_days: int | None = None, max_groups: int = 200
 ) -> int:
-    """Aggregate then delete groups older than one year in one caller-owned transaction.
+    """Aggregate then delete eligible complete UTC days in one caller-owned transaction.
 
     If persistence fails, the exception rolls the transaction back and raw rows remain.
     """
     if max_groups < 1:
         raise ValueError("max_groups must be positive")
-    cutoff = (now or datetime.now(UTC)) - timedelta(days=await _retention_days(db, retention_days))
-    day_expr = func.date(TelemetryReading.occurred_at)
+    cutoff = await compaction_cutover(db, now=now, retention_days=retention_days)
+    day_expr = func.date(func.timezone("UTC", TelemetryReading.occurred_at))
     groups = (
         await db.execute(
             select(
                 TelemetryReading.series_key,
                 day_expr.label("day"),
             )
-            .where(day_expr < cutoff.date())
+            .where(day_expr < cutoff)
             .group_by(
                 TelemetryReading.series_key,
                 day_expr,
