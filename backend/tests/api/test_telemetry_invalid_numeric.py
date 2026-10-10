@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app.application.telemetry_service import ingest_reading
 from app.domain.integration.models import Collector, Integration
@@ -31,15 +31,10 @@ async def _setup(client, auth_headers, db_session, *, metric="temperature_c", un
     assert resp.status_code == 201, resp.text
     mapping = IntegrationMetricMapping(
         id=uuid.uuid4(), integration_id=uuid.UUID(integration["id"]), source_identifier="sensor",
-        canonical_metric=metric, unit=unit, scale=scale,
+        canonical_metric=metric, unit=unit, scale=scale, registry_version=None if legacy else "1",
     )
     db_session.add(mapping)
     await db_session.commit()
-    if legacy:
-        await db_session.execute(
-            text("UPDATE integration_metric_mapping SET registry_version = NULL WHERE id = :id"), {"id": mapping.id}
-        )
-        await db_session.commit()
     return collector, integration
 
 
@@ -47,7 +42,7 @@ def _record(integration, dedup_key, value_literal):
     # Raw JSON text: Python's json module emits NaN/Infinity literals and 1e400 verbatim.
     return (
         f'{{"dedup_key": "{dedup_key}", "integration_id": "{integration["id"]}", "external_identifier": "ext", '
-        f'"source_identifier": "sensor", "occurred_at": "{NOW}", "value": {value_literal}}}'
+        f'"source_identifier": "sensor", "occurred_at": "{datetime.now(UTC).isoformat()}", "value": {value_literal}}}'
     )
 
 
@@ -153,7 +148,7 @@ async def test_exact_maximum_decimal_persists(db_session):
     await db_session.flush()
     for key, value in [("max", Decimal("9999999999.99999999")), ("min", Decimal("-9999999999.99999999"))]:
         result = await ingest_reading(db_session, collector_id=collector.id, integration_id=integration.id, dedup_key=key,
-                                      external_identifier="e", source_identifier="s", occurred_at=now, value=value)
+                                      external_identifier="e", source_identifier="s", occurred_at=datetime.now(UTC), value=value)
         assert not result.duplicate
         reading = await db_session.get(TelemetryReading, result.reading_id)
         await db_session.refresh(reading)

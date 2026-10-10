@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import null, select, text
 
 from app.api.v1.alarms import _out
 from app.application.telemetry_service import ingest_reading
@@ -40,21 +40,23 @@ async def test_ingestion_opens_and_clears_in_authored_rule_units(
     db_session.add_all([collector, integration])
     await db_session.flush()
     mapping = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="sensor",
-                                       canonical_metric=metric, unit=source_unit, scale=10)
+                                       canonical_metric=metric, unit=source_unit, scale=10,
+                                       registry_version=mapping_version if mapping_version is not None else null())
     rule = AlarmRule(id=uuid.uuid4(), integration_id=integration.id, metric=metric, rule_type="threshold_high",
                      threshold=Decimal(threshold), unit=rule_unit or source_unit, name="authored threshold")
     db_session.add_all([mapping, rule])
     await db_session.flush()
     # Match migrated rows: legacy versions stay NULL and unambiguous units are frozen,
     # as proven by test_units_metric_registry_migration; avoid ORM insertion defaults.
-    for table, row, version in [("integration_metric_mapping", mapping, mapping_version), ("alarm_rule", rule, rule_version)]:
+    # The mapping carries its version from construction: its first revision is immutable and is stamped from it.
+    for table, row, version in [("alarm_rule", rule, rule_version)]:
         await db_session.execute(text(f"UPDATE {table} SET registry_version = :version WHERE id = :id"),
                                  {"id": row.id, "version": version})
         await db_session.refresh(row)
     for seconds, scaled_value in enumerate([hot, cold]):
         result = await ingest_reading(db_session, collector_id=collector.id, integration_id=integration.id,
                                       dedup_key=uuid.uuid4().hex, external_identifier="sensor-a", source_identifier="sensor",
-                                      occurred_at=now + timedelta(seconds=seconds), value=scaled_value / 10)
+                                      occurred_at=datetime.now(UTC) + timedelta(seconds=seconds), value=scaled_value / 10)
         assert not result.duplicate
         alarm = (await db_session.execute(select(Alarm).where(Alarm.rule_id == rule.id))).scalar_one()
         assert alarm.status == ("ACTIVE" if seconds == 0 else "CLEARED")
@@ -83,17 +85,16 @@ async def test_batch_incompatible_legacy_units_reject_only_bad_record_and_roll_b
     db_session.add_all([collector, integration])
     await db_session.flush()
     good = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="good",
-                                    canonical_metric="temperature_c", unit="degF", scale=1)
+                                    canonical_metric="temperature_c", unit="degF", scale=1, registry_version=null())
     bad = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="bad",
-                                   canonical_metric="temperature_c", unit="W", scale=1)
+                                   canonical_metric="temperature_c", unit="W", scale=1, registry_version=null())
     canonical = AlarmRule(id=uuid.uuid4(), integration_id=integration.id, metric="temperature_c", rule_type="threshold_high",
                           threshold=Decimal("30"), unit="degC", name="canonical")
     db_session.add_all([good, bad, canonical])
     await db_session.flush()
-    await db_session.execute(text("UPDATE integration_metric_mapping SET registry_version = NULL WHERE integration_id = :id"),
-                             {"id": integration.id})
     await db_session.refresh(good)
     await db_session.refresh(bad)
+    assert good.registry_version is None and bad.registry_version is None
 
     async def assigned(_db, _integration_id):
         return SimpleNamespace(collector_id=collector.id)
@@ -101,7 +102,7 @@ async def test_batch_incompatible_legacy_units_reject_only_bad_record_and_roll_b
     monkeypatch.setattr("app.application.collector_service.current_assignment", assigned)
     body = TelemetryBatchIn(records=[
         {"integration_id": integration.id, "source_identifier": source, "external_identifier": source,
-         "dedup_key": source, "occurred_at": now, "value": 95}
+         "dedup_key": source, "occurred_at": datetime.now(UTC), "value": 95}
         for source in ["bad", "good"]
     ])
     result = await ingest_collector_telemetry(db_session, collector=collector, body=body)

@@ -82,6 +82,7 @@ REVIEWED_REACHABLE = {
     ("POST", "/api/v1/pass-throughs"),
     # HMAC identity/assignment checks are exercised by test_discovery_plan.py.
     ("GET", "/api/v1/collectors/{collector_id}/discovery-plan"),
+    ("GET", "/api/v1/collectors/{collector_id}/telemetry-contracts"),
     ("DELETE", "/api/v1/groups/{group_id}"),
     ("DELETE", "/api/v1/users/{user_id}"),
     ("GET", "/api/v1/auth/me"),
@@ -197,7 +198,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 106, "the reviewed reachable set is pinned at exactly 106 operations"
+    assert len(REVIEWED_REACHABLE) == 107, "the reviewed reachable set is pinned at exactly 107 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )

@@ -28,6 +28,7 @@ interface Entity {
   status: string;
   secret: string;
   access_token: string;
+  current_revision_id: string;
   items: Entity[];
 }
 interface HeatMapJson {
@@ -99,17 +100,23 @@ async function collectorFor(request: APIRequestContext, api: Api, sfx: string) {
   const integration = await api.post("/integrations", { name: `e2e-105-int-${sfx}`, integration_type: "icmp", target_host: "127.0.0.1", poll_interval_seconds: 60 });
   await api.post(`/collectors/${collector.id}/assignments`, { integration_id: integration.id });
   let mappingCount = 0;
+  // Issue #128 / G1: a collector pins each value to the mapping revision it was acquired under (the revision the
+  // mapping response advertises). Readings here are back-dated before the mapping existed, which Central only
+  // accepts when pinned.
+  const revisions = new Map<string, string>();
   return {
     map: async (assetId: string, metric: string, unit: string) => {
       mappingCount += 1;
       const source = `src-${mappingCount}`;
-      await api.post("/telemetry/mappings", { integration_id: integration.id, managed_asset_id: assetId, source_identifier: source, canonical_metric: metric, unit, scale: 1 });
+      const mapping = await api.post("/telemetry/mappings", { integration_id: integration.id, managed_asset_id: assetId, source_identifier: source, canonical_metric: metric, unit, scale: 1 });
+      revisions.set(source, mapping.current_revision_id);
       return source;
     },
     send: async (readings: { source: string; value: number; ageSeconds: number }[]) => {
       const records = readings.map((r) => ({
         dedup_key: randomUUID(), integration_id: integration.id, external_identifier: r.source, source_identifier: r.source,
         occurred_at: new Date(Date.now() - r.ageSeconds * 1000).toISOString(), value: r.value,
+        mapping_revision_id: revisions.get(r.source),
       }));
       const raw = JSON.stringify({ records });
       const ts = String(Math.floor(Date.now() / 1000));

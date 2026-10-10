@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from .queue import QueueRecord
+from .telemetry_contract import ContractBook, ContractPlanError
 
 PERMANENT_REJECTION_CODES = frozenset({"INVALID_PAYLOAD"})
 PERMANENT_PAYLOAD_STATUSES = frozenset({400, 413, 422})
@@ -95,6 +96,16 @@ class CentralClient:
         if not isinstance(plan, list) or not all(isinstance(item, dict) for item in plan):
             raise MalformedResponseError("central discovery plan has an unexpected shape")
         return plan
+
+    def get_telemetry_contracts(self) -> ContractBook:
+        """The immutable conversion contracts (Issue #128 / G1) to pin onto telemetry values at acquisition."""
+        response = self._send("GET", f"/collectors/{self.collector_id}/telemetry-contracts", None)
+        try:
+            return ContractBook.from_plan(response.json())
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise MalformedResponseError("central telemetry contracts were not JSON") from error
+        except ContractPlanError as error:
+            raise MalformedResponseError(f"central telemetry contracts are malformed: {error}") from error
 
     def _post(self, path: str, body: dict[str, Any]) -> httpx.Response:
         return self._send("POST", path, body)
