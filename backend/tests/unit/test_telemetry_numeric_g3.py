@@ -145,3 +145,20 @@ def test_canonical_is_reproducible_from_the_stored_raw_for_supported_values():
         canonical = convert_to_canonical(metric, stored_raw, unit, source_scale=scale).value
         # recomputation from ONLY persisted data (raw_value, raw_unit, source_scale)
         assert convert_to_canonical(metric, D(str(stored_raw)), unit, source_scale=scale).value == canonical
+
+
+def test_acknowledged_limitation_canonical_follows_the_rounded_raw_not_the_exact_original():
+    """G3 trades one property for another, on purpose.
+
+    The canonical value is derived from the stored (rounded) raw value, so it is reproducible from persisted data. The
+    price is double rounding: for an input with more than 8 decimals the canonical value can differ by one unit in its
+    eighth decimal from converting the EXACT original numeral in a single step. The original numeral is kept in
+    `raw_value_text`, so the single-step value is always recomputable by anyone who needs it."""
+    original = D("68.0000000051")                       # degF, 10 decimals
+    stored_raw = quantize_source(original)              # 68.00000001 (rounds up, 9th decimal is 5 then 1)
+    from_stored_raw = convert_to_canonical("temperature_c", stored_raw, "degF").value
+    from_exact_original = convert_to_canonical("temperature_c", original, "degF").value
+    assert (from_stored_raw, from_exact_original) == (D("20.00000001"), D("20.00000000"))
+    # ...but an input already within 8 decimals is never affected
+    exact = D("68.00000001")
+    assert convert_to_canonical("temperature_c", quantize_source(exact), "degF").value == convert_to_canonical("temperature_c", exact, "degF").value

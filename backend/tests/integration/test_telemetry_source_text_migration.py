@@ -2,6 +2,7 @@
 
 import importlib.util
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,7 @@ async def test_populated_upgrade_leaves_history_untouched_and_downgrade_refuses_
             await conn.run_sync(_run_migration, "upgrade")
             after = tuple((await conn.execute(text("SELECT * FROM telemetry_reading WHERE dedup_key = 'legacy'"))).one())
             assert after[:-1] == before and after[-1] is None  # the one new column is appended and NULL
-            assert await conn.scalar(text("SELECT raw_value FROM telemetry_reading WHERE dedup_key = 'legacy'")) == 1  # unchanged
+            assert await conn.scalar(text("SELECT raw_value FROM telemetry_reading WHERE dedup_key = 'legacy'")) == Decimal("1.00000001")  # unchanged
             await _reading(conn, ids, "new", "1.000000005")
             with pytest.raises(RuntimeError, match="Cannot downgrade 0047"):
                 await conn.run_sync(_run_migration, "downgrade")
