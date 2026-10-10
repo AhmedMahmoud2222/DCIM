@@ -19,7 +19,20 @@ Thermal load assumption (explicit, echoed in every result): the electrical IT lo
 into the room at 1.0 W per W (`ELECTRICAL_TO_THERMAL_FACTOR`). That is energy conservation for IT equipment that
 dissipates essentially all of its input power as heat. It excludes UPS/PDU losses, lighting, envelope and solar gain,
 and does not use COP, PUE or any efficiency figure. A zone with geometry counts racks whose footprint centre lies in
-it; floor-standing non-rack equipment is only counted by zones that cover the whole room.
+it; floor-standing non-rack equipment is only counted by zones that cover the whole room, and a zone with geometry is
+incomplete while floor-standing equipment is placed in the room (no zone area can claim it).
+
+Load completeness (Issue #105 follow-up). "Known" means every piece of IT equipment physically placed in the room is accounted
+for, not merely every piece that already has a power model. The relevant population is the equipment (ManagedAsset subtype
+`equipment`; cooling units and sensors are other subtypes) with a CURRENT placement in the room (a rack-mounted item belongs to
+the room its rack currently sits in), whose lifecycle makes it OPERATIONAL: installed, active or maintenance. planned and reserved
+items are not yet present and decommissioned/removed items are gone, so they are outside the load (neither heat nor unknown); the
+roll-up counts modelled items whatever their lifecycle, so their share is taken back out. Each operational item is exactly one of:
+  known demand       it is in the power roll-up and has a measured, stale or nameplate-estimated demand
+  unknown demand     it is in the roll-up but has no demand figure, OR it has no power-input model at all (unmodelled)
+Unknown demand is never zero. Any unknown makes the load `incomplete`: totals are null, the known part is only a labelled lower
+bound, headroom and N+1 are unverified. A room with no placed equipment is `unknown`, not zero: no attestation exists that the
+inventory is complete, and a room nobody has inventoried looks the same as an empty one.
 
 Redundancy (deterministic): pool = all members of the unit's cooling group, or the zone's ungrouped serving units.
   not_configured        no air-side unit serves the zone
@@ -37,11 +50,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import AccessScope
-from app.application.power_rollup import DEFAULT_CRITICAL_PCT, DEFAULT_WARNING_PCT
+from app.application.power_rollup import DEFAULT_CRITICAL_PCT, DEFAULT_WARNING_PCT, _classify_quality
 from app.application.power_rollup_loader import rollup_for_site
 from app.application.thermal.environment import assert_room_visible, scope_sees_site_assets
 from app.application.thermal.interpolation import point_in_polygon
@@ -56,8 +69,8 @@ from app.domain.cooling.models import (
 )
 from app.domain.identity.models import ManagedAsset
 from app.domain.location.models import Building, Floor, Room
-from app.domain.physical.models import Rack
-from app.domain.placement.models import RackPlacement
+from app.domain.physical.models import Equipment, Rack
+from app.domain.placement.models import EquipmentPlacement, RackPlacement
 
 ELECTRICAL_TO_THERMAL_FACTOR = 1.0
 AIR_SIDE_KINDS = ("crac", "crah")
@@ -131,6 +144,14 @@ def evaluate_pool(units: list[UnitIn], load_kw: float | None) -> dict[str, Any]:
     return {**result, "state": "redundant" if verified else "redundant_unverified"}
 
 
+def _with_gap(pool: dict[str, Any], loads: list["ZoneLoad"]) -> dict[str, Any]:
+    """Say WHY N+1 is unverified: an incomplete or unknown load is a different gap from an unknown capacity figure."""
+    gap = None
+    if pool["n_plus_1_verified"] is None and pool["state"] == "redundant_unverified":
+        gap = "incomplete_load" if any(item.state != "known" for item in loads) else "capacity_unknown"
+    return {**pool, "verification_unavailable_reason": gap}
+
+
 def worst_pool_state(states: list[str]) -> str:
     ranked = [s for s in states if s in _POOL_SEVERITY]
     return min(ranked, key=lambda s: _POOL_SEVERITY[s]) if ranked else "not_configured"
@@ -158,6 +179,16 @@ class ZoneLoad:
     unassigned_rack_count: int = 0
     missing_load_rack_count: int = 0
     basis: str = ""
+    # Population accounting (additive). placed = relevant equipment placed in the scope; modelled = of those, present in the
+    # power roll-up. unknown_demand = unmodelled + modelled-without-demand (+ floor equipment a rectangle zone cannot attribute).
+    placed_equipment_count: int | None = None
+    modelled_equipment_count: int | None = None
+    unknown_demand_equipment_count: int = 0
+    unmodelled_equipment_count: int = 0
+    missing_demand_equipment_count: int = 0
+    unattributed_floor_equipment_count: int = 0
+    pending_equipment_count: int = 0  # placed here but planned/reserved: not yet physically present, so not in the load
+    incomplete_reasons: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -168,6 +199,13 @@ class ZoneLoad:
             "quality": self.quality,
             "rack_count": self.rack_count, "unassigned_rack_count": self.unassigned_rack_count,
             "missing_load_rack_count": self.missing_load_rack_count, "basis": self.basis,
+            "placed_equipment_count": self.placed_equipment_count, "modelled_equipment_count": self.modelled_equipment_count,
+            "unknown_demand_equipment_count": self.unknown_demand_equipment_count,
+            "unmodelled_equipment_count": self.unmodelled_equipment_count,
+            "missing_demand_equipment_count": self.missing_demand_equipment_count,
+            "unattributed_floor_equipment_count": self.unattributed_floor_equipment_count,
+            "pending_equipment_count": self.pending_equipment_count,
+            "incomplete_reasons": list(self.incomplete_reasons),
             "assumption": LOAD_ASSUMPTION, "electrical_to_thermal_factor": ELECTRICAL_TO_THERMAL_FACTOR,
         }
 
@@ -190,9 +228,96 @@ def _quality_of(qualities: list[str]) -> str | None:
     return next(iter(unique)) if len(unique) == 1 else "mixed"
 
 
+# Lifecycle policy for the OPERATIONAL thermal-load population (see docs v1.4):
+#   planned, reserved        not yet physically present: allocated a place, but not installed, so no heat today
+#   installed, active        physically present: counted (installed = staged/commissioning, which may already be energised)
+#   maintenance              physically present and possibly powered: counted; a de-energised modelled item is "unserved"
+#   decommissioned, removed  gone: never counted
+# The rule excludes by name, so a lifecycle state added later is counted until someone decides otherwise (never silently dropped).
+PENDING_LIFECYCLE_STATUSES = ("planned", "reserved")
+RETIRED_LIFECYCLE_STATUSES = ("decommissioned", "removed")
+NON_OPERATIONAL_LIFECYCLE_STATUSES = PENDING_LIFECYCLE_STATUSES + RETIRED_LIFECYCLE_STATUSES
+
+
+@dataclass
+class RoomEquipment:
+    """Equipment currently placed in one room, split by whether it is part of the operational thermal-load population."""
+
+    by_rack: dict[uuid.UUID, set[uuid.UUID]] = field(default_factory=dict)  # operational, rack-mounted
+    floor: set[uuid.UUID] = field(default_factory=set)  # operational, floor-standing
+    excluded: dict[uuid.UUID, uuid.UUID | None] = field(default_factory=dict)  # not operational -> rack id (None = floor)
+    pending: set[uuid.UUID] = field(default_factory=set)  # the planned/reserved subset of `excluded`
+
+    @property
+    def all_ids(self) -> set[uuid.UUID]:
+        return set().union(*self.by_rack.values()) | self.floor if self.by_rack else set(self.floor)
+
+    def excluded_in_rack(self, rack_id: uuid.UUID) -> set[uuid.UUID]:
+        return {i for i, r in self.excluded.items() if r == rack_id}
+
+
+async def load_room_equipment(db: AsyncSession, room_id: uuid.UUID) -> RoomEquipment:
+    """Current placements only (effective_to IS NULL), so history never counts. A rack-mounted item belongs to the room of its
+    rack's current placement, falling back to its own placement room exactly like the power roll-up loader does. Sensors and
+    cooling units also use equipment_placement; joining `Equipment` keeps them out. Lifecycle decides whether the item is part
+    of the operational population (see NON_OPERATIONAL_LIFECYCLE_STATUSES)."""
+    rack_room = select(RackPlacement.rack_id, RackPlacement.room_id).where(RackPlacement.effective_to.is_(None)).subquery()
+    rows = (
+        await db.execute(
+            select(EquipmentPlacement.equipment_id, EquipmentPlacement.rack_id, ManagedAsset.lifecycle_status)
+            .join(Equipment, Equipment.id == EquipmentPlacement.equipment_id)
+            .join(ManagedAsset, ManagedAsset.id == Equipment.id)
+            .outerjoin(rack_room, rack_room.c.rack_id == EquipmentPlacement.rack_id)
+            .where(
+                EquipmentPlacement.effective_to.is_(None),
+                func.coalesce(rack_room.c.room_id, EquipmentPlacement.room_id) == room_id,
+            )
+        )
+    ).all()
+    population = RoomEquipment()
+    for equipment_id, rack_id, lifecycle in rows:
+        if lifecycle in NON_OPERATIONAL_LIFECYCLE_STATUSES:
+            population.excluded[equipment_id] = rack_id
+            if lifecycle in PENDING_LIFECYCLE_STATUSES:
+                population.pending.add(equipment_id)
+        elif rack_id is None:
+            population.floor.add(equipment_id)
+        else:
+            population.by_rack.setdefault(rack_id, set()).add(equipment_id)
+    return population
+
+
+def _without_excluded(rollup: Any, scope_load: float, scope_missing: int, scope_count: int, scope_quality: str, remaining: set[uuid.UUID], excluded: set[uuid.UUID]) -> tuple[float, int, int, str]:
+    """The #102 roll-up counts every modelled item with a feed, whatever its lifecycle. When items that are not operational
+    (planned/reserved/retired) sit in the scope, take their share back out so a planned server with a nameplate figure adds no
+    heat and a planned server without demand adds no unknown. Returns (load_kw, missing_count, equipment_count, quality)."""
+    known = getattr(rollup, "equipment", None) or {}
+    gone = [known[i] for i in excluded if i in known]
+    if not gone:
+        return scope_load, scope_missing, scope_count, scope_quality
+    load = scope_load - sum(r.demand_kw for r in gone if r.served and r.demand_kw is not None)
+    missing = scope_missing - sum(1 for r in gone if r.demand_kw is None)
+    counts = [0, 0, 0, 0]
+    for i in remaining:
+        r = known.get(i)
+        if r is None:
+            continue
+        if r.demand_kw is None:
+            counts[3] += 1
+        elif r.served:
+            counts[{"measured": 0, "stale": 1, "estimated": 2, "missing": 3}[r.quality]] += 1
+    return max(round(load, 6), 0.0), max(missing, 0), scope_count - len(gone), _classify_quality(*counts)
+
+
+def _modelled(rollup: Any, ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """Placed equipment that is present in the power roll-up (owns a power-input model in this site)."""
+    known = getattr(rollup, "equipment", None) or {}
+    return {i for i in ids if i in known}
+
+
 async def _zone_load(
     db: AsyncSession, zone: ThermalZone, rollup: Any, rack_rows: list[tuple[uuid.UUID, float | None, float | None]],
-    *, can_read_power: bool, scope: AccessScope, site_id: uuid.UUID,
+    *, can_read_power: bool, scope: AccessScope, site_id: uuid.UUID, population: RoomEquipment,
 ) -> ZoneLoad:
     if not can_read_power:
         return ZoneLoad(state="not_permitted", basis="power:read is required to see thermal load")
@@ -202,22 +327,47 @@ async def _zone_load(
         return ZoneLoad(state="unknown", basis="no power roll-up available")
     if zone.geometry_type is None:
         room = rollup.rooms.get(zone.room_id)
-        if room is None:
-            return ZoneLoad(state="unknown", basis="whole room; no power modelled for this room")
-        basis = "whole room (all racks and floor equipment)"
-        if room.equipment_count == 0:
-            return ZoneLoad(state="unknown", basis="whole room; no equipment with power data is modelled in this room")
-        if room.missing_demand_count > 0:
-            # Missing demand contributes 0 to load_kw, so load_kw is only a lower bound. Never present it as the load.
+        placed = population.all_ids
+        modelled = _modelled(rollup, placed)
+        unmodelled = len(placed) - len(modelled)
+        pending = len(population.pending)
+        in_rollup_but_excluded = len([i for i in population.excluded if i in (getattr(rollup, "equipment", None) or {})])
+        operational_in_rollup = (room.equipment_count - in_rollup_but_excluded) if room is not None else 0
+        if not placed and operational_in_rollup <= 0:
             return ZoneLoad(
-                state="incomplete", electrical_kw_lower_bound=round(room.load_kw, 3),
-                thermal_kw_lower_bound=round(room.load_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3), quality=room.quality,
-                rack_count=len(rack_rows), missing_load_rack_count=room.missing_demand_count,
-                basis=f"{basis}; {room.missing_demand_count} equipment item(s) have no known electrical demand",
+                state="unknown", placed_equipment_count=0, modelled_equipment_count=0, pending_equipment_count=pending,
+                incomplete_reasons=["only_planned_or_reserved_equipment_placed" if pending else "no_equipment_placed"],
+                basis="whole room; no operational IT equipment is placed in this room"
+                + (f" ({pending} planned or reserved item(s) are not yet present)" if pending else "")
+                + ", and an empty room cannot be told apart from one nobody has inventoried",
+            )
+        if room is not None:
+            known_kw, missing, _count, quality = _without_excluded(
+                rollup, room.load_kw, room.missing_demand_count, room.equipment_count, room.quality, placed, set(population.excluded)
+            )
+        else:
+            known_kw, missing, quality = 0.0, 0, None
+        unknown_total = unmodelled + missing
+        counts: dict[str, Any] = {
+            "placed_equipment_count": len(placed), "modelled_equipment_count": len(modelled),
+            "unknown_demand_equipment_count": unknown_total, "unmodelled_equipment_count": unmodelled,
+            "missing_demand_equipment_count": missing, "pending_equipment_count": pending,
+        }
+        basis = "whole room (all racks and floor equipment)"
+        if unknown_total > 0:
+            # Unknown demand contributes nothing to load_kw, so it is only a lower bound. Never present it as the load.
+            reasons = (["equipment_without_power_model"] if unmodelled else []) + (["equipment_without_demand"] if missing else [])
+            return ZoneLoad(
+                state="incomplete", electrical_kw_lower_bound=round(known_kw, 3),
+                thermal_kw_lower_bound=round(known_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3), quality=quality,
+                rack_count=len(rack_rows), missing_load_rack_count=missing, incomplete_reasons=reasons,
+                basis=f"{basis}; {unknown_total} of {len(placed)} placed equipment item(s) have no known electrical demand "
+                f"({unmodelled} without a power-input model, {missing} modelled without a demand figure)",
+                **counts,
             )
         return ZoneLoad(
-            state="known", electrical_kw=round(room.load_kw, 3), thermal_kw=round(room.load_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3),
-            quality=room.quality, rack_count=len(rack_rows), basis=basis,
+            state="known", electrical_kw=round(known_kw, 3), thermal_kw=round(known_kw * ELECTRICAL_TO_THERMAL_FACTOR, 3),
+            quality=quality, rack_count=len(rack_rows), basis=basis, **counts,
         )
     inside: list[uuid.UUID] = []
     unassigned = 0
@@ -229,31 +379,59 @@ async def _zone_load(
     loads: list[float] = []
     known_part: list[float] = []  # load of every modelled rack, complete or not: the lower bound
     qualities: list[str] = []
-    missing = 0
+    missing_racks = 0
+    placed_total = modelled_total = unmodelled_total = missing_demand_total = pending_total = 0
     for rack_id in sorted(inside, key=str):
         scoped = rollup.racks.get(rack_id)
+        in_rack = population.by_rack.get(rack_id, set())
+        gone = population.excluded_in_rack(rack_id)
+        pending_total += len(gone & population.pending)
+        rack_modelled = _modelled(rollup, in_rack)
+        placed_total += len(in_rack)
+        modelled_total += len(rack_modelled)
+        unmodelled_total += len(in_rack) - len(rack_modelled)
         if scoped is not None:
-            known_part.append(scoped.load_kw)
-        if scoped is None or scoped.quality == "missing" or scoped.missing_demand_count > 0:
-            missing += 1
+            rack_kw, rack_missing, _rack_count, rack_quality = _without_excluded(
+                rollup, scoped.load_kw, scoped.missing_demand_count, scoped.equipment_count, scoped.quality, in_rack, gone
+            )
+            known_part.append(rack_kw)
+            missing_demand_total += rack_missing
+        if scoped is None or rack_quality == "missing" or rack_missing > 0 or len(in_rack) > len(rack_modelled):
+            missing_racks += 1
         else:
-            loads.append(scoped.load_kw)
-            qualities.append(scoped.quality)
-    electrical = round(sum(loads), 3)
-    state = "known" if not (unassigned or missing) else "incomplete"
-    if state == "known":
+            loads.append(rack_kw)
+            qualities.append(rack_quality)
+    floor = len(population.floor)  # floor-standing items have no rack, so no zone rectangle can claim them
+    reasons = []
+    if unassigned:
+        reasons.append("rack_without_position")
+    if missing_racks:
+        reasons.append("rack_without_complete_demand")
+    if unmodelled_total:
+        reasons.append("equipment_without_power_model")
+    if missing_demand_total:
+        reasons.append("equipment_without_demand")
+    if floor:
+        reasons.append("floor_equipment_not_attributable_to_a_zone_area")
+    counts = {
+        "placed_equipment_count": placed_total, "modelled_equipment_count": modelled_total,
+        "unknown_demand_equipment_count": unmodelled_total + missing_demand_total, "unmodelled_equipment_count": unmodelled_total,
+        "missing_demand_equipment_count": missing_demand_total, "unattributed_floor_equipment_count": floor,
+        "pending_equipment_count": pending_total,
+    }
+    basis = "racks whose footprint centre lies inside the zone; floor-standing equipment cannot be attributed to a zone area"
+    if not reasons:
+        electrical = round(sum(loads), 3)
         return ZoneLoad(
-            state=state, electrical_kw=electrical, thermal_kw=round(electrical * ELECTRICAL_TO_THERMAL_FACTOR, 3),
+            state="known", electrical_kw=electrical, thermal_kw=round(electrical * ELECTRICAL_TO_THERMAL_FACTOR, 3),
             quality=_quality_of(qualities), rack_count=len(inside), rack_ids=[str(r) for r in sorted(inside, key=str)],
-            unassigned_rack_count=unassigned, missing_load_rack_count=missing,
-            basis="racks whose footprint centre lies inside the zone (floor equipment not counted)",
+            unassigned_rack_count=unassigned, missing_load_rack_count=missing_racks, basis=basis, **counts,
         )
     return ZoneLoad(
-        state=state, electrical_kw_lower_bound=round(sum(known_part), 3) if known_part else None,
+        state="incomplete", electrical_kw_lower_bound=round(sum(known_part), 3) if known_part else None,
         thermal_kw_lower_bound=round(sum(known_part) * ELECTRICAL_TO_THERMAL_FACTOR, 3) if known_part else None,
         quality=_quality_of(qualities), rack_count=len(inside), rack_ids=[str(r) for r in sorted(inside, key=str)],
-        unassigned_rack_count=unassigned, missing_load_rack_count=missing,
-        basis="racks whose footprint centre lies inside the zone (floor equipment not counted)",
+        unassigned_rack_count=unassigned, missing_load_rack_count=missing_racks, incomplete_reasons=reasons, basis=basis, **counts,
     )
 
 
@@ -367,8 +545,16 @@ async def build_room_capacity(
 
     rollup = await rollup_for_site(db, site_id, now) if can_read_power else None  # the caller sees the whole site (checked above)
     rack_rows = await _rack_centres(db, room_id)
+    populations: dict[uuid.UUID, RoomEquipment] = {}
+
+    async def population_of(rid: uuid.UUID) -> RoomEquipment:
+        if rid not in populations:
+            populations[rid] = await load_room_equipment(db, rid)
+        return populations[rid]
+
     zone_loads: dict[uuid.UUID, ZoneLoad] = {
-        z.id: await _zone_load(db, z, rollup, rack_rows, can_read_power=can_read_power, scope=scope, site_id=site_id) for z in zones
+        z.id: await _zone_load(db, z, rollup, rack_rows, can_read_power=can_read_power, scope=scope, site_id=site_id, population=await population_of(z.room_id))
+        for z in zones
     }
     # Zones outside this room that a pooled group also serves (needed for the pool's total load).
     outside_ids = {zid for zs in group_zone_ids.values() for zid in zs} - set(zone_loads)
@@ -376,7 +562,10 @@ async def build_room_capacity(
         {z.id: z for z in (await db.execute(select(ThermalZone).where(ThermalZone.id.in_(outside_ids)))).scalars()} if outside_ids else {}
     )
     for zid, z in outside_zones.items():
-        zone_loads[zid] = await _zone_load(db, z, rollup, await _rack_centres(db, z.room_id), can_read_power=can_read_power, scope=scope, site_id=site_id)
+        zone_loads[zid] = await _zone_load(
+            db, z, rollup, await _rack_centres(db, z.room_id), can_read_power=can_read_power, scope=scope, site_id=site_id,
+            population=await population_of(z.room_id),
+        )
 
     plant_rel = (
         await db.execute(
@@ -402,14 +591,14 @@ async def build_room_capacity(
         for pool_gid, pool_members in sorted(pools.items(), key=lambda kv: str(kv[0])):
             if pool_gid is None:
                 zone_pool_load = load.thermal_kw if load.state == "known" else None
-                pool_results.append({"scope": "zone_units", "cooling_group_id": None, **evaluate_pool(pool_members, zone_pool_load)})
+                pool_results.append(_with_gap({"scope": "zone_units", "cooling_group_id": None, **evaluate_pool(pool_members, zone_pool_load)}, [load]))
             else:
                 everyone = {m.id: m for m in group_members.get(pool_gid, [])}
                 for m in pool_members:
                     everyone.setdefault(m.id, m)
                 loads = [zone_loads[zid] for zid in sorted(group_zone_ids.get(pool_gid, set()) | {zone.id}, key=str) if zid in zone_loads]
                 pool_load = sum(item.thermal_kw or 0.0 for item in loads) if loads and all(i.state == "known" for i in loads) else None
-                pool_results.append({"scope": "cooling_group", "cooling_group_id": str(pool_gid), "pool_load_kw": pool_load, **evaluate_pool(list(everyone.values()), pool_load)})
+                pool_results.append(_with_gap({"scope": "cooling_group", "cooling_group_id": str(pool_gid), "pool_load_kw": pool_load, **evaluate_pool(list(everyone.values()), pool_load)}, loads))
         redundancy_state = worst_pool_state([p["state"] for p in pool_results]) if pool_results else "not_configured"
 
         rated_kw, rated_complete = sum_known([u.rated_kw for u in air])
@@ -422,6 +611,10 @@ async def build_room_capacity(
         no_known_capacity = bool(avail_units) and all(u.effective_kw is None for u in avail_units)
         thermal = load.thermal_kw if load.state == "known" else None
         headroom = round(available_kw - thermal, 3) if thermal is not None and available_complete and air else None
+        # With an incomplete load the real load can only be HIGHER than the known part, so available - known part is an upper
+        # bound on headroom. It is labelled as such and never feeds the level, utilisation or N+1.
+        upper = load.thermal_kw_lower_bound if load.state == "incomplete" else None
+        headroom_upper_bound = round(available_kw - upper, 3) if upper is not None and available_complete and air and not no_known_capacity else None
         utilization = round(100.0 * thermal / available_kw, 1) if thermal is not None and available_complete and available_kw > 0 else None
         if not air:
             level = "not_configured"
@@ -450,6 +643,12 @@ async def build_room_capacity(
                 "available_complete": available_complete and bool(air),
                 "available_units": len(avail_units), "unit_count": len(air),
                 "thermal_load": load.as_dict(), "headroom_kw": headroom, "utilization_pct": utilization, "level": level,
+                "headroom_verified": headroom is not None, "headroom_upper_bound_kw": headroom_upper_bound,
+                "headroom_basis": (
+                    "verified: complete load and complete capacity" if headroom is not None
+                    else "unverified: load incomplete, so headroom is at most the upper bound" if load.state == "incomplete"
+                    else "unverified: load or capacity unknown"
+                ),
                 "redundancy": {"state": redundancy_state, "pools": pool_results},
                 "plant": {
                     "note": "Chillers feed CRAH coils; their capacity is never added to room headroom.",

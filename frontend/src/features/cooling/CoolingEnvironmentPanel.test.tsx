@@ -325,18 +325,36 @@ describe("CoolingEnvironmentPanel", () => {
     mockAll({
       cap: capacity([
         zone({
-          thermal_load: { ...zone().thermal_load, state: "incomplete", load_complete: false, electrical_kw: null, thermal_kw: null, thermal_kw_lower_bound: 30, electrical_kw_lower_bound: 30, quality: "mixed", missing_load_rack_count: 1 },
-          headroom_kw: null, utilization_pct: null, level: "unknown", redundancy: { state: "redundant_unverified", pools: [{ scope: "zone_units", reason: null, n_plus_1_verified: null }] },
+          thermal_load: { ...zone().thermal_load, state: "incomplete", load_complete: false, electrical_kw: null, thermal_kw: null, thermal_kw_lower_bound: 30, electrical_kw_lower_bound: 30, quality: "mixed", missing_load_rack_count: 8, placed_equipment_count: 10, modelled_equipment_count: 2, unknown_demand_equipment_count: 8, unmodelled_equipment_count: 8 },
+          headroom_kw: null, headroom_verified: false, headroom_upper_bound_kw: 130, utilization_pct: null, level: "unknown", redundancy: { state: "redundant_unverified", pools: [{ scope: "zone_units", reason: null, n_plus_1_verified: null, verification_unavailable_reason: "incomplete_load" }] },
         }),
       ]),
     });
     renderPanel();
     const table = await screen.findByTestId("capacity-table");
     const row = within(table).getAllByRole("row")[1];
-    expect(within(row).getByTestId("load-cell")).toHaveTextContent("unknown (incomplete), at least 30 kW known, not a total");
+    expect(within(row).getByTestId("load-cell")).toHaveTextContent("unknown (incomplete), 8 of 10 placed equipment without a known demand, at least 30 kW known, not a total");
     expect(within(row).getByTestId("load-cell")).not.toHaveTextContent(/^30 kW \(/);
-    expect(within(row).getByTestId("headroom-cell")).toHaveTextContent("not calculable");
-    expect(row).toHaveTextContent("redundant unverified");
+    expect(within(row).getByTestId("headroom-cell")).toHaveTextContent("not calculable (unverified), at most 130 kW");
+    expect(within(row).getByTestId("headroom-cell")).not.toHaveTextContent(/^\d+(\.\d+)? kW \(\d/);
+    expect(within(row).getByTestId("redundancy-cell")).toHaveTextContent("redundant unverified (N+1 not verified: load incomplete)");
+  });
+
+  it("a complete load keeps the plain verified presentation", async () => {
+    mockAll({ cap: capacity([zone()]) });
+    renderPanel();
+    const row = within(await screen.findByTestId("capacity-table")).getAllByRole("row")[1];
+    expect(within(row).getByTestId("load-cell")).toHaveTextContent("60 kW (measured)");
+    expect(within(row).getByTestId("headroom-cell")).toHaveTextContent("100 kW (37.5% used)");
+    expect(within(row).getByTestId("redundancy-cell")).toHaveTextContent(/^redundant$/);
+  });
+
+  it("says how many planned or reserved items were left out of the load, and still shows a verified load", async () => {
+    mockAll({ cap: capacity([zone({ thermal_load: { ...zone().thermal_load, pending_equipment_count: 3 } })]) });
+    renderPanel();
+    const row = within(await screen.findByTestId("capacity-table")).getAllByRole("row")[1];
+    expect(within(row).getByTestId("load-cell")).toHaveTextContent("60 kW (measured) · 3 planned or reserved not counted");
+    expect(within(row).getByTestId("headroom-cell")).toHaveTextContent("100 kW (37.5% used)");
   });
 
   it("renders without any alarm information when the caller lacks alarm:read", async () => {
