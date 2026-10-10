@@ -1,6 +1,7 @@
 """RBAC enforcement (§39 of v1.0, §32/§32a). H7 = Option B: Phase 1 enforces permissions
-globally only — RoleAssignment.scope_type/scope_id are populated but never filtered on.
-Every protected route depends on require_permission(), never on frontend hiding (§13 of
+globally for role permissions; data scope comes from group site/rack grants, and a non-global
+RoleAssignment is honoured only inside its own scope (access_control.scoped_role_is_contained,
+SEC-ARCH-01). Every protected route depends on require_permission(), never on frontend hiding (§13 of
 the Phase 1 prompt).
 
 Phase 10A PR-2 (docs/superpowers/specs/2026-09-23-phase-10a-asset-catalog-designer-

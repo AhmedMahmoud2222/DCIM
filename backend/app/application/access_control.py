@@ -7,6 +7,8 @@ Permission rules
      any role. There is no ordering between groups and no inheritance between groups.
 
 Data-scope rules
+  * Permissions from a non-global RoleAssignment are honoured only while the user's whole
+    site scope lies inside the assignment's scope (`scoped_role_is_contained`, SEC-ARCH-01).
   * A user holding a `global` RoleAssignment is UNRESTRICTED: existing users keep exactly
     the access they had before groups existed.
   * Every other user is RESTRICTED: they see only the sites granted by their groups (union
@@ -109,6 +111,25 @@ class EffectiveAccess:
     sources: dict[str, list[str]] = field(default_factory=dict)  # code -> ["role:Viewer", "group:Ops"]
 
 
+def scoped_role_is_contained(
+    scope_type: str, scope_id: uuid.UUID | None, *, unrestricted: bool, scope: "AccessScope"
+) -> bool:
+    """May the permissions of a NON-global role assignment be honoured?
+
+    Permissions are one flat set per user, so a scoped assignment cannot be applied to its own
+    site only. It is therefore honoured only when everything the user can reach (the group-derived
+    site scope) lies inside the assignment's scope, so it can never act outside it. Fail closed
+    otherwise:
+      * a user with a global role is unrestricted, which no scoped assignment contains;
+      * `site` assignments need every granted site to equal the assignment's site;
+      * `building` (and any unknown) assignments cannot be proven to contain a site-level scope,
+        because site grants do not name buildings, so they contribute nothing.
+    """
+    if unrestricted or scope_type != "site" or scope_id is None:
+        return False
+    return scope.site_ids <= {scope_id}
+
+
 def build_scope(
     site_rows: list[tuple[uuid.UUID, uuid.UUID, str]], rack_by_access: dict[uuid.UUID, set[uuid.UUID]]
 ) -> AccessScope:
@@ -171,7 +192,10 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
 
     role_rows = (
         await db.execute(
-            select(RoleAssignment.user_id, RoleAssignment.scope_type, Role.name, Permission.resource, Permission.action)
+            select(
+                RoleAssignment.user_id, RoleAssignment.scope_type, RoleAssignment.scope_id, Role.name,
+                Permission.resource, Permission.action,
+            )
             .select_from(RoleAssignment)
             .join(Role, Role.id == RoleAssignment.role_id)
             .outerjoin(RolePermission, RolePermission.role_id == Role.id)
@@ -229,9 +253,18 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
         role_names: set[str] = set()
         has_global_role = False
         group_ids: set[uuid.UUID] = set()
-        for _uid, scope_type, role_name, resource, action in roles_by_user.get(uid, []):
+        user_scope = build_scope(
+            [(access_id, site_id, rack_scope) for _uid, access_id, site_id, rack_scope in sites_by_user.get(uid, [])],
+            rack_by_access,
+        )
+        user_roles = roles_by_user.get(uid, [])
+        has_global_role = any(row[1] == "global" for row in user_roles)
+        for _uid, scope_type, scope_id, role_name, resource, action in user_roles:
             role_names.add(role_name)
-            has_global_role = has_global_role or scope_type == "global"
+            if scope_type != "global" and not scoped_role_is_contained(
+                scope_type, scope_id, unrestricted=has_global_role, scope=user_scope
+            ):
+                continue  # SEC-ARCH-01: a scoped assignment never widens beyond its own scope
             if resource is not None:
                 allowed.setdefault(f"{resource}:{action}", []).append(f"role:{role_name}")
         for _uid, group_id, group_name, resource, action, effect in perms_by_user.get(uid, []):
@@ -243,11 +276,6 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
                 denied.add(code)
             else:
                 allowed.setdefault(code, []).append(f"group:{group_name}")
-
-        user_scope = build_scope(
-            [(access_id, site_id, rack_scope) for _uid, access_id, site_id, rack_scope in sites_by_user.get(uid, [])],
-            rack_by_access,
-        )
 
         unrestricted = has_global_role
         effective = {code for code in allowed if code not in denied}
