@@ -319,7 +319,7 @@ async def create_metric_mapping(
     await db.commit()
     return MetricMappingOut(
         id=mapping.id, registry_version=mapping.registry_version, current_revision_id=mapping.current_revision_id,
-        **{**body.model_dump(), "scale": float(body.scale)}, scale_decimal=decimal_text(body.scale),
+        **{**body.model_dump(), "scale": float(body.scale)}, scale_decimal=exact_text(body.scale),
     )
 
 
@@ -341,7 +341,7 @@ async def list_metric_mappings(
             canonical_metric=row.canonical_metric,
             unit=row.unit,
             scale=float(row.scale),
-            scale_decimal=decimal_text(row.scale),
+            scale_decimal=exact_text(row.scale),
             label=row.label,
             registry_version=row.registry_version,
             current_revision_id=row.current_revision_id,
@@ -628,11 +628,13 @@ async def metric_history(
 
 
 
-def decimal_text(value: Decimal | float | int | None) -> str | None:
+def exact_text(value: Decimal | float | int) -> str:
     """A stored NUMERIC as plain positional decimal text: exact, deterministic, never via a float or scientific form."""
-    if value is None:
-        return None
     return format(value if isinstance(value, Decimal) else Decimal(str(value)), "f")
+
+
+def decimal_text(value: Decimal | float | int | None) -> str | None:
+    return None if value is None else exact_text(value)
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
