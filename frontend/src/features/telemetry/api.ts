@@ -15,6 +15,12 @@ export interface TelemetryReading {
   raw_unit?: string | null;
   registry_version?: string | null;
   source_scale?: number | null;
+  // Issue #128 / G3: exact decimal strings of the stored values; raw_value_text is the source numeral as received
+  // (null for readings stored before G3 and for daily aggregates). The number fields above are unchanged.
+  value_decimal?: string | null;
+  raw_value_decimal?: string | null;
+  source_scale_decimal?: string | null;
+  raw_value_text?: string | null;
   occurred_at: string;
   received_at: string;
   expected_poll_interval_seconds?: number | null;
