@@ -20,9 +20,13 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Literal
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
+# Issue #128 / G3: the same numeral grammar and length cap Central enforces on a telemetry value.
+_NUMERAL = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+MAX_NUMERAL_CHARS = 64
 
 # Central keeps these records (hold table) and expects the collector to keep trying with its normal backoff.
 RETRYABLE_TELEMETRY_ERRORS = frozenset({
@@ -98,11 +102,35 @@ class ContractBook:
         return self.pins.get((str(uuid.UUID(str(integration_id))), source_identifier))
 
 
+def value_numeral(value: Decimal | str | float) -> str:
+    """The exact decimal text queued and sent for a source value.
+
+    `Decimal`, `str` and `int` keep every digit they were given. A `float` is rendered at its shortest round-trip text:
+    digits a float had already lost before it reached this function cannot be recovered, so acquire values as `Decimal`
+    or text (for example from the raw SNMP integer and its scale) rather than as floats. Non-finite numbers, booleans and
+    anything that is not a decimal numeral of at most 64 characters are refused here, before they are queued.
+    """
+    if isinstance(value, bool):
+        raise TypeError("a telemetry value must be a number, not a boolean")
+    if isinstance(value, Decimal):
+        text = str(value)
+    elif isinstance(value, float):
+        text = repr(value)
+    elif isinstance(value, (int, str)):
+        text = str(value)
+    else:
+        raise TypeError("a telemetry value must be a Decimal, string, integer or float")
+    if len(text) > MAX_NUMERAL_CHARS or not _NUMERAL.match(text):
+        raise ValueError("a telemetry value must be a finite decimal numeral of at most 64 characters")
+    return text
+
+
 def telemetry_record_payload(
     book: ContractBook, *, integration_id: str, source_identifier: str, external_identifier: str,
-    value: float, attributes: Mapping[str, Any] | None = None,
+    value: Decimal | str | float, attributes: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The queue payload of one acquired telemetry value, pinned to the contract known at acquisition time."""
+    numeral = value_numeral(value)
     pin = book.pin_for(integration_id, source_identifier)
     if pin is None:
         raise MissingContractError(f"no conversion contract for source {source_identifier!r}")
@@ -110,7 +138,7 @@ def telemetry_record_payload(
         "integration_id": str(uuid.UUID(str(integration_id))),
         "source_identifier": source_identifier,
         "external_identifier": external_identifier,
-        "value": value,
+        "value": numeral,
         "attributes": dict(attributes or {}),
         "mapping_revision_id": pin.mapping_revision_id,
         "source_unit": pin.source_unit,

@@ -14,8 +14,8 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from sqlalchemy import DateTime, and_, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,7 +55,12 @@ from app.domain.telemetry.models import (
     TelemetryContractHold,
     TelemetryReading,
 )
-from app.domain.telemetry.numeric import InvalidTelemetryValue
+from app.domain.telemetry.numeric import (
+    MAX_ABS_ADJUSTED_EXPONENT,
+    MAX_STORABLE,
+    NUMERIC_SCALE,
+    InvalidTelemetryValue,
+)
 from app.domain.telemetry.registry import (
     METRIC_REGISTRY,
     REGISTRY_VERSION,
@@ -78,7 +83,9 @@ class TelemetryRecordIn(BaseModel):
     external_identifier: str = Field(max_length=255)
     source_identifier: str = Field(max_length=255)
     occurred_at: datetime
-    value: float
+    # Issue #128 / G3: an exact decimal. On the wire a JSON number or a decimal string is parsed without a float
+    # intermediary (telemetry_wire); non-finite values are carried through so the service rejects that one record.
+    value: Decimal = Field(allow_inf_nan=True)
     attributes: dict = Field(default_factory=dict)
     # Issue #128 / G1: the immutable conversion contract the collector acquired this value under (from its
     # authenticated telemetry-contracts plan). Optional for older collectors; an unpinned record is accepted
@@ -87,10 +94,46 @@ class TelemetryRecordIn(BaseModel):
     mapping_revision_id: uuid.UUID | None = None
     source_unit: str | None = Field(default=None, max_length=32)
     source_scale: Decimal | None = None
+    # The exact numeral of `value` as received. Set by the wire parser only; never read from client JSON.
+    _value_lexeme: str | None = PrivateAttr(default=None)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _no_boolean(cls, raw: object) -> object:
+        if isinstance(raw, bool):
+            raise ValueError("value must be a number")
+        return raw
+
+    @property
+    def value_text(self) -> str:
+        """The exact source text of `value`: the received numeral, else the decimal text of the supplied number."""
+        return self._value_lexeme if self._value_lexeme is not None else str(self.value)
 
 
 class TelemetryBatchIn(BaseModel):
     records: list[TelemetryRecordIn] = Field(max_length=MAX_BATCH_RECORDS)
+
+
+def parse_telemetry_batch(raw_body: bytes) -> TelemetryBatchIn:
+    """Parse the (already authenticated and size-bounded) telemetry body with lossless numbers.
+
+    Raises `ApiError(422)` with the same shape as every other collector body validation failure.
+    """
+    from pydantic import ValidationError
+
+    from app.domain.telemetry.wire import WireNumberError, loads_exact, prepare_records
+
+    try:
+        document, lexemes = prepare_records(loads_exact(raw_body))
+        batch = TelemetryBatchIn.model_validate(document)
+    except (WireNumberError, ValidationError) as error:
+        raise ApiError(
+            status_code=422, title="Validation Error", detail="One or more fields failed validation.",
+            type_="https://dcim.internal/errors/validation",
+        ) from error
+    for index, record in enumerate(batch.records):
+        record._value_lexeme = lexemes.get(index)
+    return batch
 
 
 class TelemetryAck(BaseModel):
@@ -117,6 +160,12 @@ class TelemetryOut(BaseModel):
     raw_unit: str | None = None
     registry_version: str | None = None
     source_scale: float | None = None
+    # Issue #128 / G3: exact decimal strings of the stored NUMERIC values (the floats above can not carry 18
+    # significant digits). `raw_value_text` is the source numeral as received; null for rows stored before G3.
+    value_decimal: str | None = None
+    raw_value_decimal: str | None = None
+    source_scale_decimal: str | None = None
+    raw_value_text: str | None = None
     occurred_at: datetime
     received_at: datetime
     expected_poll_interval_seconds: int | None = None
@@ -137,12 +186,41 @@ class MetricMappingIn(BaseModel):
     source_identifier: str = Field(max_length=255)
     canonical_metric: str
     unit: str = Field(max_length=32)
-    scale: float = 1
+    # Issue #128 / G3: an exact decimal (JSON number or decimal string, no float intermediary), at most 8 decimal
+    # places, within the NUMERIC(18, 8) range. A number such as 0.1 is accepted exactly as written.
+    scale: Decimal = Decimal(1)
     label: str | None = Field(default=None, max_length=128)
 
+    @field_validator("scale", mode="before")
+    @classmethod
+    def _scale_is_a_number(cls, raw: object) -> object:
+        if isinstance(raw, bool):
+            raise ValueError("scale must be a number")
+        return raw
 
-class MetricMappingOut(MetricMappingIn):
+    @field_validator("scale")
+    @classmethod
+    def _scale_fits_storage(cls, scale: Decimal) -> Decimal:
+        if not scale.is_finite() or abs(scale.adjusted()) > MAX_ABS_ADJUSTED_EXPONENT:
+            raise ValueError("scale must be a finite number")
+        if abs(scale) > MAX_STORABLE:
+            raise ValueError("scale is outside the storable range")
+        quantum = Decimal(1).scaleb(-NUMERIC_SCALE)
+        if scale != scale.quantize(quantum):
+            raise ValueError("scale supports at most 8 decimal places")
+        return scale.quantize(quantum)
+
+
+class MetricMappingOut(BaseModel):
     id: uuid.UUID
+    integration_id: uuid.UUID
+    managed_asset_id: uuid.UUID | None = None
+    source_identifier: str
+    canonical_metric: str
+    unit: str
+    scale: float
+    scale_decimal: str
+    label: str | None = None
     registry_version: str | None = None
     current_revision_id: uuid.UUID | None = None
 
@@ -167,11 +245,38 @@ async def get_metric_registry(ctx=Depends(require_permission("telemetry:read")))
     )
 
 
-@router.post("/mappings", response_model=MetricMappingOut, status_code=201)
+async def exact_mapping_body(request: Request) -> MetricMappingIn:
+    """The mapping request body with `scale` parsed without a float intermediary (Issue #128 / G3).
+
+    Declared after the permission dependency on the route, so an unauthenticated or unauthorised caller is refused
+    before any body is read. Same 422 shape as automatic body validation.
+    """
+    from pydantic import ValidationError
+
+    from app.domain.telemetry.wire import WireNumberError, exact_number, loads_exact
+
+    try:
+        document = loads_exact(await request.body())
+        if isinstance(document, dict) and document.get("scale") is not None:
+            number, _text = exact_number(document["scale"])
+            document["scale"] = number
+        return MetricMappingIn.model_validate(document)
+    except (WireNumberError, ValidationError) as error:
+        raise ApiError(
+            status_code=422, title="Validation Error", detail="One or more fields failed validation.",
+            type_="https://dcim.internal/errors/validation",
+        ) from error
+
+
+@router.post(
+    "/mappings", response_model=MetricMappingOut, status_code=201,
+    openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
+        "schema": MetricMappingIn.model_json_schema()}}}},
+)
 async def create_metric_mapping(
-    body: MetricMappingIn,
-    db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("telemetry:manage")),
+    body: MetricMappingIn = Depends(exact_mapping_body),
+    db: AsyncSession = Depends(get_db),
 ) -> MetricMappingOut:
     if body.canonical_metric not in CANONICAL_METRICS:
         raise ApiError(status_code=422, title="Invalid canonical metric", detail="Metric is not supported by the MVP catalog.")
@@ -214,7 +319,7 @@ async def create_metric_mapping(
     await db.commit()
     return MetricMappingOut(
         id=mapping.id, registry_version=mapping.registry_version, current_revision_id=mapping.current_revision_id,
-        **body.model_dump(),
+        **{**body.model_dump(), "scale": float(body.scale)}, scale_decimal=decimal_text(body.scale),
     )
 
 
@@ -236,6 +341,7 @@ async def list_metric_mappings(
             canonical_metric=row.canonical_metric,
             unit=row.unit,
             scale=float(row.scale),
+            scale_decimal=decimal_text(row.scale),
             label=row.label,
             registry_version=row.registry_version,
             current_revision_id=row.current_revision_id,
@@ -283,6 +389,7 @@ async def ingest_collector_telemetry(
                     source_identifier=record.source_identifier,
                     occurred_at=record.occurred_at,
                     value=record.value,
+                    value_text=record.value_text,
                     attributes=record.attributes,
                     mapping_revision_id=record.mapping_revision_id,
                     source_unit=record.source_unit,
@@ -302,7 +409,7 @@ async def ingest_collector_telemetry(
                 db, collector_id=collector.id, integration_id=record.integration_id,
                 source_identifier=record.source_identifier, external_identifier=record.external_identifier,
                 dedup_key=record.dedup_key, occurred_at=record.occurred_at, value=record.value,
-                attributes=record.attributes, reason=ambiguous.reason,
+                value_text=record.value_text, attributes=record.attributes, reason=ambiguous.reason,
             )
             results.append(TelemetryAck(
                 dedup_key=record.dedup_key, status="rejected",
@@ -400,7 +507,8 @@ async def resolve_contract_hold(
             outcome = await ingest_reading(
                 db, collector_id=hold.collector_id, integration_id=hold.integration_id, dedup_key=hold.dedup_key,
                 external_identifier=hold.external_identifier, source_identifier=hold.source_identifier,
-                occurred_at=hold.occurred_at, value=Decimal(hold.value_text), attributes=hold.attributes,
+                occurred_at=hold.occurred_at, value=Decimal(hold.value_text), value_text=hold.value_text,
+                attributes=hold.attributes,
                 mapping_revision_id=body.mapping_revision_id, pinned_evidence="operator_resolved",
             )
     except (UnknownMappingRevision, MappingRevisionMismatch, MetricMappingNotFound) as error:
@@ -520,6 +628,13 @@ async def metric_history(
 
 
 
+def decimal_text(value: Decimal | float | int | None) -> str | None:
+    """A stored NUMERIC as plain positional decimal text: exact, deterministic, never via a float or scientific form."""
+    if value is None:
+        return None
+    return format(value if isinstance(value, Decimal) else Decimal(str(value)), "f")
+
+
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
     presentation = (
         convert_to_presentation(row.metric, row.value, row.unit, registry_version=row.registry_version)
@@ -538,6 +653,10 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         raw_value=None if row.raw_value is None else float(row.raw_value),
         raw_unit=row.raw_unit,
         source_scale=None if row.source_scale is None else float(row.source_scale),
+        value_decimal=decimal_text(row.value),
+        raw_value_decimal=decimal_text(row.raw_value),
+        source_scale_decimal=decimal_text(row.source_scale),
+        raw_value_text=row.raw_value_text,
         registry_version=row.registry_version,
         occurred_at=row.occurred_at,
         received_at=row.received_at,
@@ -565,6 +684,8 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         metric=row.metric,
         unit=row.unit,
         value=float(row.average_value),
+        # The stored average is exact NUMERIC; there is no source numeral for an aggregate, so no raw_* is invented.
+        value_decimal=decimal_text(row.average_value),
         presentation_unit=average.unit if average is not None else row.unit,
         presentation_value=float(average.value) if average is not None else float(row.average_value),
         registry_version=row.registry_version,

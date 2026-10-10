@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -123,3 +124,48 @@ def test_client_fetches_and_validates_the_signed_contract_plan():
     with pytest.raises(MalformedResponseError):
         garbage.get_telemetry_contracts()
     assert json.dumps(telemetry_record_payload(book, integration_id=INTEGRATION, source_identifier="temp.1", external_identifier="e", value=1.5))
+
+
+# ----- Issue #128 / G3: exact numerals ---------------------------------------------------------------------------
+
+from edge_collector.telemetry_contract import value_numeral
+
+
+@pytest.mark.parametrize("value,expected", [
+    (Decimal("1234567890.12345678"), "1234567890.12345678"),
+    ("1234567890.12345678", "1234567890.12345678"),
+    (12345678901234567890, "12345678901234567890"),
+    (Decimal("1E+3"), "1E+3"),
+    (Decimal("-0.0"), "-0.0"),
+    ("-0", "-0"),
+    (0.1, "0.1"),
+    (68.0, "68.0"),
+])
+def test_value_numeral_keeps_every_digit_it_is_given(value, expected):
+    assert value_numeral(value) == expected
+
+
+def test_a_float_cannot_recover_digits_it_already_lost():
+    lost = 1234567890.12345678          # the literal is rounded to a float before this function sees it
+    assert value_numeral(lost) == "1234567890.1234567"
+    assert value_numeral(Decimal("1234567890.12345678")) == "1234567890.12345678"  # acquire as Decimal or text instead
+
+
+@pytest.mark.parametrize("bad", [True, False, None, [1], Decimal("NaN"), Decimal("Infinity"), float("nan"), float("inf"),
+                                 "abc", "", " 1", "0x10", "1" * 65, Decimal("0." + "1" * 70)])
+def test_unsendable_values_are_refused_before_they_are_queued(bad):
+    with pytest.raises((ValueError, TypeError)):
+        value_numeral(bad)
+
+
+def test_exact_value_survives_the_durable_queue_unchanged(tmp_path):
+    book = ContractBook.from_plan([plan_entry()])
+    payload = telemetry_record_payload(
+        book, integration_id=INTEGRATION, source_identifier="temp.1", external_identifier="e", value=Decimal("9999999999.99999999"),
+    )
+    now = datetime(2026, 10, 10, tzinfo=UTC)
+    queue = SQLiteQueue(CollectorConfig(database_path=tmp_path / "q.sqlite3"), clock=lambda: now)
+    assert queue.enqueue(QueueRecord(record_id="r1", occurred_at=now, payload=payload))
+    (replayed,) = queue.list_due(datetime(2026, 10, 11, tzinfo=UTC))
+    assert replayed.payload["value"] == "9999999999.99999999"
+    assert json.dumps(dict(replayed.payload))  # a plain JSON document: no Decimal in the queue
