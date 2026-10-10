@@ -223,7 +223,8 @@ class AuthContext:
     user: User
     permission_codes: frozenset[str]
     role_names: frozenset[str]
-    """Every Role.name the user is assigned to, independent of that role's current
+    """Every Role.name the user is assigned to that is in force (a non-global assignment outside its
+    scope is not, see access_control.scoped_role_is_contained), independent of that role's current
     permission grants — deliberately not derived by joining through RolePermission,
     since a role stripped of every permission would then vanish from this set even
     though the user is still formally assigned to it (spec §9.1)."""

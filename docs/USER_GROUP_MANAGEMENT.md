@@ -83,7 +83,23 @@ Rules:
 
 One behavioural note: a `role_assignment` with a non-global `scope_type` previously granted its permissions globally (Phase 1 decision H7). Such rows cannot be created through the API today. If any exist, the holder is now treated as site-restricted, with the same fail-closed permission filtering.
 
-**Scoped role assignments (SEC-ARCH-01, #57).** `RoleAssignment.scope_id` is now enforced, fail closed. Permissions are one flat set per user, so a site-scoped assignment cannot be applied to its own site only. Its permissions are honoured only while every site in the holder's group-derived scope equals the assignment's site; otherwise that assignment contributes nothing. A `building`-scoped assignment contributes nothing, because site grants do not name buildings. A user who also holds a global role is unrestricted and no scoped assignment contributes to them. Group allow-grants are unaffected. Previously a site-A role combined with a site-B group grant exercised the role's permissions (for example `rack:manage`) on site B. Open owner decisions: per-site permission scoping (assignment-local intersection versus user-wide union), building semantics, and the tenant model (no tenant entity exists; the organization is derived from granted sites).
+## Scope semantics (SEC-ARCH-01, #57)
+
+Data scope comes only from group site/rack grants. A role assignment carries permissions and, if it is not global, a scope that limits when those permissions apply. Permissions are one flat set per user, so a scoped assignment cannot be applied to its own site only. The rule is therefore fail closed: a scoped assignment is honoured only when the holder's whole site scope lies inside the assignment's scope, and otherwise contributes neither permissions nor its role name (so it cannot satisfy `Administrator` membership checks).
+
+| Combination | Behaviour | Status |
+|---|---|---|
+| Global role | Unrestricted over all sites, racks and organizations. | Implemented, unchanged. |
+| Global role plus any scoped assignment | Unrestricted; the scoped assignment contributes nothing (it cannot widen a global user, and its role name is not conferred). | Implemented. |
+| Site-scoped assignment, group scope inside that site (all racks, or selected racks) | Role permissions apply to exactly the granted sites and racks. | Implemented. |
+| Site-scoped assignment, group scope includes any other site | The assignment contributes nothing (denied, not narrowed). A user who needs the role on one site of several must hold it through a group allow-grant. | Implemented. Narrowing to the assignment's site is an owner decision (below). |
+| Site-scoped assignment, no group grants | Permissions held, no data visible. | Unchanged. |
+| Building-scoped assignment | Contributes nothing. Site grants do not name buildings, so containment cannot be proven. Not a supported scope; no building-level filtering exists. | Not implemented, fails closed. |
+| Rack-limited group grant (`selected`) | Rack-level scope applies inside the site; a site-scoped assignment for that site is honoured and still limited to the selected racks. | Implemented. |
+| Tenant | There is no tenant entity. The closest boundary is the organization, derived from the sites a user is granted: organizations without a granted site are invisible (404). No tenant-level role assignment or grant exists. | Not implemented. |
+| Group allow-grants | Unaffected by role scope. | Unchanged. |
+
+Owner decisions still open: narrowing a site-scoped assignment to its own site (assignment-local intersection) versus the current containment rule or a user-wide union; building semantics and descendants; the tenant model; scoping of the modules a restricted user cannot reach (alarms, telemetry, power, dashboard, floor plans, spatial, impact, discovery, integrations, collectors, managed assets, audit), which stay blocked.
 
 ## Known limitations
 

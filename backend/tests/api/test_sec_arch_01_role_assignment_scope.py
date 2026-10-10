@@ -168,3 +168,68 @@ async def test_scope_matrix_unrestricted_site_rack_and_tenant_limited(client, ad
     assert (await client.get(f"/api/v1/racks/{rack_a1}", headers=tenant_user)).status_code == 404
     assert (await _patch_rack(client, tenant_user, rack_a1)).status_code == 404
 
+
+
+# ------------------------------------------------------------------ legitimate in-scope operations are not denied
+async def test_rack_limited_user_keeps_a_site_scoped_role_inside_the_assignment_site(client, admin, auth_headers, db_session):
+    """Over-denial check: a rack-limited user (selected racks on site A) with a site-A role keeps exactly its racks."""
+    a, b, rack_a1, rack_b = await _world(client, admin, auth_headers)
+    rack_a2 = await _make_rack(client, admin, auth_headers, a["room"])
+    gid = await _group(client, admin, allow=["rack:read", "location:read"], sites=[
+        {"site_id": a["site"], "rack_scope": "selected", "rack_ids": [rack_a1]}])
+    user, headers = await _group_user(client, admin, [gid])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "site", a["site"])
+
+    assert (await _patch_rack(client, headers, rack_a1)).status_code == 200
+    assert (await _patch_rack(client, headers, rack_a2)).status_code == 404  # outside the selected racks
+    assert (await _patch_rack(client, headers, rack_b)).status_code == 404  # outside the site
+
+
+async def test_in_scope_create_move_and_retire_work_with_a_site_scoped_role(client, admin, auth_headers, db_session):
+    a, b, rack_a, _rack_b = await _world(client, admin, auth_headers)
+    gid = await _group(client, admin, allow=["rack:read", "location:read"], sites=[{"site_id": a["site"], "rack_scope": "all"}])
+    user, headers = await _group_user(client, admin, [gid])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage", "rack:place"]), "site", a["site"])
+    from tests.api._phase2_helpers import create_rack_model_revision
+
+    revision = await create_rack_model_revision(client, auth_headers)
+    body = {"asset_tag": f"RK-{uuid.uuid4().hex[:8]}", "model_revision_id": revision, "name": "n"}
+    assert (await client.post("/api/v1/racks", json={**body, "room_id": b["room"]}, headers=headers)).status_code == 404
+    assert (await client.post("/api/v1/racks", json={**body, "room_id": a["room"]}, headers=headers)).status_code == 201
+    assert (await client.post(f"/api/v1/racks/{rack_a}/move", json={"room_id": b["room"]}, headers=headers)).status_code == 404
+    assert (await client.post(f"/api/v1/racks/{rack_a}/move", json={"room_id": a["room"]}, headers=headers)).status_code in (200, 409)
+
+
+async def test_scoped_administrator_assignment_does_not_confer_the_role_name(client, admin, db_session):
+    """An out-of-scope Administrator assignment must not satisfy role-membership checks (catalog, import)."""
+    a, b = await _make_site(client, admin), await _make_site(client, admin)
+    admin_role = (await db_session.execute(select(Role.id).where(Role.name == "Administrator"))).scalar_one()
+    gid = await _group(client, admin, allow=["rack:read"], sites=[
+        {"site_id": a["site"], "rack_scope": "all"}, {"site_id": b["site"], "rack_scope": "all"}])
+    user, _ = await _group_user(client, admin, [gid])
+    uid = uuid.UUID(user["id"])
+    await _assign(db_session, user["id"], admin_role, "site", a["site"])  # spans site B too: out of scope
+    assert "Administrator" not in (await load_effective_access(db_session, [uid]))[uid].role_names
+
+    await _assign(db_session, user["id"], admin_role, "building", None)
+    assert "Administrator" not in (await load_effective_access(db_session, [uid]))[uid].role_names
+
+    # a global Viewer plus a site-scoped Administrator assignment stays a Viewer (unrestricted, but no Administrator)
+    viewer = (await db_session.execute(select(Role.id).where(Role.name == "Viewer"))).scalar_one()
+    other, _ = await _group_user(client, admin, [])
+    await _assign(db_session, other["id"], viewer, "global", None)
+    await _assign(db_session, other["id"], admin_role, "site", a["site"])
+    oid = uuid.UUID(other["id"])
+    access = (await load_effective_access(db_session, [oid]))[oid]
+    assert access.scope.unrestricted and "Administrator" not in access.role_names
+    assert "user:manage" not in access.permission_codes and "rack:manage" not in access.permission_codes
+
+
+async def test_site_scoped_assignment_honoured_when_group_scope_equals_its_site(client, admin, db_session):
+    a = await _make_site(client, admin)
+    gid = await _group(client, admin, allow=["rack:read"], sites=[{"site_id": a["site"], "rack_scope": "all"}])
+    user, _ = await _group_user(client, admin, [gid])
+    uid = uuid.UUID(user["id"])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "site", a["site"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert {"rack:read", "rack:manage"} <= access.permission_codes

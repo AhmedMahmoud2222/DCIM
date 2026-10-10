@@ -260,11 +260,13 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
         user_roles = roles_by_user.get(uid, [])
         has_global_role = any(row[1] == "global" for row in user_roles)
         for _uid, scope_type, scope_id, role_name, resource, action in user_roles:
-            role_names.add(role_name)
             if scope_type != "global" and not scoped_role_is_contained(
                 scope_type, scope_id, unrestricted=has_global_role, scope=user_scope
             ):
-                continue  # SEC-ARCH-01: a scoped assignment never widens beyond its own scope
+                # SEC-ARCH-01: a scoped assignment never widens beyond its own scope. Its role name is
+                # dropped too, so it cannot satisfy role-membership checks such as "Administrator".
+                continue
+            role_names.add(role_name)
             if resource is not None:
                 allowed.setdefault(f"{resource}:{action}", []).append(f"role:{role_name}")
         for _uid, group_id, group_name, resource, action, effect in perms_by_user.get(uid, []):
