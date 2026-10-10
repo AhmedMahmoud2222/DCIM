@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -20,7 +20,6 @@ from edge_collector.telemetry_contract import (
     telemetry_record_payload,
 )
 
-UTC = timezone.utc
 INTEGRATION = "22222222-2222-2222-2222-222222222222"
 REVISION = "33333333-3333-3333-3333-333333333333"
 COLLECTOR_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")

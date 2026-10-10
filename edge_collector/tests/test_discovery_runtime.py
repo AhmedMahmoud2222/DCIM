@@ -1,5 +1,5 @@
 """The production runtime invokes discovery without sacrificing delivery/heartbeat."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from edge_collector.client import AckResult
 from edge_collector.config import CollectorConfig
@@ -43,7 +43,7 @@ def test_discovery_failure_isolated_from_heartbeat(tmp_path, caplog):
     queue = SQLiteQueue(CollectorConfig(tmp_path / "q.db"))
     client, discovery = Transport(), Discovery(fail=True)
     runtime = EdgeRuntime(queue, client, discovery=discovery,
-                          clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
+                          clock=lambda: datetime(2026, 1, 1, tzinfo=UTC))
     runtime.run_once()
     assert client.heartbeats == 1
     assert "private credential text" not in caplog.text
