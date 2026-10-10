@@ -12,6 +12,7 @@ power/models.py's `utility_intake` node-type addition)."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -24,23 +25,35 @@ from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.application.telemetry_service import (
+    AmbiguousMappingContract,
     BindingNotFound,
+    ConversionContractDrift,
     InvalidBindingTarget,
     LatestPortStatus,
+    MappingRevisionMismatch,
     MetricMappingNotFound,
+    UnknownMappingRevision,
     create_port_telemetry_binding,
     get_latest_status_for_equipment,
     get_latest_status_for_rack,
     ingest_reading,
     list_port_telemetry_bindings,
+    mark_hold_resolved_if_any,
     record_latest_status,
+    register_contract_hold,
 )
 from app.core.errors import ApiError
 from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
-from app.domain.telemetry.models import CANONICAL_METRICS, DailyTelemetryAggregate, IntegrationMetricMapping, TelemetryReading
+from app.domain.telemetry.models import (
+    CANONICAL_METRICS,
+    DailyTelemetryAggregate,
+    IntegrationMetricMapping,
+    TelemetryContractHold,
+    TelemetryReading,
+)
 from app.domain.telemetry.numeric import InvalidTelemetryValue
 from app.domain.telemetry.registry import (
     METRIC_REGISTRY,
@@ -66,6 +79,13 @@ class TelemetryRecordIn(BaseModel):
     occurred_at: datetime
     value: float
     attributes: dict = Field(default_factory=dict)
+    # Issue #128 / G1: the immutable conversion contract the collector acquired this value under (from its
+    # authenticated telemetry-contracts plan). Optional for older collectors; an unpinned record is accepted
+    # only where Central can prove the interpretation (see telemetry_service.resolve_contract). The unit and
+    # scale are optional echoes verified against the revision, never used to select a conversion.
+    mapping_revision_id: uuid.UUID | None = None
+    source_unit: str | None = Field(default=None, max_length=32)
+    source_scale: Decimal | None = None
 
 
 class TelemetryBatchIn(BaseModel):
@@ -123,6 +143,7 @@ class MetricMappingIn(BaseModel):
 class MetricMappingOut(MetricMappingIn):
     id: uuid.UUID
     registry_version: str | None = None
+    current_revision_id: uuid.UUID | None = None
 
 
 class MetricRegistryOut(BaseModel):
@@ -190,7 +211,10 @@ async def create_metric_mapping(
         payload={"integration_id": str(mapping.integration_id), "canonical_metric": mapping.canonical_metric},
     )
     await db.commit()
-    return MetricMappingOut(id=mapping.id, registry_version=mapping.registry_version, **body.model_dump())
+    return MetricMappingOut(
+        id=mapping.id, registry_version=mapping.registry_version, current_revision_id=mapping.current_revision_id,
+        **body.model_dump(),
+    )
 
 
 @router.get("/mappings", response_model=list[MetricMappingOut])
@@ -213,6 +237,7 @@ async def list_metric_mappings(
             scale=float(row.scale),
             label=row.label,
             registry_version=row.registry_version,
+            current_revision_id=row.current_revision_id,
         )
         for row in (await db.execute(stmt)).scalars().all()
     ]
@@ -228,6 +253,17 @@ async def ingest_collector_telemetry(
     from app.application.collector_service import current_assignment
 
     results: list[TelemetryAck] = []
+    open_holds = set(
+        (
+            await db.execute(
+                select(TelemetryContractHold.dedup_key).where(
+                    TelemetryContractHold.collector_id == collector.id,
+                    TelemetryContractHold.status != "resolved",
+                    TelemetryContractHold.dedup_key.in_([record.dedup_key for record in body.records]),
+                )
+            )
+        ).scalars()
+    )
     for record in body.records:
         assignment = await current_assignment(db, record.integration_id)
         if assignment is None or assignment.collector_id != collector.id:
@@ -247,10 +283,36 @@ async def ingest_collector_telemetry(
                     occurred_at=record.occurred_at,
                     value=record.value,
                     attributes=record.attributes,
+                    mapping_revision_id=record.mapping_revision_id,
+                    source_unit=record.source_unit,
+                    source_scale=record.source_scale,
+                )
+            if record.dedup_key in open_holds:
+                await mark_hold_resolved_if_any(
+                    db, collector_id=collector.id, dedup_key=record.dedup_key, reading_id=outcome.reading_id,
+                    revision_id=None,
                 )
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="duplicate" if outcome.duplicate else "accepted"))
         except MetricMappingNotFound:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="UNKNOWN_METRIC_MAPPING"))
+        except AmbiguousMappingContract as ambiguous:
+            # Never reinterpret with the latest mapping. Keep the record (bounded retry, then operator release).
+            hold = await register_contract_hold(
+                db, collector_id=collector.id, integration_id=record.integration_id,
+                source_identifier=record.source_identifier, external_identifier=record.external_identifier,
+                dedup_key=record.dedup_key, occurred_at=record.occurred_at, value=record.value,
+                attributes=record.attributes, reason=ambiguous.reason,
+            )
+            results.append(TelemetryAck(
+                dedup_key=record.dedup_key, status="rejected",
+                error="CONTRACT_HOLD_EXPIRED" if hold.expired else "AMBIGUOUS_MAPPING_CONTRACT",
+            ))
+        except UnknownMappingRevision:
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="UNKNOWN_MAPPING_REVISION"))
+        except MappingRevisionMismatch:
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="MAPPING_REVISION_MISMATCH"))
+        except ConversionContractDrift:
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="CONVERSION_CONTRACT_DRIFT"))
         except InvalidTelemetryValue:
             # NaN/Infinity or a value (raw, scaled or canonical) outside NUMERIC(18, 8).
             # Deterministic per-record rejection: the savepoint already discarded this
@@ -260,6 +322,103 @@ async def ingest_collector_telemetry(
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INCOMPATIBLE_TELEMETRY_UNITS"))
     await db.commit()
     return TelemetryBatchOut(results=results)
+
+
+class ContractHoldOut(BaseModel):
+    id: uuid.UUID
+    collector_id: uuid.UUID
+    integration_id: uuid.UUID
+    source_identifier: str
+    external_identifier: str
+    dedup_key: str
+    occurred_at: datetime
+    value: str
+    reason: str
+    status: str
+    attempts: int
+    first_held_at: datetime
+    last_held_at: datetime
+    resolved_at: datetime | None = None
+    resolved_revision_id: uuid.UUID | None = None
+    resolved_reading_id: uuid.UUID | None = None
+
+
+def _hold_out(hold: TelemetryContractHold) -> ContractHoldOut:
+    return ContractHoldOut(
+        id=hold.id, collector_id=hold.collector_id, integration_id=hold.integration_id,
+        source_identifier=hold.source_identifier, external_identifier=hold.external_identifier,
+        dedup_key=hold.dedup_key, occurred_at=hold.occurred_at, value=hold.value_text, reason=hold.reason,
+        status=hold.status, attempts=hold.attempts, first_held_at=hold.first_held_at, last_held_at=hold.last_held_at,
+        resolved_at=hold.resolved_at, resolved_revision_id=hold.resolved_revision_id,
+        resolved_reading_id=hold.resolved_reading_id,
+    )
+
+
+@router.get("/contract-holds", response_model=list[ContractHoldOut])
+async def list_contract_holds(
+    status: str | None = Query(default=None, pattern="^(held|expired|resolved)$"),
+    integration_id: uuid.UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=MAX_HISTORY_POINTS),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:read")),
+) -> list[ContractHoldOut]:
+    """Records Central refused to interpret because their event-time conversion contract is ambiguous."""
+    stmt = select(TelemetryContractHold).order_by(TelemetryContractHold.last_held_at.desc()).limit(limit)
+    if status is not None:
+        stmt = stmt.where(TelemetryContractHold.status == status)
+    if integration_id is not None:
+        stmt = stmt.where(TelemetryContractHold.integration_id == integration_id)
+    return [_hold_out(hold) for hold in (await db.execute(stmt)).scalars().all()]
+
+
+class ContractHoldResolveIn(BaseModel):
+    mapping_revision_id: uuid.UUID
+
+
+@router.post("/contract-holds/{hold_id}/resolve", response_model=ContractHoldOut)
+async def resolve_contract_hold(
+    hold_id: uuid.UUID,
+    body: ContractHoldResolveIn,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("telemetry:manage")),
+) -> ContractHoldOut:
+    """Operator decision: interpret a held record under one explicitly chosen revision of the same source.
+
+    This never edits a mapping or a revision; it only ingests the retained record with
+    `contract_evidence = 'operator_resolved'` and records who decided and which revision was chosen.
+    """
+    hold = (
+        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update())
+    ).scalar_one_or_none()
+    if hold is None:
+        raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")
+    if hold.status == "resolved":
+        raise ApiError(status_code=409, title="Already resolved", detail="This contract hold is already resolved.")
+    try:
+        async with db.begin_nested():
+            outcome = await ingest_reading(
+                db, collector_id=hold.collector_id, integration_id=hold.integration_id, dedup_key=hold.dedup_key,
+                external_identifier=hold.external_identifier, source_identifier=hold.source_identifier,
+                occurred_at=hold.occurred_at, value=Decimal(hold.value_text), attributes=hold.attributes,
+                mapping_revision_id=body.mapping_revision_id, pinned_evidence="operator_resolved",
+            )
+    except (UnknownMappingRevision, MappingRevisionMismatch, MetricMappingNotFound) as error:
+        raise ApiError(status_code=422, title="Revision not valid for this hold", detail=str(error)) from error
+    except (InvalidTelemetryValue, ConversionContractDrift, AlarmUnitCompatibilityError, UnknownUnit,
+            UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
+        raise ApiError(status_code=422, title="Record cannot be stored under that revision", detail=str(error)) from error
+    hold.status = "resolved"
+    hold.resolved_at = datetime.now(UTC)
+    hold.resolved_by = ctx.user.id
+    hold.resolved_revision_id = body.mapping_revision_id
+    hold.resolved_reading_id = outcome.reading_id
+    await write_audit_log(
+        db, actor_user_id=ctx.user.id, action="telemetry.contract_hold.resolve", entity_type="telemetry_contract_hold",
+        entity_id=hold.id, request_id=None, correlation_id=None,
+        after={"mapping_revision_id": str(body.mapping_revision_id), "reading_id": str(outcome.reading_id)},
+    )
+    await db.commit()
+    return _hold_out(hold)
 
 
 @router.get("/latest", response_model=list[TelemetryOut])
