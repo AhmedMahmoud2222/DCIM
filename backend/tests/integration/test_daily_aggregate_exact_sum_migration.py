@@ -2,6 +2,7 @@
 
 import importlib.util
 import uuid
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -38,7 +39,7 @@ async def _aggregate(conn, integration, day, *, basis=None, total=None, legacy_c
         VALUES (gen_random_uuid(), :i, 'e', :key, 'power_kw', 'kW', :day, 2, 1, 3, 3, '1'{values})""".format(
         extra=", sum_value, arithmetic_basis, legacy_sample_count" if basis else "",
         values=", :s, :b, :c" if basis else "")),
-        {"i": integration, "key": f"k-{day}", "day": day, "s": total, "b": basis, "c": legacy_count})
+        {"i": integration, "key": f"k-{day}", "day": date.fromisoformat(day), "s": total, "b": basis, "c": legacy_count})
 
 
 async def _columns(conn):

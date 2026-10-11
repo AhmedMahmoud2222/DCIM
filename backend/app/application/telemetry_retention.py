@@ -70,7 +70,7 @@ async def merge_late_reading(
         return False  # normal compactor will create the first aggregate from retained raw rows
     # Compute before touching the row: an AggregateArithmeticError leaves the aggregate and the reading unchanged and
     # propagates to the caller-owned transaction (the ingest savepoint), so no evidence is deleted on failure.
-    _fold_into(aggregate, state_of([reading.value]))
+    _fold_into(aggregate, state_of([cast(Decimal, reading.value)]))
     return True
 
 
@@ -157,7 +157,7 @@ async def compact_eligible_raw(
         first = raw_rows[0]
         # Exact integer-unit state of the locked rows. Raised errors leave raw rows untouched (nothing is deleted
         # before the aggregate is flushed) and abort the caller-owned transaction.
-        group = state_of([item.value for item in raw_rows])
+        group = state_of([cast(Decimal, item.value) for item in raw_rows])
         existing = await _locked_aggregate(db, row.series_key, row.day)
         if existing is None:
             db.add(

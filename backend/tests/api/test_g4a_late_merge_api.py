@@ -1,7 +1,6 @@
 """Issue #128 / G4-A over signed HTTP: a late sample for a compacted day is merged exactly, and an exhausted aggregate
 refuses the one record without losing it or its peers."""
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -26,8 +25,8 @@ async def world(client, auth_headers):
     collector, integration = await collector_with_integration(client, headers, integration_type="icmp")
     response = await client.post(
         "/api/v1/telemetry/mappings",
-        content=('{"integration_id":"%s","source_identifier":"kw","canonical_metric":"power_kw","unit":"kW","scale":1}'
-                 % integration["id"]).encode(),
+        content=(f'{{"integration_id":"{integration["id"]}","source_identifier":"kw","canonical_metric":"power_kw",'
+                 '"unit":"kW","scale":1}').encode(),
         headers={**headers, "Content-Type": "application/json"},
     )
     assert response.status_code == 201, response.text
@@ -36,9 +35,9 @@ async def world(client, auth_headers):
 
 async def post(client, world, literal, *, at, key=None):
     key = key or uuid.uuid4().hex
-    body = ('{"records":[{"dedup_key":"%s","integration_id":"%s","external_identifier":"e","source_identifier":"kw",'
-            '"occurred_at":"%s","mapping_revision_id":"%s","value":%s}]}'
-            % (key, world["integration"]["id"], at.isoformat(), world["revision"], literal)).encode()
+    body = (f'{{"records":[{{"dedup_key":"{key}","integration_id":"{world["integration"]["id"]}",'
+            f'"external_identifier":"e","source_identifier":"kw","occurred_at":"{at.isoformat()}",'
+            f'"mapping_revision_id":"{world["revision"]}","value":{literal}}}]}}').encode()
     collector = world["collector"]
     headers = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=body)
     headers["Content-Type"] = "application/json"
