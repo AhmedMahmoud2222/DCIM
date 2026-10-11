@@ -57,7 +57,8 @@ shortest text, which is exactly what is stored.
 |---|---|
 | Not JSON, a boolean, `null`, an array/object, a string that is not a decimal numeral, a numeral over 64 characters, `attributes` that hold a non-finite number (including a literal such as `1e400` that overflows to infinity) or nest deeper than 32 levels | `422 Validation Error` for the whole request (nothing is stored) |
 | `NaN`, `Infinity`, `-Infinity` (number or string), a value above `9999999999.99999999` in magnitude, an exponent beyond 10^+/-100 | that record only: `INVALID_TELEMETRY_VALUE`; valid peers persist |
-| `source_scale` echo that is non-finite, outside the storable range or has an exponent beyond 10^+/-100, or that differs from the pinned revision | that record only: `MAPPING_REVISION_MISMATCH` |
+| `source_scale` echo that is **non-finite** (`NaN`, `Infinity`, `-Infinity`, as a bare constant or a string) | `422 Validation Error` for the whole request (nothing is stored): the field is a finite decimal, so the record is structurally invalid |
+| `source_scale` echo that is finite but outside the storable range, has an exponent beyond 10^+/-100, or differs from the pinned revision | that record only: `MAPPING_REVISION_MISMATCH`; valid peers persist |
 | More than 8 decimal places | accepted and rounded (below) |
 
 The decimal-numeral grammar is the same in Central, the collector helper and the database CHECK on `raw_value_text`: an optional

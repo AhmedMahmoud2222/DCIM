@@ -482,3 +482,17 @@ async def test_mapping_scale_context_rounding_cannot_hide_an_out_of_range_value(
     body = ('{"integration_id":"%s","source_identifier":"ctx","canonical_metric":"power_kw","unit":"kW",'
             '"scale":9999999999.9999999900000000000000000000000000000000000001}' % world["integration"]["id"]).encode()
     assert (await client.post("/api/v1/telemetry/mappings", content=body, headers=headers)).status_code == 422
+
+
+@pytest.mark.parametrize("echo", ["NaN", "Infinity", "-Infinity", '"NaN"', '"Infinity"', '"-Infinity"', '"inf"', '"-nan"'])
+async def test_a_non_finite_source_scale_echo_is_a_422_for_the_whole_request_and_stores_nothing(client, world, db_session, echo):
+    revision = world["mappings"]["kw"]["current_revision_id"]
+
+    def record_with(key, extra):
+        return ('{"dedup_key":"%s","integration_id":"%s","external_identifier":"e","source_identifier":"kw","occurred_at":"%s",'
+                '"mapping_revision_id":"%s","value":3%s}' % (key, world["integration"]["id"], occurred(), revision, extra))
+
+    body = ('{"records":[%s,%s,%s]}' % (record_with("a-good", ""), record_with("bad", ',"source_scale":%s' % echo), record_with("z-good", ""))).encode()
+    response = await post_raw(client, world, body, expect=422)
+    assert response.json()["title"] == "Validation Error"
+    assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []   # the valid peers are not stored either
