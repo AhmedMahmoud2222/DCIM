@@ -2,7 +2,9 @@
 
 Policy controls when complete UTC days become eligible for compaction, not history
 visibility. Stored raw rows and daily aggregates own disjoint samples: aggregate
-updates and deletion of exactly the consumed raw rows commit atomically. A partial
+updates and deletion of exactly the consumed raw rows commit atomically. Aggregate arithmetic is exact (see
+``app.domain.telemetry.aggregate_math``; Issue #128 / G4-A): sums are integers in units of 1e-8, the average is one
+half-even division of the exact sum, min/max are compared as Decimals. A partial
 compaction or late arrival can therefore leave both representations for one series
 and day. History must read both in ONE PostgreSQL statement/snapshot, without a
 policy-age filter or day-level anti-join (which would discard unconsumed samples).
@@ -11,10 +13,20 @@ policy-age filter or day-level anti-join (which would discard unconsumed samples
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from typing import cast
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.telemetry.aggregate_math import (
+    BASIS_EXACT,
+    BASIS_LEGACY_SEEDED,
+    AggregateState,
+    fold,
+    state_of,
+    to_units,
+)
 from app.domain.telemetry.models import DailyTelemetryAggregate, MonitoringPolicy, TelemetryReading
 
 RAW_RETENTION_DAYS = 365
@@ -53,24 +65,55 @@ async def merge_late_reading(
     if utc_day(reading.occurred_at) >= cutoff:
         return False
     day = utc_day(reading.occurred_at)
-    aggregate = (
-        await db.execute(
-            select(DailyTelemetryAggregate)
-            .where(
-                DailyTelemetryAggregate.series_key == reading.series_key,
-                DailyTelemetryAggregate.day == day,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
+    aggregate = await _locked_aggregate(db, reading.series_key, day)
     if aggregate is None:
         return False  # normal compactor will create the first aggregate from retained raw rows
-    count = aggregate.sample_count + 1
-    aggregate.average_value = (float(aggregate.average_value) * aggregate.sample_count + float(reading.value)) / count
-    aggregate.minimum_value = min(float(aggregate.minimum_value), float(reading.value))
-    aggregate.maximum_value = max(float(aggregate.maximum_value), float(reading.value))
-    aggregate.sample_count = count
+    # Compute before touching the row: an AggregateArithmeticError leaves the aggregate and the reading unchanged and
+    # propagates to the caller-owned transaction (the ingest savepoint), so no evidence is deleted on failure.
+    _fold_into(aggregate, state_of([reading.value]))
     return True
+
+
+async def _locked_aggregate(db: AsyncSession, series_key: str, day: date) -> DailyTelemetryAggregate | None:
+    """The day's aggregate, row-locked. ``populate_existing`` makes the locked read authoritative.
+
+    Under READ COMMITTED a lock wait re-reads the committed row, but the ORM identity map would otherwise keep the
+    attributes of an instance this session loaded earlier and silently overwrite a concurrent writer's sum.
+    """
+    return (
+        await db.execute(
+            select(DailyTelemetryAggregate)
+            .where(DailyTelemetryAggregate.series_key == series_key, DailyTelemetryAggregate.day == day)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+
+
+def _fold_into(aggregate: DailyTelemetryAggregate, extra: AggregateState) -> None:
+    """Add disjoint samples to an existing aggregate exactly, applying the basis transitions.
+
+    * ``decimal_exact`` / ``legacy_seeded``: continue from the stored exact sum.
+    * NULL basis (computed before G4-A): seed ``sum = average * sample_count`` from the stored rounded average and mark the
+      row ``legacy_seeded``. That keeps the old rounding uncertainty, fixed and labelled; no numeric bound is claimed.
+      Every sample added from now on is exact.
+    """
+    legacy = aggregate.arithmetic_basis is None
+    if legacy:
+        base_units = to_units(aggregate.average_value) * aggregate.sample_count
+    else:
+        base_units = to_units(cast(Decimal, aggregate.sum_value))
+    merged = fold(
+        AggregateState(base_units, aggregate.sample_count, aggregate.minimum_value, aggregate.maximum_value), extra
+    )
+    if legacy:
+        aggregate.arithmetic_basis = BASIS_LEGACY_SEEDED
+        aggregate.legacy_sample_count = aggregate.sample_count
+    aggregate.sum_value = merged.sum_value
+    aggregate.average_value = merged.average
+    aggregate.minimum_value = merged.minimum
+    aggregate.maximum_value = merged.maximum
+    aggregate.sample_count = merged.count
 
 
 async def compact_eligible_raw(
@@ -112,20 +155,10 @@ async def compact_eligible_raw(
         if not raw_rows:
             continue
         first = raw_rows[0]
-        sample_count = len(raw_rows)
-        average_value = sum(float(item.value) for item in raw_rows) / sample_count
-        minimum_value = min(float(item.value) for item in raw_rows)
-        maximum_value = max(float(item.value) for item in raw_rows)
-        existing = (
-            await db.execute(
-                select(DailyTelemetryAggregate)
-                .where(
-                    DailyTelemetryAggregate.series_key == row.series_key,
-                    DailyTelemetryAggregate.day == row.day,
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
+        # Exact integer-unit state of the locked rows. Raised errors leave raw rows untouched (nothing is deleted
+        # before the aggregate is flushed) and abort the caller-owned transaction.
+        group = state_of([item.value for item in raw_rows])
+        existing = await _locked_aggregate(db, row.series_key, row.day)
         if existing is None:
             db.add(
                 DailyTelemetryAggregate(
@@ -136,20 +169,17 @@ async def compact_eligible_raw(
                     metric=first.metric,
                     unit=first.unit,
                     day=row.day,
-                    average_value=average_value,
-                    minimum_value=minimum_value,
-                    maximum_value=maximum_value,
-                    sample_count=sample_count,
+                    average_value=group.average,
+                    minimum_value=group.minimum,
+                    maximum_value=group.maximum,
+                    sample_count=group.count,
                     registry_version=first.registry_version,
+                    sum_value=group.sum_value,
+                    arithmetic_basis=BASIS_EXACT,
                 )
             )
         else:
-            total = existing.sample_count + sample_count
-            old_total = float(existing.average_value) * existing.sample_count
-            existing.average_value = (old_total + average_value * sample_count) / total
-            existing.minimum_value = min(float(existing.minimum_value), minimum_value)
-            existing.maximum_value = max(float(existing.maximum_value), maximum_value)
-            existing.sample_count = total
+            _fold_into(existing, group)
         await db.flush()  # must succeed before deletion
         await db.execute(
             delete(TelemetryReading).where(TelemetryReading.id.in_([item.id for item in raw_rows]))
