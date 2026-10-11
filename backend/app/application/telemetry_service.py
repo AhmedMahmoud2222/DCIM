@@ -286,19 +286,25 @@ async def ingest_reading(
     )
     reading_id = (await db.execute(statement)).scalar_one_or_none()
     if reading_id is not None:
+        reading = await db.get(TelemetryReading, reading_id)
+        assert reading is not None
+        # A delayed edge replay for a day already compacted is incorporated into the
+        # authoritative daily statistics; occurred_at, never receipt time, chooses it.
+        # The merge is decided before alarm evaluation so that a replay of an already-counted record (Issue #128 / G4-R)
+        # has no alarm side effects. A finite replay horizon raises ReplayHorizonExceeded here, which the caller's savepoint
+        # turns into a rejection of this record alone.
+        from app.application.telemetry_retention import LateMergeOutcome, merge_late_reading
+
+        outcome = await merge_late_reading(db, reading)
+        if outcome is LateMergeOutcome.DUPLICATE:
+            await db.delete(reading)  # its key was consumed earlier; the sample is already counted
+            return TelemetryIngestResult(reading_id=None, duplicate=True)
         # The explicit application boundary prevents the telemetry ORM domain from
         # depending on alarm persistence while retaining one transaction.
         from app.application.alarm_service import evaluate_reading
 
-        reading = await db.get(TelemetryReading, reading_id)
-        assert reading is not None
         await evaluate_reading(db, reading)
-        # A delayed edge replay for a day already compacted is incorporated into the
-        # authoritative daily statistics; occurred_at, never receipt time, chooses it.
-        from app.application.telemetry_retention import merge_late_reading
-
-        merged = await merge_late_reading(db, reading)
-        if merged:
+        if outcome is LateMergeOutcome.MERGED:
             await db.delete(reading)  # aggregate update is in the same transaction
     return TelemetryIngestResult(reading_id=reading_id, duplicate=reading_id is None)
 

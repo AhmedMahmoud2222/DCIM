@@ -12,6 +12,7 @@ policy-age filter or day-level anti-join (which would discard unconsumed samples
 
 from __future__ import annotations
 
+import enum
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import cast
@@ -19,6 +20,7 @@ from typing import cast
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.telemetry_ledger import claim_consumed_keys, enforce_horizon, note_duplicate_suppressed
 from app.domain.telemetry.aggregate_math import (
     BASIS_EXACT,
     BASIS_LEGACY_SEEDED,
@@ -56,22 +58,45 @@ async def _retention_days(db: AsyncSession, configured: int | None) -> int:
     return policy.raw_retention_days if policy is not None else RAW_RETENTION_DAYS
 
 
+class LateMergeOutcome(enum.Enum):
+    """What `merge_late_reading` did with a reading."""
+
+    STAYS_RAW = "stays_raw"      # the day is not compacted, or no aggregate exists: the raw row is kept
+    MERGED = "merged"            # folded into the day's aggregate; the caller deletes the reading
+    DUPLICATE = "duplicate"      # its key was already consumed (Issue #128 / G4-R); not counted, the caller deletes it
+
+    def __bool__(self) -> bool:
+        """Truthy only when the reading was merged: callers written when this returned a bool keep working."""
+        return self is LateMergeOutcome.MERGED
+
+
 async def merge_late_reading(
     db: AsyncSession, reading: TelemetryReading, *, now: datetime | None = None, retention_days: int | None = None
-) -> bool:
-    """Merge a post-compaction edge replay into an existing day without reopening raw data."""
+) -> LateMergeOutcome:
+    """Merge a post-compaction edge replay into an existing day without reopening raw data.
+
+    Order inside the caller's transaction: lock the aggregate, apply the replay horizon (a finite
+    ``late_replay_horizon_days`` raises `ReplayHorizonExceeded`), claim the record's key in the consumed-key ledger (a
+    conflict means the record was already counted), then fold. Any exception leaves the aggregate, the ledger and the reading
+    exactly as they were once the caller's savepoint rolls back.
+    """
+    instant = as_utc(now) if now is not None else datetime.now(UTC)
     cutoff = await compaction_cutover(db, now=now, retention_days=retention_days)
     # A day is compacted only after the whole UTC calendar day has aged out.
     if utc_day(reading.occurred_at) >= cutoff:
-        return False
+        return LateMergeOutcome.STAYS_RAW
     day = utc_day(reading.occurred_at)
     aggregate = await _locked_aggregate(db, reading.series_key, day)
     if aggregate is None:
-        return False  # normal compactor will create the first aggregate from retained raw rows
+        return LateMergeOutcome.STAYS_RAW  # normal compactor will create the first aggregate from retained raw rows
+    await enforce_horizon(db, occurred_at=reading.occurred_at, now=instant)
+    if not await claim_consumed_keys(db, [reading], instant.date()):
+        note_duplicate_suppressed(path="late_merge")
+        return LateMergeOutcome.DUPLICATE
     # Compute before touching the row: an AggregateArithmeticError leaves the aggregate and the reading unchanged and
     # propagates to the caller-owned transaction (the ingest savepoint), so no evidence is deleted on failure.
     _fold_into(aggregate, state_of([cast(Decimal, reading.value)]))
-    return True
+    return LateMergeOutcome.MERGED
 
 
 async def _locked_aggregate(db: AsyncSession, series_key: str, day: date) -> DailyTelemetryAggregate | None:
@@ -126,6 +151,7 @@ async def compact_eligible_raw(
     if max_groups < 1:
         raise ValueError("max_groups must be positive")
     cutoff = await compaction_cutover(db, now=now, retention_days=retention_days)
+    instant = as_utc(now) if now is not None else datetime.now(UTC)
     day_expr = func.date(func.timezone("UTC", TelemetryReading.occurred_at))
     groups = (
         await db.execute(
@@ -155,31 +181,38 @@ async def compact_eligible_raw(
         if not raw_rows:
             continue
         first = raw_rows[0]
-        # Exact integer-unit state of the locked rows. Raised errors leave raw rows untouched (nothing is deleted
-        # before the aggregate is flushed) and abort the caller-owned transaction.
-        group = state_of([cast(Decimal, item.value) for item in raw_rows])
-        existing = await _locked_aggregate(db, row.series_key, row.day)
-        if existing is None:
-            db.add(
-                DailyTelemetryAggregate(
-                    integration_id=first.integration_id,
-                    managed_asset_id=first.managed_asset_id,
-                    external_identifier=first.external_identifier,
-                    series_key=first.series_key,
-                    metric=first.metric,
-                    unit=first.unit,
-                    day=row.day,
-                    average_value=group.average,
-                    minimum_value=group.minimum,
-                    maximum_value=group.maximum,
-                    sample_count=group.count,
-                    registry_version=first.registry_version,
-                    sum_value=group.sum_value,
-                    arithmetic_basis=BASIS_EXACT,
+        # Claim every row's key in the consumed-key ledger. A row whose key was already consumed is a redelivery of a record
+        # that is already counted: it is deleted below without being folded (Issue #128 / G4-R).
+        fresh_ids = await claim_consumed_keys(db, raw_rows, instant.date())
+        fresh = [item for item in raw_rows if item.id in fresh_ids]
+        if len(fresh) != len(raw_rows):
+            note_duplicate_suppressed(path="compaction", count=len(raw_rows) - len(fresh))
+        if fresh:
+            # Exact integer-unit state of the claimed rows. Raised errors leave raw rows untouched (nothing is deleted
+            # before the aggregate is flushed) and abort the caller-owned transaction, which also rolls the claims back.
+            group = state_of([cast(Decimal, item.value) for item in fresh])
+            existing = await _locked_aggregate(db, row.series_key, row.day)
+            if existing is None:
+                db.add(
+                    DailyTelemetryAggregate(
+                        integration_id=first.integration_id,
+                        managed_asset_id=first.managed_asset_id,
+                        external_identifier=first.external_identifier,
+                        series_key=first.series_key,
+                        metric=first.metric,
+                        unit=first.unit,
+                        day=row.day,
+                        average_value=group.average,
+                        minimum_value=group.minimum,
+                        maximum_value=group.maximum,
+                        sample_count=group.count,
+                        registry_version=first.registry_version,
+                        sum_value=group.sum_value,
+                        arithmetic_basis=BASIS_EXACT,
+                    )
                 )
-            )
-        else:
-            _fold_into(existing, group)
+            else:
+                _fold_into(existing, group)
         await db.flush()  # must succeed before deletion
         await db.execute(
             delete(TelemetryReading).where(TelemetryReading.id.in_([item.id for item in raw_rows]))

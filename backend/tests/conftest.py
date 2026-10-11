@@ -69,6 +69,7 @@ _APP_TRUNCATE_TABLES = [
     "alarm",
     "alarm_rule",
     "daily_telemetry_aggregate",
+    "telemetry_consumed_key",
     "telemetry_reading",
     "integration_metric_mapping",
     "integration",
