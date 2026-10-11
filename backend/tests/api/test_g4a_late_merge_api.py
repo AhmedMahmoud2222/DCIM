@@ -33,17 +33,27 @@ async def world(client, auth_headers):
     return {"collector": collector, "integration": integration, "revision": response.json()["current_revision_id"]}
 
 
-async def post(client, world, literal, *, at, key=None):
-    key = key or uuid.uuid4().hex
-    body = (f'{{"records":[{{"dedup_key":"{key}","integration_id":"{world["integration"]["id"]}",'
+def record(world, literal, *, at, key):
+    return (f'{{"dedup_key":"{key}","integration_id":"{world["integration"]["id"]}",'
             f'"external_identifier":"e","source_identifier":"kw","occurred_at":"{at.isoformat()}",'
-            f'"mapping_revision_id":"{world["revision"]}","value":{literal}}}]}}').encode()
+            f'"mapping_revision_id":"{world["revision"]}","value":{literal}}}')
+
+
+async def post_batch(client, world, items):
+    """One signed request carrying several records. `items` is a list of (literal, occurred_at, key)."""
+    body = ('{"records":[' + ",".join(record(world, literal, at=at, key=key) for literal, at, key in items) + "]}").encode()
     collector = world["collector"]
     headers = sign_request(secret=collector["secret"], collector_id=uuid.UUID(collector["id"]), raw_body=body)
     headers["Content-Type"] = "application/json"
     response = await client.post(f"/api/v1/collectors/{collector['id']}/telemetry", content=body, headers=headers)
     assert response.status_code == 200, response.text
-    return response.json()["results"][0], key
+    return response.json()["results"]
+
+
+async def post(client, world, literal, *, at, key=None):
+    key = key or uuid.uuid4().hex
+    (ack,) = await post_batch(client, world, [(literal, at, key)])
+    return ack, key
 
 
 async def aggregate_of(db_session):
@@ -69,19 +79,26 @@ async def test_a_late_sample_for_a_compacted_day_is_merged_exactly_over_http(cli
     assert agg.average_value == D("617283945.06172840")                      # 617283945.061728395 -> half-even to even
 
 
-async def test_an_exhausted_aggregate_refuses_one_record_which_stays_queueable_while_peers_persist(client, world, db_session):
+async def test_an_exhausted_aggregate_refuses_one_record_in_a_mixed_batch_while_its_peers_persist(client, world, db_session):
     await post(client, world, "0", at=OLD_DAY)
     reading = (await db_session.execute(select(TelemetryReading))).scalar_one()
     await compact_eligible_raw(db_session)
     agg = await aggregate_of(db_session)
     agg.sample_count = MAX_COUNT                                              # sum 0, min 0, max 0: still consistent
     await db_session.commit()
-    ack, refused_key = await post(client, world, "0", at=OLD_DAY + timedelta(minutes=5))
-    assert (ack["status"], ack["error"]) == ("rejected", "AGGREGATE_ARITHMETIC_LIMIT")
-    assert classify_telemetry_ack(ack) == "retry"                              # the collector keeps the record
-    assert await count_readings(db_session, refused_key) == 0                  # the savepoint discarded it
-    peer, peer_key = await post(client, world, "7", at=datetime.now(UTC) + timedelta(seconds=1))
-    assert peer["status"] == "accepted" and await count_readings(db_session, peer_key) == 1
+    now = datetime.now(UTC) + timedelta(seconds=1)
+    first_key, refused_key, last_key = (uuid.uuid4().hex for _ in range(3))
+    results = await post_batch(client, world, [
+        ("7", now, first_key),                                                 # valid peer before the refused record
+        ("0", OLD_DAY + timedelta(minutes=5), refused_key),                   # late sample into the exhausted aggregate
+        ("9", now + timedelta(seconds=1), last_key),                          # valid peer after it
+    ])
+    assert [r["status"] for r in results] == ["accepted", "rejected", "accepted"]
+    assert [r["dedup_key"] for r in results] == [first_key, refused_key, last_key]
+    assert results[1]["error"] == "AGGREGATE_ARITHMETIC_LIMIT"
+    assert classify_telemetry_ack(results[1]) == "retry"                       # the collector keeps the record
+    assert await count_readings(db_session, refused_key) == 0                  # the savepoint discarded only this record
+    assert await count_readings(db_session, first_key) == 1 and await count_readings(db_session, last_key) == 1
     again = await aggregate_of(db_session)
     assert (again.sample_count, again.sum_value, again.arithmetic_basis) == (MAX_COUNT, D("0"), "decimal_exact")
     assert reading.series_key == again.series_key

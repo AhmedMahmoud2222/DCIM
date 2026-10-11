@@ -8,11 +8,23 @@ Additive. Three nullable columns on daily_telemetry_aggregate:
 * sum_value NUMERIC(38, 8)      exact sum of every sample in the row.
 * arithmetic_basis VARCHAR(24)  NULL (computed before G4-A with float arithmetic, unverified), 'decimal_exact', or
                                 'legacy_seeded' (a legacy row that later received samples).
-* legacy_sample_count INTEGER   legacy_seeded rows only: the sample count that existed when the row was seeded.
+* legacy_sample_count INTEGER    legacy_seeded rows only: the sample count that existed when the row was seeded.
 
 No default, so the column adds are metadata-only. The four CHECK constraints are added NOT VALID (no scan; every existing
-row is NULL in all three columns and satisfies them) and then VALIDATEd, which takes only SHARE UPDATE EXCLUSIVE. No row
-is read, rewritten or backfilled: a compacted day's raw samples are gone, so a legacy aggregate's exact sum cannot be
+row is NULL in all three columns and satisfies them) and then VALIDATEd.
+
+Locking. migrations/env.py runs the whole upgrade in one transaction, and PostgreSQL keeps the ACCESS EXCLUSIVE lock taken
+by ADD COLUMN / ADD CONSTRAINT until that transaction commits, so a VALIDATE in the same transaction would scan the table
+while still blocking every reader and writer. VALIDATE therefore runs inside `autocommit_block()`, which COMMITS first (the
+exclusive lock is released after the metadata-only DDL) and then runs each VALIDATE alone, where it holds only SHARE UPDATE
+EXCLUSIVE: reads and writes proceed during the scan. Consequence, as for migration 0025: everything that `alembic upgrade`
+had already applied in the same run is committed at that point.
+
+Because the block commits, an interrupted run can leave the columns and constraints in place without the revision being
+recorded. Every step before the commit is therefore idempotent (IF NOT EXISTS / existence-guarded), and VALIDATE is
+idempotent, so re-running the migration completes it.
+
+No row is read, rewritten or backfilled: a compacted day's raw samples are gone, so a legacy aggregate's exact sum cannot be
 recovered and nothing is invented for it.
 
 Downgrade refuses while any row carries an exact sum: dropping it would discard the only exact record of the samples.
@@ -41,13 +53,26 @@ CHECKS = {
 
 
 def upgrade() -> None:
-    op.add_column(TABLE, sa.Column("sum_value", sa.Numeric(38, 8), nullable=True))
-    op.add_column(TABLE, sa.Column("arithmetic_basis", sa.String(24), nullable=True))
-    op.add_column(TABLE, sa.Column("legacy_sample_count", sa.Integer(), nullable=True))
+    # Metadata-only DDL, idempotent so that an interrupted run (see the docstring) can be repeated.
+    op.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS sum_value NUMERIC(38, 8)")
+    op.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS arithmetic_basis VARCHAR(24)")
+    op.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS legacy_sample_count INTEGER")
     for name, expression in CHECKS.items():
-        op.execute(f"ALTER TABLE {TABLE} ADD CONSTRAINT {name} CHECK ({expression}) NOT VALID")
-    for name in CHECKS:
-        op.execute(f"ALTER TABLE {TABLE} VALIDATE CONSTRAINT {name}")
+        op.execute(f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = '{name}' AND conrelid = '{TABLE}'::regclass
+                ) THEN
+                    ALTER TABLE {TABLE} ADD CONSTRAINT {name} CHECK ({expression}) NOT VALID;
+                END IF;
+            END $$
+        """)
+    # Commit here so the ACCESS EXCLUSIVE lock above is released before any table scan.
+    with op.get_context().autocommit_block():
+        for name in CHECKS:
+            op.execute(f"ALTER TABLE {TABLE} VALIDATE CONSTRAINT {name}")
 
 
 def downgrade() -> None:
