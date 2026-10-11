@@ -33,7 +33,9 @@ from app.domain.telemetry.models import (
     telemetry_series_key,
 )
 from app.domain.telemetry.numeric import (
+    MAX_ABS_ADJUSTED_EXPONENT,
     MAX_LEXEME_CHARS,
+    MAX_STORABLE,
     InvalidTelemetryValue,
     ensure_storable,
     quantize_derived,
@@ -112,6 +114,24 @@ async def _existing_reading_id(db: AsyncSession, collector_id: uuid.UUID, dedup_
     ).scalar_one_or_none()
 
 
+def _scale_echo_matches(echo: Decimal, stored_scale: object) -> bool:
+    """Whether an echoed source scale equals the revision's, without any arithmetic that can raise on hostile input.
+
+    The echo is client text: it may be non-finite, astronomically large or small. Anything outside the storable scale
+    range cannot equal a stored scale, so it is a contradiction, not an error.
+    """
+    if (
+        not echo.is_finite()
+        or abs(echo.adjusted()) > MAX_ABS_ADJUSTED_EXPONENT
+        or echo.copy_abs() > MAX_STORABLE
+    ):
+        return False
+    try:
+        return echo.quantize(_SCALE_QUANTUM) == Decimal(str(stored_scale)).quantize(_SCALE_QUANTUM)
+    except InvalidOperation:
+        return False
+
+
 async def resolve_contract(
     db: AsyncSession, mapping: IntegrationMetricMapping, *, integration_id: uuid.UUID, source_identifier: str,
     occurred_at: datetime, mapping_revision_id: uuid.UUID | None, source_unit: str | None,
@@ -136,9 +156,7 @@ async def resolve_contract(
             raise MappingRevisionMismatch("The pinned mapping revision does not belong to this integration source.")
         if source_unit is not None and source_unit != revision.source_unit:
             raise MappingRevisionMismatch("The record's source unit contradicts its pinned revision.")
-        if source_scale is not None and (
-            source_scale.quantize(_SCALE_QUANTUM) != Decimal(str(revision.source_scale)).quantize(_SCALE_QUANTUM)
-        ):
+        if source_scale is not None and not _scale_echo_matches(source_scale, revision.source_scale):
             raise MappingRevisionMismatch("The record's source scale contradicts its pinned revision.")
         return revision, evidence_for_pinned
     revisions = (

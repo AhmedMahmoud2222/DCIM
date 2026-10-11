@@ -126,7 +126,7 @@ def parse_telemetry_batch(raw_body: bytes) -> TelemetryBatchIn:
     try:
         document, lexemes = prepare_records(loads_exact(raw_body))
         batch = TelemetryBatchIn.model_validate(document)
-    except (WireNumberError, ValidationError) as error:
+    except (WireNumberError, ValidationError, RecursionError) as error:
         raise ApiError(
             status_code=422, title="Validation Error", detail="One or more fields failed validation.",
             type_="https://dcim.internal/errors/validation",
@@ -203,7 +203,7 @@ class MetricMappingIn(BaseModel):
     def _scale_fits_storage(cls, scale: Decimal) -> Decimal:
         if not scale.is_finite() or abs(scale.adjusted()) > MAX_ABS_ADJUSTED_EXPONENT:
             raise ValueError("scale must be a finite number")
-        if abs(scale) > MAX_STORABLE:
+        if scale.copy_abs() > MAX_STORABLE:
             raise ValueError("scale is outside the storable range")
         quantum = Decimal(1).scaleb(-NUMERIC_SCALE)
         if scale != scale.quantize(quantum):

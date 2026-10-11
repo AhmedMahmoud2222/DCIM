@@ -371,3 +371,114 @@ async def test_legacy_pre_registry_mapping_rounds_the_scaled_value_once_half_eve
     row = await stored(db_session, "lg")
     # raw 0.000000015 -> 0.00000002 (half-even); legacy stores raw * scale = 0.00000001 exactly
     assert (row.raw_value, row.value, row.unit, row.registry_version) == (D("0.00000002"), D("0.00000001"), "widgets", None)
+
+
+# ----- Codex review of #135: structural failures must be controlled 422s / per-record rejections, never a 500 or 409 -----
+
+def _attrs_body(world, attributes_json: str, key="attr") -> bytes:
+    return ('{"records":[%s,%s]}' % (
+        rec(world, "kw", "1", "peer"),
+        ('{"dedup_key":"%s","integration_id":"%s","external_identifier":"e","source_identifier":"kw","occurred_at":"%s",'
+         '"mapping_revision_id":"%s","value":2,"attributes":%s}' % (
+            key, world["integration"]["id"], occurred(), world["mappings"]["kw"]["current_revision_id"], attributes_json)),
+    )).encode()
+
+
+@pytest.mark.parametrize("attributes", [
+    '{"x":1e400}', '{"x":-1e400}', '{"x":[1e999]}', '{"x":{"y":{"z":1e309}}}', '{"x":NaN}', '{"x":[Infinity]}', '{"x":-Infinity}',
+])
+async def test_non_finite_attribute_numbers_are_a_422_not_a_server_error(client, world, db_session, attributes):
+    await post_raw(client, world, _attrs_body(world, attributes), expect=422)
+    assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []   # the valid peer is not stored either
+
+
+@pytest.mark.parametrize("depth", [33, 500, 5000, 100000])
+async def test_deeply_nested_attributes_are_a_422_not_a_recursion_error(client, world, db_session, depth):
+    nested = "[" * depth + "1" + "]" * depth
+    await post_raw(client, world, _attrs_body(world, '{"x":%s}' % nested), expect=422)
+    nested_objects = '{"a":' * depth + "1" + "}" * depth
+    await post_raw(client, world, _attrs_body(world, nested_objects), expect=422)
+    assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []
+
+
+async def test_attributes_at_the_nesting_limit_and_ordinary_finite_numbers_are_stored(client, world, db_session):
+    nested = "[" * 30 + "1.5e3" + "]" * 30            # 31 levels including the attributes object itself
+    body = _attrs_body(world, '{"x":%s,"big":1.7e308,"small":5e-324}' % nested)
+    results = (await post_raw(client, world, body)).json()["results"]
+    assert [r["status"] for r in results] == ["accepted", "accepted"]
+
+
+@pytest.mark.parametrize("echo", [
+    "1e400", "-1e400", "1e-400", "1e101", "1e-101", "10000000000", "9999999999.999999994", "12345678901234567890123456789",
+    '"1e400"', '"1E+999999999"', "2", "0.99999999", '"1.00000001"',
+])
+async def test_a_hostile_or_contradicting_source_scale_echo_is_a_per_record_rejection(client, world, db_session, echo):
+    revision = world["mappings"]["kw"]["current_revision_id"]
+
+    def record_with(key, extra):
+        return ('{"dedup_key":"%s","integration_id":"%s","external_identifier":"e","source_identifier":"kw","occurred_at":"%s",'
+                '"mapping_revision_id":"%s","value":3%s}' % (key, world["integration"]["id"], occurred(), revision, extra))
+
+    body = ('{"records":[%s,%s,%s]}' % (record_with("a-good", ""), record_with("bad", ',"source_scale":%s' % echo), record_with("z-good", ""))).encode()
+    results = (await post_raw(client, world, body)).json()["results"]
+    assert [(r["dedup_key"], r["status"], r["error"]) for r in results] == [
+        ("a-good", "accepted", None), ("bad", "rejected", "MAPPING_REVISION_MISMATCH"), ("z-good", "accepted", None)]
+
+
+@pytest.mark.parametrize("echo", ["1", "1.0", "1.00000000", "1.000000001", '"1"', "1e0", "10e-1", "0.100000000e1"])
+async def test_a_correct_source_scale_echo_is_accepted_whatever_its_formatting(client, world, db_session, echo):
+    body = ('{"records":[{"dedup_key":"e","integration_id":"%s","external_identifier":"e","source_identifier":"kw","occurred_at":"%s",'
+            '"mapping_revision_id":"%s","value":3,"source_scale":%s}]}' % (
+                world["integration"]["id"], occurred(), world["mappings"]["kw"]["current_revision_id"], echo)).encode()
+    (ack,) = (await post_raw(client, world, body)).json()["results"]
+    assert ack["status"] == "accepted", (echo, ack)
+
+
+@pytest.mark.parametrize("literal", [
+    '"١.٥"', '"１２.５"', '"٣"', '"1\\n"', '"1\\r\\n"', '"\\n1"', '"1 "', '" 1"', '"1\\t"', '"1\\u2028"', '"1e٥"', '"\\uff11"',
+])
+async def test_non_ascii_digits_and_trailing_whitespace_are_a_422_for_the_whole_request(client, world, db_session, literal):
+    body = ('{"records":[%s,%s]}' % (rec(world, "kw", "1", "peer"), rec(world, "kw", literal, "bad"))).encode()
+    await post_raw(client, world, body, expect=422)
+    assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []
+
+
+async def test_the_database_constraint_agrees_with_the_application_grammar(client, world, db_session):
+    _, key = await send(client, world, "kw", "1.5")
+    row = await stored(db_session, key)
+    for bad in ("١.٥", "１２.５", "1\n", "1 ", "\n1"):
+        with pytest.raises(DBAPIError):
+            async with db_session.begin_nested():
+                await db_session.execute(text("UPDATE telemetry_reading SET raw_value_text = :t WHERE id = :i"), {"t": bad, "i": row.id})
+
+
+@pytest.mark.parametrize("literal", [
+    "9999999999.9999999900000000000000000000000000000000000001",      # mathematically above the maximum, 57 characters
+    "-9999999999.9999999900000000000000000000000000000000000001",
+    "9999999999.99999999000000000000000000000000000000000000000001",  # 61 characters
+    "9999999999.999999990000000000000000000000000000000000000001e0",
+])
+async def test_a_long_significand_above_the_maximum_is_rejected_even_when_context_rounding_would_hide_it(client, world, db_session, literal):
+    body = ('{"records":[%s,%s,%s]}' % (rec(world, "kw", "1", "a-good"), rec(world, "kw", literal, "bad"), rec(world, "kw", "2", "z-good"))).encode()
+    results = (await post_raw(client, world, body)).json()["results"]
+    assert [(r["dedup_key"], r["status"], r["error"]) for r in results] == [
+        ("a-good", "accepted", None), ("bad", "rejected", "INVALID_TELEMETRY_VALUE"), ("z-good", "accepted", None)]
+
+
+@pytest.mark.parametrize("literal,expected", [
+    ("9999999999.99999999000000000000000000000000000000000000", "9999999999.99999999"),      # equal to the maximum, padded
+    ("-9999999999.99999999000000000000000000000000000000000000", "-9999999999.99999999"),
+    ("9999999999.9999999849999999999999999999999999999999", "9999999999.99999998"),           # below the maximum, rounds down
+])
+async def test_a_long_significand_at_or_below_the_maximum_is_stored_and_keeps_its_text(client, world, db_session, literal, expected):
+    ack, key = await send(client, world, "kw", literal)
+    assert ack["status"] == "accepted", ack
+    row = await stored(db_session, key)
+    assert (row.raw_value, row.raw_value_text) == (D(expected), literal)
+
+
+async def test_mapping_scale_context_rounding_cannot_hide_an_out_of_range_value(client, world):
+    headers = {**world["headers"], "Content-Type": "application/json"}
+    body = ('{"integration_id":"%s","source_identifier":"ctx","canonical_metric":"power_kw","unit":"kW",'
+            '"scale":9999999999.9999999900000000000000000000000000000000000001}' % world["integration"]["id"]).encode()
+    assert (await client.post("/api/v1/telemetry/mappings", content=body, headers=headers)).status_code == 422

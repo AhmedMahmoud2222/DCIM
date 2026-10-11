@@ -162,3 +162,19 @@ def test_acknowledged_limitation_canonical_follows_the_rounded_raw_not_the_exact
     # ...but an input already within 8 decimals is never affected
     exact = D("68.00000001")
     assert convert_to_canonical("temperature_c", quantize_source(exact), "degF").value == convert_to_canonical("temperature_c", exact, "degF").value
+
+
+@pytest.mark.parametrize("raw", [
+    "9999999999.9999999900000000000000000000000000000000000001", "-9999999999.9999999900000000000000000000000000000000000001",
+    "9999999999.999999990000000000000000000000000000000000000000000000000001",
+])
+def test_range_is_checked_on_the_exact_original_not_a_context_rounded_copy(raw):
+    with pytest.raises(InvalidTelemetryValue):
+        quantize_source(D(raw))
+    assert quantize_source(D("9999999999.99999999000000000000000000000000")) == MAX_STORABLE  # padded zeros: equal, accepted
+
+
+@pytest.mark.parametrize("text", ["١.٥", "１２.５", "1\n", "1 ", " 1", "1\t", "1e٥", "0x1", "1_0", ""])
+def test_the_wire_numeral_grammar_is_ascii_and_a_full_match(text):
+    with pytest.raises(WireNumberError):
+        exact_number(text)

@@ -55,9 +55,15 @@ shortest text, which is exactly what is stored.
 
 | Input | Outcome |
 |---|---|
-| Not JSON, a boolean, `null`, an array/object, a string that is not a decimal numeral, a numeral over 64 characters | `422 Validation Error` for the whole request (nothing is stored) |
+| Not JSON, a boolean, `null`, an array/object, a string that is not a decimal numeral, a numeral over 64 characters, `attributes` that hold a non-finite number (including a literal such as `1e400` that overflows to infinity) or nest deeper than 32 levels | `422 Validation Error` for the whole request (nothing is stored) |
 | `NaN`, `Infinity`, `-Infinity` (number or string), a value above `9999999999.99999999` in magnitude, an exponent beyond 10^+/-100 | that record only: `INVALID_TELEMETRY_VALUE`; valid peers persist |
+| `source_scale` echo that is non-finite, outside the storable range or has an exponent beyond 10^+/-100, or that differs from the pinned revision | that record only: `MAPPING_REVISION_MISMATCH` |
 | More than 8 decimal places | accepted and rounded (below) |
+
+The decimal-numeral grammar is the same in Central, the collector helper and the database CHECK on `raw_value_text`: an optional
+sign, ASCII digits `0-9` with an optional fraction, an optional exponent, and a **full match** (no other scripts' digits, no
+surrounding or trailing whitespace or newline). The range check compares the exact original value, so a long significand just above
+the maximum is rejected even though 28-digit arithmetic would round it down to the maximum.
 
 The same grammar applies to the mapping `scale` (`POST /telemetry/mappings`): a number or decimal string, at most 8 decimal
 places, inside the storable range; anything else is a 422. Authorisation is decided before the body is read.

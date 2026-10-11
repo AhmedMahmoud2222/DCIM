@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 # Issue #128 / G3: the same numeral grammar and length cap Central enforces on a telemetry value.
-_NUMERAL = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+_NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")  # ASCII, full match
 MAX_NUMERAL_CHARS = 64
 
 # Central keeps these records (hold table) and expects the collector to keep trying with its normal backoff.
@@ -120,7 +120,7 @@ def value_numeral(value: Decimal | str | float) -> str:
         text = str(value)
     else:
         raise TypeError("a telemetry value must be a Decimal, string, integer or float")
-    if len(text) > MAX_NUMERAL_CHARS or not _NUMERAL.match(text):
+    if len(text) > MAX_NUMERAL_CHARS or not _NUMERAL.fullmatch(text):
         raise ValueError("a telemetry value must be a finite decimal numeral of at most 64 characters")
     return text
 

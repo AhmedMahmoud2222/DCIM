@@ -169,3 +169,9 @@ def test_exact_value_survives_the_durable_queue_unchanged(tmp_path):
     (replayed,) = queue.list_due(datetime(2026, 10, 11, tzinfo=UTC))
     assert replayed.payload["value"] == "9999999999.99999999"
     assert json.dumps(dict(replayed.payload))  # a plain JSON document: no Decimal in the queue
+
+
+@pytest.mark.parametrize("bad", ["١.٥", "１２.５", "1\n", "1 ", " 1", "1\t", "1e٥", "1\r\n"])
+def test_the_collector_grammar_is_ascii_and_a_full_match(bad):
+    with pytest.raises(ValueError):
+        value_numeral(bad)

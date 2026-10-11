@@ -15,13 +15,17 @@ Failure classes:
 """
 
 import json
+import math
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.domain.telemetry.numeric import MAX_LEXEME_CHARS
 
-_NUMERAL = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+# ASCII digits only and a FULL match: \d would accept other scripts' digits and $ would accept a trailing newline, text the
+# database CHECK on raw_value_text refuses. The same grammar is used by the collector helper and the DB constraint.
+_NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+MAX_ATTRIBUTE_DEPTH = 32
 _NONFINITE_WORDS = {"nan", "inf", "infinity"}
 NUMBER_FIELDS = ("value", "source_scale")
 
@@ -67,14 +71,22 @@ def _parse_constant(token: str) -> Any:
     return _NonFinite(token)
 
 
-def _contains_nonfinite(node: Any) -> bool:
-    if isinstance(node, _NonFinite):
-        return True
-    if isinstance(node, dict):
-        return any(_contains_nonfinite(item) for item in node.values())
-    if isinstance(node, list):
-        return any(_contains_nonfinite(item) for item in node)
-    return False
+def _attributes_are_storable(root: Any) -> bool:
+    """Whether `attributes` can be stored as JSONB: finite numbers only, nesting bounded. Iterative on purpose, so a
+    hostile nesting depth can never exhaust the interpreter stack (a RecursionError would surface as a 500)."""
+    stack: list[tuple[Any, int]] = [(root, 0)]
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, _NonFinite):
+            return False
+        if isinstance(node, float) and not math.isfinite(node):
+            return False      # e.g. 1e400, which float() turns into infinity
+        if isinstance(node, (dict, list)):
+            if depth >= MAX_ATTRIBUTE_DEPTH:
+                return False
+            children = node.values() if isinstance(node, dict) else node
+            stack.extend((child, depth + 1) for child in children)
+    return True
 
 
 def _nonfinite(text: str) -> Decimal:
@@ -101,7 +113,7 @@ def exact_number(raw: Any) -> tuple[Decimal, str]:
             raise WireNumberError("A numeric literal exceeds the maximum length.")
         if text.lower().lstrip("+-") in _NONFINITE_WORDS:
             return _nonfinite(text), text
-        if not _NUMERAL.match(text):
+        if not _NUMERAL.fullmatch(text):
             raise WireNumberError("A decimal numeral is required.")
     else:
         raise WireNumberError("A number is required.")
@@ -142,6 +154,6 @@ def prepare_records(document: Any) -> tuple[Any, dict[int, str]]:
                 if key == "value":
                     lexemes[index] = text
         attributes = record.get("attributes")
-        if attributes is not None and _contains_nonfinite(attributes):
-            raise WireNumberError("attributes must not contain non-finite numbers.")
+        if attributes is not None and not _attributes_are_storable(attributes):
+            raise WireNumberError("attributes must contain only finite numbers and nest at most 32 levels.")
     return document, lexemes

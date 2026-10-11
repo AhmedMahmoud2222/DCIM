@@ -58,7 +58,8 @@ def quantize_source(value: Decimal, field: str = "source value") -> Decimal:
         raise InvalidTelemetryValue(f"Telemetry {field} must be a finite number.")
     if abs(value.adjusted()) > MAX_ABS_ADJUSTED_EXPONENT:
         raise InvalidTelemetryValue(f"Telemetry {field} has an unsupported exponent.")
-    if abs(value) > MAX_STORABLE:
+    # copy_abs, not abs(): abs() applies the 28-digit context and could round a long significand down to the maximum.
+    if value.copy_abs() > MAX_STORABLE:
         raise InvalidTelemetryValue(f"Telemetry {field} is outside the storable range of +/-{MAX_STORABLE}.")
     return value.quantize(_QUANTUM, rounding=ROUND_HALF_EVEN)
 
