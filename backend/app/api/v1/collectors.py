@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.api.v1.telemetry import TelemetryBatchIn, TelemetryBatchOut, ingest_collector_telemetry
+from app.api.v1.telemetry import TelemetryBatchOut, ingest_collector_telemetry, parse_telemetry_batch
 from app.application import idempotency as idem
 from app.application.collector_auth import CollectorAuthError, verify_collector_request
 from app.application.collector_service import (
@@ -637,7 +637,7 @@ async def ingest_telemetry_batch(
     """Separate from discovery: telemetry never promotes discovered state."""
     if collector.id != collector_id:
         raise UnauthorizedCollectorError("Signed collector identity does not match the URL path.")
-    return await ingest_collector_telemetry(db, collector=collector, body=_parse_body(request, TelemetryBatchIn))
+    return await ingest_collector_telemetry(db, collector=collector, body=parse_telemetry_batch(request.state.raw_body))
 
 
 class PlanIntegrationOut(BaseModel):

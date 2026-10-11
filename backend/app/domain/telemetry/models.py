@@ -160,6 +160,11 @@ class TelemetryReading(Base, UUIDPkMixin):
         CheckConstraint(
             "(mapping_revision_id IS NULL) = (contract_evidence IS NULL)", name="revision_matches_evidence"
         ),
+        CheckConstraint(
+            "raw_value_text IS NULL OR (char_length(raw_value_text) BETWEEN 1 AND 64 AND "
+            "raw_value_text ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$')",
+            name="raw_value_text_numeral",
+        ),
     )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="RESTRICT"), nullable=False)
@@ -185,6 +190,9 @@ class TelemetryReading(Base, UUIDPkMixin):
         nullable=True
     )
     contract_evidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Issue #128 / G3: the exact finite source numeral as received, for rows stored after G3. NULL = stored before G3
+    # (the original text is unknown; `raw_value` is then whatever PostgreSQL rounded the float-parsed input to).
+    raw_value_text: Mapped[str | None] = mapped_column(String(64), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
