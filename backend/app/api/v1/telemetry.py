@@ -11,12 +11,12 @@ shapes would be worse than the small amount of namespacing added here (the same
 power/models.py's `utility_intake` node-type addition)."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
-from sqlalchemy import DateTime, and_, cast, func, literal, select, union_all
+from sqlalchemy import DateTime, and_, cast, func, literal, select, text, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -24,6 +24,7 @@ from app.application.alarm_service import AlarmUnitCompatibilityError
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
+from app.application.telemetry_ledger import ReplayHorizonExceeded
 from app.application.telemetry_retention import as_utc, utc_day
 from app.application.telemetry_service import (
     AmbiguousMappingContract,
@@ -427,6 +428,10 @@ async def ingest_collector_telemetry(
             # Deterministic per-record rejection: the savepoint already discarded this
             # record, valid peers persist, and a retry is rejected again (never "duplicate").
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INVALID_TELEMETRY_VALUE"))
+        except ReplayHorizonExceeded:
+            # Issue #128 / G4-R: a finite late_replay_horizon_days is set and this record is older than it. Permanent: the
+            # collector drops it (REPLAY_HORIZON_EXCEEDED is in its permanent set). The savepoint discarded the record.
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="REPLAY_HORIZON_EXCEEDED"))
         except AggregateArithmeticError:
             # Issue #128 / G4-A: the late merge would exceed an exact-aggregate limit (sum or count column). The savepoint
             # discarded the record and left the aggregate unchanged. The code is not in the collector's permanent set,
@@ -517,6 +522,14 @@ async def resolve_contract_hold(
                 attributes=hold.attributes,
                 mapping_revision_id=body.mapping_revision_id, pinned_evidence="operator_resolved",
             )
+    except ReplayHorizonExceeded as error:
+        # R4: the day is already compacted and the record is older than the replay horizon. The savepoint rolled the attempt
+        # back; the hold and its evidence stay exactly as they were, so nothing is lost.
+        raise ApiError(
+            status_code=409, title="Hold is past the replay horizon",
+            detail="The held record is older than the configured replay horizon and its day is already compacted. "
+                   "The hold is kept unchanged.",
+        ) from error
     except (UnknownMappingRevision, MappingRevisionMismatch, MetricMappingNotFound) as error:
         raise ApiError(status_code=422, title="Revision not valid for this hold", detail=str(error)) from error
     except (InvalidTelemetryValue, AggregateArithmeticError, ConversionContractDrift, AlarmUnitCompatibilityError,
@@ -641,6 +654,49 @@ def exact_text(value: Decimal | float | int) -> str:
 
 def decimal_text(value: Decimal | float | int | None) -> str | None:
     return None if value is None else exact_text(value)
+
+
+class ReplayLedgerStatus(BaseModel):
+    """Gauges for the consumed-key ledger (Issue #128 / G4-R). Reports counts and dates only, never keys or collectors."""
+
+    late_replay_horizon_days: int | None
+    effective_horizon_days: float | None
+    ledger_complete_since: datetime
+    last_pruned_at: datetime | None
+    last_pruned_count: int | None
+    pruning_begun_at: datetime | None
+    oldest_consumed_day: date | None
+    approximate_tombstones: int
+    warnings: list[str]
+
+
+@router.get("/replay-ledger", response_model=ReplayLedgerStatus)
+async def replay_ledger_status(
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("telemetry:read"))
+) -> ReplayLedgerStatus:
+    from app.domain.telemetry.models import MonitoringPolicy, TelemetryConsumedKey, TelemetryReplayLedgerState
+
+    horizon = (await db.execute(select(MonitoringPolicy.late_replay_horizon_days).where(MonitoringPolicy.id == 1))).scalar()
+    state = (await db.execute(select(TelemetryReplayLedgerState).where(TelemetryReplayLedgerState.id == 1))).scalar_one()
+    oldest = (await db.execute(select(func.min(TelemetryConsumedKey.consumed_day)))).scalar()
+    estimate = (await db.execute(text(
+        "SELECT greatest(reltuples, 0)::bigint FROM pg_class WHERE oid = 'telemetry_consumed_key'::regclass"))).scalar() or 0
+    now = datetime.now(UTC)
+    effective = None
+    if horizon is not None:
+        effective = min(timedelta(days=horizon), max(now - state.ledger_complete_since, timedelta(0))).total_seconds() / 86400
+    warnings: list[str] = []
+    if horizon is None and (estimate > 0 or oldest is not None):
+        warnings.append("horizon_unset_ledger_grows_without_bound")
+    if horizon is not None and oldest is not None and (now.date() - oldest) > timedelta(days=horizon + 2):
+        warnings.append("prune_lagging")
+    return ReplayLedgerStatus(
+        late_replay_horizon_days=horizon, effective_horizon_days=effective,
+        ledger_complete_since=state.ledger_complete_since, last_pruned_at=state.last_pruned_at,
+        last_pruned_count=state.last_pruned_count, pruning_begun_at=state.pruning_begun_at,
+        oldest_consumed_day=oldest,
+        approximate_tombstones=int(estimate), warnings=warnings,
+    )
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
