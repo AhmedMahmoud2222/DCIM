@@ -20,7 +20,7 @@ from sqlalchemy import DateTime, and_, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import AlarmUnitCompatibilityError
+from app.application.alarm_service import AlarmUnitCompatibilityError, lock_collector_batch_rules
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -358,6 +358,17 @@ async def ingest_collector_telemetry(
     body: TelemetryBatchIn,
 ) -> TelemetryBatchOut:
     """Per-record ACKs retain unacknowledged edge-queue records for retry."""
+    async with lock_collector_batch_rules(
+        db, collector_id=collector.id, integration_ids=list({record.integration_id for record in body.records}),
+    ) as eligible_integrations:
+        return await _ingest_prelocked_collector_telemetry(
+            db, collector=collector, body=body, eligible_integrations=eligible_integrations,
+        )
+
+
+async def _ingest_prelocked_collector_telemetry(
+    db: AsyncSession, *, collector: Collector, body: TelemetryBatchIn, eligible_integrations: frozenset[uuid.UUID],
+) -> TelemetryBatchOut:
     from app.application.collector_service import current_assignment
 
     results: list[TelemetryAck] = []
@@ -374,7 +385,7 @@ async def ingest_collector_telemetry(
     )
     for record in body.records:
         assignment = await current_assignment(db, record.integration_id)
-        if assignment is None or assignment.collector_id != collector.id:
+        if record.integration_id not in eligible_integrations or assignment is None or assignment.collector_id != collector.id:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="NOT_ASSIGNED"))
             continue
         try:
