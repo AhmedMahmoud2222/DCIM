@@ -68,7 +68,8 @@ def downgrade() -> None:
         raise RuntimeError(
             "Cannot downgrade 0049: monitoring_policy.late_replay_horizon_days is set. Clear it explicitly first."
         )
-    op.drop_constraint(POLICY_CHECK, "monitoring_policy", type_="check")
+    # Raw SQL: op.drop_constraint would apply the metadata naming convention to the already-conventional name.
+    op.execute(f"ALTER TABLE monitoring_policy DROP CONSTRAINT {POLICY_CHECK}")
     op.drop_column("monitoring_policy", "late_replay_horizon_days")
     op.drop_table("telemetry_replay_ledger_state")
     op.drop_index("ix_telemetry_consumed_key_consumed_day", table_name="telemetry_consumed_key")

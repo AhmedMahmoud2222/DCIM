@@ -8,6 +8,8 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
+from app.db.base import Base
+
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0049_telemetry_replay_ledger.py"
 LEDGER_TABLES = {"telemetry_consumed_key", "telemetry_replay_ledger_state"}
 
@@ -16,7 +18,9 @@ def _run(connection, direction):
     spec = importlib.util.spec_from_file_location("telemetry_replay_ledger", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    with Operations.context(MigrationContext.configure(connection)):
+    # target_metadata carries the naming convention exactly as migrations/env.py does (CI caught a doubled prefix without it).
+    context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+    with Operations.context(context):
         getattr(module, direction)()
 
 
