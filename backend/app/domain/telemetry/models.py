@@ -210,6 +210,20 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
         Index("ix_daily_telemetry_series_day", "series_key", "day"),
         Index("ix_daily_telemetry_integration_metric_day", "integration_id", "metric", "day"),
         Index("ix_daily_telemetry_asset_metric_day", "managed_asset_id", "metric", "day"),
+        # Issue #128 / G4-A. Added NOT VALID by migration 0048 (every existing row is NULL and satisfies them).
+        CheckConstraint("arithmetic_basis IS NULL OR arithmetic_basis IN ('decimal_exact', 'legacy_seeded')",
+                        name="arithmetic_basis_allowed"),
+        CheckConstraint("(arithmetic_basis IS NULL) = (sum_value IS NULL)", name="basis_has_sum"),
+        CheckConstraint(
+            "(arithmetic_basis IS NOT DISTINCT FROM 'legacy_seeded') = (legacy_sample_count IS NOT NULL) AND "
+            "(legacy_sample_count IS NULL OR legacy_sample_count BETWEEN 1 AND sample_count)",
+            name="legacy_sample_count_scope",
+        ),
+        CheckConstraint(
+            "arithmetic_basis IS DISTINCT FROM 'decimal_exact' OR "
+            "sum_value BETWEEN minimum_value * sample_count AND maximum_value * sample_count",
+            name="exact_sum_within_extremes",
+        ),
     )
     integration_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("integration.id", ondelete="CASCADE"), nullable=False)
     managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), nullable=True)
@@ -218,11 +232,17 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     day: Mapped[date] = mapped_column(nullable=False)
-    average_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
-    minimum_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
-    maximum_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    # NUMERIC(18, 8) values are loaded as Decimal; the annotation states the runtime type (it was `float` before G4-A).
+    average_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    minimum_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    maximum_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     sample_count: Mapped[int] = mapped_column(nullable=False)
     registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Exact sum of all samples (Issue #128 / G4-A). NULL = aggregate computed before G4-A with float arithmetic.
+    sum_value: Mapped[Decimal | None] = mapped_column(Numeric(38, 8), nullable=True)
+    arithmetic_basis: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # Samples whose contribution came from a legacy rounded average (legacy_seeded rows only); never changes.
+    legacy_sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class MonitoringPolicy(Base):

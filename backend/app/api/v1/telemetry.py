@@ -47,6 +47,7 @@ from app.core.errors import ApiError
 from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
+from app.domain.telemetry.aggregate_math import AggregateArithmeticError
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.models import (
     CANONICAL_METRICS,
@@ -426,6 +427,11 @@ async def ingest_collector_telemetry(
             # Deterministic per-record rejection: the savepoint already discarded this
             # record, valid peers persist, and a retry is rejected again (never "duplicate").
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INVALID_TELEMETRY_VALUE"))
+        except AggregateArithmeticError:
+            # Issue #128 / G4-A: the late merge would exceed an exact-aggregate limit (sum or count column). The savepoint
+            # discarded the record and left the aggregate unchanged. The code is not in the collector's permanent set,
+            # so the record stays queued instead of being lost; valid peers persist.
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="AGGREGATE_ARITHMETIC_LIMIT"))
         except (AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion):
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INCOMPATIBLE_TELEMETRY_UNITS"))
     await db.commit()
@@ -513,8 +519,8 @@ async def resolve_contract_hold(
             )
     except (UnknownMappingRevision, MappingRevisionMismatch, MetricMappingNotFound) as error:
         raise ApiError(status_code=422, title="Revision not valid for this hold", detail=str(error)) from error
-    except (InvalidTelemetryValue, ConversionContractDrift, AlarmUnitCompatibilityError, UnknownUnit,
-            UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
+    except (InvalidTelemetryValue, AggregateArithmeticError, ConversionContractDrift, AlarmUnitCompatibilityError,
+            UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
         raise ApiError(status_code=422, title="Record cannot be stored under that revision", detail=str(error)) from error
     hold.status = "resolved"
     hold.resolved_at = datetime.now(UTC)
