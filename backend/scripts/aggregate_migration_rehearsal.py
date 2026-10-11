@@ -69,20 +69,23 @@ def main() -> None:
     args = parser.parse_args()
     dsn = os.environ["TEST_ADMIN_DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql+psycopg://")
     plain = dsn.replace("postgresql+psycopg://", "postgresql://")
-    engine = create_engine(dsn, isolation_level="AUTOCOMMIT")
+    engine = create_engine(dsn)
     module = _load()
 
     with engine.connect() as conn:
         conn.execute(text(f"TRUNCATE {TABLE}"))
+        conn.commit()
         context = MigrationContext.configure(conn)
         with Operations.context(context), context.begin_transaction():
             module.downgrade()
+        conn.commit()
         integration = conn.execute(text("SELECT id FROM integration LIMIT 1")).scalar()
         if integration is None:
             conn.execute(text("""INSERT INTO integration (id, name, integration_type, enabled, target_host, config,
                 poll_interval_seconds, consecutive_failures, version)
                 VALUES (gen_random_uuid(), 'rehearsal', 'snmp', true, '192.0.2.1', '{}'::jsonb, 60, 0, 1)"""))
             integration = conn.execute(text("SELECT id FROM integration LIMIT 1")).scalar()
+        conn.commit()
         started = time.perf_counter()
         conn.execute(text(f"""
             INSERT INTO {TABLE} (id, integration_id, external_identifier, series_key, metric, unit, day, average_value,
@@ -90,7 +93,9 @@ def main() -> None:
             SELECT gen_random_uuid(), :i, 'e', 'registry:1:k-' || (g % 20000), 'power_kw', 'kW',
                    date '2024-01-01' + (g / 20000), 2, 1, 3, 288, '1'
             FROM generate_series(0, :n - 1) g"""), {"i": integration, "n": args.rows})
+        conn.commit()
         conn.execute(text(f"ANALYZE {TABLE}"))
+        conn.commit()
         size = conn.execute(text(f"SELECT pg_size_pretty(pg_total_relation_size('{TABLE}'))")).scalar()
         print(f"populated {args.rows:,} rows in {time.perf_counter() - started:.1f}s; table + indexes {size}")
 
@@ -128,6 +133,7 @@ def main() -> None:
         begin = time.perf_counter()
         with Operations.context(context), context.begin_transaction():
             module.upgrade()
+        conn.commit()
         total = time.perf_counter() - begin
     time.sleep(0.5)
     stop.set()
