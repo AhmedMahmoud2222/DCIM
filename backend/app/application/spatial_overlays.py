@@ -13,6 +13,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -28,7 +29,7 @@ from app.domain.network.discovery_models import DiscoveredNeighbor
 from app.domain.physical.ports import EquipmentPort
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import METRIC_REGISTRY
+from app.domain.telemetry.registry import METRIC_REGISTRY, convert_stored_canonical
 
 MAX_OVERLAY_ASSETS = 500
 ENVIRONMENT_METRICS = ("temperature_c", "humidity_percent")
@@ -221,14 +222,23 @@ async def environment_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str,
         freshness, age = classify_reading(reading.occurred_at, now, interval)
         fresh = freshness == MEASURED_FRESH
         # A stored unit that is not the metric's canonical unit is never reinterpreted: same rule as the thermal views.
-        unit_ok = reading.unit == METRIC_REGISTRY[metric].canonical_unit
+        try:
+            canonical_environment_value = convert_stored_canonical(
+                metric, Decimal(reading.value), reading.unit, reading.registry_version,
+            )
+            unit_ok = True
+        except ValueError:
+            canonical_environment_value = Decimal(str(reading.value))
+            unit_ok = False
         if not unit_ok:
             freshness, fresh = INVALID, False
         quality = "invalid" if freshness == INVALID else ("measured" if fresh else "stale")
         items.append(
             {
                 "asset_id": str(asset_id), "asset_kind": "rack" if asset_id in assets.rack_ids else "equipment", "metric": metric,
-                "value": float(reading.value), "unit": reading.unit, "occurred_at": reading.occurred_at.isoformat(),
+                "value": float(canonical_environment_value),
+                "unit": METRIC_REGISTRY[metric].canonical_unit if unit_ok else reading.unit,
+                "occurred_at": reading.occurred_at.isoformat(),
                 "age_seconds": age, "expected_poll_interval_seconds": interval,
                 "data_quality": quality,
                 "state": "critical" if asset_id in alarmed else ("normal" if fresh else "warning"),
