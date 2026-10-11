@@ -197,7 +197,7 @@ def test_collector_classifies_the_new_code_as_permanent_and_unknown_codes_as_ret
     assert classify_telemetry_ack({"status": "duplicate"}) == "acknowledge"
 
 
-async def test_raised_raw_retention_redelivery_is_a_duplicate_with_no_raw_row_and_no_alarm(client, world, db_session):
+async def test_raised_raw_retention_redelivery_is_a_duplicate_with_no_raw_row_and_no_alarm(client, world, db_session, monkeypatch):
     """Codex P1-1 over signed HTTP: 365 -> 730 days must not let a consumed key back in as raw history."""
     from app.domain.alarm.models import Alarm
 
@@ -206,8 +206,19 @@ async def test_raised_raw_retention_redelivery_is_a_duplicate_with_no_raw_row_an
     before = await aggregate(db_session)
     await db_session.execute(update(MonitoringPolicy).values(raw_retention_days=730))
     await db_session.commit()
+    evaluated = []
+    from app.application import alarm_service
+
+    original = alarm_service.evaluate_reading
+
+    async def spy(*args, **kwargs):
+        evaluated.append(1)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(alarm_service, "evaluate_reading", spy)
     (ack,) = await post_telemetry(client, world["collector"], [record(world, 10, "k1")])
     assert ack["status"] == "duplicate"
+    assert evaluated == []                           # alarm evaluation is never invoked for a duplicate
     after = await aggregate(db_session)
     assert (after.sample_count, after.sum_value) == (before.sample_count, before.sum_value)
     assert (await db_session.execute(select(func.count()).select_from(TelemetryReading))).scalar_one() == 0

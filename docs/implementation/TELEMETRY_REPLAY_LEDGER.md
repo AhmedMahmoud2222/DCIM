@@ -1,6 +1,6 @@
 # Telemetry replay protection (Issue #128 / G4-R)
 
-Version 1.1 (adds the raised-retention rule and the refused horizon clear after Codex review)
+Version 1.2 (adds the lock protocol for NULL-mode decisions after the second Codex review)
 
 Scope: stop a redelivered telemetry record from being counted twice in `daily_telemetry_aggregate` after its raw row is gone.
 Out of scope: scheduling compaction (nothing in this repository does), evidence lifetime and legal hold (G6), history trust
@@ -51,6 +51,18 @@ a daily aggregate exists for its series and day, whatever the current retention 
 * No aggregate for the day: unchanged, the record stays raw.
 
 The check costs one indexed lookup per reading for days that have already ended; the current day is skipped.
+
+### Lock protocol
+
+Every late-merge decision on a day that has an aggregate takes the ledger state row `FOR SHARE` before it reads the policy,
+whether the horizon is NULL or finite, and keeps the lock until its transaction ends, which covers the tombstone check or
+claim. A prune run and a horizon clear take the row `FOR UPDATE` before they read the policy. A prune therefore cannot delete a
+tombstone, or advance coverage, while a decision that relied on it is still in flight. Shared locks do not block each other, so
+concurrent ingests are unaffected. Order is aggregate row, then state row, then ledger rows. Test:
+`test_null_mode_decision_is_protected_from_the_first_finite_prune` (both the compacted and raised-retention branches).
+
+A scratch database that applied an earlier revision of this unmerged 0049 does not gain `pruning_begun_at` from
+`upgrade head`; rebuild it. Nothing shipped needs a data migration, since main is still at 0048.
 
 ### Clearing the horizon
 

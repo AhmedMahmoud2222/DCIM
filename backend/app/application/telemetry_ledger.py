@@ -97,9 +97,12 @@ async def guard_horizon_clear(db: AsyncSession, *, now: datetime) -> None:
 async def effective_horizon(db: AsyncSession, *, now: datetime) -> timedelta | None:
     """The age beyond which late data is refused, or None when no finite horizon is configured.
 
-    Reads the ledger state ``FOR SHARE`` so a prune run (which advances ``ledger_complete_since`` ``FOR UPDATE`` before it
-    deletes anything) waits for in-flight merges and every later merge sees the advanced value.
+    The ledger state row is locked ``FOR SHARE`` BEFORE the policy is read, and the lock is kept to the end of the caller's
+    transaction, which also covers the duplicate check or claim that follows. A prune run and a horizon clear take the same row
+    ``FOR UPDATE`` first, so neither can change the ledger underneath a decision that is already made, in NULL mode or finite
+    mode. Locking after reading NULL would leave a gap in which a prune could commit.
     """
+    state = await _locked_state(db, now=now, for_update=False)
     configured = (
         await db.execute(
             select(MonitoringPolicy.late_replay_horizon_days).where(MonitoringPolicy.id == 1)
@@ -108,7 +111,6 @@ async def effective_horizon(db: AsyncSession, *, now: datetime) -> timedelta | N
     ).scalar_one_or_none()
     if configured is None:
         return None
-    state = await _locked_state(db, now=now, for_update=False)
     protected = max(now - state.ledger_complete_since, timedelta(0))
     return min(timedelta(days=configured), protected)
 
@@ -122,16 +124,19 @@ async def enforce_horizon(db: AsyncSession, *, occurred_at: datetime, now: datet
 
 async def _locked_state(db: AsyncSession, *, now: datetime, for_update: bool) -> TelemetryReplayLedgerState:
     """The single state row, locked. A missing row (never created by the migration) is re-created conservatively as 'now'."""
-    await db.execute(
-        pg_insert(TelemetryReplayLedgerState)
-        .values(id=1, ledger_complete_since=now)
-        .on_conflict_do_nothing(index_elements=[TelemetryReplayLedgerState.id])
-    )
     statement = (
         select(TelemetryReplayLedgerState).where(TelemetryReplayLedgerState.id == 1)
         .with_for_update(read=not for_update).execution_options(populate_existing=True)
     )
-    return (await db.execute(statement)).scalar_one()
+    state = (await db.execute(statement)).scalar_one_or_none()
+    if state is None:
+        await db.execute(
+            pg_insert(TelemetryReplayLedgerState)
+            .values(id=1, ledger_complete_since=now)
+            .on_conflict_do_nothing(index_elements=[TelemetryReplayLedgerState.id])
+        )
+        state = (await db.execute(statement)).scalar_one()
+    return state
 
 
 def note_duplicate_suppressed(*, path: str, count: int = 1) -> None:

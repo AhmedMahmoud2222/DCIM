@@ -472,15 +472,50 @@ async def test_a_prune_in_flight_makes_a_concurrent_clear_wait_and_then_refuse(a
     await arena["compact"]()
     await arena["set_horizon"](5)
     far = datetime(2026, 10, 30, tzinfo=UTC)
-    locker = arena["factory"]()
-    async with locker:
-        # Stand in for a prune that holds the state lock: take it, then run the real prune in a thread behind it.
-        await locker.execute(text("SELECT 1 FROM telemetry_replay_ledger_state WHERE id = 1 FOR UPDATE"))
+    pruner, clearer = arena["factory"](), arena["factory"]()
+    async with pruner, clearer:
+        # The pruner holds the state lock and has recorded the marker, uncommitted: the same first step as a real prune run.
+        await pruner.execute(text("SELECT 1 FROM telemetry_replay_ledger_state WHERE id = 1 FOR UPDATE"))
+        await pruner.execute(update(TelemetryReplayLedgerState).values(pruning_begun_at=far))
+        clear = asyncio.create_task(guard_horizon_clear(clearer, now=far))
+        await arena["wait"]()
+        assert not clear.done()                       # a real overlap: the clear is waiting on the prune
+        await pruner.commit()
+        with pytest.raises(UnsafeHorizonClear):
+            await clear
+        await clearer.rollback()
+
+
+@pytest.mark.parametrize("retention_days", [365, 730], ids=["compacted_branch", "raised_retention_branch"])
+async def test_null_mode_decision_is_protected_from_the_first_finite_prune(arena, monkeypatch, retention_days):
+    """Codex P1: pause a NULL-mode ingest before its claim/check, enable a finite horizon and start the real prune. The
+    prune must wait for the ingest, so the key is still tombstoned when the ingest decides."""
+    await arena["seed_raw"]([("1", "a"), ("2", "b")])
+    await arena["compact"]()
+    reached, release = asyncio.Event(), asyncio.Event()
+    name = "claim_consumed_keys" if retention_days == 365 else "consumed_key_exists"
+    original = getattr(telemetry_retention, name)
+
+    async def paused(*args, **kwargs):
+        reached.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(telemetry_retention, name, paused)
+    far = datetime(2026, 10, 30, tzinfo=UTC)
+    ingest_session = arena["factory"]()
+    async with ingest_session:
+        ingest = asyncio.create_task(arena["deliver"](ingest_session, "2", 1, "b", now=far, retention_days=retention_days))
+        await asyncio.wait_for(reached.wait(), 15)    # the NULL decision is made; the claim/check has not run yet
+        await arena["set_horizon"](5)                 # a finite horizon is enabled and committed meanwhile
         pruning = asyncio.create_task(asyncio.to_thread(maintenance.prune_consumed_keys, now=far))
         await arena["wait"]()
-        await locker.commit()
-        assert (await pruning)["skipped"] is False
-    async with arena["factory"]() as session:
-        with pytest.raises(UnsafeHorizonClear):
-            await guard_horizon_clear(session, now=far)
-        await session.rollback()
+        assert not pruning.done()                     # the prune waits for the in-flight decision
+        release.set()
+        assert await ingest is LateMergeOutcome.DUPLICATE
+        await ingest_session.commit()
+        result = await pruning
+    assert result["skipped"] is False and result["deleted"] == 2     # it prunes only after the ingest finished
+    agg = await arena["aggregate"]()
+    assert (agg.sample_count, agg.sum_value) == (2, D("3"))
+    assert await arena["counts"]() == (0, 0)
