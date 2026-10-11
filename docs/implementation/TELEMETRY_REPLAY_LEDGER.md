@@ -1,6 +1,6 @@
 # Telemetry replay protection (Issue #128 / G4-R)
 
-Version 1.0
+Version 1.1 (adds the raised-retention rule and the refused horizon clear after Codex review)
 
 Scope: stop a redelivered telemetry record from being counted twice in `daily_telemetry_aggregate` after its raw row is gone.
 Out of scope: scheduling compaction (nothing in this repository does), evidence lifetime and legal hold (G6), history trust
@@ -39,6 +39,26 @@ changes the field only when the request includes it; omitting it keeps the store
 
 Refusal returns the permanent ack code `REPLAY_HORIZON_EXCEEDED`. The collector treats it as acknowledged-and-dropped. Older
 collectors treat an unknown code as retry, so Central can deploy first (see below).
+
+### Which days the ledger and horizon apply to
+
+Whether a key was consumed is history, so it does not depend on today's `raw_retention_days`. A late record is checked when
+a daily aggregate exists for its series and day, whatever the current retention setting says:
+
+* Day older than the current compaction cutover: the record is claimed and folded as above.
+* Day inside the cutover (retention was raised after compaction): the finite horizon applies, and a key that already has a
+  tombstone is a `duplicate`. A fresh key is **not** claimed; it stays raw and a later compaction consumes it.
+* No aggregate for the day: unchanged, the record stays raw.
+
+The check costs one indexed lookup per reading for days that have already ended; the current day is skipped.
+
+### Clearing the horizon
+
+Setting the horizon back to NULL is refused (HTTP 409) once pruning has begun (`pruning_begun_at` is set by the first prune
+run). NULL mode cannot rebuild deleted tombstones, so clearing would let old keys be counted again. The policy change and the
+prune run both take the ledger state row `FOR UPDATE` first, so a clear and a prune cannot interleave: the prune either
+skips (clear committed first) or the clear is refused. A fresh deployment that never pruned can still move between NULL and a
+finite value. Returning to unbounded mode after pruning needs a separate owner decision.
 
 ### `ledger_complete_since` and the effective horizon
 
@@ -109,5 +129,8 @@ else. G6 decides its retention and legal-hold rules; this change only documents 
 1. Confirm the external runner gate above.
 2. Deploy Central (migration 0049 is additive; it alters only the one-row `monitoring_policy` table).
 3. Collectors can update later; an old collector retries `REPLAY_HORIZON_EXCEEDED` instead of dropping it.
+
+The migration test's lock rehearsal inspects the locks one session holds after a downgrade and upgrade on a test database. It
+shows that no existing large table is locked exclusively; it is not a concurrent reader/writer availability measurement.
 
 Downgrade of 0049 refuses while any tombstone exists or a horizon is set.

@@ -17,8 +17,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.application import telemetry_retention
 from app.application.telemetry_ledger import (
     ReplayHorizonExceeded,
+    UnsafeHorizonClear,
     consumed_key_hash,
     effective_horizon,
+    guard_horizon_clear,
 )
 from app.application.telemetry_retention import LateMergeOutcome, compact_eligible_raw, merge_late_reading
 from app.domain.integration.models import Collector, Integration
@@ -51,7 +53,7 @@ async def arena(db_engine):
         setup.add_all((collector, integration, mapping))
         await setup.execute(update(MonitoringPolicy).values(late_replay_horizon_days=None))
         await setup.execute(update(TelemetryReplayLedgerState).values(
-            ledger_complete_since=datetime(2020, 1, 1, tzinfo=UTC), last_pruned_at=None, last_pruned_count=None))
+            ledger_complete_since=datetime(2020, 1, 1, tzinfo=UTC), last_pruned_at=None, last_pruned_count=None, pruning_begun_at=None))
         await setup.commit()
         ids = (collector.id, integration.id, mapping.id)
     series_key = telemetry_series_key(ids[1], None, "sensor", "power_kw", "kW")
@@ -108,12 +110,12 @@ async def arena(db_engine):
             await session.execute(update(TelemetryReplayLedgerState).values(ledger_complete_since=value))
             await session.commit()
 
-    async def deliver(session, value, minute, key, *, now=NOW, base=BASE):
+    async def deliver(session, value, minute, key, *, now=NOW, base=BASE, retention_days=365):
         """Deliver the way ingest does: insert (unique dedup), merge, delete a merged or duplicate reading."""
         reading = make(value, minute, key, base)
         session.add(reading)
         await session.flush()
-        outcome = await merge_late_reading(session, reading, now=now, retention_days=365)
+        outcome = await merge_late_reading(session, reading, now=now, retention_days=retention_days)
         if outcome is not LateMergeOutcome.STAYS_RAW:
             await session.delete(reading)
             await session.flush()
@@ -393,3 +395,92 @@ async def test_downgrade_guard_text_names_the_protection():
 
     source = (Path(__file__).parents[2] / "migrations/versions/0049_telemetry_replay_ledger.py").read_text()
     assert "Cannot downgrade 0049" in source and "late_replay_horizon_days is set" in source
+
+
+async def test_raised_raw_retention_still_recognises_consumed_keys_and_never_claims_fresh_ones(arena):
+    """Codex P1-1: the aggregate, not today's raw-retention setting, decides whether a day is compacted."""
+    await arena["seed_raw"]([("1", "a"), ("2", "b")])
+    await arena["compact"]()                         # compacted under 365 days; tombstones for a and b
+    async with arena["factory"]() as session:
+        assert await arena["deliver"](session, "2", 1, "b", retention_days=730) is LateMergeOutcome.DUPLICATE
+        await session.commit()
+    async with arena["factory"]() as session:
+        # A genuinely fresh record stays raw and is NOT claimed merely to perform the duplicate check.
+        assert await arena["deliver"](session, "9", 40, "fresh", retention_days=730) is LateMergeOutcome.STAYS_RAW
+        await session.commit()
+    agg = await arena["aggregate"]()
+    assert (agg.sample_count, agg.sum_value) == (2, D("3"))
+    assert await arena["counts"]() == (1, 2)         # only the fresh raw row exists; no tombstone was added for it
+    # A day with no aggregate is untouched by the check.
+    async with arena["factory"]() as session:
+        assert await arena["deliver"](session, "5", 10, "other-day", base=BASE + timedelta(days=3),
+                                      retention_days=730) is LateMergeOutcome.STAYS_RAW
+        await session.commit()
+
+
+async def test_raised_raw_retention_still_applies_the_finite_horizon_to_a_compacted_day(arena):
+    await arena["seed_raw"]([("1", "a")])
+    await arena["compact"]()
+    await arena["set_horizon"](100)
+    async with arena["factory"]() as session:
+        with pytest.raises(ReplayHorizonExceeded):
+            await arena["deliver"](session, "9", 40, "old-fresh", retention_days=730)
+        await session.rollback()
+    assert await arena["counts"]() == (0, 1)
+
+
+async def test_clearing_the_horizon_is_refused_once_pruning_has_begun(arena):
+    """Codex P1-2: NULL mode cannot reconstruct pruned tombstones, so the transition is refused."""
+    await arena["seed_raw"]([("1", "a")])
+    await arena["compact"]()
+    await arena["set_horizon"](5)
+    async with arena["factory"]() as session:
+        await guard_horizon_clear(session, now=NOW)       # allowed before any prune
+        await session.rollback()
+    maintenance.prune_consumed_keys(now=datetime(2026, 10, 30, tzinfo=UTC))
+    async with arena["factory"]() as session:
+        with pytest.raises(UnsafeHorizonClear):
+            await guard_horizon_clear(session, now=NOW)
+        await session.rollback()
+        state = (await session.execute(select(TelemetryReplayLedgerState))).scalar_one()
+        assert state.pruning_begun_at is not None
+
+
+async def test_a_clear_and_a_prune_are_serialised_so_the_prune_skips_after_the_clear_commits(arena):
+    await arena["seed_raw"]([("1", "a"), ("2", "b")])
+    await arena["compact"]()
+    await arena["set_horizon"](5)
+    far = datetime(2026, 10, 30, tzinfo=UTC)
+    clearer = arena["factory"]()
+    async with clearer:
+        await guard_horizon_clear(clearer, now=far)       # holds the state lock, nothing pruned yet
+        await clearer.execute(update(MonitoringPolicy).values(late_replay_horizon_days=None))
+        pruning = asyncio.create_task(asyncio.to_thread(maintenance.prune_consumed_keys, now=far))
+        await arena["wait"]()
+        assert not pruning.done()
+        await clearer.commit()
+        result = await pruning
+    assert result == {"skipped": True, "reason": "horizon_unset", "deleted": 0}
+    assert await arena["counts"]() == (0, 2)
+    async with arena["factory"]() as session:
+        state = (await session.execute(select(TelemetryReplayLedgerState))).scalar_one()
+        assert state.pruning_begun_at is None
+
+
+async def test_a_prune_in_flight_makes_a_concurrent_clear_wait_and_then_refuse(arena):
+    await arena["seed_raw"]([("1", "a")])
+    await arena["compact"]()
+    await arena["set_horizon"](5)
+    far = datetime(2026, 10, 30, tzinfo=UTC)
+    locker = arena["factory"]()
+    async with locker:
+        # Stand in for a prune that holds the state lock: take it, then run the real prune in a thread behind it.
+        await locker.execute(text("SELECT 1 FROM telemetry_replay_ledger_state WHERE id = 1 FOR UPDATE"))
+        pruning = asyncio.create_task(asyncio.to_thread(maintenance.prune_consumed_keys, now=far))
+        await arena["wait"]()
+        await locker.commit()
+        assert (await pruning)["skipped"] is False
+    async with arena["factory"]() as session:
+        with pytest.raises(UnsafeHorizonClear):
+            await guard_horizon_clear(session, now=far)
+        await session.rollback()

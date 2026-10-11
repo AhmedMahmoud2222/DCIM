@@ -8,7 +8,8 @@ Additive. Creates:
 * telemetry_consumed_key(key_hash BYTEA PRIMARY KEY, consumed_day DATE): one tombstone per source record whose raw row was
   consumed into a daily aggregate. key_hash is the first 16 bytes of SHA-256 over collector_id || 0x00 || dedup_key.
 * telemetry_replay_ledger_state: one row. ledger_complete_since is seeded with this migration's time; keys consumed before it
-  have no tombstone and nothing is invented for them (the consumed raw rows are gone).
+  have no tombstone and nothing is invented for them (the consumed raw rows are gone). pruning_begun_at records the first
+  prune: once set, the horizon can no longer be cleared back to NULL.
 * monitoring_policy.late_replay_horizon_days INTEGER NULL (>= 1). NULL, the default, means no age-based rejection and no
   pruning: the ledger then grows without bound (documented in docs/implementation/TELEMETRY_REPLAY_LEDGER.md).
 
@@ -45,6 +46,7 @@ def upgrade() -> None:
         sa.Column("ledger_complete_since", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("last_pruned_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("last_pruned_count", sa.BigInteger(), nullable=True),
+        sa.Column("pruning_begun_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_telemetry_replay_ledger_state")),
         sa.CheckConstraint("id = 1", name=op.f("ck_telemetry_replay_ledger_state_single_row")),
     )

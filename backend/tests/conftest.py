@@ -135,10 +135,10 @@ async def _clean_tables(db_engine, _admin_engine):
     async with db_engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {', '.join(_APP_TRUNCATE_TABLES)} CASCADE"))
         # G4-R: policy and the ledger state row are not truncated (they are seeded by migrations); reset what tests change.
-        await conn.execute(text("UPDATE monitoring_policy SET late_replay_horizon_days = NULL"))
+        await conn.execute(text("UPDATE monitoring_policy SET late_replay_horizon_days = NULL, raw_retention_days = 365"))
         await conn.execute(text(
             "UPDATE telemetry_replay_ledger_state SET ledger_complete_since = '2020-01-01T00:00:00Z', "
-            "last_pruned_at = NULL, last_pruned_count = NULL"))
+            "last_pruned_at = NULL, last_pruned_count = NULL, pruning_begun_at = NULL"))
     # audit_log: dcim_app is deliberately no longer able to TRUNCATE/DELETE this table
     # (Finding C1 correction) — reset it via the test-admin superuser connection instead.
     async with _admin_engine.begin() as conn:

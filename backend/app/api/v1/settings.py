@@ -1,4 +1,7 @@
 """Persisted monitoring-policy settings; edits never trigger immediate cleanup."""
+
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +53,14 @@ async def update_monitoring_policy(
     changes = body.model_dump(exclude_unset=False)
     if "late_replay_horizon_days" not in body.model_fields_set:
         changes.pop("late_replay_horizon_days")
+    if "late_replay_horizon_days" in changes and changes["late_replay_horizon_days"] is None:
+        if policy.late_replay_horizon_days is not None:
+            from app.application.telemetry_ledger import UnsafeHorizonClear, guard_horizon_clear
+            from app.core.errors import ApiError
+            try:
+                await guard_horizon_clear(db, now=datetime.now(UTC))
+            except UnsafeHorizonClear as error:
+                raise ApiError(status_code=409, title="Replay horizon cannot be cleared", detail=str(error)) from error
     for key, value in changes.items():
         setattr(policy, key, value)
     await write_audit_log(

@@ -36,6 +36,10 @@ class ReplayHorizonExceeded(ValueError):
     """A late record is older than the configured replay horizon (permanent; the collector must not retry it)."""
 
 
+class UnsafeHorizonClear(ValueError):
+    """Clearing the horizon is refused: pruning has begun, so unbounded mode would count pruned keys again."""
+
+
 class _KeyedRow(Protocol):
     id: uuid.UUID
     collector_id: uuid.UUID
@@ -67,6 +71,27 @@ async def claim_consumed_keys(db: AsyncSession, rows: Sequence[_KeyedRow], consu
         )
         fresh.update(by_hash[key_hash] for key_hash in (await db.execute(statement)).scalars().all())
     return fresh
+
+
+async def consumed_key_exists(db: AsyncSession, row: _KeyedRow) -> bool:
+    """Whether the row's key already has a tombstone. Read-only: it never claims the key."""
+    key_hash = consumed_key_hash(row.collector_id, row.dedup_key)
+    found = await db.execute(select(TelemetryConsumedKey.key_hash).where(TelemetryConsumedKey.key_hash == key_hash))
+    return found.first() is not None
+
+
+async def guard_horizon_clear(db: AsyncSession, *, now: datetime) -> None:
+    """Call before setting the horizon to NULL, in the transaction that changes the policy.
+
+    Takes the ledger state row ``FOR UPDATE``, the same lock a prune run takes before it reads the horizon, so a clear and
+    a prune are serialised: either the prune has already begun (this raises) or it runs afterwards, reads NULL and skips.
+    """
+    state = await _locked_state(db, now=now, for_update=True)
+    if state.pruning_begun_at is not None:
+        raise UnsafeHorizonClear(
+            "Tombstones have already been pruned, so the replay horizon cannot be cleared: unbounded mode would count "
+            "records whose tombstones are gone a second time. Keep a finite horizon."
+        )
 
 
 async def effective_horizon(db: AsyncSession, *, now: datetime) -> timedelta | None:

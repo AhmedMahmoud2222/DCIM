@@ -114,6 +114,14 @@ def prune_consumed_keys(
         raise ValueError("Retention clock must be timezone-aware.")
     database = engine if engine is not None else sync_engine
     with database.begin() as conn:
+        # Lock the state row BEFORE reading the horizon. Clearing the horizon takes the same lock first
+        # (`guard_horizon_clear`), so a clear and this run are serialised: if the clear commits first this run reads NULL and
+        # skips; if this run gets the lock first it records `pruning_begun_at`, which makes the clear refuse.
+        conn.execute(
+            pg_insert(_LEDGER_STATE_TABLE).values(id=1, ledger_complete_since=instant).on_conflict_do_nothing(
+                index_elements=[_LEDGER_STATE_TABLE.c.id])
+        )
+        conn.execute(select(_LEDGER_STATE_TABLE.c.id).where(_LEDGER_STATE_TABLE.c.id == 1).with_for_update())
         horizon = conn.execute(select(_POLICY_TABLE.c.late_replay_horizon_days).where(_POLICY_TABLE.c.id == 1)).scalar()
         if horizon is None:
             result: dict[str, int | bool | str] = {"skipped": True, "reason": "horizon_unset", "deleted": 0}
@@ -122,12 +130,9 @@ def prune_consumed_keys(
         cutoff_day = (instant - timedelta(days=horizon)).astimezone(UTC).date() - timedelta(days=1)
         cutoff_start = datetime(cutoff_day.year, cutoff_day.month, cutoff_day.day, tzinfo=UTC)
         conn.execute(
-            pg_insert(_LEDGER_STATE_TABLE).values(id=1, ledger_complete_since=instant).on_conflict_do_nothing(
-                index_elements=[_LEDGER_STATE_TABLE.c.id])
-        )
-        conn.execute(
             update(_LEDGER_STATE_TABLE).where(_LEDGER_STATE_TABLE.c.id == 1).values(
-                ledger_complete_since=func.greatest(_LEDGER_STATE_TABLE.c.ledger_complete_since, cutoff_start))
+                ledger_complete_since=func.greatest(_LEDGER_STATE_TABLE.c.ledger_complete_since, cutoff_start),
+                pruning_begun_at=func.coalesce(_LEDGER_STATE_TABLE.c.pruning_begun_at, instant))
         )
     deleted_total = 0
     limit_reached = True

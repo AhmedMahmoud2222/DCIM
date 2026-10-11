@@ -664,6 +664,7 @@ class ReplayLedgerStatus(BaseModel):
     ledger_complete_since: datetime
     last_pruned_at: datetime | None
     last_pruned_count: int | None
+    pruning_begun_at: datetime | None
     oldest_consumed_day: date | None
     approximate_tombstones: int
     warnings: list[str]
@@ -692,7 +693,8 @@ async def replay_ledger_status(
     return ReplayLedgerStatus(
         late_replay_horizon_days=horizon, effective_horizon_days=effective,
         ledger_complete_since=state.ledger_complete_since, last_pruned_at=state.last_pruned_at,
-        last_pruned_count=state.last_pruned_count, oldest_consumed_day=oldest,
+        last_pruned_count=state.last_pruned_count, pruning_begun_at=state.pruning_begun_at,
+        oldest_consumed_day=oldest,
         approximate_tombstones=int(estimate), warnings=warnings,
     )
 

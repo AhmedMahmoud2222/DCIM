@@ -20,7 +20,12 @@ from typing import cast
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.telemetry_ledger import claim_consumed_keys, enforce_horizon, note_duplicate_suppressed
+from app.application.telemetry_ledger import (
+    claim_consumed_keys,
+    consumed_key_exists,
+    enforce_horizon,
+    note_duplicate_suppressed,
+)
 from app.domain.telemetry.aggregate_math import (
     BASIS_EXACT,
     BASIS_LEGACY_SEEDED,
@@ -81,11 +86,23 @@ async def merge_late_reading(
     exactly as they were once the caller's savepoint rolls back.
     """
     instant = as_utc(now) if now is not None else datetime.now(UTC)
-    cutoff = await compaction_cutover(db, now=now, retention_days=retention_days)
-    # A day is compacted only after the whole UTC calendar day has aged out.
-    if utc_day(reading.occurred_at) >= cutoff:
-        return LateMergeOutcome.STAYS_RAW
     day = utc_day(reading.occurred_at)
+    if day >= instant.date():
+        return LateMergeOutcome.STAYS_RAW  # compaction only ever aggregates days that have already ended
+    cutoff = await compaction_cutover(db, now=now, retention_days=retention_days)
+    if day >= cutoff:
+        # The current raw-retention setting calls this day uncompacted, but an aggregate can still exist for it if the setting
+        # was raised after compaction. Which keys were consumed is history, independent of today's setting, so the stored
+        # aggregate (not the policy) decides whether the horizon and the ledger apply. The reading is only checked, never
+        # claimed: a fresh record stays raw and is consumed by a later compaction.
+        if not await _aggregate_exists(db, reading.series_key, day):
+            return LateMergeOutcome.STAYS_RAW
+        await enforce_horizon(db, occurred_at=reading.occurred_at, now=instant)
+        if await consumed_key_exists(db, reading):
+            note_duplicate_suppressed(path="late_merge_raised_retention")
+            return LateMergeOutcome.DUPLICATE
+        return LateMergeOutcome.STAYS_RAW
+    # A day is compacted only after the whole UTC calendar day has aged out.
     aggregate = await _locked_aggregate(db, reading.series_key, day)
     if aggregate is None:
         return LateMergeOutcome.STAYS_RAW  # normal compactor will create the first aggregate from retained raw rows
@@ -97,6 +114,15 @@ async def merge_late_reading(
     # propagates to the caller-owned transaction (the ingest savepoint), so no evidence is deleted on failure.
     _fold_into(aggregate, state_of([cast(Decimal, reading.value)]))
     return LateMergeOutcome.MERGED
+
+
+async def _aggregate_exists(db: AsyncSession, series_key: str, day: date) -> bool:
+    found = await db.execute(
+        select(DailyTelemetryAggregate.id).where(
+            DailyTelemetryAggregate.series_key == series_key, DailyTelemetryAggregate.day == day
+        ).limit(1)
+    )
+    return found.first() is not None
 
 
 async def _locked_aggregate(db: AsyncSession, series_key: str, day: date) -> DailyTelemetryAggregate | None:

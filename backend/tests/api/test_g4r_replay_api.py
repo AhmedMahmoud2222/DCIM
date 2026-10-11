@@ -29,7 +29,7 @@ OLD = datetime.now(UTC) - timedelta(days=400)
 async def world(client, auth_headers, db_session):
     await db_session.execute(update(MonitoringPolicy).values(late_replay_horizon_days=None))
     await db_session.execute(update(TelemetryReplayLedgerState).values(
-        ledger_complete_since=datetime(2020, 1, 1, tzinfo=UTC), last_pruned_at=None, last_pruned_count=None))
+        ledger_complete_since=datetime(2020, 1, 1, tzinfo=UTC), last_pruned_at=None, last_pruned_count=None, pruning_begun_at=None))
     await db_session.commit()
     headers = await auth_headers("Administrator")
     collector, integration = await collector_with_integration(client, headers, integration_type="icmp")
@@ -195,3 +195,68 @@ def test_collector_classifies_the_new_code_as_permanent_and_unknown_codes_as_ret
     assert classify_telemetry_ack({"status": "rejected", "error": "REPLAY_HORIZON_EXCEEDED"}) == "acknowledge"
     assert classify_telemetry_ack({"status": "rejected", "error": "SOME_FUTURE_CODE"}) == "retry"
     assert classify_telemetry_ack({"status": "duplicate"}) == "acknowledge"
+
+
+async def test_raised_raw_retention_redelivery_is_a_duplicate_with_no_raw_row_and_no_alarm(client, world, db_session):
+    """Codex P1-1 over signed HTTP: 365 -> 730 days must not let a consumed key back in as raw history."""
+    from app.domain.alarm.models import Alarm
+
+    await post_telemetry(client, world["collector"], [record(world, 10, "k1"), record(world, 20, "k2", minutes=1)])
+    await compact(db_session)
+    before = await aggregate(db_session)
+    await db_session.execute(update(MonitoringPolicy).values(raw_retention_days=730))
+    await db_session.commit()
+    (ack,) = await post_telemetry(client, world["collector"], [record(world, 10, "k1")])
+    assert ack["status"] == "duplicate"
+    after = await aggregate(db_session)
+    assert (after.sample_count, after.sum_value) == (before.sample_count, before.sum_value)
+    assert (await db_session.execute(select(func.count()).select_from(TelemetryReading))).scalar_one() == 0
+    assert (await db_session.execute(select(func.count()).select_from(Alarm))).scalar_one() == 0
+    # A fresh record on that day stays raw and is not claimed as consumed.
+    (fresh,) = await post_telemetry(client, world["collector"], [record(world, 30, "k3", minutes=2)])
+    assert fresh["status"] == "accepted"
+    assert (await db_session.execute(select(func.count()).select_from(TelemetryReading))).scalar_one() == 1
+    assert await tombstones(db_session) == 2
+    # With a finite horizon the same compacted day refuses over-horizon data.
+    await db_session.execute(update(MonitoringPolicy).values(late_replay_horizon_days=30))
+    await db_session.commit()
+    (refused,) = await post_telemetry(client, world["collector"], [record(world, 40, "k4", minutes=3)])
+    assert (refused["status"], refused["error"]) == ("rejected", "REPLAY_HORIZON_EXCEEDED")
+
+
+async def test_hold_release_after_a_retention_increase_still_respects_the_finite_horizon(client, world, db_session):
+    await post_telemetry(client, world["collector"], [record(world, 10, "k1")])
+    await compact(db_session)
+    first = world["mapping"]["current_revision_id"]
+    await append_mapping_revision(db_session, uuid.UUID(world["mapping"]["id"]), unit="degF")
+    await db_session.commit()
+    await post_telemetry(client, world["collector"], [record(world, 68, "held", minutes=9, mapping_revision_id=None)])
+    hold_id = (await db_session.execute(select(TelemetryContractHold.id))).scalar_one()
+    await db_session.execute(update(MonitoringPolicy).values(raw_retention_days=730, late_replay_horizon_days=30))
+    await db_session.commit()
+    refused = await client.post(f"/api/v1/telemetry/contract-holds/{hold_id}/resolve",
+                                json={"mapping_revision_id": first}, headers=world["headers"])
+    assert refused.status_code == 409
+    db_session.expire_all()
+    assert (await db_session.execute(select(TelemetryContractHold.status))).scalar_one() == "held"
+
+
+async def test_clearing_the_horizon_over_the_api_is_refused_after_pruning_but_allowed_before(client, world, db_session):
+    from app.infrastructure.tasks import maintenance
+
+    headers = world["headers"]
+    current = (await client.get("/api/v1/settings/monitoring", headers=headers)).json()
+    body = {k: v for k, v in current.items() if k != "late_replay_horizon_days"}
+    await client.put("/api/v1/settings/monitoring", json={**body, "late_replay_horizon_days": 5}, headers=headers)
+    allowed = await client.put("/api/v1/settings/monitoring", json={**body, "late_replay_horizon_days": None}, headers=headers)
+    assert allowed.status_code == 200 and allowed.json()["late_replay_horizon_days"] is None
+    await client.put("/api/v1/settings/monitoring", json={**body, "late_replay_horizon_days": 5}, headers=headers)
+    maintenance.prune_consumed_keys(now=datetime.now(UTC) + timedelta(days=30))
+    refused = await client.put("/api/v1/settings/monitoring", json={**body, "late_replay_horizon_days": None}, headers=headers)
+    assert refused.status_code == 409 and "cannot be cleared" in refused.json()["title"].lower()
+    still = (await client.get("/api/v1/settings/monitoring", headers=headers)).json()
+    assert still["late_replay_horizon_days"] == 5
+    status = (await client.get("/api/v1/telemetry/replay-ledger", headers=headers)).json()
+    assert status["pruning_begun_at"] is not None
+    raised = await client.put("/api/v1/settings/monitoring", json={**body, "late_replay_horizon_days": 60}, headers=headers)
+    assert raised.status_code == 200

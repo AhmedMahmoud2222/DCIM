@@ -292,6 +292,9 @@ class TelemetryReplayLedgerState(Base):
     ledger_complete_since: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     last_pruned_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     last_pruned_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Set by the first prune run, in the same statement that first advances `ledger_complete_since`. From then on tombstones
+    # are missing for old keys, so the horizon can no longer be cleared (NULL mode would double count them).
+    pruning_begun_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class TelemetryContractHold(Base, UUIDPkMixin):
