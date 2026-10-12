@@ -132,17 +132,6 @@ async def instantiate_equipment(
     db.add(equipment)
     await db.flush()
 
-    if _model.category == "pdu":
-        pdu_record = PDU(
-            id=asset.id,
-            name=hostname or asset_tag,
-            ip_address=ip_address,
-            protocol="none",
-            outlet_count=len(psus),
-        )
-        db.add(pdu_record)
-        await db.flush()
-
     ports = list(
         (
             await db.execute(
@@ -152,6 +141,7 @@ async def instantiate_equipment(
             )
         ).scalars()
     )
+
     for template in ports:
         db.add(
             EquipmentPort(
@@ -178,6 +168,17 @@ async def instantiate_equipment(
             )
         ).scalars()
     )
+
+    if _model.category == "pdu":
+        pdu_record = PDU(
+            id=asset.id,
+            name=hostname or asset_tag,
+            ip_address=ip_address,
+            protocol="none",
+            outlet_count=len(psus),
+        )
+        db.add(pdu_record)
+        await db.flush()
     for psu_template in psus:
         for unit in range(psu_template.quantity):
             label = psu_template.label if psu_template.quantity == 1 else f"{psu_template.label} {unit + 1}"
