@@ -19,6 +19,7 @@ export function groupHistoryPoints(points: TelemetryReading[]): TelemetryReading
     const key = JSON.stringify([
       point.series_key ?? point.id, point.provenance_status ?? "unavailable", point.unit,
       point.registry_version ?? null, point.presentation_unit, point.resolution ?? "raw",
+      point.resolution === "daily" ? null : point.mapping_revision_id ?? null,
     ]);
     const group = groups.get(key) ?? [];
     group.push(point);

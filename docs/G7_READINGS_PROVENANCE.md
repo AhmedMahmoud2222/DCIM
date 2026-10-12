@@ -36,3 +36,9 @@ exports alarms, so its unrelated contract is unchanged. Aggregate provenance and
 aggregate filter vocabulary wait for G6 after G4-R merges. Operational acceptance,
 PostgreSQL integration tests and independent review are still required before release.
 All PRs remain draft until G4 completion and owner release authorization.
+
+Raw history grouping also separates recorded mapping revision IDs, conservatively
+finer than the minimum series/status grouping contract. Same-status readings from
+different revisions cannot share a trend or min/max range. Missing revision IDs
+remain unknown; no revision is inferred or conversion changed. Daily rows retain
+their separate aggregate summary contract.

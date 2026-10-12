@@ -70,3 +70,18 @@ it("shows a single unverified reading with its label even without a line", () =>
   expect(screen.getByText("Unverified legacy")).toBeInTheDocument();
   expect(screen.queryByRole("img")).not.toBeInTheDocument();
 });
+
+it("never charts raw readings across different mapping revisions", () => {
+  const base = { ...point("a", 10, "degC"), series_key: "same", provenance_status: "pinned" as const };
+  const points = [
+    { ...base, id: "a", mapping_revision_id: "revision-one", presentation_value: 10 },
+    { ...base, id: "b", mapping_revision_id: "revision-one", presentation_value: 20 },
+    { ...base, id: "c", mapping_revision_id: "revision-two", presentation_value: 100 },
+    { ...base, id: "d", mapping_revision_id: "revision-two", presentation_value: 200 },
+  ];
+  expect(groupHistoryPoints(points)).toHaveLength(2);
+  render(<TelemetryTrend points={points} />);
+  expect(screen.getByRole("img", { name: "Trend from 10 to 20 degC" })).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Trend from 100 to 200 degC" })).toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "Trend from 10 to 200 degC" })).not.toBeInTheDocument();
+});
