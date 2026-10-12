@@ -71,9 +71,9 @@ async def _load_publishable_revision(db: AsyncSession, revision_id: uuid.UUID) -
     model = await db.get(CatalogModel, revision.catalog_model_id)
     assert model is not None
 
-    if model.category != "equipment":
+    if model.category not in ("equipment", "pdu"):
         raise InstantiationRejected(
-            f"CatalogModel {model.id} has category {model.category!r}; only 'equipment' models can be instantiated "
+            f"CatalogModel {model.id} has category {model.category!r}; only 'equipment' and 'pdu' models can be instantiated "
             "as physical equipment."
         )
     if revision.lifecycle_status == "draft":

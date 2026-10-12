@@ -117,7 +117,7 @@ def validate_revision_for_publish(
         if value is None:
             errors.append(ValidationIssue(field=field_name, code="required_for_category", message=message))
 
-    if category in ("rack", "equipment"):
+    if category in ("rack", "equipment", "pdu"):
         require(revision.dimension_unit, "dimension_unit", f"Dimension unit is required for {category} models.")
         require(revision.width_value, "width_value", f"Width is required for {category} models.")
         require(revision.height_value, "height_value", f"Height is required for {category} models.")
@@ -127,7 +127,7 @@ def validate_revision_for_publish(
 
     if category == "rack":
         require(revision.rack_unit_height, "rack_unit_height", "Rack unit height is required for rack models.")
-    elif category == "equipment":
+    elif category in ("equipment", "pdu"):
         placement_types = revision.supported_placement_types or []
         if "rack_mounted" in placement_types:
             require(
@@ -407,7 +407,7 @@ async def publish_revision(
     if not summary.valid:
         raise ValidationFailed(summary)
 
-    if model.category not in ("rack", "equipment"):
+    if model.category not in ("rack", "equipment", "pdu"):
         raise ConflictError(detail=f"category {model.category!r} has no legacy bridge in this phase.")
 
     rack_unit_height, width_mm, depth_mm, weight_kg = _convert_physical(revision)
@@ -425,7 +425,7 @@ async def publish_revision(
         await db.flush()
         legacy_revision.bridged_from_catalog_revision_id = revision.id
         revision.legacy_rack_model_revision_id = legacy_revision.id
-    else:
+    elif model.category in ("equipment", "pdu"):
         equipment_model_id = await _find_or_create_equipment_model(
             db, manufacturer_name=manufacturer.name, model_name=model.model_name
         )
