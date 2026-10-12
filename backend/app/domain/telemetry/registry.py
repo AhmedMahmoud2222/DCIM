@@ -98,10 +98,10 @@ UNITS: Mapping[str, UnitDefinition] = {
 UNIT_ALIASES: Mapping[str, str] = {
     "c": "degC",
     "celsius": "degC",
-    "Â°c": "degC",
+    "°c": "degC",
     "f": "degF",
     "fahrenheit": "degF",
-    "Â°f": "degF",
+    "°f": "degF",
     "kelvin": "K",
     "percent": "%",
     "pct": "%",
@@ -203,7 +203,7 @@ def assert_snapshot_hash(snapshot: RegistrySnapshot, expected: str) -> None:
 
 _V1 = make_snapshot("1", UNITS, UNIT_ALIASES, METRIC_REGISTRY)
 # Pinned after capturing the exact shipped v1 definitions; changes require a new version.
-V1_CONTENT_HASH = "735fc99734938085cb6ffcadaac2f296e171aa40a4bcf643c8287a9ec6057e27"
+V1_CONTENT_HASH = "d29e5d41a996e5b081583e87f8e6a270b4040b682432c16aaad7b0f22f9ac6d4"
 assert_snapshot_hash(_V1, V1_CONTENT_HASH)
 UNITS = _V1.units
 UNIT_ALIASES = _V1.aliases

@@ -27,6 +27,17 @@ def test_v1_encoding_and_hash_match_shipped_golden_file():
     assert len(snapshot.content_hash) == 64
 
 
+@pytest.mark.parametrize("source,normalized,value,expected", [
+    ("°C", "degC", "20", "20.00000000"),
+    ("°F", "degF", "68", "20.00000000"),
+])
+def test_shipped_degree_aliases_preserve_pre_snapshot_v1(source, normalized, value, expected):
+    # Capture main's actual Unicode aliases, rather than freezing a mojibake copy.
+    assert registry.normalize_unit(source, registry_version="1") == normalized
+    assert registry.convert_to_canonical("temperature_c", Decimal(value), source,
+                                         registry_version="1").value == Decimal(expected)
+
+
 def test_conversions_ignore_hostile_global_decimal_context():
     with localcontext(Context(prec=6)):
         assert registry.convert_value(Decimal("1000000"), "CFM", "m3/s") == Decimal("471.94744320")

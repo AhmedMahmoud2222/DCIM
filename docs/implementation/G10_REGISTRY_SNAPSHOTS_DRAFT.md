@@ -1,7 +1,7 @@
 # G10 immutable registry snapshots — draft implementation
 
 Authority: Issue #128 comment 6108192722 and design comment 6100092674.
-Source baseline: cloud main b573aaf3b037b4076db200838cf9c6d657513853.
+Integration baseline: cloud main bd12390544164132df90002c3ea40119198db2cb.
 
 Version 1 is frozen, including the eleven existing metric definitions, all unit
 definitions and aliases. Every subsequent definition change requires another
@@ -14,7 +14,7 @@ the unit factors, offsets, aliases, metric dimension, canonical and presentation
 units, precision, rounding and Decimal context. The committed UTF-8 golden file
 and SHA-256 constant pin that encoding. Import refuses changed definitions.
 The v1 content hash is
-`735fc99734938085cb6ffcadaac2f296e171aa40a4bcf643c8287a9ec6057e27`.
+`d29e5d41a996e5b081583e87f8e6a270b4040b682432c16aaad7b0f22f9ac6d4`.
 
 Conversion and mapping-contract hashing use an explicit 28-digit, half-even
 Decimal context. Scaling before canonical conversion occurs inside that context.
@@ -40,26 +40,10 @@ No migration, data backfill, production profiling or registry database ledger
 is included. The database snapshot ledger remains part of the first v2 deliverable.
 Revert code to roll back; historical data is untouched.
 
-Local verification: 56 focused snapshot, G1 hash, physical-unit, cross-version
-power and cooling-conversion tests passed; changed-file Ruff and Mypy passed.
-Alembic reports single head `0048_daily_aggregate_exact_sum`.
-The normal full suite stops at test_login_succeeds_with_correct_credentials:
-repository-default dcim_test authentication fails for dcim_app. Full-app Mypy
-reports 19 Windows-platform attribute errors in the unchanged Linux-only
-catalog extraction sandbox and PDF validation modules; scoped Mypy is clean.
-Required PostgreSQL compatibility, full suite, deployment validation, exact-head
-CI and independent acceptance are not claimed by these focused results.
+## Current remediation and gates
 
-Publication is blocked in this session: Git cannot connect to github.com and the
-configured SSH signing private key is unavailable. No commit, branch or PR was
-published. G4-R PR #137 is open; this deliverable must remain DRAFT even after
-publication, until G4 acceptance and separate owner release approval.
+The published Draft captured mojibake degree aliases. Live main preserves Unicode °c and °f. The corrected golden snapshot and digest restore those shipped definitions; they do not redefine production v1. Regressions preserve Celsius aliases and 68°F → 20°C. The Python 3.14 CI failure came from an unrelated randomized spatial test fixture: a generated RACK-03... tag accidentally matched the imported RACK-03 label. Only the failing test uses deterministic unrelated tags; its assertions and production reconciliation remain unchanged.
 
-Independent review identified source-only v2 alarm unit rejection and dropped
-versions in power consumers. The alarm regression failed before correction, then
-passed. Three consumer regressions failed before implementing version-aware
-canonical projection and hourly normalization; all are green in the focused run.
-Ruling: fixed-unit power/thermal/spatial outputs stay in frozen v1 while source
-interpretation uses each reading's own snapshot. If wrong, a later caller could
-expect a v2 display unit; output contracts would need a separate versioned API.
-The review is not acceptance; required integrated checks remain blocked.
+G4-R is merged. This worktree cleanly integrated main with an uncommitted merge. Alembic has one head, 0049_telemetry_replay_ledger. Current focused snapshot, conversion, consumer and alarm tests: 62 passed (database-independent run), with Ruff and diff checks passing. Cross-version consumers and the repaired spatial API fixture still require actual PostgreSQL execution. Published CI run38155961069 fails on the old fixture; deployment run38155961068 succeeds. Those runs do not validate unpublished fixes.
+
+Git HTTPS push authentication and authorized signing remain unavailable. No new commit or PR update is published. All work must remain Draft; signed exact-head review, full CI/deployment validation and owner release authorization remain gates. No merge or deployment is authorized.
