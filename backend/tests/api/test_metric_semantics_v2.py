@@ -76,13 +76,8 @@ async def test_v2_canonical_storage_overflow_retains_numeric_error(client, auth_
     from tests.api.test_telemetry_invalid_numeric import _setup
 
     collector, integration = await _setup(
-        client, auth_headers, db_session, metric="humidity_percent", unit="1",
+        client, auth_headers, db_session, metric="humidity_percent", unit="1", registry_version="2",
     )
-    from app.domain.telemetry.models import IntegrationMetricMapping
-
-    mapping = (await db_session.execute(select(IntegrationMetricMapping))).scalar_one()
-    mapping.registry_version = "2"
-    await db_session.commit()
     response = await _post(client, collector, integration, [("overflow", "9999999999"), ("domain", "1.01"), ("valid", "0.5")])
     assert response.status_code == 200, response.text
     assert [(r["status"], r["error"]) for r in response.json()["results"]] == [
