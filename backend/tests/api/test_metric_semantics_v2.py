@@ -83,7 +83,7 @@ async def test_v2_canonical_storage_overflow_retains_numeric_error(client, auth_
     mapping = (await db_session.execute(select(IntegrationMetricMapping))).scalar_one()
     mapping.registry_version = "2"
     await db_session.commit()
-    response = await _post(client, collector, integration, [("overflow", "9999999999"), ("domain", "1.01"), ("valid", ".5")])
+    response = await _post(client, collector, integration, [("overflow", "9999999999"), ("domain", "1.01"), ("valid", "0.5")])
     assert response.status_code == 200, response.text
     assert [(r["status"], r["error"]) for r in response.json()["results"]] == [
         ("rejected", "INVALID_TELEMETRY_VALUE"), ("rejected", "VALUE_OUT_OF_RANGE"), ("accepted", None),
