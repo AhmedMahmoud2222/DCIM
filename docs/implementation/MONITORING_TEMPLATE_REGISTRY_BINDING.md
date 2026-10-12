@@ -45,8 +45,9 @@ backfill is introduced in this scope. G9a publication policy is independent.
 `0052_monitoring_template_binding` adds three nullable columns to
 `monitoring_metric_template`, without defaults or backfill. Existing rows stay
 unbound. Its current parent is `0049_telemetry_replay_ledger`; this isolated
-worktree has exactly one Alembic head, `0052_monitoring_template_binding`.
-G8 0050, G6 0051 and the G5 registry snapshot ledger 0053 are sibling Draft migrations. Their final accepted order
+dependent worktree has exactly one Alembic head, `0052_monitoring_template_binding`,
+parented to the required G5 registry snapshot ledger `0053_registry_version_snapshot`.
+G8 0050 and G6 0051 remain sibling Draft migrations. Their final accepted order
 must be reconciled before integration; the combined branch must have exactly
 one head. The provisional numbering is not evidence that the other migrations
 have landed.

@@ -1,14 +1,14 @@
 """G9b optional monitoring-template registry binding; existing rows remain unbound.
 
-Provisional sibling migration: recheck/reparent after G8/G6 land; never merge with
-multiple heads. No historical backfill or published-template rewriting.
+Dependent migration on G5's registry snapshot ledger. No historical backfill or
+published-template rewriting.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0052_monitoring_template_binding"
-down_revision = "0049_telemetry_replay_ledger"
+down_revision = "0053_registry_version_snapshot"
 branch_labels = None
 depends_on = None
 

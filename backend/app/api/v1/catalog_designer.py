@@ -1225,10 +1225,9 @@ async def create_monitoring_metric(
     if_match_version: int = Depends(require_if_match),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> MonitoringMetricTemplateOut:
-    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
-
     metric = MonitoringMetricTemplate(catalog_model_revision_id=revision_id, **body.model_dump())
     _validate_monitoring_binding(metric)
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     db.add(metric)
     await db.flush()
     await _write_child_audit(
@@ -1256,7 +1255,14 @@ async def update_monitoring_metric(
 
     for field_name, value in body.model_dump(exclude_unset=True).items():
         setattr(metric, field_name, value)
-    _validate_monitoring_binding(metric)
+    try:
+        _validate_monitoring_binding(metric)
+    except ApiError:
+        # The request-scoped test/application session can remain alive after an
+        # handled 422. Roll back the parent version bump and field mutations
+        # before the exception handler returns the validation response.
+        await db.rollback()
+        raise
     await db.flush()
     await _write_child_audit(
         db, request, ctx, revision_id, action="catalog.revision.update_draft", after={"metric_id": str(metric.id)},

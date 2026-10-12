@@ -9,14 +9,14 @@ from tests.api.test_catalog_designer_lifecycle import _make_draft, _make_manufac
 
 async def make_revision(client, headers):
     manufacturer = await _make_manufacturer(client, headers)
-    model = await _make_model(client, headers, manufacturer, category="server")
+    model = await _make_model(client, headers, manufacturer, category="equipment")
     return await _make_draft(client, headers, model)
 
 
 def body(**changes):
     return {
         "stable_key": "temperature", "metric_name": "temperature", "protocol": "snmp",
-        "value_type": "float", "unit": "degF", "scale": 0.1,
+        "oid": "1.3.6.1.4.1.999.1", "value_type": "float", "unit": "degF", "scale": 0.1,
         "registry_metric": "temperature_c", "registry_version": "2", "threshold_unit": "degF",
         "default_warning_threshold": 95,
     } | changes
@@ -96,6 +96,14 @@ async def test_published_binding_clones_without_reinterpretation(client, auth_he
 
 
 async def test_concurrent_binding_edits_have_one_revision_winner(client, auth_headers):
+    import os
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.api.deps import get_db
+    from app.main import app
+
     headers = await auth_headers("Administrator")
     revision = await make_revision(client, headers)
     url = f"/api/v1/catalog/revisions/{revision['id']}/monitoring-metrics"
@@ -104,11 +112,28 @@ async def test_concurrent_binding_edits_have_one_revision_winner(client, auth_he
     metric = created.json()
     update_url = f"{url}/{metric['id']}"
     concurrent_headers = {**headers, "If-Match": str(metric["revision_version"])}
-    responses = await asyncio.gather(
-        client.patch(update_url, json={"unit": "degC", "scale": 1}, headers=concurrent_headers),
-        client.patch(update_url, json={"threshold_unit": "degC", "default_warning_threshold": 35},
-                     headers=concurrent_headers),
-    )
+    engine = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def independent_db():
+        async with sessions() as session:
+            yield session
+
+    original_override = app.dependency_overrides[get_db]
+    app.dependency_overrides[get_db] = independent_db
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as first, AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as second:
+            responses = await asyncio.gather(
+                first.patch(update_url, json={"unit": "degC", "scale": 1}, headers=concurrent_headers),
+                second.patch(update_url, json={"threshold_unit": "degC", "default_warning_threshold": 35},
+                             headers=concurrent_headers),
+            )
+    finally:
+        app.dependency_overrides[get_db] = original_override
+        await engine.dispose()
     assert sorted(response.status_code for response in responses) == [200, 409]
     read = await client.get(f"/api/v1/catalog/revisions/{revision['id']}", headers=headers)
     assert read.status_code == 200, read.text
