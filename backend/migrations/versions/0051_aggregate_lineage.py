@@ -81,8 +81,8 @@ def downgrade() -> None:
         raise RuntimeError('Cannot downgrade 0051: aggregate lineage evidence exists; retain the schema and stop writes.')
     op.drop_table('daily_telemetry_aggregate_lineage')
     for name in CHECKS:
-        op.execute(f'ALTER TABLE daily_telemetry_aggregate DROP CONSTRAINT ck_daily_telemetry_aggregate_{name}')
+        op.execute(f'ALTER TABLE daily_telemetry_aggregate DROP CONSTRAINT IF EXISTS ck_daily_telemetry_aggregate_{name}')
     for name in COLUMNS:
         op.drop_column('daily_telemetry_aggregate', name)
-    op.execute('ALTER TABLE monitoring_policy DROP CONSTRAINT ck_monitoring_policy_resolved_hold_retention_positive')
+    op.execute('ALTER TABLE monitoring_policy DROP CONSTRAINT IF EXISTS ck_monitoring_policy_resolved_hold_retention_positive')
     op.drop_column('monitoring_policy', 'resolved_hold_retention_days')
