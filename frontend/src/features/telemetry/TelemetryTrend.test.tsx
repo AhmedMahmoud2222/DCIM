@@ -71,6 +71,21 @@ it("shows a single unverified reading with its label even without a line", () =>
   expect(screen.queryByRole("img")).not.toBeInTheDocument();
 });
 
+it("keeps complete, partial and prelineage aggregate evidence separate", () => {
+  const daily = { ...point("daily", 10, "degC"), resolution: "daily" as const, provenance_status: null };
+  const complete = { ...daily, id: "complete", aggregate_evidence_class: "pinned" as const,
+    lineage_coverage: "complete" as const, raw_evidence_status: "expired" as const };
+  const partial = { ...daily, id: "partial", aggregate_evidence_class: "mixed" as const,
+    lineage_coverage: "partial" as const, raw_evidence_status: "expired" as const };
+  expect(groupHistoryPoints([daily, complete, partial])).toHaveLength(3);
+  render(<TelemetryTrend points={[daily, complete, partial]} />);
+  expect(screen.getByRole("region", { name: "Aggregate lineage unavailable history group" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Pinned; complete aggregate lineage history group" })).toBeInTheDocument();
+  const mixed = screen.getByRole("region", { name: "Mixed evidence; partial aggregate lineage history group" });
+  expect(mixed).toHaveTextContent("Historical contributors have incomplete lineage.");
+  expect(mixed).toHaveTextContent("Raw evidence expired; source numerals cannot be reconstructed.");
+});
+
 it("never charts raw readings across different mapping revisions", () => {
   const base = { ...point("a", 10, "degC"), series_key: "same", provenance_status: "pinned" as const };
   const points = [

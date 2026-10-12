@@ -51,6 +51,7 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.aggregate_math import AggregateArithmeticError
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
+from app.domain.telemetry.lineage import lineage_coverage
 from app.domain.telemetry.models import (
     CANONICAL_METRICS,
     DailyTelemetryAggregate,
@@ -207,8 +208,14 @@ class TelemetryHistoryOut(TelemetryOut):
     series_key: str | None = None
     mapping_revision_id: uuid.UUID | None = None
     contract_evidence: str | None = None
-    # Aggregate provenance stays null until the independently scoped G6/G7 aggregate phase.
+    # Reading provenance stays null for daily rows; aggregate lineage has its own evidence contract.
     provenance_status: ReadingProvenanceStatus | None = None
+    aggregate_evidence_class: Literal["pinned", "inferred", "operator_resolved", "unverified", "mixed"] | None = None
+    lineage_coverage: Literal["none", "partial", "complete"] | None = None
+    lineage_sample_count: int | None = None
+    raw_evidence_status: Literal["available", "expired", "unknown"] = "available"
+    first_compacted_at: datetime | None = None
+    raw_retention_days_at_compaction: int | None = None
     resolution: str = "raw"
     minimum_value: float | None = None
     maximum_value: float | None = None
@@ -812,6 +819,12 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         occurred_at=occurred_at,
         received_at=occurred_at,
         resolution="daily",
+        aggregate_evidence_class=row.evidence_class,
+        lineage_coverage=lineage_coverage(row.sample_count, row.lineage_sample_count or 0),
+        lineage_sample_count=row.lineage_sample_count,
+        raw_evidence_status="expired" if row.first_compacted_at is not None else "unknown",
+        first_compacted_at=row.first_compacted_at,
+        raw_retention_days_at_compaction=row.raw_retention_days_at_compaction,
         minimum_value=float(row.minimum_value),
         maximum_value=float(row.maximum_value),
         presentation_minimum_value=float(minimum.value) if minimum is not None else float(row.minimum_value),

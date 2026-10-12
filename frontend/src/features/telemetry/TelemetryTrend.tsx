@@ -6,7 +6,13 @@ const labels = {
 };
 
 export function provenanceLabel(point: TelemetryReading): string {
-  if (point.resolution === "daily") return "Aggregate provenance pending";
+  if (point.resolution === "daily") {
+    if (!point.lineage_coverage || point.lineage_coverage === "none") return "Aggregate lineage unavailable";
+    const evidence = point.aggregate_evidence_class === "mixed" ? "Mixed evidence" :
+      point.aggregate_evidence_class === "unverified" ? "Unverified evidence" :
+      point.aggregate_evidence_class ? labels[point.aggregate_evidence_class] : "Evidence unavailable";
+    return `${evidence}; ${point.lineage_coverage} aggregate lineage`;
+  }
   return point.provenance_status ? labels[point.provenance_status] : "Provenance unavailable";
 }
 
@@ -20,6 +26,7 @@ export function groupHistoryPoints(points: TelemetryReading[]): TelemetryReading
       point.series_key ?? point.id, point.provenance_status ?? "unavailable", point.unit,
       point.registry_version ?? null, point.presentation_unit, point.resolution ?? "raw",
       point.resolution === "daily" ? null : point.mapping_revision_id ?? null,
+      point.aggregate_evidence_class ?? null, point.lineage_coverage ?? null, point.raw_evidence_status ?? null,
     ]);
     const group = groups.get(key) ?? [];
     group.push(point);
@@ -53,6 +60,10 @@ export function TelemetryTrend({ points }: { points: TelemetryReading[] }) {
     {mixedUnits && <p className="mb-3 text-xs text-slate-400">This history contains multiple units. Review the values and units below.</p>}
     {groups.map((group) => <section key={group[0].id} className="mb-3" aria-label={`${provenanceLabel(group[0])} history group`}>
       <p className="text-xs text-slate-300"><span title="Contract provenance records how Central interpreted a reading; it does not certify a physical sensor.">{provenanceLabel(group[0])}</span> <span className="text-slate-400">{group[0].series_key ?? "Series unavailable"}</span></p>
+      {group[0].resolution === "daily" && <p className="text-xs text-amber-300">
+        {group[0].raw_evidence_status === "expired" ? "Raw evidence expired; source numerals cannot be reconstructed." : "Raw evidence expiry metadata unavailable."}
+        {group[0].lineage_coverage === "partial" && " Historical contributors have incomplete lineage."}
+      </p>}
       {/* Preserve the existing mixed-presentation-unit guard for the whole response. */}
       {!mixedUnits && <GroupTrend points={group} />}
     </section>)}

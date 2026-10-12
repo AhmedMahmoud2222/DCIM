@@ -8,6 +8,12 @@ export interface TelemetryReading {
   mapping_revision_id?: string | null;
   contract_evidence?: string | null;
   provenance_status?: ReadingProvenanceStatus | null;
+  aggregate_evidence_class?: "pinned" | "inferred" | "operator_resolved" | "unverified" | "mixed" | null;
+  lineage_coverage?: "none" | "partial" | "complete" | null;
+  lineage_sample_count?: number | null;
+  raw_evidence_status?: "available" | "expired" | "unknown";
+  first_compacted_at?: string | null;
+  raw_retention_days_at_compaction?: number | null;
   id: string;
   integration_id: string;
   managed_asset_id: string | null;
