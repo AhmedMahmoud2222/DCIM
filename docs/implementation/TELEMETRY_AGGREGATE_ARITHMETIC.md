@@ -1,7 +1,7 @@
 # Daily telemetry aggregate arithmetic (Issue #128 / G4-A)
 
 Scope: how `compact_eligible_raw` and `merge_late_reading` compute `daily_telemetry_aggregate` rows. Out of scope and
-unchanged: retention cutoffs and history reads (G2), replay/dedup of consumed readings (G4-R, design only), evidence
+unchanged: retention cutoffs and history reads (G2), replay/dedup of consumed readings (G4-R, see TELEMETRY_REPLAY_LEDGER.md), evidence
 lifetime (G6), API trust labels (G7). Nothing in this repository schedules compaction.
 
 ## Contract
@@ -90,6 +90,7 @@ existing behaviour that G4-A does not introduce or hide; `test_r3a_...` reproduc
 
 ## What this does not fix
 
-A reading that is redelivered after compaction or a late merge has already deleted its row is still counted again, because the
-dedup key lives only on `telemetry_reading`. G4-A makes the sum exact for the samples it is given; it does not make the sample
-set duplicate-free. That is G4-R, which is design only. Until it exists, do not schedule compaction.
+G4-A makes the sum exact for the samples it is given; it does not make the sample set duplicate-free. Issue #128 / G4-R
+adds the consumed-key ledger that stops a redelivered record from being counted again, with the limits described in
+[TELEMETRY_REPLAY_LEDGER.md](TELEMETRY_REPLAY_LEDGER.md) (notably the pre-ledger coverage gap and the unbounded ledger
+growth while no horizon is configured). Compaction stays unscheduled until the operator checklist in that document is done.
