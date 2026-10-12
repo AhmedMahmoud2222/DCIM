@@ -18,7 +18,7 @@ def run(connection, direction):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     context = MigrationContext.configure(connection)
-    with Operations.context(context):
+    with Operations.context(context), context.begin_transaction():
         getattr(module, direction)()
 
 
