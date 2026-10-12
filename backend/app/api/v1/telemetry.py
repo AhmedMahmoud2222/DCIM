@@ -50,8 +50,8 @@ from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.aggregate_math import AggregateArithmeticError
-from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.lineage import lineage_coverage
+from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
 from app.domain.telemetry.models import (
     CANONICAL_METRICS,
     DailyTelemetryAggregate,
