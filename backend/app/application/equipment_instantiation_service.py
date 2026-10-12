@@ -118,6 +118,27 @@ async def instantiate_equipment(
     db.add(asset)
     await db.flush()
 
+    psus = list(
+        (
+            await db.execute(
+                select(PowerSupplyTemplate)
+                .where(PowerSupplyTemplate.catalog_model_revision_id == revision.id)
+                .order_by(PowerSupplyTemplate.sort_order)
+            )
+        ).scalars()
+    )
+
+    if _model.category == "pdu":
+        pdu_record = PDU(
+            id=asset.id,
+            name=hostname or asset_tag,
+            ip_address=ip_address,
+            protocol="none",
+            outlet_count=None,
+        )
+        db.add(pdu_record)
+        await db.flush()
+
     equipment = Equipment(
         id=asset.id,
         model_revision_id=legacy_revision.id,
@@ -159,26 +180,6 @@ async def instantiate_equipment(
             )
         )
 
-    psus = list(
-        (
-            await db.execute(
-                select(PowerSupplyTemplate)
-                .where(PowerSupplyTemplate.catalog_model_revision_id == revision.id)
-                .order_by(PowerSupplyTemplate.sort_order)
-            )
-        ).scalars()
-    )
-
-    if _model.category == "pdu":
-        pdu_record = PDU(
-            id=asset.id,
-            name=hostname or asset_tag,
-            ip_address=ip_address,
-            protocol="none",
-            outlet_count=len(psus),
-        )
-        db.add(pdu_record)
-        await db.flush()
     for psu_template in psus:
         for unit in range(psu_template.quantity):
             label = psu_template.label if psu_template.quantity == 1 else f"{psu_template.label} {unit + 1}"
