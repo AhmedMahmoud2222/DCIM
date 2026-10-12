@@ -38,8 +38,8 @@ async def prepare(connection):
     await connection.run_sync(run, "upgrade")
 
 
-async def test_fresh_seeded_and_populated_v1_roundtrip_and_append_only(db_engine):
-    async with db_engine.connect() as connection:
+async def test_fresh_seeded_and_populated_v1_roundtrip_and_append_only(_admin_engine):
+    async with _admin_engine.connect() as connection:
         transaction = await connection.begin()
         try:
             await prepare(connection)
@@ -66,8 +66,8 @@ async def test_fresh_seeded_and_populated_v1_roundtrip_and_append_only(db_engine
 
 
 @pytest.mark.parametrize("table", CONSUMERS)
-async def test_populated_v2_guard_locks_consumers_and_preserves_evidence(db_engine, table):
-    async with db_engine.connect() as connection:
+async def test_populated_v2_guard_locks_consumers_and_preserves_evidence(_admin_engine, table):
+    async with _admin_engine.connect() as connection:
         transaction = await connection.begin()
         try:
             await prepare(connection)
