@@ -21,6 +21,7 @@ test("equipment history separates contract evidence and preserves legacy display
     let body: unknown = [];
     if (path === "/api/v1/auth/login") body = { access_token: "fixture-token" };
     else if (path === "/api/v1/auth/me") body = { id: asset, email: "g7@example.test", full_name: "G7", role_names: [], permission_codes: [] };
+    else if (path === "/api/v1/equipment") body = { items: [{ id: asset, hostname: "G7 fixture", asset_tag: "G7", lifecycle_status: "active", created_at: at, version: 1, placement: null }], next_cursor: null };
     else if (path === `/api/v1/equipment/${asset}`) body = { id: asset, hostname: "G7 fixture", asset_tag: "G7", lifecycle_status: "active", created_at: at, version: 1, placement: null };
     else if (path.endsWith("/ports")) body = { ports: [], power_inlets: [] };
     else if (path.endsWith("/power-summary")) body = null;
@@ -34,8 +35,9 @@ test("equipment history separates contract evidence and preserves legacy display
   await page.getByLabel("Password").fill("FixturePassw0rd!");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL("/");
-  // Client navigation preserves the in-memory token.
-  await page.evaluate((id) => { window.history.pushState({}, "", `/equipment/${id}`); window.dispatchEvent(new PopStateEvent("popstate")); }, asset);
+  // Use application links so BrowserRouter owns both transitions and the in-memory token survives.
+  await page.getByRole("link", { name: "Equipment" }).first().click();
+  await page.getByRole("link", { name: "G7 fixture" }).click();
   await expect(page.getByRole("heading", { name: "G7 fixture" })).toBeVisible();
   const pinned = page.getByRole("region", { name: "Pinned history group" });
   const unverified = page.getByRole("region", { name: "Unverified registry history group" });
