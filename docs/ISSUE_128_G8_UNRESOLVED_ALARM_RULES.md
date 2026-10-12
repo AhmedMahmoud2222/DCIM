@@ -1,6 +1,6 @@
 # Issue 128 G8: unresolved legacy alarm rules (DRAFT)
 
-Prototype baseline: cloud main `b573aaf3b037b4076db200838cf9c6d657513853`.
+Integration baseline: cloud main `bd12390544164132df90002c3ea40119198db2cb`.
 Owner authorization: issue 128 comment 6108192722; source design 6100092674.
 Do not merge, deploy, mark ready, or close issue 128 until G4-R is merged and
 independently accepted and the owner approves release.
@@ -90,12 +90,22 @@ and first-block marker. Populated downgrade refuses while any column has
 evidence, holding an ACCESS EXCLUSIVE lock across the check/removal to prevent
 a concurrent writer slipping between them. No existing rule unit is rewritten.
 
-**Provisional chain:** 0050 is reserved after open PR 137's 0049, but this isolated
-prototype points to current main's `0048_daily_aggregate_exact_sum`. Recheck and
-reparent to the actually merged G4-R revision before integration. Do not merge
-the parallel migration head; the release migration chain is not complete.
+**Reconciled chain:** 0050 follows merged G4-R's
+`0049_telemetry_replay_ledger`. A regression reads the complete Alembic graph
+and requires exactly this single head. Sibling migrations in other Draft PRs
+must be reconciled before their eventual integration.
 Rehearse populated upgrade, FK behavior, clean downgrade, populated refusal and
 lock behavior on a disposable PostgreSQL test database after reconciliation.
+
+### Hold-release lock order
+
+The published draft omitted the recovered rule-first hold-release correction.
+The release route now reads the hold's integration identity without locking,
+locks its enabled rules in UUID order, then locks and reloads the hold before
+ingestion. Its bounded rule snapshot is removed on success and exceptions.
+This matches collector batches' rule-before-hold/aggregate/ledger hierarchy;
+G4-R's replay-horizon refusal and savepoint behavior remain intact. Unit lock
+ordering tests run locally; real two-session PostgreSQL acceptance is pending.
 
 ## Validation and outstanding gates
 

@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 
 def migration():
@@ -14,6 +16,14 @@ def migration():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_resolution_migration_follows_replay_ledger_as_single_head():
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "migrations"))
+    directory = ScriptDirectory.from_config(config)
+    assert directory.get_heads() == ["0050_alarm_rule_resolution"]
+    assert directory.get_revision("0050_alarm_rule_resolution").down_revision == "0049_telemetry_replay_ledger"
 
 
 def test_upgrade_is_nullable_without_backfill():
