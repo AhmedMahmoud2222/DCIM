@@ -148,7 +148,7 @@ async def test_pdu_catalog_lifecycle_and_instantiation(client, auth_headers, db_
 
     asset = await db_session.get(ManagedAsset, equipment_id)
     assert asset is not None
-    assert asset.asset_type == "equipment"
+    assert asset.asset_type == "pdu"
 
     # Verify Power Inlet + Power Node creation
     inlets = (

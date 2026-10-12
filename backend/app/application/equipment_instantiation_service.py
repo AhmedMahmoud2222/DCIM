@@ -49,7 +49,7 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.network.cable_models import Cable
 from app.domain.physical.models import Equipment
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection
-from app.domain.power.models import PowerNode
+from app.domain.power.models import PDU, PowerNode
 
 
 class InstantiationRejected(Exception):
@@ -113,7 +113,8 @@ async def instantiate_equipment(
     legacy_revision = await db.get(EquipmentModelRevision, revision.legacy_equipment_model_revision_id)
     assert legacy_revision is not None
 
-    asset = ManagedAsset(asset_type="equipment", asset_tag=asset_tag, lifecycle_status="planned")
+    asset_type = "pdu" if _model.category == "pdu" else "equipment"
+    asset = ManagedAsset(asset_type=asset_type, asset_tag=asset_tag, lifecycle_status="planned")
     db.add(asset)
     await db.flush()
 
@@ -130,6 +131,17 @@ async def instantiate_equipment(
     )
     db.add(equipment)
     await db.flush()
+
+    if _model.category == "pdu":
+        pdu_record = PDU(
+            id=asset.id,
+            name=hostname or asset_tag,
+            ip_address=ip_address,
+            protocol="none",
+            outlet_count=len(psus),
+        )
+        db.add(pdu_record)
+        await db.flush()
 
     ports = list(
         (

@@ -116,7 +116,7 @@ export function InstantiatePage() {
               .filter((m) => m.category === "equipment" || m.category === "pdu")
               .map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.model_name} {m.model_number ? `(${m.model_number})` : ""} [{m.category}]
+                  {m.model_name} {m.model_number ? `(${m.model_number})` : ""}
                 </option>
               ))}
           </select>
