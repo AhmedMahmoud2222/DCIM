@@ -14,7 +14,7 @@ import {
   getLatestTelemetry,
   getTelemetryHistory,
 } from "@/features/telemetry/api";
-import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
+import { provenanceLabel, TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
 
@@ -518,7 +518,7 @@ export function EquipmentDetailPage() {
           {historyQuery.isError && <p className="text-sm text-red-400">Unable to load the selected history range.</p>}
           {historyQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No readings in this range.</p>}
           {historyQuery.data && <TelemetryTrend points={historyQuery.data} />}
-          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded-sm bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.presentation_value} avg (${point.presentation_minimum_value}–${point.presentation_maximum_value}, n=${point.sample_count})` : point.presentation_value} {point.presentation_unit} <span className="text-slate-400">{point.resolution ?? "raw"}</span></span></div>)}</div>
+          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded-sm bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.presentation_value} avg (${point.presentation_minimum_value}–${point.presentation_maximum_value}, n=${point.sample_count})` : point.presentation_value} {point.presentation_unit} <span className="text-slate-400">{point.resolution ?? "raw"} · {provenanceLabel(point)}</span></span></div>)}</div>
         </div>
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4"><h2 className="mb-3 text-sm font-semibold text-slate-300">Alarm history</h2>
           {alarmHistoryQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}

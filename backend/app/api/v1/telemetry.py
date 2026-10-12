@@ -13,10 +13,11 @@ power/models.py's `utility_intake` node-type addition)."""
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
-from sqlalchemy import DateTime, and_, cast, func, literal, select, text, union_all
+from sqlalchemy import DateTime, and_, case, cast, func, literal, select, text, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -173,7 +174,41 @@ class TelemetryOut(BaseModel):
     expected_poll_interval_seconds: int | None = None
 
 
+ReadingProvenanceStatus = Literal[
+    "pinned", "inferred", "operator_resolved", "unverified_registry", "unverified_legacy"
+]
+
+
+def reading_provenance_status(row: TelemetryReading) -> ReadingProvenanceStatus:
+    """Stored contract evidence only; this does not certify a physical sensor."""
+    if row.mapping_revision_id is not None:
+        if row.contract_evidence == "pinned":
+            return "pinned"
+        if row.contract_evidence == "inferred_single_revision":
+            return "inferred"
+        if row.contract_evidence == "operator_resolved":
+            return "operator_resolved"
+    return "unverified_legacy" if row.registry_version is None else "unverified_registry"
+
+
+def reading_provenance_expression():
+    """Same conservative derivation in SQL, so filtering precedes the shared history limit."""
+    recorded = TelemetryReading.mapping_revision_id.is_not(None)
+    return case(
+        (and_(recorded, TelemetryReading.contract_evidence == "pinned"), "pinned"),
+        (and_(recorded, TelemetryReading.contract_evidence == "inferred_single_revision"), "inferred"),
+        (and_(recorded, TelemetryReading.contract_evidence == "operator_resolved"), "operator_resolved"),
+        (TelemetryReading.registry_version.is_(None), "unverified_legacy"),
+        else_="unverified_registry",
+    )
+
+
 class TelemetryHistoryOut(TelemetryOut):
+    series_key: str | None = None
+    mapping_revision_id: uuid.UUID | None = None
+    contract_evidence: str | None = None
+    # Aggregate provenance stays null until the independently scoped G6/G7 aggregate phase.
+    provenance_status: ReadingProvenanceStatus | None = None
     resolution: str = "raw"
     minimum_value: float | None = None
     maximum_value: float | None = None
@@ -583,6 +618,9 @@ async def metric_history(
     end: datetime,
     integration_id: uuid.UUID | None = None,
     managed_asset_id: uuid.UUID | None = None,
+    series_key: str | None = Query(default=None, max_length=512),
+    registry_version: str | None = Query(default=None, max_length=32),
+    provenance_status: list[ReadingProvenanceStatus] | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=MAX_HISTORY_POINTS),
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("telemetry:read")),
@@ -610,6 +648,12 @@ async def metric_history(
         raw_stmt = raw_stmt.where(TelemetryReading.integration_id == integration_id)
     if managed_asset_id is not None:
         raw_stmt = raw_stmt.where(TelemetryReading.managed_asset_id == managed_asset_id)
+    if series_key is not None:
+        raw_stmt = raw_stmt.where(TelemetryReading.series_key == series_key)
+    if registry_version is not None:
+        raw_stmt = raw_stmt.where(TelemetryReading.registry_version == registry_version)
+    if provenance_status:
+        raw_stmt = raw_stmt.where(reading_provenance_expression().in_(provenance_status))
     daily_stmt = (
         select(
             DailyTelemetryAggregate.id.label("id"),
@@ -626,6 +670,13 @@ async def metric_history(
         daily_stmt = daily_stmt.where(DailyTelemetryAggregate.integration_id == integration_id)
     if managed_asset_id is not None:
         daily_stmt = daily_stmt.where(DailyTelemetryAggregate.managed_asset_id == managed_asset_id)
+    if series_key is not None:
+        daily_stmt = daily_stmt.where(DailyTelemetryAggregate.series_key == series_key)
+    if registry_version is not None:
+        daily_stmt = daily_stmt.where(DailyTelemetryAggregate.registry_version == registry_version)
+    if provenance_status:
+        # Readings-only filter cannot claim a daily row has a reading's provenance.
+        daily_stmt = daily_stmt.where(literal(False))
     # See telemetry_retention's storage contract: never suppress raw rows merely
     # because their day has an aggregate. SKIP LOCKED compaction may be partial.
     # A single statement prevents READ COMMITTED snapshots straddling compaction
@@ -729,7 +780,11 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
 
 
 def _history_raw(row: TelemetryReading) -> TelemetryHistoryOut:
-    return TelemetryHistoryOut(**_out(row).model_dump(), resolution="raw")
+    return TelemetryHistoryOut(
+        **_out(row).model_dump(), resolution="raw", series_key=row.series_key,
+        mapping_revision_id=row.mapping_revision_id, contract_evidence=row.contract_evidence,
+        provenance_status=reading_provenance_status(row),
+    )
 
 
 def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
@@ -748,6 +803,7 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         metric=row.metric,
         unit=row.unit,
         value=float(row.average_value),
+        series_key=row.series_key,
         # The stored average is exact NUMERIC; there is no source numeral for an aggregate, so no raw_* is invented.
         value_decimal=decimal_text(row.average_value),
         presentation_unit=average.unit if average is not None else row.unit,
