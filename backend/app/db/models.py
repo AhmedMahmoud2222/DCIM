@@ -100,6 +100,8 @@ from app.domain.telemetry.models import (  # noqa: F401
     IntegrationMetricMapping,
     IntegrationMetricMappingRevision,
     MonitoringPolicy,
+    TelemetryConsumedKey,
     TelemetryContractHold,
     TelemetryReading,
+    TelemetryReplayLedgerState,
 )

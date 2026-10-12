@@ -175,3 +175,10 @@ def test_exact_value_survives_the_durable_queue_unchanged(tmp_path):
 def test_the_collector_grammar_is_ascii_and_a_full_match(bad):
     with pytest.raises(ValueError):
         value_numeral(bad)
+
+
+def test_replay_horizon_exceeded_is_a_permanent_rejection_and_unknown_codes_still_retry():
+    from edge_collector.telemetry_contract import classify_telemetry_ack
+
+    assert classify_telemetry_ack({"status": "rejected", "error": "REPLAY_HORIZON_EXCEEDED"}) == "acknowledge"
+    assert classify_telemetry_ack({"status": "rejected", "error": "A_CODE_FROM_THE_FUTURE"}) == "retry"

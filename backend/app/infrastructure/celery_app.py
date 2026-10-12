@@ -42,6 +42,13 @@ celery_app.conf.update(
             "schedule": 3600.0,
             "options": {"queue": "maintenance"},
         },
+        # Issue #128 / G4-R: a strict no-op while monitoring_policy.late_replay_horizon_days is NULL. This prunes consumed-key
+        # tombstones only; it is NOT a telemetry compaction runner and never compacts or deletes telemetry.
+        "prune-consumed-telemetry-keys": {
+            "task": "app.infrastructure.tasks.maintenance.prune_consumed_telemetry_keys",
+            "schedule": 3600.0,
+            "options": {"queue": "maintenance"},
+        },
         "ensure-audit-log-partitions": {
             "task": "app.infrastructure.tasks.audit_partition_maintenance.ensure_future_partitions",
             "schedule": 86400.0,
