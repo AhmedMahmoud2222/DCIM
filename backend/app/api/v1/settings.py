@@ -1,4 +1,7 @@
 """Persisted monitoring-policy settings; edits never trigger immediate cleanup."""
+
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +19,10 @@ class MonitoringPolicyOut(BaseModel):
     raw_retention_days: int = Field(ge=1)
     daily_aggregate_retention_days: int | None = Field(default=None, ge=1)
     alarm_history_retention_days: int | None = Field(default=None, ge=1)
+    # Issue #128 / G4-R. NULL = no age-based rejection of late data and no ledger pruning (the ledger then grows without
+    # bound). A finite value is an owner decision made from representative delay profiling. An omitted field on PUT
+    # leaves the stored value unchanged, so an older client cannot clear it by accident.
+    late_replay_horizon_days: int | None = Field(default=None, ge=1)
 
 @router.get("/monitoring", response_model=MonitoringPolicyOut)
 async def get_monitoring_policy(
@@ -41,8 +48,20 @@ async def update_monitoring_policy(
         "raw_retention_days": policy.raw_retention_days,
         "daily_aggregate_retention_days": policy.daily_aggregate_retention_days,
         "alarm_history_retention_days": policy.alarm_history_retention_days,
+        "late_replay_horizon_days": policy.late_replay_horizon_days,
     }
-    for key, value in body.model_dump().items():
+    changes = body.model_dump(exclude_unset=False)
+    if "late_replay_horizon_days" not in body.model_fields_set:
+        changes.pop("late_replay_horizon_days")
+    if "late_replay_horizon_days" in changes and changes["late_replay_horizon_days"] is None:
+        if policy.late_replay_horizon_days is not None:
+            from app.application.telemetry_ledger import UnsafeHorizonClear, guard_horizon_clear
+            from app.core.errors import ApiError
+            try:
+                await guard_horizon_clear(db, now=datetime.now(UTC))
+            except UnsafeHorizonClear as error:
+                raise ApiError(status_code=409, title="Replay horizon cannot be cleared", detail=str(error)) from error
+    for key, value in changes.items():
         setattr(policy, key, value)
     await write_audit_log(
         db,
@@ -53,7 +72,7 @@ async def update_monitoring_policy(
         request_id=None,
         correlation_id=None,
         before=before,
-        after=body.model_dump(),
+        after={**before, **changes},
     )
     await db.commit()
     return policy
