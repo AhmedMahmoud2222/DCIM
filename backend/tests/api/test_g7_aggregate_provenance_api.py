@@ -12,7 +12,6 @@ from app.domain.telemetry.models import (
     IntegrationMetricMapping,
     IntegrationMetricMappingRevision,
     TelemetryReading,
-    revision_values,
 )
 
 
@@ -27,10 +26,8 @@ async def test_aggregate_history_exposes_lineage_after_compaction(client, auth_h
                                        canonical_metric="temperature_c", unit="degC", scale=1, registry_version="1")
     db_session.add_all([collector, integration, mapping])
     await db_session.flush()
-    revision = IntegrationMetricMappingRevision(**revision_values(mapping, revision=1, provenance="authored",
-                                                                   effective_from=now-timedelta(days=1000)))
-    db_session.add(revision)
-    await db_session.flush()
+    revision = await db_session.get(IntegrationMetricMappingRevision, mapping.current_revision_id)
+    assert revision is not None
     rows = []
     for index, evidence in enumerate((None, "pinned", "inferred_single_revision", "operator_resolved")):
         row = TelemetryReading(id=uuid.uuid4(), collector_id=collector.id, integration_id=integration.id,
