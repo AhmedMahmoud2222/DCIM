@@ -1,8 +1,7 @@
 """G8 unresolved legacy alarm rule visibility and operator resolution.
 
-DRAFT integration: 0050 is reserved after open G4-R's 0049. This isolated
-prototype uses live main's 0048 parent. Reparent to the actually merged G4-R
-revision before release; never merge this parallel head into the final chain.
+Follows merged G4-R's 0049 replay-ledger revision. This keeps the additive
+alarm evidence migration in the single telemetry migration chain.
 Nullable additions, no backfill. Downgrade refuses to discard block/resolution
 evidence and holds the table lock across the check and column removal.
 """
@@ -12,7 +11,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0050_alarm_rule_resolution"
-down_revision = "0048_daily_aggregate_exact_sum"
+down_revision = "0049_telemetry_replay_ledger"
 branch_labels = None
 depends_on = None
 

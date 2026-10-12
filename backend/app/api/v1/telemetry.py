@@ -20,7 +20,7 @@ from sqlalchemy import DateTime, and_, cast, func, literal, select, text, union_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import AlarmUnitCompatibilityError, lock_collector_batch_rules
+from app.application.alarm_service import AlarmUnitCompatibilityError, lock_collector_batch_rules, lock_operator_hold_rules
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -532,8 +532,23 @@ async def resolve_contract_hold(
     This never edits a mapping or a revision; it only ingests the retained record with
     `contract_evidence = 'operator_resolved'` and records who decided and which revision was chosen.
     """
+    # Read identity without a hold lock, then establish the same rule-first hierarchy
+    # as collector batches. Taking the hold or aggregate first can deadlock a batch.
+    integration_id = (await db.execute(
+        select(TelemetryContractHold.integration_id).where(TelemetryContractHold.id == hold_id)
+    )).scalar_one_or_none()
+    if integration_id is None:
+        raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")
+    async with lock_operator_hold_rules(db, integration_id=integration_id):
+        return await _resolve_prelocked_contract_hold(hold_id, body, db, ctx)
+
+
+async def _resolve_prelocked_contract_hold(
+    hold_id: uuid.UUID, body: ContractHoldResolveIn, db: AsyncSession, ctx,
+) -> ContractHoldOut:
     hold = (
-        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update())
+        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update()
+            .execution_options(populate_existing=True))
     ).scalar_one_or_none()
     if hold is None:
         raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")

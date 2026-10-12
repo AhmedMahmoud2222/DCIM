@@ -62,6 +62,32 @@ async def lock_collector_batch_rules(
             db.info[BATCH_ALARM_RULE_IDS] = previous
 
 
+@asynccontextmanager
+async def lock_operator_hold_rules(
+    db: AsyncSession, *, integration_id: uuid.UUID,
+) -> AsyncIterator[None]:
+    """Match collector ordering: rules, then hold, then aggregate/ledger.
+
+    Called only after the telemetry:manage dependency authorizes the operator.
+    Freeze the request rule set so concurrent rule creation cannot add a later
+    out-of-order lock during the release.
+    """
+    rule_ids = tuple((await db.execute(
+        select(AlarmRule.id).where(
+            AlarmRule.integration_id == integration_id, AlarmRule.enabled.is_(True),
+        ).order_by(AlarmRule.id).with_for_update(of=AlarmRule)
+    )).scalars().all())
+    previous = db.info.get(BATCH_ALARM_RULE_IDS)
+    db.info[BATCH_ALARM_RULE_IDS] = rule_ids
+    try:
+        yield
+    finally:
+        if previous is None:
+            db.info.pop(BATCH_ALARM_RULE_IDS, None)
+        else:
+            db.info[BATCH_ALARM_RULE_IDS] = previous
+
+
 class AlarmUnitCompatibilityError(ApiError):
     """An explicit 422 when telemetry cannot preserve an alarm threshold's units."""
 
