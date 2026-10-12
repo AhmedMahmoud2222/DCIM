@@ -21,6 +21,8 @@ test("equipment history separates contract evidence and preserves legacy display
     let body: unknown = [];
     if (path === "/api/v1/auth/login") body = { access_token: "fixture-token" };
     else if (path === "/api/v1/auth/me") body = { id: asset, email: "g7@example.test", full_name: "G7", role_names: [], permission_codes: [] };
+    else if (path === "/api/v1/dashboard/summary") body = null;
+    else if (path === "/api/v1/dashboard/exceptions") body = [];
     else if (path === "/api/v1/equipment") body = { items: [{ id: asset, hostname: "G7 fixture", asset_tag: "G7", lifecycle_status: "active", created_at: at, version: 1, placement: null }], next_cursor: null };
     else if (path === `/api/v1/equipment/${asset}`) body = { id: asset, hostname: "G7 fixture", asset_tag: "G7", lifecycle_status: "active", created_at: at, version: 1, placement: null };
     else if (path.endsWith("/ports")) body = { ports: [], power_inlets: [] };
