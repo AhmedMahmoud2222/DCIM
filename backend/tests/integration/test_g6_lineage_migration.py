@@ -94,7 +94,7 @@ def run_with_probe(connection, probe):
     spec.loader.exec_module(module)
     module.op = ProbingOp(module.op, probe)
     context = MigrationContext.configure(connection)
-    with Operations.context(context):
+    with Operations.context(context), context.begin_transaction():
         module.upgrade()
 
 
