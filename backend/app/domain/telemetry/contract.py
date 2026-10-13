@@ -25,7 +25,7 @@ immutable conversion definitions (Issue #128 / G10): it only makes a silent chan
 """
 
 import hashlib
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 
 from app.domain.telemetry import registry
 
@@ -36,11 +36,21 @@ ROUNDING = "ROUND_HALF_EVEN"
 
 
 def _number(value: Decimal) -> str:
-    text = format(value.normalize(), "f")
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
     return "0" if text in {"-0", ""} else text
 
 
 def conversion_contract_text(
+    metric: str, source_unit: str, source_scale: Decimal, registry_version: str | None
+) -> str:
+    snapshot = registry.registry_snapshot(registry_version or "1")
+    with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
+        return _conversion_contract_text(metric, source_unit, source_scale, registry_version)
+
+
+def _conversion_contract_text(
     metric: str, source_unit: str, source_scale: Decimal, registry_version: str | None
 ) -> str:
     lines = [
@@ -51,11 +61,15 @@ def conversion_contract_text(
         f"source_scale={_number(Decimal(source_scale).quantize(SCALE_QUANTUM))}",
     ]
     if registry_version is not None:
+        snapshot = registry.registry_snapshot(registry_version)
         definition = registry._registry(registry_version).get(metric)
         if definition is None:
             raise registry.UnknownMetric(f"Unknown canonical metric: {metric!r}")
-        source = registry.UNITS[registry.validate_metric_unit(metric, source_unit, registry_version=registry_version)]
-        canonical = registry.UNITS[registry.normalize_unit(definition.canonical_unit)]
+        source = snapshot.units[registry.validate_metric_unit(metric, source_unit, registry_version=registry_version)]
+        canonical = snapshot.units[registry.normalize_unit(definition.canonical_unit, registry_version=registry_version)]
+        if registry_version == "2":
+            lines[0] = "dcim.mapping-conversion.v2"
+            lines.append(f"registry_content_hash={snapshot.content_hash}")
         lines += [
             f"source_symbol={source.symbol}",
             f"source_dimension={source.dimension}",
@@ -65,8 +79,8 @@ def conversion_contract_text(
             f"canonical_dimension={canonical.dimension}",
             f"canonical_unit_scale={_number(canonical.scale)}",
             f"canonical_unit_offset={_number(canonical.offset)}",
-            f"precision={_number(registry.PRECISION)}",
-            f"rounding={ROUNDING}",
+            f"precision={_number(snapshot.precision)}",
+            f"rounding={snapshot.rounding}",
         ]
     return "\n".join(lines)
 

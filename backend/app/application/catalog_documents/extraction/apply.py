@@ -50,7 +50,7 @@ def candidate_patch(candidate: CatalogExtractionCandidate, revision: CatalogMode
         if any(getattr(revision, name) is not None for name in siblings):
             raise ValueError("Existing draft values have no unit; correct the draft before applying.")
     unit = unit or canonical.unit
-    value = convert_value(canonical.value, canonical.unit, unit)
+    value = convert_value(canonical.value, canonical.unit, unit, registry_version=canonical.registry_version)
     if value < 0:
         raise ValueError("Catalog values cannot be negative, including values that round to zero.")
     scale = 3 if unit_column else 2
