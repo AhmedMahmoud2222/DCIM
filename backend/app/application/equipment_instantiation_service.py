@@ -49,7 +49,7 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.network.cable_models import Cable
 from app.domain.physical.models import Equipment
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection
-from app.domain.power.models import PowerNode
+from app.domain.power.models import PDU, PowerNode
 
 
 class InstantiationRejected(Exception):
@@ -71,9 +71,9 @@ async def _load_publishable_revision(db: AsyncSession, revision_id: uuid.UUID) -
     model = await db.get(CatalogModel, revision.catalog_model_id)
     assert model is not None
 
-    if model.category != "equipment":
+    if model.category not in ("equipment", "pdu"):
         raise InstantiationRejected(
-            f"CatalogModel {model.id} has category {model.category!r}; only 'equipment' models can be instantiated "
+            f"CatalogModel {model.id} has category {model.category!r}; only 'equipment' and 'pdu' models can be instantiated "
             "as physical equipment."
         )
     if revision.lifecycle_status == "draft":
@@ -113,9 +113,31 @@ async def instantiate_equipment(
     legacy_revision = await db.get(EquipmentModelRevision, revision.legacy_equipment_model_revision_id)
     assert legacy_revision is not None
 
-    asset = ManagedAsset(asset_type="equipment", asset_tag=asset_tag, lifecycle_status="planned")
+    asset_type = "pdu" if _model.category == "pdu" else "equipment"
+    asset = ManagedAsset(asset_type=asset_type, asset_tag=asset_tag, lifecycle_status="planned")
     db.add(asset)
     await db.flush()
+
+    psus = list(
+        (
+            await db.execute(
+                select(PowerSupplyTemplate)
+                .where(PowerSupplyTemplate.catalog_model_revision_id == revision.id)
+                .order_by(PowerSupplyTemplate.sort_order)
+            )
+        ).scalars()
+    )
+
+    if _model.category == "pdu":
+        pdu_record = PDU(
+            id=asset.id,
+            name=hostname or asset_tag,
+            ip_address=ip_address,
+            protocol="none",
+            outlet_count=None,
+        )
+        db.add(pdu_record)
+        await db.flush()
 
     equipment = Equipment(
         id=asset.id,
@@ -140,6 +162,7 @@ async def instantiate_equipment(
             )
         ).scalars()
     )
+
     for template in ports:
         db.add(
             EquipmentPort(
@@ -157,15 +180,6 @@ async def instantiate_equipment(
             )
         )
 
-    psus = list(
-        (
-            await db.execute(
-                select(PowerSupplyTemplate)
-                .where(PowerSupplyTemplate.catalog_model_revision_id == revision.id)
-                .order_by(PowerSupplyTemplate.sort_order)
-            )
-        ).scalars()
-    )
     for psu_template in psus:
         for unit in range(psu_template.quantity):
             label = psu_template.label if psu_template.quantity == 1 else f"{psu_template.label} {unit + 1}"
