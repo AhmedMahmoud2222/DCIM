@@ -210,13 +210,15 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
             )
             assert child is not None
             child_schema, child_name = child[4], child[5]
-            qualified_child = await conn.fetchval("SELECT format('%I.%I', $1, $2)", child_schema, child_name)
+            qualified_child = await conn.fetchval(
+                "SELECT format('%I.%I', $1::text, $2::text)", child_schema, child_name
+            )
             await conn.execute(f"CREATE INDEX pr147_local_index ON {qualified_child} (action)")
             result = _run_alembic(app_url, "check")
             assert result.returncode != 0
             assert "pr147_local_index" in result.stderr + result.stdout
             qualified_index = await conn.fetchval(
-                "SELECT format('%I.%I', $1, $2)", child_schema, "pr147_local_index"
+                "SELECT format('%I.%I', $1::text, $2::text)", child_schema, "pr147_local_index"
             )
             await conn.execute(f"DROP INDEX {qualified_index}")
 
@@ -243,7 +245,7 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
             )
             assert check_name
             drop_check = await conn.fetchval(
-                "SELECT format('ALTER TABLE public.audit_log DROP CONSTRAINT %I', $1)", check_name
+                "SELECT format('ALTER TABLE public.audit_log DROP CONSTRAINT %I', $1::text)", check_name
             )
             await conn.execute(drop_check)
             result = _run_alembic(app_url, "check")
@@ -251,7 +253,7 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
             assert "result_allowed" in result.stderr + result.stdout
             add_check = await conn.fetchval(
                 "SELECT format('ALTER TABLE public.audit_log ADD CONSTRAINT %I "
-                "CHECK (result IN (''success'', ''failure''))', $1)",
+                "CHECK (result IN (''success'', ''failure''))', $1::text)",
                 check_name,
             )
             await conn.execute(add_check)
