@@ -174,7 +174,7 @@ class TelemetryReading(Base, UUIDPkMixin):
     mapping_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("integration_metric_mapping.id", ondelete="RESTRICT"), nullable=False
     )
-    managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), index=True)
+    managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"))
     external_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     series_key: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
