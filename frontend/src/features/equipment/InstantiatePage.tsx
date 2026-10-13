@@ -20,7 +20,6 @@ export function InstantiatePage() {
   const isCatalogAdministrator = useIsCatalogAdministrator();
 
   const [modelId, setModelId] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
   const [revisionId, setRevisionId] = useState("");
   const [assetTag, setAssetTag] = useState("");
   const [hostname, setHostname] = useState("");
@@ -32,8 +31,8 @@ export function InstantiatePage() {
   const [side, setSide] = useState<Side>("front");
 
   const modelsQuery = useQuery({
-    queryKey: ["catalog", "models", { category: categoryFilter, status: "active" }],
-    queryFn: () => listCatalogModels({ category: categoryFilter || undefined, status: "active" }),
+    queryKey: ["catalog", "models", { category: "equipment" }],
+    queryFn: () => listCatalogModels({ category: "equipment", status: "active" }),
   });
   const modelDetailQuery = useQuery({
     queryKey: ["catalog", "models", modelId],
@@ -86,41 +85,22 @@ export function InstantiatePage() {
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-3 rounded-sm border border-slate-800 bg-slate-900 p-4">
-        <div className="flex gap-2">
-          <select
-            data-testid="instantiate-category-select"
-            value={categoryFilter}
-            onChange={(e) => {
-              setCategoryFilter(e.target.value);
-              setModelId("");
-              setRevisionId("");
-            }}
-            className="w-1/3 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
-          >
-            <option value="">All categories</option>
-            <option value="equipment">Equipment</option>
-            <option value="pdu">PDU</option>
-          </select>
-
-          <select
-            data-testid="instantiate-model-select"
-            value={modelId}
-            onChange={(e) => {
-              setModelId(e.target.value);
-              setRevisionId("");
-            }}
-            className="w-2/3 rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
-          >
-            <option value="">Select a catalog model…</option>
-            {modelsQuery.data?.items
-              .filter((m) => m.category === "equipment" || m.category === "pdu")
-              .map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.model_name} {m.model_number ? `(${m.model_number})` : ""}
-                </option>
-              ))}
-          </select>
-        </div>
+        <select
+          data-testid="instantiate-model-select"
+          value={modelId}
+          onChange={(e) => {
+            setModelId(e.target.value);
+            setRevisionId("");
+          }}
+          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100"
+        >
+          <option value="">Select a catalog model…</option>
+          {modelsQuery.data?.items.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.model_name} {m.model_number ? `(${m.model_number})` : ""}
+            </option>
+          ))}
+        </select>
 
         {modelId && (
           <select

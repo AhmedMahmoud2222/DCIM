@@ -70,7 +70,7 @@ from app.infrastructure.storage import get_storage_backend
 
 router = APIRouter(prefix="/catalog", tags=["catalog-designer"])
 
-_BRIDGED_CATEGORIES = ("rack", "equipment", "pdu")
+_BRIDGED_CATEGORIES = ("rack", "equipment")
 
 
 def _request_ids(request: Request) -> tuple[str | None, str | None]:

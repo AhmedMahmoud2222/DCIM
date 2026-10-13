@@ -27,7 +27,7 @@ from app.domain.catalog.designer_models import (
 )
 from app.domain.placement.models import PLACEMENT_TYPES
 
-_BRIDGED_CATEGORIES = ("rack", "equipment", "pdu")
+_BRIDGED_CATEGORIES = ("rack", "equipment")
 
 
 def _split_csv(value: object) -> list[str]:
