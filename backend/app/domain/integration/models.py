@@ -123,7 +123,9 @@ class CollectorCapability(Base, UUIDPkMixin):
     (app/application/collector_service.py), not assumed."""
 
     __tablename__ = "collector_capability"
-    __table_args__ = (UniqueConstraint("collector_id", "protocol_code", name="uq_collector_capability_collector_id_protocol_code"),)
+    __table_args__ = (
+        UniqueConstraint("collector_id", "protocol_code", name="uq_collector_capability_collector_id_protocol_code"),
+    )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="CASCADE"), nullable=False, index=True)
     protocol_code: Mapped[str] = mapped_column(String(32), nullable=False)
