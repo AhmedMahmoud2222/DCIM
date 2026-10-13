@@ -129,7 +129,7 @@ def validate_revision_for_publish(
         require(revision.rack_unit_height, "rack_unit_height", "Rack unit height is required for rack models.")
     elif category in ("equipment", "pdu"):
         placement_types = revision.supported_placement_types or []
-        if "rack_mounted" in placement_types:
+        if "rack_mounted" in placement_types and revision.mounting_orientation != "vertical_0u":
             require(
                 revision.rack_unit_height,
                 "rack_unit_height",

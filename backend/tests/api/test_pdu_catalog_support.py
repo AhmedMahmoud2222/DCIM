@@ -60,7 +60,6 @@ async def test_pdu_catalog_lifecycle_and_instantiation(client, auth_headers, db_
         "depth_value": 44.0,
         "weight_unit": "kg",
         "weight_value": 8.5,
-        "rack_unit_height": 0,
         "mounting_orientation": "vertical_0u",
         "supported_placement_types": ["rack_mounted"],
         "rated_power_w": 4992.0,
