@@ -21,8 +21,8 @@ def test_downgrade_locks_before_guard_and_never_discards_populated_evidence(evid
     module.op = MagicMock()
     order = []
     module.op.execute.side_effect = lambda statement: order.append(("lock", str(statement)))
-    module.op.get_bind.return_value.execute.side_effect = lambda statement: (
-        order.append(("guard", str(statement))) or MagicMock(scalar=lambda: evidence)
+    module.op.get_bind.return_value.scalar.side_effect = lambda statement: (
+        order.append(("guard", str(statement))) or evidence
     )
     module.op.drop_column.side_effect = lambda table, column: order.append(("drop", column))
     if evidence:

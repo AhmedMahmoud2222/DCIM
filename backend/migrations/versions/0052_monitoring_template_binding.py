@@ -23,10 +23,10 @@ def downgrade() -> None:
     # Serialize against authoring writes before checking evidence. A check
     # preceding the DDL lock could miss a binding committed before DROP COLUMN.
     op.execute(sa.text("LOCK TABLE monitoring_metric_template IN ACCESS EXCLUSIVE MODE"))
-    if op.get_bind().execute(sa.text(
+    if op.get_bind().scalar(sa.text(
         "SELECT EXISTS(SELECT 1 FROM monitoring_metric_template WHERE registry_metric IS NOT NULL "
         "OR registry_version IS NOT NULL OR threshold_unit IS NOT NULL)"
-    )).scalar():
+    )):
         raise RuntimeError("Cannot downgrade 0052: monitoring templates carry registry binding evidence")
     op.drop_column("monitoring_metric_template", "threshold_unit")
     op.drop_column("monitoring_metric_template", "registry_version")
