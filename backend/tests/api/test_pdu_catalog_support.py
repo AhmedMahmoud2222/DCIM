@@ -60,6 +60,7 @@ async def test_pdu_catalog_lifecycle_and_instantiation(client, auth_headers, db_
         "depth_value": 44.0,
         "weight_unit": "kg",
         "weight_value": 8.5,
+        "rack_unit_height": 0,
         "mounting_orientation": "vertical_0u",
         "supported_placement_types": ["rack_mounted"],
         "rated_power_w": 4992.0,
@@ -109,7 +110,8 @@ async def test_pdu_catalog_lifecycle_and_instantiation(client, auth_headers, db_
     # 6. Validate Draft Revision
     val_resp = await client.post(f"/api/v1/catalog/revisions/{draft['id']}/validate", headers=headers)
     assert val_resp.status_code == 200, val_resp.text
-    assert val_resp.json()["valid"] is True
+    val_data = val_resp.json()
+    assert val_data["valid"] is True, f"Validation failed: {val_data}"
 
     # 7. Publish Revision
     pub_resp = await client.post(f"/api/v1/catalog/revisions/{draft['id']}/publish", headers=headers)
@@ -163,3 +165,18 @@ async def test_pdu_catalog_lifecycle_and_instantiation(client, auth_headers, db_
     assert node is not None
     assert node.node_type == "equipment_power_input"
     assert node.owning_asset_id == equipment_id
+
+    # 9. Create PDU Outlet on the instantiated PDU asset
+    outlet_resp = await client.post(
+        "/api/v1/power/pdu-outlets",
+        json={
+            "pdu_asset_id": str(equipment_id),
+            "outlet_number": 1,
+            "label": "Outlet 1",
+        },
+        headers=headers,
+    )
+    assert outlet_resp.status_code == 201, outlet_resp.text
+    outlet_node = outlet_resp.json()
+    assert outlet_node["node_type"] == "pdu_outlet"
+    assert outlet_node["owning_asset_id"] == str(equipment_id)
