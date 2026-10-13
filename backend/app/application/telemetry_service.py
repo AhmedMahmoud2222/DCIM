@@ -8,7 +8,7 @@ from the MVP `TelemetryReading` pipeline above)."""
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Context, Decimal, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation
 
 import structlog
 from sqlalchemy import select
@@ -46,33 +46,8 @@ from app.domain.telemetry.registry import (
     UnknownMetric,
     UnknownRegistryVersion,
     UnknownUnit,
-    convert_value,
-    registry_snapshot,
-    validate_metric_unit,
-    validate_metric_value,
+    convert_to_canonical,
 )
-
-
-def canonical_storage_value(
-    metric: str, raw_value: Decimal, source_unit: str, source_scale: Decimal, registry_version: str,
-) -> tuple[Decimal, str]:
-    """One pinned conversion, numeric storage validation, then metric semantics."""
-    snapshot = registry_snapshot(registry_version)
-    with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
-        scaled_value = ensure_storable(raw_value * source_scale, "scaled value")
-        normalized_unit = validate_metric_unit(metric, source_unit, registry_version=registry_version)
-        definition = snapshot.metrics[metric]
-        try:
-            converted = convert_value(
-                scaled_value, normalized_unit, definition.canonical_unit, registry_version=registry_version,
-            )
-        except InvalidOperation as error:
-            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
-        # Numeric storage failures keep their existing error code even when a value
-        # also violates a v2 physical domain.
-        stored_value = ensure_storable(converted, "canonical value")
-        validate_metric_value(metric, stored_value, registry_version=registry_version)
-        return stored_value, definition.canonical_unit
 
 
 def exact_decimal(value: float | int | Decimal | str) -> Decimal:
@@ -266,10 +241,17 @@ async def ingest_reading(
         stored_unit = revision.source_unit
         registry_version = None
     else:
-        stored_value, stored_unit = canonical_storage_value(
-            revision.canonical_metric, raw_value, revision.source_unit, source_scale_value, revision.registry_version,
-        )
-        registry_version = revision.registry_version
+        ensure_storable(raw_value * source_scale_value, "scaled value")
+        try:
+            canonical = convert_to_canonical(
+                revision.canonical_metric, raw_value, revision.source_unit,
+                source_scale=source_scale_value, registry_version=revision.registry_version,
+            )
+        except InvalidOperation as error:
+            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
+        stored_value = ensure_storable(canonical.value, "canonical value")
+        stored_unit = canonical.unit
+        registry_version = canonical.registry_version
     received_at = datetime.now(UTC)
     statement = (
         insert(TelemetryReading)

@@ -4,7 +4,6 @@ import base64
 import json
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -18,13 +17,12 @@ from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.alarm.models import ALARM_STATUSES, RULE_TYPES, Alarm, AlarmRule
-from app.domain.telemetry.registry import REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
+from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION, convert_to_presentation
 
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 
 
 class AlarmRuleIn(BaseModel):
-    registry_version: str = REGISTRY_VERSION
     integration_id: uuid.UUID
     metric: str = Field(max_length=64)
     rule_type: str
@@ -61,19 +59,11 @@ async def create_alarm_rule(
         from app.core.errors import ApiError
 
         raise ApiError(status_code=422, title="Invalid alarm rule", detail="Rule type and threshold are inconsistent.")
-    try:
-        definition = registry_snapshot(body.registry_version).metrics.get(body.metric)
-        if definition is not None:
-            validate_metric_rule(body.metric, body.rule_type,
-                                 Decimal(str(body.threshold)) if body.threshold is not None else None,
-                                 definition.canonical_unit, registry_version=body.registry_version)
-    except ValueError as error:
-        from app.core.errors import ApiError
-        raise ApiError(status_code=422, title="Invalid alarm semantics", detail=str(error)) from error
+    definition = METRIC_REGISTRY.get(body.metric)
     if definition is None:
         from app.core.errors import ApiError
         raise ApiError(status_code=422, title="Invalid alarm metric", detail="Metric is not in the active registry.")
-    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit,
+    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit, registry_version=REGISTRY_VERSION,
                      **body.model_dump())
     db.add(rule)
     await db.flush()

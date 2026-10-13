@@ -34,15 +34,9 @@ async def get_rack(client, headers, rack_id: str) -> dict:
     return (await client.get(f"/api/v1/racks/{rack_id}", headers=headers)).json()
 
 
-async def world(client, auth_headers, *, racks=((RACK1, "Rack A"), (RACK2, "Rack B")), count=4, asset_tags=None):
+async def world(client, auth_headers, *, racks=((RACK1, "Rack A"), (RACK2, "Rack B")), count=4):
     headers, room_id, plan = await room_with_plan(client, auth_headers)
-    placed = [
-        await place_rack(
-            client, headers, auth_headers, room_id, x, y, name=name,
-            **({"asset_tag": asset_tags[index]} if asset_tags is not None else {}),
-        )
-        for index, ((x, y), name) in enumerate(racks)
-    ]
+    placed = [await place_rack(client, headers, auth_headers, room_id, x, y, name=name) for (x, y), name in racks]
     job = await import_file(client, headers, plan["id"], fx.rack_row_dxf(count), "r.dxf", "dxf")
     await calibrate_declared(client, headers, plan["id"], job["id"])
     return {"headers": headers, "room": room_id, "plan": plan, "job": job, "racks": placed}
@@ -54,9 +48,7 @@ async def objects(client, headers, plan_id):
 
 # ------------------------------------------------------------------------------------------ reconciliation
 async def test_candidates_are_matched_to_existing_racks_by_position_and_footprint_not_by_label(client, auth_headers):
-    # Random RACK-<hex> asset tags can start with 03 and partially match RACK-03.
-    # Explicit unrelated tags preserve this test's intended label-mismatch case.
-    w = await world(client, auth_headers, asset_tags=("AUTH-A", "AUTH-B"))
+    w = await world(client, auth_headers)
     items = await candidates(client, w["headers"], w["job"]["id"])
     first, second, third = (by_label(items, f"RACK-0{i}") for i in (1, 2, 3))
     assert first["match_status"] == "matched" and first["matched_asset_id"] == w["racks"][0]["id"] and first["matched_asset_name"] == "Rack A"

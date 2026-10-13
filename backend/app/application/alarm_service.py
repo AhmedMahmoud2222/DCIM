@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
@@ -16,7 +16,7 @@ from app.application.outbox_service import write_outbox_event
 from app.core.errors import ApiError
 from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import convert_value, validate_metric_unit
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_value, validate_metric_unit
 
 
 class AlarmUnitCompatibilityError(ApiError):
@@ -54,13 +54,12 @@ def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal,
     if rule.unit is not None:
         # Validate both dimensions and registry versions before comparing. A legacy
         # explicit unit uses the active physical contract; its threshold is unchanged.
-        version = rule.registry_version if rule.registry_version is not None else "1"
+        version = rule.registry_version if rule.registry_version is not None else REGISTRY_VERSION
         validate_metric_unit(rule.metric, rule.unit, registry_version=version)
-        validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version or "1")
-        return convert_value(
-            Decimal(str(reading.value)), reading.unit, rule.unit,
-            registry_version=reading.registry_version or "1", target_registry_version=version,
-        ), rule.unit, rule.registry_version
+        validate_metric_unit(rule.metric, reading.unit, registry_version=version)
+        if reading.registry_version is not None:
+            validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version)
+        return convert_value(Decimal(str(reading.value)), reading.unit, rule.unit), rule.unit, rule.registry_version
     raise AlarmUnitCompatibilityError(status_code=422, title="Unresolved legacy alarm unit",
                    detail=f"Alarm rule {rule.id} requires an explicit threshold unit before evaluation.")
 
@@ -75,10 +74,6 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                     AlarmRule.enabled.is_(True),
                     AlarmRule.integration_id == reading.integration_id,
                     AlarmRule.metric == reading.metric,
-                    # Tightened v2 policies never re-judge v1/legacy samples. Version mismatch
-                    # skips evaluation; it cannot reject a valid telemetry record.
-                    or_(AlarmRule.registry_version.is_(None), AlarmRule.registry_version == "1",
-                        AlarmRule.registry_version == reading.registry_version),
                 )
             )
         )

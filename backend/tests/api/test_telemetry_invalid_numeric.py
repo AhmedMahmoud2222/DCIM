@@ -20,10 +20,7 @@ from tests.api._phase8_helpers import create_integration, register_collector, si
 NOW = datetime.now(UTC).isoformat()
 
 
-async def _setup(
-    client, auth_headers, db_session, *, metric="temperature_c", unit="degC", scale=1,
-    legacy=False, registry_version="1",
-):
+async def _setup(client, auth_headers, db_session, *, metric="temperature_c", unit="degC", scale=1, legacy=False):
     headers = await auth_headers("DCIM Manager")
     collector = await register_collector(client, headers)
     await client.post(f"/api/v1/collectors/{collector['id']}/capabilities", json={"protocol_codes": ["icmp"]}, headers=headers)
@@ -34,8 +31,7 @@ async def _setup(
     assert resp.status_code == 201, resp.text
     mapping = IntegrationMetricMapping(
         id=uuid.uuid4(), integration_id=uuid.UUID(integration["id"]), source_identifier="sensor",
-        canonical_metric=metric, unit=unit, scale=scale,
-        registry_version=None if legacy else registry_version,
+        canonical_metric=metric, unit=unit, scale=scale, registry_version=None if legacy else "1",
     )
     db_session.add(mapping)
     await db_session.commit()

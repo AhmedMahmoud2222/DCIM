@@ -34,7 +34,7 @@ from app.domain.location.models import Building, Floor, Room
 from app.domain.physical.models import Rack
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import METRIC_REGISTRY, convert_stored_canonical, convert_to_presentation
+from app.domain.telemetry.registry import METRIC_REGISTRY, convert_to_presentation
 
 FRESH_POLL_MULTIPLE = 3
 FUTURE_TOLERANCE_SECONDS = 120
@@ -281,11 +281,7 @@ async def load_room_sensor_snapshot(
         point.integration_name = integration_name
         state, age = classify_reading(reading.occurred_at, as_of, interval)
         point.age_seconds = age
-        try:
-            canonical_value = convert_stored_canonical(
-                metric, Decimal(str(reading.value)), reading.unit, reading.registry_version,
-            )
-        except ValueError:
+        if reading.unit != definition.canonical_unit:
             point.state = INVALID
             point.invalid_reason = "unit_mismatch"
             continue
@@ -294,11 +290,9 @@ async def load_room_sensor_snapshot(
             point.invalid_reason = "future_timestamp"
             continue
         point.state = state
-        point.value = float(canonical_value)
-        point.unit = definition.canonical_unit
-        presentation = convert_to_presentation(
-            metric, canonical_value, definition.canonical_unit, registry_version="1",
-        )
+        point.value = float(reading.value)
+        point.unit = reading.unit
+        presentation = convert_to_presentation(metric, Decimal(str(reading.value)), reading.unit)
         point.presentation_value = float(presentation.value)
         point.presentation_unit = presentation.unit
     return snapshot
