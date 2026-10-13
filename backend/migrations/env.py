@@ -25,49 +25,145 @@ def _partitioned_parent_names() -> set[str]:
     return {
         table.name
         for table in target_metadata.tables.values()
-        if table.dialect_options.get("postgresql", {}).get("partition_by")
+        if table.dialect_options["postgresql"].get("partition_by")
     }
 
 
-def _attached_partition_names(connection: Connection) -> set[str]:
-    """Names of tables that are VERIFIED attached partitions (per pg_inherits) of a
-    partitioned parent declared in ORM metadata. Only these are excluded from
-    autogenerate comparison — an arbitrary ``audit_log_*``-looking table that is not
-    actually attached is still compared (and would be reported as drift), so genuine
-    schema drift remains detectable."""
+def _attached_partitions(connection: Connection) -> set[tuple[str, str]]:
+    """Schema-qualified identities of verified PostgreSQL partitions."""
     parents = _partitioned_parent_names()
     if not parents:
         return set()
     rows = connection.execute(
         text(
-            "SELECT child.relname FROM pg_inherits "
+            "SELECT child_ns.nspname, child.relname FROM pg_inherits "
             "JOIN pg_class parent ON parent.oid = pg_inherits.inhparent "
-            "JOIN pg_namespace ns ON ns.oid = parent.relnamespace "
+            "JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
             "JOIN pg_class child ON child.oid = pg_inherits.inhrelid "
-            "WHERE parent.relname = ANY(:parents) AND ns.nspname = current_schema()"
+            "JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace "
+            "WHERE parent.relname = ANY(:parents) "
+            "AND parent_ns.nspname = current_schema() "
+            "AND parent.relkind = 'p' AND child.relispartition"
         ),
         {"parents": list(parents)},
     )
-    return {row[0] for row in rows}
+    return {(row[0], row[1]) for row in rows}
 
 
-def _make_include_object(attached_partitions: set[str]):
-    def include_object(obj, name, type_, reflected, table_name):  # noqa: ANN001, ANN202
+def _local_partition_drift(connection: Connection, attached_partitions: set[tuple[str, str]]) -> list[str]:
+    """Find indexes/constraints created locally on a partition rather than inherited.
+
+    Parent indexes and constraints are attached by PostgreSQL and have pg_inherits or
+    conparentid links. The one local CHECK constraint PostgreSQL creates for a partition
+    is its bound; additional local constraints, or any unattached local index, are drift.
+    """
+    if not attached_partitions:
+        return []
+    rows = connection.execute(
+        text(
+            "WITH partitions AS ("
+            " SELECT child.oid, child.relname, child_ns.nspname "
+            " FROM pg_inherits part_inh "
+            " JOIN pg_class parent ON parent.oid = part_inh.inhparent "
+            " JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
+            " JOIN pg_class child ON child.oid = part_inh.inhrelid "
+            " JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace "
+            " WHERE parent.relname = ANY(:parents) "
+            " AND parent_ns.nspname = current_schema() "
+            " AND parent.relkind = 'p' AND child.relispartition"
+            "), local_indexes AS ("
+            " SELECT p.nspname, p.relname, idx.relname AS object_name "
+            " FROM partitions p JOIN pg_index i ON i.indrelid = p.oid "
+            " JOIN pg_class idx ON idx.oid = i.indexrelid "
+            " WHERE NOT EXISTS (SELECT 1 FROM pg_inherits ih WHERE ih.inhrelid = idx.oid)"
+            "), local_constraints AS ("
+            " SELECT p.nspname, p.relname, c.conname AS object_name "
+            " FROM partitions p JOIN pg_constraint c ON c.conrelid = p.oid "
+            " WHERE c.conparentid = 0 AND (c.contype <> 'c' OR ("
+            " SELECT count(*) FROM pg_constraint bound "
+            " WHERE bound.conrelid = p.oid AND bound.conparentid = 0 AND bound.contype = 'c'"
+            ") <> 1)"
+            "), missing_parent_indexes AS ("
+            " SELECT p.nspname, p.relname, parent_idx.relname AS object_name "
+            " FROM partitions p JOIN pg_inherits part_inh ON part_inh.inhrelid = p.oid "
+            " JOIN pg_index parent_i ON parent_i.indrelid = part_inh.inhparent "
+            " JOIN pg_class parent_idx ON parent_idx.oid = parent_i.indexrelid "
+            " WHERE NOT EXISTS (SELECT 1 FROM pg_inherits ii "
+            " JOIN pg_index child_i ON child_i.indexrelid = ii.inhrelid AND child_i.indrelid = p.oid "
+            " WHERE ii.inhparent = parent_i.indexrelid)"
+            "), missing_parent_constraints AS ("
+            " SELECT p.nspname, p.relname, parent_con.conname AS object_name "
+            " FROM partitions p JOIN pg_inherits part_inh ON part_inh.inhrelid = p.oid "
+            " JOIN pg_constraint parent_con ON parent_con.conrelid = part_inh.inhparent "
+            " WHERE NOT EXISTS (SELECT 1 FROM pg_constraint child_con "
+            " WHERE child_con.conrelid = p.oid AND child_con.conparentid = parent_con.oid)"
+            ") SELECT nspname, relname, object_name, 'index' AS kind FROM local_indexes"
+            " UNION ALL SELECT nspname, relname, object_name, 'constraint' AS kind FROM local_constraints"
+            " UNION ALL SELECT nspname, relname, object_name, 'missing inherited index' AS kind FROM missing_parent_indexes"
+            " UNION ALL SELECT nspname, relname, object_name, 'missing inherited constraint' AS kind "
+            "FROM missing_parent_constraints"
+        ),
+        {"parents": list(_partitioned_parent_names())},
+    )
+    return [f"{row.kind} {row.nspname}.{row.relname}.{row.object_name}" for row in rows]
+
+
+def _make_include_object(
+    attached_partitions: set[tuple[str, str]],
+    inherited_partition_indexes: set[tuple[str, str, str]],
+    default_schema: str | None,
+):
+    def include_object(obj, name, type_, reflected, compare_to):  # noqa: ANN001, ANN202
         if not reflected:
             # Never suppress metadata-side objects: an index/constraint declared on a
             # model but missing from the database is genuine drift and must be reported.
             return True
-        if type_ == "table" and name in attached_partitions:
+        schema = obj.schema or default_schema
+        table_identity = (schema, name)
+        if type_ == "table" and table_identity in attached_partitions:
             # Verified attached partition child — PostgreSQL owns its lifecycle (created
             # by raw partition DDL / maintenance job, dropped only via DETACH/DROP by an
-            # operator), so autogenerate must never propose removing it.
+            # operator). Local partition-only indexes/constraints are separately checked
+            # by _local_partition_drift before Alembic's table-level comparison.
             return False
-        if type_ == "index" and table_name in attached_partitions:
-            # Partition-child indexes inherited from the parent's partitioned indexes.
-            return False
+        if type_ == "index" and obj.table is not None:
+            index_identity = (obj.table.schema or default_schema, obj.table.name, name)
+            if index_identity in inherited_partition_indexes:
+                # Only indexes whose PostgreSQL catalog inheritance is verified are
+                # excluded; locally-created indexes are not hidden by this callback.
+                return False
         return True
 
     return include_object
+
+
+def _inherited_partition_indexes(
+    connection: Connection,
+    attached_partitions: set[tuple[str, str]],
+) -> set[tuple[str, str, str]]:
+    """Return schema-qualified child index identities attached to parent indexes."""
+    if not attached_partitions:
+        return set()
+    rows = connection.execute(
+        text(
+            "SELECT child_ns.nspname, child.relname, child_idx.relname "
+            "FROM pg_inherits part_inh "
+            "JOIN pg_class parent ON parent.oid = part_inh.inhparent "
+            "JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
+            "JOIN pg_class child ON child.oid = part_inh.inhrelid "
+            "JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace "
+            "JOIN pg_index parent_idx ON parent_idx.indrelid = parent.oid "
+            "JOIN pg_inherits index_inh ON index_inh.inhparent = parent_idx.indexrelid "
+            "JOIN pg_class child_idx ON child_idx.oid = index_inh.inhrelid "
+            "JOIN pg_index child_index ON child_index.indexrelid = child_idx.oid "
+            "AND child_index.indrelid = child.oid "
+            "WHERE parent.relname = ANY(:parents) "
+            "AND parent_ns.nspname = current_schema() "
+            "AND parent.relkind = 'p' AND child.relispartition"
+        ),
+        {"parents": list(_partitioned_parent_names())},
+    )
+    return {(row[0], row[1], row[2]) for row in rows}
 
 
 def run_migrations_offline() -> None:
@@ -81,7 +177,14 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    attached_partitions = _attached_partition_names(connection)
+    attached_partitions = _attached_partitions(connection)
+    local_drift = _local_partition_drift(connection, attached_partitions)
+    if local_drift:
+        raise RuntimeError(
+            "Unexpected local indexes/constraints on attached audit partitions: "
+            + ", ".join(local_drift)
+        )
+    inherited_indexes = _inherited_partition_indexes(connection, attached_partitions)
     # The lookup above autobegins a SQLAlchemy transaction on the connection; close it
     # so Alembic's own transaction handling (and migrations that use
     # `autocommit_block`, e.g. 0025's CONCURRENTLY indexes) behaves exactly as before.
@@ -89,7 +192,11 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        include_object=_make_include_object(attached_partitions),
+        include_object=_make_include_object(
+            attached_partitions,
+            inherited_indexes,
+            connection.dialect.default_schema_name,
+        ),
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -5,12 +5,13 @@ Runs the full migration chain on a genuinely fresh scratch database (never the s
 proves all four acceptance behaviors at once:
 
 1. `alembic check` passes on a correctly migrated database (no false drift).
-2. It still passes once real audit_log partition rows exist across multiple attached
-   partitions, and every partition, index, and row survives (no destructive DDL).
-3. Genuine drift IS still detected: an unexpected column makes `alembic check` fail.
-4. The partition exclusion is verified-only: an *unattached* table whose name merely
-   looks like an audit partition (`audit_log_2099_01`) is reported as drift, proving
-   env.py filters on pg_inherits membership rather than on a name pattern.
+2. Populated rows in multiple partitions survive a revision upgrade and repeated
+   checks; partition bounds, index definitions/attachments, and constraints are
+   unchanged, including empty partitions.
+3. Genuine drift IS still detected: unexpected columns, local partition objects, and
+   unattached tables make `alembic check` fail.
+4. A foreign-schema attached partition cannot hide a same-named unattached table in
+   the default schema.
 """
 
 import os
@@ -54,6 +55,54 @@ def _assert_alembic_ok(result: subprocess.CompletedProcess, *args: str) -> None:
     )
 
 
+async def _audit_partition_snapshot(conn: asyncpg.Connection) -> dict[str, list[tuple]]:
+    partitions = await conn.fetch(
+        "SELECT parent.oid::text AS parent_oid, parent_ns.nspname AS parent_schema, "
+        "parent.relname AS parent_name, child.oid::text AS child_oid, "
+        "child_ns.nspname AS child_schema, child.relname AS child_name, "
+        "pg_get_expr(child.relpartbound, child.oid) AS bound "
+        "FROM pg_inherits i JOIN pg_class parent ON parent.oid = i.inhparent "
+        "JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
+        "JOIN pg_class child ON child.oid = i.inhrelid "
+        "JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace "
+        "WHERE parent.oid = 'public.audit_log'::regclass ORDER BY 1, 2, 3, 4"
+    )
+    indexes = await conn.fetch(
+        "SELECT table_ns.nspname AS table_schema, tbl.relname AS table_name, "
+        "idx.relname AS index_name, pg_get_indexdef(idx.oid) AS definition, "
+        "COALESCE((SELECT array_agg(format('%I.%I', parent_ns.nspname, parent_idx.relname) "
+        "ORDER BY parent_ns.nspname, parent_idx.relname) FROM pg_inherits ii "
+        "JOIN pg_class parent_idx ON parent_idx.oid = ii.inhparent "
+        "JOIN pg_namespace parent_ns ON parent_ns.oid = parent_idx.relnamespace "
+        "WHERE ii.inhrelid = idx.oid), ARRAY[]::text[]) AS inherited_from "
+        "FROM pg_index i JOIN pg_class tbl ON tbl.oid = i.indrelid "
+        "JOIN pg_namespace table_ns ON table_ns.oid = tbl.relnamespace "
+        "JOIN pg_class idx ON idx.oid = i.indexrelid "
+        "WHERE tbl.oid = 'public.audit_log'::regclass OR tbl.oid IN "
+        "(SELECT inhrelid FROM pg_inherits WHERE inhparent = 'public.audit_log'::regclass) "
+        "ORDER BY 1, 2, 3"
+    )
+    constraints = await conn.fetch(
+        "SELECT ns.nspname AS table_schema, tbl.relname AS table_name, con.conname, "
+        "con.contype, pg_get_constraintdef(con.oid) AS definition, con.conparentid "
+        "FROM pg_constraint con JOIN pg_class tbl ON tbl.oid = con.conrelid "
+        "JOIN pg_namespace ns ON ns.oid = tbl.relnamespace "
+        "WHERE tbl.oid = 'public.audit_log'::regclass OR tbl.oid IN "
+        "(SELECT inhrelid FROM pg_inherits WHERE inhparent = 'public.audit_log'::regclass) "
+        "ORDER BY 1, 2, 3"
+    )
+    records = await conn.fetch(
+        "SELECT to_jsonb(row_data)::text FROM public.audit_log AS row_data "
+        "ORDER BY timestamp, audit_id"
+    )
+    return {
+        "partitions": [tuple(row) for row in partitions],
+        "indexes": [tuple(row) for row in indexes],
+        "constraints": [tuple(row) for row in constraints],
+        "records": [tuple(row) for row in records],
+    }
+
+
 async def _create_scratch_database(db_name: str) -> None:
     admin = await asyncpg.connect(_asyncpg_dsn(_url_for_db(ADMIN_DATABASE_URL, "postgres")))
     try:
@@ -88,14 +137,14 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
     admin_dsn = _asyncpg_dsn(_url_for_db(ADMIN_DATABASE_URL, db_name))
     try:
         await _create_scratch_database(db_name)
-        _assert_alembic_ok(_run_alembic(app_url, "upgrade", "head"), "upgrade", "head")
-
-        # 1. Fresh, fully migrated database: no drift.
-        _assert_alembic_ok(_run_alembic(app_url, "check"), "check")
-
-        # 2. Populate several attached partitions (current month, future month via the
-        #    maintenance-created partitions, and the default catch-all) and confirm
-        #    `alembic check` neither flags nor touches them.
+        # Start from a real previously migrated base, then populate it before upgrading
+        # the final revision. This exercises the existing-database upgrade path rather
+        # than only checking an empty database immediately after a fresh install.
+        _assert_alembic_ok(
+            _run_alembic(app_url, "upgrade", "0048_daily_aggregate_exact_sum"),
+            "upgrade",
+            "0048_daily_aggregate_exact_sum",
+        )
         conn = await asyncpg.connect(admin_dsn)
         try:
             await conn.execute(
@@ -104,54 +153,133 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
             )
             await conn.execute(
                 "INSERT INTO audit_log (timestamp, action, entity_type, source, result) "
-                "VALUES ('2027-03-01', 'drift_test.default', 'rack', 'api', 'success')"
+                "VALUES (date_trunc('month', now()) + interval '1 month' + interval '10 days', "
+                "'drift_test.next_month', 'rack', 'api', 'success')"
             )
-            partitions_before = {
-                row["partition"]: row["n"]
-                for row in await conn.fetch(
-                    "SELECT tableoid::regclass::text AS partition, count(*) AS n FROM audit_log GROUP BY 1"
-                )
-            }
-            assert partitions_before, "expected audit_log rows routed to attached partitions"
+            await conn.execute(
+                "INSERT INTO audit_log (timestamp, action, entity_type, source, result) "
+                "VALUES (date_trunc('month', now()) + interval '6 months', "
+                "'drift_test.default', 'rack', 'api', 'success')"
+            )
+            routed = await conn.fetch(
+                "SELECT DISTINCT tableoid::regclass::text AS partition FROM public.audit_log"
+            )
+            assert len(routed) >= 3, f"expected rows in >=3 distinct partitions, got {routed}"
+            before_upgrade = await _audit_partition_snapshot(conn)
         finally:
             await conn.close()
 
+        # 1. Upgrade a populated existing DB to head, then check repeatedly.
+        _assert_alembic_ok(_run_alembic(app_url, "upgrade", "head"), "upgrade", "head")
+        _assert_alembic_ok(_run_alembic(app_url, "check"), "check")
         _assert_alembic_ok(_run_alembic(app_url, "check"), "check")
 
         conn = await asyncpg.connect(admin_dsn)
         try:
-            partitions_after = {
-                row["partition"]: row["n"]
-                for row in await conn.fetch(
-                    "SELECT tableoid::regclass::text AS partition, count(*) AS n FROM audit_log GROUP BY 1"
-                )
-            }
-            assert partitions_after == partitions_before
-            attached = {
-                row["p"]
-                for row in await conn.fetch(
-                    "SELECT inhrelid::regclass::text AS p FROM pg_inherits WHERE inhparent = 'audit_log'::regclass"
-                )
-            }
-            assert set(partitions_before) <= attached
+            after_upgrade = await _audit_partition_snapshot(conn)
+            assert after_upgrade == before_upgrade, "upgrade/check changed audit partition schema or records"
 
-            # 3. Genuine drift must still be detected.
+            # 2. Genuine schema drift must still be detected.
             await conn.execute("ALTER TABLE managed_asset ADD COLUMN intentional_drift text")
             result = _run_alembic(app_url, "check")
             assert result.returncode != 0, "alembic check failed to detect an unexpected column"
             assert "intentional_drift" in result.stderr + result.stdout
             await conn.execute("ALTER TABLE managed_asset DROP COLUMN intentional_drift")
 
-            # 4. A table merely *named* like a partition but not attached is drift, not
-            #    a partition — the exclusion is verified via pg_inherits, never by name.
-            await conn.execute("CREATE TABLE audit_log_2099_01 (id uuid)")
+            # 3. A bare-name collision across schemas must not hide default-schema drift.
+            await conn.execute("CREATE SCHEMA pr147_probe")
+            await conn.execute(
+                "CREATE TABLE pr147_probe.audit_log_review_collision PARTITION OF public.audit_log "
+                "FOR VALUES FROM ('2099-01-01') TO ('2099-02-01')"
+            )
+            await conn.execute("CREATE TABLE public.audit_log_review_collision (id uuid)")
             result = _run_alembic(app_url, "check")
-            assert result.returncode != 0, "alembic check failed to flag an unattached audit_log_* table"
+            assert result.returncode != 0, "foreign-schema partition name hid a default-schema table"
+            assert "audit_log_review_collision" in result.stderr + result.stdout
+            await conn.execute("DROP TABLE public.audit_log_review_collision")
+            await conn.execute(
+                "ALTER TABLE public.audit_log DETACH PARTITION pr147_probe.audit_log_review_collision"
+            )
+            await conn.execute("DROP SCHEMA pr147_probe CASCADE")
+
+            # 4. Local indexes/constraints on a valid attached partition are not
+            #    inherited parent artifacts, so the partition guard must reject them.
+            child = next(
+                (row for row in before_upgrade["partitions"] if row[5] != "audit_log_default"),
+                None,
+            )
+            assert child is not None
+            child_schema, child_name = child[4], child[5]
+            qualified_child = await conn.fetchval("SELECT format('%I.%I', $1, $2)", child_schema, child_name)
+            await conn.execute(f"CREATE INDEX pr147_local_index ON {qualified_child} (action)")
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0
+            assert "pr147_local_index" in result.stderr + result.stdout
+            qualified_index = await conn.fetchval(
+                "SELECT format('%I.%I', $1, $2)", child_schema, "pr147_local_index"
+            )
+            await conn.execute(f"DROP INDEX {qualified_index}")
+
+            await conn.execute(
+                f"ALTER TABLE {qualified_child} ADD CONSTRAINT pr147_local_check CHECK (action <> 'blocked')"
+            )
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0
+            assert "pr147_local_check" in result.stderr + result.stdout
+            await conn.execute(f"ALTER TABLE {qualified_child} DROP CONSTRAINT pr147_local_check")
+
+            # 5. Missing declared parent indexes/constraints remain ordinary drift.
+            await conn.execute("DROP INDEX public.ix_audit_log_actor")
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0
+            assert "ix_audit_log_actor" in result.stderr + result.stdout
+            await conn.execute(
+                "CREATE INDEX ix_audit_log_actor ON public.audit_log (actor_user_id, timestamp)"
+            )
+
+            check_name = await conn.fetchval(
+                "SELECT conname FROM pg_constraint "
+                "WHERE conrelid = 'public.audit_log'::regclass AND conname LIKE '%result_allowed'"
+            )
+            assert check_name
+            drop_check = await conn.fetchval(
+                "SELECT format('ALTER TABLE public.audit_log DROP CONSTRAINT %I', $1)", check_name
+            )
+            await conn.execute(drop_check)
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0
+            assert "result_allowed" in result.stderr + result.stdout
+            add_check = await conn.fetchval(
+                "SELECT format('ALTER TABLE public.audit_log ADD CONSTRAINT %I "
+                "CHECK (result IN (''success'', ''failure''))', $1)",
+                check_name,
+            )
+            await conn.execute(add_check)
+
+            # 6. A detached former partition is now an ordinary table and must no
+            #    longer be excluded by the partition filter.
+            await conn.execute(
+                "CREATE TABLE public.audit_log_2099_01 PARTITION OF public.audit_log "
+                "FOR VALUES FROM ('2099-01-01') TO ('2099-02-01')"
+            )
+            await conn.execute("ALTER TABLE public.audit_log DETACH PARTITION public.audit_log_2099_01")
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0, "alembic check failed to flag a detached former partition"
             assert "audit_log_2099_01" in result.stderr + result.stdout
-            await conn.execute("DROP TABLE audit_log_2099_01")
+            await conn.execute(
+                "ALTER TABLE public.audit_log ATTACH PARTITION public.audit_log_2099_01 "
+                "FOR VALUES FROM ('2099-01-01') TO ('2099-02-01')"
+            )
+            await conn.execute("ALTER TABLE public.audit_log DETACH PARTITION public.audit_log_2099_01")
+            await conn.execute("DROP TABLE public.audit_log_2099_01")
         finally:
             await conn.close()
 
         _assert_alembic_ok(_run_alembic(app_url, "check"), "check")
+        conn = await asyncpg.connect(admin_dsn)
+        try:
+            assert await _audit_partition_snapshot(conn) == before_upgrade
+        finally:
+            await conn.close()
     finally:
         await _drop_scratch_database(db_name)

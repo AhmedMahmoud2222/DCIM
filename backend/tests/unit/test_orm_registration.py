@@ -9,11 +9,17 @@ database: they walk every `app.domain` model module and fail if importing
 """
 
 import importlib
+import os
 import pkgutil
+import subprocess
+import sys
+from pathlib import Path
 
 import app.db.models  # noqa: F401 — the registry under test
 import app.domain
 from app.db.base import Base
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 def _model_module_names() -> list[str]:
@@ -38,6 +44,43 @@ def test_every_domain_model_table_is_registered_by_app_db_models():
         "model modules whose tables app.db.models does not register "
         f"(add the import there): {missed}"
     )
+
+
+def test_registry_completeness_in_fresh_python_process():
+    """Avoid false passes when pytest/conftest imported a missing model earlier."""
+    script = """
+import importlib
+import pkgutil
+
+import app.db.models
+import app.domain
+from app.db.base import Base
+
+registered = set(Base.metadata.tables)
+missed = {}
+for module in pkgutil.walk_packages(app.domain.__path__, "app.domain."):
+    leaf = module.name.rsplit(".", 1)[-1]
+    if leaf == "models" or leaf.endswith("_models") or leaf == "ports":
+        importlib.import_module(module.name)
+        new_tables = set(Base.metadata.tables) - registered
+        if new_tables:
+            missed[module.name] = sorted(new_tables)
+            registered |= new_tables
+for table in Base.metadata.tables.values():
+    for foreign_key in table.foreign_keys:
+        foreign_key.column
+assert not missed, f"unregistered model tables: {missed}"
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=BACKEND_DIR,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"fresh-process registry check failed:\n{result.stdout}\n{result.stderr}"
 
 
 def test_every_foreign_key_target_resolves():
