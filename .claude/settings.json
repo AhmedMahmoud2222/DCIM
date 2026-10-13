@@ -1,7 +1,7 @@
 {
   "extraKnownMarketplaces": {
     "my-marketplace": {
-      "source": { "source": "github", "repo": "w3b6x9/supabase" }
+      "source": { "source": "github", "repo": "supabase/supabase" }
     }
   },
   "enabledPlugins": {
