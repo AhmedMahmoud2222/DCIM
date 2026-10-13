@@ -258,6 +258,40 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
             )
             await conn.execute(add_check)
 
+            # 5b. Same-name parent constraint with modified expression must be detected as drift.
+            await conn.execute(drop_check)
+            mod_check = await conn.fetchval(
+                "SELECT format('ALTER TABLE public.audit_log ADD CONSTRAINT %I "
+                "CHECK (result = ''success'')', $1::text)",
+                check_name,
+            )
+            await conn.execute(mod_check)
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0, "alembic check failed to detect modified CHECK expression"
+            assert "result_allowed" in result.stderr + result.stdout or "modified parent constraint" in result.stderr + result.stdout
+            await conn.execute(drop_check)
+            await conn.execute(add_check)
+
+            # 5c. Parent CHECK validation must run even when parent has zero attached child partitions.
+            detached_children = []
+            for child_row in before_upgrade["partitions"]:
+                child_rel = await conn.fetchval(
+                    "SELECT format('%I.%I', $1::text, $2::text)", child_row[4], child_row[5]
+                )
+                await conn.execute(f"ALTER TABLE public.audit_log DETACH PARTITION {child_rel}")
+                detached_children.append((child_rel, child_row[6]))
+
+            try:
+                # On empty parent with 0 children, missing parent constraint is still flagged.
+                await conn.execute(drop_check)
+                result = _run_alembic(app_url, "check")
+                assert result.returncode != 0, "alembic check failed to detect missing CHECK on childless parent"
+                assert "result_allowed" in result.stderr + result.stdout or "missing parent constraint" in result.stderr + result.stdout
+                await conn.execute(add_check)
+            finally:
+                for child_rel, bound in detached_children:
+                    await conn.execute(f"ALTER TABLE public.audit_log ATTACH PARTITION {child_rel} {bound}")
+
             # 6. A detached former partition is now an ordinary table and must no
             #    longer be excluded by the partition filter.
             await conn.execute(

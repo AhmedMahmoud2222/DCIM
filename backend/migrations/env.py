@@ -183,46 +183,81 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def _missing_parent_metadata_constraints(
+def _existing_parent_tables(connection: Connection) -> set[str]:
+    """Parent table names in ORM metadata that currently exist in PostgreSQL catalog as partitioned tables."""
+    parents = _partitioned_parent_names()
+    if not parents:
+        return set()
+    rows = connection.execute(
+        text(
+            "SELECT parent.relname FROM pg_class parent "
+            "JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
+            "WHERE parent.relname = ANY(:parents) "
+            "AND parent_ns.nspname = current_schema() "
+            "AND parent.relkind = 'p'"
+        ),
+        {"parents": list(parents)},
+    )
+    return {row[0] for row in rows}
+
+
+def _normalize_check_constraint_def(connection: Connection, table_name: str, sqltext_str: str) -> str | None:
+    """Ask PostgreSQL to parse and normalize a CHECK constraint expression via a temporary probe."""
+    try:
+        connection.execute(text(f"CREATE TEMP TABLE _norm_probe (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP"))
+        connection.execute(text(f"ALTER TABLE _norm_probe ADD CONSTRAINT _probe_c CHECK ({sqltext_str})"))
+        norm_def = connection.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid = '_norm_probe'::regclass AND conname = '_probe_c'"
+            )
+        ).scalar()
+        connection.execute(text("DROP TABLE _norm_probe"))
+        return norm_def
+    except Exception:
+        return None
+
+
+def _missing_or_modified_parent_metadata_constraints(
     connection: Connection,
-    attached_partitions: set[tuple[str, str]],
+    existing_parents: set[str],
 ) -> list[str]:
-    """Find check constraints declared in ORM metadata on parent tables that are missing from PostgreSQL catalog."""
-    if not attached_partitions:
+    """Find check constraints declared in ORM metadata on parent tables that are missing or modified in PostgreSQL catalog."""
+    if not existing_parents:
         return []
     drift = []
-    for parent_name in _partitioned_parent_names():
+    schema = connection.dialect.default_schema_name or "public"
+    for parent_name in existing_parents:
         table = target_metadata.tables.get(parent_name)
         if table is None:
             continue
-        db_constraints = set(
-            connection.execute(
+        db_constraints = {
+            row[0]: row[1]
+            for row in connection.execute(
                 text(
-                    "SELECT c.conname FROM pg_constraint c "
+                    "SELECT c.conname, pg_get_constraintdef(c.oid) FROM pg_constraint c "
                     "JOIN pg_class parent ON parent.oid = c.conrelid "
                     "JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
-                    "WHERE parent.relname = :parent_name AND parent_ns.nspname = current_schema()"
+                    "WHERE parent.relname = :parent_name AND parent_ns.nspname = current_schema() "
+                    "AND c.contype = 'c'"
                 ),
                 {"parent_name": parent_name},
-            ).scalars()
-        )
+            )
+        }
         for c in table.constraints:
-            if isinstance(c, CheckConstraint) and c.name and c.name not in db_constraints:
-                schema = connection.dialect.default_schema_name or "public"
-                drift.append(f"missing parent constraint {schema}.{parent_name}.{c.name}")
+            if isinstance(c, CheckConstraint) and c.name:
+                if c.name not in db_constraints:
+                    drift.append(f"missing parent constraint {schema}.{parent_name}.{c.name}")
+                else:
+                    norm = _normalize_check_constraint_def(connection, f"{schema}.{parent_name}", str(c.sqltext))
+                    actual = db_constraints[c.name]
+                    if norm and actual != norm:
+                        drift.append(f"modified parent constraint {schema}.{parent_name}.{c.name}")
     return drift
 
 
 def do_run_migrations(connection: Connection) -> None:
     attached_partitions = _attached_partitions(connection)
-    local_drift = _local_partition_drift(connection, attached_partitions) + _missing_parent_metadata_constraints(
-        connection, attached_partitions
-    )
-    if local_drift:
-        raise RuntimeError(
-            "Unexpected local indexes/constraints on attached audit partitions: "
-            + ", ".join(local_drift)
-        )
     inherited_indexes = _inherited_partition_indexes(connection, attached_partitions)
     # The lookup above autobegins a SQLAlchemy transaction on the connection; close it
     # so Alembic's own transaction handling (and migrations that use
@@ -239,6 +274,20 @@ def do_run_migrations(connection: Connection) -> None:
     )
     with context.begin_transaction():
         context.run_migrations()
+
+    # Post-migration schema drift check: runs after context.run_migrations() so legitimate
+    # migration upgrades can restore schema objects, while fail-closed drift verification
+    # still rejects missing/modified/unexpected constraints or indexes for alembic check.
+    existing_parents = _existing_parent_tables(connection)
+    updated_attached_partitions = _attached_partitions(connection)
+    local_drift = _local_partition_drift(
+        connection, updated_attached_partitions
+    ) + _missing_or_modified_parent_metadata_constraints(connection, existing_parents)
+    if local_drift:
+        raise RuntimeError(
+            "Unexpected local indexes/constraints on attached audit partitions: "
+            + ", ".join(local_drift)
+        )
 
 
 async def run_migrations_online() -> None:
