@@ -1,10 +1,10 @@
 {
   "extraKnownMarketplaces": {
     "my-marketplace": {
-      "source": { "source": "github", "repo": "supabase/supabase" }
+      "source": { "source": "github", "repo": "vercel/vercel" }
     }
   },
   "enabledPlugins": {
-    "supabase@my-marketplace": true
+    "vercel@my-marketplace": true
   }
 }
