@@ -35,4 +35,6 @@ def test_bootstep_checks_before_consumption_and_disposes(monkeypatch, failure):
 def test_gate_is_registered_as_worker_bootstep():
     assert registry_bootstep.RegistryLedgerGate in celery_app.steps["worker"]
     required_steps = {step if isinstance(step, str) else step.name for step in registry_bootstep.RegistryLedgerGate.requires}
-    assert "celery.worker.components:Pool" in required_steps
+    # Celery versions differ: string requires may stay as "module:Class" or be
+    # resolved to the step class whose name uses dotted notation.
+    assert required_steps & {"celery.worker.components:Pool", "celery.worker.components.Pool"}
