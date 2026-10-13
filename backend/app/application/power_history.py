@@ -13,6 +13,7 @@ topology at backfill time; the row says so through `computed_at`."""
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Context, Decimal, localcontext
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -23,7 +24,7 @@ from app.application.power_rollup_loader import POWER_METRIC, POWER_UNIT, load_r
 from app.domain.location.models import Site
 from app.domain.power.analytics_models import PowerUtilizationSnapshot
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import REGISTRY_VERSION
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_stored_canonical
 
 METHOD_VERSION = "1"
 EXPECTED_SAMPLES_PER_HOUR = 60  # one reading a minute per equipment item
@@ -49,16 +50,26 @@ async def _bucket_means(
         return {}
     rows = (
         await db.execute(
-            select(TelemetryReading.managed_asset_id, func.avg(TelemetryReading.value), func.count())
+            select(TelemetryReading.managed_asset_id, TelemetryReading.registry_version, TelemetryReading.unit,
+                   func.sum(TelemetryReading.value), func.count())
             .where(
-                TelemetryReading.metric == POWER_METRIC, TelemetryReading.unit == POWER_UNIT,
+                TelemetryReading.metric == POWER_METRIC,
+                (TelemetryReading.unit == POWER_UNIT) | TelemetryReading.registry_version.is_not(None),
                 TelemetryReading.managed_asset_id.in_(equipment_ids),
                 TelemetryReading.occurred_at >= start, TelemetryReading.occurred_at < end,
             )
-            .group_by(TelemetryReading.managed_asset_id)
+            .group_by(TelemetryReading.managed_asset_id, TelemetryReading.registry_version, TelemetryReading.unit)
         )
     ).all()
-    return {aid: (float(avg), int(n)) for aid, avg, n in rows if aid is not None}
+    totals: dict[uuid.UUID, tuple[Decimal, int]] = {}
+    with localcontext(Context(prec=28)):
+        for aid, version, unit, source_sum, n in rows:
+            if aid is None:
+                continue
+            normalized = convert_stored_canonical(POWER_METRIC, Decimal(source_sum), unit, version)
+            total, count = totals.get(aid, (Decimal("0"), 0))
+            totals[aid] = (total + normalized, count + int(n))
+        return {aid: (float(total / n), n) for aid, (total, n) in totals.items()}
 
 
 def _basis(quality: str, load: float | None) -> str:

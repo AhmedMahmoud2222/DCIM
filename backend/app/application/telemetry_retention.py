@@ -26,7 +26,6 @@ from app.application.telemetry_ledger import (
     enforce_horizon,
     note_duplicate_suppressed,
 )
-from app.application.telemetry_lineage import record_lineage
 from app.domain.telemetry.aggregate_math import (
     BASIS_EXACT,
     BASIS_LEGACY_SEEDED,
@@ -114,7 +113,6 @@ async def merge_late_reading(
     # Compute before touching the row: an AggregateArithmeticError leaves the aggregate and the reading unchanged and
     # propagates to the caller-owned transaction (the ingest savepoint), so no evidence is deleted on failure.
     _fold_into(aggregate, state_of([cast(Decimal, reading.value)]))
-    await record_lineage(db, aggregate, [reading], now=instant, retention_days=await _retention_days(db, retention_days))
     return LateMergeOutcome.MERGED
 
 
@@ -221,7 +219,8 @@ async def compact_eligible_raw(
             group = state_of([cast(Decimal, item.value) for item in fresh])
             existing = await _locked_aggregate(db, row.series_key, row.day)
             if existing is None:
-                existing = DailyTelemetryAggregate(
+                db.add(
+                    DailyTelemetryAggregate(
                         integration_id=first.integration_id,
                         managed_asset_id=first.managed_asset_id,
                         external_identifier=first.external_identifier,
@@ -237,10 +236,9 @@ async def compact_eligible_raw(
                         sum_value=group.sum_value,
                         arithmetic_basis=BASIS_EXACT,
                     )
-                db.add(existing)
+                )
             else:
                 _fold_into(existing, group)
-            await record_lineage(db, existing, fresh, now=instant, retention_days=await _retention_days(db, retention_days))
         await db.flush()  # must succeed before deletion
         await db.execute(
             delete(TelemetryReading).where(TelemetryReading.id.in_([item.id for item in raw_rows]))
