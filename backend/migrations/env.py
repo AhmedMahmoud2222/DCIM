@@ -128,14 +128,14 @@ def _make_include_object(
             # Never suppress metadata-side objects: an index/constraint declared on a
             # model but missing from the database is genuine drift and must be reported.
             return True
-        schema = obj.schema or default_schema
-        table_identity = (schema, name)
-        if type_ == "table" and table_identity in attached_partitions:
-            # Verified attached partition child — PostgreSQL owns its lifecycle (created
-            # by raw partition DDL / maintenance job, dropped only via DETACH/DROP by an
-            # operator). Local partition-only indexes/constraints are separately checked
-            # by _local_partition_drift before Alembic's table-level comparison.
-            return False
+        if type_ == "table":
+            schema = obj.schema or default_schema
+            if (schema, name) in attached_partitions:
+                # Verified attached partition child — PostgreSQL owns its lifecycle (created
+                # by raw partition DDL / maintenance job, dropped only via DETACH/DROP by an
+                # operator). Local partition-only indexes/constraints are separately checked
+                # by _local_partition_drift before Alembic's table-level comparison.
+                return False
         if type_ == "index" and obj.table is not None:
             index_identity = (obj.table.schema or default_schema, obj.table.name, name)
             if index_identity in inherited_partition_indexes:
