@@ -2,7 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool, text
+from sqlalchemy import CheckConstraint, pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -88,10 +88,7 @@ def _local_partition_drift(connection: Connection, attached_partitions: set[tupl
             " AND pg_get_constraintdef(parent_con.oid) = pg_get_constraintdef(c.oid))"
             "), invalid_local_constraints AS ("
             " SELECT lc.nspname, lc.relname, lc.object_name "
-            " FROM local_constraints lc WHERE lc.contype <> 'c' OR ("
-            " SELECT count(*) FROM local_constraints bound "
-            " WHERE bound.nspname = lc.nspname AND bound.relname = lc.relname AND bound.contype = 'c'"
-            ") <> 1"
+            " FROM local_constraints lc"
             "), missing_parent_indexes AS ("
             " SELECT p.nspname, p.relname, parent_idx.relname AS object_name "
             " FROM partitions p JOIN pg_inherits part_inh ON part_inh.inhrelid = p.oid "
@@ -186,9 +183,41 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _missing_parent_metadata_constraints(
+    connection: Connection,
+    attached_partitions: set[tuple[str, str]],
+) -> list[str]:
+    """Find check constraints declared in ORM metadata on parent tables that are missing from PostgreSQL catalog."""
+    if not attached_partitions:
+        return []
+    drift = []
+    for parent_name in _partitioned_parent_names():
+        table = target_metadata.tables.get(parent_name)
+        if table is None:
+            continue
+        db_constraints = set(
+            connection.execute(
+                text(
+                    "SELECT c.conname FROM pg_constraint c "
+                    "JOIN pg_class parent ON parent.oid = c.conrelid "
+                    "JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace "
+                    "WHERE parent.relname = :parent_name AND parent_ns.nspname = current_schema()"
+                ),
+                {"parent_name": parent_name},
+            ).scalars()
+        )
+        for c in table.constraints:
+            if isinstance(c, CheckConstraint) and c.name and c.name not in db_constraints:
+                schema = connection.dialect.default_schema_name or "public"
+                drift.append(f"missing parent constraint {schema}.{parent_name}.{c.name}")
+    return drift
+
+
 def do_run_migrations(connection: Connection) -> None:
     attached_partitions = _attached_partitions(connection)
-    local_drift = _local_partition_drift(connection, attached_partitions)
+    local_drift = _local_partition_drift(connection, attached_partitions) + _missing_parent_metadata_constraints(
+        connection, attached_partitions
+    )
     if local_drift:
         raise RuntimeError(
             "Unexpected local indexes/constraints on attached audit partitions: "
