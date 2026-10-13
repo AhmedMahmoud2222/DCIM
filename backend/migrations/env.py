@@ -53,9 +53,11 @@ def _attached_partitions(connection: Connection) -> set[tuple[str, str]]:
 def _local_partition_drift(connection: Connection, attached_partitions: set[tuple[str, str]]) -> list[str]:
     """Find indexes/constraints created locally on a partition rather than inherited.
 
-    Parent indexes and constraints are attached by PostgreSQL and have pg_inherits or
-    conparentid links. The one local CHECK constraint PostgreSQL creates for a partition
-    is its bound; additional local constraints, or any unattached local index, are drift.
+    Parent indexes are attached through pg_inherits. PostgreSQL 16 can expose inherited
+    CHECK constraints as local catalog rows with conparentid=0, so constraints are
+    matched to parent definitions rather than relying on that field. The one unmatched
+    local CHECK is the partition bound; additional local constraints, or any unattached
+    local index, are drift.
     """
     if not attached_partitions:
         return []
@@ -77,12 +79,19 @@ def _local_partition_drift(connection: Connection, attached_partitions: set[tupl
             " JOIN pg_class idx ON idx.oid = i.indexrelid "
             " WHERE NOT EXISTS (SELECT 1 FROM pg_inherits ih WHERE ih.inhrelid = idx.oid)"
             "), local_constraints AS ("
-            " SELECT p.nspname, p.relname, c.conname AS object_name "
-            " FROM partitions p JOIN pg_constraint c ON c.conrelid = p.oid "
-            " WHERE c.conparentid = 0 AND (c.contype <> 'c' OR ("
-            " SELECT count(*) FROM pg_constraint bound "
-            " WHERE bound.conrelid = p.oid AND bound.conparentid = 0 AND bound.contype = 'c'"
-            ") <> 1)"
+            " SELECT p.nspname, p.relname, c.conname AS object_name, c.contype "
+            " FROM partitions p JOIN pg_inherits part_inh ON part_inh.inhrelid = p.oid "
+            " JOIN pg_constraint c ON c.conrelid = p.oid "
+            " WHERE NOT EXISTS (SELECT 1 FROM pg_constraint parent_con "
+            " WHERE parent_con.conrelid = part_inh.inhparent "
+            " AND parent_con.conname = c.conname AND parent_con.contype = c.contype "
+            " AND pg_get_constraintdef(parent_con.oid) = pg_get_constraintdef(c.oid))"
+            "), invalid_local_constraints AS ("
+            " SELECT lc.nspname, lc.relname, lc.object_name "
+            " FROM local_constraints lc WHERE lc.contype <> 'c' OR ("
+            " SELECT count(*) FROM local_constraints bound "
+            " WHERE bound.nspname = lc.nspname AND bound.relname = lc.relname AND bound.contype = 'c'"
+            ") <> 1"
             "), missing_parent_indexes AS ("
             " SELECT p.nspname, p.relname, parent_idx.relname AS object_name "
             " FROM partitions p JOIN pg_inherits part_inh ON part_inh.inhrelid = p.oid "
@@ -96,9 +105,11 @@ def _local_partition_drift(connection: Connection, attached_partitions: set[tupl
             " FROM partitions p JOIN pg_inherits part_inh ON part_inh.inhrelid = p.oid "
             " JOIN pg_constraint parent_con ON parent_con.conrelid = part_inh.inhparent "
             " WHERE NOT EXISTS (SELECT 1 FROM pg_constraint child_con "
-            " WHERE child_con.conrelid = p.oid AND child_con.conparentid = parent_con.oid)"
+            " WHERE child_con.conrelid = p.oid AND child_con.conname = parent_con.conname "
+            " AND child_con.contype = parent_con.contype "
+            " AND pg_get_constraintdef(child_con.oid) = pg_get_constraintdef(parent_con.oid))"
             ") SELECT nspname, relname, object_name, 'index' AS kind FROM local_indexes"
-            " UNION ALL SELECT nspname, relname, object_name, 'constraint' AS kind FROM local_constraints"
+            " UNION ALL SELECT nspname, relname, object_name, 'constraint' AS kind FROM invalid_local_constraints"
             " UNION ALL SELECT nspname, relname, object_name, 'missing inherited index' AS kind FROM missing_parent_indexes"
             " UNION ALL SELECT nspname, relname, object_name, 'missing inherited constraint' AS kind "
             "FROM missing_parent_constraints"
