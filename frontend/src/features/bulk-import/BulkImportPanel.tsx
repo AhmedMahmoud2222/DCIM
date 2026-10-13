@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import {
   BulkImportResource,
@@ -239,13 +240,18 @@ export function BulkImportPanel({
         {!jobId && (
           <div className="space-y-4">
             <div>
-              <button
-                onClick={() => templateMutation.mutate()}
-                disabled={templateMutation.isPending}
-                className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
-              >
-                {templateMutation.isPending ? "Downloading…" : "Download template"}
-              </button>
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => templateMutation.mutate()}
+                  disabled={templateMutation.isPending}
+                  className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
+                >
+                  {templateMutation.isPending ? "Downloading…" : "Download template"}
+                </button>
+                <Link to="/locations" onClick={onClose} className="text-xs text-blue-400 hover:underline">
+                  Missing sites or rooms? Manage Locations →
+                </Link>
+              </div>
               {templateMutation.isError && (
                 <p role="alert" className="mt-2 text-sm text-red-400">
                   {apiErrorMessage(templateMutation.error, "Could not download the template.")}

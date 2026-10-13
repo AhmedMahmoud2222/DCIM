@@ -11,6 +11,19 @@ export interface Organization {
   created_at: string;
 }
 
+export interface Country {
+  id: string;
+  organization_id: string;
+  name: string;
+  iso_code: string | null;
+}
+
+export interface City {
+  id: string;
+  country_id: string;
+  name: string;
+}
+
 export interface Site {
   id: string;
   city_id: string;
@@ -19,13 +32,18 @@ export interface Site {
   timezone: string;
 }
 
-export interface ManagedAsset {
+export interface Building {
   id: string;
-  asset_type: string;
-  asset_tag: string;
-  serial_number: string | null;
-  lifecycle_status: string;
-  created_at: string;
+  site_id: string;
+  code: string;
+  name: string;
+}
+
+export interface Floor {
+  id: string;
+  building_id: string;
+  name: string;
+  level_number: number;
 }
 
 export interface Room {
@@ -35,6 +53,15 @@ export interface Room {
   name: string;
   room_type: string;
   version: number;
+}
+
+export interface ManagedAsset {
+  id: string;
+  asset_type: string;
+  asset_tag: string;
+  serial_number: string | null;
+  lifecycle_status: string;
+  created_at: string;
 }
 
 // ------------------------------------------------------------------- Catalog
