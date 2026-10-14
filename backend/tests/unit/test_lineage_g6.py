@@ -36,6 +36,11 @@ def test_no_backfill_or_complete_coverage_claim_for_prelineage_samples():
         lineage_coverage(100, 101)
 
 
+def test_null_lineage_sample_count_is_none_coverage_not_a_type_error():
+    # Persisted as NULL for aggregates folded before this G6 feature existed.
+    assert lineage_coverage(100, None) == "none"
+
+
 def test_missing_revision_cannot_claim_pinned_evidence():
     summaries = summarize_fresh_readings([reading(None, "pinned", datetime.now(UTC))])
     assert evidence_class(row.key for row in summaries) == "unverified"

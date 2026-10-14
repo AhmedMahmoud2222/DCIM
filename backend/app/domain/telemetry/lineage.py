@@ -58,8 +58,15 @@ def evidence_class(keys: Iterable[LineageKey]) -> str:
     return next(iter(statuses)) if len(statuses) == 1 else "mixed"
 
 
-def lineage_coverage(aggregate_sample_count: int, lineage_sample_count: int) -> str:
-    if aggregate_sample_count < 1 or lineage_sample_count < 0 or lineage_sample_count > aggregate_sample_count:
+def lineage_coverage(aggregate_sample_count: int, lineage_sample_count: int | None) -> str:
+    if aggregate_sample_count < 1:
+        raise ValueError("Lineage counts contradict the aggregate")
+    # Persisted as NULL for aggregates folded before this G6 feature existed;
+    # there is no lineage evidence to claim, so this is "none" coverage, not
+    # an impossible-count error.
+    if lineage_sample_count is None:
+        return "none"
+    if lineage_sample_count < 0 or lineage_sample_count > aggregate_sample_count:
         raise ValueError("Lineage counts contradict the aggregate")
     if lineage_sample_count == 0:
         return "none"

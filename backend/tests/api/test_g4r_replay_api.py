@@ -170,6 +170,26 @@ async def test_settings_field_default_validation_and_omitted_put_preserves_it(cl
     assert cleared.json()["late_replay_horizon_days"] is None
 
 
+async def test_resolved_hold_retention_days_is_settable_and_omitted_put_preserves_it(client, world):
+    headers = world["headers"]
+    current = (await client.get("/api/v1/settings/monitoring", headers=headers)).json()
+    body = {k: v for k, v in current.items() if k != "resolved_hold_retention_days"}
+    assert (await client.put(
+        "/api/v1/settings/monitoring", json={**body, "resolved_hold_retention_days": 0}, headers=headers
+    )).status_code == 422
+    set_ = await client.put(
+        "/api/v1/settings/monitoring", json={**body, "resolved_hold_retention_days": 90}, headers=headers
+    )
+    assert set_.status_code == 200, set_.text
+    assert set_.json()["resolved_hold_retention_days"] == 90
+    kept = await client.put("/api/v1/settings/monitoring", json=body, headers=headers)
+    assert kept.json()["resolved_hold_retention_days"] == 90
+    cleared = await client.put(
+        "/api/v1/settings/monitoring", json={**body, "resolved_hold_retention_days": None}, headers=headers
+    )
+    assert cleared.json()["resolved_hold_retention_days"] is None
+
+
 async def test_ledger_status_endpoint_auth_values_and_warnings(client, world, db_session, auth_headers):
     url = "/api/v1/telemetry/replay-ledger"
     assert (await client.get(url)).status_code == 401
