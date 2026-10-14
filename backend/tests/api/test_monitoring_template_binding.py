@@ -1,6 +1,7 @@
 """G9b binding survives authored API edits/cloning and rejects ambiguous conversion."""
 
 import asyncio
+import uuid
 
 import pytest
 
@@ -43,6 +44,19 @@ async def test_binding_create_partial_edit_rejection_and_read(client, auth_heade
     read = await client.get(f"/api/v1/catalog/revisions/{revision['id']}", headers=headers)
     assert read.status_code == 200, read.text
     assert read.json()["monitoring_metrics"][0]["registry_version"] == "2"
+
+
+async def test_invalid_binding_against_missing_revision_is_404_not_422(client, auth_headers):
+    # Existence/lock must be checked before the payload is validated -- an
+    # invalid binding for a revision that doesn't exist is a 404, not a 422,
+    # otherwise a caller can't tell "bad body" apart from "wrong revision".
+    headers = await auth_headers("Administrator")
+    missing_id = uuid.uuid4()
+    response = await client.post(
+        f"/api/v1/catalog/revisions/{missing_id}/monitoring-metrics",
+        json=body(registry_version=None), headers={**headers, "If-Match": "1"},
+    )
+    assert response.status_code == 404, response.text
 
 
 @pytest.mark.parametrize("changes", [
