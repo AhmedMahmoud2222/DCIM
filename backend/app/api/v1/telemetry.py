@@ -20,7 +20,7 @@ from sqlalchemy import DateTime, and_, cast, func, literal, select, text, union_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import AlarmUnitCompatibilityError
+from app.application.alarm_service import AlarmUnitCompatibilityError, lock_collector_batch_rules, lock_operator_hold_rules
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -359,6 +359,17 @@ async def ingest_collector_telemetry(
     body: TelemetryBatchIn,
 ) -> TelemetryBatchOut:
     """Per-record ACKs retain unacknowledged edge-queue records for retry."""
+    async with lock_collector_batch_rules(
+        db, collector_id=collector.id, integration_ids=list({record.integration_id for record in body.records}),
+    ) as eligible_integrations:
+        return await _ingest_prelocked_collector_telemetry(
+            db, collector=collector, body=body, eligible_integrations=eligible_integrations,
+        )
+
+
+async def _ingest_prelocked_collector_telemetry(
+    db: AsyncSession, *, collector: Collector, body: TelemetryBatchIn, eligible_integrations: frozenset[uuid.UUID],
+) -> TelemetryBatchOut:
     from app.application.collector_service import current_assignment
 
     results: list[TelemetryAck] = []
@@ -375,7 +386,7 @@ async def ingest_collector_telemetry(
     )
     for record in body.records:
         assignment = await current_assignment(db, record.integration_id)
-        if assignment is None or assignment.collector_id != collector.id:
+        if record.integration_id not in eligible_integrations or assignment is None or assignment.collector_id != collector.id:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="NOT_ASSIGNED"))
             continue
         try:
@@ -506,8 +517,23 @@ async def resolve_contract_hold(
     This never edits a mapping or a revision; it only ingests the retained record with
     `contract_evidence = 'operator_resolved'` and records who decided and which revision was chosen.
     """
+    # Read identity without a hold lock, then establish the same rule-first hierarchy
+    # as collector batches. Taking the hold or aggregate first can deadlock a batch.
+    integration_id = (await db.execute(
+        select(TelemetryContractHold.integration_id).where(TelemetryContractHold.id == hold_id)
+    )).scalar_one_or_none()
+    if integration_id is None:
+        raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")
+    async with lock_operator_hold_rules(db, integration_id=integration_id):
+        return await _resolve_prelocked_contract_hold(hold_id, body, db, ctx)
+
+
+async def _resolve_prelocked_contract_hold(
+    hold_id: uuid.UUID, body: ContractHoldResolveIn, db: AsyncSession, ctx,
+) -> ContractHoldOut:
     hold = (
-        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update())
+        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update()
+            .execution_options(populate_existing=True))
     ).scalar_one_or_none()
     if hold is None:
         raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")

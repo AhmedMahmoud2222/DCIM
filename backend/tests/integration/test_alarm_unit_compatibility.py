@@ -10,7 +10,7 @@ from sqlalchemy import null, select, text
 from app.api.v1.alarms import _out
 from app.application.telemetry_service import ingest_reading
 from app.domain.alarm.models import Alarm, AlarmRule
-from app.domain.integration.models import Collector, Integration
+from app.domain.integration.models import Collector, CollectorAssignment, Integration
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
 
 
@@ -90,7 +90,9 @@ async def test_batch_incompatible_legacy_units_reject_only_bad_record_and_roll_b
                                    canonical_metric="temperature_c", unit="W", scale=1, registry_version=null())
     canonical = AlarmRule(id=uuid.uuid4(), integration_id=integration.id, metric="temperature_c", rule_type="threshold_high",
                           threshold=Decimal("30"), unit="degC", name="canonical")
-    db_session.add_all([good, bad, canonical])
+    assignment = CollectorAssignment(id=uuid.uuid4(), integration_id=integration.id, collector_id=collector.id,
+                                     effective_from=now)
+    db_session.add_all([good, bad, canonical, assignment])
     await db_session.flush()
     await db_session.refresh(good)
     await db_session.refresh(bad)
