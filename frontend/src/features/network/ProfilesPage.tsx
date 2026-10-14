@@ -81,10 +81,9 @@ export function ProfilesPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Vendor &amp; Device Profiles</h1>
+      <h1 className="mb-1 text-lg font-semibold">Device Profiles</h1>
       <p className="mb-4 max-w-3xl text-sm text-slate-400">
-        Profiles are data: sysObjectID matching, discovery OIDs, LLDP/CDP table layouts and metric mappings live here, not in
-        collector code. They never hold credentials. An ambiguous match selects nothing.
+        Device profiles define capability specifications, sysObjectID matching, discovery OIDs, metric mappings, and network discovery parameters (LLDP/CDP table layouts). They never hold credentials. An ambiguous match selects nothing.
       </p>
 
       <label className="mb-3 flex items-center gap-2 text-xs text-slate-400">
