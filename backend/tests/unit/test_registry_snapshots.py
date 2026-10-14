@@ -38,7 +38,6 @@ def test_shipped_degree_aliases_preserve_pre_snapshot_v1(source, normalized, val
                                          registry_version="1").value == Decimal(expected)
 
 
-
 def test_conversions_ignore_hostile_global_decimal_context():
     with localcontext(Context(prec=6)):
         assert registry.convert_value(Decimal("1000000"), "CFM", "m3/s") == Decimal("471.94744320")
