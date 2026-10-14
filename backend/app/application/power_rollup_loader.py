@@ -5,7 +5,6 @@ registry already normalised at ingest. Nothing is converted here and no reading 
 
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +26,7 @@ from app.domain.power.models import (
     ProtectionDevice,
 )
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import METRIC_REGISTRY, convert_stored_canonical
+from app.domain.telemetry.registry import METRIC_REGISTRY
 
 POWER_METRIC = "power_kw"
 POWER_UNIT = METRIC_REGISTRY[POWER_METRIC].canonical_unit
@@ -157,8 +156,7 @@ async def load_rollup_inputs(
                 func.max(TelemetryReading.occurred_at).label("ts"),
             )
             .where(
-                TelemetryReading.metric == POWER_METRIC,
-                (TelemetryReading.unit == POWER_UNIT) | TelemetryReading.registry_version.is_not(None),
+                TelemetryReading.metric == POWER_METRIC, TelemetryReading.unit == POWER_UNIT,
                 TelemetryReading.managed_asset_id.in_(list(by_equipment)),
             )
             .group_by(TelemetryReading.managed_asset_id)
@@ -166,24 +164,19 @@ async def load_rollup_inputs(
         )
         rows = (
             await db.execute(
-                select(TelemetryReading.managed_asset_id, TelemetryReading.value, TelemetryReading.occurred_at,
-                       TelemetryReading.unit, TelemetryReading.registry_version)
+                select(TelemetryReading.managed_asset_id, TelemetryReading.value, TelemetryReading.occurred_at)
                 .join(
                     sub,
                     (sub.c.managed_asset_id == TelemetryReading.managed_asset_id)
                     & (sub.c.ts == TelemetryReading.occurred_at),
                 )
-                .where(TelemetryReading.metric == POWER_METRIC,
-                       (TelemetryReading.unit == POWER_UNIT) | TelemetryReading.registry_version.is_not(None))
+                .where(TelemetryReading.metric == POWER_METRIC)
                 .order_by(TelemetryReading.managed_asset_id, TelemetryReading.value)
             )
         ).all()
-        for aid, value, ts, unit, version in rows:
+        for aid, value, ts in rows:
             if aid is not None:
-                normalized = float(convert_stored_canonical(POWER_METRIC, Decimal(value), unit, version))
-                previous = latest.get(aid)
-                if previous is None or normalized > previous[0]:
-                    latest[aid] = (normalized, ts)  # tie-break by the normalized fixed-unit value
+                latest[aid] = (float(value), ts)  # on a timestamp tie the highest value wins (sorted ascending)
 
     tag_rows = (
         await db.execute(select(ManagedAsset.id, ManagedAsset.asset_tag).where(ManagedAsset.id.in_(list(by_equipment))))

@@ -205,12 +205,7 @@ async def test_dedup_semantics_are_unchanged_across_revisions_and_ambiguity(db_s
 
 async def test_registry_drift_is_refused_for_a_pinned_revision(db_session, monkeypatch):
     collector, integration, mapping = await _world(db_session, unit="degF")
-    from types import MappingProxyType
-    original = registry.registry_snapshot("1")
-    units = dict(original.units)
-    units["degF"] = registry.UnitDefinition("degF", "temperature", Decimal("0.56"), Decimal("-32"))
-    drifted = registry.make_snapshot("1", units, original.aliases, original.metrics)
-    monkeypatch.setattr(registry, "REGISTRIES", MappingProxyType({"1": drifted}))
+    monkeypatch.setitem(registry.UNITS, "degF", registry.UnitDefinition("degF", "temperature", Decimal("0.56"), Decimal("-32")))
     with pytest.raises(ConversionContractDrift):
         await _ingest(db_session, collector, integration, value=68, mapping_revision_id=mapping.current_revision_id)
     assert (await db_session.execute(select(TelemetryReading))).scalars().all() == []

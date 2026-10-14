@@ -19,10 +19,8 @@ from sqlalchemy import (
     Numeric,
     String,
     Table,
-    Text,
     UniqueConstraint,
     event,
-    func,
     insert,
     update,
 )
@@ -33,19 +31,6 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
 from app.domain.telemetry.contract import conversion_contract_hash
 from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION
-
-
-class RegistryVersionSnapshot(Base):
-    """Append-only contract evidence; database triggers prohibit row mutation."""
-
-    __tablename__ = "registry_version_snapshot"
-    __table_args__ = (CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="hash"),)
-
-    version: Mapped[str] = mapped_column(Text, primary_key=True)
-    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
-
 
 CANONICAL_METRICS = tuple(METRIC_REGISTRY)
 
