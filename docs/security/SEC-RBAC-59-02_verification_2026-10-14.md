@@ -98,3 +98,42 @@ correct (i.e., whether the rack-scope containment #64 asked for is genuinely alr
 enforced on current main) and whether the test evidence is sufficient to close #64.
 Per the owner's gates, #64 will not be closed, and nothing will be merged, until that
 review records an explicit ACCEPTED verdict at this exact head.
+
+## Update 2026-10-15 — re-verification against `main` `1aa77f6c5c31e555905b5d126e4e179e3a0bd2d2` (includes #134)
+
+PR #134 (SEC-ARCH-01 / #57) merged after the review above. This section separates what was
+already verified from what is new.
+
+### Previously verified (unchanged, not re-run locally)
+- The 13-test delegation-boundary module and the 104-test RBAC/authority surface were run at
+  `main` `47141e83` (see above). Those results are not re-claimed for the new base.
+
+### New: code-level reassessment of #134 (reading, not execution)
+- `groups.py`, `users.py`, `user_admin_service.py` and `test_pr59_delegation_boundary.py` are
+  **not modified** by #134. The #64 guards (`scope_contains`, `assert_can_assign_group`,
+  `assert_can_grant_sites`, `assert_not_changing_own_membership`) are unchanged.
+- The guards compare against `ctx.scope`, which comes from `load_effective_access`. #134 changes
+  that function: a non-global `organization` RoleAssignment adds every site under its
+  organization as `rack_scope=all` to the holder's reach, only when no global role exists, the
+  user names exactly one organization, and all group sites already lie inside it.
+  Consequences for #64: an actor's delegation ceiling is their own effective reach, so an
+  organization-assigned actor can delegate within, and only within, sites it genuinely holds.
+  Selected-rack actors without an organization assignment are unaffected (the widening path
+  requires the assignment).
+- Non-global RoleAssignments cannot be created through the API (`users.py` only writes
+  `scope_type="global"`), so the organization widening requires a database-level assignment and
+  is not reachable by a rack-limited delegated admin acting through the routes.
+- Scoped role names are dropped when not contained (`Administrator` checks), and organization
+  assignments never confer role names or `unrestricted`, so they cannot satisfy the
+  `assert_can_assign_role` / last-administrator logic.
+- Migration `0054` only swaps the `role_assignment.scope_type` check constraint
+  (`building` -> `organization`) and refuses to run if `building` rows exist; it does not touch
+  group/site-access tables.
+
+### New: execution evidence
+- No local test execution was possible for this update (Docker daemon unavailable; no local
+  PostgreSQL/Redis). **No claim is made that the 13 tests were re-run locally on `1aa77f6c`.**
+- Execution evidence for the updated head is the repository CI (backend suites on Python
+  3.12/3.13/3.14 with PostgreSQL), which includes `test_pr59_delegation_boundary.py`,
+  `test_sec_arch_01_role_assignment_scope.py` and the 0054 migration test. CI results are
+  recorded on the PR.
