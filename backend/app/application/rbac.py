@@ -1,6 +1,7 @@
 """RBAC enforcement (§39 of v1.0, §32/§32a). H7 = Option B: Phase 1 enforces permissions
-globally only — RoleAssignment.scope_type/scope_id are populated but never filtered on.
-Every protected route depends on require_permission(), never on frontend hiding (§13 of
+globally for role permissions; data scope comes from group site/rack grants, and a non-global
+RoleAssignment is honoured only inside its own scope (access_control.scoped_role_is_contained,
+SEC-ARCH-01). Every protected route depends on require_permission(), never on frontend hiding (§13 of
 the Phase 1 prompt).
 
 Phase 10A PR-2 (docs/superpowers/specs/2026-09-23-phase-10a-asset-catalog-designer-
@@ -222,7 +223,8 @@ class AuthContext:
     user: User
     permission_codes: frozenset[str]
     role_names: frozenset[str]
-    """Every Role.name the user is assigned to, independent of that role's current
+    """Every Role.name the user is assigned to that is in force (a non-global assignment outside its
+    scope is not, see access_control.scoped_role_is_contained), independent of that role's current
     permission grants — deliberately not derived by joining through RolePermission,
     since a role stripped of every permission would then vanish from this set even
     though the user is still formally assigned to it (spec §9.1)."""
