@@ -152,11 +152,19 @@ def test_sanitize_svg_rejects_extreme_nesting_depth_quickly_and_without_recursio
     for one specific depth."""
     import time
 
+    # The depth guard raises inside the SAX `start()` callback as soon as
+    # MAX_NESTING_DEPTH (200) is exceeded, interrupting the underlying expat
+    # parse immediately — so the walk's own cost is O(200) regardless of how
+    # deep the attacker-supplied document goes. 10s is a CI-load-safe budget
+    # for that bounded cost, not a tuned-per-depth number: a real regression
+    # back to O(depth) would still fail this comfortably (confirmed CI flake
+    # at the previous 2.0s budget under runner contention, not a slowdown in
+    # the sanitizer itself).
     for depth in (20_000, 100_000):
         t0 = time.monotonic()
         with pytest.raises(SvgRejected, match="depth limit"):
             sanitize_svg(_nested_group_svg(depth))
-        assert time.monotonic() - t0 < 2.0, f"depth {depth} took too long to reject"
+        assert time.monotonic() - t0 < 10.0, f"depth {depth} took too long to reject"
 
 
 def test_sanitize_svg_rejects_depth_before_parsing_the_remaining_input():

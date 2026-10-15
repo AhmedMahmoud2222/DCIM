@@ -41,6 +41,7 @@ PERMANENT_TELEMETRY_ERRORS = frozenset({
     "MAPPING_REVISION_MISMATCH",
     "CONTRACT_HOLD_EXPIRED",
     "INVALID_TELEMETRY_VALUE",
+    "VALUE_OUT_OF_RANGE",
     "INCOMPATIBLE_TELEMETRY_UNITS",
     # Issue #128 / G4-R: the record is older than Central's configured replay horizon; resending can never succeed.
     # An older collector that does not know this code treats it as retryable and stops at its own queue retention.

@@ -1,10 +1,11 @@
 # G6 aggregate lineage and source evidence lifetime (Draft)
 
-Depends on merged G4-R #137/main bd12390544164132df90002c3ea40119198db2cb.
-Migration 0051 follows 0049 on this isolated draft. G8 has independent migration
-0050 also following 0049. These are sibling drafts: integration must reparent the
-later migration onto the accepted earlier chain and re-run single-head/migration
-checks. Neither draft may be merged just to unblock implementation.
+Integrated with main 6c8a4a3dbcfccdede78b3c811708b1be44d7505e after merged
+G10 #138, G5 #142 and G9b #144. The migration chain is
+0049_telemetry_replay_ledger -> 0053_registry_version_snapshot ->
+0052_monitoring_template_binding -> 0051_aggregate_lineage (sole head).
+G8 #139, G7 #141 and combined #146/#153 are not integration dependencies.
+The G9a projection gate is unchanged.
 
 Raw retention is the existing individual-source-evidence expiry policy. Actual
 expiry occurs when compaction or a late merge transfers a sample into a daily
@@ -53,13 +54,37 @@ Upgrade is additive and never backfills history. Nullable aggregate columns have
 no defaults; checks are added NOT VALID, then validated after releasing the metadata
 DDL's exclusive locks. Every pre-commit step is rerunnable after an interrupted
 upgrade. Downgrade locks the evidence tables and refuses when lineage or summary
-evidence exists; operational rollback stops writes while retaining schema.
+evidence exists, including independently nullable compaction metadata. An owner
+hold-retention policy differing from the seeded 365 days (including explicit NULL)
+also blocks downgrade. The policy table is locked before this check so a concurrent
+edit cannot slip between the guard and column removal. Operational rollback stops
+writes while retaining schema.
 
 Representative production profiling is blocked pending an authorized reachable
 source. Test fixtures and storage estimates are synthetic, never production evidence.
 
 
-## Local validation, 2026-10-12
+## Integration recovery validation, 2026-10-15
+
+- Focused G6 domain, migration, concurrency and rollback suites: 33 passed.
+- Two additional late-merge tests verify failure after lineage persistence under
+  transaction rollback and savepoint rollback; the aggregate suite rerun passed
+  all seven cases.
+- G4 arithmetic/G1 mapping/G5 registry/G9b template migration regressions,
+  hostile retention checks and replay/settings API checks: 36 passed.
+- Additional G4 replay-ledger, migration, arithmetic and race suites: 60 passed.
+- Fresh CLI upgrade, downgrade to 0010 and re-upgrade: passed. Populated G6
+  round trip preserves unknown history; committed metadata blocks downgrade
+  without changing the Alembic revision or evidence.
+- Ruff: passed. Mypy with deployment target `--platform linux`: passed,
+  245 source files. Native Windows checking reports 19 Linux-API typing errors
+  in unrelated PDF/extraction sandbox files.
+- Full backend and additional G4 replay regression results are recorded in the
+  recovery handoff, not asserted here. Docker deployment validation and signed
+  publication remain blocked by this Windows runtime's permissions and missing
+  usable signing key. No independent acceptance covers the unpublished recovery.
+
+## Historical local validation, 2026-10-12
 
 - `ruff check app tests migrations/versions/0051_aggregate_lineage.py`: passed.
 - `mypy app`: passed, 241 source files.

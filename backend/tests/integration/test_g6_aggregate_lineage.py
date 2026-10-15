@@ -169,3 +169,33 @@ async def test_legacy_contracts_are_recorded_as_unverified_without_claiming_a_re
     assert (agg.evidence_class, agg.lineage_sample_count) == ("unverified", 1)
     summary = (await lineage(db_session))[0]
     assert summary.mapping_revision_id is None and summary.source_scale is None
+
+
+@pytest.mark.parametrize('savepoint', [False, True])
+async def test_late_failure_after_lineage_write_preserves_committed_evidence(db_session, world, monkeypatch, savepoint):
+    await world['add'](['2'])
+    await compact_eligible_raw(db_session, now=NOW, retention_days=365)
+    await db_session.commit()
+    reading = (await world['add'](['7'], start_minute=600))[0]
+    await db_session.commit()
+    real_record = telemetry_retention.record_lineage
+
+    async def fail_after_write(*args, **kwargs):
+        await real_record(*args, **kwargs)
+        await db_session.flush()
+        raise RuntimeError('failure after lineage persistence')
+
+    monkeypatch.setattr(telemetry_retention, 'record_lineage', fail_after_write)
+    if savepoint:
+        with pytest.raises(RuntimeError, match='after lineage persistence'):
+            async with db_session.begin_nested():
+                await merge_late_reading(db_session, reading, now=NOW, retention_days=365)
+    else:
+        with pytest.raises(RuntimeError, match='after lineage persistence'):
+            await merge_late_reading(db_session, reading, now=NOW, retention_days=365)
+        await db_session.rollback()
+    agg = await world['aggregate']()
+    assert (agg.sample_count, agg.sum_value, agg.lineage_sample_count, agg.evidence_class) == (1, D('2'), 1, 'pinned')
+    assert (await lineage(db_session))[0].sample_count == 1
+    assert await world['raw_count']() == 1
+    assert len((await db_session.execute(select(TelemetryConsumedKey))).scalars().all()) == 1

@@ -72,6 +72,69 @@ async def test_downgrade_refuses_summary_evidence_and_preserves_schema(db_engine
         await conn.rollback()
 
 
+@pytest.mark.parametrize('column,value', [
+    ('first_compacted_at', "'2026-01-01T00:00:00Z'::timestamptz"),
+    ('raw_retention_days_at_compaction', '365'),
+])
+async def test_downgrade_refuses_compaction_metadata_without_lineage_counts(db_engine, column, value):
+    # These independently nullable fields are evidence even when coverage is unknown.
+    async with db_engine.connect() as conn:
+        integration = uuid.uuid4()
+        await conn.execute(text("""INSERT INTO integration
+            (id,name,integration_type,enabled,target_host,config,poll_interval_seconds,consecutive_failures,version)
+            VALUES (:id,:name,'snmp',true,'192.0.2.1','{}'::jsonb,60,0,1)"""),
+                           {'id': integration, 'name': f'g6-{integration}'})
+        await conn.execute(text(f"""INSERT INTO daily_telemetry_aggregate
+            (id,integration_id,external_identifier,series_key,metric,unit,day,
+             average_value,minimum_value,maximum_value,sample_count,{column})
+            VALUES (gen_random_uuid(),:id,'e','g6-metadata','power_kw','kW','2025-01-01',2,1,3,3,{value})"""),
+                           {'id': integration})
+        with pytest.raises(RuntimeError, match='Cannot downgrade 0051'):
+            await conn.run_sync(run, 'downgrade')
+        assert await conn.scalar(text(f'SELECT {column} IS NOT NULL FROM daily_telemetry_aggregate')) is True
+        assert await conn.scalar(text("SELECT to_regclass('daily_telemetry_aggregate_lineage') IS NOT NULL")) is True
+        await conn.rollback()
+
+
+@pytest.mark.parametrize('retention_days', [None, 730])
+async def test_downgrade_refuses_owner_retention_policy_changes(db_engine, retention_days):
+    async with db_engine.connect() as conn:
+        await conn.execute(text('UPDATE monitoring_policy SET resolved_hold_retention_days=:days WHERE id=1'),
+                           {'days': retention_days})
+        with pytest.raises(RuntimeError, match='Cannot downgrade 0051'):
+            await conn.run_sync(run, 'downgrade')
+        assert await conn.scalar(text('SELECT resolved_hold_retention_days FROM monitoring_policy WHERE id=1')) == retention_days
+        assert await conn.scalar(text("SELECT to_regclass('daily_telemetry_aggregate_lineage') IS NOT NULL")) is True
+        await conn.rollback()
+
+
+async def test_downgrade_preserves_committed_lineage_even_without_summary_evidence(db_engine):
+    async with db_engine.connect() as conn:
+        integration, aggregate, lineage = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        await conn.execute(text("""INSERT INTO integration
+            (id,name,integration_type,enabled,target_host,config,poll_interval_seconds,consecutive_failures,version)
+            VALUES (:id,:name,'snmp',true,'192.0.2.1','{}'::jsonb,60,0,1)"""),
+                           {'id': integration, 'name': f'g6-{integration}'})
+        await conn.execute(text("""INSERT INTO daily_telemetry_aggregate
+            (id,integration_id,external_identifier,series_key,metric,unit,day,
+             average_value,minimum_value,maximum_value,sample_count)
+            VALUES (:id,:integration,'e','g6-committed','power_kw','kW','2025-01-01',2,1,3,3)"""),
+                           {'id': aggregate, 'integration': integration})
+        await conn.execute(text("""INSERT INTO daily_telemetry_aggregate_lineage
+            (id,aggregate_id,contract_key,sample_count,first_occurred_at,last_occurred_at)
+            VALUES (:id,:aggregate,repeat('a',64),1,'2025-01-01','2025-01-01')"""),
+                           {'id': lineage, 'aggregate': aggregate})
+        await conn.commit()
+        with pytest.raises(RuntimeError, match='Cannot downgrade 0051'):
+            await conn.run_sync(run, 'downgrade')
+        await conn.rollback()
+    async with db_engine.connect() as verify:
+        assert await verify.scalar(text('SELECT sample_count FROM daily_telemetry_aggregate_lineage WHERE id=:id'),
+                                   {'id': lineage}) == 1
+        assert await verify.scalar(text('SELECT sample_count FROM daily_telemetry_aggregate WHERE id=:id'),
+                                   {'id': aggregate}) == 3
+
+
 class ProbingOp:
     """Inject an observation/failure after metadata DDL commits, before validation."""
 
@@ -87,15 +150,37 @@ class ProbingOp:
     def __getattr__(self, name):
         return getattr(self.real, name)
 
+    def drop_table(self, *args, **kwargs):
+        self.probe()
+        return self.real.drop_table(*args, **kwargs)
 
-def run_with_probe(connection, probe):
+
+def run_with_probe(connection, probe, direction='upgrade'):
     spec = importlib.util.spec_from_file_location('aggregate_lineage_probe', MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.op = ProbingOp(module.op, probe)
     context = MigrationContext.configure(connection)
     with Operations.context(context), context.begin_transaction():
-        module.upgrade()
+        getattr(module, direction)()
+
+
+async def test_downgrade_locks_policy_before_guard_until_schema_removal(db_engine):
+    def observe():
+        dsn = os.environ['TEST_ADMIN_DATABASE_URL'].replace('postgresql+asyncpg://', 'postgresql://')
+        with psycopg.connect(dsn, autocommit=True) as other:
+            other.execute("SET lock_timeout = '250ms'")
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                other.execute('UPDATE monitoring_policy SET resolved_hold_retention_days=730 WHERE id=1')
+
+    async with db_engine.connect() as conn:
+        try:
+            await conn.run_sync(run_with_probe, observe, 'downgrade')
+            await conn.commit()
+        finally:
+            await conn.rollback()
+            await conn.run_sync(run, 'upgrade')
+            await conn.commit()
 
 
 async def test_validation_releases_exclusive_metadata_lock_before_scan(db_engine):

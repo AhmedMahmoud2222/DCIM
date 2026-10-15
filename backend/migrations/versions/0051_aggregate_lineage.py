@@ -1,14 +1,14 @@
 """G6 evidence lifetime. Additive, no historic provenance backfill.
 
-Independent draft sibling of G8/0050; reparent to the accepted latest head before
-integration, without stacking unreviewed G8 implementation. No raw deletion here.
+Follows merged G9b/0052 and G5/0053 without importing sibling G8/G9a work.
+No raw deletion here.
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = '0051_aggregate_lineage'
-down_revision = '0049_telemetry_replay_ledger'
+down_revision = '0052_monitoring_template_binding'
 branch_labels = None
 depends_on = None
 
@@ -75,10 +75,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute('LOCK TABLE daily_telemetry_aggregate, daily_telemetry_aggregate_lineage IN ACCESS EXCLUSIVE MODE')
+    # Lock every inspected table before checking: a concurrent policy edit must
+    # not commit between the evidence check and DROP COLUMN.
+    op.execute('LOCK TABLE daily_telemetry_aggregate, daily_telemetry_aggregate_lineage, '
+               'monitoring_policy IN ACCESS EXCLUSIVE MODE')
     if op.get_bind().scalar(sa.text('SELECT EXISTS(SELECT 1 FROM daily_telemetry_aggregate_lineage) OR '
-                                   'EXISTS(SELECT 1 FROM daily_telemetry_aggregate WHERE evidence_class IS NOT NULL)')):
-        raise RuntimeError('Cannot downgrade 0051: aggregate lineage evidence exists; retain the schema and stop writes.')
+                                   'EXISTS(SELECT 1 FROM daily_telemetry_aggregate WHERE evidence_class IS NOT NULL '
+                                   'OR lineage_sample_count IS NOT NULL OR first_compacted_at IS NOT NULL '
+                                   'OR raw_retention_days_at_compaction IS NOT NULL) OR '
+                                   'EXISTS(SELECT 1 FROM monitoring_policy '
+                                   'WHERE resolved_hold_retention_days IS DISTINCT FROM 365)')):
+        raise RuntimeError('Cannot downgrade 0051: lineage evidence or configured hold retention exists; '
+                           'retain the schema and stop writes.')
     op.drop_table('daily_telemetry_aggregate_lineage')
     for name in CHECKS:
         op.execute(f'ALTER TABLE daily_telemetry_aggregate DROP CONSTRAINT ck_daily_telemetry_aggregate_{name}')
