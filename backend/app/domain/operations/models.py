@@ -17,7 +17,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -122,7 +121,7 @@ class CorrelationIncident(Base, UUIDPkMixin, TimestampMixin):
     cause_ref: Mapped[str] = mapped_column(String(64), nullable=False)
     cause_label: Mapped[str] = mapped_column(String(256), nullable=False)
     confidence: Mapped[str] = mapped_column(String(8), nullable=False)
-    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str] = mapped_column(String, nullable=False)
     evidence: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     site_id: Mapped[uuid.UUID | None] = mapped_column()

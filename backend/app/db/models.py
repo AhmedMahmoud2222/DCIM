@@ -52,6 +52,16 @@ from app.domain.floorplan_import.models import (  # noqa: F401
 )
 from app.domain.idempotency.models import IdempotencyKey  # noqa: F401
 from app.domain.identity.models import ManagedAsset  # noqa: F401
+from app.domain.integration.models import (  # noqa: F401
+    Collector,
+    CollectorAssignment,
+    CollectorCapability,
+    CollectorHeartbeat,
+    CollectorRequestNonce,
+    DiscoveredDevice,
+    Integration,
+    ReconciliationDiff,
+)
 from app.domain.location.models import (  # noqa: F401
     Building,
     City,
@@ -100,6 +110,7 @@ from app.domain.telemetry.models import (  # noqa: F401
     IntegrationMetricMapping,
     IntegrationMetricMappingRevision,
     MonitoringPolicy,
+    RegistryVersionSnapshot,
     TelemetryConsumedKey,
     TelemetryContractHold,
     TelemetryReading,

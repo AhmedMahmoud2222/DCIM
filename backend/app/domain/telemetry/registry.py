@@ -6,9 +6,11 @@ source value/unit and store the returned canonical value/unit as separate fields
 
 import hashlib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 from types import MappingProxyType
+
+from app.domain.telemetry.metric_semantics import V2_SEMANTICS, MetricSemantics
 
 REGISTRY_VERSION = "1"
 PRECISION = Decimal("0.00000001")
@@ -44,6 +46,7 @@ class MetricDefinition:
     dimension: str
     canonical_unit: str
     presentation_unit: str
+    semantics: MetricSemantics | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +182,16 @@ def snapshot_text(snapshot: RegistrySnapshot) -> str:
         lines.extend((f"metric.{key}.key={metric.key}", f"metric.{key}.dimension={metric.dimension}",
                       f"metric.{key}.canonical_unit={metric.canonical_unit}",
                       f"metric.{key}.presentation_unit={metric.presentation_unit}"))
+        if metric.semantics is not None:
+            policy = metric.semantics
+            minimum = _plain(policy.min_canonical) if policy.min_canonical is not None else "none"
+            maximum = _plain(policy.max_canonical) if policy.max_canonical is not None else "none"
+            lines.extend((f"metric.{key}.value_kind={policy.value_kind.value}",
+                          f"metric.{key}.min_canonical={minimum}",
+                          f"metric.{key}.max_canonical={maximum}",
+                          f"metric.{key}.allowed_source_units={','.join(policy.allowed_source_units)}",
+                          f"metric.{key}.aggregations={','.join(policy.aggregations)}",
+                          f"metric.{key}.rule_types={','.join(policy.rule_types)}"))
     return "\n".join(lines)
 
 
@@ -208,7 +221,11 @@ assert_snapshot_hash(_V1, V1_CONTENT_HASH)
 UNITS = _V1.units
 UNIT_ALIASES = _V1.aliases
 METRIC_REGISTRY = _V1.metrics
-REGISTRIES: Mapping[str, RegistrySnapshot] = MappingProxyType({"1": _V1})
+_V2 = make_snapshot("2", _V1.units, _V1.aliases,
+                    {key: replace(metric, semantics=V2_SEMANTICS[key]) for key, metric in _V1.metrics.items()})
+V2_CONTENT_HASH = "2f9bd2d613f32baed8322fc244d5f33d74437d0fb10f53bc047fff2ce8e8c147"
+assert_snapshot_hash(_V2, V2_CONTENT_HASH)
+REGISTRIES: Mapping[str, RegistrySnapshot] = MappingProxyType({"1": _V1, "2": _V2})
 
 
 def registry_snapshot(version: str = "1") -> RegistrySnapshot:
@@ -279,7 +296,31 @@ def validate_metric_unit(metric: str, source_unit: str, *, registry_version: str
         raise UnitDimensionMismatch(
             f"Metric {metric!r} requires dimension {definition.dimension}; unit {source_unit!r} is {actual_dimension}."
         )
+    if definition.semantics is not None and normalized not in definition.semantics.allowed_source_units:
+        raise UnitDimensionMismatch(f"Source unit {normalized!r} is not permitted for {metric!r}.")
     return normalized
+
+
+def validate_metric_value(metric: str, value: Decimal, *, registry_version: str = REGISTRY_VERSION) -> None:
+    definition = _registry(registry_version).get(metric)
+    if definition is None:
+        raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
+    if definition.semantics is not None:
+        definition.semantics.validate_value(value)
+
+
+def validate_metric_rule(metric: str, rule_type: str, threshold: Decimal | None, unit: str,
+                         *, registry_version: str = REGISTRY_VERSION) -> None:
+    definition = _registry(registry_version).get(metric)
+    if definition is None:
+        raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
+    validate_metric_unit(metric, unit, registry_version=registry_version)
+    if definition.semantics is not None:
+        if threshold is not None and not threshold.is_finite():
+            raise ValueError("Threshold must be finite")
+        canonical = (convert_value(threshold, unit, definition.canonical_unit, registry_version=registry_version)
+                     if threshold is not None else None)
+        definition.semantics.validate_rule(rule_type, canonical)
 
 
 def convert_to_canonical(
@@ -293,8 +334,10 @@ def convert_to_canonical(
     snapshot = registry_snapshot(registry_version)
     with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
         scaled = value * source_scale
+    converted = convert_value(scaled, normalized, definition.canonical_unit, registry_version=registry_version)
+    validate_metric_value(metric, converted, registry_version=registry_version)
     return CanonicalValue(
-        value=convert_value(scaled, normalized, definition.canonical_unit, registry_version=registry_version),
+        value=converted,
         unit=definition.canonical_unit,
         raw_value=value,
         raw_unit=source_unit,
