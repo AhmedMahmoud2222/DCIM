@@ -81,11 +81,11 @@ Rules:
 
 `0031_user_groups` only adds tables (`user_group`, `user_group_member`, `user_group_permission`, `user_group_site_access`, `user_group_rack_access`) and three permission rows. No existing user, role, role assignment or grant changes. Downgrade removes the tables and the three permissions.
 
-One behavioural note: a `role_assignment` with a non-global `scope_type` previously granted its permissions globally (Phase 1 decision H7). Such rows cannot be created through the API today. If any exist, the holder is now treated as site-restricted, with the same fail-closed permission filtering.
+One behavioural note: a `role_assignment` with a non-global `scope_type` previously granted its permissions globally (Phase 1 decision H7). Such rows cannot be created through the API today. If any exist, the holder is now treated as site-restricted, with the same fail-closed permission filtering. Since SEC-ARCH-01 the valid `scope_type` values are `global`, `site` and `organization`; `building` was removed by migration `0047_role_assignment_scope_types` (see Migration / upgrade note below).
 
 ## Scope semantics (SEC-ARCH-01, #57)
 
-Data scope comes only from group site/rack grants. A role assignment carries permissions and, if it is not global, a scope that limits when those permissions apply. Permissions are one flat set per user, so a scoped assignment cannot be applied to its own site only. The rule is therefore fail closed: a scoped assignment is honoured only when the holder's whole site scope lies inside the assignment's scope, and otherwise contributes neither permissions nor its role name (so it cannot satisfy `Administrator` membership checks).
+Data scope comes from group site/rack grants and from `organization` role assignments (see Organization scope). A role assignment carries permissions and, if it is not global, a scope that limits when those permissions apply. Permissions are one flat set per user, so a scoped assignment cannot be applied to its own site only. The rule is therefore fail closed: a scoped assignment is honoured only when the holder's whole reachable site scope lies inside the assignment's scope, and otherwise contributes neither permissions nor its role name (so it cannot satisfy `Administrator` membership checks).
 
 | Combination | Behaviour | Status |
 |---|---|---|
@@ -94,12 +94,43 @@ Data scope comes only from group site/rack grants. A role assignment carries per
 | Site-scoped assignment, group scope inside that site (all racks, or selected racks) | Role permissions apply to exactly the granted sites and racks. | Implemented. |
 | Site-scoped assignment, group scope includes any other site | The assignment contributes nothing (denied, not narrowed). A user who needs the role on one site of several must hold it through a group allow-grant. | Implemented. Narrowing to the assignment's site is an owner decision (below). |
 | Site-scoped assignment, no group grants | Permissions held, no data visible. | Unchanged. |
-| Building-scoped assignment | Contributes nothing. Site grants do not name buildings, so containment cannot be proven. Not a supported scope; no building-level filtering exists. | Not implemented, fails closed. |
+| Organization-scoped assignment, group sites all inside that organization (or no group sites) | Role permissions apply to every site under the organization. The holder stays site-restricted. See Organization scope. | Implemented. |
+| Organization-scoped assignment, any group site outside that organization | Contributes nothing (denied, not narrowed). | Implemented. |
+| Organization-scoped assignments naming two or more distinct organizations | All of them contribute nothing. | Implemented. |
+| Organization-scoped plus site-scoped assignment | The organization widens reachable sites, so the site assignment is honoured only if that site is the only reachable site. | Implemented. |
+| Building-scoped assignment | Not a valid scope. Migration `0047_role_assignment_scope_types` removes it. Any legacy row blocks the upgrade. | Removed (SEC-ARCH-01, #57). |
 | Rack-limited group grant (`selected`) | Rack-level scope applies inside the site; a site-scoped assignment for that site is honoured and still limited to the selected racks. | Implemented. |
-| Tenant | There is no tenant entity. The closest boundary is the organization, derived from the sites a user is granted: organizations without a granted site are invisible (404). No tenant-level role assignment or grant exists. | Not implemented. |
+| Tenant | There is no tenant entity. The closest boundary is the organization, derived from the sites a user is reached through (group grants or an organization assignment): organizations without a reachable site are invisible (404). No tenant-level role assignment or grant exists. | Not implemented. |
 | Group allow-grants | Unaffected by role scope. | Unchanged. |
 
-Owner decisions still open: narrowing a site-scoped assignment to its own site (assignment-local intersection) versus the current containment rule or a user-wide union; building semantics and descendants; the tenant model; scoping of the modules a restricted user cannot reach (alarms, telemetry, power, dashboard, floor plans, spatial, impact, discovery, integrations, collectors, managed assets, audit), which stay blocked.
+Owner decisions still open: narrowing a site-scoped assignment to its own site (assignment-local intersection) versus the current containment rule or a user-wide union; the tenant model; scoping of the modules a restricted user cannot reach (alarms, telemetry, power, dashboard, floor plans, spatial, impact, discovery, integrations, collectors, managed assets, audit), which stay blocked.
+
+## Organization scope (SEC-ARCH-01, #57)
+
+An `organization` RoleAssignment grants its role's permissions across every site under one organization, in addition to group grants. Implemented in `load_effective_access` (`app/application/access_control.py`), with `organization_site_ids`, `scope_with_full_sites` and `scoped_role_is_contained`. The chain is Organization -> Country -> City -> Site.
+
+* **Reach.** Every site under the organization is added to the user's reach as `rack_scope = all`. An `all` grant supersedes any `selected` group grant on the same site.
+* **Conditions.** The assignment is honoured only when all of the following hold. Otherwise it contributes nothing:
+  * the user has no `global` role (a global user is already unrestricted, so organization rows are ignored);
+  * every `organization` assignment of the user names the same single organization; two or more distinct organizations fail closed;
+  * every site the user reaches from group grants lies inside that organization. A user with no group sites satisfies this, so the assignment alone grants visibility of all sites under the organization.
+* **Permissions.** Permissions are one flat set per user. Group allow-grants and role permissions therefore also reach the organization's other sites. Explicit deny grants still win. Permissions that are not site-aware remain inactive for the restricted holder (see Fail closed for unscoped endpoints above).
+* **Never global.** The holder stays site-restricted. Only a `global` assignment makes a user unrestricted.
+* **No role name.** Permission entries are added, but the role name is not, so role-name checks such as `Administrator`, catalog administration and bulk import are not satisfied by an organization assignment.
+* **Interaction with site assignments.** Reach is computed before site containment, so an organization assignment can make a co-existing site-scoped assignment fail its containment check. It is then honoured only if that site is the only reachable site.
+
+## Migration / upgrade note (SEC-ARCH-01, #57)
+
+Migration `0047_role_assignment_scope_types` removes `building` from the allowed `scope_type` values and adds `organization`. Before upgrading past 0047, an owner must check for legacy rows:
+
+```sql
+SELECT scope_type, count(*) FROM role_assignment GROUP BY 1;
+```
+
+If any `building` rows exist, the upgrade refuses and raises an error. The message in `backend/migrations/versions/0047_role_assignment_scope_types.py` is the authoritative remediation: review each row, then delete it or re-create it with an explicit `site`, `organization` or `global` scope, and run the upgrade again.
+
+* Legacy `building` rows are never converted automatically, because any other scope could widen access. They grant nothing today, so deleting one does not reduce effective access. Re-creating one with a wider scope does widen it.
+* Downgrade refuses while `organization` rows exist. Remove or re-scope them first.
 
 ## Known limitations
 
@@ -108,6 +139,8 @@ Owner decisions still open: narrowing a site-scoped assignment to its own site (
 * Deleting a user who owns imports or catalog revisions is refused (409); deactivate instead. Users holding a legacy role delete normally.
 * Denied escalation attempts return 403/404 but are not written to the audit log.
 * Effective access is computed per request with a handful of queries; very large tenants may want caching.
+* SEC-ARCH-01 (#57): `building` scope is removed and `organization` scope is added, with the migration path for legacy `building` rows (see Migration / upgrade note). Per-permission scope composition (a permission held through one assignment limited to that assignment's scope) remains future work, tracked separately.
+* A user in two groups whose grants span different sites combines access across both groups. This is pre-existing, documented behaviour (see Effective permissions and Site and rack scope). SEC-ARCH-01 does not change it.
 
 ## Import jobs and site-restricted users (owner-approved uploader-access rule)
 Operations (bulk-import pipeline): upload and template download per domain (`POST|GET /racks|equipment|catalog/import-*`), and on `/import-jobs/{id}`: status, `/rows` (preview, `?status=invalid` for validation errors), `/report`, `/commit`, `/cancel`. There is no list or retry endpoint.
@@ -125,6 +158,6 @@ Owner decision (2026-10-01): preserve uploader-only read access for historical u
 `backend/scripts/create_admin.py` is the only out-of-band path. It needs shell access and the application database credentials, creates a *new* global Administrator and refuses (or, with `--if-exists skip`, silently leaves) an existing email. It cannot reset a password, deactivate or demote an existing account, or revoke refresh tokens. It writes no audit entry and needs no approval. Because global Administrators are peers, a compromised or departed Administrator cannot be deactivated through the API by another Administrator, so recovery today means direct database edits. A controlled peer-recovery procedure (separate approvers, an audit record, credential and session revocation) is a separate operational-security follow-up and deliberately not part of this change; no Super Administrator role or numeric rank is introduced.
 
 ## Tenant model: implemented behaviour and what stays outside it (issue #57 stays open)
-Implemented: data scope is the pair (sites, racks) held through groups. Site-aware modules (organization/location read, racks, equipment, rack placement) filter by that scope and answer 404 for out-of-scope ids. Administering another principal (user and group routes) is bounded by strict outranking on permissions and scope, as described above, evaluated under the authority lock.
+Implemented: data scope is the pair (sites, racks) held through groups, plus the sites of an organization assignment (see Organization scope). Site-aware modules (organization/location read, racks, equipment, rack placement) filter by that scope and answer 404 for out-of-scope ids. Administering another principal (user and group routes) is bounded by strict outranking on permissions and scope, as described above, evaluated under the authority lock.
 
 Outside the model today: there is no tenant entity that owns users, groups, import jobs or catalog data. User and group directories are readable by any holder of `user:read` / `group:read`; a site-restricted actor sees only the users and groups whose grants lie inside their own scope (see Scoped administration), and unrestricted holders see all of them. Catalog data is global manufacturer data. Alarms, telemetry, power, dashboard, floor plans, discovery and integrations are not site-scoped and stay disabled for restricted users. Import jobs carry no site link (see the PR #68 contract note). Two principals cannot be separated into tenants beyond what site/rack grants express; a real tenant boundary needs an owning-tenant column on users, groups and jobs and is a separate design.
