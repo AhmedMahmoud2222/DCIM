@@ -18,7 +18,13 @@ an independent reviewer (Jules) a concrete artifact to review.
 
 ## What was checked
 
-Reconciled against `origin/main` HEAD `47141e825...` (see PR base) — see `gh pr view`/`gh
+Reconciled against `origin/main` HEAD `47141e825...` (original PR base); re-confirmed
+unchanged on `origin/main` `0b7df185dc50eb260e11d5e2e9173a5ab1fd0749` (2026-10-15, branch updated
+by merge, no force-push). Since PR #91 (`e319392f`) the only change to the three guard files is
+PR #127 (#63), which altered only the wording/docstring of `assert_administrator_remains`; the
+guards below and `test_pr59_delegation_boundary.py` are byte-identical to PR #91. Note: the
+test results below were produced at the original base, not re-run locally on the new base
+(CI at the updated head is the fresh evidence). Original reference — see `gh pr view`/`gh
 issue view` output for #59, #63, #64, #65, #67, #91, #127 for the full reconciliation
 (not reproduced here). PR #67 confirmed closed/superseded; issues #69/#83 (stale, stacked
 on the pre-#91 base, refs #57) and #134 (SEC-ARCH-01/#57) confirmed out of scope for #64.
