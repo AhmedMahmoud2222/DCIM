@@ -52,6 +52,10 @@ class ManagedAsset(Base, UUIDPkMixin, TimestampMixin):
             name="decommissioned_at_terminal",
         ),
         UniqueConstraint("replaces_asset_id", name="uq_managed_asset_replaces_asset_id"),
+        # Migration 0007 (F-M3): composite unique backing pdu_outlet's composite FK —
+        # `(pdu_asset_id, pdu_asset_expected_type)` can only reference a ManagedAsset
+        # whose own asset_type is 'pdu'.
+        UniqueConstraint("id", "asset_type", name="uq_managed_asset_id_asset_type"),
         # Findings M2/M3 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
         # PHASE1_CORRECTION_REPORT.md): an asset cannot replace itself. Longer cycles
         # (A replaces B, B replaces A; or longer chains) cannot be expressed as a
