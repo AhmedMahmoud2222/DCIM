@@ -342,3 +342,22 @@ async def test_global_role_is_unchanged_by_an_organization_assignment(client, ad
     uid = uuid.UUID(user["id"])
     access = (await load_effective_access(db_session, [uid]))[uid]
     assert access.scope.unrestricted and "rack:manage" not in access.permission_codes
+
+
+async def test_organization_scoped_role_reaches_a_site_created_after_the_assignment(client, admin, auth_headers, db_session):
+    """Pins the deliberate, owner-approved dynamic-expansion behaviour (SEC-ARCH-01 decision memo,
+    B2): reach is recomputed from the live hierarchy on every request, not snapshotted at
+    assignment time, so a site added to the organization later is covered automatically."""
+    a1, _a2, _b, (rack_a1, _rack_a2, _rack_b) = await _org_world(client, admin, auth_headers)
+    user, headers = await _group_user(client, admin, [])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:read", "rack:manage"]), "organization", a1["org"])
+
+    # the assignment above already exists; this site is created afterwards, under the same org
+    a3 = await _make_site(client, admin, org_id=a1["org"])
+    rack_a3 = await _make_rack(client, admin, auth_headers, a3["room"])
+
+    uid = uuid.UUID(user["id"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert uuid.UUID(a3["site"]) in access.scope.site_ids
+    assert (await _patch_rack(client, headers, rack_a1)).status_code == 200
+    assert (await _patch_rack(client, headers, rack_a3)).status_code == 200

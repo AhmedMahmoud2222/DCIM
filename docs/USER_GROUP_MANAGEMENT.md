@@ -118,6 +118,7 @@ An `organization` RoleAssignment grants its role's permissions across every site
 * **Never global.** The holder stays site-restricted. Only a `global` assignment makes a user unrestricted.
 * **No role name.** Permission entries are added, but the role name is not, so role-name checks such as `Administrator`, catalog administration and bulk import are not satisfied by an organization assignment.
 * **Interaction with site assignments.** Reach is computed before site containment, so an organization assignment can make a co-existing site-scoped assignment fail its containment check. It is then honoured only if that site is the only reachable site.
+* **Re-parenting invariant (forward-looking).** Organization reach is a live lookup through Organization -> Country -> City -> Site, recomputed on every request, not cached at assignment time. No route today re-parents a site, city or country (`locations.py` has only create routes for those levels; `PATCH /rooms` cannot change a room's parent), so this cannot yet be exploited. Any future route that re-parents a site, city or country must take the `dcim.authority_change` shared lock first (the same rule already stated above for rack placement and room/floor/building parentage) and should ship with a dedicated regression test, the same way `test_organization_scoped_role_reaches_a_site_created_after_the_assignment` pins the (intended) dynamic-expansion behavior for newly created sites.
 
 ## Migration / upgrade note (SEC-ARCH-01, #57)
 
