@@ -7,10 +7,12 @@ be exercised now."""
 from celery import Celery
 
 from app.core.config import get_settings
+from app.infrastructure.registry_bootstep import RegistryLedgerGate
 
 settings = get_settings()
 
 celery_app = Celery("dcim", broker=settings.redis_url, backend=settings.redis_url)
+celery_app.steps["worker"].add(RegistryLedgerGate)
 
 celery_app.conf.update(
     task_serializer="json",
