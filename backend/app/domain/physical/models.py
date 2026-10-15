@@ -53,7 +53,7 @@ class Equipment(Base, TimestampMixin):
     # EquipmentModelRevision id directly) leaves this NULL — model_revision_id alone
     # already fully describes those rows, exactly as before this column existed.
     catalog_model_revision_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT")
+        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT"), index=True
     )
     hostname: Mapped[str | None] = mapped_column(String(255))
     ip_address: Mapped[str | None] = mapped_column(INET)
