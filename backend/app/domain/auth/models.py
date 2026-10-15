@@ -7,7 +7,7 @@ query in this codebase filters by site — enforcement is deliberately not built
 import uuid
 from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, Boolean, CheckConstraint, ForeignKey, String, UniqueConstraint
+from sqlalchemy import TIMESTAMP, Boolean, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, column, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
@@ -102,6 +102,10 @@ class UserGroup(Base, UUIDPkMixin, TimestampMixin):
     which is untouched — see docs/USER_GROUP_MANAGEMENT.md for how the two combine."""
 
     __tablename__ = "user_group"
+    __table_args__ = (
+        # Migration 0031: case-insensitive group-name uniqueness (functional index).
+        Index("uq_user_group_name_lower", func.lower(column("name")), unique=True),
+    )
 
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))
