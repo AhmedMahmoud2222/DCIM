@@ -1,7 +1,7 @@
 """SEC-ARCH-01 (#57): RoleAssignment scope types become ('global', 'site', 'organization').
 
-Revision ID: 0047_role_assignment_scope_types
-Revises: 0046_mapping_revisions
+Revision ID: 0054_role_assignment_scope_types
+Revises: 0052_monitoring_template_binding
 
 `building` is removed. It was never enforceable (site grants do not name buildings), so since
 SEC-ARCH-01 a building-scoped assignment grants nothing. Existing building rows are NOT converted:
@@ -15,8 +15,8 @@ Downgrade refuses while organization-scoped assignments exist, then restores the
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0047_role_assignment_scope_types"
-down_revision = "0046_mapping_revisions"
+revision = "0054_role_assignment_scope_types"
+down_revision = "0052_monitoring_template_binding"
 branch_labels = None
 depends_on = None
 
@@ -41,7 +41,7 @@ def upgrade() -> None:
     building_rows = _count_scope_type("building")
     if building_rows:
         raise RuntimeError(
-            f"Cannot upgrade to 0047: {building_rows} role_assignment row(s) have scope_type='building', which is "
+            f"Cannot upgrade to 0054: {building_rows} role_assignment row(s) have scope_type='building', which is "
             "no longer supported. They currently grant nothing (fail closed, SEC-ARCH-01) and are deliberately not "
             "converted, because any other scope could widen access. Review them (SELECT * FROM role_assignment "
             "WHERE scope_type = 'building'), then delete them or re-create them with an explicit site, organization "
@@ -55,7 +55,7 @@ def downgrade() -> None:
     organization_rows = _count_scope_type("organization")
     if organization_rows:
         raise RuntimeError(
-            f"Cannot downgrade 0047: {organization_rows} role_assignment row(s) have scope_type='organization', "
+            f"Cannot downgrade 0054: {organization_rows} role_assignment row(s) have scope_type='organization', "
             "which the previous schema does not allow. Remove or re-scope them explicitly first."
         )
     _swap_constraint(_OLD_TYPES)

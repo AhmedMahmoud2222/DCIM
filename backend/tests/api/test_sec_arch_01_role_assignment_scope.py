@@ -7,7 +7,7 @@ scope came only from groups.
 
 Enforced rule (fail closed, no per-permission scoping): a permission that comes ONLY from
 non-global role assignments is honoured only while every site in the user's group-derived scope lies
-inside every such assignment's own scope. The `building` scope type was removed (migration 0047).
+inside every such assignment's own scope. The `building` scope type was removed (migration 0054).
 An `organization` assignment grants every site of its organization, never sites of another
 organization, and never makes its holder unrestricted. Group allow-grants are unaffected.
 
@@ -106,7 +106,7 @@ async def test_site_scoped_role_for_a_different_site_grants_nothing(client, admi
 
 
 async def test_building_scope_type_is_rejected_by_the_database(client, admin, db_session):
-    """`building` was removed (migration 0047); the CHECK constraint refuses it outright."""
+    """`building` was removed (migration 0054); the CHECK constraint refuses it outright."""
     a = await _make_site(client, admin)
     user, _ = await _group_user(client, admin, [])
     role_id = await _role(db_session, ["rack:manage"])

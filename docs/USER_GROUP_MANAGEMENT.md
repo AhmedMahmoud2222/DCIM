@@ -81,7 +81,7 @@ Rules:
 
 `0031_user_groups` only adds tables (`user_group`, `user_group_member`, `user_group_permission`, `user_group_site_access`, `user_group_rack_access`) and three permission rows. No existing user, role, role assignment or grant changes. Downgrade removes the tables and the three permissions.
 
-One behavioural note: a `role_assignment` with a non-global `scope_type` previously granted its permissions globally (Phase 1 decision H7). Such rows cannot be created through the API today. If any exist, the holder is now treated as site-restricted, with the same fail-closed permission filtering. Since SEC-ARCH-01 the valid `scope_type` values are `global`, `site` and `organization`; `building` was removed by migration `0047_role_assignment_scope_types` (see Migration / upgrade note below).
+One behavioural note: a `role_assignment` with a non-global `scope_type` previously granted its permissions globally (Phase 1 decision H7). Such rows cannot be created through the API today. If any exist, the holder is now treated as site-restricted, with the same fail-closed permission filtering. Since SEC-ARCH-01 the valid `scope_type` values are `global`, `site` and `organization`; `building` was removed by migration `0054_role_assignment_scope_types` (see Migration / upgrade note below).
 
 ## Scope semantics (SEC-ARCH-01, #57)
 
@@ -98,7 +98,7 @@ Data scope comes from group site/rack grants and from `organization` role assign
 | Organization-scoped assignment, any group site outside that organization | Contributes nothing (denied, not narrowed). | Implemented. |
 | Organization-scoped assignments naming two or more distinct organizations | All of them contribute nothing. | Implemented. |
 | Organization-scoped plus site-scoped assignment | The organization widens reachable sites, so the site assignment is honoured only if that site is the only reachable site. | Implemented. |
-| Building-scoped assignment | Not a valid scope. Migration `0047_role_assignment_scope_types` removes it. Any legacy row blocks the upgrade. | Removed (SEC-ARCH-01, #57). |
+| Building-scoped assignment | Not a valid scope. Migration `0054_role_assignment_scope_types` removes it. Any legacy row blocks the upgrade. | Removed (SEC-ARCH-01, #57). |
 | Rack-limited group grant (`selected`) | Rack-level scope applies inside the site; a site-scoped assignment for that site is honoured and still limited to the selected racks. | Implemented. |
 | Tenant | There is no tenant entity. The closest boundary is the organization, derived from the sites a user is reached through (group grants or an organization assignment): organizations without a reachable site are invisible (404). No tenant-level role assignment or grant exists. | Not implemented. |
 | Group allow-grants | Unaffected by role scope. | Unchanged. |
@@ -121,13 +121,13 @@ An `organization` RoleAssignment grants its role's permissions across every site
 
 ## Migration / upgrade note (SEC-ARCH-01, #57)
 
-Migration `0047_role_assignment_scope_types` removes `building` from the allowed `scope_type` values and adds `organization`. Before upgrading past 0047, an owner must check for legacy rows:
+Migration `0054_role_assignment_scope_types` removes `building` from the allowed `scope_type` values and adds `organization`. Before upgrading past 0054, an owner must check for legacy rows:
 
 ```sql
 SELECT scope_type, count(*) FROM role_assignment GROUP BY 1;
 ```
 
-If any `building` rows exist, the upgrade refuses and raises an error. The message in `backend/migrations/versions/0047_role_assignment_scope_types.py` is the authoritative remediation: review each row, then delete it or re-create it with an explicit `site`, `organization` or `global` scope, and run the upgrade again.
+If any `building` rows exist, the upgrade refuses and raises an error. The message in `backend/migrations/versions/0054_role_assignment_scope_types.py` is the authoritative remediation: review each row, then delete it or re-create it with an explicit `site`, `organization` or `global` scope, and run the upgrade again.
 
 * Legacy `building` rows are never converted automatically, because any other scope could widen access. They grant nothing today, so deleting one does not reduce effective access. Re-creating one with a wider scope does widen it.
 * Downgrade refuses while `organization` rows exist. Remove or re-scope them first.

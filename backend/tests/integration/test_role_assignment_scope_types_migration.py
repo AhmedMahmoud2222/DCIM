@@ -1,4 +1,4 @@
-"""SEC-ARCH-01 (#57) migration 0047: existing `building` assignments are never silently re-scoped."""
+"""SEC-ARCH-01 (#57) migration 0054: existing `building` assignments are never silently re-scoped."""
 
 import importlib.util
 import uuid
@@ -9,7 +9,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
-MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0047_role_assignment_scope_types.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0054_role_assignment_scope_types.py"
 
 
 def _run_migration(connection, direction):
