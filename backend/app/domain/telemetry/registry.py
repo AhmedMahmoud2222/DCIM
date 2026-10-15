@@ -4,8 +4,11 @@ Conversions are deliberately pure and Decimal based.  Persistence layers retain 
 source value/unit and store the returned canonical value/unit as separate fields.
 """
 
+import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
+from types import MappingProxyType
 
 REGISTRY_VERSION = "1"
 PRECISION = Decimal("0.00000001")
@@ -59,7 +62,7 @@ class PresentationValue:
     unit: str
 
 
-UNITS = {
+UNITS: Mapping[str, UnitDefinition] = {
     "degC": UnitDefinition("degC", "temperature"),
     "degF": UnitDefinition("degF", "temperature", Decimal("0.5555555555555555555555555556"), Decimal("-32")),
     "K": UnitDefinition("K", "temperature", Decimal("1"), Decimal("-273.15")),
@@ -92,7 +95,7 @@ UNITS = {
     "inH2O": UnitDefinition("inH2O", "pressure", Decimal("249.08891")),
 }
 
-UNIT_ALIASES = {
+UNIT_ALIASES: Mapping[str, str] = {
     "c": "degC",
     "celsius": "degC",
     "°c": "degC",
@@ -120,7 +123,7 @@ UNIT_ALIASES = {
     "inh2o": "inH2O",
 }
 
-METRIC_REGISTRY = {
+METRIC_REGISTRY: Mapping[str, MetricDefinition] = {
     "temperature_c": MetricDefinition("temperature_c", "temperature", "degC", "degC"),
     "humidity_percent": MetricDefinition("humidity_percent", "ratio", "%", "%"),
     "power_kw": MetricDefinition("power_kw", "power", "kW", "kW"),
@@ -135,7 +138,84 @@ METRIC_REGISTRY = {
     "differential_pressure_pa": MetricDefinition("differential_pressure_pa", "pressure", "Pa", "Pa"),
     "cooling_output_kw": MetricDefinition("cooling_output_kw", "power", "kW", "kW"),
 }
-REGISTRIES = {REGISTRY_VERSION: METRIC_REGISTRY}
+
+
+@dataclass(frozen=True)
+class RegistrySnapshot:
+    version: str
+    units: Mapping[str, UnitDefinition]
+    aliases: Mapping[str, str]
+    metrics: Mapping[str, MetricDefinition]
+    precision: Decimal
+    rounding: str
+    decimal_precision: int
+    content_hash: str
+
+
+def _plain(value: Decimal) -> str:
+    # No normalize(): it rounds according to the ambient Decimal context.
+    result = format(value, "f")
+    if "." in result:
+        result = result.rstrip("0").rstrip(".")
+    return "0" if result in {"", "-0"} else result
+
+
+def snapshot_text(snapshot: RegistrySnapshot) -> str:
+    """Canonical UTF-8/LF key=value encoding, sorted map keys, no final newline.
+
+    Decimal values use plain notation without insignificant trailing zeroes.
+    Alias spelling and metric names are case sensitive. All meaning-bearing fields,
+    including presentation and the complete arithmetic context, enter the digest.
+    """
+    lines = ["dcim.registry-snapshot.v1", f"version={snapshot.version}",
+             f"precision={_plain(snapshot.precision)}", f"rounding={snapshot.rounding}",
+             f"decimal_precision={snapshot.decimal_precision}"]
+    for key, unit in sorted(snapshot.units.items()):
+        lines.extend((f"unit.{key}.symbol={unit.symbol}", f"unit.{key}.dimension={unit.dimension}",
+                      f"unit.{key}.scale={_plain(unit.scale)}", f"unit.{key}.offset={_plain(unit.offset)}"))
+    for key, alias in sorted(snapshot.aliases.items()):
+        lines.append(f"alias.{key}={alias}")
+    for key, metric in sorted(snapshot.metrics.items()):
+        lines.extend((f"metric.{key}.key={metric.key}", f"metric.{key}.dimension={metric.dimension}",
+                      f"metric.{key}.canonical_unit={metric.canonical_unit}",
+                      f"metric.{key}.presentation_unit={metric.presentation_unit}"))
+    return "\n".join(lines)
+
+
+def make_snapshot(
+    version: str, units: Mapping[str, UnitDefinition], aliases: Mapping[str, str],
+    metrics: Mapping[str, MetricDefinition], *, precision: Decimal = PRECISION,
+    rounding: str = ROUND_HALF_EVEN, decimal_precision: int = 28,
+) -> RegistrySnapshot:
+    """Copy-on-write factory; its copied maps cannot be mutated through an input."""
+    snapshot = RegistrySnapshot(version, MappingProxyType(dict(units)), MappingProxyType(dict(aliases)),
+                                MappingProxyType(dict(metrics)), precision, rounding, decimal_precision, "")
+    digest = hashlib.sha256(snapshot_text(snapshot).encode("utf-8")).hexdigest()
+    return RegistrySnapshot(version, snapshot.units, snapshot.aliases, snapshot.metrics,
+                            precision, rounding, decimal_precision, digest)
+
+
+def assert_snapshot_hash(snapshot: RegistrySnapshot, expected: str) -> None:
+    computed = hashlib.sha256(snapshot_text(snapshot).encode("utf-8")).hexdigest()
+    if computed != expected or snapshot.content_hash != expected:
+        raise RuntimeError(f"Registry snapshot {snapshot.version!r} differs from its frozen contract")
+
+
+_V1 = make_snapshot("1", UNITS, UNIT_ALIASES, METRIC_REGISTRY)
+# Pinned after capturing the exact shipped v1 definitions; changes require a new version.
+V1_CONTENT_HASH = "d29e5d41a996e5b081583e87f8e6a270b4040b682432c16aaad7b0f22f9ac6d4"
+assert_snapshot_hash(_V1, V1_CONTENT_HASH)
+UNITS = _V1.units
+UNIT_ALIASES = _V1.aliases
+METRIC_REGISTRY = _V1.metrics
+REGISTRIES: Mapping[str, RegistrySnapshot] = MappingProxyType({"1": _V1})
+
+
+def registry_snapshot(version: str = "1") -> RegistrySnapshot:
+    try:
+        return REGISTRIES[version]
+    except KeyError as error:
+        raise UnknownRegistryVersion(f"Unknown unit registry version: {version!r}") from error
 
 
 @dataclass(frozen=True)
@@ -156,41 +236,45 @@ CATALOG_FIELD_CONTRACTS = {
 }
 
 
-def _registry(version: str) -> dict[str, MetricDefinition]:
-    try:
-        return REGISTRIES[version]
-    except KeyError as error:
-        raise UnknownRegistryVersion(f"Unknown unit registry version: {version!r}") from error
+def _registry(version: str) -> Mapping[str, MetricDefinition]:
+    return registry_snapshot(version).metrics
 
 
-def normalize_unit(unit: str) -> str:
+def normalize_unit(unit: str, *, registry_version: str = "1") -> str:
+    snapshot = registry_snapshot(registry_version)
     stripped = unit.strip()
-    if stripped in UNITS:
+    if stripped in snapshot.units:
         return stripped
-    canonical = UNIT_ALIASES.get(stripped.lower())
+    canonical = snapshot.aliases.get(stripped.lower())
     if canonical is None:
         raise UnknownUnit(f"Unknown physical unit: {unit!r}")
     return canonical
 
 
-def convert_value(value: Decimal, source_unit: str, target_unit: str) -> Decimal:
-    source = UNITS[normalize_unit(source_unit)]
-    target = UNITS[normalize_unit(target_unit)]
+def convert_value(
+    value: Decimal, source_unit: str, target_unit: str, *, registry_version: str = "1",
+    target_registry_version: str | None = None,
+) -> Decimal:
+    snapshot = registry_snapshot(registry_version)
+    target_snapshot = registry_snapshot(target_registry_version or registry_version)
+    source = snapshot.units[normalize_unit(source_unit, registry_version=registry_version)]
+    target = target_snapshot.units[normalize_unit(target_unit, registry_version=target_snapshot.version)]
     if source.dimension != target.dimension:
         raise UnitDimensionMismatch(
             f"Cannot convert {source.symbol} ({source.dimension}) to {target.symbol} ({target.dimension})."
         )
-    base_value = (value + source.offset) * source.scale
-    converted = (base_value / target.scale) - target.offset
-    return converted.quantize(PRECISION, rounding=ROUND_HALF_EVEN)
+    with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
+        base_value = (value + source.offset) * source.scale
+        converted = (base_value / target.scale) - target.offset
+        return converted.quantize(target_snapshot.precision, rounding=target_snapshot.rounding)
 
 
 def validate_metric_unit(metric: str, source_unit: str, *, registry_version: str = REGISTRY_VERSION) -> str:
     definition = _registry(registry_version).get(metric)
     if definition is None:
         raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
-    normalized = normalize_unit(source_unit)
-    actual_dimension = UNITS[normalized].dimension
+    normalized = normalize_unit(source_unit, registry_version=registry_version)
+    actual_dimension = registry_snapshot(registry_version).units[normalized].dimension
     if actual_dimension != definition.dimension:
         raise UnitDimensionMismatch(
             f"Metric {metric!r} requires dimension {definition.dimension}; unit {source_unit!r} is {actual_dimension}."
@@ -206,8 +290,11 @@ def convert_to_canonical(
     if definition is None:
         raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
     normalized = validate_metric_unit(metric, source_unit, registry_version=registry_version)
+    snapshot = registry_snapshot(registry_version)
+    with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
+        scaled = value * source_scale
     return CanonicalValue(
-        value=convert_value(value * source_scale, normalized, definition.canonical_unit),
+        value=convert_value(scaled, normalized, definition.canonical_unit, registry_version=registry_version),
         unit=definition.canonical_unit,
         raw_value=value,
         raw_unit=source_unit,
@@ -227,33 +314,54 @@ def convert_to_presentation(
     unit = source_unit or definition.canonical_unit
     validate_metric_unit(metric, unit, registry_version=registry_version)
     return PresentationValue(
-        value=convert_value(Decimal(str(value)), unit, definition.presentation_unit),
+        value=convert_value(Decimal(str(value)), unit, definition.presentation_unit, registry_version=registry_version),
         unit=definition.presentation_unit,
     )
 
 
-def validate_catalog_candidate_unit(unit: str | None, dimension: str) -> str:
+def convert_stored_canonical(
+    metric: str, value: Decimal, unit: str, registry_version: str | None, *, target_registry_version: str = "1",
+) -> Decimal:
+    """Read an already canonical sample in a consumer's fixed snapshot.
+
+    Legacy fixed-unit rows retain v1 interpretation. Never accept a free-text
+    source unit here: these consumers require canonical stored values.
+    """
+    source = _registry(registry_version or "1").get(metric)
+    target = _registry(target_registry_version).get(metric)
+    if source is None or target is None:
+        raise UnknownMetric(f"Unknown canonical metric: {metric!r}")
+    if unit != source.canonical_unit:
+        raise UnitDimensionMismatch("Stored reading unit is not canonical for its registry snapshot.")
+    return convert_value(value, unit, target.canonical_unit,
+                         registry_version=registry_version or "1", target_registry_version=target_registry_version)
+
+
+def validate_catalog_candidate_unit(unit: str | None, dimension: str, *, registry_version: str = "1") -> str:
     """Executable handoff used when PR #109 applies a provenance-bearing extraction candidate."""
     if unit is None:
         raise UnknownUnit("Catalog extraction candidate has no unit.")
-    normalized = normalize_unit(unit)
-    actual_dimension = UNITS[normalized].dimension
+    normalized = normalize_unit(unit, registry_version=registry_version)
+    actual_dimension = registry_snapshot(registry_version).units[normalized].dimension
     if actual_dimension != dimension:
         raise UnitDimensionMismatch(f"Catalog candidate requires dimension {dimension}; unit {unit!r} is {actual_dimension}.")
     return normalized
 
 
-def convert_catalog_candidate(field_key: str, value: Decimal, unit: str | None) -> CanonicalValue:
+def convert_catalog_candidate(
+    field_key: str, value: Decimal, unit: str | None, *, registry_version: str = "1",
+) -> CanonicalValue:
     """#109 apply-boundary contract: validate an extracted field and retain its source provenance."""
     try:
         contract = CATALOG_FIELD_CONTRACTS[field_key]
     except KeyError as error:
         raise UnknownMetric(f"Catalog field has no unit contract: {field_key!r}") from error
-    normalized = validate_catalog_candidate_unit(unit, contract.dimension)
+    normalized = validate_catalog_candidate_unit(unit, contract.dimension, registry_version=registry_version)
     assert unit is not None
     return CanonicalValue(
-        value=convert_value(value, normalized, contract.canonical_unit),
+        value=convert_value(value, normalized, contract.canonical_unit, registry_version=registry_version),
         unit=contract.canonical_unit,
         raw_value=value,
         raw_unit=unit,
+        registry_version=registry_version,
     )
