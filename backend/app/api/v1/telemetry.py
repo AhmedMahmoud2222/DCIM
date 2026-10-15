@@ -11,12 +11,12 @@ shapes would be worse than the small amount of namespacing added here (the same
 power/models.py's `utility_intake` node-type addition)."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from sqlalchemy import DateTime, and_, cast, func, literal, select, text, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -24,6 +24,8 @@ from app.application.alarm_service import AlarmUnitCompatibilityError
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
+from app.application.telemetry_ledger import ReplayHorizonExceeded
+from app.application.telemetry_retention import as_utc, utc_day
 from app.application.telemetry_service import (
     AmbiguousMappingContract,
     BindingNotFound,
@@ -46,7 +48,9 @@ from app.core.errors import ApiError
 from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
+from app.domain.telemetry.aggregate_math import AggregateArithmeticError
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
+from app.domain.telemetry.metric_semantics import ValueOutOfRange
 from app.domain.telemetry.models import (
     CANONICAL_METRICS,
     DailyTelemetryAggregate,
@@ -54,15 +58,20 @@ from app.domain.telemetry.models import (
     TelemetryContractHold,
     TelemetryReading,
 )
-from app.domain.telemetry.numeric import InvalidTelemetryValue
+from app.domain.telemetry.numeric import (
+    MAX_ABS_ADJUSTED_EXPONENT,
+    MAX_STORABLE,
+    NUMERIC_SCALE,
+    InvalidTelemetryValue,
+)
 from app.domain.telemetry.registry import (
-    METRIC_REGISTRY,
     REGISTRY_VERSION,
     UnitDimensionMismatch,
     UnknownMetric,
     UnknownRegistryVersion,
     UnknownUnit,
     convert_to_presentation,
+    registry_snapshot,
     validate_metric_unit,
 )
 
@@ -77,7 +86,9 @@ class TelemetryRecordIn(BaseModel):
     external_identifier: str = Field(max_length=255)
     source_identifier: str = Field(max_length=255)
     occurred_at: datetime
-    value: float
+    # Issue #128 / G3: an exact decimal. On the wire a JSON number or a decimal string is parsed without a float
+    # intermediary (telemetry_wire); non-finite values are carried through so the service rejects that one record.
+    value: Decimal = Field(allow_inf_nan=True)
     attributes: dict = Field(default_factory=dict)
     # Issue #128 / G1: the immutable conversion contract the collector acquired this value under (from its
     # authenticated telemetry-contracts plan). Optional for older collectors; an unpinned record is accepted
@@ -86,10 +97,46 @@ class TelemetryRecordIn(BaseModel):
     mapping_revision_id: uuid.UUID | None = None
     source_unit: str | None = Field(default=None, max_length=32)
     source_scale: Decimal | None = None
+    # The exact numeral of `value` as received. Set by the wire parser only; never read from client JSON.
+    _value_lexeme: str | None = PrivateAttr(default=None)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _no_boolean(cls, raw: object) -> object:
+        if isinstance(raw, bool):
+            raise ValueError("value must be a number")
+        return raw
+
+    @property
+    def value_text(self) -> str:
+        """The exact source text of `value`: the received numeral, else the decimal text of the supplied number."""
+        return self._value_lexeme if self._value_lexeme is not None else str(self.value)
 
 
 class TelemetryBatchIn(BaseModel):
     records: list[TelemetryRecordIn] = Field(max_length=MAX_BATCH_RECORDS)
+
+
+def parse_telemetry_batch(raw_body: bytes) -> TelemetryBatchIn:
+    """Parse the (already authenticated and size-bounded) telemetry body with lossless numbers.
+
+    Raises `ApiError(422)` with the same shape as every other collector body validation failure.
+    """
+    from pydantic import ValidationError
+
+    from app.domain.telemetry.wire import WireNumberError, loads_exact, prepare_records
+
+    try:
+        document, lexemes = prepare_records(loads_exact(raw_body))
+        batch = TelemetryBatchIn.model_validate(document)
+    except (WireNumberError, ValidationError, RecursionError) as error:
+        raise ApiError(
+            status_code=422, title="Validation Error", detail="One or more fields failed validation.",
+            type_="https://dcim.internal/errors/validation",
+        ) from error
+    for index, record in enumerate(batch.records):
+        record._value_lexeme = lexemes.get(index)
+    return batch
 
 
 class TelemetryAck(BaseModel):
@@ -116,6 +163,12 @@ class TelemetryOut(BaseModel):
     raw_unit: str | None = None
     registry_version: str | None = None
     source_scale: float | None = None
+    # Issue #128 / G3: exact decimal strings of the stored NUMERIC values (the floats above can not carry 18
+    # significant digits). `raw_value_text` is the source numeral as received; null for rows stored before G3.
+    value_decimal: str | None = None
+    raw_value_decimal: str | None = None
+    source_scale_decimal: str | None = None
+    raw_value_text: str | None = None
     occurred_at: datetime
     received_at: datetime
     expected_poll_interval_seconds: int | None = None
@@ -131,54 +184,122 @@ class TelemetryHistoryOut(TelemetryOut):
 
 
 class MetricMappingIn(BaseModel):
+    registry_version: str = REGISTRY_VERSION
     integration_id: uuid.UUID
     managed_asset_id: uuid.UUID | None = None
     source_identifier: str = Field(max_length=255)
     canonical_metric: str
     unit: str = Field(max_length=32)
-    scale: float = 1
+    # Issue #128 / G3: an exact decimal (JSON number or decimal string, no float intermediary), at most 8 decimal
+    # places, within the NUMERIC(18, 8) range. A number such as 0.1 is accepted exactly as written.
+    scale: Decimal = Decimal(1)
     label: str | None = Field(default=None, max_length=128)
 
+    @field_validator("scale", mode="before")
+    @classmethod
+    def _scale_is_a_number(cls, raw: object) -> object:
+        if isinstance(raw, bool):
+            raise ValueError("scale must be a number")
+        return raw
 
-class MetricMappingOut(MetricMappingIn):
+    @field_validator("scale")
+    @classmethod
+    def _scale_fits_storage(cls, scale: Decimal) -> Decimal:
+        if not scale.is_finite() or abs(scale.adjusted()) > MAX_ABS_ADJUSTED_EXPONENT:
+            raise ValueError("scale must be a finite number")
+        if scale.copy_abs() > MAX_STORABLE:
+            raise ValueError("scale is outside the storable range")
+        quantum = Decimal(1).scaleb(-NUMERIC_SCALE)
+        if scale != scale.quantize(quantum):
+            raise ValueError("scale supports at most 8 decimal places")
+        return scale.quantize(quantum)
+
+
+class MetricMappingOut(BaseModel):
     id: uuid.UUID
+    integration_id: uuid.UUID
+    managed_asset_id: uuid.UUID | None = None
+    source_identifier: str
+    canonical_metric: str
+    unit: str
+    scale: float
+    scale_decimal: str
+    label: str | None = None
     registry_version: str | None = None
     current_revision_id: uuid.UUID | None = None
 
 
 class MetricRegistryOut(BaseModel):
     version: str
-    metrics: dict[str, dict[str, str]]
+    metrics: dict[str, dict[str, object]]
 
 
 @router.get("/metric-registry", response_model=MetricRegistryOut)
-async def get_metric_registry(ctx=Depends(require_permission("telemetry:read"))) -> MetricRegistryOut:
-    return MetricRegistryOut(
-        version=REGISTRY_VERSION,
-        metrics={
-            key: {
-                "dimension": definition.dimension,
-                "canonical_unit": definition.canonical_unit,
-                "presentation_unit": definition.presentation_unit,
-            }
-            for key, definition in METRIC_REGISTRY.items()
-        },
-    )
+async def get_metric_registry(
+    version: str = "1", ctx=Depends(require_permission("telemetry:read")),
+) -> MetricRegistryOut:
+    try:
+        snapshot = registry_snapshot(version)
+    except UnknownRegistryVersion as error:
+        raise ApiError(status_code=422, title="Invalid registry version", detail=str(error)) from error
+    metrics: dict[str, dict[str, object]] = {}
+    for key, definition in snapshot.metrics.items():
+        fields: dict[str, object] = {
+            "dimension": definition.dimension,
+            "canonical_unit": definition.canonical_unit,
+            "presentation_unit": definition.presentation_unit,
+        }
+        if definition.semantics is not None:
+            policy = definition.semantics
+            fields.update(value_kind=policy.value_kind.value,
+                          min_canonical=exact_text(policy.min_canonical) if policy.min_canonical is not None else None,
+                          max_canonical=exact_text(policy.max_canonical) if policy.max_canonical is not None else None,
+                          allowed_source_units=policy.allowed_source_units,
+                          aggregations=policy.aggregations, rule_types=policy.rule_types)
+        metrics[key] = fields
+    return MetricRegistryOut(version=snapshot.version, metrics=metrics)
 
 
-@router.post("/mappings", response_model=MetricMappingOut, status_code=201)
+async def exact_mapping_body(request: Request) -> MetricMappingIn:
+    """The mapping request body with `scale` parsed without a float intermediary (Issue #128 / G3).
+
+    Declared after the permission dependency on the route, so an unauthenticated or unauthorised caller is refused
+    before any body is read. Same 422 shape as automatic body validation.
+    """
+    from pydantic import ValidationError
+
+    from app.domain.telemetry.wire import WireNumberError, exact_number, loads_exact
+
+    try:
+        document = loads_exact(await request.body())
+        if isinstance(document, dict) and document.get("scale") is not None:
+            number, _text = exact_number(document["scale"])
+            document["scale"] = number
+        return MetricMappingIn.model_validate(document)
+    except (WireNumberError, ValidationError) as error:
+        raise ApiError(
+            status_code=422, title="Validation Error", detail="One or more fields failed validation.",
+            type_="https://dcim.internal/errors/validation",
+        ) from error
+
+
+@router.post(
+    "/mappings", response_model=MetricMappingOut, status_code=201,
+    openapi_extra={"requestBody": {"required": True, "content": {"application/json": {
+        "schema": MetricMappingIn.model_json_schema()}}}},
+)
 async def create_metric_mapping(
-    body: MetricMappingIn,
-    db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("telemetry:manage")),
+    body: MetricMappingIn = Depends(exact_mapping_body),
+    db: AsyncSession = Depends(get_db),
 ) -> MetricMappingOut:
     if body.canonical_metric not in CANONICAL_METRICS:
         raise ApiError(status_code=422, title="Invalid canonical metric", detail="Metric is not supported by the MVP catalog.")
     try:
-        validate_metric_unit(body.canonical_metric, body.unit)
+        validate_metric_unit(body.canonical_metric, body.unit, registry_version=body.registry_version)
     except UnknownUnit as exc:
         raise ApiError(status_code=422, title="Invalid source unit", detail=str(exc)) from exc
-    except (UnitDimensionMismatch, UnknownMetric) as exc:
+    except (UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as exc:
         raise ApiError(status_code=422, title="Metric/unit mismatch", detail=str(exc)) from exc
     if body.managed_asset_id is not None and await db.get(ManagedAsset, body.managed_asset_id) is None:
         raise ApiError(status_code=422, title="Invalid managed asset", detail="managed_asset_id does not exist.")
@@ -190,7 +311,7 @@ async def create_metric_mapping(
                 status_code=422, title="Metric not supported by sensor",
                 detail=f"A {sensor.sensor_kind} sensor can be mapped to {list(SENSOR_KIND_METRICS[sensor.sensor_kind])}.",
             )
-    mapping = IntegrationMetricMapping(id=uuid.uuid4(), registry_version=REGISTRY_VERSION, **body.model_dump())
+    mapping = IntegrationMetricMapping(id=uuid.uuid4(), **body.model_dump())
     db.add(mapping)
     await db.flush()
     await write_audit_log(
@@ -212,8 +333,8 @@ async def create_metric_mapping(
     )
     await db.commit()
     return MetricMappingOut(
-        id=mapping.id, registry_version=mapping.registry_version, current_revision_id=mapping.current_revision_id,
-        **body.model_dump(),
+        id=mapping.id, current_revision_id=mapping.current_revision_id,
+        **{**body.model_dump(), "scale": float(body.scale)}, scale_decimal=exact_text(body.scale),
     )
 
 
@@ -235,6 +356,7 @@ async def list_metric_mappings(
             canonical_metric=row.canonical_metric,
             unit=row.unit,
             scale=float(row.scale),
+            scale_decimal=exact_text(row.scale),
             label=row.label,
             registry_version=row.registry_version,
             current_revision_id=row.current_revision_id,
@@ -282,6 +404,7 @@ async def ingest_collector_telemetry(
                     source_identifier=record.source_identifier,
                     occurred_at=record.occurred_at,
                     value=record.value,
+                    value_text=record.value_text,
                     attributes=record.attributes,
                     mapping_revision_id=record.mapping_revision_id,
                     source_unit=record.source_unit,
@@ -301,7 +424,7 @@ async def ingest_collector_telemetry(
                 db, collector_id=collector.id, integration_id=record.integration_id,
                 source_identifier=record.source_identifier, external_identifier=record.external_identifier,
                 dedup_key=record.dedup_key, occurred_at=record.occurred_at, value=record.value,
-                attributes=record.attributes, reason=ambiguous.reason,
+                value_text=record.value_text, attributes=record.attributes, reason=ambiguous.reason,
             )
             results.append(TelemetryAck(
                 dedup_key=record.dedup_key, status="rejected",
@@ -313,11 +436,22 @@ async def ingest_collector_telemetry(
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="MAPPING_REVISION_MISMATCH"))
         except ConversionContractDrift:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="CONVERSION_CONTRACT_DRIFT"))
+        except ValueOutOfRange:
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="VALUE_OUT_OF_RANGE"))
         except InvalidTelemetryValue:
             # NaN/Infinity or a value (raw, scaled or canonical) outside NUMERIC(18, 8).
             # Deterministic per-record rejection: the savepoint already discarded this
             # record, valid peers persist, and a retry is rejected again (never "duplicate").
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INVALID_TELEMETRY_VALUE"))
+        except ReplayHorizonExceeded:
+            # Issue #128 / G4-R: a finite late_replay_horizon_days is set and this record is older than it. Permanent: the
+            # collector drops it (REPLAY_HORIZON_EXCEEDED is in its permanent set). The savepoint discarded the record.
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="REPLAY_HORIZON_EXCEEDED"))
+        except AggregateArithmeticError:
+            # Issue #128 / G4-A: the late merge would exceed an exact-aggregate limit (sum or count column). The savepoint
+            # discarded the record and left the aggregate unchanged. The code is not in the collector's permanent set,
+            # so the record stays queued instead of being lost; valid peers persist.
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="AGGREGATE_ARITHMETIC_LIMIT"))
         except (AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion):
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="INCOMPATIBLE_TELEMETRY_UNITS"))
     await db.commit()
@@ -399,13 +533,22 @@ async def resolve_contract_hold(
             outcome = await ingest_reading(
                 db, collector_id=hold.collector_id, integration_id=hold.integration_id, dedup_key=hold.dedup_key,
                 external_identifier=hold.external_identifier, source_identifier=hold.source_identifier,
-                occurred_at=hold.occurred_at, value=Decimal(hold.value_text), attributes=hold.attributes,
+                occurred_at=hold.occurred_at, value=Decimal(hold.value_text), value_text=hold.value_text,
+                attributes=hold.attributes,
                 mapping_revision_id=body.mapping_revision_id, pinned_evidence="operator_resolved",
             )
+    except ReplayHorizonExceeded as error:
+        # R4: the day is already compacted and the record is older than the replay horizon. The savepoint rolled the attempt
+        # back; the hold and its evidence stay exactly as they were, so nothing is lost.
+        raise ApiError(
+            status_code=409, title="Hold is past the replay horizon",
+            detail="The held record is older than the configured replay horizon and its day is already compacted. "
+                   "The hold is kept unchanged.",
+        ) from error
     except (UnknownMappingRevision, MappingRevisionMismatch, MetricMappingNotFound) as error:
         raise ApiError(status_code=422, title="Revision not valid for this hold", detail=str(error)) from error
-    except (InvalidTelemetryValue, ConversionContractDrift, AlarmUnitCompatibilityError, UnknownUnit,
-            UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
+    except (InvalidTelemetryValue, ValueOutOfRange, AggregateArithmeticError, ConversionContractDrift,
+            AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
         raise ApiError(status_code=422, title="Record cannot be stored under that revision", detail=str(error)) from error
     hold.status = "resolved"
     hold.resolved_at = datetime.now(UTC)
@@ -463,42 +606,112 @@ async def metric_history(
         raise ApiError(
             status_code=422, title="Telemetry series required", detail="integration_id or managed_asset_id is required."
         )
+    start, end = as_utc(start), as_utc(end)
     if start >= end:
         raise ApiError(status_code=422, title="Invalid time range", detail="start must be before end.")
-    cutoff = datetime.now(UTC) - timedelta(days=365)
     raw_stmt = (
-        select(TelemetryReading)
+        select(
+            TelemetryReading.id.label("id"),
+            TelemetryReading.occurred_at.label("occurred_at"),
+            literal("raw").label("resolution"),
+        )
         .where(
             TelemetryReading.metric == metric,
             TelemetryReading.occurred_at >= start,
             TelemetryReading.occurred_at <= end,
-            TelemetryReading.occurred_at >= cutoff,
         )
-        .order_by(TelemetryReading.occurred_at.asc())
-        .limit(limit)
     )
     if integration_id is not None:
         raw_stmt = raw_stmt.where(TelemetryReading.integration_id == integration_id)
     if managed_asset_id is not None:
         raw_stmt = raw_stmt.where(TelemetryReading.managed_asset_id == managed_asset_id)
     daily_stmt = (
-        select(DailyTelemetryAggregate)
+        select(
+            DailyTelemetryAggregate.id.label("id"),
+            func.timezone("UTC", cast(DailyTelemetryAggregate.day, DateTime())).label("occurred_at"),
+            literal("daily").label("resolution"),
+        )
         .where(
             DailyTelemetryAggregate.metric == metric,
-            DailyTelemetryAggregate.day >= start.date(),
-            DailyTelemetryAggregate.day <= end.date(),
-            DailyTelemetryAggregate.day < cutoff.date(),
+            DailyTelemetryAggregate.day >= utc_day(start),
+            DailyTelemetryAggregate.day <= utc_day(end),
         )
-        .order_by(DailyTelemetryAggregate.day.asc())
-        .limit(limit)
     )
     if integration_id is not None:
         daily_stmt = daily_stmt.where(DailyTelemetryAggregate.integration_id == integration_id)
     if managed_asset_id is not None:
         daily_stmt = daily_stmt.where(DailyTelemetryAggregate.managed_asset_id == managed_asset_id)
-    raw = [_history_raw(row) for row in (await db.execute(raw_stmt)).scalars().all()]
-    daily = [_history_daily(row) for row in (await db.execute(daily_stmt)).scalars().all()]
-    return sorted([*daily, *raw], key=lambda item: item.occurred_at)[:limit]
+    # See telemetry_retention's storage contract: never suppress raw rows merely
+    # because their day has an aggregate. SKIP LOCKED compaction may be partial.
+    # A single statement prevents READ COMMITTED snapshots straddling compaction
+    # (two separate selects could miss evidence or read it twice).
+    points = union_all(raw_stmt, daily_stmt).subquery()
+    bounded = (
+        select(points).order_by(points.c.occurred_at, points.c.resolution, points.c.id).limit(limit).subquery()
+    )
+    stmt = (
+        select(TelemetryReading, DailyTelemetryAggregate)
+        .select_from(bounded)
+        .outerjoin(TelemetryReading, and_(bounded.c.resolution == "raw", TelemetryReading.id == bounded.c.id))
+        .outerjoin(DailyTelemetryAggregate, and_(bounded.c.resolution == "daily", DailyTelemetryAggregate.id == bounded.c.id))
+        .order_by(bounded.c.occurred_at, bounded.c.resolution, bounded.c.id)
+    )
+    # Preserve the API's whole-day daily buckets (including a start day's midnight
+    # bucket for an intraday start); raw endpoints remain inclusive.
+    return [_history_raw(raw) if raw is not None else _history_daily(daily) for raw, daily in (await db.execute(stmt)).all()]
+
+
+
+def exact_text(value: Decimal | float | int) -> str:
+    """A stored NUMERIC as plain positional decimal text: exact, deterministic, never via a float or scientific form."""
+    return format(value if isinstance(value, Decimal) else Decimal(str(value)), "f")
+
+
+def decimal_text(value: Decimal | float | int | None) -> str | None:
+    return None if value is None else exact_text(value)
+
+
+class ReplayLedgerStatus(BaseModel):
+    """Gauges for the consumed-key ledger (Issue #128 / G4-R). Reports counts and dates only, never keys or collectors."""
+
+    late_replay_horizon_days: int | None
+    effective_horizon_days: float | None
+    ledger_complete_since: datetime
+    last_pruned_at: datetime | None
+    last_pruned_count: int | None
+    pruning_begun_at: datetime | None
+    oldest_consumed_day: date | None
+    approximate_tombstones: int
+    warnings: list[str]
+
+
+@router.get("/replay-ledger", response_model=ReplayLedgerStatus)
+async def replay_ledger_status(
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("telemetry:read"))
+) -> ReplayLedgerStatus:
+    from app.domain.telemetry.models import MonitoringPolicy, TelemetryConsumedKey, TelemetryReplayLedgerState
+
+    horizon = (await db.execute(select(MonitoringPolicy.late_replay_horizon_days).where(MonitoringPolicy.id == 1))).scalar()
+    state = (await db.execute(select(TelemetryReplayLedgerState).where(TelemetryReplayLedgerState.id == 1))).scalar_one()
+    oldest = (await db.execute(select(func.min(TelemetryConsumedKey.consumed_day)))).scalar()
+    estimate = (await db.execute(text(
+        "SELECT greatest(reltuples, 0)::bigint FROM pg_class WHERE oid = 'telemetry_consumed_key'::regclass"))).scalar() or 0
+    now = datetime.now(UTC)
+    effective = None
+    if horizon is not None:
+        effective = min(timedelta(days=horizon), max(now - state.ledger_complete_since, timedelta(0))).total_seconds() / 86400
+    warnings: list[str] = []
+    if horizon is None and (estimate > 0 or oldest is not None):
+        warnings.append("horizon_unset_ledger_grows_without_bound")
+    if horizon is not None and oldest is not None and (now.date() - oldest) > timedelta(days=horizon + 2):
+        warnings.append("prune_lagging")
+    return ReplayLedgerStatus(
+        late_replay_horizon_days=horizon, effective_horizon_days=effective,
+        ledger_complete_since=state.ledger_complete_since, last_pruned_at=state.last_pruned_at,
+        last_pruned_count=state.last_pruned_count, pruning_begun_at=state.pruning_begun_at,
+        oldest_consumed_day=oldest,
+        approximate_tombstones=int(estimate), warnings=warnings,
+    )
 
 
 def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> TelemetryOut:
@@ -519,6 +732,10 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         raw_value=None if row.raw_value is None else float(row.raw_value),
         raw_unit=row.raw_unit,
         source_scale=None if row.source_scale is None else float(row.source_scale),
+        value_decimal=decimal_text(row.value),
+        raw_value_decimal=decimal_text(row.raw_value),
+        source_scale_decimal=decimal_text(row.source_scale),
+        raw_value_text=row.raw_value_text,
         registry_version=row.registry_version,
         occurred_at=row.occurred_at,
         received_at=row.received_at,
@@ -546,6 +763,8 @@ def _history_daily(row: DailyTelemetryAggregate) -> TelemetryHistoryOut:
         metric=row.metric,
         unit=row.unit,
         value=float(row.average_value),
+        # The stored average is exact NUMERIC; there is no source numeral for an aggregate, so no raw_* is invented.
+        value_decimal=decimal_text(row.average_value),
         presentation_unit=average.unit if average is not None else row.unit,
         presentation_value=float(average.value) if average is not None else float(row.average_value),
         registry_version=row.registry_version,

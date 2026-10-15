@@ -8,7 +8,7 @@ from the MVP `TelemetryReading` pipeline above)."""
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation, localcontext
 
 import structlog
 from sqlalchemy import select
@@ -32,14 +32,60 @@ from app.domain.telemetry.models import (
     TelemetryReading,
     telemetry_series_key,
 )
-from app.domain.telemetry.numeric import InvalidTelemetryValue, ensure_storable
+from app.domain.telemetry.numeric import (
+    MAX_ABS_ADJUSTED_EXPONENT,
+    MAX_LEXEME_CHARS,
+    MAX_STORABLE,
+    InvalidTelemetryValue,
+    ensure_storable,
+    quantize_derived,
+    quantize_source,
+)
 from app.domain.telemetry.registry import (
     UnitDimensionMismatch,
     UnknownMetric,
     UnknownRegistryVersion,
     UnknownUnit,
-    convert_to_canonical,
+    convert_value,
+    registry_snapshot,
+    validate_metric_unit,
+    validate_metric_value,
 )
+
+
+def canonical_storage_value(
+    metric: str, raw_value: Decimal, source_unit: str, source_scale: Decimal, registry_version: str,
+) -> tuple[Decimal, str]:
+    """One pinned conversion, numeric storage validation, then metric semantics."""
+    snapshot = registry_snapshot(registry_version)
+    with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
+        scaled_value = ensure_storable(raw_value * source_scale, "scaled value")
+        normalized_unit = validate_metric_unit(metric, source_unit, registry_version=registry_version)
+        definition = snapshot.metrics[metric]
+        try:
+            converted = convert_value(
+                scaled_value, normalized_unit, definition.canonical_unit, registry_version=registry_version,
+            )
+        except InvalidOperation as error:
+            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
+        # Numeric storage failures keep their existing error code even when a value
+        # also violates a v2 physical domain.
+        stored_value = ensure_storable(converted, "canonical value")
+        validate_metric_value(metric, stored_value, registry_version=registry_version)
+        return stored_value, definition.canonical_unit
+
+
+def exact_decimal(value: float | int | Decimal | str) -> Decimal:
+    """An exact `Decimal` for a caller-supplied number. A float is taken at its shortest repr (digits a float already
+    lost cannot be recovered); a string must be a decimal numeral."""
+    if isinstance(value, bool):
+        raise InvalidTelemetryValue("Telemetry source value must be a number.")
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(repr(value) if isinstance(value, float) else str(value))
+    except InvalidOperation as error:
+        raise InvalidTelemetryValue("Telemetry source value must be a number.") from error
 
 
 class MetricMappingNotFound(ValueError):
@@ -93,6 +139,24 @@ async def _existing_reading_id(db: AsyncSession, collector_id: uuid.UUID, dedup_
     ).scalar_one_or_none()
 
 
+def _scale_echo_matches(echo: Decimal, stored_scale: object) -> bool:
+    """Whether an echoed source scale equals the revision's, without any arithmetic that can raise on hostile input.
+
+    The echo is client text: it may be non-finite, astronomically large or small. Anything outside the storable scale
+    range cannot equal a stored scale, so it is a contradiction, not an error.
+    """
+    if (
+        not echo.is_finite()
+        or abs(echo.adjusted()) > MAX_ABS_ADJUSTED_EXPONENT
+        or echo.copy_abs() > MAX_STORABLE
+    ):
+        return False
+    try:
+        return echo.quantize(_SCALE_QUANTUM) == Decimal(str(stored_scale)).quantize(_SCALE_QUANTUM)
+    except InvalidOperation:
+        return False
+
+
 async def resolve_contract(
     db: AsyncSession, mapping: IntegrationMetricMapping, *, integration_id: uuid.UUID, source_identifier: str,
     occurred_at: datetime, mapping_revision_id: uuid.UUID | None, source_unit: str | None,
@@ -117,9 +181,7 @@ async def resolve_contract(
             raise MappingRevisionMismatch("The pinned mapping revision does not belong to this integration source.")
         if source_unit is not None and source_unit != revision.source_unit:
             raise MappingRevisionMismatch("The record's source unit contradicts its pinned revision.")
-        if source_scale is not None and (
-            source_scale.quantize(_SCALE_QUANTUM) != Decimal(str(revision.source_scale)).quantize(_SCALE_QUANTUM)
-        ):
+        if source_scale is not None and not _scale_echo_matches(source_scale, revision.source_scale):
             raise MappingRevisionMismatch("The record's source scale contradicts its pinned revision.")
         return revision, evidence_for_pinned
     revisions = (
@@ -148,7 +210,8 @@ async def ingest_reading(
     external_identifier: str,
     source_identifier: str,
     occurred_at: datetime,
-    value: float | Decimal,
+    value: float | int | Decimal | str,
+    value_text: str | None = None,
     attributes: dict | None = None,
     mapping_revision_id: uuid.UUID | None = None,
     source_unit: str | None = None,
@@ -165,6 +228,15 @@ async def ingest_reading(
     ).scalar_one_or_none()
     if mapping is None:
         raise MetricMappingNotFound("No metric mapping exists for this integration source identifier.")
+    # Issue #128 / G3: the source value is converted to an exact Decimal and rounded ONCE, here, to the 8-decimal
+    # storage contract (half-even). Everything downstream, the stored raw value and the canonical value, starts from
+    # `raw_value`, so the canonical value is always reproducible from the persisted raw value. Done before contract
+    # resolution so a record that cannot be stored is never held.
+    source_decimal = exact_decimal(value)
+    raw_text = value_text if value_text is not None else str(source_decimal)
+    if len(raw_text) > MAX_LEXEME_CHARS:
+        raise InvalidTelemetryValue("Telemetry source value text exceeds the maximum length.")
+    raw_value = quantize_source(source_decimal, "source value")
     try:
         revision, evidence = await resolve_contract(
             db, mapping, integration_id=integration_id, source_identifier=source_identifier, occurred_at=occurred_at,
@@ -187,27 +259,17 @@ async def ingest_reading(
         raise ConversionContractDrift("The pinned conversion can no longer be resolved by the registry.") from error
     if stamped != revision.conversion_hash:
         raise ConversionContractDrift("The registry no longer reproduces the pinned conversion contract.")
-    # Explicit numeric boundary: every persisted quantity is checked against NUMERIC(18, 8)
-    # here, so PostgreSQL overflow is never the validation mechanism.
-    raw_value = ensure_storable(Decimal(str(value)), "source value")
     source_scale_value = revision_scale
     if revision.registry_version is None:
         # Rows/mappings created before the registry retain their historic meaning.
-        stored_value = ensure_storable(raw_value * source_scale_value, "scaled value")
+        stored_value = quantize_derived(raw_value * source_scale_value, "scaled value")
         stored_unit = revision.source_unit
         registry_version = None
     else:
-        ensure_storable(raw_value * source_scale_value, "scaled value")
-        try:
-            canonical = convert_to_canonical(
-                revision.canonical_metric, raw_value, revision.source_unit,
-                source_scale=source_scale_value, registry_version=revision.registry_version,
-            )
-        except InvalidOperation as error:
-            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
-        stored_value = ensure_storable(canonical.value, "canonical value")
-        stored_unit = canonical.unit
-        registry_version = canonical.registry_version
+        stored_value, stored_unit = canonical_storage_value(
+            revision.canonical_metric, raw_value, revision.source_unit, source_scale_value, revision.registry_version,
+        )
+        registry_version = revision.registry_version
     received_at = datetime.now(UTC)
     statement = (
         insert(TelemetryReading)
@@ -227,6 +289,7 @@ async def ingest_reading(
             unit=stored_unit,
             value=stored_value,
             raw_value=raw_value,
+            raw_value_text=raw_text,
             raw_unit=revision.source_unit,
             source_scale=source_scale_value,
             registry_version=registry_version,
@@ -241,19 +304,25 @@ async def ingest_reading(
     )
     reading_id = (await db.execute(statement)).scalar_one_or_none()
     if reading_id is not None:
+        reading = await db.get(TelemetryReading, reading_id)
+        assert reading is not None
+        # A delayed edge replay for a day already compacted is incorporated into the
+        # authoritative daily statistics; occurred_at, never receipt time, chooses it.
+        # The merge is decided before alarm evaluation so that a replay of an already-counted record (Issue #128 / G4-R)
+        # has no alarm side effects. A finite replay horizon raises ReplayHorizonExceeded here, which the caller's savepoint
+        # turns into a rejection of this record alone.
+        from app.application.telemetry_retention import LateMergeOutcome, merge_late_reading
+
+        outcome = await merge_late_reading(db, reading)
+        if outcome is LateMergeOutcome.DUPLICATE:
+            await db.delete(reading)  # its key was consumed earlier; the sample is already counted
+            return TelemetryIngestResult(reading_id=None, duplicate=True)
         # The explicit application boundary prevents the telemetry ORM domain from
         # depending on alarm persistence while retaining one transaction.
         from app.application.alarm_service import evaluate_reading
 
-        reading = await db.get(TelemetryReading, reading_id)
-        assert reading is not None
         await evaluate_reading(db, reading)
-        # A delayed edge replay for a day already compacted is incorporated into the
-        # authoritative daily statistics; occurred_at, never receipt time, chooses it.
-        from app.application.telemetry_retention import merge_late_reading
-
-        merged = await merge_late_reading(db, reading)
-        if merged:
+        if outcome is LateMergeOutcome.MERGED:
             await db.delete(reading)  # aggregate update is in the same transaction
     return TelemetryIngestResult(reading_id=reading_id, duplicate=reading_id is None)
 
@@ -266,8 +335,8 @@ class HoldOutcome:
 
 async def register_contract_hold(
     db: AsyncSession, *, collector_id: uuid.UUID, integration_id: uuid.UUID, source_identifier: str,
-    external_identifier: str, dedup_key: str, occurred_at: datetime, value: float | Decimal, attributes: dict | None,
-    reason: str,
+    external_identifier: str, dedup_key: str, occurred_at: datetime, value: float | int | Decimal | str,
+    attributes: dict | None, reason: str, value_text: str | None = None,
 ) -> HoldOutcome:
     """Record one more refused delivery of an ambiguous record and decide whether the retry budget is spent.
 
@@ -280,7 +349,8 @@ async def register_contract_hold(
         .values(
             id=uuid.uuid4(), collector_id=collector_id, integration_id=integration_id,
             source_identifier=source_identifier, external_identifier=external_identifier, dedup_key=dedup_key,
-            occurred_at=occurred_at, value_text=str(Decimal(str(value))), attributes=attributes or {},
+            occurred_at=occurred_at, value_text=value_text if value_text is not None else str(exact_decimal(value)),
+            attributes=attributes or {},
             reason=reason, status="held", attempts=0, first_held_at=now, last_held_at=now,
         )
         .on_conflict_do_nothing(constraint="uq_telemetry_contract_hold_collector_dedup")

@@ -10,15 +10,19 @@ from decimal import Decimal
 from typing import cast
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Table,
+    Text,
     UniqueConstraint,
     event,
+    func,
     insert,
     update,
 )
@@ -29,6 +33,19 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
 from app.domain.telemetry.contract import conversion_contract_hash
 from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION
+
+
+class RegistryVersionSnapshot(Base):
+    """Append-only contract evidence; database triggers prohibit row mutation."""
+
+    __tablename__ = "registry_version_snapshot"
+    __table_args__ = (CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="hash"),)
+
+    version: Mapped[str] = mapped_column(Text, primary_key=True)
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
 
 CANONICAL_METRICS = tuple(METRIC_REGISTRY)
 
@@ -160,6 +177,11 @@ class TelemetryReading(Base, UUIDPkMixin):
         CheckConstraint(
             "(mapping_revision_id IS NULL) = (contract_evidence IS NULL)", name="revision_matches_evidence"
         ),
+        CheckConstraint(
+            "raw_value_text IS NULL OR (char_length(raw_value_text) BETWEEN 1 AND 64 AND "
+            "raw_value_text ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$')",
+            name="raw_value_text_numeral",
+        ),
     )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="RESTRICT"), nullable=False)
@@ -185,6 +207,9 @@ class TelemetryReading(Base, UUIDPkMixin):
         nullable=True
     )
     contract_evidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Issue #128 / G3: the exact finite source numeral as received, for rows stored after G3. NULL = stored before G3
+    # (the original text is unknown; `raw_value` is then whatever PostgreSQL rounded the float-parsed input to).
+    raw_value_text: Mapped[str | None] = mapped_column(String(64), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -202,6 +227,20 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
         Index("ix_daily_telemetry_series_day", "series_key", "day"),
         Index("ix_daily_telemetry_integration_metric_day", "integration_id", "metric", "day"),
         Index("ix_daily_telemetry_asset_metric_day", "managed_asset_id", "metric", "day"),
+        # Issue #128 / G4-A. Added NOT VALID by migration 0048 (every existing row is NULL and satisfies them).
+        CheckConstraint("arithmetic_basis IS NULL OR arithmetic_basis IN ('decimal_exact', 'legacy_seeded')",
+                        name="arithmetic_basis_allowed"),
+        CheckConstraint("(arithmetic_basis IS NULL) = (sum_value IS NULL)", name="basis_has_sum"),
+        CheckConstraint(
+            "(arithmetic_basis IS NOT DISTINCT FROM 'legacy_seeded') = (legacy_sample_count IS NOT NULL) AND "
+            "(legacy_sample_count IS NULL OR legacy_sample_count BETWEEN 1 AND sample_count)",
+            name="legacy_sample_count_scope",
+        ),
+        CheckConstraint(
+            "arithmetic_basis IS DISTINCT FROM 'decimal_exact' OR "
+            "sum_value BETWEEN minimum_value * sample_count AND maximum_value * sample_count",
+            name="exact_sum_within_extremes",
+        ),
     )
     integration_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("integration.id", ondelete="CASCADE"), nullable=False)
     managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), nullable=True)
@@ -210,11 +249,17 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     day: Mapped[date] = mapped_column(nullable=False)
-    average_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
-    minimum_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
-    maximum_value: Mapped[float] = mapped_column(Numeric(18, 8), nullable=False)
+    # NUMERIC(18, 8) values are loaded as Decimal; the annotation states the runtime type (it was `float` before G4-A).
+    average_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    minimum_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    maximum_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     sample_count: Mapped[int] = mapped_column(nullable=False)
     registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Exact sum of all samples (Issue #128 / G4-A). NULL = aggregate computed before G4-A with float arithmetic.
+    sum_value: Mapped[Decimal | None] = mapped_column(Numeric(38, 8), nullable=True)
+    arithmetic_basis: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # Samples whose contribution came from a legacy rounded average (legacy_seeded rows only); never changes.
+    legacy_sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class MonitoringPolicy(Base):
@@ -225,6 +270,46 @@ class MonitoringPolicy(Base):
     raw_retention_days: Mapped[int] = mapped_column(nullable=False, default=365)
     daily_aggregate_retention_days: Mapped[int | None] = mapped_column(nullable=True)
     alarm_history_retention_days: Mapped[int | None] = mapped_column(nullable=True)
+    # Issue #128 / G4-R. NULL (the default) means: no age-based rejection of late data and no ledger pruning. A finite
+    # value is an owner decision made from representative delay profiling; see docs/implementation/TELEMETRY_REPLAY_LEDGER.md.
+    late_replay_horizon_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class TelemetryConsumedKey(Base):
+    """Tombstone of a source record whose raw row was consumed into a daily aggregate (Issue #128 / G4-R).
+
+    `key_hash` is the first 16 bytes of SHA-256 over ``collector_id || 0x00 || dedup_key``. The raw reading (and with it the
+    unique dedup key) is deleted by compaction and by a late merge, so without this row a redelivery of the same record would
+    be counted again. The insert ``ON CONFLICT DO NOTHING`` is the arbiter: only the transaction whose insert succeeds may fold
+    the sample into an aggregate. Nothing here identifies a collector, a key or a value, and rows are never updated.
+    """
+
+    __tablename__ = "telemetry_consumed_key"
+    __table_args__ = (
+        CheckConstraint("octet_length(key_hash) = 16", name="key_hash_length"),
+        Index("ix_telemetry_consumed_key_consumed_day", "consumed_day"),
+    )
+    key_hash: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
+    consumed_day: Mapped[date] = mapped_column(nullable=False)
+
+
+class TelemetryReplayLedgerState(Base):
+    """One-row state of the consumed-key ledger.
+
+    `ledger_complete_since`: every key consumed at or after this instant has a tombstone (or was a duplicate). It is set when
+    the ledger is created and advanced, before any delete, by each prune run. A finite horizon is only ever applied as
+    ``min(horizon, now - ledger_complete_since)``, so raising the horizon never trusts tombstones that were already pruned.
+    """
+
+    __tablename__ = "telemetry_replay_ledger_state"
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    ledger_complete_since: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    last_pruned_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    last_pruned_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Set by the first prune run, in the same statement that first advances `ledger_complete_since`. From then on tombstones
+    # are missing for old keys, so the horizon can no longer be cleared (NULL mode would double count them).
+    pruning_begun_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class TelemetryContractHold(Base, UUIDPkMixin):

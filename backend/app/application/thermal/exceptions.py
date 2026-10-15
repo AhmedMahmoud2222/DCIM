@@ -145,7 +145,9 @@ async def build_exceptions(
         if zone["level"] == "unknown":
             items.append(_item("capacity_inputs_incomplete", "info", "thermal_zone", zone["zone_id"],
                                f"{zone['name']}: headroom cannot be computed (capacity or load inputs are incomplete).",
-                               load_state=zone["thermal_load"]["state"], available_complete=zone["available_complete"]))
+                               load_state=zone["thermal_load"]["state"], available_complete=zone["available_complete"],
+                               unknown_demand_equipment_count=zone["thermal_load"]["unknown_demand_equipment_count"],
+                               incomplete_reasons=zone["thermal_load"]["incomplete_reasons"]))
         if zone["level"] == "not_configured":
             items.append(_item("no_cooling_assigned", "warning", "thermal_zone", zone["zone_id"], f"{zone['name']}: no CRAC/CRAH is assigned."))
 
