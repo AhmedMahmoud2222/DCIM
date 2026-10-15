@@ -20,6 +20,7 @@ triggers re-enforce at the database layer regardless of whether this check is by
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from io import BytesIO
 from typing import Literal
 
@@ -66,6 +67,7 @@ from app.domain.catalog.designer_models import (
     NetworkPortTemplate,
     PowerSupplyTemplate,
 )
+from app.domain.catalog.template_binding import TemplateBinding, validate_template_binding
 from app.infrastructure.storage import get_storage_backend
 
 router = APIRouter(prefix="/catalog", tags=["catalog-designer"])
@@ -576,6 +578,9 @@ class MonitoringMetricTemplateIn(BaseModel):
     oid: str | None = Field(default=None, max_length=255)
     value_type: str
     unit: str | None = Field(default=None, max_length=32)
+    registry_metric: str | None = Field(default=None, max_length=64)
+    registry_version: str | None = Field(default=None, max_length=16)
+    threshold_unit: str | None = Field(default=None, max_length=32)
     scale: float = 1
     transform: str = "none"
     offset: float | None = None
@@ -592,6 +597,9 @@ class MonitoringMetricTemplateUpdateIn(BaseModel):
     oid: str | None = Field(default=None, max_length=255)
     value_type: str | None = None
     unit: str | None = Field(default=None, max_length=32)
+    registry_metric: str | None = Field(default=None, max_length=64)
+    registry_version: str | None = Field(default=None, max_length=16)
+    threshold_unit: str | None = Field(default=None, max_length=32)
     scale: float | None = None
     transform: str | None = None
     offset: float | None = None
@@ -612,6 +620,10 @@ class MonitoringMetricTemplateOut(BaseModel):
     oid: str | None
     value_type: str
     unit: str | None
+    registry_metric: str | None
+    registry_version: str | None
+    threshold_unit: str | None
+    binding_status: Literal["bound", "unbound"]
     scale: float
     transform: str
     offset: float | None
@@ -628,11 +640,25 @@ def _monitoring_metric_out(metric: MonitoringMetricTemplate, revision_version: i
         id=metric.id, catalog_model_revision_id=metric.catalog_model_revision_id, revision_version=revision_version,
         stable_key=metric.stable_key, protocol=metric.protocol, protocol_other_label=metric.protocol_other_label,
         metric_name=metric.metric_name, oid=metric.oid, value_type=metric.value_type, unit=metric.unit,
+        registry_metric=metric.registry_metric, registry_version=metric.registry_version,
+        threshold_unit=metric.threshold_unit, binding_status="bound" if metric.registry_metric else "unbound",
         scale=metric.scale, transform=metric.transform, offset=metric.offset,
         default_collection_interval_seconds=metric.default_collection_interval_seconds,
         default_warning_threshold=metric.default_warning_threshold,
         default_critical_threshold=metric.default_critical_threshold, sort_order=metric.sort_order,
     )
+
+
+def _validate_monitoring_binding(metric: MonitoringMetricTemplate) -> None:
+    try:
+        validate_template_binding(
+            TemplateBinding(metric.registry_metric, metric.registry_version, metric.threshold_unit),
+            unit=metric.unit, scale=Decimal(str(metric.scale)),
+            offset=Decimal(str(metric.offset)) if metric.offset is not None else Decimal(0),
+            transform=metric.transform,
+        )
+    except ValueError as exc:
+        raise ApiError(title="Invalid template binding", detail=str(exc), status_code=422) from exc
 
 
 class CatalogGraphicMarkerIn(BaseModel):
@@ -901,7 +927,8 @@ async def compare_revisions(
     for collection_name, model_cls, fields in (
         ("network_ports", NetworkPortTemplate, ("display_name", "media_type", "connector_type", "role", "side")),
         ("power_supplies", PowerSupplyTemplate, ("label", "quantity", "redundancy_mode", "connector_type")),
-        ("monitoring_metrics", MonitoringMetricTemplate, ("metric_name", "protocol", "oid", "value_type")),
+        ("monitoring_metrics", MonitoringMetricTemplate, ("metric_name", "protocol", "oid", "value_type",
+                                                          "registry_metric", "registry_version", "threshold_unit")),
     ):
         left_rows = {
             getattr(row, "stable_key"): row  # noqa: B009
@@ -1199,8 +1226,15 @@ async def create_monitoring_metric(
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> MonitoringMetricTemplateOut:
     revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
-
     metric = MonitoringMetricTemplate(catalog_model_revision_id=revision_id, **body.model_dump())
+    try:
+        _validate_monitoring_binding(metric)
+    except ApiError:
+        # Same reasoning as update_monitoring_metric below: roll back the
+        # parent revision's version bump from the lock before the exception
+        # handler returns the validation response.
+        await db.rollback()
+        raise
     db.add(metric)
     await db.flush()
     await _write_child_audit(
@@ -1228,6 +1262,14 @@ async def update_monitoring_metric(
 
     for field_name, value in body.model_dump(exclude_unset=True).items():
         setattr(metric, field_name, value)
+    try:
+        _validate_monitoring_binding(metric)
+    except ApiError:
+        # The request-scoped test/application session can remain alive after an
+        # handled 422. Roll back the parent version bump and field mutations
+        # before the exception handler returns the validation response.
+        await db.rollback()
+        raise
     await db.flush()
     await _write_child_audit(
         db, request, ctx, revision_id, action="catalog.revision.update_draft", after={"metric_id": str(metric.id)},
