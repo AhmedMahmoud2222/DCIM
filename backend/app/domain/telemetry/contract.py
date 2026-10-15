@@ -67,6 +67,9 @@ def _conversion_contract_text(
             raise registry.UnknownMetric(f"Unknown canonical metric: {metric!r}")
         source = snapshot.units[registry.validate_metric_unit(metric, source_unit, registry_version=registry_version)]
         canonical = snapshot.units[registry.normalize_unit(definition.canonical_unit, registry_version=registry_version)]
+        if registry_version == "2":
+            lines[0] = "dcim.mapping-conversion.v2"
+            lines.append(f"registry_content_hash={snapshot.content_hash}")
         lines += [
             f"source_symbol={source.symbol}",
             f"source_dimension={source.dimension}",
