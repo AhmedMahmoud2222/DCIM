@@ -42,6 +42,13 @@ class FloorPlan(Base, UUIDPkMixin, TimestampMixin):
         CheckConstraint(f"source_format IS NULL OR source_format IN {SOURCE_FORMATS!r}", name="source_format_allowed"),
         UniqueConstraint("room_id", "revision_number", name="uq_floor_plan_room_revision"),
         Index("ix_floor_plan_room_status", "room_id", "status"),
+        # §8: "exactly one ACTIVE FloorPlan at a time" per room (migration 0004 raw SQL).
+        Index(
+            "uq_floor_plan_one_active_per_room",
+            "room_id",
+            unique=True,
+            postgresql_where="status = 'active'",
+        ),
     )
 
     room_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("room.id", ondelete="RESTRICT"), nullable=False)
@@ -115,7 +122,16 @@ class FloorPlanCalibration(Base, UUIDPkMixin):
 
 class SpatialLayer(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "spatial_layer"
-    __table_args__ = (CheckConstraint(f"layer_type IN {LAYER_TYPES!r}", name="layer_type_allowed"),)
+    __table_args__ = (
+        CheckConstraint(f"layer_type IN {LAYER_TYPES!r}", name="layer_type_allowed"),
+        # Migration 0005: at most one 'imported' layer per floor plan.
+        Index(
+            "uq_spatial_layer_one_imported_per_floor_plan",
+            "floor_plan_id",
+            unique=True,
+            postgresql_where="layer_type = 'imported'",
+        ),
+    )
 
     floor_plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("floor_plan.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)

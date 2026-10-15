@@ -44,6 +44,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -212,7 +213,7 @@ class PDUOutlet(Base, TimestampMixin):
     )
     pdu_asset_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     pdu_asset_expected_type: Mapped[str] = mapped_column(
-        String, Computed("'pdu'", persisted=True), nullable=False
+        Text, Computed("'pdu'", persisted=True), nullable=False
     )
     outlet_number: Mapped[int] = mapped_column(nullable=False)
     label: Mapped[str | None] = mapped_column(String(64))
@@ -230,6 +231,17 @@ class PowerConnection(Base, UUIDPkMixin):
     __tablename__ = "power_connection"
     __table_args__ = (
         CheckConstraint("source_node_id <> target_node_id", name="no_self_loop"),
+        # Duplicate-active-edge prevention (migration 0006, master prompt §5): the same
+        # source->target edge with the same feed_label cannot be opened twice while both
+        # are active. Declared here so ORM metadata matches the migrated schema exactly.
+        Index(
+            "uq_power_connection_active_edge",
+            "source_node_id",
+            "target_node_id",
+            "feed_label",
+            unique=True,
+            postgresql_where="effective_to IS NULL",
+        ),
         CheckConstraint(f"connection_type IN {CONNECTION_TYPES!r}", name="connection_type_allowed"),
         CheckConstraint(f"feed_label IN {FEED_LABELS!r}", name="feed_label_allowed"),
         CheckConstraint(f"phase IS NULL OR phase IN {PHASES!r}", name="phase_allowed"),
@@ -262,6 +274,14 @@ class PowerCapacity(Base, UUIDPkMixin):
 
     __tablename__ = "power_capacity"
     __table_args__ = (
+        # At most one *current* capacity record per node (migration 0006; the same
+        # temporal "current = NULL effective_to" convention as the placement tables).
+        Index(
+            "uq_power_capacity_current_per_node",
+            "power_node_id",
+            unique=True,
+            postgresql_where="effective_to IS NULL",
+        ),
         CheckConstraint("rated_capacity_kw IS NULL OR rated_capacity_kw >= 0", name="rated_capacity_kw_non_negative"),
         CheckConstraint(
             "configured_capacity_kw IS NULL OR configured_capacity_kw >= 0", name="configured_capacity_kw_non_negative"

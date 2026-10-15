@@ -78,7 +78,17 @@ def test_shipped_factor_drift_fails_closed_at_import(tmp_path):
     source = source.replace('Decimal("0.00047194744320")', 'Decimal("0.00047")')
     drifted = tmp_path / "drifted_registry.py"
     drifted.write_text(source, encoding="utf-8")
-    result = subprocess.run([sys.executable, str(drifted)], capture_output=True, text=True)
+    # The copied module still imports the v2 semantics package. Bootstrap the
+    # backend root explicitly so this probe does not depend on PYTHONPATH.
+    backend_root = Path(registry.__file__).resolve().parents[3]
+    bootstrap = (
+        "import runpy, sys; sys.path.insert(0, sys.argv[1]); "
+        "runpy.run_path(sys.argv[2], run_name='__main__')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", bootstrap, str(backend_root), str(drifted)],
+        capture_output=True, text=True,
+    )
     assert result.returncode != 0
     assert "differs from its frozen contract" in result.stderr
 
