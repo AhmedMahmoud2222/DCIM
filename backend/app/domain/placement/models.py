@@ -70,6 +70,12 @@ class EquipmentPlacement(Base, UUIDPkMixin):
         CheckConstraint("(x_mm IS NULL) = (y_mm IS NULL)", name="position_pair"),
         Index("ix_equipment_placement_equipment_effective_to", "equipment_id", "effective_to"),
         Index("ix_equipment_placement_rack_effective_to", "rack_id", "effective_to"),
+        # Migration 0045: current-placement lookup by room.
+        Index(
+            "ix_equipment_placement_room_current",
+            "room_id",
+            postgresql_where="effective_to IS NULL",
+        ),
     )
 
     equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_asset.id", ondelete="RESTRICT"), nullable=False)
