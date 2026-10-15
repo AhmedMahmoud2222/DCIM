@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
@@ -75,6 +75,10 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                     AlarmRule.enabled.is_(True),
                     AlarmRule.integration_id == reading.integration_id,
                     AlarmRule.metric == reading.metric,
+                    # Tightened v2 policies never re-judge v1/legacy samples. Version mismatch
+                    # skips evaluation; it cannot reject a valid telemetry record.
+                    or_(AlarmRule.registry_version.is_(None), AlarmRule.registry_version == "1",
+                        AlarmRule.registry_version == reading.registry_version),
                 )
             )
         )

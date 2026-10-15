@@ -107,7 +107,7 @@ class CollectorRequestNonce(Base, UUIDPkMixin):
 
     __tablename__ = "collector_request_nonce"
     __table_args__ = (
-        UniqueConstraint("collector_id", "nonce", name="uq_collector_request_nonce_collector_nonce"),
+        UniqueConstraint("collector_id", "nonce", name="uq_collector_request_nonce_collector_id_nonce"),
         Index("ix_collector_request_nonce_seen_at", "seen_at"),
     )
 
@@ -123,7 +123,9 @@ class CollectorCapability(Base, UUIDPkMixin):
     (app/application/collector_service.py), not assumed."""
 
     __tablename__ = "collector_capability"
-    __table_args__ = (UniqueConstraint("collector_id", "protocol_code", name="uq_collector_capability_collector_protocol"),)
+    __table_args__ = (
+        UniqueConstraint("collector_id", "protocol_code", name="uq_collector_capability_collector_id_protocol_code"),
+    )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="CASCADE"), nullable=False, index=True)
     protocol_code: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -227,7 +229,7 @@ class DiscoveredDevice(Base, UUIDPkMixin):
 
     __tablename__ = "discovered_device"
     __table_args__ = (
-        UniqueConstraint("integration_id", "external_identifier", name="uq_discovered_device_integration_external_id"),
+        UniqueConstraint("integration_id", "external_identifier", name="uq_discovered_device_integration_id_external_identifier"),
         CheckConstraint(f"status IN {DISCOVERED_DEVICE_STATUSES!r}", name="status_allowed"),
     )
 
