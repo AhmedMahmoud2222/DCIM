@@ -9,6 +9,11 @@ Permission rules
 Data-scope rules
   * Permissions from a non-global RoleAssignment are honoured only while the user's whole
     site scope lies inside the assignment's scope (`scoped_role_is_contained`, SEC-ARCH-01).
+  * An `organization` RoleAssignment additionally grants every site under its organization
+    (Country -> City -> Site, as rack_scope='all'), independent of group grants, provided the
+    user's group sites all lie in that organization. The user stays RESTRICTED (never global)
+    and the assignment confers no role name. Within that organization the user's permissions
+    are one flat set, so group allow-grants also reach the organization's other sites.
   * A user holding a `global` RoleAssignment is UNRESTRICTED: existing users keep exactly
     the access they had before groups existed.
   * Every other user is RESTRICTED: they see only the sites granted by their groups (union
@@ -112,22 +117,65 @@ class EffectiveAccess:
 
 
 def scoped_role_is_contained(
-    scope_type: str, scope_id: uuid.UUID | None, *, unrestricted: bool, scope: "AccessScope"
+    scope_type: str,
+    scope_id: uuid.UUID | None,
+    *,
+    unrestricted: bool,
+    scope: "AccessScope",
+    organization_site_ids: frozenset[uuid.UUID] = frozenset(),
 ) -> bool:
     """May the permissions of a NON-global role assignment be honoured?
 
     Permissions are one flat set per user, so a scoped assignment cannot be applied to its own
-    site only. It is therefore honoured only when everything the user can reach (the group-derived
-    site scope) lies inside the assignment's scope, so it can never act outside it. Fail closed
-    otherwise:
+    scope only. It is therefore honoured only when everything the user can reach (`scope`) lies
+    inside the assignment's scope, so it can never act outside it. Fail closed otherwise:
       * a user with a global role is unrestricted, which no scoped assignment contains;
-      * `site` assignments need every granted site to equal the assignment's site;
-      * `building` (and any unknown) assignments cannot be proven to contain a site-level scope,
-        because site grants do not name buildings, so they contribute nothing.
+      * `site` assignments need every reachable site to equal the assignment's site;
+      * `organization` assignments need every reachable site to belong to that organization
+        (`organization_site_ids`, the sites under it via Country -> City -> Site);
+      * any other value contributes nothing.
     """
-    if unrestricted or scope_type != "site" or scope_id is None:
+    if unrestricted or scope_id is None:
         return False
-    return scope.site_ids <= {scope_id}
+    if scope_type == "site":
+        return scope.site_ids <= {scope_id}
+    if scope_type == "organization":
+        return scope.site_ids <= organization_site_ids
+    return False
+
+
+def scope_with_full_sites(scope: AccessScope, site_ids: frozenset[uuid.UUID]) -> AccessScope:
+    """`scope` plus `site_ids` granted as rack_scope='all' (an `all` grant wins over `selected`)."""
+    if not site_ids:
+        return scope
+    full = scope.full_site_ids | site_ids
+    selected = {k: v for k, v in scope.selected_racks_by_site.items() if k not in full}
+    return AccessScope(
+        unrestricted=False,
+        site_ids=scope.site_ids | site_ids,
+        full_site_ids=full,
+        rack_ids=frozenset(r for racks in selected.values() for r in racks),
+        selected_racks_by_site=selected,
+    )
+
+
+async def organization_site_ids(
+    db: AsyncSession, organization_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, frozenset[uuid.UUID]]:
+    """organization id -> ids of every site under it (Organization -> Country -> City -> Site).
+    An unknown organization, or one with no sites, maps to the empty set."""
+    found: dict[uuid.UUID, set[uuid.UUID]] = {oid: set() for oid in organization_ids}
+    if organization_ids:
+        for org_id, site_id in (
+            await db.execute(
+                select(Country.organization_id, Site.id)
+                .join(City, City.country_id == Country.id)
+                .join(Site, Site.city_id == City.id)
+                .where(Country.organization_id.in_(organization_ids))
+            )
+        ).all():
+            found[org_id].add(site_id)
+    return {oid: frozenset(sites) for oid, sites in found.items()}
 
 
 def build_scope(
@@ -245,6 +293,9 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
     sites_by_user: dict[uuid.UUID, list] = {}
     for site_row in site_rows:
         sites_by_user.setdefault(site_row[0], []).append(site_row)
+    org_sites = await organization_site_ids(
+        db, {row[2] for row in role_rows if row[1] == "organization" and row[2] is not None}
+    )
 
     result: dict[uuid.UUID, EffectiveAccess] = {}
     for uid in wanted:
@@ -259,12 +310,33 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
         )
         user_roles = roles_by_user.get(uid, [])
         has_global_role = any(row[1] == "global" for row in user_roles)
+        # SEC-ARCH-01 organization scope: an `organization` assignment adds every site under its
+        # organization (rack_scope='all') to the user's reach, independent of group grants, but only
+        # when the user's group sites already lie inside that organization, so no site of another
+        # organization is ever reachable with the role's permissions. Assignments naming two or more
+        # distinct organizations cannot be kept apart in one flat permission set: all fail closed.
+        # It never makes the user unrestricted; only a `global` assignment does.
+        org_ids = {row[2] for row in user_roles if row[1] == "organization" and row[2] is not None}
+        if not has_global_role and len(org_ids) == 1:
+            (honoured_org,) = org_ids
+            if user_scope.site_ids <= org_sites[honoured_org]:
+                user_scope = scope_with_full_sites(user_scope, org_sites[honoured_org])
         for _uid, scope_type, scope_id, role_name, resource, action in user_roles:
-            if scope_type != "global" and not scoped_role_is_contained(
-                scope_type, scope_id, unrestricted=has_global_role, scope=user_scope
+            if scope_type != "global" and not (
+                (scope_type != "organization" or len(org_ids) == 1)
+                and scoped_role_is_contained(
+                    scope_type, scope_id, unrestricted=has_global_role, scope=user_scope,
+                    organization_site_ids=org_sites.get(scope_id, frozenset()),
+                )
             ):
                 # SEC-ARCH-01: a scoped assignment never widens beyond its own scope. Its role name is
                 # dropped too, so it cannot satisfy role-membership checks such as "Administrator".
+                continue
+            if scope_type == "organization":
+                # Organization scope bounds data visibility only; role-name checks (catalog administration,
+                # bulk import) are organization-independent and stay reserved for in-scope global/site roles.
+                if resource is not None:
+                    allowed.setdefault(f"{resource}:{action}", []).append(f"role:{role_name}")
                 continue
             role_names.add(role_name)
             if resource is not None:

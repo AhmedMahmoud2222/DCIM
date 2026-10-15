@@ -12,7 +12,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
 
-SCOPE_TYPES = ("global", "site", "building")
+# Semantics are enforced in app/application/access_control.py (SEC-ARCH-01). `building` was removed by
+# migration 0047: it was never enforceable (site grants do not name buildings) and granted nothing.
+SCOPE_TYPES = ("global", "site", "organization")
 
 
 class User(Base, UUIDPkMixin, TimestampMixin):

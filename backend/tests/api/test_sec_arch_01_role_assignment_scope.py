@@ -7,8 +7,9 @@ scope came only from groups.
 
 Enforced rule (fail closed, no per-permission scoping): a permission that comes ONLY from
 non-global role assignments is honoured only while every site in the user's group-derived scope lies
-inside every such assignment's own scope. A `building` assignment cannot be proven to contain a
-site-level scope, so it contributes nothing. Group allow-grants are unaffected.
+inside every such assignment's own scope. The `building` scope type was removed (migration 0047).
+An `organization` assignment grants every site of its organization, never sites of another
+organization, and never makes its holder unrestricted. Group allow-grants are unaffected.
 
 Also holds the positive/negative matrix for unrestricted, site-limited, rack-limited and
 tenant-limited (organization-limited) users, and a guard that the surviving-administrator safeguard
@@ -19,6 +20,7 @@ import uuid
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.application.access_control import load_effective_access
 from app.domain.auth.models import Permission, Role, RoleAssignment, RolePermission, User
@@ -103,14 +105,27 @@ async def test_site_scoped_role_for_a_different_site_grants_nothing(client, admi
     assert (await client.get(f"/api/v1/racks/{rack_b}", headers=headers)).status_code == 404
 
 
-async def test_building_scoped_role_fails_closed(client, admin, auth_headers, db_session):
-    a, _b, rack_a, _rack_b = await _world(client, admin, auth_headers)
-    gid = await _group(client, admin, allow=["rack:read", "location:read"], sites=[{"site_id": a["site"], "rack_scope": "all"}])
-    user, headers = await _group_user(client, admin, [gid])
-    building = (await client.get("/api/v1/buildings", headers=admin, params={"site_id": a["site"]})).json()["items"][0]["id"]
-    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "building", building)
+async def test_building_scope_type_is_rejected_by_the_database(client, admin, db_session):
+    """`building` was removed (migration 0047); the CHECK constraint refuses it outright."""
+    a = await _make_site(client, admin)
+    user, _ = await _group_user(client, admin, [])
+    role_id = await _role(db_session, ["rack:manage"])
+    with pytest.raises(IntegrityError, match="ck_role_assignment_scope_type_allowed"):
+        await _assign(db_session, user["id"], role_id, "building", a["site"])
+    await db_session.rollback()
 
-    assert (await _patch_rack(client, headers, rack_a)).status_code == 403
+
+def test_unknown_scope_types_fail_closed_in_the_containment_check():
+    from app.application.access_control import AccessScope, scoped_role_is_contained
+
+    site = uuid.uuid4()
+    empty = AccessScope(unrestricted=False)
+    assert not scoped_role_is_contained("building", site, unrestricted=False, scope=empty)
+    assert not scoped_role_is_contained("organization", None, unrestricted=False, scope=empty)
+    assert not scoped_role_is_contained("organization", site, unrestricted=True, scope=empty, organization_site_ids=frozenset({site}))
+    in_site = AccessScope(unrestricted=False, site_ids=frozenset({site}))
+    assert scoped_role_is_contained("organization", uuid.uuid4(), unrestricted=False, scope=in_site, organization_site_ids=frozenset({site}))
+    assert not scoped_role_is_contained("organization", uuid.uuid4(), unrestricted=False, scope=in_site, organization_site_ids=frozenset())
 
 
 async def test_global_roles_and_group_grants_are_unaffected(client, admin, auth_headers, db_session):
@@ -211,9 +226,6 @@ async def test_scoped_administrator_assignment_does_not_confer_the_role_name(cli
     await _assign(db_session, user["id"], admin_role, "site", a["site"])  # spans site B too: out of scope
     assert "Administrator" not in (await load_effective_access(db_session, [uid]))[uid].role_names
 
-    await _assign(db_session, user["id"], admin_role, "building", None)
-    assert "Administrator" not in (await load_effective_access(db_session, [uid]))[uid].role_names
-
     # a global Viewer plus a site-scoped Administrator assignment stays a Viewer (unrestricted, but no Administrator)
     viewer = (await db_session.execute(select(Role.id).where(Role.name == "Viewer"))).scalar_one()
     other, _ = await _group_user(client, admin, [])
@@ -233,3 +245,100 @@ async def test_site_scoped_assignment_honoured_when_group_scope_equals_its_site(
     await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "site", a["site"])
     access = (await load_effective_access(db_session, [uid]))[uid]
     assert {"rack:read", "rack:manage"} <= access.permission_codes
+
+
+# ------------------------------------------------------------------ organization scope
+async def _org_world(client, admin, auth_headers):
+    """Two sites in organization A and one in organization B, one rack each."""
+    a1 = await _make_site(client, admin)
+    a2 = await _make_site(client, admin, org_id=a1["org"])
+    b = await _make_site(client, admin)
+    racks = [await _make_rack(client, admin, auth_headers, s["room"]) for s in (a1, a2, b)]
+    return a1, a2, b, racks
+
+
+async def _racks(client, headers) -> set[str]:
+    return {r["id"] for r in (await client.get("/api/v1/racks", headers=headers)).json()["items"]}
+
+
+async def test_organization_scoped_role_grants_every_site_of_its_organization(client, admin, auth_headers, db_session):
+    a1, a2, b, (rack_a1, rack_a2, rack_b) = await _org_world(client, admin, auth_headers)
+    user, headers = await _group_user(client, admin, [])  # no group grants at all
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:read", "rack:manage", "location:read", "organization:read"]), "organization", a1["org"])
+
+    uid = uuid.UUID(user["id"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert access.scope.site_ids == {uuid.UUID(a1["site"]), uuid.UUID(a2["site"])}
+    assert access.scope.full_site_ids == access.scope.site_ids
+    assert await _racks(client, headers) == {rack_a1, rack_a2}
+    assert (await _patch_rack(client, headers, rack_a1)).status_code == 200
+    assert (await _patch_rack(client, headers, rack_a2)).status_code == 200
+    # a site of another organization stays invisible
+    assert (await client.get(f"/api/v1/racks/{rack_b}", headers=headers)).status_code == 404
+    assert (await _patch_rack(client, headers, rack_b)).status_code == 404
+    assert (await client.get(f"/api/v1/sites/{b['site']}", headers=headers)).status_code == 404
+    assert (await client.get(f"/api/v1/organizations/{b['org']}", headers=headers)).status_code == 404
+    assert (await client.get(f"/api/v1/organizations/{a1['org']}", headers=headers)).status_code == 200
+
+
+async def test_organization_scoped_role_is_unioned_with_in_organization_group_grants(client, admin, auth_headers, db_session):
+    a1, a2, _b, (rack_a1, rack_a2, rack_b) = await _org_world(client, admin, auth_headers)
+    gid = await _group(client, admin, allow=["rack:read"], sites=[{"site_id": a1["site"], "rack_scope": "selected", "rack_ids": []}])
+    user, headers = await _group_user(client, admin, [gid])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:read", "location:read"]), "organization", a1["org"])
+    # the organization grant (rack_scope=all) wins over the narrower group grant on the same site
+    assert await _racks(client, headers) == {rack_a1, rack_a2}
+
+
+async def test_organization_scoped_role_fails_closed_when_groups_reach_another_organization(client, admin, auth_headers, db_session):
+    a1, _a2, b, (rack_a1, _rack_a2, rack_b) = await _org_world(client, admin, auth_headers)
+    gid = await _group(client, admin, allow=["rack:read", "location:read"], sites=[{"site_id": b["site"], "rack_scope": "all"}])
+    user, headers = await _group_user(client, admin, [gid])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "organization", a1["org"])
+
+    uid = uuid.UUID(user["id"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert "rack:manage" not in access.permission_codes  # would otherwise apply to organization B's site
+    assert access.scope.site_ids == {uuid.UUID(b["site"])}
+    assert (await _patch_rack(client, headers, rack_b)).status_code == 403
+    assert (await client.get(f"/api/v1/racks/{rack_a1}", headers=headers)).status_code == 404
+
+
+async def test_organization_scoped_roles_for_two_organizations_fail_closed(client, admin, auth_headers, db_session):
+    a1, _a2, b, _racks_ = await _org_world(client, admin, auth_headers)
+    user, _ = await _group_user(client, admin, [])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "organization", a1["org"])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:read"]), "organization", b["org"])
+    uid = uuid.UUID(user["id"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert not access.scope.site_ids
+    assert not {"rack:manage", "rack:read"} & access.permission_codes
+
+
+async def test_organization_scoped_administrator_is_not_global(client, admin, auth_headers, db_session):
+    from app.application.access_control import active_administrator_ids
+
+    a1, _a2, _b, _racks_ = await _org_world(client, admin, auth_headers)
+    user, headers = await _group_user(client, admin, [])
+    admin_role = (await db_session.execute(select(Role.id).where(Role.name == "Administrator"))).scalar_one()
+    await _assign(db_session, user["id"], admin_role, "organization", a1["org"])
+
+    uid = uuid.UUID(user["id"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert not access.scope.unrestricted
+    assert "Administrator" not in access.role_names  # no catalog-administrator / bulk-import role checks
+    assert "rack:manage" in access.permission_codes  # scope-aware permissions are honoured
+    assert "catalog:manage" in access.inactive_permissions and "catalog:manage" not in access.permission_codes
+    assert uid not in await active_administrator_ids(db_session)
+    assert (await client.post("/api/v1/rack-models", json={}, headers=headers)).status_code == 403
+
+
+async def test_global_role_is_unchanged_by_an_organization_assignment(client, admin, auth_headers, db_session):
+    a1, _a2, _b, _racks_ = await _org_world(client, admin, auth_headers)
+    user, _ = await _group_user(client, admin, [])
+    viewer = (await db_session.execute(select(Role.id).where(Role.name == "Viewer"))).scalar_one()
+    await _assign(db_session, user["id"], viewer, "global", None)
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:manage"]), "organization", a1["org"])
+    uid = uuid.UUID(user["id"])
+    access = (await load_effective_access(db_session, [uid]))[uid]
+    assert access.scope.unrestricted and "rack:manage" not in access.permission_codes
