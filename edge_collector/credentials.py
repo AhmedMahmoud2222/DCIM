@@ -6,7 +6,12 @@ a local JSON file on the collector host, keyed by integration ID:
     {"<integration-uuid>": {"community": "..."},
      "<integration-uuid>": {"snmpv3": {"username": "...", "auth_protocol": "sha256",
                                        "auth_secret": "...", "priv_protocol": "aes128",
-                                       "priv_secret": "...", "context_name": ""}}}
+                                       "priv_secret": "...", "context_name": ""}},
+     "<integration-uuid>": {"community": "...", "allow_legacy_v2c": true}}
+
+`allow_legacy_v2c` (JSON boolean, default false) is read only by telemetry metric polling
+(`snmp_metrics.py`): without it a community-only entry is refused for metric polling rather
+than sent in cleartext, and it never overrides an `snmpv3` entry. Discovery ignores it.
 
 The file must not be readable by group or others (POSIX), and nothing here logs, prints or
 puts a secret in an exception message.
@@ -53,6 +58,11 @@ class LocalCredentialStore:
         if not isinstance(document, dict) or not all(isinstance(v, dict) for v in document.values()):
             raise CredentialStoreError("credential file has an unexpected shape")
         return cls(document)
+
+    def legacy_v2c_allowed(self, integration_id: str) -> bool:
+        """True only if the entry explicitly sets `"allow_legacy_v2c": true` (a JSON boolean)."""
+        entry = self._entries.get(integration_id)
+        return entry is not None and entry.get("allow_legacy_v2c") is True
 
     def session_for(
         self, integration_id: str, target: SNMPTarget, *, policy: SNMPTargetPolicy, timeout_seconds: float = 5.0,
