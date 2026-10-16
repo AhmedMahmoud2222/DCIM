@@ -15,6 +15,7 @@ from app.application.access_control import (
     _current_rack_sites,
     active_administrator_ids,
     build_scope,
+    intersect_scopes,
     load_effective_access,
     load_group_scopes,
 )
@@ -75,12 +76,14 @@ async def resolve_permission_codes(db: AsyncSession, codes: list[str]) -> dict[s
     return {c: known[c] for c in unique}
 
 
-def assert_can_grant_permissions(ctx: AuthContext, codes: set[str]) -> None:
+def assert_can_grant_permissions(ctx: AuthContext, codes: set[str], scope: AccessScope | None = None) -> None:
     """Privilege-escalation guard: an actor can allow-grant only permissions they hold
     themselves (deny grants only remove access and are always permitted)."""
     missing = sorted(codes - ctx.permission_codes)
     if missing:
         raise ForbiddenError(f"You cannot grant permissions you do not hold: {', '.join(missing[:10])}")
+    if scope is not None and any(not ctx.scope_for(code).contains(scope) for code in codes):
+        raise ForbiddenError("You cannot grant a permission beyond that permission's own site/rack access.")
 
 
 async def scope_contains(db: AsyncSession, outer: AccessScope, inner: AccessScope, *, current_only: bool = False) -> bool:
@@ -183,7 +186,7 @@ async def assert_can_assign_group(db: AsyncSession, ctx: AuthContext, group_id: 
     already hold all of it. Members of a group cannot manage that group's membership."""
     await assert_group_visible(db, ctx, group_id)
     codes, _ = await group_grants(db, group_id)
-    assert_can_grant_permissions(ctx, codes)
+    assert_can_grant_permissions(ctx, codes, await group_scope(db, group_id))
     if not ctx.scope.unrestricted and not await scope_contains(db, ctx.scope, await group_scope(db, group_id)):
         raise ForbiddenError("You cannot assign a group that grants site or rack access beyond your own access.")
 
@@ -200,7 +203,7 @@ async def assert_can_assign_role(db: AsyncSession, ctx: AuthContext, role: Role)
         ).all()
     }
     assert_can_grant_permissions(ctx, codes)
-    if not ctx.scope.unrestricted:
+    if not ctx.scope.unrestricted or any(not ctx.scope_for(code).unrestricted for code in codes):
         raise ForbiddenError("Site-restricted administrators cannot assign global roles.")
 
 
@@ -233,14 +236,39 @@ async def get_group_or_404(db: AsyncSession, group_id: uuid.UUID) -> UserGroup:
     return group
 
 
+def _authority_codes(access: EffectiveAccess | AuthContext) -> frozenset[str]:
+    # An unusable inactive write is not effective authority. The existing
+    # filtered thermal read exception IS exercisable alongside cooling:read,
+    # and must be included so it cannot escape delegation/post-state checks.
+    thermal = frozenset({"spatial:read", "telemetry:read", "power:read", "alarm:read"})
+    return access.permission_codes | (
+        access.inactive_permissions & thermal if "cooling:read" in access.permission_codes else frozenset()
+    )
+
+
+def _authority_scope(access: EffectiveAccess | AuthContext, code: str) -> AccessScope:
+    scope = access.scope_for(code, include_inactive=True)
+    return intersect_scopes(scope, access.scope_for("cooling:read")) if code in access.inactive_permissions else scope
+
+
 async def _covers(
     db: AsyncSession, outer: EffectiveAccess | AuthContext, inner: EffectiveAccess, *, current_only: bool = False
 ) -> bool:
-    """`inner` <= `outer` in the authority order: `inner` holds no permission and no
-    site/rack scope that `outer` lacks."""
-    return inner.permission_codes <= outer.permission_codes and await scope_contains(
-        db, outer.scope, inner.scope, current_only=current_only
-    )
+    """`inner` <= `outer`: every permission's scope and latent grant reach are covered.
+    Comparing independent permission/site unions would recreate SEC-ARCH-02 in delegation."""
+    inner_codes = _authority_codes(inner)
+    outer_codes = _authority_codes(outer)
+    if not inner_codes <= outer_codes:
+        return False
+    for code in inner_codes:
+        if not await scope_contains(
+            db, _authority_scope(outer, code), _authority_scope(inner, code),
+            current_only=current_only,
+        ):
+            return False
+    # Preserve containment of latent/raw grants as well as exercisable entitlements.
+    outer_scope = outer.aggregate_scope if isinstance(outer, AuthContext) else outer.scope
+    return await scope_contains(db, outer_scope, inner.scope, current_only=current_only)
 
 
 async def actor_strictly_outranks(db: AsyncSession, ctx: AuthContext, target: EffectiveAccess) -> str | None:
@@ -255,7 +283,8 @@ async def actor_strictly_outranks(db: AsyncSession, ctx: AuthContext, target: Ef
     if not await _covers(db, ctx, target):
         return "exceeds"
     actor_as_access = EffectiveAccess(
-        user_id=ctx.user.id, permission_codes=ctx.permission_codes, role_names=ctx.role_names, scope=ctx.scope
+        user_id=ctx.user.id, permission_codes=ctx.permission_codes, role_names=ctx.role_names, scope=ctx.aggregate_scope,
+        inactive_permissions=ctx.inactive_permissions, permission_scopes=ctx.permission_scopes,
     )
     # Reverse half only: a stale selected-rack grant held by the actor must not make a peer look lower.
     if await _covers(db, target, actor_as_access, current_only=True):
@@ -339,8 +368,10 @@ async def begin_authority_change(db: AsyncSession, ctx: AuthContext, permission:
         ctx,
         permission_codes=access.permission_codes,
         role_names=access.role_names,
-        scope=access.scope,
+        scope=access.scope_for(permission),
         inactive_permissions=access.inactive_permissions,
+        permission_scopes=access.permission_scopes,
+        aggregate_scope=access.scope,
     )
 
 
