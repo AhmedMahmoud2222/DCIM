@@ -618,7 +618,7 @@ async def metric_history(
     end: datetime,
     integration_id: uuid.UUID | None = None,
     managed_asset_id: uuid.UUID | None = None,
-    series_key: str | None = Query(default=None, max_length=512),
+    series_key: str | None = Query(default=None, max_length=1024),
     registry_version: str | None = Query(default=None, max_length=32),
     provenance_status: list[ReadingProvenanceStatus] | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=MAX_HISTORY_POINTS),
