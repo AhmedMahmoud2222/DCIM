@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = '0051_aggregate_lineage'
-down_revision = '0052_monitoring_template_binding'
+down_revision = '0054_role_assignment_scope_types'
 branch_labels = None
 depends_on = None
 
