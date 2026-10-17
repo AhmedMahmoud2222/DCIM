@@ -52,6 +52,7 @@ import hashlib
 import io
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
@@ -61,6 +62,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.application.concurrency import check_version_match
+from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
     SIDES,
@@ -75,13 +77,11 @@ from app.domain.catalog.designer_models import (
 )
 from app.domain.catalog.document_models import CatalogRevisionDocument
 from app.domain.catalog.models import EquipmentModel, EquipmentModelRevision, RackModel, RackModelRevision
+from app.domain.catalog.physical_projection import project_physical
+from app.domain.telemetry.registry import convert_value
 from app.infrastructure.storage import StorageBackend
 
 _THUMBNAIL_MAX_DIMENSION_PX = 320
-
-_MM_PER_INCH = 25.4
-_KG_PER_LB = 0.45359237
-
 
 # --------------------------------------------------------------------------- Validation
 
@@ -272,21 +272,34 @@ async def allocate_revision_number(db: AsyncSession, *, catalog_model_id: uuid.U
 # --------------------------------------------------------------------------- Unit conversion
 
 
-def _convert_physical(revision: CatalogModelRevision) -> tuple[int | None, int | None, int | None, int | None]:
+def _convert_physical(
+    revision: CatalogModelRevision, *, category: str = "equipment", decimal_projection: bool = False,
+) -> tuple[int | None, int | None, int | None, int | None]:
     """Converts the draft's authored dimension/weight unit to the legacy tables' fixed
     mm/kg integer columns, rounding to the nearest whole unit (the legacy schema's own
     precision, unchanged by this design). `rack_unit_height` is a U count, never a
-    physical-unit value, so it passes through unconverted."""
+    physical-unit value, so it passes through unconverted.
+
+    G9a's opt-in prototype applies only to equipment. Rack authored weight is
+    currently used as load capacity; the prototype must not inflate that capacity.
+    The legacy float path deliberately remains when the gate is off, including
+    float precision and ties. Its factors come from registry v1 instead of copies.
+    """
+    if decimal_projection and category == "equipment":
+        return project_physical(revision)
+
+    mm_per_inch = float(convert_value(Decimal("1"), "in", "mm"))
+    kg_per_lb = float(convert_value(Decimal("1"), "lb", "kg"))
 
     def _mm(value: float | None) -> int | None:
         if value is None:
             return None
-        return round(float(value) * _MM_PER_INCH) if revision.dimension_unit == "in" else round(float(value))
+        return round(float(value) * mm_per_inch) if revision.dimension_unit == "in" else round(float(value))
 
     def _kg(value: float | None) -> int | None:
         if value is None:
             return None
-        return round(float(value) * _KG_PER_LB) if revision.weight_unit == "lb" else round(float(value))
+        return round(float(value) * kg_per_lb) if revision.weight_unit == "lb" else round(float(value))
 
     return revision.rack_unit_height, _mm(revision.width_value), _mm(revision.depth_value), _kg(revision.weight_value)
 
@@ -410,7 +423,15 @@ async def publish_revision(
     if model.category not in ("rack", "equipment"):
         raise ConflictError(detail=f"category {model.category!r} has no legacy bridge in this phase.")
 
-    rack_unit_height, width_mm, depth_mm, weight_kg = _convert_physical(revision)
+    try:
+        rack_unit_height, width_mm, depth_mm, weight_kg = _convert_physical(
+            revision, category=model.category,
+            decimal_projection=get_settings().catalog_decimal_publication_projection,
+        )
+    except ValueError as error:
+        raise ValidationFailed(ValidationSummary(valid=False, errors=[ValidationIssue(
+            field="physical_projection", code="invalid_physical_projection", message=str(error),
+        )])) from error
     legacy_revision: RackModelRevision | EquipmentModelRevision
     if model.category == "rack":
         rack_model_id = await _find_or_create_rack_model(
