@@ -1,5 +1,8 @@
+import re
 import uuid
+from pathlib import Path
 
+from app.api.pagination import MAX_LIMIT
 from tests.api.test_user_groups import _group, _group_user, _make_site
 
 
@@ -150,3 +153,41 @@ async def test_site_scoped_user_cannot_create_locations(client, auth_headers):
 
     resp = await client.post("/api/v1/organizations", json={"name": "Should Fail"}, headers=headers)
     assert resp.status_code == 403
+
+
+# ------------------------------------------------------------------ #148 pagination contract
+# The hierarchy screen lists every level with an explicit `limit`. The backend accepts
+# `limit` at most MAX_LIMIT and answers 422 above it, so the client must stay <= that
+# ceiling. These tests pin both ends of the contract: the endpoint behavior itself, and
+# the frontend constant that produces the requests.
+
+
+async def test_list_limit_at_backend_maximum_is_accepted(client, auth_headers):
+    headers = await auth_headers("DCIM Manager")
+    chain = await _create_full_chain(client, headers)
+    resp = await client.get(f"/api/v1/sites?city_id={chain['city']['id']}&limit={MAX_LIMIT}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["limit"] == MAX_LIMIT
+
+
+async def test_list_limit_above_backend_maximum_is_rejected(client, auth_headers):
+    """The regression this guards: a client that requests more than MAX_LIMIT (the UI once
+    sent limit=500) gets a 422 and shows no hierarchy at all."""
+    headers = await auth_headers("DCIM Manager")
+    chain = await _create_full_chain(client, headers)
+    resp = await client.get(f"/api/v1/sites?city_id={chain['city']['id']}&limit={MAX_LIMIT + 1}", headers=headers)
+    assert resp.status_code == 422
+
+
+def test_frontend_page_size_never_exceeds_backend_maximum():
+    """Cross-language contract: the client's declared cap must equal the backend's
+    MAX_LIMIT, so a limit the client would send can never be rejected as out of range."""
+    api_ts = Path(__file__).resolve().parents[3] / "frontend" / "src" / "features" / "locations" / "api.ts"
+    text = api_ts.read_text(encoding="utf-8")
+    match = re.search(r"HIERARCHY_MAX_LIMIT\s*=\s*(\d+)", text)
+    assert match, "HIERARCHY_MAX_LIMIT must be declared in the locations API client"
+    assert int(match.group(1)) == MAX_LIMIT
+    # The page size is what actually goes on the wire; it must not exceed the cap either.
+    assert re.search(r"HIERARCHY_PAGE_SIZE\s*=\s*HIERARCHY_MAX_LIMIT", text), (
+        "HIERARCHY_PAGE_SIZE must be derived from HIERARCHY_MAX_LIMIT"
+    )

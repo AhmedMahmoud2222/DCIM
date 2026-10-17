@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "@/features/locations/api";
+import { HIERARCHY_PAGE_SIZE } from "@/features/locations/api";
 import { LocationsPage } from "@/features/locations/LocationsPage";
 import { ApiError } from "@/lib/apiClient";
 import { CurrentUser } from "@/lib/authStore";
@@ -31,7 +32,7 @@ const LOCATION_VIEWER: CurrentUser = {
 const NO_ACCESS: CurrentUser = { ...LOCATION_ADMIN, id: "user-none", permission_codes: [] };
 
 function mockPage<T>(items: T[]): Page<T> {
-  return { items, total: items.length, limit: 500, offset: 0 };
+  return { items, total: items.length, limit: HIERARCHY_PAGE_SIZE, offset: 0 };
 }
 
 const org: Organization = { id: "org-1", name: "Acme Corp", created_at: "2026-01-01T00:00:00Z" };
@@ -93,7 +94,7 @@ describe("LocationsPage", () => {
     await user.click(await screen.findByRole("button", { name: /Acme Corp/ }));
 
     expect(await screen.findByRole("heading", { name: "Countries" })).toBeInTheDocument();
-    await waitFor(() => expect(api.listCountries).toHaveBeenCalledWith("org-1"));
+    await waitFor(() => expect(api.listCountries).toHaveBeenCalledWith("org-1", HIERARCHY_PAGE_SIZE, 0));
     expect(await screen.findByRole("button", { name: /UAE/ })).toBeInTheDocument();
   });
 
@@ -167,5 +168,23 @@ describe("LocationsPage", () => {
 
     expect(await screen.findByText(/location:update/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save room" })).not.toBeInTheDocument();
+  });
+
+  it("pages through a level with more rows than one backend page", async () => {
+    const user = userEvent.setup();
+    const org2: Organization = { ...org, id: "org-2", name: "Beta Corp" };
+    vi.mocked(api.listOrganizations).mockImplementation(async (_limit, offset) =>
+      offset === 0
+        ? { items: [org], total: 2, limit: HIERARCHY_PAGE_SIZE, offset: 0 }
+        : { items: [org2], total: 2, limit: HIERARCHY_PAGE_SIZE, offset },
+    );
+    renderWithProviders(<LocationsPage />, { user: LOCATION_ADMIN });
+
+    await screen.findByRole("button", { name: /Acme Corp/ });
+    await user.click(await screen.findByRole("button", { name: /Load more \(1 of 2\)/ }));
+
+    expect(await screen.findByRole("button", { name: /Beta Corp/ })).toBeInTheDocument();
+    expect(api.listOrganizations).toHaveBeenNthCalledWith(1, HIERARCHY_PAGE_SIZE, 0);
+    expect(api.listOrganizations).toHaveBeenNthCalledWith(2, HIERARCHY_PAGE_SIZE, 1);
   });
 });

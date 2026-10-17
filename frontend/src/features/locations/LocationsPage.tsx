@@ -1,4 +1,4 @@
-import { UseQueryResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -8,6 +8,7 @@ import {
   City,
   Country,
   Floor,
+  HIERARCHY_PAGE_SIZE,
   Organization,
   Room,
   Site,
@@ -179,37 +180,91 @@ function HierarchyItem({
   );
 }
 
+/** Normalized view of one hierarchy level's offset-paged list. */
+interface HierarchyList<T> {
+  items: T[];
+  total: number;
+  isLoading: boolean;
+  error: Error | null;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => void;
+}
+
+/** Offset-paged list for one hierarchy level. The backend caps `limit` at
+ * `HIERARCHY_MAX_LIMIT` (200) — a larger value is a 422 — so further pages are fetched by
+ * `offset` and appended instead of raising `limit`. */
+function useHierarchyList<T extends { id: string }>(
+  key: unknown[],
+  fetchPage: (limit: number, offset: number) => Promise<Page<T>>,
+  enabled: boolean,
+): HierarchyList<T> {
+  const query = useInfiniteQuery({
+    queryKey: key,
+    queryFn: ({ pageParam }) => fetchPage(HIERARCHY_PAGE_SIZE, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, page) => n + page.items.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
+    },
+    enabled,
+  });
+  const pages = query.data?.pages ?? [];
+  return {
+    items: pages.flatMap((page) => page.items),
+    total: pages[0]?.total ?? 0,
+    isLoading: query.isLoading,
+    error: (query.error as Error | null) ?? null,
+    hasMore: query.hasNextPage,
+    isLoadingMore: query.isFetchingNextPage,
+    loadMore: () => {
+      void query.fetchNextPage();
+    },
+  };
+}
+
 function LevelList<T extends { id: string }>({
-  query,
+  list,
   selectedId,
   onSelect,
   renderPrimary,
   renderSecondary,
   emptyLabel,
 }: {
-  query: UseQueryResult<Page<T>, Error>;
+  list: HierarchyList<T>;
   selectedId: string;
   onSelect: (id: string) => void;
   renderPrimary: (item: T) => string;
   renderSecondary?: (item: T) => string | undefined;
   emptyLabel: string;
 }) {
-  if (query.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
-  if (query.isError) return <p className="text-sm text-red-400">{(query.error as Error).message}</p>;
-  const items = query.data?.items ?? [];
-  if (items.length === 0) return <p className="text-sm text-slate-500">{emptyLabel}</p>;
+  if (list.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
+  if (list.error) return <p className="text-sm text-red-400">{list.error.message}</p>;
+  if (list.items.length === 0) return <p className="text-sm text-slate-500">{emptyLabel}</p>;
   return (
-    <ul className="space-y-1">
-      {items.map((item) => (
-        <HierarchyItem
-          key={item.id}
-          selected={item.id === selectedId}
-          primary={renderPrimary(item)}
-          secondary={renderSecondary?.(item)}
-          onSelect={() => onSelect(item.id)}
-        />
-      ))}
-    </ul>
+    <div className="space-y-2">
+      <ul className="space-y-1">
+        {list.items.map((item) => (
+          <HierarchyItem
+            key={item.id}
+            selected={item.id === selectedId}
+            primary={renderPrimary(item)}
+            secondary={renderSecondary?.(item)}
+            onSelect={() => onSelect(item.id)}
+          />
+        ))}
+      </ul>
+      {list.hasMore && (
+        <button
+          type="button"
+          onClick={list.loadMore}
+          disabled={list.isLoadingMore}
+          className="rounded-sm bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+        >
+          {list.isLoadingMore ? "Loading…" : `Load more (${list.items.length} of ${list.total})`}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -271,51 +326,51 @@ export function LocationsPage() {
     setRoomId(id === roomId ? "" : id);
   }
 
-  const organizations = useQuery({
-    queryKey: ["locations", "organizations"],
-    queryFn: listOrganizations,
-    enabled: canReadOrgs,
-  });
-  const countries = useQuery({
-    queryKey: ["locations", "countries", orgId],
-    queryFn: () => listCountries(orgId),
-    enabled: canRead && !!orgId,
-  });
-  const cities = useQuery({
-    queryKey: ["locations", "cities", countryId],
-    queryFn: () => listCities(countryId),
-    enabled: canRead && !!countryId,
-  });
-  const sites = useQuery({
-    queryKey: ["locations", "sites", cityId],
-    queryFn: () => listSites(cityId),
-    enabled: canRead && !!cityId,
-  });
-  const buildings = useQuery({
-    queryKey: ["locations", "buildings", siteId],
-    queryFn: () => listBuildings(siteId),
-    enabled: canRead && !!siteId,
-  });
-  const floors = useQuery({
-    queryKey: ["locations", "floors", buildingId],
-    queryFn: () => listFloors(buildingId),
-    enabled: canRead && !!buildingId,
-  });
-  const rooms = useQuery({
-    queryKey: ["locations", "rooms", floorId],
-    queryFn: () => listRooms(floorId),
-    enabled: canRead && !!floorId,
-  });
+  const organizations = useHierarchyList(
+    ["locations", "organizations"],
+    (limit, offset) => listOrganizations(limit, offset),
+    canReadOrgs,
+  );
+  const countries = useHierarchyList(
+    ["locations", "countries", orgId],
+    (limit, offset) => listCountries(orgId, limit, offset),
+    canRead && !!orgId,
+  );
+  const cities = useHierarchyList(
+    ["locations", "cities", countryId],
+    (limit, offset) => listCities(countryId, limit, offset),
+    canRead && !!countryId,
+  );
+  const sites = useHierarchyList(
+    ["locations", "sites", cityId],
+    (limit, offset) => listSites(cityId, limit, offset),
+    canRead && !!cityId,
+  );
+  const buildings = useHierarchyList(
+    ["locations", "buildings", siteId],
+    (limit, offset) => listBuildings(siteId, limit, offset),
+    canRead && !!siteId,
+  );
+  const floors = useHierarchyList(
+    ["locations", "floors", buildingId],
+    (limit, offset) => listFloors(buildingId, limit, offset),
+    canRead && !!buildingId,
+  );
+  const rooms = useHierarchyList(
+    ["locations", "rooms", floorId],
+    (limit, offset) => listRooms(floorId, limit, offset),
+    canRead && !!floorId,
+  );
 
   const invalidate = (key: unknown[]) => queryClient.invalidateQueries({ queryKey: key });
 
-  const selectedOrg = organizations.data?.items.find((o) => o.id === orgId);
-  const selectedCountry = countries.data?.items.find((c) => c.id === countryId);
-  const selectedCity = cities.data?.items.find((c) => c.id === cityId);
-  const selectedSite = sites.data?.items.find((s) => s.id === siteId);
-  const selectedBuilding = buildings.data?.items.find((b) => b.id === buildingId);
-  const selectedFloor = floors.data?.items.find((f) => f.id === floorId);
-  const selectedRoom = rooms.data?.items.find((r) => r.id === roomId);
+  const selectedOrg = organizations.items.find((o) => o.id === orgId);
+  const selectedCountry = countries.items.find((c) => c.id === countryId);
+  const selectedCity = cities.items.find((c) => c.id === cityId);
+  const selectedSite = sites.items.find((s) => s.id === siteId);
+  const selectedBuilding = buildings.items.find((b) => b.id === buildingId);
+  const selectedFloor = floors.items.find((f) => f.id === floorId);
+  const selectedRoom = rooms.items.find((r) => r.id === roomId);
 
   const breadcrumb = [
     selectedOrg && { label: selectedOrg.name, onClick: () => selectOrganization(selectedOrg.id) },
@@ -377,7 +432,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={organizations}
+            list={organizations}
             selectedId={orgId}
             onSelect={selectOrganization}
             renderPrimary={(o: Organization) => o.name}
@@ -405,7 +460,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={countries}
+            list={countries}
             selectedId={countryId}
             onSelect={selectCountry}
             renderPrimary={(c: Country) => c.name}
@@ -428,7 +483,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={cities}
+            list={cities}
             selectedId={cityId}
             onSelect={selectCity}
             renderPrimary={(c: City) => c.name}
@@ -456,7 +511,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={sites}
+            list={sites}
             selectedId={siteId}
             onSelect={selectSite}
             renderPrimary={(s: Site) => s.name}
@@ -482,7 +537,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={buildings}
+            list={buildings}
             selectedId={buildingId}
             onSelect={selectBuilding}
             renderPrimary={(b: Building) => b.name}
@@ -510,7 +565,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={floors}
+            list={floors}
             selectedId={floorId}
             onSelect={selectFloor}
             renderPrimary={(f: Floor) => f.name}
@@ -547,7 +602,7 @@ export function LocationsPage() {
             />
           )}
           <LevelList
-            query={rooms}
+            list={rooms}
             selectedId={roomId}
             onSelect={selectRoom}
             renderPrimary={(r: Room) => r.name}
