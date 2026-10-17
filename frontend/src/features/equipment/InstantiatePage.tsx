@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 import { getCatalogModel, listCatalogModels } from "@/features/catalog-designer/api";
@@ -80,7 +80,7 @@ export function InstantiatePage() {
       <p className="mb-4 text-sm text-slate-400">
         Creates a physical Equipment record from a published catalog model, plus its network ports and power inlets.
         {isCatalogAdministrator && (
-          <> Need a different model published first? <a href="/admin/catalog" className="text-blue-400 hover:underline">Open the catalog designer →</a></>
+          <> Need a different model published first? <Link to="/admin/catalog" className="text-blue-400 hover:underline">Open the catalog designer →</Link></>
         )}
       </p>
 
