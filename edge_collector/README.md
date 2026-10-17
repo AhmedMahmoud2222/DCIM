@@ -38,6 +38,13 @@ silently use a v2c community. V3 sessions enforce authPriv. Failed or expired sc
 not generate successful completion markers. Discovery evidence remains separate from
 operator-confirmed logical connections and physical cables.
 
+Telemetry metric polling (`snmp_metrics.py`) uses SNMPv3 USM authPriv through the same
+`SNMPv3Session` as discovery. SNMPv2c sends the community in cleartext, so it is a legacy
+compatibility option only: a community-only credential entry is refused for metric polling,
+before any packet is sent, unless that entry also sets `"allow_legacy_v2c": true`. An
+`snmpv3` entry always takes precedence over a community and the opt-in; an invalid `snmpv3`
+entry is an error, never a fallback to v2c. The opt-in does not affect discovery.
+
 Troubleshooting: check Central assignment/enabled status, selected active profile,
 numeric target address and CIDR policy, local credential UUID/version and file permissions,
 then UDP reachability. Do not enable payload/credential debug logging. Offline delivery
