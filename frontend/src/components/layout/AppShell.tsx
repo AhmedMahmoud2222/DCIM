@@ -7,6 +7,7 @@ import { useAuthStore } from "@/lib/authStore";
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
   { to: "/infrastructure", label: "Infrastructure" },
+  { to: "/locations", label: "Locations", permission: "location:read" },
   { to: "/managed-assets", label: "Managed Assets" },
   { to: "/racks", label: "Racks" },
   { to: "/equipment", label: "Equipment" },
