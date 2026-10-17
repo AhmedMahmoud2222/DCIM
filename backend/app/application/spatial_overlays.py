@@ -19,6 +19,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.access_control import UNRESTRICTED, AccessScope, equipment_visible_clause, rack_visible_clause
 from app.application.power_capacity import equipment_power_summary
 from app.application.power_protection import inlet_path_status
 from app.application.thermal.environment import INVALID, MEASURED_FRESH, classify_reading
@@ -48,16 +49,17 @@ class RoomAssets:
         return sorted(set(ids) | set(self.floor_equipment_ids), key=str)
 
 
-async def load_room_assets(db: AsyncSession, room_id: uuid.UUID) -> RoomAssets:
+async def load_room_assets(db: AsyncSession, room_id: uuid.UUID, scope: AccessScope = UNRESTRICTED) -> RoomAssets:
     rack_ids = list(
-        (await db.execute(select(RackPlacement.rack_id).where(RackPlacement.room_id == room_id, RackPlacement.effective_to.is_(None)))).scalars()
+        (await db.execute(select(RackPlacement.rack_id).where(RackPlacement.room_id == room_id, RackPlacement.effective_to.is_(None), rack_visible_clause(scope, RackPlacement.rack_id)))).scalars()
     )
     by_rack: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
     floor: list[uuid.UUID] = []
     rows = (
         await db.execute(
             select(EquipmentPlacement.equipment_id, EquipmentPlacement.rack_id, EquipmentPlacement.placement_type).where(
-                EquipmentPlacement.room_id == room_id, EquipmentPlacement.effective_to.is_(None)
+                EquipmentPlacement.room_id == room_id, EquipmentPlacement.effective_to.is_(None),
+                equipment_visible_clause(scope, EquipmentPlacement.equipment_id),
             )
         )
     ).all()
@@ -124,13 +126,16 @@ async def power_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str, Any]:
     return {"source": "power_topology", "items": [*racks, *items.values()], "truncated": len(assets.all_equipment_ids) > MAX_OVERLAY_ASSETS}
 
 
-async def network_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str, Any]:
+async def network_overlay(db: AsyncSession, assets: RoomAssets, scope: AccessScope = UNRESTRICTED) -> dict[str, Any]:
     equipment_ids = assets.all_equipment_ids[:MAX_OVERLAY_ASSETS]
     per_equipment: dict[uuid.UUID, dict[str, Any]] = {
         e: {"installed": 0, "planned": 0, "cable_ids": [], "peers": set()} for e in equipment_ids
     }
     discovered: dict[uuid.UUID, int] = defaultdict(int)
     if equipment_ids:
+        visible_peers = None if scope.unrestricted else set((await db.execute(
+            select(EquipmentPort.equipment_id).where(equipment_visible_clause(scope, EquipmentPort.equipment_id))
+        )).scalars())
         rows = (
             await db.execute(
                 select(Cable.id, Cable.label, Cable.status, EquipmentPort.equipment_id, CableEndpoint.end_label)
@@ -148,7 +153,10 @@ async def network_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str, Any
                     bucket = per_equipment[equipment_id]
                     bucket["installed" if status == "installed" else "planned"] += 1
                     bucket["cable_ids"].append(str(cable_id))
-                    bucket["peers"].update(str(other) for other, _ in endpoints if other != equipment_id)
+                    bucket["peers"].update(
+                        str(other) for other, _ in endpoints
+                        if other != equipment_id and (visible_peers is None or other in visible_peers)
+                    )
         neighbor_rows = (
             await db.execute(
                 select(EquipmentPort.equipment_id)

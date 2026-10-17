@@ -42,6 +42,9 @@ beforeEach(() => {
   vi.mocked(api.getEffectiveAccess).mockResolvedValue({
     user_id: "u1", is_active: true, unrestricted: false, role_names: [], groups: [{ id: "g1", name: "Ops" }],
     permissions: { "rack:read": ["group:Ops"] }, denied_permissions: ["dashboard:read"], inactive_permissions: ["alarm:read"],
+    permission_scopes: {
+      "rack:read": { unrestricted: false, site_ids: ["s1"], full_site_ids: [], selected_racks_by_site: { s1: ["r1"] } },
+    },
     sites: [{ site_id: "s1", code: "DXB1", name: "Dubai 1", rack_scope: "selected", rack_ids: ["r1"] }],
   });
   vi.mocked(api.listAllSites).mockResolvedValue(page([{ id: "s1", city_id: "c", code: "DXB1", name: "Dubai 1", timezone: "UTC" }]));
@@ -49,6 +52,24 @@ beforeEach(() => {
 });
 
 describe("UsersPage", () => {
+  it("shows global reads and scoped writes independently", async () => {
+    const previous = await vi.mocked(api.getEffectiveAccess)("u1");
+    vi.mocked(api.getEffectiveAccess).mockResolvedValue({
+      ...previous,
+      unrestricted: true,
+      permissions: { "rack:read": ["role:Viewer"], "rack:manage": ["group:Ops"] },
+      permission_scopes: {
+        "rack:read": { unrestricted: true, site_ids: [], full_site_ids: [], selected_racks_by_site: {} },
+        "rack:manage": { unrestricted: false, site_ids: ["s1"], full_site_ids: [], selected_racks_by_site: { s1: ["r1"] } },
+      },
+    } as api.EffectiveAccess);
+    renderWithProviders(<UsersPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: /ops@example.com/ }));
+    expect(await screen.findByText("All sites and racks")).toBeInTheDocument();
+    expect(screen.getByText(/DXB1: 1 selected rack/)).toBeInTheDocument();
+    expect(screen.queryByText(/all sites and racks are visible/)).not.toBeInTheDocument();
+  });
+
   it("shows a user's effective access, including denied and inactive permissions", async () => {
     renderWithProviders(<UsersPage />, { user: MANAGER });
     await userEvent.click(await screen.findByRole("button", { name: /ops@example.com/ }));

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.application.access_control import ensure_rack_access, ensure_room_access
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.outbox_service import write_outbox_event
@@ -1088,6 +1089,9 @@ async def accept_import_candidate(
             raise ApiError(status_code=409, title="Rack In Another Room", detail="The matched rack is placed in a different room; moving it between rooms is not an import side effect.")
         if body.apply_position and not ctx.has_permission("rack:place"):
             raise ApiError(status_code=403, title="Forbidden", detail="Moving a rack requires the rack:place permission.")
+        if body.apply_position:
+            await ensure_rack_access(db, ctx.scope_for("rack:place"), matched_id)
+            await ensure_room_access(db, ctx.scope_for("rack:place"), floor_plan.room_id)
         if body.apply_position and placement is not None and body.placement_version is None:
             raise ApiError(status_code=428, title="Precondition Required", detail="placement_version is required to move an already-placed rack.")
         if body.link_placement and rack is not None:
