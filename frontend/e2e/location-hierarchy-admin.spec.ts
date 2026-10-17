@@ -25,6 +25,12 @@ const RACK_IMPORT_HEADERS = [
   "floor_level", "room_code", "x_mm", "y_mm", "rotation_deg", "owner", "notes",
 ];
 
+/** The bulk-import parser numbers *real spreadsheet* rows — the header occupies row 1, so the
+ * first data row a workbook built here produces is row_number 2, not 1
+ * (backend/app/application/bulk_import/parsing.py). Asserting on row 1 silently matched
+ * nothing at all. */
+const FIRST_DATA_ROW_NUMBER = 2;
+
 interface Api {
   api: APIRequestContext;
   headers: { Authorization: string };
@@ -59,6 +65,11 @@ async function apiItems<T = Record<string, unknown>>(ctx: Api, path: string): Pr
   const resp = await ctx.api.get(path, { headers: ctx.headers });
   expect(resp.ok(), `GET ${path} failed: ${resp.status()} ${await resp.text()}`).toBeTruthy();
   return ((await resp.json()) as { items: T[] }).items;
+}
+
+/** Every row of a bulk-import job, read over the authenticated API (not the optimistic UI). */
+async function jobRows(ctx: Api, jobId: string): Promise<Array<{ row_number: number; status: string }>> {
+  return apiItems<{ row_number: number; status: string }>(ctx, `/api/v1/import-jobs/${jobId}/rows?limit=25`);
 }
 
 async function loginThroughUi(page: Page): Promise<void> {
@@ -334,20 +345,17 @@ test.describe("Location hierarchy administration", () => {
       await dialog.getByRole("button", { name: "Commit import" }).click();
       await expect(statusBadge).toHaveText("committed", { timeout: 15_000 });
 
-      // Row results, asserted against the generic job pipeline rather than the UI table:
-      // the single row must reach "committed".
+      // Row results, asserted against the generic job pipeline rather than the UI table.
+      // This workbook has exactly one data row (row_number 2, under the header row); it must
+      // reach the terminal "committed" state and there must be no other rows.
       await expect
-        .poll(
-          async () => {
-            const rows = await apiItems<{ row_number: number; status: string }>(
-              ctx,
-              `/api/v1/import-jobs/${job.id}/rows?limit=25`,
-            );
-            return rows.find((r) => r.row_number === 1)?.status;
-          },
-          { timeout: 15_000 },
-        )
+        .poll(async () => (await jobRows(ctx, job.id)).find((r) => r.row_number === FIRST_DATA_ROW_NUMBER)?.status, {
+          timeout: 15_000,
+        })
         .toBe("committed");
+      const committedRows = await jobRows(ctx, job.id);
+      expect(committedRows.map((r) => r.row_number)).toEqual([FIRST_DATA_ROW_NUMBER]);
+      expect(committedRows.map((r) => r.status)).toEqual(["committed"]);
 
       // The committed rack is durable and scoped to the site the UI created.
       const racks = await apiItems<{ asset_tag: string; name: string }>(ctx, `/api/v1/racks?site_id=${site.id}&limit=200`);
@@ -414,19 +422,14 @@ test.describe("Location hierarchy administration", () => {
       const racks = await apiItems<{ asset_tag: string }>(ctx, `/api/v1/racks?site_id=${site.id}&limit=200`);
       expect(racks.some((r) => r.asset_tag === assetTag)).toBe(false);
 
-      // The job is terminal and the row never committed.
+      // The job is terminal and the row (row_number 2) is invalid: never committed, and never
+      // silently rewritten to a success state.
       await expect
-        .poll(
-          async () => {
-            const rows = await apiItems<{ row_number: number; status: string }>(
-              ctx,
-              `/api/v1/import-jobs/${job.id}/rows?limit=25`,
-            );
-            return rows.find((r) => r.row_number === 1)?.status;
-          },
-          { timeout: 15_000 },
-        )
-        .not.toBe("committed");
+        .poll(async () => (await jobRows(ctx, job.id)).find((r) => r.row_number === FIRST_DATA_ROW_NUMBER)?.status, {
+          timeout: 15_000,
+        })
+        .toBe("invalid");
+      expect((await jobRows(ctx, job.id)).map((r) => r.status)).toEqual(["invalid"]);
     } finally {
       await ctx.api.dispose();
     }

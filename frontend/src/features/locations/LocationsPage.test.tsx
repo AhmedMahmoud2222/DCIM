@@ -173,7 +173,9 @@ describe("LocationsPage", () => {
   it("pages through a level with more rows than one backend page", async () => {
     const user = userEvent.setup();
     const org2: Organization = { ...org, id: "org-2", name: "Beta Corp" };
-    vi.mocked(api.listOrganizations).mockImplementation(async (_limit, offset) =>
+    // `offset` is the optional second argument of the real list function; default it to a
+    // number so the mocked page satisfies `Page<Organization>.offset: number`.
+    vi.mocked(api.listOrganizations).mockImplementation(async (_limit, offset = 0) =>
       offset === 0
         ? { items: [org], total: 2, limit: HIERARCHY_PAGE_SIZE, offset: 0 }
         : { items: [org2], total: 2, limit: HIERARCHY_PAGE_SIZE, offset },
