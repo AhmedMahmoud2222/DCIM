@@ -134,6 +134,10 @@ async def _admin_engine():
 async def _clean_tables(db_engine, _admin_engine):
     async with db_engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {', '.join(_APP_TRUNCATE_TABLES)} CASCADE"))
+        # Scoped-role tests commit custom roles and their permission rows. Keep the
+        # migration-seeded system roles, but remove per-test roles (their permission
+        # rows cascade) so later tests observe the original RBAC seed unchanged.
+        await conn.execute(text("DELETE FROM role WHERE is_system = false"))
         # G4-R: policy and the ledger state row are not truncated (they are seeded by migrations); reset what tests change.
         await conn.execute(text("UPDATE monitoring_policy SET late_replay_horizon_days = NULL, raw_retention_days = 365"))
         await conn.execute(text(
