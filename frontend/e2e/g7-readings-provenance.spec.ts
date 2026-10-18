@@ -46,6 +46,8 @@ test("equipment history separates contract evidence and preserves legacy display
   await expect(pinned.getByRole("img", { name: "Trend from 20 to 21 degC" })).toBeVisible();
   await expect(unverified.getByRole("img", { name: "Trend from 90 to 91 degC" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Aggregate provenance pending history group" })).toBeVisible();
+  await expect(page.getByText("raw · Pinned").first()).toBeVisible();
+  await expect(page.getByText("daily · Aggregate provenance pending")).toBeVisible();
   await expect(page.getByRole("region", { name: "Provenance unavailable history group" })).toBeVisible();
   await expect(page.getByText("Mixed provenance or distinct series: each group is shown separately.")).toBeVisible();
   await expect(page.getByRole("img", { name: /Trend from 20 to 91/ })).toHaveCount(0);
