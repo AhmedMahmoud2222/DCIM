@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "0055_pdu_catalog_outlet_template"
-down_revision = "0054_role_assignment_scope_types"
+down_revision = "0051_aggregate_lineage"
 branch_labels = None
 depends_on = None
 
