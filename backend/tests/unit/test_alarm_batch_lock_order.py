@@ -72,7 +72,9 @@ async def test_batch_snapshot_excludes_newly_inserted_rule_from_later_record_loc
     old = uuid.uuid4()
     db.info = {key: (old,)}
     db.execute.return_value = result([])
-    reading = SimpleNamespace(integration_id=uuid.uuid4(), metric="power_kw")
+    # registry_version is a nullable column on TelemetryReading; the mock must
+    # carry it so the merged main-side version-mismatch filter can run.
+    reading = SimpleNamespace(integration_id=uuid.uuid4(), metric="power_kw", registry_version=None)
     await alarm_service.evaluate_reading(db, reading)
     sql = str(db.execute.call_args.args[0].compile(dialect=dialect(), compile_kwargs={"literal_binds": True}))
     assert str(old) in sql
