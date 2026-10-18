@@ -142,6 +142,14 @@ class CatalogModelRevision(Base, UUIDPkMixin, TimestampMixin):
 
     rated_power_w: Mapped[float | None] = mapped_column(Numeric(10, 2))
     typical_power_w: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    # Issue #150 PDU-specific electrical attributes (nullable; validated at publish time)
+    pdu_input_voltage_v: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    pdu_input_current_a: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    pdu_phase: Mapped[str | None] = mapped_column(String(8))
+    pdu_rated_capacity_kw: Mapped[float | None] = mapped_column(Numeric(10, 3))
+    pdu_plug_type: Mapped[str | None] = mapped_column(String(32))
+    pdu_monitoring_protocol: Mapped[str | None] = mapped_column(String(16))
+    pdu_monitoring_endpoint: Mapped[str | None] = mapped_column(String(255))
     max_power_w: Mapped[float | None] = mapped_column(Numeric(10, 2))
     heat_dissipation_btu_hr: Mapped[float | None] = mapped_column(Numeric(10, 2))
     power_redundancy_mode: Mapped[str | None] = mapped_column(String(8))
@@ -347,4 +355,29 @@ class MonitoringMetricTemplate(Base, UUIDPkMixin, TimestampMixin):
     default_collection_interval_seconds: Mapped[int | None] = mapped_column(Integer)
     default_warning_threshold: Mapped[float | None] = mapped_column(Numeric(18, 4))
     default_critical_threshold: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+class PDUOutletTemplate(Base, UUIDPkMixin, TimestampMixin):
+    """PDU catalog revision outlet template (Issue #150)."""
+
+    __tablename__ = "pdu_outlet_template"
+    __table_args__ = (
+        UniqueConstraint("catalog_model_revision_id", "stable_key", name="uq_pdu_outlet_template_cmr_sk"),
+        UniqueConstraint("catalog_model_revision_id", "outlet_number", name="uq_pdu_outlet_template_cmr_on"),
+        CheckConstraint("outlet_count > 0", name="outlet_count_positive"),
+    )
+
+    catalog_model_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalog_model_revision.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stable_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    outlet_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    outlet_type: Mapped[str] = mapped_column(String(16), nullable=False, default="other", server_default="other")
+    outlet_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    phase: Mapped[str] = mapped_column(String(8), nullable=False, default="single", server_default="single")
+    rated_voltage_v: Mapped[float | None] = mapped_column(Numeric(6, 1))
+    rated_current_a: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    position: Mapped[str | None] = mapped_column(String(32))
+    side: Mapped[str] = mapped_column(String(8), nullable=False, default="front", server_default="front")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
