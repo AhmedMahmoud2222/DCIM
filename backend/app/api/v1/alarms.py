@@ -19,7 +19,7 @@ from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.alarm.models import ALARM_STATUSES, RULE_TYPES, Alarm, AlarmRule
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
 
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 

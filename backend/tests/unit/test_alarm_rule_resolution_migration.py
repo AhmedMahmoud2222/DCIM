@@ -10,7 +10,7 @@ from alembic.script import ScriptDirectory
 
 
 def migration():
-    path = Path(__file__).resolve().parents[2] / "migrations/versions/0050_alarm_rule_resolution.py"
+    path = Path(__file__).resolve().parents[2] / "migrations/versions/0055_alarm_rule_resolution.py"
     assert path.exists(), "G8 additive migration is missing"
     spec = importlib.util.spec_from_file_location("g8_migration", path)
     module = importlib.util.module_from_spec(spec)
@@ -18,12 +18,12 @@ def migration():
     return module
 
 
-def test_resolution_migration_follows_replay_ledger_as_single_head():
+def test_resolution_migration_follows_aggregate_lineage_as_single_head():
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "migrations"))
     directory = ScriptDirectory.from_config(config)
-    assert directory.get_heads() == ["0050_alarm_rule_resolution"]
-    assert directory.get_revision("0050_alarm_rule_resolution").down_revision == "0049_telemetry_replay_ledger"
+    assert directory.get_heads() == ["0055_alarm_rule_resolution"]
+    assert directory.get_revision("0055_alarm_rule_resolution").down_revision == "0051_aggregate_lineage"
 
 
 def test_upgrade_is_nullable_without_backfill():

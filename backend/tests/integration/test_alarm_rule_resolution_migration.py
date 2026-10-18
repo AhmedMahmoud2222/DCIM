@@ -13,7 +13,7 @@ from tests.integration.test_unresolved_alarm_rules import seed
 
 
 def load_migration():
-    path = Path(__file__).resolve().parents[2] / "migrations/versions/0050_alarm_rule_resolution.py"
+    path = Path(__file__).resolve().parents[2] / "migrations/versions/0055_alarm_rule_resolution.py"
     spec = importlib.util.spec_from_file_location("g8_pg_migration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

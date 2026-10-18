@@ -1,7 +1,8 @@
 """G8 unresolved legacy alarm rule visibility and operator resolution.
 
-Follows merged G4-R's 0049 replay-ledger revision. This keeps the additive
-alarm evidence migration in the single telemetry migration chain.
+Reconciled chain: follows merged G6's 0051 aggregate-lineage revision, which
+is the single main head (0049 -> 0053 -> 0052 -> 0054 -> 0051). This keeps
+the additive alarm evidence migration in the single telemetry migration chain.
 Nullable additions, no backfill. Downgrade refuses to discard block/resolution
 evidence and holds the table lock across the check and column removal.
 """
@@ -10,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0050_alarm_rule_resolution"
-down_revision = "0049_telemetry_replay_ledger"
+revision = "0055_alarm_rule_resolution"
+down_revision = "0051_aggregate_lineage"
 branch_labels = None
 depends_on = None
 
@@ -33,7 +34,7 @@ def downgrade() -> None:
         "SELECT EXISTS (SELECT 1 FROM alarm_rule WHERE unit_resolved_by IS NOT NULL "
         "OR unit_resolved_at IS NOT NULL OR unit_resolution_reason IS NOT NULL OR blocked_notified_at IS NOT NULL)"
     )):
-        raise RuntimeError("Cannot downgrade 0050: alarm rules carry block or unit resolution evidence.")
+        raise RuntimeError("Cannot downgrade 0055: alarm rules carry block or unit resolution evidence.")
     op.drop_constraint(ACTOR_FK, TABLE, type_="foreignkey")
     for name in ("blocked_notified_at", "unit_resolution_reason", "unit_resolved_at", "unit_resolved_by"):
         op.drop_column(TABLE, name)
