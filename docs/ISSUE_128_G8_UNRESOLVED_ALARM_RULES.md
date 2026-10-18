@@ -84,14 +84,14 @@ permission enforcement beyond the current baseline.
 
 ## Migration and rollback gate
 
-`0050_alarm_rule_resolution` adds four nullable columns without defaults or
+`0055_alarm_rule_resolution` adds four nullable columns without defaults or
 backfill: resolution actor (FK to user, ON DELETE SET NULL), timestamp, reason,
 and first-block marker. Populated downgrade refuses while any column has
 evidence, holding an ACCESS EXCLUSIVE lock across the check/removal to prevent
 a concurrent writer slipping between them. No existing rule unit is rewritten.
 
-**Reconciled chain:** 0050 follows merged G4-R's
-`0049_telemetry_replay_ledger`. A regression reads the complete Alembic graph
+**Reconciled chain:** 0055 follows merged G6's
+`0051_aggregate_lineage`. A regression reads the complete Alembic graph
 and requires exactly this single head. Sibling migrations in other Draft PRs
 must be reconciled before their eventual integration.
 Rehearse populated upgrade, FK behavior, clean downgrade, populated refusal and
@@ -144,5 +144,7 @@ was contacted by these local checks.
 
 Required before readiness: real PostgreSQL tests and populated migration
 rehearsal, full repository tests, CI/deployment validation, independent
-non-author review, G4 completion, and owner release approval. No frontend rules
-panel is included; the source design explicitly makes it optional in this PR.
+non-author review, G4 completion, and owner release approval. A read-only
+operator rules panel (`AlarmRulesPage`, gated on `alarm:read`/`alarm:manage`)
+is included so unresolved legacy rules can be resolved or disabled; the
+authorization engine is unchanged.
