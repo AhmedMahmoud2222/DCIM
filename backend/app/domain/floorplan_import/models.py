@@ -21,7 +21,17 @@ MATCH_STATUSES = ("not_applicable", "unmatched", "matched", "ambiguous", "confli
 
 class FloorPlanImportJob(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "floor_plan_import_job"
-    __table_args__ = (CheckConstraint(f"status IN {IMPORT_JOB_STATUSES!r}", name="status_allowed"),)
+    __table_args__ = (
+        CheckConstraint(f"status IN {IMPORT_JOB_STATUSES!r}", name="status_allowed"),
+        # Migration 0044: identical-upload dedup key, unique while present.
+        Index(
+            "uq_floor_plan_import_job_dedup",
+            "floor_plan_id",
+            "dedup_key",
+            unique=True,
+            postgresql_where="dedup_key IS NOT NULL",
+        ),
+    )
 
     floor_plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("floor_plan.id", ondelete="CASCADE"), nullable=False)
     uploaded_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"), nullable=False)

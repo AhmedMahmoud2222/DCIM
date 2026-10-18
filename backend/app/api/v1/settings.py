@@ -23,6 +23,10 @@ class MonitoringPolicyOut(BaseModel):
     # bound). A finite value is an owner decision made from representative delay profiling. An omitted field on PUT
     # leaves the stored value unchanged, so an older client cannot clear it by accident.
     late_replay_horizon_days: int | None = Field(default=None, ge=1)
+    # Issue #128 / G6. NULL = no hold-expiry policy (resolved lineage evidence is kept indefinitely); DB default is
+    # 365. Same omitted-field-preserves-current-value contract as late_replay_horizon_days above, for the same
+    # reason: this field is new, so an older client's PUT body must not silently reset an owner's explicit policy.
+    resolved_hold_retention_days: int | None = Field(default=None, ge=1)
 
 @router.get("/monitoring", response_model=MonitoringPolicyOut)
 async def get_monitoring_policy(
@@ -49,10 +53,13 @@ async def update_monitoring_policy(
         "daily_aggregate_retention_days": policy.daily_aggregate_retention_days,
         "alarm_history_retention_days": policy.alarm_history_retention_days,
         "late_replay_horizon_days": policy.late_replay_horizon_days,
+        "resolved_hold_retention_days": policy.resolved_hold_retention_days,
     }
     changes = body.model_dump(exclude_unset=False)
     if "late_replay_horizon_days" not in body.model_fields_set:
         changes.pop("late_replay_horizon_days")
+    if "resolved_hold_retention_days" not in body.model_fields_set:
+        changes.pop("resolved_hold_retention_days")
     if "late_replay_horizon_days" in changes and changes["late_replay_horizon_days"] is None:
         if policy.late_replay_horizon_days is not None:
             from app.application.telemetry_ledger import UnsafeHorizonClear, guard_horizon_clear

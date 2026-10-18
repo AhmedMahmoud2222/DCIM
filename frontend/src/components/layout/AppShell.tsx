@@ -7,6 +7,7 @@ import { useAuthStore } from "@/lib/authStore";
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
   { to: "/infrastructure", label: "Infrastructure" },
+  { to: "/locations", label: "Locations", permission: "location:read" },
   { to: "/managed-assets", label: "Managed Assets" },
   { to: "/racks", label: "Racks" },
   { to: "/equipment", label: "Equipment" },
@@ -18,7 +19,7 @@ const NAV_ITEMS = [
   { to: "/integrations", label: "Integrations" },
   { to: "/discovery", label: "Discovery" },
   { to: "/discovery/neighbors", label: "Neighbors", permission: "discovery:read" },
-  { to: "/network/profiles", label: "Network Profiles", permission: "network_profile:read" },
+  { to: "/network/profiles", label: "Device Profiles", permission: "network_profile:read" },
   { to: "/cables", label: "Cables", permission: "cable:read" },
   { to: "/topology/pass-throughs", label: "Pass-throughs", permission: "cable:read" },
   { to: "/topology/trace", label: "Trace", permission: "cable:read" },

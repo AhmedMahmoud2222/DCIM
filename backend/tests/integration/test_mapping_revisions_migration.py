@@ -10,10 +10,19 @@ from alembic.operations import Operations
 from sqlalchemy import text
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0046_mapping_revisions.py"
+AGGREGATE_LINEAGE_MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0051_aggregate_lineage.py"
 
 
 def _run_migration(connection, direction):
     spec = importlib.util.spec_from_file_location("mapping_revisions", MIGRATION)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with Operations.context(MigrationContext.configure(connection)):
+        getattr(module, direction)()
+
+
+def _run_aggregate_lineage_migration(connection, direction):
+    spec = importlib.util.spec_from_file_location("aggregate_lineage", AGGREGATE_LINEAGE_MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     with Operations.context(MigrationContext.configure(connection)):
@@ -59,6 +68,7 @@ async def test_populated_upgrade_seeds_one_honestly_labelled_revision_per_mappin
     async with db_engine.connect() as conn:
         transaction = await conn.begin()
         try:
+            await conn.run_sync(_run_aggregate_lineage_migration, "downgrade")
             await conn.run_sync(_run_migration, "downgrade")
             ids = await _seed(conn)
             before = tuple((await conn.execute(text("SELECT * FROM telemetry_reading WHERE id = :i"), {"i": ids.reading})).one())
@@ -100,6 +110,7 @@ async def test_downgrade_refuses_once_any_non_seed_evidence_exists(db_engine):
         async with db_engine.connect() as conn:
             transaction = await conn.begin()
             try:
+                await conn.run_sync(_run_aggregate_lineage_migration, "downgrade")
                 await conn.run_sync(_run_migration, "downgrade")
                 ids = await _seed(conn)
                 await conn.run_sync(_run_migration, "upgrade")
@@ -144,6 +155,7 @@ async def test_the_database_enforces_the_reading_evidence_pairing_and_revision_f
         transaction = await conn.begin()
         try:
             ids = await _seed(conn)
+            await conn.run_sync(_run_aggregate_lineage_migration, "downgrade")
             await conn.run_sync(_run_migration, "downgrade")
             await conn.run_sync(_run_migration, "upgrade")
             for statement in (

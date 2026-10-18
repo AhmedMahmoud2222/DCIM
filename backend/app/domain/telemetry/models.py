@@ -19,8 +19,10 @@ from sqlalchemy import (
     Numeric,
     String,
     Table,
+    Text,
     UniqueConstraint,
     event,
+    func,
     insert,
     update,
 )
@@ -31,6 +33,19 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
 from app.domain.telemetry.contract import conversion_contract_hash
 from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION
+
+
+class RegistryVersionSnapshot(Base):
+    """Append-only contract evidence; database triggers prohibit row mutation."""
+
+    __tablename__ = "registry_version_snapshot"
+    __table_args__ = (CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="hash"),)
+
+    version: Mapped[str] = mapped_column(Text, primary_key=True)
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
 
 CANONICAL_METRICS = tuple(METRIC_REGISTRY)
 
@@ -174,7 +189,7 @@ class TelemetryReading(Base, UUIDPkMixin):
     mapping_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("integration_metric_mapping.id", ondelete="RESTRICT"), nullable=False
     )
-    managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), index=True)
+    managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"))
     external_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     series_key: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -212,6 +227,12 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
         Index("ix_daily_telemetry_series_day", "series_key", "day"),
         Index("ix_daily_telemetry_integration_metric_day", "integration_id", "metric", "day"),
         Index("ix_daily_telemetry_asset_metric_day", "managed_asset_id", "metric", "day"),
+        CheckConstraint("evidence_class IS NULL OR evidence_class IN "
+                        "('pinned', 'inferred', 'operator_resolved', 'mixed', 'unverified')",
+                        name="lineage_evidence_allowed"),
+        CheckConstraint("(evidence_class IS NULL) = (lineage_sample_count IS NULL) AND "
+                        "(lineage_sample_count IS NULL OR lineage_sample_count BETWEEN 1 AND sample_count)",
+                        name="lineage_count_scope"),
         # Issue #128 / G4-A. Added NOT VALID by migration 0048 (every existing row is NULL and satisfies them).
         CheckConstraint("arithmetic_basis IS NULL OR arithmetic_basis IN ('decimal_exact', 'legacy_seeded')",
                         name="arithmetic_basis_allowed"),
@@ -243,8 +264,36 @@ class DailyTelemetryAggregate(Base, UUIDPkMixin):
     # Exact sum of all samples (Issue #128 / G4-A). NULL = aggregate computed before G4-A with float arithmetic.
     sum_value: Mapped[Decimal | None] = mapped_column(Numeric(38, 8), nullable=True)
     arithmetic_basis: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # G6: NULL = no lineage was recorded. Coverage is count / sample_count, never inferred from evidence_class.
+    evidence_class: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    lineage_sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_compacted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    raw_retention_days_at_compaction: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Samples whose contribution came from a legacy rounded average (legacy_seeded rows only); never changes.
     legacy_sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class DailyTelemetryAggregateLineage(Base, UUIDPkMixin):
+    """Contract summaries, without source values or arbitrary attributes; retained with the aggregate."""
+    __tablename__ = "daily_telemetry_aggregate_lineage"
+    __table_args__ = (
+        UniqueConstraint("aggregate_id", "contract_key", name="uq_daily_lineage_contract"),
+        CheckConstraint("sample_count >= 1", name="sample_count_positive"),
+        CheckConstraint("first_occurred_at <= last_occurred_at", name="event_time_order"),
+        CheckConstraint("(mapping_revision_id IS NULL) = (contract_evidence IS NULL)", name="revision_matches_evidence"),
+        CheckConstraint(f"contract_evidence IS NULL OR contract_evidence IN {CONTRACT_EVIDENCE!r}", name="evidence_allowed"),
+    )
+    aggregate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("daily_telemetry_aggregate.id", ondelete="CASCADE"), nullable=False, index=True)
+    contract_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    mapping_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("integration_metric_mapping_revision.id", ondelete="RESTRICT"), nullable=True)
+    contract_evidence: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    raw_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_scale: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    first_occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    last_occurred_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
 
 class MonitoringPolicy(Base):
@@ -255,6 +304,7 @@ class MonitoringPolicy(Base):
     raw_retention_days: Mapped[int] = mapped_column(nullable=False, default=365)
     daily_aggregate_retention_days: Mapped[int | None] = mapped_column(nullable=True)
     alarm_history_retention_days: Mapped[int | None] = mapped_column(nullable=True)
+    resolved_hold_retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=365)
     # Issue #128 / G4-R. NULL (the default) means: no age-based rejection of late data and no ledger pruning. A finite
     # value is an owner decision made from representative delay profiling; see docs/implementation/TELEMETRY_REPLAY_LEDGER.md.
     late_replay_horizon_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
