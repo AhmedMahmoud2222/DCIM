@@ -32,6 +32,7 @@ from app.api.v1 import (
     telemetry,
     thermal,
     users,
+    pdu_catalog,
 )
 
 api_router = APIRouter()
