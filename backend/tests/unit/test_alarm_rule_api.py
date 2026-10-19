@@ -21,6 +21,7 @@ async def request(method, path, *, body=None, permissions=frozenset({"alarm:read
     app.include_router(router)
     register_exception_handlers(app)
     ctx = SimpleNamespace(user=SimpleNamespace(id=uuid.uuid4()), has_permission=lambda code: code in permissions)
+    ctx.for_permission = lambda code: ctx
     db = AsyncMock()
     db.add = MagicMock()
     result = MagicMock()
