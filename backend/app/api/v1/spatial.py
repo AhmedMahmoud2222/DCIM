@@ -6,6 +6,7 @@ owned by `racks`/`equipment`/`floor_plans` into the single combined shape the 2D
 floor-plan viewer needs, and creates nothing of its own."""
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.application import spatial_overlays
+from app.application.access_control import ensure_room_access, intersect_scopes
 from app.application.rbac import AuthContext, get_auth_context, require_permission
 from app.application.spatial_import.boundary import load_boundary_object
 from app.core.errors import ApiError, ForbiddenError, NotFoundError
@@ -341,6 +343,7 @@ async def get_room_overlays(
     effective spatial:read and cannot reach this endpoint at all (fail closed)."""
     if not ctx.has_permission("spatial:read"):
         raise ForbiddenError("Missing required permission: spatial:read")
+    ctx = ctx.for_permission("spatial:read")
     requested = [k.strip() for k in kinds.split(",") if k.strip()]
     unknown = [k for k in requested if k not in OVERLAY_KINDS]
     if unknown or not requested:
@@ -348,8 +351,14 @@ async def get_room_overlays(
     for kind in requested:
         if not _overlay_permitted(ctx, kind):
             raise ForbiddenError(f"Missing required permission for the {kind} overlay: {OVERLAY_KINDS[kind][0]}")
+        ctx = replace(ctx, scope=intersect_scopes(ctx.scope, ctx.scope_for(OVERLAY_KINDS[kind][0])))
+    await ensure_room_access(db, ctx.scope, room_id)
     if await db.get(Room, room_id) is None:
         raise NotFoundError(f"Room {room_id} not found.")
-    assets = await spatial_overlays.load_room_assets(db, room_id)
-    overlays = {kind: await OVERLAY_KINDS[kind][1](db, assets) for kind in dict.fromkeys(requested)}
+    assets = await spatial_overlays.load_room_assets(db, room_id, ctx.scope)
+    overlays = {
+        kind: await spatial_overlays.network_overlay(db, assets, ctx.scope) if kind == "network"
+        else await OVERLAY_KINDS[kind][1](db, assets)
+        for kind in dict.fromkeys(requested)
+    }
     return RoomOverlaysOut(room_id=room_id, generated_at=datetime.now(UTC), overlays=overlays)

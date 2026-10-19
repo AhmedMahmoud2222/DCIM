@@ -60,6 +60,12 @@ export interface EffectiveAccess {
   permissions: Record<string, string[]>;
   denied_permissions: string[];
   inactive_permissions: string[];
+  permission_scopes: Record<string, {
+    unrestricted: boolean;
+    site_ids: string[];
+    full_site_ids: string[];
+    selected_racks_by_site: Record<string, string[]>;
+  }>;
   sites: { site_id: string; code: string; name: string; rack_scope: RackScope; rack_ids: string[] }[];
 }
 
