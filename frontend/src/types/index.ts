@@ -1118,6 +1118,22 @@ export interface DashboardExceptionItem {
 export const CATALOG_CATEGORIES = ["rack", "equipment", "network_device", "pdu", "ups", "power_panel", "sensor"] as const;
 export type CatalogCategory = (typeof CATALOG_CATEGORIES)[number];
 
+// PDU catalog vocabularies (Issue #150) — exact mirrors of
+// backend/app/application/pdu_catalog/validators.py so the editor rejects the same
+// values the server would, before a round-trip.
+export const PDU_PHASES = ["single", "three"] as const;
+export const PDU_MOUNTING_ORIENTATIONS = ["horizontal", "vertical"] as const;
+export const PDU_SIDES = ["front", "rear"] as const;
+export const PDU_OUTLET_TYPES = [
+  "iec_c13",
+  "iec_c19",
+  "iec_c39",
+  "nema_5_15",
+  "nema_5_20",
+  "schuko",
+  "other",
+] as const;
+
 export interface Manufacturer {
   id: string;
   name: string;
@@ -1233,6 +1249,44 @@ export interface MonitoringMetricTemplate {
   default_warning_threshold: number | null;
   default_critical_threshold: number | null;
   sort_order: number;
+}
+
+/** One outlet template row of a PDU-category revision (`PDUOutletTemplate` table),
+ * shape of `GET/PATCH /catalog/revisions/{id}/pdu`'s `outlets[]` (M2 API). */
+export interface PDUOutletTemplate {
+  id: string;
+  stable_key: string;
+  outlet_number: number;
+  label: string;
+  outlet_type: string;
+  outlet_count: number;
+  phase: string;
+  rated_voltage_v: number | null;
+  rated_current_a: number | null;
+  position: string | null;
+  side: string;
+  sort_order: number;
+}
+
+/** Response of the PDU draft sub-resource (M2). Only exists — and is only readable —
+ * while the revision is a draft; published revisions return 409 by contract. */
+export interface PDUDraft {
+  revision_id: string;
+  lifecycle_status: string;
+  pdu_input_voltage_v: number | null;
+  pdu_input_current_a: number | null;
+  pdu_phase: string | null;
+  mounting_orientation: string | null;
+  outlets: PDUOutletTemplate[];
+  version: number;
+}
+
+/** Response of `POST /power/pdus/instantiate` (M4): the created `pdu` power node plus
+ * one `pdu_outlet` node per published outlet template. */
+export interface PDUInstantiatedAsset extends PowerNode {
+  catalog_model_revision_id: string;
+  outlet_count: number;
+  outlets: PowerNode[];
 }
 
 export interface CatalogGraphicMarker {

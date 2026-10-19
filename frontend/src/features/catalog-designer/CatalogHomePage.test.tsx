@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -44,6 +44,27 @@ describe("CatalogHomePage", () => {
     expect(screen.getByRole("textbox", { name: "Search models" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Filter by category" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Catalog models" })).toBeInTheDocument();
+  });
+
+  it("offers pdu as a supported catalog model category and submits it (Issue #150)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.createCatalogModel).mockResolvedValue({ ...model, id: "model-9", category: "pdu" });
+
+    renderWithProviders(<CatalogHomePage />);
+    await screen.findByRole("link", { name: "Acme" });
+
+    await user.click(screen.getByRole("button", { name: "New Model" }));
+    const categorySelect = screen.getByRole("combobox", { name: "Model category" });
+    expect(within(categorySelect).getByRole("option", { name: "pdu" })).toBeInTheDocument();
+
+    await user.selectOptions(categorySelect, "pdu");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Model manufacturer" }), "mfr-1");
+    await user.type(screen.getByRole("textbox", { name: "Model name" }), "Rack PDU 100");
+    await user.click(screen.getByRole("button", { name: "Create Model" }));
+
+    await waitFor(() =>
+      expect(api.createCatalogModel).toHaveBeenCalledWith(expect.objectContaining({ category: "pdu" })),
+    );
   });
 
   it("creates a manufacturer and refreshes the list", async () => {
