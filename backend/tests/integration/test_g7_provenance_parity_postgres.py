@@ -1,9 +1,9 @@
 """PostgreSQL parity: reading_provenance_status() vs reading_provenance_expression()."""
-import uuid
 from datetime import UTC, datetime
+import uuid
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app.api.v1.telemetry import reading_provenance_expression, reading_provenance_status
 from app.domain.integration.models import Collector, Integration
@@ -11,13 +11,13 @@ from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReadi
 
 
 # Independent hard-coded expected classification for all 20 combinations.
-# (registry_version, mapping_revision_present, contract_evidence) -> expected status
+# (registry_version, revision_present, contract_evidence) -> expected status
 EXPECTED = {
-    (None, False, None): None,
-    (None, False, "pinned"): None,
-    (None, False, "inferred_single_revision"): None,
-    (None, False, "operator_resolved"): None,
-    (None, False, "unrecognized"): None,
+    (None, False, None): "unverified_legacy",
+    (None, False, "pinned"): "unverified_legacy",
+    (None, False, "inferred_single_revision"): "unverified_legacy",
+    (None, False, "operator_resolved"): "unverified_legacy",
+    (None, False, "unrecognized"): "unverified_legacy",
     ("1", False, None): "unverified_registry",
     ("1", False, "pinned"): "unverified_registry",
     ("1", False, "inferred_single_revision"): "unverified_registry",
@@ -54,12 +54,8 @@ async def test_provenance_python_sql_parity_postgres(db_session):
     assert len(EXPECTED) == 20
 
     for (registry_version, has_revision, evidence), expected in EXPECTED.items():
-        if has_revision and evidence in ("pinned", "inferred_single_revision", "operator_resolved", None, "unrecognized"):
-            mapping_revision_id = revision
-            contract_evidence = evidence if evidence in ("pinned", "inferred_single_revision", "operator_resolved") else None
-        else:
-            mapping_revision_id = None
-            contract_evidence = None
+        mapping_revision_id = revision if has_revision else None
+        contract_evidence = evidence if (has_revision and evidence in ("pinned", "inferred_single_revision", "operator_resolved")) else None
         row = TelemetryReading(
             id=uuid.uuid4(), collector_id=collector.id, integration_id=integration.id,
             mapping_id=mapping.id, external_identifier="sensor", series_key="g7", dedup_key=uuid.uuid4().hex,
