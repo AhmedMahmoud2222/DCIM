@@ -4,7 +4,8 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import literal, select
+from sqlalchemy.sql import visitors
 
 from app.api.v1.telemetry import reading_provenance_expression, reading_provenance_status
 from app.domain.integration.models import Collector, Integration
@@ -91,14 +92,22 @@ async def test_provenance_python_sql_parity_postgres(db_session):
         py_val = reading_provenance_status(row)
         assert py_val == expected, (row.id, py_val, expected)
         seen.add((registry_version, has_revision, evidence))
-        # For constraint-valid persisted states, additionally verify SQL parity.
-        if (has_revision and evidence in ("pinned", "inferred_single_revision", "operator_resolved", None, "unrecognized")) or (
-            not has_revision and evidence is None
-        ):
-            db_session.add(row)
-            await db_session.flush()
-            sql_val = await db_session.scalar(select(reading_provenance_expression()).where(TelemetryReading.id == row.id))
-            assert sql_val == expected, (row.id, sql_val, expected)
-            await db_session.delete(row)
-            await db_session.flush()
+        # Evaluate the actual production SQL CASE expression over literal inputs so
+        # NULL registry semantics are preserved without persisting ORM-defaulted rows.
+        values = {
+            "registry_version": registry_version,
+            "mapping_revision_id": str(mapping_revision_id) if mapping_revision_id else None,
+            "contract_evidence": evidence,
+        }
+        expr = visitors.replacement_traverse(
+            reading_provenance_expression(),
+            {},
+            lambda node, _values=values: (
+                literal(_values[node.name])
+                if getattr(node, "table", None) is TelemetryReading.__table__ and getattr(node, "name", None) in _values
+                else None
+            ),
+        )
+        sql_val = (await db_session.execute(select(expr))).scalar_one()
+        assert sql_val == expected, (sql_val, expected)
     assert seen == set(EXPECTED.keys())
