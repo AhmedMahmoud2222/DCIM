@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.application.access_preflight import write_report_file
+from app.application.access_preflight import _discard_partial, write_report_file
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "sec_arch_02_preflight.py"
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes are not enforced on Windows")
@@ -54,6 +54,64 @@ def test_symlink_target_is_refused_and_not_written_through(tmp_path):
     assert victim.read_text(encoding="utf-8") == "keep"
 
 
+class _PartialWriteHandle:
+    """Real handle that flushes half the payload to the file, then fails like a full disk."""
+
+    def __init__(self, handle):
+        self._handle = handle
+
+    def write(self, data):
+        self._handle.write(data[: max(1, len(data) // 2)])
+        raise OSError("no space left on device")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self._handle.close()
+        return False
+
+
+def test_partial_write_failure_leaves_no_partial_report(tmp_path, monkeypatch):
+    target = tmp_path / "report.json"
+    real_fdopen = os.fdopen
+    monkeypatch.setattr(os, "fdopen", lambda fd, *args, **kwargs: _PartialWriteHandle(real_fdopen(fd, *args, **kwargs)))
+    with pytest.raises(OSError, match="no space left on device"):
+        write_report_file(target, "secret" * 512)
+    assert not target.exists()
+
+
+def test_descriptor_wrap_failure_removes_the_created_file(tmp_path, monkeypatch):
+    target = tmp_path / "report.json"
+
+    def broken_fdopen(fd, *args, **kwargs):
+        raise OSError("cannot wrap descriptor")
+
+    monkeypatch.setattr(os, "fdopen", broken_fdopen)
+    with pytest.raises(OSError, match="cannot wrap descriptor"):
+        write_report_file(target, "{}\n")
+    assert not target.exists()
+
+
+def test_cleanup_never_unlinks_a_path_swapped_for_another_file(tmp_path):
+    target = tmp_path / "report.json"
+    target.write_text("partial report", encoding="utf-8")
+    stale_identity = (os.stat(target).st_dev, os.stat(target).st_ino)
+    target.unlink()
+    target.write_text("unrelated file created meanwhile", encoding="utf-8")
+    _discard_partial(target, stale_identity)
+    assert target.read_text(encoding="utf-8") == "unrelated file created meanwhile"
+    current = os.stat(target)
+    _discard_partial(target, (current.st_dev, current.st_ino))
+    assert not target.exists()
+
+
+def test_report_filename_is_gitignored():
+    root = Path(__file__).resolve().parents[3]
+    patterns = {line.strip() for line in (root / ".gitignore").read_text(encoding="utf-8").splitlines()}
+    assert "sec-arch-02-preflight*.json" in patterns
+
+
 def test_cli_failure_prints_only_the_exception_class(monkeypatch, capsys, tmp_path):
     module = _load_script()
 
@@ -81,3 +139,24 @@ def test_stdout_mode_warns_on_stderr_and_keeps_report_on_stdout(monkeypatch, cap
     captured = capsys.readouterr()
     assert "confidential" in captured.err
     assert '"read_only": true' in captured.out
+
+
+def test_cli_write_failure_is_sanitized_and_leaves_no_partial_report(monkeypatch, capsys, tmp_path):
+    """Filesystem failures during --output print only the class name and clean up."""
+    module = _load_script()
+    target = tmp_path / "report.json"
+
+    async def fake():
+        return {"read_only": True}
+
+    def broken_fdopen(fd, *args, **kwargs):
+        raise PermissionError("denied: C:\\Users\\operator\\secret\\path")
+
+    monkeypatch.setattr(module, "report", fake)
+    monkeypatch.setattr(os, "fdopen", broken_fdopen)
+    monkeypatch.setattr(sys, "argv", ["sec_arch_02_preflight.py", "--output", str(target)])
+    assert module.main() == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "preflight failed: PermissionError"
+    assert "secret" not in captured.err
+    assert not target.exists()

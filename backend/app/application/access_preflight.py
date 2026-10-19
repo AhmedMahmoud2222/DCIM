@@ -10,17 +10,53 @@ from app.application.access_control import AccessScope, is_scope_independent, lo
 from app.domain.auth.models import User
 
 
+def _discard_partial(path: Path, identity: tuple[int, int]) -> None:
+    """Remove a report this call created but failed to write completely.
+
+    The identity check (device + inode of the file ``os.open`` created) refuses to unlink
+    a path that was swapped for a different file while we held it, so failure cleanup can
+    never delete data we no longer own. Unlink failures are swallowed: the original write
+    error is what the operator needs to see.
+    """
+    try:
+        stat_result = os.stat(path, follow_symlinks=False)
+        if (stat_result.st_dev, stat_result.st_ino) != identity:
+            return
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def write_report_file(path: Path, payload: str) -> None:
     """Create the report owner-only (0600), failing if the target already exists or is a link.
 
     O_EXCL refuses an existing file or symlink, so a report is never written through a
     planted link or into a file whose permissions are looser than intended. POSIX modes
     are not enforced by Windows; there, rely on the directory's ACL (see the runbook).
+
+    Every failure after creation (descriptor wrap, partial write, flush on close) removes
+    the incomplete file instead of leaving access-control fragments on disk for the next
+    run to refuse with a confusing FileExistsError.
     """
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(payload)
+    stat_result = os.fstat(descriptor)
+    identity = (stat_result.st_dev, stat_result.st_ino)
+    try:
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+    except BaseException:
+        try:
+            os.close(descriptor)  # fdopen failed before taking ownership
+        except OSError:
+            pass
+        _discard_partial(path, identity)
+        raise
+    try:
+        with handle:
+            handle.write(payload)
+    except BaseException:
+        _discard_partial(path, identity)
+        raise
 
 
 def scope_record(scope: AccessScope) -> dict:
