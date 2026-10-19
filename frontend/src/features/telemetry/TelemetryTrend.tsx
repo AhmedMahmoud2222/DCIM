@@ -1,8 +1,6 @@
 import { TelemetryReading } from "@/features/telemetry/api";
 import { provenanceLabel, groupHistoryPoints } from "@/features/telemetry/provenanceHelpers";
 
-export { provenanceLabel, groupHistoryPoints };
-
 function GroupTrend({ points }: { points: TelemetryReading[] }) {
   if (points.length < 2) return <p className="text-xs text-slate-400">One history point; no trend line.</p>;
   const values = points.map((point) => point.presentation_value);
