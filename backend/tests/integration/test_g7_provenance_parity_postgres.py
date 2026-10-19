@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import literal, select
+from sqlalchemy import String, Uuid, literal, select
 from sqlalchemy.sql import visitors
 
 from app.api.v1.telemetry import reading_provenance_expression, reading_provenance_status
@@ -94,6 +94,7 @@ async def test_provenance_python_sql_parity_postgres(db_session):
         seen.add((registry_version, has_revision, evidence))
         # Evaluate the actual production SQL CASE expression over literal inputs so
         # NULL registry semantics are preserved without persisting ORM-defaulted rows.
+        subs: list[str] = []
         values = {
             "registry_version": registry_version,
             "mapping_revision_id": str(mapping_revision_id) if mapping_revision_id else None,
@@ -102,12 +103,14 @@ async def test_provenance_python_sql_parity_postgres(db_session):
         expr = visitors.replacement_traverse(
             reading_provenance_expression(),
             {},
-            lambda node, _values=values: (
-                literal(_values[node.name])
+            lambda node, _values=values, _subs=subs: (
+                _subs.append(node.name) or literal(_values[node.name], String if node.name != "mapping_revision_id" else Uuid)
                 if getattr(node, "table", None) is TelemetryReading.__table__ and getattr(node, "name", None) in _values
                 else None
             ),
         )
+        # Fail closed if any of the three production columns were not substituted.
+        assert set(subs) == set(values), subs
         sql_val = (await db_session.execute(select(expr))).scalar_one()
         assert sql_val == expected, (sql_val, expected)
     assert seen == set(EXPECTED.keys())
