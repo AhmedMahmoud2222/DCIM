@@ -3,11 +3,11 @@ real PostgreSQL.
 
 Every test hits the HTTP boundary through `client` with real `make_user`/`auth_headers`
 principals (this repo's `test_catalog_designer_lifecycle.py` convention) - no mocked
-persistence, no mocked authorization. PDU-category models are seeded through the ORM
-because `POST /catalog/models` still rejects `category='pdu'` by design (the Phase 1 scope
-limitation Issue #150 documents - model creation/publish integration is a later milestone);
-rack models go through the real designer endpoints so existing catalog behavior is
-exercised alongside the new `/pdu` sub-resource."""
+persistence, no mocked authorization. PDU-category models here are seeded through the ORM
+for fixture-scope reasons (the M3 suite `test_pdu_catalog_publish.py` covers the real
+`POST /catalog/models` path with `category='pdu'`); rack models go through the real
+designer endpoints so existing catalog behavior is exercised alongside the new `/pdu`
+sub-resource."""
 
 import uuid
 
