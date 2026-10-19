@@ -24,10 +24,6 @@ async def test_provenance_python_sql_parity_postgres(db_session):
     revision_states = [None, uuid.uuid4()]
     evidence_states = [None, "pinned", "inferred_single_revision", "operator_resolved", "legacy_unmapped"]
 
-    expected = {
-        (None, None, None): None,
-    }
-
     for registry_version in registry_states:
         for mapping_revision_id in revision_states:
             for evidence in evidence_states:

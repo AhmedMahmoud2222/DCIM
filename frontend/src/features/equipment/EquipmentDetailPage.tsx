@@ -14,7 +14,8 @@ import {
   getLatestTelemetry,
   getTelemetryHistory,
 } from "@/features/telemetry/api";
-import { provenanceLabel, TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
+import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
+import { provenanceLabel } from "@/features/telemetry/provenanceHelpers";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
 

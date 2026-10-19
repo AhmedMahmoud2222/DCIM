@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { TelemetryReading } from "@/features/telemetry/api";
-import { groupHistoryPoints, TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
+import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
+import { groupHistoryPoints } from "@/features/telemetry/provenanceHelpers";
 
 function point(id: string, value: number, unit: string): TelemetryReading {
   return {
