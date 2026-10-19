@@ -522,7 +522,7 @@ export function PowerTopologyPage() {
                     ))}
                   </div>
                 </div>
-                <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
+                <div className="rounded-sm border border-slate-800 bg-slate-900 p-4" data-testid="power-downstream">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Downstream (loads)</h3>
                   <div className="space-y-1">
                     {downstreamQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">Nothing connected downstream.</p>}
