@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.api.v1.telemetry import reading_provenance_expression, reading_provenance_status
 from app.domain.integration.models import Collector, Integration
-from app.domain.telemetry.models import TelemetryReading
+from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
 
 
 @pytest.mark.asyncio
@@ -19,24 +19,31 @@ async def test_provenance_python_sql_parity_postgres(db_session):
                               config={}, poll_interval_seconds=300)
     db_session.add_all([collector, integration])
     await db_session.flush()
+    mapping = IntegrationMetricMapping(id=uuid.uuid4(), integration_id=integration.id, source_identifier="temp",
+                                       canonical_metric="temperature_c", unit="degC", scale=1, registry_version="1")
+    db_session.add(mapping)
+    await db_session.flush()
 
-    registry_states = [None, "1"]
-    revision_states = [None, uuid.uuid4()]
-    evidence_states = [None, "pinned", "inferred_single_revision", "operator_resolved", "legacy_unmapped"]
-
-    for registry_version in registry_states:
-        for mapping_revision_id in revision_states:
-            for evidence in evidence_states:
-                row = TelemetryReading(
-                    id=uuid.uuid4(), collector_id=collector.id, integration_id=integration.id,
-                    mapping_id=None, external_identifier="sensor", series_key="g7", dedup_key=uuid.uuid4().hex,
-                    metric="temperature_c", unit="degC", value=1, raw_value=1, raw_unit="degC",
-                    raw_value_text="1", source_scale=1, registry_version=registry_version,
-                    mapping_revision_id=mapping_revision_id if mapping_revision_id and evidence else None,
-                    contract_evidence=evidence if mapping_revision_id else None,
-                    occurred_at=now, received_at=now, attributes={},
-                )
-                db_session.add(row)
+    revision = mapping.current_revision_id
+    cases = [
+        (None, None, None),
+        (revision, "pinned", "1"),
+        (revision, "inferred_single_revision", "1"),
+        (revision, "operator_resolved", "1"),
+        (revision, None, "1"),
+        (None, "pinned", "1"),
+        (revision, "pinned", None),
+    ]
+    for mapping_revision_id, evidence, registry_version in cases:
+        row = TelemetryReading(
+            id=uuid.uuid4(), collector_id=collector.id, integration_id=integration.id,
+            mapping_id=mapping.id, external_identifier="sensor", series_key="g7", dedup_key=uuid.uuid4().hex,
+            metric="temperature_c", unit="degC", value=1, raw_value=1, raw_unit="degC",
+            raw_value_text="1", source_scale=1, registry_version=registry_version,
+            mapping_revision_id=mapping_revision_id, contract_evidence=evidence,
+            occurred_at=now, received_at=now, attributes={},
+        )
+        db_session.add(row)
     await db_session.flush()
     rows = (await db_session.execute(select(TelemetryReading))).scalars().all()
     for row in rows:
