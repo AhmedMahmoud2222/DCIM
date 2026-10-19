@@ -96,9 +96,17 @@ def test_descriptor_wrap_failure_removes_the_created_file(tmp_path, monkeypatch)
 def test_cleanup_never_unlinks_a_path_swapped_for_another_file(tmp_path):
     target = tmp_path / "report.json"
     target.write_text("partial report", encoding="utf-8")
-    stale_identity = (os.stat(target).st_dev, os.stat(target).st_ino)
-    target.unlink()
-    target.write_text("unrelated file created meanwhile", encoding="utf-8")
+    stale = os.stat(target)
+    stale_identity = (stale.st_dev, stale.st_ino)
+    # Build the replacement beside the target so both inodes exist at once and must differ.
+    # Unlinking first lets the filesystem hand the freed inode to the new file, which would
+    # make the swap indistinguishable from the original and defeat the guard under test.
+    decoy = tmp_path / "decoy.json"
+    decoy.write_text("unrelated file created meanwhile", encoding="utf-8")
+    decoy_stat = os.stat(decoy)
+    if (decoy_stat.st_dev, decoy_stat.st_ino) == stale_identity:
+        pytest.skip("filesystem does not expose distinct inodes")
+    os.replace(decoy, target)
     _discard_partial(target, stale_identity)
     assert target.read_text(encoding="utf-8") == "unrelated file created meanwhile"
     current = os.stat(target)
