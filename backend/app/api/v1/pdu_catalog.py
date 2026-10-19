@@ -9,10 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.v1.catalog_designer import _request_ids, write_audit_log, write_outbox_event
+from app.application.concurrency import require_if_match
 from app.application.pdu_catalog.draft_service import get_pdu_draft, update_pdu_draft
 from app.application.rbac import AuthContext, require_catalog_administrator, require_permission
 from app.core.errors import ApiError
-from app.domain.catalog.designer_models import CatalogModelRevision, PDUOutletTemplate
+from app.domain.catalog.designer_models import PDUOutletTemplate
 
 router = APIRouter(prefix="/catalog/revisions", tags=["pdu-catalog"])
 
@@ -114,15 +115,13 @@ async def update_pdu_draft_endpoint(
     request: Request,
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
-    if_match: int | None = None,
+    if_match_version: int = Depends(require_if_match),
 ) -> PDUDraftOut:
-    if if_match is None:
-        raise ApiError(status_code=428, title="Precondition Required", detail="If-Match header is required")
     try:
         rev, outlets = await update_pdu_draft(
             db,
             revision_id=revision_id,
-            if_match_version=if_match,
+            if_match_version=if_match_version,
             draft_updates={
                 "pdu_input_voltage_v": body.pdu_input_voltage_v,
                 "pdu_input_current_a": body.pdu_input_current_a,
@@ -133,7 +132,7 @@ async def update_pdu_draft_endpoint(
             actor_user_id=ctx.user.id,
         )
     except ValueError as e:
-        raise ApiError(status_code=422, title="Validation Failed", detail=str(e))
+        raise ApiError(status_code=422, title="Validation Failed", detail=str(e)) from e
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
         db,

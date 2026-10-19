@@ -1,6 +1,4 @@
-import pytest
-
-from app.application.pdu_catalog.validators import validate_pdu_revision, ValidationSummary
+from app.application.pdu_catalog.validators import validate_pdu_revision
 
 
 def test_valid_pdu():

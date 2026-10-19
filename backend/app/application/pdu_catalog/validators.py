@@ -50,7 +50,9 @@ def validate_pdu_revision(draft: dict[str, Any], outlets: list[dict[str, Any]]) 
         errors.append(ValidationIssue(field="pdu_input_current_a", code="invalid_current", message="Input current must be > 0."))
 
     if pdu_phase is not None and pdu_phase not in PDU_PHASES_ALLOWED:
-        errors.append(ValidationIssue(field="pdu_phase", code="invalid_phase", message=f"Phase must be one of {PDU_PHASES_ALLOWED}."))
+        errors.append(
+            ValidationIssue(field="pdu_phase", code="invalid_phase", message=f"Phase must be one of {PDU_PHASES_ALLOWED}.")
+        )
 
     outlet_numbers = []
     for i, o in enumerate(outlets):
@@ -69,15 +71,21 @@ def validate_pdu_revision(draft: dict[str, Any], outlets: list[dict[str, Any]]) 
         else:
             outlet_numbers.append(outlet_number)
         if outlet_type is not None and outlet_type not in PDU_OUTLET_TYPES_ALLOWED:
-            errors.append(ValidationIssue(field=f"outlets[{i}].outlet_type", code="invalid_outlet_type", message="Invalid outlet type"))
+            errors.append(
+                ValidationIssue(field=f"outlets[{i}].outlet_type", code="invalid_outlet_type", message="Invalid outlet type")
+            )
         if phase is not None and phase not in PDU_PHASES_ALLOWED:
             errors.append(ValidationIssue(field=f"outlets[{i}].phase", code="invalid_phase", message="Invalid phase"))
         if side not in PDU_SIDES_ALLOWED:
             errors.append(ValidationIssue(field=f"outlets[{i}].side", code="invalid_side", message="Invalid side"))
         if rated_voltage is not None and rated_voltage < 0:
-            errors.append(ValidationIssue(field=f"outlets[{i}].rated_voltage_v", code="invalid_voltage", message="Invalid voltage"))
+            errors.append(
+                ValidationIssue(field=f"outlets[{i}].rated_voltage_v", code="invalid_voltage", message="Invalid voltage")
+            )
         if rated_current is not None and rated_current <= 0:
-            errors.append(ValidationIssue(field=f"outlets[{i}].rated_current_a", code="invalid_current", message="Invalid current"))
+            errors.append(
+                ValidationIssue(field=f"outlets[{i}].rated_current_a", code="invalid_current", message="Invalid current")
+            )
         try:
             if int(outlet_count) <= 0:
                 errors.append(ValidationIssue(field=f"outlets[{i}].outlet_count", code="invalid_count", message="count > 0"))
@@ -87,13 +95,23 @@ def validate_pdu_revision(draft: dict[str, Any], outlets: list[dict[str, Any]]) 
     seen = set()
     for num in outlet_numbers:
         if num in seen:
-            errors.append(ValidationIssue(field="outlets", code="duplicate_outlet_number", message=f"Duplicate outlet number {num}"))
+            errors.append(
+                ValidationIssue(field="outlets", code="duplicate_outlet_number", message=f"Duplicate outlet number {num}")
+            )
             break
         seen.add(num)
 
     if pdu_mouting is not None and pdu_mouting not in PDU_MOUNTING_ORIENTATIONS_ALLOWED:
-        errors.append(ValidationIssue(field="pdu_mounting_orientation", code="invalid_mounting", message="Invalid mounting orientation"))
+        errors.append(
+            ValidationIssue(
+                field="pdu_mounting_orientation", code="invalid_mounting", message="Invalid mounting orientation"
+            )
+        )
     if mounting is not None and mounting not in PDU_MOUNTING_ORIENTATIONS_ALLOWED:
-        errors.append(ValidationIssue(field="mounting_orientation", code="invalid_mounting", message="Invalid mounting orientation"))
+        errors.append(
+            ValidationIssue(
+                field="mounting_orientation", code="invalid_mounting", message="Invalid mounting orientation"
+            )
+        )
 
     return ValidationSummary(valid=not errors, errors=errors, warnings=warnings)

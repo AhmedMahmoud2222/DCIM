@@ -9,9 +9,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.catalog_designer_service import lock_draft_revision_for_edit
 from app.core.errors import ConflictError, NotFoundError
-from app.domain.catalog.designer_models import CatalogModelRevision, PDUOutletTemplate
+from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision, PDUOutletTemplate
 
 from .validators import validate_pdu_revision
+
+
+async def _require_pdu_revision(db: AsyncSession, *, revision_id: uuid.UUID) -> CatalogModelRevision:
+    """Load a revision and reject anything that is not a PDU-category revision.
+
+    The `/catalog/revisions/{id}/pdu` sub-resource only exists for `category == 'pdu'`
+    models - mirroring `equipment_instantiation_service`'s category gate, but as a 404
+    (no such representation) rather than a 422, so a rack/equipment revision id cannot be
+    probed, read or mutated through the PDU endpoint at all."""
+    revision = await db.get(CatalogModelRevision, revision_id)
+    if revision is None:
+        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
+    model = await db.get(CatalogModel, revision.catalog_model_id)
+    if model is None or model.category != "pdu":
+        raise NotFoundError(
+            f"CatalogModelRevision {revision_id} has no PDU representation "
+            "(only revisions of 'pdu' category models expose the /pdu sub-resource)."
+        )
+    return revision
 
 
 async def get_pdu_draft(
@@ -19,9 +38,7 @@ async def get_pdu_draft(
     *,
     revision_id: uuid.UUID,
 ) -> tuple[CatalogModelRevision, list[PDUOutletTemplate]]:
-    revision = await db.get(CatalogModelRevision, revision_id)
-    if revision is None:
-        raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
+    revision = await _require_pdu_revision(db, revision_id=revision_id)
     if revision.lifecycle_status != "draft":
         raise ConflictError(detail="This revision is published and immutable.")
     outlets = (await db.execute(
@@ -41,6 +58,9 @@ async def update_pdu_draft(
     outlets: list[dict[str, Any]] | None = None,
     actor_user_id: uuid.UUID | None = None,
 ) -> tuple[CatalogModelRevision, list[PDUOutletTemplate]]:
+    # Category gate first: a non-PDU revision must never take the draft row lock or the
+    # optimistic-concurrency path below - it 404s before any If-Match comparison happens.
+    await _require_pdu_revision(db, revision_id=revision_id)
     revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
     if draft_updates:
         for k, v in draft_updates.items():
@@ -49,7 +69,7 @@ async def update_pdu_draft(
     # validate before touching outlet templates
     outlets_in = outlets or []
     s = validate_pdu_revision(
-        {k: getattr(revision, k) for k in ["pdu_input_voltage_v","pdu_input_current_a","pdu_phase","mounting_orientation","pdu_mounting_orientation"]},
+        {k: getattr(revision, k) for k in ["pdu_input_voltage_v", "pdu_input_current_a", "pdu_phase", "mounting_orientation"]},
         outlets_in,
     )
     if not s.valid:
