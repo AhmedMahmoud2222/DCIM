@@ -33,6 +33,10 @@ class AlarmRule(Base, UUIDPkMixin, TimestampMixin):
     registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default=REGISTRY_VERSION)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    unit_resolved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("app_user.id", ondelete="SET NULL"))
+    unit_resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    unit_resolution_reason: Mapped[str | None] = mapped_column(String(2048))
+    blocked_notified_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
 
 class Alarm(Base, UUIDPkMixin):
