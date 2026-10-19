@@ -13,11 +13,13 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.access_control import UNRESTRICTED, AccessScope, equipment_visible_clause, rack_visible_clause
 from app.application.power_capacity import equipment_power_summary
 from app.application.power_protection import inlet_path_status
 from app.application.thermal.environment import INVALID, MEASURED_FRESH, classify_reading
@@ -28,7 +30,7 @@ from app.domain.network.discovery_models import DiscoveredNeighbor
 from app.domain.physical.ports import EquipmentPort
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import METRIC_REGISTRY
+from app.domain.telemetry.registry import METRIC_REGISTRY, convert_stored_canonical
 
 MAX_OVERLAY_ASSETS = 500
 ENVIRONMENT_METRICS = ("temperature_c", "humidity_percent")
@@ -47,16 +49,17 @@ class RoomAssets:
         return sorted(set(ids) | set(self.floor_equipment_ids), key=str)
 
 
-async def load_room_assets(db: AsyncSession, room_id: uuid.UUID) -> RoomAssets:
+async def load_room_assets(db: AsyncSession, room_id: uuid.UUID, scope: AccessScope = UNRESTRICTED) -> RoomAssets:
     rack_ids = list(
-        (await db.execute(select(RackPlacement.rack_id).where(RackPlacement.room_id == room_id, RackPlacement.effective_to.is_(None)))).scalars()
+        (await db.execute(select(RackPlacement.rack_id).where(RackPlacement.room_id == room_id, RackPlacement.effective_to.is_(None), rack_visible_clause(scope, RackPlacement.rack_id)))).scalars()
     )
     by_rack: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
     floor: list[uuid.UUID] = []
     rows = (
         await db.execute(
             select(EquipmentPlacement.equipment_id, EquipmentPlacement.rack_id, EquipmentPlacement.placement_type).where(
-                EquipmentPlacement.room_id == room_id, EquipmentPlacement.effective_to.is_(None)
+                EquipmentPlacement.room_id == room_id, EquipmentPlacement.effective_to.is_(None),
+                equipment_visible_clause(scope, EquipmentPlacement.equipment_id),
             )
         )
     ).all()
@@ -123,13 +126,16 @@ async def power_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str, Any]:
     return {"source": "power_topology", "items": [*racks, *items.values()], "truncated": len(assets.all_equipment_ids) > MAX_OVERLAY_ASSETS}
 
 
-async def network_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str, Any]:
+async def network_overlay(db: AsyncSession, assets: RoomAssets, scope: AccessScope = UNRESTRICTED) -> dict[str, Any]:
     equipment_ids = assets.all_equipment_ids[:MAX_OVERLAY_ASSETS]
     per_equipment: dict[uuid.UUID, dict[str, Any]] = {
         e: {"installed": 0, "planned": 0, "cable_ids": [], "peers": set()} for e in equipment_ids
     }
     discovered: dict[uuid.UUID, int] = defaultdict(int)
     if equipment_ids:
+        visible_peers = None if scope.unrestricted else set((await db.execute(
+            select(EquipmentPort.equipment_id).where(equipment_visible_clause(scope, EquipmentPort.equipment_id))
+        )).scalars())
         rows = (
             await db.execute(
                 select(Cable.id, Cable.label, Cable.status, EquipmentPort.equipment_id, CableEndpoint.end_label)
@@ -147,7 +153,10 @@ async def network_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str, Any
                     bucket = per_equipment[equipment_id]
                     bucket["installed" if status == "installed" else "planned"] += 1
                     bucket["cable_ids"].append(str(cable_id))
-                    bucket["peers"].update(str(other) for other, _ in endpoints if other != equipment_id)
+                    bucket["peers"].update(
+                        str(other) for other, _ in endpoints
+                        if other != equipment_id and (visible_peers is None or other in visible_peers)
+                    )
         neighbor_rows = (
             await db.execute(
                 select(EquipmentPort.equipment_id)
@@ -221,14 +230,23 @@ async def environment_overlay(db: AsyncSession, assets: RoomAssets) -> dict[str,
         freshness, age = classify_reading(reading.occurred_at, now, interval)
         fresh = freshness == MEASURED_FRESH
         # A stored unit that is not the metric's canonical unit is never reinterpreted: same rule as the thermal views.
-        unit_ok = reading.unit == METRIC_REGISTRY[metric].canonical_unit
+        try:
+            canonical_environment_value = convert_stored_canonical(
+                metric, Decimal(reading.value), reading.unit, reading.registry_version,
+            )
+            unit_ok = True
+        except ValueError:
+            canonical_environment_value = Decimal(str(reading.value))
+            unit_ok = False
         if not unit_ok:
             freshness, fresh = INVALID, False
         quality = "invalid" if freshness == INVALID else ("measured" if fresh else "stale")
         items.append(
             {
                 "asset_id": str(asset_id), "asset_kind": "rack" if asset_id in assets.rack_ids else "equipment", "metric": metric,
-                "value": float(reading.value), "unit": reading.unit, "occurred_at": reading.occurred_at.isoformat(),
+                "value": float(canonical_environment_value),
+                "unit": METRIC_REGISTRY[metric].canonical_unit if unit_ok else reading.unit,
+                "occurred_at": reading.occurred_at.isoformat(),
                 "age_seconds": age, "expected_poll_interval_seconds": interval,
                 "data_quality": quality,
                 "state": "critical" if asset_id in alarmed else ("normal" if fresh else "warning"),

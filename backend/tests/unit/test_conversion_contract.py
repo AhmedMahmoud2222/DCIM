@@ -1,7 +1,9 @@
 """Issue #128 / G1: the conversion contract hash is deterministic and detects any change of meaning."""
 
 import hashlib
+from dataclasses import replace
 from decimal import Decimal
+from types import MappingProxyType
 
 import pytest
 
@@ -63,20 +65,20 @@ def test_every_input_changes_the_hash(other):
 
 def test_a_pinned_revision_cannot_silently_drift_when_the_registry_changes(monkeypatch):
     stamped = conversion_contract_hash(*FAHRENHEIT)
-    monkeypatch.setitem(
-        registry.UNITS, "degF", registry.UnitDefinition("degF", "temperature", Decimal("0.5555556"), Decimal("-32"))
-    )
+    original = registry.registry_snapshot("1")
+    with pytest.raises(TypeError):
+        registry.UNITS["degF"] = replace(original.units["degF"], scale=Decimal("0.5555556"))
+    for symbol, field, value in (("degF", "scale", Decimal("0.5555556")), ("degC", "offset", Decimal("1"))):
+        units = dict(original.units)
+        units[symbol] = replace(units[symbol], **{field: value})
+        drifted = registry.make_snapshot("1", units, original.aliases, original.metrics)
+        monkeypatch.setattr(registry, "REGISTRIES", MappingProxyType({"1": drifted}))
+        assert conversion_contract_hash(*FAHRENHEIT) != stamped
+    drifted = registry.make_snapshot("1", original.units, original.aliases, original.metrics, precision=Decimal("0.001"))
+    monkeypatch.setattr(registry, "REGISTRIES", MappingProxyType({"1": drifted}))
     assert conversion_contract_hash(*FAHRENHEIT) != stamped
-
     monkeypatch.undo()
     assert conversion_contract_hash(*FAHRENHEIT) == stamped
-
-    monkeypatch.setattr(registry, "PRECISION", Decimal("0.001"))
-    assert conversion_contract_hash(*FAHRENHEIT) != stamped
-
-    monkeypatch.undo()
-    monkeypatch.setitem(registry.UNITS, "degC", registry.UnitDefinition("degC", "temperature", Decimal("1"), Decimal("1")))
-    assert conversion_contract_hash(*FAHRENHEIT) != stamped
 
 
 def test_legacy_encoding_has_no_resolved_definitions_and_is_stable_for_unknown_units():

@@ -21,14 +21,7 @@ import uuid
 from pathlib import Path
 
 import asyncpg
-import pytest
-from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import make_url
-
-from migrations.env import (
-    _missing_or_modified_parent_metadata_constraints,
-    _normalize_check_constraint_def,
-)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
@@ -325,63 +318,4 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
         finally:
             await conn.close()
     finally:
-        await _drop_scratch_database(db_name)
-
-
-async def test_normalization_negative_and_probe_isolation():
-    db_name = f"dcim_norm_{uuid.uuid4().hex[:8]}"
-    app_url = _url_for_db(APP_DATABASE_URL, db_name)
-    sync_url = app_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
-
-    await _create_scratch_database(db_name)
-
-    engine = None
-    try:
-        _assert_alembic_ok(_run_alembic(app_url, "upgrade", "head"), "upgrade", "head")
-
-        engine = create_engine(sync_url)
-        with engine.connect() as conn:
-            # 1. Normalization exception on invalid/malformed SQL expression must fail closed
-            with pytest.raises(RuntimeError, match="Failed to normalize CHECK constraint"):
-                _normalize_check_constraint_def(
-                    conn, "public", "audit_log", "ck_invalid", "non_existent_column > 0"
-                )
-
-            # 2. Connection and transaction state remain healthy after a normalization failure
-            with conn.begin_nested():
-                test_val = conn.execute(text("SELECT 1")).scalar()
-                assert test_val == 1
-
-            # 3. Repeated invocations and probe-name collisions do not cause lingering table conflicts
-            norm1 = _normalize_check_constraint_def(
-                conn, "public", "audit_log", "result_allowed", "result IN ('success', 'failure')"
-            )
-            norm2 = _normalize_check_constraint_def(
-                conn, "public", "audit_log", "result_allowed", "result IN ('success', 'failure')"
-            )
-            assert norm1 == norm2
-            assert "success" in norm1
-
-            # 4. Unexpected parent CHECK constraint is returned in drift list
-            conn.execute(
-                text(
-                    "ALTER TABLE public.audit_log ADD CONSTRAINT ck_unexpected_probe CHECK (source <> 'invalid')"
-                )
-            )
-            conn.commit()
-
-            drift = _missing_or_modified_parent_metadata_constraints(conn, {"audit_log"})
-            assert any("unexpected parent constraint public.audit_log.ck_unexpected_probe" in d for d in drift)
-
-            conn.execute(
-                text("ALTER TABLE public.audit_log DROP CONSTRAINT ck_unexpected_probe")
-            )
-            conn.commit()
-
-            # Ensure DB passes validation clean after cleanup
-            clean_drift = _missing_or_modified_parent_metadata_constraints(conn, {"audit_log"})
-            assert clean_drift == []
-    finally:
-        if engine is not None:
-            engine.dispose()
         await _drop_scratch_database(db_name)

@@ -20,7 +20,7 @@ from sqlalchemy import DateTime, and_, cast, func, literal, select, text, union_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import AlarmUnitCompatibilityError
+from app.application.alarm_service import AlarmUnitCompatibilityError, lock_collector_batch_rules, lock_operator_hold_rules
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -50,6 +50,7 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.telemetry.aggregate_math import AggregateArithmeticError
 from app.domain.telemetry.mapping_models import TELEMETRY_PROTOCOLS, TELEMETRY_TARGET_TYPES, PortTelemetryBinding
+from app.domain.telemetry.metric_semantics import ValueOutOfRange
 from app.domain.telemetry.models import (
     CANONICAL_METRICS,
     DailyTelemetryAggregate,
@@ -64,13 +65,13 @@ from app.domain.telemetry.numeric import (
     InvalidTelemetryValue,
 )
 from app.domain.telemetry.registry import (
-    METRIC_REGISTRY,
     REGISTRY_VERSION,
     UnitDimensionMismatch,
     UnknownMetric,
     UnknownRegistryVersion,
     UnknownUnit,
     convert_to_presentation,
+    registry_snapshot,
     validate_metric_unit,
 )
 
@@ -183,6 +184,7 @@ class TelemetryHistoryOut(TelemetryOut):
 
 
 class MetricMappingIn(BaseModel):
+    registry_version: str = REGISTRY_VERSION
     integration_id: uuid.UUID
     managed_asset_id: uuid.UUID | None = None
     source_identifier: str = Field(max_length=255)
@@ -229,22 +231,33 @@ class MetricMappingOut(BaseModel):
 
 class MetricRegistryOut(BaseModel):
     version: str
-    metrics: dict[str, dict[str, str]]
+    metrics: dict[str, dict[str, object]]
 
 
 @router.get("/metric-registry", response_model=MetricRegistryOut)
-async def get_metric_registry(ctx=Depends(require_permission("telemetry:read"))) -> MetricRegistryOut:
-    return MetricRegistryOut(
-        version=REGISTRY_VERSION,
-        metrics={
-            key: {
-                "dimension": definition.dimension,
-                "canonical_unit": definition.canonical_unit,
-                "presentation_unit": definition.presentation_unit,
-            }
-            for key, definition in METRIC_REGISTRY.items()
-        },
-    )
+async def get_metric_registry(
+    version: str = "1", ctx=Depends(require_permission("telemetry:read")),
+) -> MetricRegistryOut:
+    try:
+        snapshot = registry_snapshot(version)
+    except UnknownRegistryVersion as error:
+        raise ApiError(status_code=422, title="Invalid registry version", detail=str(error)) from error
+    metrics: dict[str, dict[str, object]] = {}
+    for key, definition in snapshot.metrics.items():
+        fields: dict[str, object] = {
+            "dimension": definition.dimension,
+            "canonical_unit": definition.canonical_unit,
+            "presentation_unit": definition.presentation_unit,
+        }
+        if definition.semantics is not None:
+            policy = definition.semantics
+            fields.update(value_kind=policy.value_kind.value,
+                          min_canonical=exact_text(policy.min_canonical) if policy.min_canonical is not None else None,
+                          max_canonical=exact_text(policy.max_canonical) if policy.max_canonical is not None else None,
+                          allowed_source_units=policy.allowed_source_units,
+                          aggregations=policy.aggregations, rule_types=policy.rule_types)
+        metrics[key] = fields
+    return MetricRegistryOut(version=snapshot.version, metrics=metrics)
 
 
 async def exact_mapping_body(request: Request) -> MetricMappingIn:
@@ -283,10 +296,10 @@ async def create_metric_mapping(
     if body.canonical_metric not in CANONICAL_METRICS:
         raise ApiError(status_code=422, title="Invalid canonical metric", detail="Metric is not supported by the MVP catalog.")
     try:
-        validate_metric_unit(body.canonical_metric, body.unit)
+        validate_metric_unit(body.canonical_metric, body.unit, registry_version=body.registry_version)
     except UnknownUnit as exc:
         raise ApiError(status_code=422, title="Invalid source unit", detail=str(exc)) from exc
-    except (UnitDimensionMismatch, UnknownMetric) as exc:
+    except (UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as exc:
         raise ApiError(status_code=422, title="Metric/unit mismatch", detail=str(exc)) from exc
     if body.managed_asset_id is not None and await db.get(ManagedAsset, body.managed_asset_id) is None:
         raise ApiError(status_code=422, title="Invalid managed asset", detail="managed_asset_id does not exist.")
@@ -298,7 +311,7 @@ async def create_metric_mapping(
                 status_code=422, title="Metric not supported by sensor",
                 detail=f"A {sensor.sensor_kind} sensor can be mapped to {list(SENSOR_KIND_METRICS[sensor.sensor_kind])}.",
             )
-    mapping = IntegrationMetricMapping(id=uuid.uuid4(), registry_version=REGISTRY_VERSION, **body.model_dump())
+    mapping = IntegrationMetricMapping(id=uuid.uuid4(), **body.model_dump())
     db.add(mapping)
     await db.flush()
     await write_audit_log(
@@ -320,7 +333,7 @@ async def create_metric_mapping(
     )
     await db.commit()
     return MetricMappingOut(
-        id=mapping.id, registry_version=mapping.registry_version, current_revision_id=mapping.current_revision_id,
+        id=mapping.id, current_revision_id=mapping.current_revision_id,
         **{**body.model_dump(), "scale": float(body.scale)}, scale_decimal=exact_text(body.scale),
     )
 
@@ -359,6 +372,17 @@ async def ingest_collector_telemetry(
     body: TelemetryBatchIn,
 ) -> TelemetryBatchOut:
     """Per-record ACKs retain unacknowledged edge-queue records for retry."""
+    async with lock_collector_batch_rules(
+        db, collector_id=collector.id, integration_ids=list({record.integration_id for record in body.records}),
+    ) as eligible_integrations:
+        return await _ingest_prelocked_collector_telemetry(
+            db, collector=collector, body=body, eligible_integrations=eligible_integrations,
+        )
+
+
+async def _ingest_prelocked_collector_telemetry(
+    db: AsyncSession, *, collector: Collector, body: TelemetryBatchIn, eligible_integrations: frozenset[uuid.UUID],
+) -> TelemetryBatchOut:
     from app.application.collector_service import current_assignment
 
     results: list[TelemetryAck] = []
@@ -375,7 +399,7 @@ async def ingest_collector_telemetry(
     )
     for record in body.records:
         assignment = await current_assignment(db, record.integration_id)
-        if assignment is None or assignment.collector_id != collector.id:
+        if record.integration_id not in eligible_integrations or assignment is None or assignment.collector_id != collector.id:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="NOT_ASSIGNED"))
             continue
         try:
@@ -423,6 +447,8 @@ async def ingest_collector_telemetry(
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="MAPPING_REVISION_MISMATCH"))
         except ConversionContractDrift:
             results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="CONVERSION_CONTRACT_DRIFT"))
+        except ValueOutOfRange:
+            results.append(TelemetryAck(dedup_key=record.dedup_key, status="rejected", error="VALUE_OUT_OF_RANGE"))
         except InvalidTelemetryValue:
             # NaN/Infinity or a value (raw, scaled or canonical) outside NUMERIC(18, 8).
             # Deterministic per-record rejection: the savepoint already discarded this
@@ -506,8 +532,23 @@ async def resolve_contract_hold(
     This never edits a mapping or a revision; it only ingests the retained record with
     `contract_evidence = 'operator_resolved'` and records who decided and which revision was chosen.
     """
+    # Read identity without a hold lock, then establish the same rule-first hierarchy
+    # as collector batches. Taking the hold or aggregate first can deadlock a batch.
+    integration_id = (await db.execute(
+        select(TelemetryContractHold.integration_id).where(TelemetryContractHold.id == hold_id)
+    )).scalar_one_or_none()
+    if integration_id is None:
+        raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")
+    async with lock_operator_hold_rules(db, integration_id=integration_id):
+        return await _resolve_prelocked_contract_hold(hold_id, body, db, ctx)
+
+
+async def _resolve_prelocked_contract_hold(
+    hold_id: uuid.UUID, body: ContractHoldResolveIn, db: AsyncSession, ctx,
+) -> ContractHoldOut:
     hold = (
-        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update())
+        await db.execute(select(TelemetryContractHold).where(TelemetryContractHold.id == hold_id).with_for_update()
+            .execution_options(populate_existing=True))
     ).scalar_one_or_none()
     if hold is None:
         raise ApiError(status_code=404, title="Hold not found", detail="No such contract hold.")
@@ -532,8 +573,8 @@ async def resolve_contract_hold(
         ) from error
     except (UnknownMappingRevision, MappingRevisionMismatch, MetricMappingNotFound) as error:
         raise ApiError(status_code=422, title="Revision not valid for this hold", detail=str(error)) from error
-    except (InvalidTelemetryValue, AggregateArithmeticError, ConversionContractDrift, AlarmUnitCompatibilityError,
-            UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
+    except (InvalidTelemetryValue, ValueOutOfRange, AggregateArithmeticError, ConversionContractDrift,
+            AlarmUnitCompatibilityError, UnknownUnit, UnitDimensionMismatch, UnknownMetric, UnknownRegistryVersion) as error:
         raise ApiError(status_code=422, title="Record cannot be stored under that revision", detail=str(error)) from error
     hold.status = "resolved"
     hold.resolved_at = datetime.now(UTC)
