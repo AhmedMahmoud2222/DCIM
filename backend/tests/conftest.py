@@ -139,7 +139,8 @@ async def _clean_tables(db_engine, _admin_engine):
         # rows cascade) so later tests observe the original RBAC seed unchanged.
         await conn.execute(text("DELETE FROM role WHERE is_system = false"))
         # G4-R: policy and the ledger state row are not truncated (they are seeded by migrations); reset what tests change.
-        await conn.execute(text("UPDATE monitoring_policy SET late_replay_horizon_days = NULL, raw_retention_days = 365"))
+        await conn.execute(text("UPDATE monitoring_policy SET late_replay_horizon_days = NULL, raw_retention_days = 365, "
+                                "resolved_hold_retention_days = 365"))
         await conn.execute(text(
             "UPDATE telemetry_replay_ledger_state SET ledger_complete_since = '2020-01-01T00:00:00Z', "
             "last_pruned_at = NULL, last_pruned_count = NULL, pruning_begun_at = NULL"))
