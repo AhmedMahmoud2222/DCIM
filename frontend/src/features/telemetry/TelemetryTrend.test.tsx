@@ -86,3 +86,4 @@ it("never charts raw readings across different mapping revisions", () => {
   expect(screen.getByRole("img", { name: "Trend from 100 to 200 degC" })).toBeInTheDocument();
   expect(screen.queryByRole("img", { name: "Trend from 10 to 200 degC" })).not.toBeInTheDocument();
 });
+

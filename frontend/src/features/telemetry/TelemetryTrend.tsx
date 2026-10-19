@@ -31,3 +31,4 @@ export function TelemetryTrend({ points }: { points: TelemetryReading[] }) {
     </section>)}
   </div>;
 }
+
