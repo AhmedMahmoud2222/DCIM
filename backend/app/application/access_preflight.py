@@ -1,10 +1,26 @@
 """Read-only SEC-ARCH-02 compatibility report, never a legacy authorization mode."""
 
+import os
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import AccessScope, is_scope_independent, load_effective_access
 from app.domain.auth.models import User
+
+
+def write_report_file(path: Path, payload: str) -> None:
+    """Create the report owner-only (0600), failing if the target already exists or is a link.
+
+    O_EXCL refuses an existing file or symlink, so a report is never written through a
+    planted link or into a file whose permissions are looser than intended. POSIX modes
+    are not enforced by Windows; there, rely on the directory's ACL (see the runbook).
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(payload)
 
 
 def scope_record(scope: AccessScope) -> dict:
