@@ -10,6 +10,7 @@ edits, via the shared `parse_if_match` helper (F-M1 correction)."""
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
@@ -21,7 +22,17 @@ from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import check_version_match, lock_versioned_row, parse_if_match, require_if_match
+from app.application.idempotency import (
+    ClaimRef,
+    IdempotencyConflict,
+    IdempotencyStillProcessing,
+    complete_claim,
+    get_or_claim,
+    hash_request_body,
+    release_claim,
+)
 from app.application.outbox_service import write_outbox_event
+from app.application.pdu_instantiation_service import PDUInstantiationRejected, instantiate_pdu
 from app.application.power_capacity import (
     derive_node_capacity_exceptions,
     equipment_power_summary,
@@ -148,6 +159,103 @@ async def create_pdu(
     )
     await db.commit()
     return PowerNodeOut.model_validate(node)
+
+
+class PDUInstantiateIn(BaseModel):
+    asset_tag: str = Field(max_length=64)
+    name: str = Field(max_length=128)
+    catalog_model_revision_id: uuid.UUID
+    ip_address: str | None = Field(default=None, max_length=45)
+    protocol: Literal["snmp", "rest", "none"] = "none"
+
+
+class PDUInstantiateOut(PowerNodeOut):
+    catalog_model_revision_id: uuid.UUID
+    outlet_count: int
+    outlets: list[PowerNodeOut]
+
+
+@router.post("/pdus/instantiate", response_model=PDUInstantiateOut, status_code=201)
+async def instantiate_pdu_endpoint(
+    body: PDUInstantiateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ctx=Depends(require_permission("power:manage")),
+) -> PDUInstantiateOut:
+    """Issue #150 M4: create a physical PDU — `ManagedAsset(asset_type='pdu')` + the `pdu`
+    graph `PowerNode` + the `PDU` subtype + one `pdu_outlet` node/`PDUOutlet` pair per
+    published outlet template — in one transaction; see
+    app/application/pdu_instantiation_service.py for the full contract. Draft/retired/
+    non-pdu revisions are rejected with 409, matching catalog_designer_service.py's
+    ConflictError convention and POST /equipment/instantiate's own mapping.
+    `input_voltage`/`rated_current_a`/`outlet_count` come from the published revision,
+    never from the request body."""
+    request_hash = hash_request_body(body.model_dump(mode="json"))
+    claim = None
+    if idempotency_key is not None:
+        try:
+            outcome = await get_or_claim(
+                db, key=idempotency_key, endpoint="POST:/power/pdus/instantiate", request_hash=request_hash
+            )
+        except IdempotencyConflict as exc:
+            raise ApiError(
+                status_code=422, title="Idempotency Key Reused",
+                detail="This Idempotency-Key was already used with a different request body.",
+            ) from exc
+        except IdempotencyStillProcessing as exc:
+            raise ApiError(
+                status_code=503, title="Request Still Processing",
+                detail="An identical request with this Idempotency-Key is still being processed. Retry shortly.",
+            ) from exc
+        if outcome.cached is not None:
+            assert outcome.cached.response_body is not None
+            return PDUInstantiateOut(**outcome.cached.response_body)
+        claim = outcome.claim
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
+
+    try:
+        try:
+            node, pdu, outlet_nodes = await instantiate_pdu(
+                db,
+                asset_tag=body.asset_tag,
+                catalog_model_revision_id=body.catalog_model_revision_id,
+                name=body.name,
+                ip_address=body.ip_address,
+                protocol=body.protocol,
+            )
+        except PDUInstantiationRejected as exc:
+            raise ApiError(
+                status_code=409, title="Instantiation Rejected", detail=exc.detail,
+                type_="https://dcim.internal/errors/conflict",
+            ) from exc
+
+        request_id, correlation_id = _request_ids(request)
+        await write_audit_log(
+            db, actor_user_id=ctx.user.id, action="power.pdu.instantiate", entity_type="pdu", entity_id=pdu.id,
+            request_id=request_id, correlation_id=correlation_id,
+            after={"asset_tag": body.asset_tag, "catalog_model_revision_id": str(body.catalog_model_revision_id)},
+        )
+        await write_outbox_event(
+            db, event_type="PDUInstantiated", aggregate_type="pdu", aggregate_id=pdu.id,
+            payload={"catalog_model_revision_id": str(body.catalog_model_revision_id), "outlet_count": len(outlet_nodes)},
+            correlation_id=correlation_id,
+        )
+        out = PDUInstantiateOut(
+            **PowerNodeOut.model_validate(node).model_dump(),
+            catalog_model_revision_id=body.catalog_model_revision_id,
+            outlet_count=len(outlet_nodes),
+            outlets=[PowerNodeOut.model_validate(n) for n in outlet_nodes],
+        )
+        if claim is not None:
+            await complete_claim(db, claim, response_status=201, response_body=out.model_dump(mode="json"))
+        await db.commit()
+        return out
+    except Exception:
+        await db.rollback()
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
+        raise
 
 
 @router.post("/upses", response_model=PowerNodeOut, status_code=201)
