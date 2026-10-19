@@ -1,6 +1,6 @@
 """PostgreSQL parity: reading_provenance_status() vs reading_provenance_expression()."""
-from datetime import UTC, datetime
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -24,9 +24,9 @@ EXPECTED = {
     ("1", False, "operator_resolved"): "unverified_registry",
     ("1", False, "unrecognized"): "unverified_registry",
     (None, True, None): "unverified_legacy",
-    (None, True, "pinned"): "unverified_legacy",
-    (None, True, "inferred_single_revision"): "unverified_legacy",
-    (None, True, "operator_resolved"): "unverified_legacy",
+    (None, True, "pinned"): "pinned",
+    (None, True, "inferred_single_revision"): "inferred",
+    (None, True, "operator_resolved"): "operator_resolved",
     (None, True, "unrecognized"): "unverified_legacy",
     ("1", True, "pinned"): "pinned",
     ("1", True, "inferred_single_revision"): "inferred",
