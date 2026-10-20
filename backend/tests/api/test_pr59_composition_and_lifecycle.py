@@ -33,13 +33,20 @@ async def test_union_of_sites_and_racks_across_groups_and_all_beats_selected(cli
     ra1, ra2 = await _make_rack(client, admin, auth_headers, a["room"]), await _make_rack(client, admin, auth_headers, a["room"])
     rb = await _make_rack(client, admin, auth_headers, b["room"])
     g1 = await _group(client, admin, allow=DATA_PERMS, sites=[{"site_id": a["site"], "rack_scope": "selected", "rack_ids": [ra1]}])
-    g2 = await _group(client, admin, sites=[{"site_id": b["site"], "rack_scope": "selected", "rack_ids": [rb]}])
+    # Since SEC-ARCH-02 (#163/#170) a group's site/rack grant is bound to the permissions that
+    # same group grants: scopes union only across groups granting the same permission.
+    g2 = await _group(client, admin, allow=DATA_PERMS, sites=[{"site_id": b["site"], "rack_scope": "selected", "rack_ids": [rb]}])
     _, h = await _group_user(client, admin, [g1, g2])
     seen = {r["id"] for r in (await client.get("/api/v1/racks", headers=h)).json()["items"]}
     assert seen == {ra1, rb}
-    g3 = await _group(client, admin, sites=[{"site_id": a["site"], "rack_scope": "all"}])
+    g3 = await _group(client, admin, allow=DATA_PERMS, sites=[{"site_id": a["site"], "rack_scope": "all"}])
     user, h2 = await _group_user(client, admin, [g1, g3])
     assert {r["id"] for r in (await client.get("/api/v1/racks", headers=h2)).json()["items"]} == {ra1, ra2}
+    # Negative boundary: a group holding a site grant but no permission widens nothing.
+    g_nop_b = await _group(client, admin, sites=[{"site_id": b["site"], "rack_scope": "selected", "rack_ids": [rb]}])
+    g_nop_a = await _group(client, admin, sites=[{"site_id": a["site"], "rack_scope": "all"}])
+    _, h3 = await _group_user(client, admin, [g1, g_nop_b, g_nop_a])
+    assert {r["id"] for r in (await client.get("/api/v1/racks", headers=h3)).json()["items"]} == {ra1}
 
 
 async def test_group_deny_beats_allow_from_another_group_and_from_a_role(client, admin):
