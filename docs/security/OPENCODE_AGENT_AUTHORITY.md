@@ -1,23 +1,22 @@
-# OpenCode agent authority (v3.1)
+# OpenCode agent authority (v4.0)
 
-Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist), and `tests/deployment/test_opencode_*.py`. Delivered through PR #180.
+Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/` and `tests/deployment/mutation_check.py`. Delivered through PR #180.
 
-Status: implemented and unit-validated offline. Not live-validated. Not accepted: the independent review of this revision has not run. The previous head (`29740c6`) was rejected by Codex and is not evidence of anything.
+Status: implemented and tested locally, including against the real OpenCode 1.19.3 binary. Not run on GitHub-hosted runners with real secrets. Not accepted: independent review of this revision has not happened. Earlier heads (`29740c6`, `bc54f2e`) were rejected and are not evidence for this one.
 
-## Review disposition
+## Review disposition (second review)
 
 | Finding | Disposition | Where |
 | --- | --- | --- |
-| P1 generation success contract | Replaced the third-party action with `opencode run --format json` behind a guard. Publication needs exit 0, no timeout, all events parseable, no `error` event, and a final `step_finish` with reason `stop`. | `opencode_guard.py`, workflow `opencode` job |
-| P1 independent PR binding | Publisher refetches the issue or PR from GitHub and checks number, open and unmerged state, base and head repos, approved head branch, head SHA and branch tip before any write. | `bind_target` in `opencode_publish.py` |
-| P1 trusted baseline | Gate records the baseline before the agent runs. Trusted SHA, manifest SHA and live branch SHA must all agree. | `binding` in `opencode_gate.py`, `bind_target` |
-| P1 confidentiality boundary | Model input is the fixed preface plus the command text and files the agent reads from a sanitized copy. OS isolation: unprivileged user, loopback-only egress, key held by a proxy. | see "Input boundary" |
-| P1 model data terms | A model needs terms verified with evidence, owner approval for repository code, healthy status and a live catalog entry. All six ship disabled. | `blockers` in `opencode_router.py`, registry |
-| P2 token permissions | Generation job has `contents: read` only and no GitHub credentials in the agent's environment. Comments moved to trusted jobs. | workflow |
-| P2 failure recovery | Existing PR branches are updated only by non-forced fast-forward after the commit is verified on a staging branch. Residual state is reported as partial. | `publish` |
-| P2 concurrency | Concurrency applies only to jobs that run after authorization. | workflow |
-| P3 schema validation | Strict manifest schema, declared sizes checked against blobs, undeclared artifact files rejected. | `validate_manifest` |
-| Separation rule (added request) | Distinct reviewer model and session, read-only reviewer, evidence-based reviewer ranking, `REVIEW_BLOCKED`, commit-bound COMMENT review, staleness. | see "Implementer-reviewer separation" |
+| P1-1 proxy does not bind the model | One proxy per run, bound to the router's model. It validates method, exact path, headers and the JSON body (no duplicate keys, allow-listed fields, `model` equals the bound model) before the real key is attached. It refuses to start for a model that is unapproved, paid, disabled, unverified, unhealthy, or (for the reviewer) one that implemented. Rejections log code, method and a sanitized path only. | `opencode_proxy.py`, `test_opencode_sandbox.py`, `test_opencode_e2e.py` |
+| P1-2 reviewer filesystem | `/srv/ocreview` and `src` are root-owned (dirs 0555, files 0444/0555) with a read-only bind mount when the platform allows it. The agent user cannot rename, replace, delete, symlink or write. Effective permissions are probed as the reviewer UID before and after the run, plus an ownership-chain check and a byte digest. The implementation work tree sits under a root-owned parent for the same reason. | `opencode_fsisolate.py`, `test_opencode_runtime.py` |
+| P1-3 transcript validation | Lifecycle validator built from the real 1.19.3 event format: one session, strictly nested steps, matching message ids, ordered timestamps, only `tool-calls` then a final `stop`, no error event, exit 0, no timeout. Real fixtures captured from the 1.19.3 binary. | `opencode_guard.py`, `test_opencode_guard_fixtures.py` |
+| P2-1 final authorization | The PR and branch are refetched and every condition rechecked immediately before the update. | `check_pr_target`, `publish` |
+| P2-2 concurrency | The PR branch moves only by `git push --force-with-lease=REF:EXPECTED_SHA`, an exact-SHA compare-and-swap that a reset to an ancestor cannot satisfy. The REST ref update is gone. Tested against real bare repositories, including a server-side race. | `git_cas_push`, `test_opencode_runtime.py` |
+| P2-3 immutable review inputs | The gate records base and head SHAs. Diff, files and commits come from `compare/BASE...HEAD`. Results are bound to both SHAs and posted marked stale if either moved. Git-quoted paths are decoded. | `prepare_inputs`, `publish_main` |
+| P2-4 confidentiality | Whole-file classification with explicit limits: only valid UTF-8 text without NUL bytes, at most 1 MiB per file, 20,000 files and 100 MiB in total reaches the sandbox. Everything else is excluded; limits exceeded stop the run. | `classify_file`, `prepare` |
+| P2-5 publication recovery | After an ambiguous GitHub failure the real remote state is queried. Reports say "verified unchanged" only after a successful lookup, otherwise "partial". An evidence file is uploaded for manual recovery. Nothing is force-pushed or rewritten. | `publish`, `write_evidence` |
+| Real defects found while capturing fixtures | OpenCode hung offline on external plugin installs (fixed with `--pure`, `OPENCODE_PURE=1`). `OPENCODE_DISABLE_EXTERNAL_SKILLS` does not exist in 1.19.3 and did nothing (removed). OpenCode titles sessions with a different model over a different API unless `small_model` is set (set; the proxy blocks it regardless). A length-truncated run exits 0. | see "Validation" |
 
 ## Architecture
 
@@ -27,39 +26,67 @@ issue_comment (owner) -> gate ----------------------> opencode (sandboxed genera
                          fixes trusted baseline       API key held by a proxy, not the agent       signed commit + Draft PR
 ```
 
-- `gate` checks the commenter, parses the command exactly, fetches PR metadata and outputs the trusted target: `kind`, `number`, `authorized_sha`, `head_ref`. For issues the baseline is the default-branch commit that holds the workflow (`GITHUB_SHA`); for PRs it is the PR head SHA at authorization time.
+- `gate` checks the commenter, parses the command exactly, fetches PR metadata and outputs the trusted target: `kind`, `number`, `authorized_sha`, `base_sha` (PRs), `head_ref`. For issues the baseline is the default-branch commit that holds the workflow (`GITHUB_SHA`); for PRs it is the PR head SHA at authorization time.
 - `opencode` checks out trusted scripts (workflow commit) and the target (authorized SHA) separately, reads the live model catalog, routes, builds the sandbox, runs the agent through the guard, and collects the result as data.
 - `publish` runs on a fresh runner, mints a one-hour App token, publishes, and re-verifies the signature independently.
+- `review` / `review_publish` are the read-only reviewer path (see separation).
 - `report` posts a plain status comment (issues write only) when nothing was published. Its text is built from fixed strings and sanitized enum values; no model output reaches it.
 
 `issue_comment` is the only trigger. `pull_request_review_comment` runs the workflow file from the PR merge ref, which lets a PR author edit the gate, so it stays unsupported.
 
 ## Successful-generation contract
 
-The previous integration ran `dceoy/opencode-action`, which runs its own commit and push and exits nonzero for many reasons; generated files could not be told apart from a failed run. The pinned action offers no generation-only mode, so it is gone. The workflow now installs OpenCode `1.19.3` (the version the action pinned) and calls `opencode run --format json` as the unprivileged user. In v1.19.3 `run` only produces a session: it makes no commit, push, PR or comment, auto-rejects any permission request that is not explicitly allowed, sets a nonzero exit code on a session or prompt error, and emits `step_finish` events (behavior read from `packages/opencode/src/cli/cmd/run.ts` at tag v1.19.3). That the `step_finish` part carries a `reason` field with value `stop` on normal completion is assumed from OpenCode's event model and is unverified; if absent, every run fails closed.
+The previous integration ran `dceoy/opencode-action`, which runs its own commit and push and exits nonzero for many reasons. It is gone. OpenCode 1.19.3 is installed with `npm ci --ignore-scripts` from a committed lockfile (`.github/opencode/runtime`, sha512 integrity for every tarball, exact version) instead of a `curl | bash` installer, and `opencode run --pure --format json` runs as the unprivileged user. `run` only produces a session: no commit, push, PR or comment.
 
-`opencode_guard.py` runs as the runner user. The agent runs as another user and cannot change the guard, its result file, or its job outputs. Collection, upload and publication all depend on `generation == success`. The publisher refuses anything else before making an API call, so a changed working tree after a failed run is never published. Cancellation never reaches publication because the job result is not `success`.
+`opencode_guard.py` runs as the runner user; the agent cannot change it or its outputs. It accepts a run only when all of these hold:
+
+- exit code 0, no timeout (the exit code alone is not trusted: a truncated run exits 0)
+- every line is a JSON event with a known type, one `sessionID` throughout, ordered timestamps, and a `part` whose type, session and `msg_` id match the event
+- steps nest strictly (`step_start`, body events, `step_finish` with the same message id); no event outside a step; no step after the final `stop`; no step left open
+- every `step_finish` reason is `tool-calls` (and the step ran at least one tool) or the single final `stop` (with no tool call in that step)
+- no `error` event anywhere, no tool call left pending
+- the transcript ends in a supported termination (`stop`)
+
+A valid transcript shows that the run ended normally. It does not show that the change is correct; CI and review decide that.
+
+Evidence: `tests/deployment/fixtures/opencode_1_19_3/` holds eight transcripts captured from the real 1.19.3 binary against a scripted local model server (reproduce with `capture.py`; npm integrity of the binary package is in the lockfile). They cover success (text and a tool-call edit), provider 500 and 401 after retries (exit 1 with an `error` event), a `length` truncation (exit 0, no error), a tool-call step followed by a provider failure, a cut stream that retries until killed (2066 events, first 60 kept), and a hang. Mutations of a real success transcript (foreign session, dropped or duplicated steps, reordered events, trailing events, injected errors, altered reasons) are all rejected.
+
+Limits of that evidence: the model's replies are scripted, not produced by a real provider; a provider that returns `stop` together with tool calls would be rejected (fail closed) and a real provider's other edge cases are unobserved.
 
 ## Input boundary
 
 Everything the model can receive:
 
 1. The fixed preface in `opencode_guard.py` plus the authorized command text. The router refuses command text that looks like a credential or mentions credentials, production data, customer data or PII.
-2. Files the agent reads inside `/srv/ocagent/work`, a sanitized copy of the tracked tree at the authorized SHA.
+2. Files the agent reads inside the sanitized copy of the tracked tree at the authorized SHA (and, for reviews, `REVIEW/diff.patch`).
 3. Its own tool output.
 
-The upstream action's addition of issue bodies, comment threads and PR metadata is gone: no discussion text is passed. The copy excludes symlinks, `.opencode/`, `opencode.json(c)`, `.claude/`, `.agents/`, `.cursor/`, and credential-like names (`.env*` except examples, keys and certificates, databases and dumps, `.npmrc`, kubeconfig and similar). The remaining text files are scanned for high-confidence secrets (private-key blocks, GitHub, AWS, OpenAI-style, Slack and Google API keys); a hit fails closed before any model call, naming paths and never content. `.github/opencode/secret-scan-allowlist.txt` lists owner-approved fake fixtures. The scan cannot recognise every secret format; it is a backstop.
+No issue body, comment thread or PR metadata is passed.
+
+What reaches the sandbox copy, with explicit limits:
+
+- Excluded: symlinks and non-regular files; `.opencode/`, `opencode.json(c)`, `.claude/`, `.agents/`, `.cursor/`; credential-like names (`.env*` except examples, keys, certificates, databases, dumps, `.npmrc`, kubeconfig and similar).
+- Every remaining file is read in full and must be valid UTF-8 text, free of NUL bytes, and at most 1 MiB; otherwise it is excluded and recorded with its reason. There is no scan window: content after any offset or after early NUL bytes is either scanned or never exposed. Tests cover a secret at 2.5 MiB (file excluded), a secret near the 1 MiB limit (run stops), and secrets after NUL bytes (file excluded).
+- A secret-shaped match (private-key blocks, GitHub, AWS, OpenAI-style, Slack, Google, Stripe, GitLab, npm, Azure storage, JWT) stops the run before any model call and names paths, never content. Patterns match without a leading word boundary, so a token glued to preceding text is still found.
+- More than 20,000 files or 100 MiB stops the run: input that cannot be bounded is not sent.
+- `.github/opencode/secret-scan-allowlist.txt` lists owner-approved fixtures. A test requires the repository itself to pass the scan, so a secret-shaped literal added to any tracked file fails CI instead of silently blocking every run.
+
+Residual: the scan recognises listed formats only; a low-entropy or unlisted secret in an included text file is still exposed. Files excluded as binary or oversized cannot be reviewed or edited by the agent.
 
 Execution isolation (not only OpenCode permissions):
 
 - Dedicated user `ocagent`; the runner home is `chmod 700`, so the checkout, tokens and runner files are unreadable to it.
-- `env -i` with a fixed environment: no `GITHUB_*`, no runner variables, no keys.
-- Firewall rules for `ocagent`: loopback only, IPv4 and IPv6. The step probes `api.github.com` as `ocagent` and aborts the run if it connects.
-- The OpenCode key is held by `opencode_proxy.py`, running as the runner user. The agent talks to it over loopback with a placeholder; the proxy replaces the credential and forwards only `GET` and `POST` to `/inference/` and `/zen/v1/` on `opencode.ai`. The agent cannot read the key from its environment, config or a process listing.
-- Managed config in `/etc/opencode/opencode.json` plus `OPENCODE_CONFIG_CONTENT`, `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_DISABLE_EXTERNAL_SKILLS`, and the repo's own config is not copied at all. The config allows read, edit, glob, grep, list and bash; denies web access, subagents and reads outside the work directory; and adds `.env` read denials. Anything not allowed is rejected, not prompted.
-- Collection runs against a runner-owned baseline git dir with the sandbox as a bare work tree, so no `.git` content the agent plants is consulted. A test plants a `core.fsmonitor` hook and checks it never runs.
+- `env -i` with a fixed environment: no `GITHUB_*`, runner variables or keys. The flags used exist in 1.19.3 (`OPENCODE_PURE`, `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_DISABLE_MODELS_FETCH`, `OPENCODE_DISABLE_AUTOUPDATE`, `OPENCODE_CONFIG_CONTENT`).
+- Firewall rules for `ocagent`: loopback only, IPv4 and IPv6, probed before the agent starts.
+- The OpenCode key is held by `opencode_proxy.py` (runner user). The agent reaches it over loopback with a placeholder.
+- Managed config in `/etc/opencode/opencode.json` plus `OPENCODE_CONFIG_CONTENT`. With the real 1.19.3 binary, a hostile project `opencode.json` that redirected the provider to a dead port and allowed edits lost to the managed file (manual experiment; not an automated test, since it writes `/etc`). The repo's own config is also not copied.
+- Collection runs against a runner-owned baseline git dir with the sandbox as a bare work tree; a test plants a `core.fsmonitor` hook and checks it never runs. The collector also refuses a work tree that is a symlink or has an agent-controlled ancestor.
 
-Not covered: a model can still send what it reads from the sanitized copy to the OpenCode endpoint, which is the point of using it. Free-model terms decide what happens to that data (see below).
+### Proxy model binding
+
+Rules enforced by the proxy, not by the provider: `POST` only to `/inference/openai/v1/chat/completions`; `GET` only to the two model-list paths; no query string, fragment, encoded slash, `..` or `//`; no `Transfer-Encoding` or `Content-Encoding`; `Content-Type: application/json`; the body must parse as a JSON object with no duplicate keys (a duplicated `model` is the classic smuggling route), no `NaN`, only allow-listed top-level fields (routing fields such as `models`, `provider`, `route`, `fallbacks` are not on the list), a non-empty `messages` list, and `model` exactly equal to the bound bare id. The original bytes are forwarded unchanged only after validation.
+
+Found with the real binary: without `small_model`, OpenCode asks `gpt-5.4-nano` over `/responses` to title the session. The config now sets `small_model` to the bound model, and the proxy rejects the substitute anyway (the end-to-end test removes `small_model` and shows the rejection and a still-successful run). A shell command, CLI flag or config edit naming another model reaches the proxy and is refused; a provider URL pointing elsewhere has no route because of the firewall.
 
 ## Implementer-reviewer separation
 
@@ -70,7 +97,7 @@ Rule IMPLEMENTER_REVIEWER_SEPARATION applies when OpenCode implements and review
 | `enabled`, `scope: same_branch_or_pr` | implementer records are read from the PR being reviewed |
 | `require_distinct_models` | `check_separation`; the selector also excludes every model that implemented on the PR |
 | `require_distinct_sessions` | `check_separation`; the guard records the OpenCode session id, a missing id fails the run |
-| `review_read_only` | review config denies edit tools, the work tree is `root`-owned and `a-w`, and `verify-readonly` fails on any change |
+| `review_read_only` | review config denies edit tools; the source lives under a root-owned parent and tree (read-only mount when available); effective write, rename, replace and symlink attempts are probed as the reviewer UID before and after the run; the tree digest and `verify-readonly` must match |
 | `reviewer_selection: best_verified_capability` | `select_reviewer` ranks only on recorded evaluation evidence |
 | `block_if_no_eligible_reviewer` | no eligible reviewer produces `REVIEW_BLOCKED` and a PR comment |
 | `external_acceptance_required` | every review states it is not an approval; `acceptance_status` never returns accepted |
@@ -83,9 +110,9 @@ No model has evaluation evidence yet, so the matrix ships empty and every review
 
 Review output. The reviewer ends with one JSON block. The trusted publisher validates it (severity, affected files, evidence required for critical and high, recommendation), strips mentions, hidden markers and slash commands, and recomputes the verdict: any critical or high finding makes it `BLOCKING_FINDINGS` whatever the model claimed; an approval-style verdict is rejected. It posts one PR review with event `COMMENT` and `commit_id` set to the reviewed commit, containing implementer model, session, commit and branch, reviewer model and session, findings, and the verification evidence the reviewer reported (not re-run by the publisher). The review job and reviewer have no merge, approval or branch write path; its App token is `pull-requests: write` only.
 
-Staleness. The review marker carries the reviewed commit and must match GitHub's own `commit_id` for the review. `acceptance_status` returns `CURRENT` only when the newest OpenCode review covers exactly the PR head, otherwise `STALE`, and never `accepted`. When a new OpenCode implementation commit lands on a PR that has an earlier OpenCode review, the publisher's comment says the review is stale. A commit by anyone else needs a new review request; a review cannot be dismissed through the API because it is a COMMENT review.
+Staleness. The review marker carries the reviewed head and base commits and must match GitHub's own `commit_id` for the review. `acceptance_status` returns `CURRENT` only when the newest OpenCode review covers exactly the PR head and base and was not stale on arrival, otherwise `STALE`, and never `accepted`. When a new OpenCode implementation commit lands on a PR that has an earlier OpenCode review, the publisher's comment says the review is stale. A commit by anyone else needs a new review request; a review cannot be dismissed through the API because it is a COMMENT review.
 
-Confidentiality. The reviewer sees the sanitized copy plus `REVIEW/diff.patch`. The review is blocked if the diff touches credential-like or agent-configuration files, contains secret-like text, exceeds 1.5 MB, or if the PR head is not the authorized commit.
+Confidentiality. The reviewer sees the sanitized copy plus `REVIEW/diff.patch`, taken from `compare/BASE...HEAD` at the SHAs the gate recorded (not from the live PR). The review is blocked if the diff touches credential-like or agent-configuration files, contains secret-like text, exceeds 1.5 MB, names a path GitHub does not list for those revisions, or the file list may be truncated (300 files). Git-quoted paths are decoded before the checks. At publication the PR is refetched: if its head or base moved, or it closed, the review is still posted for the revisions it examined but marked `STALE ON ARRIVAL`, and `acceptance_status` never reports it as current.
 
 External acceptance by Codex or Jules is unchanged and still required before merge.
 
@@ -104,7 +131,7 @@ All six models ship with every requirement unmet except catalog presence, so the
 
 Catalog: all six IDs appear under provider `opencode` at zero cost in OpenCode's bundled model snapshot (anomalyco/opencode `50c5fce`, 2026-10-20), served from `https://opencode.ai/inference/openai/v1`. The workflow lists models from `.../inference/openai/v1/models` first and falls back to `/zen/v1/models`, which OpenCode's gateway still routes (`inference-proxy.ts`). Neither endpoint has been called with a real key.
 
-Routing categories, chains and rules are unchanged from v2.0 of this document and live in the registry. Routing never changes GitHub permissions.
+Routing categories, chains and rules live in the registry. Routing never changes GitHub permissions.
 
 ## Target binding and publication
 
@@ -114,13 +141,15 @@ Before any write the publisher does the following, using only gate values:
 2. `AUTHORIZED_SHA` is a full SHA and equals the manifest's `base_sha`.
 3. The repository's default branch matches the event and is protected.
 4. Issue target: open, number matches, not a PR, and the baseline is reachable from the default branch.
-5. PR target: number matches; open and unmerged; base and head both in this repo; head branch equals the gate's approved branch; head SHA equals the baseline; branch tip equals the baseline; branch not protected and not the default branch.
+5. PR target (`check_pr_target`): number matches; open and unmerged; base and head both in this repo; head branch equals the gate's approved branch; head SHA equals the baseline; branch tip equals the baseline; branch not protected and not the default branch.
 
 Then:
 
 - New work: create `opencode/issue<N>-<run>-<attempt>` at the baseline, commit with `createCommitOnBranch` (`expectedHeadOid` is the baseline), verify, open a Draft PR. A failed check deletes the branch.
-- Existing PR: create staging branch `opencode/pr<N>-<run>-<attempt>`, commit there, verify the signature and the App author, then move the PR branch with a non-forced ref update (`PATCH git/refs`, `force: false`). The PR branch is never touched by an unverified commit. A concurrent push makes the update fail and the PR branch stays as it was. No branch is ever rewritten or reset.
-- If something durable remains after a failure (undeletable staging branch, a verified commit with no PR), the publisher raises `PartialPublication`, sets `published=partial` with the branch and commit, and the report comment names the branch. Nothing is cleaned up by force.
+- Existing PR: create staging branch `opencode/pr<N>-<run>-<attempt>`, commit there, verify the signature and the App author. Immediately before the update, `check_pr_target` runs again against freshly fetched data and GitHub's compare data must show the verified commit descends from the baseline. The PR branch then moves with `git push --force-with-lease=refs/heads/<branch>:<baseline>`: it succeeds only if the remote branch is still exactly the baseline. `--force-with-lease` is used for its exact-SHA check, and the descent check above makes the update a fast-forward; it is never an unconditional force. A concurrent push, a force-push, a reset to an ancestor or a deleted branch makes it fail and leaves their state in place. The earlier non-forced REST update could not give this: a reset to an ancestor leaves the new commit a valid fast-forward, so it would have silently undone the reset.
+- Evidence: tests push to real bare repositories and cover the unchanged branch, a concurrent descendant push, a reset to an ancestor (shown to be a fast-forward that the lease still refuses), a reset to an unrelated root commit, a deleted branch, and a pre-receive hook that resets the branch after the client check (server-side refusal). The full publish flow is also exercised against a real repository with those transitions injected between verification and the update.
+
+After an ambiguous GitHub failure (network error, timeout, 5xx) the publisher queries the real remote state before saying anything: branch creation, the commit mutation, the update and the staging deletion each have a lookup. A report says the PR branch is "still at the authorized commit" only when a lookup showed it; otherwise it raises `PartialPublication` ("could not be confirmed as unchanged"). The facts (trusted baseline, observed tips, staging branch, any lookup error) go to `publication-evidence.json`, uploaded even on failure, for manual recovery. If the update reported failure but the branch is at the new commit, that is recorded as a warning. Nothing is force-pushed, reset or rewritten automatically.
 
 ## Permissions
 
@@ -128,7 +157,9 @@ Then:
 | --- | --- | --- |
 | gate | `contents: read`, `pull-requests: read` | checkout of scripts, PR metadata |
 | opencode | `contents: read` | checkout only; the token is not given to the agent, and the agent has no issue or PR write rights |
-| publish | `contents: read` plus App token: contents, pull-requests, issues write | repo-scoped, one hour |
+| publish | `contents: read` plus App token: contents, pull-requests, issues write | repo-scoped, one hour; the token reaches `git` through environment config, never argv or logs |
+| review | `contents: read`, `pull-requests: read` | reads compare data before the sandbox starts; the token is not in the agent's environment |
+| review_publish | `contents: read` plus App token: pull-requests write only | posts one `COMMENT` review |
 | report | no `GITHUB_TOKEN` permissions; App token: issues write only | status comment |
 
 No `workflows`, `administration`, `actions` or `id-token`. The GitHub App cannot be verified from inside Actions to lack ruleset bypass; the owner must check that it is on no bypass list. The publisher confirms only that the default branch reports `protected`.
@@ -158,16 +189,28 @@ Reviews stay `REVIEW_BLOCKED` until the owner fills the capability matrix. Do no
 4. Repeat on a disposable PR branch: the PR branch advances by one verified commit, and the staging branch is gone.
 5. Provoke failures: an impossible task, a model removed from the catalog, a push to the PR branch during the run. Each must publish nothing.
 
-## Validation status
+## Validation
 
-Offline, local: 182 tests in `tests/deployment` pass (148 in the five OpenCode test files, up from 58). They include reproductions of the three publisher failures from the review (failed generation, unrelated branch with mismatched PR number, forged artifact baseline), the confidentiality cases, guard failure modes (provider error, timeout, crash, cancellation signal, truncation, garbage output), proxy header injection with a stub upstream, router eligibility, and schema attacks. Twenty-four deliberate code mutations of the key checks (publisher binding, guard contract, router eligibility, secret scan, separation, read-only review, staleness) were each caught by a test. `actionlint` 1.7.12 and `shellcheck` 0.11.0 report nothing on the workflows.
+Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 278 tests with none skipped, both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
 
-Not validated, because it needs a runner, secrets or your App (the review path adds: reviewer output format from a real model, `gh api` pagination and diff media type, and a review run end to end): `useradd`, `iptables` owner rules, the proxy against the real endpoint, OpenCode honoring the managed config path, `OPENCODE_DISABLE_*` flags and permission schema in v1.19.3, `opencode run` exit and event behavior in a real run, the installer's trust (it downloads from `opencode.ai`; the version is pinned, the script is not checksummed), GitHub's signature on API-created commits, CI triggering on bot-created PRs, and ruleset behavior. Any of these failing stops the run without publication; none can publish by failing.
+- 37 proxy tests against a live proxy with crafted raw HTTP (model substitution, duplicate keys, routing fields, other endpoints and methods, path tricks, compressed and chunked bodies, malformed JSON, oversized lengths, log hygiene, startup refusals);
+- 6 end-to-end tests that run the real binary through the real proxy against a stub provider (normal run, CLI model substitution, config model substitution, side-request substitution, provider redirection);
+- 23 runtime tests: filesystem operations executed as an unprivileged user (rejected creates, renames, replacements, symlink swaps, hard-link and `/proc` aliases, truncation, chmod and chown, modify-then-restore, the old agent-owned-parent layout shown vulnerable and detected) and real-git history transitions;
+- 20 guard tests on the real transcripts and their mutations.
+
+Not run locally or not yet run on GitHub: the CI workflow on this head (queued results are reported separately), `useradd`/`iptables` in the workflow itself (the runtime tests exercise the permission model with `setpriv`; the firewall rules and the read-only bind mount were not exercised here), the proxy against the real OpenCode endpoint, GitHub's server-side behavior for the lease push (verified against local bare repositories only; the shallow fetch of the staging commit into an unrelated checkout is verified over `file://`, not HTTPS), App-token scopes, GitHub's signature on API-created commits, and CI triggering on bot-created PRs.
+
+`actionlint` 1.7.12 with `shellcheck` 0.11.0 reports nothing on all workflows (including the shell in `opencode.yml`).
+
+Mutation check: `python3 tests/deployment/mutation_check.py` applies each entry in its inventory (67 single-snippet changes covering every finding above and the earlier controls) to a copy of the repository and requires the suite to fail. Result on the final code in this session: 67 caught, 0 missed, 0 invalid, 0 hung. The inventory and the exact snippets are in the script; end-to-end tests are skipped in those runs for time (they were run separately).
 
 ## Remaining risks
 
-- A model that reads a file in the sanitized copy sends it to a free provider whose terms are unverified.
-- The secret scan misses unknown formats and low-entropy secrets.
-- The route to a published change still depends on a model reading untrusted PR content; a prompt injection inside a file can steer edits. The control files are protected and nothing merges, but a malicious edit to ordinary code could reach a Draft PR and needs human review.
-- Operational health is a manual flag.
-- A newer authorized comment can replace an older one still queued in the same group.
+- A model that reads an included file sends it to a free provider whose terms are unverified. The secret scan covers listed formats only.
+- A prompt injection inside an included file can steer edits. Control files are protected and nothing merges, but ordinary code could reach a Draft PR and needs human review.
+- The proxy allow-list is strict by design: if OpenCode or a provider sends a field or endpoint not on the list (for example the Responses API for some model), the run fails closed.
+- OpenCode tries to install its plugin package on start; offline that fails after retries (about 24 seconds here with DNS retries, faster with the workflow's REJECT firewall). It does not block the model call.
+- The read-only bind mount may be unavailable on a runner; the permission model and runtime probe remain the gate.
+- The lease push relies on git's old-value check being honored by GitHub's receive-pack; local bare repositories confirm the client and server logic, GitHub itself is untested.
+- Free-model health is a manual flag; availability can change without notice.
+- A newer authorized comment can replace an older one still queued in the same concurrency group.

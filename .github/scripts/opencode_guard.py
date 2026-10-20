@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the sandboxed agent and decide whether generation truly succeeded (guard v2.0).
+"""Run the sandboxed agent and decide whether generation truly succeeded (guard v3.0).
 
 Uses `opencode run --format json`, which only generates in the working tree: it makes
 no commit, push, PR or comment. Generation counts as successful only when ALL hold:
@@ -72,12 +72,30 @@ def extract_final_text(lines: list[str]) -> str:
     return texts[-1] if texts else ''
 
 
+EVENT_PART_TYPE = {'step_start': 'step-start', 'step_finish': 'step-finish', 'text': 'text',
+                   'reasoning': 'reasoning', 'tool_use': 'tool'}
+STEP_BODY = ('text', 'reasoning', 'tool_use')
+SESSION_EVENT_RE = re.compile(r'^ses_[A-Za-z0-9]{8,64}$')
+MESSAGE_RE = re.compile(r'^msg_[A-Za-z0-9]{8,64}$')
+
+
+def fail(code: str) -> tuple[str, str]:
+    return 'failed', code
+
+
 def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[str, str]:
-    """Return ('success', '') or ('failed', reason). Pure and exhaustively testable."""
+    """Return ('success', '') or ('failed', code). Pure and exhaustively testable.
+
+    The event format below was captured from the real OpenCode 1.19.3 binary
+    (tests/deployment/fixtures/opencode_1_19_3). Success needs a coherent lifecycle, not
+    just a terminal event: one session, strictly nested steps, a supported termination,
+    and no contradictory failure signal. A valid transcript proves the run ended normally;
+    it says nothing about whether the change is correct.
+    """
     if timed_out:
-        return 'failed', 'timeout'
+        return fail('timeout')
     if exit_code != 0:
-        return 'failed', f'nonzero_exit:{exit_code}'
+        return fail(f'nonzero_exit:{exit_code}')
     events = []
     for line in lines:
         if not line.strip():
@@ -85,18 +103,62 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
         try:
             event = json.loads(line)
         except ValueError:
-            return 'failed', 'unparseable_output'
+            return fail('unparseable_output')
         if not isinstance(event, dict) or not isinstance(event.get('type'), str):
-            return 'failed', 'unparseable_output'
+            return fail('unparseable_output')
         events.append(event)
-    if any(event['type'] == 'error' for event in events):
-        return 'failed', 'agent_reported_error'
-    finishes = [e for e in events if e['type'] == 'step_finish']
-    if not finishes:
-        return 'failed', 'no_completion_event'
-    reason = ((finishes[-1].get('part') or {}).get('reason'))
-    if reason != 'stop':
-        return 'failed', 'incomplete_generation:' + re.sub(r'[^a-z_-]', '', str(reason).lower())[:30]
+    if not events:
+        return fail('no_events')
+    session = events[0].get('sessionID')
+    if not isinstance(session, str) or not SESSION_EVENT_RE.match(session):
+        return fail('session_identity_missing')
+    open_step = None          # (messageID, tool_uses, saw_body)
+    finished = []             # (reason, tool_uses)
+    last_stamp = 0
+    for event in events:
+        kind = event['type']
+        if kind == 'error':
+            return fail('agent_reported_error')
+        if kind not in EVENT_PART_TYPE:
+            return fail('unknown_event_type')
+        if event.get('sessionID') != session:
+            return fail('session_mismatch')
+        stamp = event.get('timestamp')
+        if isinstance(stamp, bool) or not isinstance(stamp, int) or stamp < last_stamp:
+            return fail('timestamp_order')
+        last_stamp = stamp
+        part = event.get('part')
+        if not isinstance(part, dict) or part.get('type') != EVENT_PART_TYPE[kind] \
+                or part.get('sessionID') != session or not isinstance(part.get('messageID'), str) \
+                or not MESSAGE_RE.match(part['messageID']):
+            return fail('malformed_part')
+        if kind == 'step_start':
+            if open_step is not None or (finished and finished[-1][0] == 'stop'):
+                return fail('event_ordering')
+            open_step = [part['messageID'], 0]
+        elif kind in STEP_BODY:
+            if open_step is None or part['messageID'] != open_step[0]:
+                return fail('event_ordering')
+            if kind == 'tool_use':
+                if (part.get('state') or {}).get('status') not in ('completed', 'error'):
+                    return fail('tool_state_unfinished')
+                open_step[1] += 1
+        else:  # step_finish
+            if open_step is None or part['messageID'] != open_step[0]:
+                return fail('unmatched_step_finish')
+            reason = part.get('reason')
+            if reason == 'stop' and open_step[1]:
+                return fail('stop_with_pending_tools')
+            if reason == 'tool-calls' and not open_step[1]:
+                return fail('tool_calls_without_tools')
+            if reason not in ('stop', 'tool-calls'):
+                return fail('incomplete_generation:' + re.sub(r'[^a-z_-]', '', str(reason).lower())[:30])
+            finished.append((reason, open_step[1]))
+            open_step = None
+    if open_step is not None:
+        return fail('unfinished_step')
+    if not finished or finished[-1][0] != 'stop':
+        return fail('no_supported_termination')
     return 'success', ''
 
 
@@ -107,12 +169,12 @@ def build_command(model: str, config: str, home: str, workdir: str, timeout_min:
         'XDG_CACHE_HOME': f'{home}/.cache', 'XDG_STATE_HOME': f'{home}/.local/state',
         'PATH': '/opt/opencode/bin:/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8', 'CI': 'true',
         'OPENCODE_CONFIG_CONTENT': config, 'OPENCODE_DISABLE_PROJECT_CONFIG': '1',
-        'OPENCODE_DISABLE_EXTERNAL_SKILLS': '1', 'OPENCODE_DISABLE_AUTOUPDATE': '1',
+        'OPENCODE_PURE': '1', 'OPENCODE_DISABLE_MODELS_FETCH': '1', 'OPENCODE_DISABLE_AUTOUPDATE': '1',
     }
     assignments = [f'{key}={value}' for key, value in env.items()]
     return ['sudo', '-n', '-u', AGENT_USER, 'timeout', '--kill-after=30s', f'{timeout_min}m',
             'env', '-i', *assignments,
-            'opencode', 'run', '--format', 'json', '--model', model, '--dir', workdir, '--',
+            'opencode', 'run', '--pure', '--format', 'json', '--model', model, '--dir', workdir, '--',
             (REVIEW_PREFACE if mode == 'review' else PREFACE) + task]
 
 

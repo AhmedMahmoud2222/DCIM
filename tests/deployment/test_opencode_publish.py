@@ -1,10 +1,12 @@
 """OpenCode manifest, publisher and signature-verifier tests (tests v2.0). No network."""
 import base64
+import copy
 import hashlib
 import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,13 +16,11 @@ SCRIPTS = ROOT / '.github/scripts'
 
 
 def load(name):
-    import sys
+    # One shared module instance per script (as in production): exception classes must be identical
+    # across the publisher, the review module and these tests.
     if str(SCRIPTS) not in sys.path:
         sys.path.insert(0, str(SCRIPTS))
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f'{name}.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module(name)
 
 
 collect = load('opencode_collect')
@@ -61,42 +61,88 @@ def build_artifact(tmp, changes, **top):
 
 
 class FakeApi:
-    """Records every call. `mutations()` lists calls that change GitHub state."""
+    """In-memory GitHub. Tracks refs so staging, update and deletion are observable.
+
+    `ambiguous` maps 'METHOD path-prefix' -> 'applied' | 'not_applied': the call raises an
+    AmbiguousApiError and the mutation either did or did not happen.
+    """
 
     def __init__(self, verified=True, login=BOT, branch_tip=BASE, protected=False, compare='behind',
-                 default_protected=True, pr=None, issue=None, patch_fails=False, delete_fails=False,
-                 pulls_fails=False):
+                 default_protected=True, pr=None, issue=None, delete_fails=False, pulls_fails=False,
+                 push_fails=False, ambiguous=None, lookup_fails=False):
         self.calls, self.verified, self.login = [], verified, login
-        self.branch_tip, self.protected, self.compare = branch_tip, protected, compare
-        self.default_protected, self.patch_fails, self.delete_fails = default_protected, patch_fails, delete_fails
-        self.pulls_fails = pulls_fails
+        self.refs = {'feature/x': branch_tip}
+        self.protected, self.compare = protected, compare
+        self.default_protected, self.delete_fails = default_protected, delete_fails
+        self.pulls_fails, self.push_fails = pulls_fails, push_fails
+        self.ambiguous = ambiguous or {}
+        self.lookup_fails = lookup_fails
         self.pr = pr if pr is not None else {
             'number': 9, 'state': 'open', 'merged': False, 'base': {'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}},
             'head': {'ref': 'feature/x', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}
         self.issue = issue if issue is not None else {'number': 7, 'state': 'open'}
+        self.pr_state_after_verify = None
+        self.before_push = None
+        self.reviews = []
+
+    @property
+    def branch_tip(self):
+        return self.refs.get('feature/x')
+
+    def _maybe_ambiguous(self, method, path):
+        for key, outcome in self.ambiguous.items():
+            if key == f'{method} {path}' or (key.endswith('*') and f'{method} {path}'.startswith(key[:-1])):
+                return outcome
+        return None
 
     def call(self, method, path, body=None):
         self.calls.append((method, path, body))
+        outcome = self._maybe_ambiguous(method, path) if method != 'GET' else None
         if method == 'GET' and path == '':
             return {'default_branch': 'main', 'full_name': 'AhmedMahmoud2222/DCIM'}
         if path == 'branches/main':
             return {'protected': self.default_protected, 'commit': {'sha': 'f' * 40}}
         if path.startswith('branches/'):
-            return {'protected': self.protected, 'commit': {'sha': self.branch_tip}}
+            return {'protected': self.protected, 'commit': {'sha': self.refs.get(path[len('branches/'):])}}
+        if path.startswith('git/ref/heads/'):
+            if self.lookup_fails:
+                raise publish.AmbiguousApiError('lookup unreachable')
+            tip = self.refs.get(path[len('git/ref/heads/'):])
+            if tip is None:
+                error = publish.PublishError('HTTP 404')
+                error.status = 404
+                raise error
+            return {'object': {'sha': tip}}
         if path.startswith('issues/') and method == 'GET':
             return self.issue
+        if path.startswith('pulls/') and method == 'GET' and path.endswith('/reviews?per_page=100'):
+            return self.reviews
         if path.startswith('pulls/') and method == 'GET':
-            return self.pr
+            pr = copy.deepcopy(self.pr)
+            if self.pr_state_after_verify and any(c[1].startswith('commits/') for c in self.calls):
+                pr['state'] = self.pr_state_after_verify
+            return pr
         if path.startswith('compare/'):
-            return {'status': self.compare}
+            if path == f'compare/{BASE}...{NEW}':      # does the verified commit descend from the baseline?
+                return {'status': 'ahead', 'behind_by': 0}
+            return {'status': self.compare}            # default...baseline reachability
         if path.startswith('commits/'):
-            return {'commit': {'verification': {'verified': self.verified,
-                                                'reason': 'valid' if self.verified else 'unsigned'}},
+            return {'commit': {'verification': {'verified': self.verified, 'reason': 'valid' if self.verified else 'unsigned'}},
                     'author': {'login': self.login}}
-        if method == 'PATCH' and self.patch_fails:
-            raise publish.PublishError('HTTP 422')
-        if method == 'DELETE' and self.delete_fails:
-            raise publish.PublishError('HTTP 500')
+        if method == 'POST' and path == 'git/refs':
+            if outcome != 'not_applied':
+                self.refs[body['ref'][len('refs/heads/'):]] = body['sha']
+            if outcome:
+                raise publish.AmbiguousApiError('timeout')
+            return {}
+        if method == 'DELETE' and path.startswith('git/refs/heads/'):
+            if self.delete_fails:
+                raise publish.PublishError('HTTP 403')
+            if outcome != 'not_applied':
+                self.refs.pop(path[len('git/refs/heads/'):], None)
+            if outcome:
+                raise publish.AmbiguousApiError('timeout')
+            return {}
         if path == 'pulls' and method == 'POST':
             if self.pulls_fails:
                 raise publish.PublishError('HTTP 500')
@@ -105,7 +151,26 @@ class FakeApi:
 
     def graphql(self, query, variables):
         self.calls.append(('GRAPHQL', 'createCommitOnBranch', variables))
+        branch = variables['input']['branch']['branchName']
+        outcome = self._maybe_ambiguous('GRAPHQL', 'createCommitOnBranch')
+        if outcome != 'not_applied':
+            self.refs[branch] = NEW
+        if outcome:
+            raise publish.AmbiguousApiError('timeout')
         return {'createCommitOnBranch': {'commit': {'oid': NEW}}}
+
+    def push(self, branch, expected, new, staging):
+        """Stand-in for git_cas_push: exact-SHA compare-and-swap against the in-memory remote."""
+        if self.before_push:
+            self.before_push()
+        self.calls.append(('PUSH', f'{branch} {expected[:7]}->{new[:7]}', None))
+        outcome = self._maybe_ambiguous('PUSH', branch)
+        if self.push_fails or self.refs.get(branch) != expected:
+            raise publish.PushRejected('exact-SHA update was rejected')
+        if outcome != 'not_applied':
+            self.refs[branch] = new
+        if outcome:
+            raise publish.PushRejected('push result unknown')
 
     def mutations(self):
         return [(m, p) for m, p, _ in self.calls if m not in ('GET',)]
@@ -134,7 +199,9 @@ class ManifestValidationTests(unittest.TestCase):
         for path in ('.github/workflows/ci.yml', '.github/scripts/opencode_gate.py',
                      '.github/opencode/model-registry.json', '.github/opencode/secret-scan-allowlist.txt',
                      '.github/CODEOWNERS', 'CODEOWNERS', 'docs/security/OPENCODE_AGENT_AUTHORITY.md',
-                     'tests/deployment/test_opencode_router.py', '.opencode/commands/x.md', 'opencode.json',
+                     'tests/deployment/test_opencode_router.py', 'tests/deployment/mutation_check.py',
+                     'tests/deployment/fixtures/opencode_1_19_3/success_text.jsonl', '.github/opencode/runtime/package-lock.json',
+                     '.opencode/commands/x.md', 'opencode.json',
                      'sub/AGENTS.md', '.GitHub/Workflows/x.yml', '.claude/settings.json', 'sub/opencode.jsonc',
                      '.env', 'backend/.env.production', 'keys/server.pem', 'id_rsa'):
             with self.assertRaises(publish.PublishError, msg=path):
@@ -223,10 +290,10 @@ class ManifestValidationTests(unittest.TestCase):
 
 
 class CodexReproductionTests(unittest.TestCase):
-    """The three publisher failures from the independent review must not publish."""
+    """The three publisher failures from the first independent review must not publish."""
 
     def run_publish(self, api, env=ENV, plan=PLAN):
-        return publish.publish(api, env, plan, sleep=lambda _s: None)
+        return publish.publish(api, env, plan, sleep=lambda _s: None, git_push=api.push)
 
     def test_agent_failure_cannot_publish(self):
         for status in ('failure', 'failed', 'cancelled', 'timeout', '', 'Success'):
@@ -236,16 +303,17 @@ class CodexReproductionTests(unittest.TestCase):
             self.assertEqual(api.calls, [], status)  # not even a read
 
     def test_unrelated_branch_and_mismatched_pr_number_cannot_publish(self):
+        base_pr = FakeApi().pr
         cases = {
-            'pr number differs': FakeApi(pr={**FakeApi().pr, 'number': 99}),
-            'unrelated head branch': FakeApi(pr={**FakeApi().pr, 'head': {
+            'pr number differs': FakeApi(pr={**base_pr, 'number': 99}),
+            'unrelated head branch': FakeApi(pr={**base_pr, 'head': {
                 'ref': 'someone/else', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}),
-            'fork head': FakeApi(pr={**FakeApi().pr, 'head': {
+            'fork head': FakeApi(pr={**base_pr, 'head': {
                 'ref': 'feature/x', 'sha': BASE, 'repo': {'full_name': 'evil/DCIM'}}}),
-            'foreign base repo': FakeApi(pr={**FakeApi().pr, 'base': {'repo': {'full_name': 'evil/DCIM'}}}),
-            'closed pr': FakeApi(pr={**FakeApi().pr, 'state': 'closed'}),
-            'merged pr': FakeApi(pr={**FakeApi().pr, 'merged': True}),
-            'head moved': FakeApi(pr={**FakeApi().pr, 'head': {
+            'foreign base repo': FakeApi(pr={**base_pr, 'base': {'repo': {'full_name': 'evil/DCIM'}}}),
+            'closed pr': FakeApi(pr={**base_pr, 'state': 'closed'}),
+            'merged pr': FakeApi(pr={**base_pr, 'merged': True}),
+            'head moved': FakeApi(pr={**base_pr, 'head': {
                 'ref': 'feature/x', 'sha': MOVED, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}),
             'branch tip moved': FakeApi(branch_tip=MOVED),
             'protected branch': FakeApi(protected=True),
@@ -256,7 +324,6 @@ class CodexReproductionTests(unittest.TestCase):
             self.assertEqual(api.mutations(), [], name)
 
     def test_artifact_cannot_redirect_the_target(self):
-        # The command targeted PR 9 on feature/x; the artifact cannot name another target.
         api = FakeApi(pr={**FakeApi().pr, 'number': 3, 'head': {
             'ref': 'unrelated', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}})
         with self.assertRaises(publish.PublishError):
@@ -272,11 +339,10 @@ class CodexReproductionTests(unittest.TestCase):
                 self.assertEqual(api.mutations(), [])
 
     def test_three_way_agreement_required_for_pr_updates(self):
-        # trusted == manifest == live branch is the only passing combination
-        self.assertTrue(self.run_publish(FakeApi(), env=PR_ENV)['published'])
-        with self.assertRaises(publish.PublishError):  # trusted differs from manifest and live
+        self.assertTrue(self.run_publish(FakeApi(), env=PR_ENV)['published'])      # all three agree
+        with self.assertRaises(publish.PublishError):                              # trusted differs
             self.run_publish(FakeApi(), env={**PR_ENV, 'AUTHORIZED_SHA': MOVED})
-        api = FakeApi(branch_tip=MOVED)  # live differs
+        api = FakeApi(branch_tip=MOVED)                                            # live differs
         with self.assertRaises(publish.PublishError):
             self.run_publish(api, env=PR_ENV)
         self.assertEqual(api.mutations(), [])
@@ -289,8 +355,9 @@ class CodexReproductionTests(unittest.TestCase):
 
 
 class PublishFlowTests(unittest.TestCase):
-    def run_publish(self, api, env=ENV, plan=PLAN):
-        return publish.publish(api, env, plan, sleep=lambda _s: None)
+    def run_publish(self, api, env=ENV, plan=PLAN, evidence=None):
+        return publish.publish(api, env, plan, sleep=lambda _s: None, git_push=api.push,
+                               evidence=evidence if evidence is not None else {})
 
     def test_new_branch_flow_creates_signed_commit_and_draft_pr(self):
         api = FakeApi()
@@ -324,13 +391,15 @@ class PublishFlowTests(unittest.TestCase):
         self.assertIn('not GitHub-verified', str(caught.exception))
         self.assertIn(('DELETE', 'git/refs/heads/opencode/issue7-1-1'), api.methods())
         self.assertNotIn(('POST', 'pulls'), api.methods())
+        self.assertNotIn('opencode/issue7-1-1', api.refs)
 
-    def test_new_branch_unverified_and_undeletable_is_reported_as_partial(self):
+    def test_new_branch_unverified_and_undeletable_is_reported_as_partial_with_the_observed_state(self):
         api = FakeApi(verified=False, delete_fails=True)
         with self.assertRaises(publish.PartialPublication) as caught:
             self.run_publish(api)
         self.assertEqual(caught.exception.branch, 'opencode/issue7-1-1')
         self.assertEqual(caught.exception.commit, NEW)
+        self.assertIn(f'still exists at {NEW}', str(caught.exception))
 
     def test_new_branch_pr_creation_failure_is_reported_as_partial(self):
         api = FakeApi(pulls_fails=True)
@@ -338,49 +407,190 @@ class PublishFlowTests(unittest.TestCase):
             self.run_publish(api)
         self.assertIn('Draft PR could not be opened', str(caught.exception))
 
-    def test_existing_branch_commits_on_staging_then_fast_forwards_after_verification(self):
+    def test_existing_branch_commits_on_staging_verifies_then_updates_exactly(self):
         api = FakeApi()
         result = self.run_publish(api, env=PR_ENV)
-        self.assertEqual(result['branch'], 'feature/x')
-        self.assertIsNone(result['pr'])
+        self.assertEqual((result['branch'], result['pr']), ('feature/x', None))
         order = api.methods()
         staging = 'opencode/pr9-1-1'
         graphql = next(c for c in api.calls if c[0] == 'GRAPHQL')[2]['input']
-        self.assertEqual(graphql['branch']['branchName'], staging)  # never committed on the PR branch directly
+        self.assertEqual(graphql['branch']['branchName'], staging)   # never committed on the PR branch directly
         verify_index = order.index(('GET', f'commits/{NEW}'))
-        patch_index = order.index(('PATCH', 'git/refs/heads/feature/x'))
-        self.assertLess(verify_index, patch_index)
-        self.assertEqual(next(c for c in api.calls if c[0] == 'PATCH')[2], {'sha': NEW, 'force': False})
-        self.assertIn(('DELETE', f'git/refs/heads/{staging}'), order)
+        push_index = order.index(('PUSH', f'feature/x {BASE[:7]}->{NEW[:7]}'))
+        self.assertLess(verify_index, push_index)
+        self.assertEqual(api.refs['feature/x'], NEW)
+        self.assertNotIn(staging, api.refs)
         self.assertNotIn(('POST', 'pulls'), order)
+        self.assertFalse([m for m, _ in order if m == 'PATCH'])       # the non-CAS REST update is never used
+
+    def test_final_authorization_refetches_the_pr_immediately_before_the_update(self):
+        api = FakeApi()
+        self.run_publish(api, env=PR_ENV)
+        order = api.methods()
+        push_index = next(i for i, c in enumerate(order) if c[0] == 'PUSH')
+        verify_index = order.index(('GET', f'commits/{NEW}'))
+        refetches = [i for i, c in enumerate(order) if c == ('GET', 'pulls/9') and verify_index < i < push_index]
+        self.assertTrue(refetches, 'PR was not refetched between verification and the update')
+        self.assertTrue(any(c == ('GET', 'branches/feature/x') and verify_index < i < push_index
+                            for i, c in enumerate(order)))
+
+    def test_pr_closed_merged_or_retargeted_after_verification_aborts_before_the_update(self):
+        for state in ('closed',):
+            api = FakeApi()
+            api.pr_state_after_verify = state
+            with self.assertRaises(publish.PublishError) as caught:
+                self.run_publish(api, env=PR_ENV)
+            self.assertIn('not open', str(caught.exception))
+            self.assertFalse([c for c in api.calls if c[0] == 'PUSH'])
+            self.assertEqual(api.refs['feature/x'], BASE)
+            self.assertNotIn('opencode/pr9-1-1', api.refs)
+        api = FakeApi()
+        api.before_push = None
+        original = api.call
+
+        def merged(method, path, body=None):
+            result = original(method, path, body)
+            if path == 'pulls/9' and any(c[1].startswith('commits/') for c in api.calls):
+                result = {**result, 'merged': True}
+            return result
+        api.call = merged
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(api, env=PR_ENV)
+        self.assertFalse([c for c in api.calls if c[0] == 'PUSH'])
 
     def test_existing_branch_verification_failure_leaves_pr_branch_untouched(self):
         api = FakeApi(verified=False)
         with self.assertRaises(publish.PublishError):
             self.run_publish(api, env=PR_ENV)
-        self.assertNotIn(('PATCH', 'git/refs/heads/feature/x'), api.methods())
-        self.assertIn(('DELETE', 'git/refs/heads/opencode/pr9-1-1'), api.methods())
+        self.assertFalse([c for c in api.calls if c[0] == 'PUSH'])
+        self.assertEqual(api.refs['feature/x'], BASE)
+        self.assertNotIn('opencode/pr9-1-1', api.refs)
 
     def test_existing_branch_commit_by_wrong_identity_is_never_applied(self):
         api = FakeApi(login='AhmedMahmoud2222')
         with self.assertRaises(publish.PublishError):
             self.run_publish(api, env=PR_ENV)
-        self.assertNotIn(('PATCH', 'git/refs/heads/feature/x'), api.methods())
+        self.assertFalse([c for c in api.calls if c[0] == 'PUSH'])
 
-    def test_existing_branch_concurrent_push_fails_fast_forward_without_rewrite(self):
-        api = FakeApi(patch_fails=True)
+    def test_concurrent_move_makes_the_update_fail_and_the_report_is_verified_not_assumed(self):
+        api = FakeApi()
+        api.before_push = lambda: api.refs.__setitem__('feature/x', MOVED)   # someone pushes during the window
+        evidence = {}
+        with self.assertRaises(publish.PartialPublication) as caught:
+            self.run_publish(api, env=PR_ENV, evidence=evidence)
+        self.assertEqual(api.refs['feature/x'], MOVED)                        # their change survives
+        self.assertEqual(evidence['pr_branch_observed_after_failure'], MOVED)
+        self.assertIn('could not be confirmed as unchanged', str(caught.exception))
+        self.assertNotIn('opencode/pr9-1-1', api.refs)
+
+    def test_failed_update_with_branch_verified_unchanged_says_so(self):
+        api = FakeApi(push_fails=True)
+        evidence = {}
         with self.assertRaises(publish.PublishError) as caught:
-            self.run_publish(api, env=PR_ENV)
-        self.assertIn('PR branch unchanged', str(caught.exception))
-        patches = [c for c in api.calls if c[0] == 'PATCH']
-        self.assertEqual(len(patches), 1)
-        self.assertIs(patches[0][2]['force'], False)  # never a forced rewrite
+            self.run_publish(api, env=PR_ENV, evidence=evidence)
+        self.assertNotIsInstance(caught.exception, publish.PartialPublication)
+        self.assertIn(f'is still at the authorized commit {BASE}', str(caught.exception))
+        self.assertEqual(evidence['pr_branch_observed_after_failure'], BASE)
 
     def test_cleanup_failure_after_success_is_a_warning_not_a_rewrite(self):
         api = FakeApi(delete_fails=True)
         result = self.run_publish(api, env=PR_ENV)
-        self.assertTrue(result['warnings'])
         self.assertTrue(result['published'])
+        self.assertTrue(any('still exists' in w for w in result['warnings']))
+
+    # ---- ambiguous GitHub failures: query the real remote state before claiming anything
+    def test_ambiguous_ref_creation_that_was_applied_continues(self):
+        api = FakeApi(ambiguous={'POST git/refs': 'applied'})
+        self.assertTrue(self.run_publish(api)['published'])
+
+    def test_ambiguous_ref_creation_that_was_not_applied_stops_with_the_observed_state(self):
+        api = FakeApi(ambiguous={'POST git/refs': 'not_applied'})
+        with self.assertRaises(publish.PublishError) as caught:
+            self.run_publish(api)
+        self.assertIn('observed remote state: None', str(caught.exception))
+
+    def test_ambiguous_commit_that_landed_is_found_verified_and_published(self):
+        api = FakeApi(ambiguous={'GRAPHQL createCommitOnBranch': 'applied'})
+        result = self.run_publish(api)
+        self.assertEqual(result['commit'], NEW)
+        self.assertTrue(result['verified'])
+
+    def test_ambiguous_commit_that_did_not_land_is_reported_from_observation(self):
+        api = FakeApi(ambiguous={'GRAPHQL createCommitOnBranch': 'not_applied'})
+        with self.assertRaises(publish.PublishError) as caught:
+            self.run_publish(api)
+        self.assertIn(f'verified: opencode/issue7-1-1 is at {BASE}', str(caught.exception))
+        self.assertNotIn('opencode/issue7-1-1', api.refs)    # staging branch cleaned up
+
+    def test_ambiguous_update_that_actually_applied_is_reported_as_applied(self):
+        api = FakeApi(ambiguous={'PUSH feature/x': 'applied'})
+        evidence = {}
+        result = self.run_publish(api, env=PR_ENV, evidence=evidence)
+        self.assertEqual(api.refs['feature/x'], NEW)
+        self.assertTrue(any('is at' in w for w in result['warnings']))
+        self.assertEqual(evidence['pr_branch_observed_after_failure'], NEW)
+
+    def test_ambiguous_update_that_did_not_apply_is_reported_as_unchanged_only_after_checking(self):
+        api = FakeApi(ambiguous={'PUSH feature/x': 'not_applied'})
+        with self.assertRaises(publish.PublishError) as caught:
+            self.run_publish(api, env=PR_ENV)
+        self.assertIn('verified: feature/x is still at the authorized commit', str(caught.exception))
+
+    def test_unknowable_remote_state_is_never_reported_as_unchanged(self):
+        api = FakeApi(push_fails=True)
+        original = api.call
+
+        def flaky(method, path, body=None):
+            if path.startswith('git/ref/heads/feature/x'):
+                raise publish.AmbiguousApiError('unreachable')
+            return original(method, path, body)
+        api.call = flaky
+        evidence = {}
+        with self.assertRaises(publish.PartialPublication) as caught:
+            self.run_publish(api, env=PR_ENV, evidence=evidence)
+        self.assertNotIn('still at the authorized commit', str(caught.exception))
+        self.assertIn('could not be confirmed as unchanged', str(caught.exception))
+        self.assertIn('pr_branch_lookup_error', evidence)
+
+    def test_ambiguous_delete_is_confirmed_by_lookup(self):
+        api = FakeApi(verified=False, ambiguous={'DELETE git/refs/heads/opencode/*': 'applied'})
+        with self.assertRaises(publish.PublishError) as caught:
+            self.run_publish(api)
+        self.assertNotIsInstance(caught.exception, publish.PartialPublication)   # branch really is gone
+        api = FakeApi(verified=False, ambiguous={'DELETE git/refs/heads/opencode/*': 'not_applied'})
+        with self.assertRaises(publish.PartialPublication):                      # it is still there
+            self.run_publish(api)
+
+    def test_evidence_is_written_for_manual_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp, 'a')
+            artifact.mkdir()
+            manifest, _ = build_artifact(artifact, [('a.txt', 'add', b'x')])
+            Path(artifact, 'manifest.json').write_text(json.dumps(manifest))
+            evidence_path = Path(tmp, 'evidence.json')
+            old = dict(os.environ)
+            original = publish.Api
+            try:
+                os.environ.clear()
+                os.environ.update({**ENV, 'ARTIFACT_DIR': str(artifact), 'GH_PUBLISH_TOKEN': 'tok', 'EVIDENCE_PATH': str(evidence_path),
+                                   'GITHUB_OUTPUT': str(Path(tmp, 'out')), 'EVENT_KIND': 'pr', 'TARGET_NUMBER': '9',
+                                   'PR_HEAD_REF': 'feature/x'})
+                api = FakeApi(push_fails=True)
+                publish.Api = lambda token, repo: api
+                os.environ['GIT_REPO_DIR'] = tmp
+                original_publish = publish.publish
+                publish.publish = lambda api_, env_, plan_, sleep=None, git_push=None, evidence=None: original_publish(
+                    api_, env_, plan_, sleep=lambda _s: None, git_push=api.push, evidence=evidence)
+                self.assertEqual(publish.main(), 1)
+                data = json.loads(evidence_path.read_text())
+                self.assertEqual(data['trusted_baseline'], BASE)
+                self.assertIn('failure', data)
+                self.assertEqual(data['pr_branch_observed_after_failure'], BASE)
+            finally:
+                publish.Api = original
+                publish.publish = original_publish
+                os.environ.clear()
+                os.environ.update(old)
 
     def test_never_writes_to_default_or_protected_branch(self):
         with self.assertRaises(publish.PublishError):
@@ -429,9 +639,9 @@ class PublishFlowTests(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(old)
 
-    def test_api_errors_do_not_leak_tokens(self):
+    def test_api_errors_do_not_leak_tokens_and_classify_ambiguity(self):
         api = publish.Api('ghs_SECRETTOKENVALUE', 'o/r')
-        with self.assertRaises(publish.PublishError) as caught:
+        with self.assertRaises(publish.AmbiguousApiError) as caught:
             api.call('GET', 'https://127.0.0.1:1/never')
         self.assertNotIn('SECRETTOKENVALUE', str(caught.exception))
 

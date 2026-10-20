@@ -39,9 +39,12 @@ def comment_event(body, user_id=OWNER_ID, assoc='OWNER', user_type='User', repo=
 HEAD = 'c' * 40
 
 
-def pr(head_repo=REPO, state='open', ref='feature/x', number=5, base_repo=REPO, merged=False, sha=HEAD):
+BASE_SHA = '9' * 40
+
+
+def pr(head_repo=REPO, state='open', ref='feature/x', number=5, base_repo=REPO, merged=False, sha=HEAD, base_sha=BASE_SHA):
     return {'number': number, 'state': state, 'merged': merged,
-            'base': {'repo': {'full_name': base_repo}},
+            'base': {'sha': base_sha, 'repo': {'full_name': base_repo}},
             'head': {'ref': ref, 'sha': sha, 'repo': {'full_name': head_repo}}}
 
 
@@ -108,15 +111,18 @@ class GateDecisionTests(unittest.TestCase):
         for bad in (pr(number=6), pr(merged=True), pr(base_repo='evil/DCIM'), pr(sha='not-a-sha'),
                     pr(sha='C' * 40)):
             self.assertFalse(self.run_gate(event, pr_obj=bad)[0], bad)
+        # a PR whose base SHA cannot be established gets no trusted baseline
+        with self.assertRaises(ValueError):
+            gate.binding(event, pr(base_sha='main'), 'd' * 40)
 
     def test_binding_fixes_trusted_baseline_at_authorization(self):
         event = comment_event('/oc x', issue={'number': 5, 'pull_request': {}})
         target = gate.binding(event, pr(), 'd' * 40)
-        self.assertEqual(target, {'kind': 'pr', 'number': 5, 'authorized_sha': HEAD, 'head_ref': 'feature/x',
-                                  'mode': 'implement'})
+        self.assertEqual(target, {'kind': 'pr', 'number': 5, 'authorized_sha': HEAD, 'base_sha': BASE_SHA,
+                                  'head_ref': 'feature/x', 'mode': 'implement'})
         target = gate.binding(comment_event('/oc x'), None, 'd' * 40)
-        self.assertEqual(target, {'kind': 'issue', 'number': 5, 'authorized_sha': 'd' * 40, 'head_ref': '',
-                                  'mode': 'implement'})
+        self.assertEqual(target, {'kind': 'issue', 'number': 5, 'authorized_sha': 'd' * 40, 'base_sha': '',
+                                  'head_ref': '', 'mode': 'implement'})
 
     def test_review_comment_events_are_not_privileged(self):
         # pull_request_review_comment runs the workflow file from the PR merge ref,
@@ -143,7 +149,7 @@ class GateDecisionTests(unittest.TestCase):
                 gate.main()
                 text = out_path.read_text()
                 for expected in ('authorized=true', 'kind=pr', 'number=5', f'authorized_sha={HEAD}',
-                                 'head_ref=feature/x'):
+                                 f'base_sha={BASE_SHA}', 'head_ref=feature/x'):
                     self.assertIn(expected, text)
                 out_path.write_text('')
                 event_path.write_text(json.dumps(comment_event('/oc fix')))
@@ -279,19 +285,53 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_agent_runs_in_the_sandbox_with_no_third_party_action(self):
         self.assertNotIn('dceoy/opencode-action', self.text)
         steps = {s.get('name'): s for s in self.steps_of('opencode')}
-        run = steps['Run agent (loopback-only, credential held by proxy)']['run']
+        layout = steps['Create isolated agent user and verify its filesystem view']['run']
+        self.assertIn('install -d -o root -g root -m 755 /srv/ocimpl', layout)    # root-controlled parent
+        self.assertIn('chmod 700 "${HOME}"', layout)
+        self.assertIn('fsisolate.py chain /srv/ocimpl/work', layout)
+        self.assertIn('sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe-parent /srv/ocimpl/work', layout)
+        self.assertNotIn('/srv/ocagent/work', self.text)
+        run_name = 'Run agent (loopback-only, model-bound proxy)'
+        run = steps[run_name]['run']
         self.assertIn('--uid-owner ocagent', run)
         self.assertLess(run.index('still has network egress'), run.index('opencode_guard.py'))
-        self.assertIn('unset OPENCODE_API_KEY', run)
         self.assertLess(run.index('opencode_proxy.py'), run.index('unset OPENCODE_API_KEY'))
         self.assertLess(run.index('unset OPENCODE_API_KEY'), run.index('opencode_guard.py'))
+        self.assertIn('opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json', run)
         self.assertIn('/etc/opencode/opencode.json', run)
-        self.assertIn('chmod 700 "${HOME}"', steps['Create isolated agent user']['run'])
         order = [s.get('name') for s in self.steps_of('opencode')]
         self.assertLess(order.index('Read live model catalog'), order.index('Select model'))
         self.assertLess(order.index('Select model'), order.index('Build sanitized sandbox copy'))
-        self.assertLess(order.index('Build sanitized sandbox copy'),
-                        order.index('Run agent (loopback-only, credential held by proxy)'))
+        self.assertLess(order.index('Build sanitized sandbox copy'), order.index(run_name))
+        self.assertLess(order.index('Create isolated agent user and verify its filesystem view'), order.index(run_name))
+
+    def test_opencode_is_installed_from_the_lockfile_not_an_unpinned_script(self):
+        for job in ('opencode', 'review'):
+            step = next(s for s in self.steps_of(job) if s.get('name', '').startswith('Install pinned OpenCode'))
+            self.assertIn('npm ci --ignore-scripts', step['run'])
+            self.assertIn('${OPENCODE_VERSION}', step['run'])
+        self.assertNotRegex(self.text, r'curl[^\n]*\|\s*(ba)?sh')
+        lock = json.loads((ROOT / '.github/opencode/runtime/package-lock.json').read_text())
+        self.assertEqual(lock['packages']['node_modules/opencode-ai']['version'], '1.19.3')
+        for name, meta in lock['packages'].items():
+            if name:
+                self.assertRegex(meta['integrity'], r'^sha512-')
+        manifest = json.loads((ROOT / '.github/opencode/runtime/package.json').read_text())
+        self.assertEqual(manifest['dependencies'], {'opencode-ai': '1.19.3'})   # exact, no range
+
+    def test_gate_exports_the_trusted_base_for_review_binding(self):
+        self.assertIn('base_sha', self.jobs['gate']['outputs'])
+        env = next(s for s in self.steps_of('review') if s.get('id') == 'inputs')['env']
+        self.assertEqual(env['BASE_SHA'], '${{ needs.gate.outputs.base_sha }}')
+        self.assertEqual(env['AUTHORIZED_SHA'], '${{ needs.gate.outputs.authorized_sha }}')
+
+    def test_publication_evidence_is_preserved_even_on_failure(self):
+        step = next(s for s in self.steps_of('publish') if s.get('name') == 'Preserve publication evidence')
+        self.assertEqual(step['if'], 'always()')
+        self.assertEqual(step['with']['name'], 'opencode-publication-evidence')
+        publish_env = next(s for s in self.steps_of('publish') if s.get('id') == 'publish')['env']
+        self.assertIn('EVIDENCE_PATH', publish_env)
+        self.assertIn('GIT_REPO_DIR', publish_env)
 
     def test_collection_and_upload_only_after_verified_generation(self):
         steps = {s.get('name'): s for s in self.steps_of('opencode')}

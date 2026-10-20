@@ -71,6 +71,11 @@ jobs:
           shellcheck scripts/deploy-docker-compose.sh
           python3 -m pip install PyYAML==6.0.2
           python3 tests/deployment/check_workflows.py
+      - name: Install the pinned OpenCode binary for end-to-end tests
+        run: |
+          set -euo pipefail
+          (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
       - name: Run mocked API, lock and rollback tests
         run: |
           set -euo pipefail

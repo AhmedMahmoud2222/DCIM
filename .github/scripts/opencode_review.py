@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent reviewer routing, separation checks and review publication (review v1.0).
+"""Independent reviewer routing, separation checks and review publication (review v2.0).
 
 Enforces IMPLEMENTER_REVIEWER_SEPARATION (registry key `agent_separation`):
   - the implementer is read from GitHub-verified commit trailers written by the publisher
@@ -210,14 +210,18 @@ def parse_review(text: str) -> dict:
 
 
 def render_review(review: dict, ctx: dict) -> str:
-    marker = {'reviewed_commit': ctx['commit'], 'reviewer_model': ctx['reviewer_model'],
+    marker = {'reviewed_commit': ctx['commit'], 'base_commit': ctx['base_commit'],
+              'stale_on_arrival': bool(ctx.get('stale_on_arrival')), 'reviewer_model': ctx['reviewer_model'],
               'reviewer_session': ctx['reviewer_session'],
               'implementer_models': sorted({r['model'] for r in ctx['records']}),
               'implementer_sessions': sorted({r['session'] for r in ctx['records'] if r['session']}),
               'verdict': review['verdict'], 'external_acceptance': 'REQUIRED'}
     lines = [f"<!-- opencode-review:{json.dumps(marker, separators=(',', ':'))} -->",
              f"## OpenCode independent review: {review['verdict']}", '',
-             f"- Reviewed commit: `{ctx['commit']}` (valid for this commit only; any new commit makes it stale)",
+             *(['- **STALE ON ARRIVAL**: the pull request head or base moved before this review was posted; '
+                'it describes the commits below, not the current PR state.'] if ctx.get('stale_on_arrival') else []),
+             f"- Reviewed commits: base `{ctx['base_commit']}`, head `{ctx['commit']}` (valid for exactly these "
+             'two revisions; a change to either makes it stale)',
              f"- Reviewer: `{ctx['reviewer_model']}`, session `{ctx['reviewer_session']}` (read-only sandbox)"]
     for record in ctx['records']:
         lines.append(f"- Implementer: `{record['model']}`, session `{record['session'] or 'unrecorded'}`, "
@@ -238,8 +242,9 @@ def render_review(review: dict, ctx: dict) -> str:
     return '\n'.join(lines)
 
 
-def acceptance_status(reviews: list[dict], head_sha: str, bot_login: str) -> dict:
-    """CURRENT only when the newest OpenCode review covers exactly head_sha. Never 'accepted'."""
+def acceptance_status(reviews: list[dict], head_sha: str, bot_login: str, base_sha: str | None = None) -> dict:
+    """CURRENT only when the newest OpenCode review covers exactly head_sha (and base_sha when
+    given) and was not stale when posted. Never 'accepted'."""
     best = None
     for review in reviews if isinstance(reviews, list) else []:
         user = review.get('user') or {}
@@ -260,8 +265,11 @@ def acceptance_status(reviews: list[dict], head_sha: str, bot_login: str) -> dic
     if best is None:
         return {'status': 'NONE', 'accepted': False, 'external_acceptance': 'REQUIRED'}
     marker = best[1]
-    status = 'CURRENT' if marker['reviewed_commit'] == head_sha else 'STALE'
-    return {'status': status, 'reviewed_commit': marker['reviewed_commit'], 'verdict': marker.get('verdict'),
+    current = (marker['reviewed_commit'] == head_sha and not marker.get('stale_on_arrival')
+               and (base_sha is None or marker.get('base_commit') == base_sha))
+    status = 'CURRENT' if current else 'STALE'
+    return {'status': status, 'reviewed_commit': marker['reviewed_commit'], 'base_commit': marker.get('base_commit'),
+            'verdict': marker.get('verdict'),
             'accepted': False, 'external_acceptance': 'REQUIRED'}
 
 
@@ -279,42 +287,121 @@ def assert_read_only(manifest: dict, diff_sha256: str) -> None:
 
 def gh_json(path: str, accept: str | None = None):
     cmd = ['gh', 'api', *(['-H', f'Accept: {accept}'] if accept else []), path]
-    if '?' in path and not accept:
-        cmd.insert(2, '--paginate')
-        cmd.insert(3, '--slurp')
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
-    if accept:
-        return out
-    data = json.loads(out)
-    return [x for page in data for x in page] if isinstance(data, list) and data and isinstance(data[0], list) else data
+    return out if accept else json.loads(out)
 
 
-def diff_files(diff: str) -> list[str]:
-    return sorted({m.group(1) for m in re.finditer(r'(?m)^diff --git a/(.+?) b/', diff)})
+_ESCAPES = {'a': 7, 'b': 8, 'f': 12, 'n': 10, 'r': 13, 't': 9, 'v': 11, '\\': 92, '"': 34}
 
 
-def prepare_inputs(fetch, repo: str, number: str, authorized_sha: str, bot_login: str, out_dir: str) -> dict:
-    pr = fetch(f'repos/{repo}/pulls/{number}')
-    head = pr.get('head') or {}
-    if pr.get('state') != 'open' or pr.get('merged') or head.get('sha') != authorized_sha \
-            or ((head.get('repo') or {}).get('full_name') or '').lower() != repo.lower():
-        raise ReviewBlocked('pull request is not the open same-repository PR at the authorized commit')
-    diff = fetch(f'repos/{repo}/pulls/{number}', 'application/vnd.github.diff')
+def unquote_git_path(token: str) -> str:
+    """Decode a git C-style quoted path ("..." with \\ooo octal and \\n style escapes)."""
+    if not (len(token) >= 2 and token[0] == '"' and token[-1] == '"'):
+        return token
+    raw, out, i = token[1:-1], bytearray(), 0
+    while i < len(raw):
+        ch = raw[i]
+        if ch != '\\':
+            out += ch.encode('utf-8')
+            i += 1
+            continue
+        i += 1
+        if i < len(raw) and raw[i] in '0123':
+            digits = raw[i:i + 3]
+            if len(digits) == 3 and all(d in '01234567' for d in digits):
+                out.append(int(digits, 8))
+                i += 3
+                continue
+        if i < len(raw) and raw[i] in _ESCAPES:
+            out.append(_ESCAPES[raw[i]])
+            i += 1
+            continue
+        raise ReviewBlocked('diff contains an unrecognised path escape')
+    return out.decode('utf-8', 'replace')
+
+
+def _split_quoted_pair(rest: str) -> list[str]:
+    tokens, i = [], 0
+    while i < len(rest):
+        if rest[i] == ' ':
+            i += 1
+        elif rest[i] == '"':
+            j = i + 1
+            while j < len(rest) and not (rest[j] == '"' and rest[j - 1] != '\\'):
+                j += 1
+            tokens.append(rest[i:j + 1])
+            i = j + 1
+        else:
+            j = rest.find(' ', i)
+            j = len(rest) if j < 0 else j
+            tokens.append(rest[i:j])
+            i = j
+    return tokens
+
+
+def diff_paths(diff: str) -> set[str]:
+    """Every path a unified git diff names, decoded; quoted and unquoted forms both handled."""
+    paths: set[str] = set()
+    for line in diff.splitlines():
+        if line.startswith('diff --git '):
+            rest = line[len('diff --git '):]
+            if rest.startswith('"') or '"' in rest:
+                for token in _split_quoted_pair(rest):
+                    path = unquote_git_path(token)
+                    paths.add(path[2:] if path[:2] in ('a/', 'b/') else path)
+            elif rest.startswith('a/') and ' b/' in rest and len(rest) % 2 == 1:
+                half = (len(rest) - 5) // 2          # 'a/' + N + ' b/' + N when both names are equal
+                if rest[2 + half:5 + half] == ' b/' and rest[2:2 + half] == rest[5 + half:]:
+                    paths.add(rest[2:2 + half])
+        elif line.startswith(('rename from ', 'rename to ', 'copy from ', 'copy to ')):
+            paths.add(unquote_git_path(line.split(' ', 2)[2]))
+        elif line.startswith(('--- ', '+++ ')):
+            token = line[4:].split('\t')[0]
+            token = unquote_git_path(token)
+            if token != '/dev/null':
+                paths.add(token[2:] if token[:2] in ('a/', 'b/') else token)
+    return paths
+
+
+def prepare_inputs(fetch, repo: str, number: str, head_sha: str, base_sha: str, bot_login: str,
+                   out_dir: str) -> dict:
+    """Collect review material from the two immutable revisions captured at authorization."""
+    if not (SHA_RE.match(head_sha) and SHA_RE.match(base_sha)):
+        raise ReviewBlocked('trusted base or head SHA is missing')
+    compare = f'repos/{repo}/compare/{base_sha}...{head_sha}'
+    diff = fetch(compare, 'application/vnd.github.diff')
     if len(diff.encode()) > MAX_DIFF_BYTES:
         raise ReviewBlocked('diff is too large to inspect in full')
-    files = diff_files(diff)
-    flagged = [f for f in files if sandbox.is_sensitive_name(f) or sandbox.is_untrusted_config(f)]
+    commits, files, page = [], [], 1
+    while True:
+        chunk = fetch(f'{compare}?per_page=100&page={page}')
+        commits += chunk.get('commits', [])
+        if page == 1:
+            files = chunk.get('files', [])
+            total = chunk.get('total_commits', len(commits))
+            if chunk.get('merge_base_commit') is None or len(files) >= 300:
+                raise ReviewBlocked('file list may be truncated or the revisions are unrelated')
+        if len(commits) >= total or page >= 10:
+            break
+        page += 1
+    if len(commits) < total:
+        raise ReviewBlocked('too many commits to establish implementer records')
+    api_names = {f['filename'] for f in files} | {f['previous_filename'] for f in files if f.get('previous_filename')}
+    named = diff_paths(diff)
+    if not named <= api_names:
+        raise ReviewBlocked('diff names paths that GitHub does not list for these revisions; refusing to guess')
+    flagged = [f for f in api_names | named if sandbox.is_sensitive_name(f) or sandbox.is_untrusted_config(f)]
     if flagged:
-        raise ReviewBlocked('diff touches credential-like or agent-configuration files: ' + ', '.join(flagged[:5]))
+        raise ReviewBlocked('diff touches credential-like or agent-configuration files: ' + ', '.join(sorted(flagged)[:5]))
     if sandbox.SECRET_RE.search(diff):
         raise ReviewBlocked('diff contains secret-like content; confidentiality cannot be established')
-    records = implementer_records(fetch(f'repos/{repo}/pulls/{number}/commits?per_page=100'), bot_login)
+    records = implementer_records(commits, bot_login)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, 'diff.patch'), 'w', encoding='utf-8') as handle:
         handle.write(diff)
     with open(os.path.join(out_dir, 'implementers.json'), 'w', encoding='utf-8') as handle:
         json.dump(records, handle)
-    return {'files': files, 'records': records, 'branch': head.get('ref', '')}
+    return {'files': sorted(api_names), 'records': records, 'base': base_sha, 'head': head_sha}
 
 
 def load_json(path: str):
@@ -340,8 +427,8 @@ def main(argv: list[str]) -> int:
     try:
         if command == 'prepare':
             result = prepare_inputs(gh_json, env['GITHUB_REPOSITORY'], env['TARGET_NUMBER'], env['AUTHORIZED_SHA'],
-                                    env['EXPECT_BOT_LOGIN'], argv[2])
-            emit(review_blocked='false', branch=result['branch'])
+                                    env['BASE_SHA'], env['EXPECT_BOT_LOGIN'], argv[2])
+            emit(review_blocked='false')
             print(f"review inputs ready: {len(result['files'])} files, {len(result['records'])} implementer record(s)")
             return 0
         if command == 'select':
@@ -373,7 +460,7 @@ def main(argv: list[str]) -> int:
         if command == 'status':
             reviews = gh_json(f"repos/{env['GITHUB_REPOSITORY']}/pulls/{env['TARGET_NUMBER']}/reviews?per_page=100")
             pr = gh_json(f"repos/{env['GITHUB_REPOSITORY']}/pulls/{env['TARGET_NUMBER']}")
-            print(json.dumps(acceptance_status(reviews, pr['head']['sha'], env['EXPECT_BOT_LOGIN'])))
+            print(json.dumps(acceptance_status(reviews, pr['head']['sha'], env['EXPECT_BOT_LOGIN'], pr['base']['sha'])))
             return 0
     except ReviewBlocked as error:
         emit(review_blocked='true', block_reason=one_line(str(error)))
@@ -395,11 +482,16 @@ def publish_main(argv: list[str]) -> int:
     registry = load_json(argv[2])
     with open(os.path.join(argv[3], 'review-text.txt'), encoding='utf-8') as handle:
         text = handle.read()
+    base_sha = env['BASE_SHA']
     pr = api.call('GET', f'pulls/{number}')
-    head = pr.get('head') or {}
-    if pr.get('state') != 'open' or pr.get('merged') or head.get('sha') != sha \
-            or ((head.get('repo') or {}).get('full_name') or '').lower() != repo.lower():
-        raise ReviewError('pull request moved or closed since authorization; review not posted')
+    head, pr_base = pr.get('head') or {}, pr.get('base') or {}
+    if ((head.get('repo') or {}).get('full_name') or '').lower() != repo.lower() \
+            or ((pr_base.get('repo') or {}).get('full_name') or '').lower() != repo.lower():
+        raise ReviewError('pull request repositories changed; review not posted')
+    # A moved head or base, or a closed PR, does not discard the review: it is posted bound to the
+    # revisions it examined and marked stale, so nobody mistakes it for the current state.
+    stale_on_arrival = (head.get('sha') != sha or pr_base.get('sha') != base_sha
+                        or pr.get('state') != 'open' or bool(pr.get('merged')))
     commits = []
     for page in range(1, 6):  # up to 500 commits; a longer history cannot be separated safely
         chunk = api.call('GET', f'pulls/{number}/commits?per_page=100&page={page}')
@@ -413,11 +505,13 @@ def publish_main(argv: list[str]) -> int:
     review = parse_review(text)
     body = render_review(review, {
         'commit': sha, 'reviewer_model': env['REVIEWER_MODEL'], 'reviewer_session': env['REVIEWER_SESSION'],
-        'records': records, 'branch': head.get('ref', ''), 'run_url': env['RUN_URL']})
+        'records': records, 'branch': head.get('ref', ''), 'run_url': env['RUN_URL'],
+        'base_commit': base_sha, 'stale_on_arrival': stale_on_arrival})
     # COMMENT only: this publisher never submits an approving or change-requesting review and never merges.
     api.call('POST', f'pulls/{number}/reviews', {'commit_id': sha, 'body': body, 'event': 'COMMENT'})
-    emit(review_verdict=review['verdict'])
-    print(f"review posted for {sha[:12]}: {review['verdict']}, {len(review['findings'])} finding(s)")
+    emit(review_verdict=review['verdict'], review_stale=str(stale_on_arrival).lower())
+    print(f"review posted for {sha[:12]}: {review['verdict']}, {len(review['findings'])} finding(s)"
+          + (' [STALE ON ARRIVAL]' if stale_on_arrival else ''))
     return 0
 
 

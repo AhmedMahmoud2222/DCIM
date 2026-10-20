@@ -121,11 +121,15 @@ def binding(event: dict, pr: dict | None, event_sha: str, mode: str = 'implement
     """Trusted target identity, fixed at authorization time and never taken from artifacts."""
     number = (event.get('issue') or {}).get('number')
     if 'pull_request' in (event.get('issue') or {}):
+        base_sha = ((pr or {}).get('base') or {}).get('sha', '')
+        if not SHA_RE.match(str(base_sha)):
+            raise ValueError('pull request base SHA is invalid')
         return {'kind': 'pr', 'number': number, 'authorized_sha': (pr or {})['head']['sha'],
-                'head_ref': pr_head_ref('issue_comment', event, pr), 'mode': mode}
+                'base_sha': base_sha, 'head_ref': pr_head_ref('issue_comment', event, pr), 'mode': mode}
     if mode == 'review':
         raise ValueError('review applies to pull requests only')
-    return {'kind': 'issue', 'number': number, 'authorized_sha': event_sha, 'head_ref': '', 'mode': mode}
+    return {'kind': 'issue', 'number': number, 'authorized_sha': event_sha, 'base_sha': '', 'head_ref': '',
+            'mode': mode}
 
 
 def write_output(path: str | None, authorized: bool, reason: str, task: str,

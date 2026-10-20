@@ -282,7 +282,7 @@ class ReviewOutputTests(unittest.TestCase):
         first = parsed['findings'][0]
         self.assertEqual((first['severity'], first['files']), ('high', ['backend/app/db.py']))
         self.assertTrue(first['evidence'] and first['recommendation'])
-        body = review.render_review(parsed, {'commit': SHA, 'reviewer_model': M['glm-5.3-flash'],
+        body = review.render_review(parsed, {'commit': SHA, 'base_commit': BASE_C, 'reviewer_model': M['glm-5.3-flash'],
                                              'reviewer_session': 'ses_review999', 'records': [impl_record()],
                                              'branch': 'feature/x', 'run_url': 'https://x'})
         for expected in ('[HIGH]', 'backend/app/db.py', 'Evidence:', 'Recommendation:', SHA, 'ses_review999',
@@ -300,8 +300,8 @@ class ReviewOutputTests(unittest.TestCase):
                                             'findings': self.GOOD['findings'][1:]}))
         self.assertEqual(ok['verdict'], 'NO_BLOCKING_FINDINGS')
         self.assertNotIn('approv', review.render_review(ok, {
-            'commit': SHA, 'reviewer_model': 'm', 'reviewer_session': 's', 'records': [], 'branch': 'b',
-            'run_url': 'u'}).lower().replace('not an approval', ''))
+            'commit': SHA, 'base_commit': BASE_C, 'reviewer_model': 'm', 'reviewer_session': 's', 'records': [],
+            'branch': 'b', 'run_url': 'u'}).lower().replace('not an approval', ''))
 
     def test_malformed_review_output_is_rejected(self):
         bad = ['', 'no json here', '{"verdict": ', json.dumps([1]),
@@ -327,28 +327,32 @@ class ReviewOutputTests(unittest.TestCase):
         self.assertNotRegex(parsed['findings'][0]['title'], r'(?m)^/opencode')
 
 
+BASE_C = '9' * 40
+
+
 class FakeReviewApi:
-    def __init__(self, head=SHA, state='open', commits=None, repo='o/r', existing_reviews=None):
-        self.head, self.state, self.repo = head, state, repo
+    def __init__(self, head=SHA, base=BASE_C, state='open', commits=None, repo='o/r', merged=False):
+        self.head, self.base, self.state, self.repo, self.merged = head, base, state, repo, merged
         self.commits = commits if commits is not None else [bot_commit('deepseek-v4.1-flash', 'ses_impl000111')]
         self.calls = []
 
     def call(self, method, path, body=None):
         self.calls.append((method, path, body))
-        if path.startswith('pulls/') and path.endswith('/commits?per_page=100&page=1'):
-            return self.commits
+        if path.startswith('pulls/') and '/commits?' in path:
+            return self.commits if path.endswith('page=1') else []
         if path.startswith('pulls/') and path.endswith('/reviews') and method == 'POST':
             return {'state': 'COMMENTED'}
         if path.startswith('pulls/'):
-            return {'state': self.state, 'merged': False, 'head': {'sha': self.head, 'ref': 'feature/x',
-                                                                    'repo': {'full_name': self.repo}}}
+            return {'state': self.state, 'merged': self.merged,
+                    'head': {'sha': self.head, 'ref': 'feature/x', 'repo': {'full_name': self.repo}},
+                    'base': {'sha': self.base, 'repo': {'full_name': self.repo}}}
         return {}
 
 
 class PublishReviewTests(unittest.TestCase):
-    ENV = {'GITHUB_REPOSITORY': 'o/r', 'TARGET_NUMBER': '9', 'AUTHORIZED_SHA': SHA, 'EXPECT_BOT_LOGIN': BOT,
-           'REVIEWER_MODEL': M['glm-5.3-flash'], 'REVIEWER_SESSION': 'ses_review999', 'RUN_URL': 'https://x',
-           'GH_PUBLISH_TOKEN': 'tok'}
+    ENV = {'GITHUB_REPOSITORY': 'o/r', 'TARGET_NUMBER': '9', 'AUTHORIZED_SHA': SHA, 'BASE_SHA': BASE_C,
+           'EXPECT_BOT_LOGIN': BOT, 'REVIEWER_MODEL': M['glm-5.3-flash'], 'REVIEWER_SESSION': 'ses_review999',
+           'RUN_URL': 'https://x', 'GH_PUBLISH_TOKEN': 'tok'}
 
     def run_publish(self, api, text=None, env=None):
         with tempfile.TemporaryDirectory() as tmp:
@@ -365,18 +369,24 @@ class PublishReviewTests(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(old)
 
-    def test_review_is_comment_only_and_tied_to_the_exact_commit(self):
+    def marker(self, api):
+        posted = next(c for c in api.calls if c[0] == 'POST')
+        return posted, json.loads(re.match(r'<!-- opencode-review:(\{.*?\}) -->', posted[2]['body']).group(1))
+
+    def test_review_is_comment_only_and_tied_to_both_reviewed_commits(self):
         api = FakeReviewApi()
         self.run_publish(api)
-        posted = next(c for c in api.calls if c[0] == 'POST')
+        posted, marker = self.marker(api)
         self.assertEqual(posted[1], 'pulls/9/reviews')
         self.assertEqual(posted[2]['event'], 'COMMENT')  # never APPROVE or REQUEST_CHANGES
         self.assertEqual(posted[2]['commit_id'], SHA)
-        marker = json.loads(re.match(r'<!-- opencode-review:(\{.*?\}) -->', posted[2]['body']).group(1))
         self.assertEqual(marker['reviewed_commit'], SHA)
+        self.assertEqual(marker['base_commit'], BASE_C)
+        self.assertIs(marker['stale_on_arrival'], False)
         self.assertEqual(marker['external_acceptance'], 'REQUIRED')
         self.assertEqual(marker['implementer_models'], [M['deepseek-v4.1-flash']])
         self.assertEqual(marker['reviewer_model'], M['glm-5.3-flash'])
+        self.assertNotIn('STALE ON ARRIVAL', posted[2]['body'])
 
     def test_review_findings_cannot_trigger_merge_or_approval(self):
         api = FakeReviewApi()
@@ -396,11 +406,26 @@ class PublishReviewTests(unittest.TestCase):
                 self.run_publish(api, env=env)
             self.assertEqual([c for c in api.calls if c[0] == 'POST'], [])
 
-    def test_moved_closed_or_foreign_pr_is_not_reviewed(self):
-        for api in (FakeReviewApi(head=NEWSHA), FakeReviewApi(state='closed'), FakeReviewApi(repo='evil/r')):
-            with self.assertRaises(review.ReviewError):
-                self.run_publish(api)
-            self.assertEqual([c for c in api.calls if c[0] == 'POST'], [])
+    def test_pr_changed_before_publication_is_posted_marked_stale_bound_to_the_reviewed_revisions(self):
+        for kwargs in ({'head': NEWSHA}, {'base': 'c' * 40}, {'state': 'closed'}, {'merged': True}):
+            api = FakeReviewApi(**kwargs)
+            self.run_publish(api)
+            posted, marker = self.marker(api)
+            self.assertIs(marker['stale_on_arrival'], True, kwargs)
+            self.assertIn('STALE ON ARRIVAL', posted[2]['body'])
+            self.assertEqual(posted[2]['commit_id'], SHA)          # still the commit that was reviewed
+            self.assertEqual(marker['reviewed_commit'], SHA)
+            self.assertEqual(marker['base_commit'], BASE_C)
+            status = review.acceptance_status([{
+                'user': {'login': BOT}, 'commit_id': SHA, 'submitted_at': '2026-10-22T10:00:00Z',
+                'body': posted[2]['body']}], SHA, BOT, BASE_C)
+            self.assertEqual(status['status'], 'STALE', kwargs)    # stale even though SHAs now match
+
+    def test_foreign_repository_pr_is_refused(self):
+        api = FakeReviewApi(repo='evil/r')
+        with self.assertRaises(review.ReviewError):
+            self.run_publish(api)
+        self.assertEqual([c for c in api.calls if c[0] == 'POST'], [])
 
     def test_invalid_review_output_is_not_posted(self):
         api = FakeReviewApi()
@@ -410,23 +435,31 @@ class PublishReviewTests(unittest.TestCase):
 
 
 class AcceptanceStalenessTests(unittest.TestCase):
-    def posted(self, commit, verdict='NO_BLOCKING_FINDINGS', submitted='2026-10-22T10:00:00Z', login=BOT, commit_id=None):
-        marker = {'reviewed_commit': commit, 'verdict': verdict, 'external_acceptance': 'REQUIRED'}
+    def posted(self, commit, verdict='NO_BLOCKING_FINDINGS', submitted='2026-10-22T10:00:00Z', login=BOT, commit_id=None,
+               base=BASE_C, stale=False):
+        marker = {'reviewed_commit': commit, 'base_commit': base, 'stale_on_arrival': stale, 'verdict': verdict,
+                  'external_acceptance': 'REQUIRED'}
         return {'user': {'login': login}, 'commit_id': commit_id or commit, 'submitted_at': submitted,
                 'body': f'<!-- opencode-review:{json.dumps(marker)} -->\n## review'}
 
     def test_verdict_is_tied_to_the_exact_reviewed_commit(self):
-        status = review.acceptance_status([self.posted(SHA)], SHA, BOT)
+        status = review.acceptance_status([self.posted(SHA)], SHA, BOT, BASE_C)
         self.assertEqual(status['status'], 'CURRENT')
-        self.assertEqual(status['reviewed_commit'], SHA)
+        self.assertEqual((status['reviewed_commit'], status['base_commit']), (SHA, BASE_C))
 
     def test_new_commit_invalidates_prior_review(self):
-        status = review.acceptance_status([self.posted(SHA)], NEWSHA, BOT)
-        self.assertEqual(status['status'], 'STALE')
+        self.assertEqual(review.acceptance_status([self.posted(SHA)], NEWSHA, BOT, BASE_C)['status'], 'STALE')
+        self.assertEqual(review.acceptance_status([self.posted(SHA)], NEWSHA, BOT)['status'], 'STALE')
+
+    def test_base_change_also_invalidates_the_review(self):
+        self.assertEqual(review.acceptance_status([self.posted(SHA)], SHA, BOT, 'c' * 40)['status'], 'STALE')
+
+    def test_review_posted_stale_never_becomes_current(self):
+        self.assertEqual(review.acceptance_status([self.posted(SHA, stale=True)], SHA, BOT, BASE_C)['status'], 'STALE')
 
     def test_a_review_is_never_acceptance(self):
         for head in (SHA, NEWSHA):
-            status = review.acceptance_status([self.posted(SHA)], head, BOT)
+            status = review.acceptance_status([self.posted(SHA)], head, BOT, BASE_C)
             self.assertIs(status['accepted'], False)
             self.assertEqual(status['external_acceptance'], 'REQUIRED')
         self.assertEqual(review.acceptance_status([], SHA, BOT)['status'], 'NONE')
@@ -441,40 +474,24 @@ class AcceptanceStalenessTests(unittest.TestCase):
     def test_newest_review_decides(self):
         reviews = [self.posted(SHA, submitted='2026-10-22T10:00:00Z'),
                    self.posted(NEWSHA, submitted='2026-10-22T11:00:00Z')]
-        self.assertEqual(review.acceptance_status(reviews, NEWSHA, BOT)['status'], 'CURRENT')
-        self.assertEqual(review.acceptance_status(reviews, 'c' * 40, BOT)['status'], 'STALE')
+        self.assertEqual(review.acceptance_status(reviews, NEWSHA, BOT, BASE_C)['status'], 'CURRENT')
+        self.assertEqual(review.acceptance_status(reviews, 'c' * 40, BOT, BASE_C)['status'], 'STALE')
 
     def test_implementation_publish_announces_stale_review(self):
-        pr_env = {'GITHUB_REPOSITORY': 'o/r', 'DEFAULT_BRANCH': 'main', 'EVENT_KIND': 'pr', 'TARGET_NUMBER': '9',
-                  'AUTHORIZED_SHA': SHA, 'GENERATION_STATUS': 'success', 'RUN_URL': 'https://x', 'RUN_ID': '2',
-                  'RUN_ATTEMPT': '1', 'ACTOR_LOGIN': 'me', 'EXPECT_BOT_LOGIN': BOT, 'TASK': 't',
-                  'MODEL': M['glm-5.3-flash'], 'CATEGORY': 'general', 'ROUTE_REASON': 'r', 'PR_HEAD_REF': 'feature/x',
-                  'SESSION_ID': 'ses_impl000222'}
-        calls = []
-        old_review = self.posted(SHA)
-
-        class Api:
-            def call(self_inner, method, path, body=None):
-                calls.append((method, path, body))
-                if path == '':
-                    return {'default_branch': 'main', 'full_name': 'o/r'}
-                if path == 'branches/main':
-                    return {'protected': True}
-                if path == 'branches/feature/x':
-                    return {'protected': False, 'commit': {'sha': SHA}}
-                if path == 'pulls/9':
-                    return {'number': 9, 'state': 'open', 'merged': False, 'base': {'repo': {'full_name': 'o/r'}},
-                            'head': {'ref': 'feature/x', 'sha': SHA, 'repo': {'full_name': 'o/r'}}}
-                if path.startswith('commits/'):
-                    return {'commit': {'verification': {'verified': True, 'reason': 'valid'}}, 'author': {'login': BOT}}
-                if path.startswith('pulls/9/reviews'):
-                    return [old_review]
-                return {}
-            def graphql(self_inner, query, variables):
-                return {'createCommitOnBranch': {'commit': {'oid': NEWSHA}}}
-        publish.publish(Api(), pr_env, {'base_sha': SHA, 'additions': [{'path': 'a', 'contents': 'eA=='}],
-                                        'deletions': []}, sleep=lambda _s: None)
-        comment = next(c for c in calls if c[1] == 'issues/9/comments')[2]['body']
+        try:
+            FakeApi = importlib.import_module('test_opencode_publish').FakeApi
+        except ImportError:
+            FakeApi = importlib.import_module('tests.deployment.test_opencode_publish').FakeApi
+        pr_env = {'GITHUB_REPOSITORY': 'AhmedMahmoud2222/DCIM', 'DEFAULT_BRANCH': 'main', 'EVENT_KIND': 'pr',
+                  'TARGET_NUMBER': '9', 'AUTHORIZED_SHA': 'a' * 40, 'GENERATION_STATUS': 'success', 'RUN_URL': 'https://x',
+                  'RUN_ID': '2', 'RUN_ATTEMPT': '1', 'ACTOR_LOGIN': 'me', 'EXPECT_BOT_LOGIN': 'dcim-opencode-agent[bot]',
+                  'TASK': 't', 'MODEL': M['glm-5.3-flash'], 'CATEGORY': 'general', 'ROUTE_REASON': 'r',
+                  'PR_HEAD_REF': 'feature/x', 'SESSION_ID': 'ses_impl000222'}
+        api = FakeApi()
+        api.reviews = [self.posted(SHA)]
+        publish.publish(api, pr_env, {'base_sha': 'a' * 40, 'additions': [{'path': 'a', 'contents': 'eA=='}],
+                                      'deletions': []}, sleep=lambda _s: None, git_push=api.push)
+        comment = next(c for c in api.calls if c[1] == 'issues/9/comments')[2]['body']
         self.assertIn('STALE', comment)
         self.assertIn(SHA[:12], comment)
 
@@ -505,20 +522,28 @@ class ReadOnlyAndConfidentialityTests(unittest.TestCase):
             with self.assertRaises(review.ReviewError):
                 review.assert_read_only(manifest, digest)
 
-    def test_workflow_makes_the_reviewer_tree_read_only_before_the_agent_starts(self):
+    def test_workflow_builds_a_root_controlled_tree_and_probes_as_the_reviewer_before_the_agent_starts(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/opencode.yml').read_text())
         steps = {s.get('name'): s for s in workflow['jobs']['review']['steps']}
-        create = steps['Create isolated agent user']['run']
-        self.assertIn('chown -R root:root /srv/ocagent/work', create)
-        self.assertIn('chmod -R a-w,a+rX /srv/ocagent/work', create)
+        layout = steps['Create isolated agent user and root-controlled read-only source']['run']
+        for required in ('fsisolate.py build "${RUNNER_TEMP}/stage" /srv/ocreview', 'fsisolate.py mount /srv/ocreview',
+                         'fsisolate.py chain /srv/ocreview/src', 'fsisolate.py digest /srv/ocreview/src',
+                         'sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocreview/src'):
+            self.assertIn(required, layout)
+        self.assertNotIn('chown -R ocagent', layout)
         order = [s.get('name') for s in workflow['jobs']['review']['steps']]
-        self.assertLess(order.index('Create isolated agent user'),
-                        order.index('Run reviewer (loopback-only, read-only, credential held by proxy)'))
-        run = steps['Run reviewer (loopback-only, read-only, credential held by proxy)']['run']
+        run_name = 'Run reviewer (loopback-only, read-only, model-bound proxy)'
+        self.assertLess(order.index('Create isolated agent user and root-controlled read-only source'), order.index(run_name))
+        run = steps[run_name]['run']
         self.assertIn('config "${MODEL}" "${port}" review', run)
-        self.assertEqual(steps['Run reviewer (loopback-only, read-only, credential held by proxy)']['env']['GUARD_MODE'], 'review')
-        self.assertIn('verify-readonly', steps['Verify separation and that nothing was modified']['run'])
-        self.assertIn('review check', steps['Verify separation and that nothing was modified']['run'].replace('opencode_review.py check', 'review check'))
+        self.assertIn('/srv/ocreview/src 25', run)
+        self.assertIn('implementers.json', run)          # reviewer proxy is told which models are forbidden
+        self.assertEqual(steps[run_name]['env']['GUARD_MODE'], 'review')
+        after = steps['Verify separation, unchanged source and effective permissions']
+        for required in ('opencode_review.py check', 'fsisolate.py chain /srv/ocreview/src', 'EXPECTED_DIGEST',
+                         'fsisolate.py probe /srv/ocreview/src', 'verify-readonly'):
+            self.assertIn(required, after['run'])
+        self.assertEqual(after['env']['EXPECTED_DIGEST'], '${{ steps.layout.outputs.tree_digest }}')
 
     def test_reviewer_job_has_no_write_rights_and_a_review_only_publish_token(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/opencode.yml').read_text())
@@ -530,40 +555,98 @@ class ReadOnlyAndConfidentialityTests(unittest.TestCase):
         self.assertEqual({k: v for k, v in mint['with'].items() if k.startswith('permission-')},
                          {'permission-pull-requests': 'write'})
 
+    def compare_fetch(self, diff, files, commits=None, total=None, merge_base=True):
+        calls = []
+
+        def fetch(path, accept=None):
+            calls.append((path, accept))
+            if accept:
+                return diff
+            return {'merge_base_commit': {'sha': BASE_C} if merge_base else None,
+                    'files': [{'filename': f} if isinstance(f, str) else f for f in files],
+                    'commits': commits if commits is not None else [bot_commit('glm-5.3-flash', 'ses_aaa111')],
+                    'total_commits': total if total is not None else len(commits or [1])}
+        fetch.calls = calls
+        return fetch
+
+    def prepare(self, fetch):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = review.prepare_inputs(fetch, 'o/r', '9', SHA, BASE_C, BOT, tmp)
+            return result, Path(tmp, 'diff.patch').exists()
+
     def test_restricted_data_never_reaches_the_reviewer(self):
         secret = 'ghp_' + 'Z9y8X7w6' * 5
-        diffs = {
-            'credential-like file': 'diff --git a/.env b/.env\n+A=1\n',
-            'untrusted config': 'diff --git a/.opencode/x.md b/.opencode/x.md\n+x\n',
-            'secret in diff': f'diff --git a/a.py b/a.py\n+token = "{secret}"\n',
-            'oversized': 'diff --git a/a.py b/a.py\n' + '+x\n' * 600_000,
+        cases = {
+            'credential-like file': ('diff --git a/.env b/.env\n+A=1\n', ['.env']),
+            'untrusted config': ('diff --git a/.opencode/x.md b/.opencode/x.md\n+x\n', ['.opencode/x.md']),
+            'secret in diff': (f'diff --git a/a.py b/a.py\n+token = "{secret}"\n', ['a.py']),
+            'oversized': ('diff --git a/a.py b/a.py\n' + '+x\n' * 600_000, ['a.py']),
+            'diff names a path GitHub does not list': ('diff --git a/a.py b/a.py\n+x\n', ['b.py']),
+            'files list possibly truncated': ('diff --git a/a.py b/a.py\n+x\n', [f'f{i}.py' for i in range(300)]),
         }
-        pr = {'state': 'open', 'merged': False, 'head': {'sha': SHA, 'ref': 'f', 'repo': {'full_name': 'o/r'}}}
-        for name, diff in diffs.items():
-            def fetch(path, accept=None, _diff=diff):
-                return _diff if accept else (pr if path.endswith('/9') else [])
+        for name, (diff, files) in cases.items():
             with tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaises(review.ReviewBlocked, msg=name):
-                    review.prepare_inputs(fetch, 'o/r', '9', SHA, BOT, tmp)
+                    review.prepare_inputs(self.compare_fetch(diff, files), 'o/r', '9', SHA, BASE_C, BOT, tmp)
                 self.assertFalse(os.path.exists(os.path.join(tmp, 'diff.patch')), name)
 
-    def test_clean_diff_is_prepared_with_implementer_records(self):
-        pr = {'state': 'open', 'merged': False, 'head': {'sha': SHA, 'ref': 'feature/x', 'repo': {'full_name': 'o/r'}}}
-        commits = [bot_commit('glm-5.3-flash', 'ses_aaa111')]
-        def fetch(path, accept=None):
-            if accept:
-                return 'diff --git a/backend/a.py b/backend/a.py\n+x = 1\n'
-            return commits if 'commits' in path else pr
-        with tempfile.TemporaryDirectory() as tmp:
-            result = review.prepare_inputs(fetch, 'o/r', '9', SHA, BOT, tmp)
-            self.assertEqual(result['files'], ['backend/a.py'])
-            self.assertEqual(json.loads(Path(tmp, 'implementers.json').read_text())[0]['session'], 'ses_aaa111')
+    def test_review_material_comes_from_the_two_immutable_revisions_not_the_live_pr(self):
+        fetch = self.compare_fetch('diff --git a/backend/a.py b/backend/a.py\n+x = 1\n', ['backend/a.py'])
+        result, wrote = self.prepare(fetch)
+        self.assertTrue(wrote)
+        self.assertEqual((result['base'], result['head']), (BASE_C, SHA))
+        for path, _accept in fetch.calls:
+            self.assertIn(f'compare/{BASE_C}...{SHA}', path)       # never pulls/9 (which can move)
+            self.assertNotIn('/pulls/', path)
 
-    def test_pr_at_a_different_commit_than_authorized_is_blocked(self):
-        pr = {'state': 'open', 'merged': False, 'head': {'sha': NEWSHA, 'ref': 'f', 'repo': {'full_name': 'o/r'}}}
+    def test_missing_or_malformed_revision_ids_block_the_review(self):
+        for base, head in (('', SHA), (BASE_C, ''), ('main', SHA), (BASE_C, 'HEAD'), ('A' * 40, SHA), (BASE_C, 'A' * 40)):
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(review.ReviewBlocked, msg=f'{base!r} {head!r}'):
+                    review.prepare_inputs(self.compare_fetch('', []), 'o/r', '9', head, base, BOT, tmp)
+
+    def test_unrelated_revisions_and_unbounded_commit_lists_block_the_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(review.ReviewBlocked):
-                review.prepare_inputs(lambda path, accept=None: pr, 'o/r', '9', SHA, BOT, tmp)
+                review.prepare_inputs(self.compare_fetch('', [], merge_base=False), 'o/r', '9', SHA, BASE_C, BOT, tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(review.ReviewBlocked):
+                review.prepare_inputs(self.compare_fetch('diff --git a/a b/a\n', ['a'], commits=[bot_commit('glm-5.3-flash', 'ses_aaa111')],
+                                                         total=5000), 'o/r', '9', SHA, BASE_C, BOT, tmp)
+
+    def test_git_quoted_paths_are_decoded_and_checked(self):
+        self.assertEqual(review.unquote_git_path('"dir/caf\\303\\251.py"'), 'dir/caf\u00e9.py')
+        self.assertEqual(review.unquote_git_path('"a\\tb\\"c"'), 'a\tb"c')
+        self.assertEqual(review.unquote_git_path('plain/path.py'), 'plain/path.py')
+        with self.assertRaises(review.ReviewBlocked):
+            review.unquote_git_path('"bad\\q"')
+        diff = ('diff --git "a/dir/caf\\303\\251.py" "b/dir/caf\\303\\251.py"\n--- "a/dir/caf\\303\\251.py"\n+++ "b/dir/caf\\303\\251.py"\n+x\n'
+                'diff --git a/with space.txt b/with space.txt\n--- a/with space.txt\n+++ b/with space.txt\n+y\n'
+                'diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt\n')
+        self.assertEqual(review.diff_paths(diff), {'dir/caf\u00e9.py', 'with space.txt', 'old.txt', 'new.txt'})
+
+    def test_octal_escaped_names_cannot_hide_a_credential_file(self):
+        hidden = '"dir/\\056env"'          # git would never quote this, but the decoder must still see .env
+        diff = f'diff --git a/{hidden} b/{hidden}\n--- {hidden}\n+++ {hidden}\n+A=1\n'
+        self.assertIn('dir/.env', review.diff_paths(diff))
+        with self.assertRaises(review.ReviewBlocked):
+            self.prepare(self.compare_fetch(diff, ['dir/.env']))
+        # a quoted unicode path is accepted when GitHub lists the same decoded name
+        quoted = 'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n+x\n'
+        result, _ = self.prepare(self.compare_fetch(quoted, ['caf\u00e9.py']))
+        self.assertEqual(result['files'], ['caf\u00e9.py'])
+        # a rename INTO a credential file name is caught through the rename lines
+        rename = 'diff --git a/x.txt b/.env\nrename from x.txt\nrename to .env\n'
+        with self.assertRaises(review.ReviewBlocked):
+            self.prepare(self.compare_fetch(rename, [{'filename': '.env', 'previous_filename': 'x.txt'}]))
+
+    def test_clean_diff_is_prepared_with_implementer_records(self):
+        fetch = self.compare_fetch('diff --git a/backend/a.py b/backend/a.py\n+x = 1\n', ['backend/a.py'],
+                                   commits=[bot_commit('glm-5.3-flash', 'ses_aaa111')], total=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = review.prepare_inputs(fetch, 'o/r', '9', SHA, BASE_C, BOT, tmp)
+            self.assertEqual(result['files'], ['backend/a.py'])
+            self.assertEqual(json.loads(Path(tmp, 'implementers.json').read_text())[0]['session'], 'ses_aaa111')
 
     def test_sensitive_review_focus_is_blocked_before_any_model_call(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -623,12 +706,15 @@ class GateReviewModeTests(unittest.TestCase):
     def test_review_applies_to_pull_requests_only(self):
         with self.assertRaises(ValueError):
             self.gate.binding({'issue': {'number': 5}}, None, SHA, 'review')
-        pr = {'head': {'sha': SHA, 'ref': 'feature/x'}}
+        pr = {'head': {'sha': SHA, 'ref': 'feature/x'}, 'base': {'sha': BASE_C}}
         target = self.gate.binding({'issue': {'number': 5, 'pull_request': {}}}, pr, SHA, 'review')
-        self.assertEqual((target['mode'], target['kind'], target['authorized_sha']), ('review', 'pr', SHA))
+        self.assertEqual((target['mode'], target['kind'], target['authorized_sha'], target['base_sha']),
+                         ('review', 'pr', SHA, BASE_C))
+        with self.assertRaises(ValueError):        # a PR without a usable base SHA cannot be reviewed
+            self.gate.binding({'issue': {'number': 5, 'pull_request': {}}}, {'head': {'sha': SHA, 'ref': 'f'}, 'base': {}}, SHA, 'review')
 
     def test_main_authorizes_review_on_pr_and_rejects_review_on_issue(self):
-        pr = {'number': 5, 'state': 'open', 'merged': False, 'base': {'repo': {'full_name': 'o/r'}},
+        pr = {'number': 5, 'state': 'open', 'merged': False, 'base': {'sha': BASE_C, 'repo': {'full_name': 'o/r'}},
               'head': {'ref': 'feature/x', 'sha': SHA, 'repo': {'full_name': 'o/r'}}}
         def run(issue):
             with tempfile.TemporaryDirectory() as tmp:
@@ -649,7 +735,7 @@ class GateReviewModeTests(unittest.TestCase):
                     os.environ.clear()
                     os.environ.update(old)
         text = run({'number': 5, 'pull_request': {}})
-        for expected in ('authorized=true', 'mode=review', 'kind=pr', 'task<<'):
+        for expected in ('authorized=true', 'mode=review', 'kind=pr', 'task<<', f'base_sha={BASE_C}', f'authorized_sha={SHA}'):
             self.assertIn(expected, text)
         self.assertIn('check locking', text)
         self.assertNotIn('review check', text)

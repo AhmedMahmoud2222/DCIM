@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the confidentiality boundary for the sandboxed agent (sandbox v2.0).
+"""Build the confidentiality boundary for the sandboxed agent (sandbox v3.0).
 
 The model can only see (a) the fixed instruction plus the authorized command text,
 and (b) files the agent reads from a sanitized copy of the repository. This module
@@ -36,10 +36,17 @@ SENSITIVE_NAMES = (
 )
 SENSITIVE_ALLOWED = ('.env.example', '.env.sample', '.env.template')
 SECRET_RE = re.compile(
-    r'-----BEGIN [A-Z ]*PRIVATE KEY-----|\bgh[pousr]_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{30,}|'
-    r'\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9]{32,}|\bxox[baprs]-[A-Za-z0-9-]{20,}|'
-    r'\bAIza[0-9A-Za-z_-]{35}\b')
-MAX_SCAN_BYTES = 2 * 1024 * 1024
+    r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|gh[pousr]_[A-Za-z0-9]{30,}|'
+    r'github_pat_[A-Za-z0-9_]{30,}|(?:AKIA|ASIA)[0-9A-Z]{16}|\bsk-[A-Za-z0-9_-]{32,}|'
+    r'xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{35}|[sr]k_live_[A-Za-z0-9]{20,}|'
+    r'glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|'
+    r'\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|'
+    r'AccountKey=[A-Za-z0-9+/=]{40,}')
+# Explicit limits on what may reach the model. Anything that cannot be fully read, decoded
+# and scanned inside these limits is NOT copied into the sandbox.
+MAX_FILE_BYTES = 1024 * 1024          # per file; larger files are excluded
+MAX_TOTAL_BYTES = 100 * 1024 * 1024   # whole sandbox copy; exceeding it fails the run
+MAX_FILES = 20000
 GIT_SAFE = ['-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
             '-c', 'core.attributesFile=/dev/null', '-c', 'commit.gpgsign=false',
             '-c', 'user.name=opencode-sandbox', '-c', 'user.email=sandbox@invalid']
@@ -61,19 +68,35 @@ def is_untrusted_config(path: str) -> bool:
     return first in UNTRUSTED_CONFIG or os.path.basename(path) in ('opencode.json', 'opencode.jsonc')
 
 
+def classify_file(path: str) -> tuple[str, str]:
+    """Return ('ok', '') for a fully scanned UTF-8 text file within limits, ('secret', '') when it
+    holds a secret pattern, else ('excluded', reason). The whole file is read: there is no
+    scan window, so content after any offset or after NUL bytes is covered or excluded."""
+    try:
+        size = os.stat(path).st_size
+        if size > MAX_FILE_BYTES:
+            return 'excluded', 'larger than the per-file limit'
+        with open(path, 'rb') as handle:
+            data = handle.read(MAX_FILE_BYTES + 1)
+    except OSError:
+        return 'excluded', 'unreadable'
+    if len(data) > MAX_FILE_BYTES:
+        return 'excluded', 'larger than the per-file limit'
+    if b'\0' in data:
+        return 'excluded', 'binary content'
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError:
+        return 'excluded', 'not valid UTF-8'
+    if SECRET_RE.search(text):
+        return 'secret', ''
+    return 'ok', ''
+
+
 def scan_for_secrets(root: str, files: list[str], allowlist: set[str]) -> list[str]:
-    """Return paths whose content matches a high-confidence secret pattern (never the match)."""
-    hits = []
-    for rel in files:
-        if rel in allowlist:
-            continue
-        with open(os.path.join(root, rel), 'rb') as handle:
-            data = handle.read(MAX_SCAN_BYTES)
-        if b'\0' in data[:2048]:
-            continue
-        if SECRET_RE.search(data.decode('utf-8', 'ignore')):
-            hits.append(rel)
-    return hits
+    """Paths among `files` (already copied under root) that contain a secret pattern."""
+    return [rel for rel in files if rel not in allowlist
+            and classify_file(os.path.join(root, rel))[0] == 'secret']
 
 
 def run_git(gitdir: str, worktree: str | None, *args: str, env: dict | None = None) -> str:
@@ -88,7 +111,7 @@ def run_git(gitdir: str, worktree: str | None, *args: str, env: dict | None = No
 def prepare(src: str, dest: str, state: str, authorized_sha: str, allowlist: set[str]) -> dict:
     tracked = subprocess.run(['git', '-C', src, 'ls-files', '-z'], check=True,
                              capture_output=True).stdout.split(b'\0')
-    copied, excluded = [], []
+    copied, excluded, secret_hits, total = [], [], [], 0
     os.makedirs(dest, exist_ok=True)
     for raw in tracked:
         if not raw:
@@ -97,19 +120,32 @@ def prepare(src: str, dest: str, state: str, authorized_sha: str, allowlist: set
         source = os.path.join(src, rel)
         if os.path.islink(source) or not os.path.isfile(source):
             excluded.append({'path': rel, 'reason': 'symlink or non-regular file'})
-        elif is_untrusted_config(rel):
+            continue
+        if is_untrusted_config(rel):
             excluded.append({'path': rel, 'reason': 'untrusted agent configuration'})
-        elif is_sensitive_name(rel):
+            continue
+        if is_sensitive_name(rel):
             excluded.append({'path': rel, 'reason': 'credential-like file name'})
-        else:
-            target = os.path.join(dest, rel)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(source, target)
-            os.chmod(target, 0o755 if os.stat(source).st_mode & 0o111 else 0o644)
-            copied.append(rel)
-    hits = scan_for_secrets(dest, copied, allowlist)
-    if hits:
-        raise SandboxError('secret-like content found in ' + ', '.join(hits[:10]) +
+            continue
+        verdict, reason = classify_file(source)
+        if verdict == 'secret':
+            if rel not in allowlist:
+                secret_hits.append(rel)
+                continue
+        elif verdict == 'excluded':
+            excluded.append({'path': rel, 'reason': reason})
+            continue
+        total += os.path.getsize(source)
+        if len(copied) + 1 > MAX_FILES or total > MAX_TOTAL_BYTES:
+            raise SandboxError('repository exceeds the sandbox size limits; input cannot be bounded, '
+                               'stopping before any model call')
+        target = os.path.join(dest, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copyfile(source, target)
+        os.chmod(target, 0o755 if os.stat(source).st_mode & 0o111 else 0o644)
+        copied.append(rel)
+    if secret_hits:
+        raise SandboxError('secret-like content found in ' + ', '.join(secret_hits[:10]) +
                            '; confidentiality cannot be established, stopping before any model call')
     gitdir = os.path.join(state, 'baseline.git')
     os.makedirs(state, exist_ok=True)
@@ -141,6 +177,9 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
         'share': 'disabled',
         'enabled_providers': ['opencode'],
         'model': model,
+        # OpenCode makes side requests (session titles) with its `small_model`. Without this it picks a
+        # different model on a different API, which the model-bound proxy would have to refuse.
+        'small_model': model,
         'provider': {'opencode': {'options': {
             'baseURL': f'http://127.0.0.1:{int(port)}/inference/openai/v1', 'apiKey': 'sandbox-placeholder'}}},
         'permission': {

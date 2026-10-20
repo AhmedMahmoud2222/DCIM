@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish agent changes as one GitHub-signed commit and a Draft PR (publisher v3.0).
+"""Publish agent changes as one GitHub-signed commit and a Draft PR (publisher v4.0).
 
 Runs in a fresh job that never executed agent code. Target identity and the baseline
 come ONLY from trusted workflow values (the gate's outputs and the event). The artifact
@@ -8,8 +8,16 @@ content. Commits use GraphQL createCommitOnBranch with a GitHub App installation
 so GitHub signs them and attributes them to the App; no signing key exists here.
 
 Existing PR branches are never touched until the commit is verified: the commit is
-created on a fresh staging branch, verified, and only then fast-forwarded onto the PR
-branch with a non-forced ref update.
+created on a fresh staging branch and verified. Immediately before the PR branch moves, the
+PR is refetched and every authorization condition is checked again. The move itself is an
+exact-SHA compare-and-swap (git push --force-with-lease=REF:EXPECTED): it succeeds only if
+the remote branch is still exactly the authorized SHA, so a concurrent push, force-push or
+reset to an ancestor makes it fail instead of silently undoing that change. The REST
+ref-update endpoint cannot give that guarantee and is not used.
+
+After any ambiguous GitHub failure the real remote state is queried before anything is
+claimed; the facts are written to the evidence file for manual recovery. Nothing is ever
+force-pushed or rewritten.
 
 Environment (trusted): GH_PUBLISH_TOKEN (never printed), GITHUB_REPOSITORY, DEFAULT_BRANCH,
 EVENT_KIND (issue|pr), TARGET_NUMBER, SESSION_ID, AUTHORIZED_SHA, PR_HEAD_REF (pr only),
@@ -24,6 +32,7 @@ import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -48,7 +57,8 @@ PROTECTED_PREFIXES = (
     '.github/workflows/', '.github/opencode/', '.github/codeowners', '.github/dependabot.yml',
     '.opencode/', 'docs/security/opencode_agent_authority.md', 'opencode.json', 'opencode.jsonc',
 )
-PROTECTED_BASENAME_PREFIXES = ('.github/scripts/opencode_', 'tests/deployment/test_opencode_')
+PROTECTED_BASENAME_PREFIXES = ('.github/scripts/opencode_', 'tests/deployment/test_opencode_',
+                               'tests/deployment/mutation_check', 'tests/deployment/fixtures/')
 PROTECTED_NAMES = ('codeowners', 'agents.md')
 
 
@@ -56,12 +66,16 @@ class PublishError(Exception):
     pass
 
 
+class AmbiguousApiError(PublishError):
+    """The outcome of a GitHub call is unknown (network failure, timeout or 5xx)."""
+
+
 class PartialPublication(PublishError):
     """Something durable exists on GitHub although the run did not complete."""
 
-    def __init__(self, message: str, branch: str, commit: str):
+    def __init__(self, message: str, branch: str, commit: str, evidence: dict | None = None):
         super().__init__(message)
-        self.branch, self.commit = branch, commit
+        self.branch, self.commit, self.evidence = branch, commit, evidence or {}
 
 
 def is_protected_path(path: str) -> bool:
@@ -182,14 +196,21 @@ class Api:
             url, method=method, data=None if body is None else json.dumps(body).encode(),
             headers={'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
                      'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'dcim-opencode-publisher'})
+        label = f'GitHub API {method} {path.split("?")[0]}'
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 raw = response.read()
         except urllib.error.HTTPError as error:
-            raise PublishError(f'GitHub API {method} {path.split("?")[0]} failed with HTTP {error.code}') from None
+            cls = AmbiguousApiError if error.code >= 500 else PublishError
+            failure = cls(f'{label} failed with HTTP {error.code}')
+            failure.status = error.code
+            raise failure from None
         except (urllib.error.URLError, TimeoutError, OSError):
-            raise PublishError(f'GitHub API {method} {path.split("?")[0]} unreachable') from None
-        return json.loads(raw) if raw else {}
+            raise AmbiguousApiError(f'{label} unreachable or timed out') from None
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            raise AmbiguousApiError(f'{label} returned an unreadable response') from None
 
     def graphql(self, query: str, variables: dict):
         result = self.call('POST', 'https://api.github.com/graphql', {'query': query, 'variables': variables})
@@ -218,29 +239,22 @@ def verify_commit(api, sha: str, expect_login: str, sleep=time.sleep) -> str:
     return reason
 
 
-def bind_target(api, env: dict, base: str) -> str:
-    """Independently fetch the target from GitHub and bind it to the trusted values.
+def remote_sha(api, branch: str) -> str | None:
+    """Actual remote tip of `branch` (None when the branch does not exist). Raises if unknowable."""
+    try:
+        return api.call('GET', f'git/ref/heads/{branch}')['object']['sha']
+    except AmbiguousApiError:
+        raise
+    except PublishError as error:
+        if getattr(error, 'status', None) == 404:
+            return None
+        raise
 
-    Returns the branch whose tip is the baseline. Raises before any mutation on mismatch.
-    """
+
+def check_pr_target(api, env: dict) -> str:
+    """Refetch the PR and branch and verify every authorization condition. Returns the branch."""
     repo, default, number = env['GITHUB_REPOSITORY'], env['DEFAULT_BRANCH'], env['TARGET_NUMBER']
     authorized = env['AUTHORIZED_SHA']
-    if not SHA_RE.match(authorized):
-        raise PublishError('trusted baseline is not a full SHA')
-    if base != authorized:
-        raise PublishError('artifact baseline does not match the trusted authorized baseline')
-    meta = api.call('GET', '')
-    if meta.get('default_branch') != default or meta.get('full_name', repo).lower() != repo.lower():
-        raise PublishError('repository identity or default branch differs from the event context')
-    if not api.call('GET', f'branches/{default}').get('protected'):
-        raise PublishError('default branch is not protected; refusing to publish')
-    if env['EVENT_KIND'] == 'issue':
-        issue = api.call('GET', f'issues/{number}')
-        if issue.get('number') != int(number) or 'pull_request' in issue or issue.get('state') != 'open':
-            raise PublishError('target is not an open issue with the authorized number')
-        if api.call('GET', f'compare/{default}...{authorized}').get('status') not in ('behind', 'identical'):
-            raise PublishError('authorized baseline is not reachable from the default branch')
-        return ''
     pr = api.call('GET', f'pulls/{number}')
     head, pr_base = pr.get('head') or {}, pr.get('base') or {}
     checks = [
@@ -262,59 +276,180 @@ def bind_target(api, env: dict, base: str) -> str:
     return branch
 
 
+def bind_target(api, env: dict, base: str) -> str:
+    """Independently fetch the target from GitHub and bind it to the trusted values.
+
+    Returns the PR branch (empty for issues). Raises before any mutation on a mismatch.
+    """
+    repo, default, number = env['GITHUB_REPOSITORY'], env['DEFAULT_BRANCH'], env['TARGET_NUMBER']
+    authorized = env['AUTHORIZED_SHA']
+    if not SHA_RE.match(authorized):
+        raise PublishError('trusted baseline is not a full SHA')
+    if base != authorized:
+        raise PublishError('artifact baseline does not match the trusted authorized baseline')
+    meta = api.call('GET', '')
+    if meta.get('default_branch') != default or meta.get('full_name', repo).lower() != repo.lower():
+        raise PublishError('repository identity or default branch differs from the event context')
+    if not api.call('GET', f'branches/{default}').get('protected'):
+        raise PublishError('default branch is not protected; refusing to publish')
+    if env['EVENT_KIND'] == 'issue':
+        issue = api.call('GET', f'issues/{number}')
+        if issue.get('number') != int(number) or 'pull_request' in issue or issue.get('state') != 'open':
+            raise PublishError('target is not an open issue with the authorized number')
+        if api.call('GET', f'compare/{default}...{authorized}').get('status') not in ('behind', 'identical'):
+            raise PublishError('authorized baseline is not reachable from the default branch')
+        return ''
+    return check_pr_target(api, env)
+
+
+class PushRejected(PublishError):
+    pass
+
+
+def git_cas_push(repo_dir: str, remote: str, token: str | None, branch: str, expected: str, new: str,
+                 staging: str, runner=subprocess.run) -> None:
+    """Move refs/heads/<branch> from `expected` to `new` only if it still equals `expected`.
+
+    Uses git's lease with the exact expected SHA. A lease is a compare-and-swap on the old
+    value, enforced again by the server when it applies the update. The caller has already
+    established (through GitHub's compare data) that `new` descends from `expected`, so the
+    update is a fast-forward; the lease additionally refuses any other remote state, including
+    a concurrent reset to an ancestor, which a fast-forward-only check would accept.
+    """
+    if not (SHA_RE.match(expected) and SHA_RE.match(new)):
+        raise PushRejected('refusing to push with a non-SHA expectation')
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('GIT_', 'GH_', 'GITHUB_TOKEN'))}
+    env.update({'GIT_TERMINAL_PROMPT': '0', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'})
+    if token:  # kept out of argv and out of logs
+        credential = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+        env.update({'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'http.https://github.com/.extraheader',
+                    'GIT_CONFIG_VALUE_0': f'AUTHORIZATION: basic {credential}'})
+    base_cmd = ['git', '-C', repo_dir, '-c', 'protocol.version=2']
+    fetch = runner([*base_cmd, 'fetch', '--no-tags', '--depth=2', remote,
+                    f'+refs/heads/{staging}:refs/opencode/staging'], capture_output=True, text=True, env=env)
+    if fetch.returncode != 0:
+        raise PushRejected('could not fetch the verified staging commit: ' + one_line(fetch.stderr.replace(token or '\0', '***'), 160))
+    head = runner([*base_cmd, 'rev-parse', 'refs/opencode/staging'], capture_output=True, text=True, env=env)
+    if head.returncode != 0 or head.stdout.strip() != new:
+        raise PushRejected('staging branch does not hold the verified commit')
+    push = runner([*base_cmd, 'push', '--porcelain', f'--force-with-lease=refs/heads/{branch}:{expected}',
+                   remote, f'{new}:refs/heads/{branch}'], capture_output=True, text=True, env=env)
+    if push.returncode != 0:
+        raise PushRejected('exact-SHA update was rejected (the branch is no longer at the authorized commit): '
+                           + one_line(push.stderr.replace(token or '\0', '***'), 160))
+
+
 def delete_ref(api, branch: str) -> str:
+    """Delete a staging ref and confirm. Returns '' when it is gone, else a factual description."""
     try:
         api.call('DELETE', f'git/refs/heads/{branch}')
-        return ''
+    except PublishError:
+        pass
+    try:
+        left = remote_sha(api, branch)
     except PublishError as error:
-        return f'could not delete {branch}: {error}'
+        return f'could not confirm whether {branch} still exists ({error})'
+    return '' if left is None else f'{branch} still exists at {left}'
 
 
-def publish(api, env: dict, plan: dict, sleep=time.sleep) -> dict:
+def default_git_push(env: dict):
+    def push(branch: str, expected: str, new: str, staging: str) -> None:
+        git_cas_push(env.get('GIT_REPO_DIR', '.'), f"https://github.com/{env['GITHUB_REPOSITORY']}.git",
+                     env.get('GH_PUBLISH_TOKEN'), branch, expected, new, staging)
+    return push
+
+
+def publish(api, env: dict, plan: dict, sleep=time.sleep, git_push=None, evidence: dict | None = None) -> dict:
+    evidence = evidence if evidence is not None else {}
+    evidence.update({'trusted_baseline': env.get('AUTHORIZED_SHA'), 'steps': []})
+    note = evidence['steps'].append
     if env.get('GENERATION_STATUS') != 'success':
         raise PublishError('generation did not complete successfully; nothing is published')
     if not plan['additions'] and not plan['deletions']:
         return {'published': False, 'reason': 'no file changes'}
+    git_push = git_push or default_git_push(env)
     base, kind, number, default = plan['base_sha'], env['EVENT_KIND'], env['TARGET_NUMBER'], env['DEFAULT_BRANCH']
     pr_branch = bind_target(api, env, base)  # no mutation before this returns
     suffix = f"{env['RUN_ID']}-{env['RUN_ATTEMPT']}"
     work_branch = f'opencode/issue{number}-{suffix}' if kind == 'issue' else f'opencode/pr{number}-{suffix}'
     check_branch('issue', work_branch, default, protected=False)
-    api.call('POST', 'git/refs', {'ref': f'refs/heads/{work_branch}', 'sha': base})
+    evidence.update({'work_branch': work_branch, 'pr_branch': pr_branch})
+    try:
+        api.call('POST', 'git/refs', {'ref': f'refs/heads/{work_branch}', 'sha': base})
+    except AmbiguousApiError:
+        observed = remote_sha(api, work_branch)  # an unknowable state propagates as a hard failure
+        evidence['ref_create_observed'] = observed
+        if observed != base:
+            raise PublishError(f'branch creation outcome unclear; observed remote state: {observed}') from None
+    note(f'created {work_branch} at {base}')
     headline = 'opencode: ' + (one_line(env['TASK'], 60) or 'automated change')
     body = '\n'.join([
         f"OpenCode-Run: {env['RUN_URL']}", f"OpenCode-Model: {env['MODEL']}",
         f"OpenCode-Category: {env['CATEGORY']}", f"OpenCode-Session: {env['SESSION_ID']}",
         'OpenCode-Mode: implement', f"Requested-By: {one_line(env['ACTOR_LOGIN'], 60)}"])
+    sha = None
     try:
-        data = api.graphql(COMMIT_MUTATION, {'input': {
-            'branch': {'repositoryNameWithOwner': env['GITHUB_REPOSITORY'], 'branchName': work_branch},
-            'message': {'headline': headline, 'body': body}, 'expectedHeadOid': base,
-            'fileChanges': {'additions': plan['additions'], 'deletions': [{'path': p} for p in plan['deletions']]},
-        }})
-        sha = data['createCommitOnBranch']['commit']['oid']
+        try:
+            data = api.graphql(COMMIT_MUTATION, {'input': {
+                'branch': {'repositoryNameWithOwner': env['GITHUB_REPOSITORY'], 'branchName': work_branch},
+                'message': {'headline': headline, 'body': body}, 'expectedHeadOid': base,
+                'fileChanges': {'additions': plan['additions'],
+                                'deletions': [{'path': p} for p in plan['deletions']]}}})
+            sha = data['createCommitOnBranch']['commit']['oid']
+        except AmbiguousApiError:
+            tip = remote_sha(api, work_branch)
+            evidence['commit_observed_tip'] = tip
+            if tip in (None, base):
+                raise PublishError(f'commit was not created (verified: {work_branch} is at {tip})') from None
+            sha = tip  # the mutation landed; it is verified below like any other commit
+        note(f'commit {sha} on {work_branch}')
         problem = verify_commit(api, sha, env['EXPECT_BOT_LOGIN'], sleep)
     except PublishError:
-        delete_ref(api, work_branch)
+        leftover = delete_ref(api, work_branch)
+        if leftover and sha:
+            raise PartialPublication(f'publication failed and {leftover}', work_branch, sha, evidence) from None
         raise
     if problem:
         leftover = delete_ref(api, work_branch)
         if leftover:
             raise PartialPublication(f'commit {sha[:12]} is not GitHub-verified ({problem}) and {leftover}',
-                                     work_branch, sha)
+                                     work_branch, sha, evidence)
         raise PublishError(f'commit {sha[:12]} is not GitHub-verified ({problem}); publication stopped')
     result = {'published': True, 'branch': work_branch, 'commit': sha, 'verified': True, 'pr': None,
               'warnings': []}
     if kind == 'pr':
-        try:  # fast-forward only, after verification; a moved branch makes this fail safely
-            api.call('PATCH', f'git/refs/heads/{pr_branch}', {'sha': sha, 'force': False})
+        # Last-moment authorization, then an exact-SHA update. Any change aborts.
+        try:
+            check_pr_target(api, env)
+            ahead = api.call('GET', f'compare/{base}...{sha}')
+            if ahead.get('status') != 'ahead' or ahead.get('behind_by') != 0:
+                raise PublishError('verified commit does not descend from the authorized baseline')
+            git_push(pr_branch, base, sha, work_branch)
+            note(f'moved {pr_branch} {base} -> {sha}')
         except PublishError as error:
+            observed = None
+            try:
+                observed = remote_sha(api, pr_branch)
+            except PublishError as lookup:
+                evidence['pr_branch_lookup_error'] = str(lookup)
+            evidence['pr_branch_observed_after_failure'] = observed
             leftover = delete_ref(api, work_branch)
-            raise PublishError(f'could not fast-forward {pr_branch}: {error}; PR branch unchanged'
-                               + (f'; {leftover}' if leftover else '')) from None
-        cleanup = delete_ref(api, work_branch)
-        if cleanup:
-            result['warnings'].append(cleanup)
+            if observed == sha:
+                note('update reported failure but the branch is at the new commit')
+                result['warnings'].append(f'update call failed ({error}) but {pr_branch} is at {sha}')
+            elif observed == base:
+                raise PublishError(
+                    f'{error}; verified: {pr_branch} is still at the authorized commit {base}'
+                    + (f'; {leftover}' if leftover else '')) from None
+            else:
+                raise PartialPublication(
+                    f'{error}; the state of {pr_branch} could not be confirmed as unchanged '
+                    f'(observed {observed}); verified commit {sha} exists'
+                    + (f'; {leftover}' if leftover else ''), pr_branch, sha, evidence) from None
+        else:
+            cleanup = delete_ref(api, work_branch)
+            if cleanup:
+                result['warnings'].append(cleanup)
         result['branch'] = pr_branch
     else:
         try:
@@ -325,13 +460,14 @@ def publish(api, env: dict, plan: dict, sleep=time.sleep) -> dict:
                     f"- Model: `{env['MODEL']}` (category `{env['CATEGORY']}`)",
                     f"- Routing: {one_line(env['ROUTE_REASON'], 300)}",
                     f"- Run: {env['RUN_URL']}", f'- Commit: {sha} (GitHub-verified)', '',
-                    'Generation was confirmed complete by the run guard. Tests were not run by the publisher; '
-                    'review the CI checks on this PR.', f'Refs #{number}'])})
+                    'Generation was confirmed complete by the run guard, which does not establish that the '
+                    'change is correct. Tests were not run by the publisher; review the CI checks on this PR.',
+                    f'Refs #{number}'])})
             result['pr'] = {'number': pr['number'], 'url': pr['html_url']}
         except (PublishError, KeyError) as error:
             raise PartialPublication(
-                f'verified commit {sha[:12]} is on branch {work_branch} but the Draft PR could not be opened: {error}',
-                work_branch, sha) from None
+                f'verified commit {sha[:12]} is on branch {work_branch} but the Draft PR could not be opened '
+                f'or its creation could not be confirmed: {error}', work_branch, sha, evidence) from None
     where = f"PR #{result['pr']['number']}" if result['pr'] else f"branch `{result['branch']}`"
     notes = []
     if kind == 'pr':  # a new implementation commit voids any earlier OpenCode review
@@ -354,8 +490,16 @@ def publish(api, env: dict, plan: dict, sleep=time.sleep) -> dict:
     return result
 
 
+def write_evidence(evidence: dict) -> None:
+    path = os.environ.get('EVIDENCE_PATH')
+    if path:
+        with open(path, 'w', encoding='utf-8') as handle:
+            json.dump(evidence, handle, indent=2, default=str)
+
+
 def main() -> int:
     out = os.environ.get('GITHUB_OUTPUT')
+    evidence: dict = {}
 
     def emit(**values):
         if out:
@@ -370,22 +514,29 @@ def main() -> int:
             'RUN_URL', 'RUN_ID', 'RUN_ATTEMPT', 'ACTOR_LOGIN', 'EXPECT_BOT_LOGIN', 'TASK', 'MODEL', 'CATEGORY',
             'ROUTE_REASON', 'SESSION_ID')}
         env['PR_HEAD_REF'] = os.environ.get('PR_HEAD_REF', '')
+        env['GIT_REPO_DIR'] = os.environ.get('GIT_REPO_DIR', '.')
+        env['GH_PUBLISH_TOKEN'] = os.environ['GH_PUBLISH_TOKEN']
         if not review.SESSION_RE.match(env['SESSION_ID']):
             raise PublishError('agent session identity is missing or malformed')
         if env['EVENT_KIND'] not in ('issue', 'pr') or not env['TARGET_NUMBER'].isdigit():
             raise PublishError('invalid event context')
-        result = publish(Api(os.environ['GH_PUBLISH_TOKEN'], env['GITHUB_REPOSITORY']), env, plan)
+        result = publish(Api(env['GH_PUBLISH_TOKEN'], env['GITHUB_REPOSITORY']), env, plan, evidence=evidence)
     except KeyError as error:
         print(f'::error::missing required configuration {error}')
         return 1
     except PartialPublication as error:
+        evidence['partial'] = {'message': str(error), 'branch': error.branch, 'commit': error.commit}
+        write_evidence(evidence)
         print(f'::error::PARTIAL PUBLICATION: {error}')
         emit(published='partial', branch=error.branch, commit=error.commit)
         return 1
     except (PublishError, OSError, ValueError) as error:
+        evidence['failure'] = str(error)
+        write_evidence(evidence)
         print(f'::error::OpenCode publication stopped: {error}')
         emit(published='false')
         return 1
+    write_evidence(evidence)
     print(json.dumps(result))
     emit(published='true' if result['published'] else 'false',
          **{k: result[k] for k in ('commit', 'branch') if result.get(k)})

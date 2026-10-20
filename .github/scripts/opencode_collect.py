@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the agent's working-tree changes as inert data (collector v2.0).
+"""Package the agent's working-tree changes as inert data (collector v3.0).
 
 Runs as the runner user after a successful generation. The diff is computed against a
 runner-owned baseline git dir, with the sandbox only as a work tree, so no config,
@@ -16,11 +16,11 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import opencode_fsisolate as fsisolate  # noqa: E402
 import opencode_sandbox as sandbox  # noqa: E402
 
 
@@ -36,6 +36,14 @@ def parse_raw(raw: bytes) -> list[tuple[str, str, str, str]]:
 
 
 def collect(worktree: str, state: str, out_dir: str) -> dict:
+    # The work tree must be the real directory on a root-controlled path. If the agent could
+    # swap it for a symlink, this runner-user process would read and publish unrelated files.
+    if os.path.islink(worktree) or os.path.realpath(worktree) != os.path.abspath(worktree):
+        raise sandbox.SandboxError('work tree path is a symlink or contains one')
+    problems = (fsisolate.chain_problems(worktree, os.lstat(worktree).st_uid)
+                if os.environ.get('OPENCODE_REQUIRE_ROOT_CHAIN') == '1' else [])  # set by the workflow layout
+    if problems:
+        raise sandbox.SandboxError('work tree path is not controlled by root: ' + '; '.join(problems[:3]))
     with open(os.path.join(state, 'baseline.json'), encoding='utf-8') as handle:
         meta = json.load(handle)
     gitdir, baseline = os.path.join(state, 'baseline.git'), meta['baseline_commit']
