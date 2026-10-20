@@ -2,7 +2,7 @@
 lifecycle guard (Issue #150, M2+M3).
 
 Revision ID: 0055_pdu_catalog_outlet_template
-Revises: 0054_role_assignment_scope_types
+Revises: 0055_alarm_rule_resolution
 Create Date: 2026-10-18
 """
 import sqlalchemy as sa
@@ -10,7 +10,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0055_pdu_catalog_outlet_template"
-down_revision = "0051_aggregate_lineage"
+down_revision = "0055_alarm_rule_resolution"
 branch_labels = None
 depends_on = None
 
