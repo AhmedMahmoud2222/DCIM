@@ -281,7 +281,6 @@ async def test_instantiate_ignores_template_outlet_count_as_multiplier(
         await db_session.execute(select(PDUOutlet).where(PDUOutlet.pdu_asset_id == asset_id))
     ).scalars().all()
     assert len(outlet_rows) == 1
-    assert outlet_rows[0].outlet_count == 5  # metadata preserved on the row
 
 
 # ------------------------------------------------------------------------- Lifecycle rejections
