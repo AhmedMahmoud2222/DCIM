@@ -106,7 +106,7 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     ]);
     vi.mocked(telemetryApi.getTelemetryHistory).mockResolvedValue([
       {
-        id: "daily-1", integration_id: "integration-1", managed_asset_id: "eq-1",
+        id: "daily-1", series_key: "availability-series", integration_id: "integration-1", managed_asset_id: "eq-1",
         external_identifier: "availability", metric: "availability", unit: "1", value: 0.98,
         presentation_unit: "%", presentation_value: 98, resolution: "daily",
         minimum_value: 0.97, maximum_value: 0.99,
@@ -114,7 +114,7 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
         occurred_at: "2026-01-01T00:00:00Z", received_at: "2026-01-01T00:00:00Z",
       },
       {
-        id: "daily-2", integration_id: "integration-1", managed_asset_id: "eq-1",
+        id: "daily-2", series_key: "availability-series", integration_id: "integration-1", managed_asset_id: "eq-1",
         external_identifier: "availability", metric: "availability", unit: "1", value: 0.99,
         presentation_unit: "%", presentation_value: 99, resolution: "daily",
         occurred_at: "2026-01-02T00:00:00Z", received_at: "2026-01-02T00:00:00Z",
