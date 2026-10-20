@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Fail when any commit OpenCode published lacks a GitHub-verified signature (v1.0).
+"""Fail when any commit OpenCode published lacks a GitHub-verified signature (v2.0).
 
 Usage: opencode_verify_signatures.py REPO BASE_REF HEAD_REF [HEAD_REF ...]
+       opencode_verify_signatures.py --commit REPO SHA EXPECTED_AUTHOR_LOGIN
+The --commit mode checks one published commit: verified == true, reason valid,
+and authored by the dedicated App bot (so a commit signed by anyone else fails).
 Compares each HEAD_REF against BASE_REF through the REST compare API and checks
 commit.verification.verified for every commit in the range. Uses `gh api`, so
 GH_TOKEN must be set by the caller. Prints SHAs and reasons only, never tokens.
@@ -33,7 +36,37 @@ def compare(repo: str, base: str, head: str) -> list[dict]:
     return commits
 
 
+def check_commit(data: dict, expect_login: str) -> str:
+    """Return '' when the commit passes, else the failure reason."""
+    verification = (data.get('commit') or {}).get('verification') or {}
+    login = (data.get('author') or {}).get('login', '')
+    if verification.get('verified') is not True or verification.get('reason') != 'valid':
+        return f"not verified ({verification.get('reason', 'unknown')})"
+    if login.lower() != expect_login.lower():
+        return f'unexpected author {login or "unknown"}'
+    return ''
+
+
+def main_commit(argv: list[str]) -> int:
+    if len(argv) != 5:
+        print('usage: opencode_verify_signatures.py --commit REPO SHA EXPECTED_AUTHOR_LOGIN', file=sys.stderr)
+        return 2
+    try:
+        out = subprocess.run(['gh', 'api', f'repos/{argv[2]}/commits/{argv[3]}'],
+                             check=True, capture_output=True, text=True).stdout
+        problem = check_commit(json.loads(out), argv[4])
+    except (subprocess.CalledProcessError, ValueError):
+        problem = 'commit lookup failed'
+    if problem:
+        print(f'::error::published commit {argv[3][:12]} failed verification: {problem}')
+        return 1
+    print(f'{argv[3][:12]}: verified and authored by {argv[4]}')
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) > 1 and argv[1] == '--commit':
+        return main_commit(argv)
     if len(argv) < 4:
         print('usage: opencode_verify_signatures.py REPO BASE_REF HEAD_REF...', file=sys.stderr)
         return 2

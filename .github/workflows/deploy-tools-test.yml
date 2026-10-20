@@ -5,6 +5,8 @@ on:
     branches: [main, 'claude/**', 'codex/**']
     paths:
       - '.github/scripts/verify_release_sha.py'
+      - '.github/scripts/opencode_*.py'
+      - '.github/opencode/**'
       - '.github/workflows/**'
       - '.github/dependabot.yml'
       - 'scripts/deploy-docker-compose.sh'
@@ -26,6 +28,8 @@ on:
   pull_request:
     paths:
       - '.github/scripts/verify_release_sha.py'
+      - '.github/scripts/opencode_*.py'
+      - '.github/opencode/**'
       - '.github/workflows/**'
       - '.github/dependabot.yml'
       - 'scripts/deploy-docker-compose.sh'

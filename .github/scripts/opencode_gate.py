@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authorize an OpenCode comment command before any secret is exposed (gate v1.0).
+"""Authorize an OpenCode comment command before any secret is exposed (gate v2.0).
 
 Reads only GitHub-signed event metadata (the webhook payload at GITHUB_EVENT_PATH
 and, for PR conversation comments, the PR object fetched from the GitHub API).
@@ -17,7 +17,9 @@ import re
 import secrets
 import sys
 
-COMMENT_EVENTS = {'issue_comment', 'pull_request_review_comment'}
+# pull_request_review_comment is deliberately absent: GitHub runs that event's workflow
+# file from the PR merge ref, so PR content could rewrite this gate.
+COMMENT_EVENTS = {'issue_comment'}
 TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
 # Command must be the first token of the comment, case-sensitive, followed by
 # whitespace and a non-empty task. Quoted replies, code blocks and mid-text
@@ -78,9 +80,7 @@ def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
 
     # Pull request scope: same-repository, open PRs only. Fork head branches
     # contain attacker-controlled content and must never reach the agent.
-    if event_name == 'pull_request_review_comment':
-        pr_obj = event.get('pull_request') or {}
-    elif 'pull_request' in (event.get('issue') or {}):
+    if 'pull_request' in (event.get('issue') or {}):
         pr_obj = pr or {}
         if not pr_obj:
             return False, 'PR metadata unavailable for PR comment', ''
@@ -96,8 +96,7 @@ def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
 
 
 def pr_head_ref(event_name: str, event: dict, pr: dict | None) -> str:
-    pr_obj = event.get('pull_request') if event_name == 'pull_request_review_comment' else pr
-    ref = ((pr_obj or {}).get('head') or {}).get('ref') or ''
+    ref = ((pr or {}).get('head') or {}).get('ref') or ''
     return ref if re.fullmatch(r'[A-Za-z0-9._/-]{1,255}', ref) else ''
 
 
