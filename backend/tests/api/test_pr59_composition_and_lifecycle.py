@@ -60,7 +60,10 @@ async def test_group_deny_beats_allow_from_another_group_and_from_a_role(client,
     assert r.status_code == 201, r.text
     hv = await _login(client, email)
     assert (await client.get("/api/v1/racks", headers=hv)).status_code == 403
-    assert (await client.get("/api/v1/sites", headers=hv)).status_code == 200  # deny is per permission, and the role user stays unrestricted
+    # deny is per permission, and the role user stays unrestricted: the status alone would also be 200 for an empty restricted scope
+    sites = await client.get("/api/v1/sites", headers=hv)
+    assert sites.status_code == 200
+    assert site["site"] in {item["id"] for item in sites.json()["items"]}
 
 
 async def test_user_with_permissions_but_no_sites_sees_nothing(client, admin, auth_headers):
@@ -123,12 +126,21 @@ async def test_password_policy_is_enforced_on_create_and_reset_and_never_echoed(
 
 async def test_login_error_is_identical_for_unknown_wrong_and_deactivated(client, admin):
     user, _ = await _group_user(client, admin, [await _group(client, admin)])
-    await client.patch(f"/api/v1/users/{user['id']}", json={"is_active": False}, headers=admin)
     bodies = []
-    for email, pw in ((user["email"], PW), ("nobody@example.com", PW), (user["email"], "wrong-password-value")):
+
+    async def attempt(email, pw):
         resp = await client.post("/api/v1/auth/login", json={"email": email, "password": pw})
+        assert resp.status_code in (401, 403), resp.text
         bodies.append((resp.status_code, resp.json()["detail"]))
-    assert len(set(bodies)) == 1
+
+    # Wrong password while the account is still active: this is the password-mismatch branch (inactive users are
+    # filtered out before the password is checked, so it cannot be reached after deactivation).
+    await attempt(user["email"], "wrong-password-value")
+    await attempt("nobody@example.com", PW)
+    await client.patch(f"/api/v1/users/{user['id']}", json={"is_active": False}, headers=admin)
+    await attempt(user["email"], PW)
+    await attempt(user["email"], "wrong-password-value")
+    assert len(bodies) == 4 and len(set(bodies)) == 1, bodies
 
 
 # ------------------------------------------------------------------ concurrency (real overlapping transactions)
@@ -147,28 +159,55 @@ async def race_client(db_engine):
 
 
 async def test_two_administrators_cannot_deactivate_each_other_concurrently(race_client, make_user, db_engine):
-    """Each request has its own session/transaction, so the two PATCHes genuinely overlap in
-    PostgreSQL. Whatever the interleaving, at least one administrator must stay active."""
+    """Two qualifying principals (global Administrators, unrestricted for user:manage and group:manage), each request
+    on its own session so the PATCHes genuinely overlap in PostgreSQL. Global Administrators are peers, so strict
+    outranking refuses both with exactly 403 and both stay active. The last-administrator invariant is unreachable
+    through the API (any actor that strictly outranks an administrator is itself one); it is exercised directly,
+    with real overlapping transactions, in the test below."""
     client = race_client
-    root = await make_user(f"root-{uuid.uuid4().hex[:6]}@example.com", PW, "Administrator")
-    admin = await _login(client, root.email)
-    gid = await _group(client, admin, allow=ADMIN_PERMS)
-    u1, h1 = await _group_user(client, admin, [gid])
-    u2, h2 = await _group_user(client, admin, [gid])
-    async with db_engine.begin() as conn:  # take the global administrator out of play
-        await conn.execute(text("UPDATE app_user SET is_active = false WHERE id = :i"), {"i": root.id})
+    emails = [f"adm-{uuid.uuid4().hex[:6]}@example.com" for _ in range(2)]
+    users = [await make_user(email, PW, "Administrator") for email in emails]
+    h1, h2 = [await _login(client, email) for email in emails]
     for _ in range(5):
         results = await asyncio.gather(
-            client.patch(f"/api/v1/users/{u2['id']}", json={"is_active": False}, headers=h1),
-            client.patch(f"/api/v1/users/{u1['id']}", json={"is_active": False}, headers=h2),
+            client.patch(f"/api/v1/users/{users[1].id}", json={"is_active": False}, headers=h1),
+            client.patch(f"/api/v1/users/{users[0].id}", json={"is_active": False}, headers=h2),
             return_exceptions=True,
         )
         assert not [r for r in results if isinstance(r, Exception)], results
-        # Only outcomes the design allows: success, last-administrator conflict, or refusal. A 401 (lapsed token) or a 5xx
-        # would make the "at least one stays active" check below pass for the wrong reason.
-        assert {r.status_code for r in results} <= {200, 403, 409}, [(r.status_code, r.text) for r in results]
+        assert [r.status_code for r in results] == [403, 403], [(r.status_code, r.text) for r in results]
         async with db_engine.connect() as conn:
-            active = (await conn.execute(text("SELECT count(*) FROM app_user WHERE id IN (:a, :b) AND is_active"), {"a": u1["id"], "b": u2["id"]})).scalar_one()
-        assert active >= 1, sorted(r.status_code for r in results)
-        async with db_engine.begin() as conn:
-            await conn.execute(text("UPDATE app_user SET is_active = true WHERE id IN (:a, :b)"), {"a": u1["id"], "b": u2["id"]})
+            active = (await conn.execute(text("SELECT count(*) FROM app_user WHERE id IN (:a, :b) AND is_active"), {"a": users[0].id, "b": users[1].id})).scalar_one()
+        assert active == 2
+
+
+async def test_last_administrator_lock_serialises_overlapping_deactivations(db_engine, make_user):
+    """Two active global Administrators; two transactions each deactivate a different one and then run the
+    last-administrator check. A barrier forces both to have flushed their own change (neither committed) before
+    either checks, so without the advisory lock both see the other still active, both pass and no administrator
+    remains. With the lock exactly one succeeds and the other gets the conflict."""
+    from app.application.user_admin_service import assert_administrator_remains
+    from app.core.errors import ConflictError
+
+    users = [await make_user(f"adm-{uuid.uuid4().hex[:6]}@example.com", PW, "Administrator") for _ in range(2)]
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    barrier = asyncio.Barrier(2)
+
+    async def deactivate(user_id) -> str:
+        async with factory() as session:
+            await session.execute(text("UPDATE app_user SET is_active = false WHERE id = :i"), {"i": user_id})
+            await session.flush()
+            await asyncio.wait_for(barrier.wait(), timeout=10)
+            try:
+                await assert_administrator_remains(session)
+            except ConflictError:
+                await session.rollback()
+                return "conflict"
+            await session.commit()
+            return "ok"
+
+    outcomes = await asyncio.gather(*(deactivate(u.id) for u in users))
+    assert sorted(outcomes) == ["conflict", "ok"], outcomes
+    async with db_engine.connect() as conn:
+        active = (await conn.execute(text("SELECT count(*) FROM app_user WHERE id IN (:a, :b) AND is_active"), {"a": users[0].id, "b": users[1].id})).scalar_one()
+    assert active == 1

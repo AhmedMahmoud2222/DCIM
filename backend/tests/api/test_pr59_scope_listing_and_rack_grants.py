@@ -33,7 +33,8 @@ async def world(client, admin, auth_headers):
         w[f"eq_{key}"] = eq["id"]
     eq_room_a = await create_equipment(client, admin, auth_headers)
     mv = await client.post(f"/api/v1/equipment/{eq_room_a['id']}/move", json={"placement_type": "floor_standing", "room_id": a["room"]}, headers=admin)
-    w["eq_room_a"] = eq_room_a["id"] if mv.status_code == 200 else None
+    assert mv.status_code == 200, mv.text  # setup must not silently drop the room-placed equipment
+    w["eq_room_a"] = eq_room_a["id"]
     return w
 
 
@@ -72,8 +73,11 @@ async def test_rack_limited_user_sees_only_selected_rack_and_its_equipment(clien
     eq_ids = _ids((await client.get("/api/v1/equipment", headers=ur)).json())
     assert world["eq_a1"] in eq_ids and world["eq_a2"] not in eq_ids and world["eq_b1"] not in eq_ids
     assert (await client.get(f"/api/v1/equipment/{world['eq_a2']}", headers=ur)).status_code == 404
-    if world["eq_room_a"]:  # room-placed equipment is only visible with rack_scope=all
-        assert (await client.get(f"/api/v1/equipment/{world['eq_room_a']}", headers=ur)).status_code == 404
+    # Room-placed equipment is only visible with rack_scope=all: hidden from the rack-limited user, visible to an all-racks user.
+    assert world["eq_room_a"] not in eq_ids
+    assert (await client.get(f"/api/v1/equipment/{world['eq_room_a']}", headers=ur)).status_code == 404
+    ua = await _restricted(client, admin, world["a"]["site"])
+    assert (await client.get(f"/api/v1/equipment/{world['eq_room_a']}", headers=ua)).status_code == 200
 
 
 async def test_stale_rack_grant_does_not_follow_a_rack_to_another_site(client, admin, world):
