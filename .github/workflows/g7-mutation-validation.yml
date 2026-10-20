@@ -52,8 +52,8 @@ jobs:
           python-version: '3.12'
       - name: Install deps
         run: |
-          cd backend
-          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install --upgrade pip
+          python -m pip install -e "./backend[dev]"
       - name: Provision roles
         run: |
           PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
