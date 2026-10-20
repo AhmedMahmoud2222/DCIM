@@ -1,0 +1,55 @@
+name: G7 mutation validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "G7 baseline SHA"
+        required: true
+        default: "d2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675"
+
+jobs:
+  g7-mutation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_test_admin_password
+          POSTGRES_DB: dcim_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd=pg_isready -U postgres -d dcim_test
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
+      TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:postgres_test_admin_password@localhost:5432/dcim_test
+      JWT_SECRET_KEY: test-only-secret-key-not-for-production-use-32ch
+      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+      REDIS_URL: redis://localhost:6379/1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: |
+          cd backend
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Provision roles
+        run: |
+          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
+      - name: Migrate
+        run: |
+          cd backend
+          alembic upgrade head
+      - name: Baseline parity
+        run: |
+          cd backend
+          pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q
