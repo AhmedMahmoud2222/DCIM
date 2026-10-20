@@ -265,7 +265,7 @@ async def instantiate_pdu_endpoint(
             outlet_count=len(outlet_nodes),
             outlets=[
                 PowerNodeOut(
-                    **PowerNodeOut.model_validate(n).model_dump(mode="python", exclude={"outlet_number"}),
+                    **{k: v for k, v in PowerNodeOut.model_validate(n).model_dump(mode="python").items() if k != "outlet_number"},
                     outlet_number=num,
                 )
                 for n, num in zip(outlet_nodes, outlet_numbers, strict=True)
@@ -710,7 +710,8 @@ async def list_power_nodes(
     ).all()
     items = [
         PowerNodeOut(
-            **PowerNodeOut.model_validate(node).model_dump(mode="python"), outlet_number=outlet_number
+            **PowerNodeOut.model_validate(node).model_dump(mode="python", exclude={"outlet_number"}),
+            outlet_number=outlet_number,
         )
         for node, outlet_number in rows
     ]
@@ -727,7 +728,8 @@ async def get_power_node(
     outlet_number = (
         await db.execute(select(PDUOutlet.outlet_number).where(PDUOutlet.power_node_id == node_id))
     ).scalar_one_or_none()
-    return PowerNodeOut(**PowerNodeOut.model_validate(node).model_dump(mode="python"), outlet_number=outlet_number)
+    node_dump = PowerNodeOut.model_validate(node).model_dump(mode="python", exclude={"outlet_number"})
+    return PowerNodeOut(**node_dump, outlet_number=outlet_number)
 
 
 @router.post("/nodes/{node_id}/retire", response_model=PowerNodeOut)

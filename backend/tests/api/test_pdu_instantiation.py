@@ -255,7 +255,7 @@ async def test_instantiate_outlet_count_matches_declared_templates(
         assert {o.power_node_id for o in outlet_rows} == {n.id for n in outlet_nodes}
 
         assets = (
-            await db_session.execute(select(func.count()).select_from(ManagedAsset).where(ManagedAsset.asset_tag == body["asset_tag"]))
+            await db_session.execute(select(func.count()).select_from(ManagedAsset).where(ManagedAsset.id == asset_id))
         ).scalar_one()
         assert assets == 1
 

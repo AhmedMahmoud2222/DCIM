@@ -62,14 +62,16 @@ async def update_pdu_draft(
 ) -> tuple[CatalogModelRevision, list[PDUOutletTemplate]]:
     # Category gate first: a non-PDU revision must never take the draft row lock or the
     # optimistic-concurrency path below - it 404s before any If-Match comparison happens.
-    await _require_pdu_revision(db, revision_id=revision_id)
-    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
+    revision = await _require_pdu_revision(db, revision_id=revision_id)
+    outlets_in = outlets or []
+
+    # Validate before taking the row lock: an invalid draft must not consume a version
+    # increment or block concurrent writers. Apply draft_updates to the in-memory
+    # revision copy for validation purposes only.
     if draft_updates:
         for k, v in draft_updates.items():
             if hasattr(revision, k):
                 setattr(revision, k, v)
-    # validate before touching outlet templates
-    outlets_in = outlets or []
     s = validate_pdu_revision(
         {
             k: getattr(revision, k)
@@ -88,6 +90,15 @@ async def update_pdu_draft(
     )
     if not s.valid:
         raise ValueError(s.model_dump_json())
+
+    # Lock the draft revision (version check + increment). The lock may load a fresh
+    # copy of the row, so re-apply the validated updates against the locked object.
+    revision = await lock_draft_revision_for_edit(db, revision_id=revision_id, if_match_version=if_match_version)
+    if draft_updates:
+        for k, v in draft_updates.items():
+            if hasattr(revision, k):
+                setattr(revision, k, v)
+
     # Database-safe deletion/replacement: flush the deletes first so the unique
     # constraint slots they free are visible before any new row is inserted. This avoids
     # transient uniqueness violations on `uq_pdu_outlet_template_cmr_on` when a repeated

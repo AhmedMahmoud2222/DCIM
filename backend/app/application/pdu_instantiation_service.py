@@ -147,6 +147,7 @@ async def instantiate_pdu(
                 power_node_id=outlet_node.id,
                 pdu_asset_id=asset.id,
                 outlet_number=template.outlet_number,
+                outlet_count=template.outlet_count,
                 # The legacy `pdu_outlet.label` column is String(64) while catalog labels
                 # allow 128 — the full label always survives on the PowerNode (String(128))
                 # above; the outlet row carries the display-truncated form.
