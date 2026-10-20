@@ -106,7 +106,7 @@ async def instantiate_pdu(
     name: str,
     ip_address: str | None,
     protocol: str,
-) -> tuple[PowerNode, PDU, list[PowerNode]]:
+) -> tuple[PowerNode, PDU, list[PowerNode], list[int]]:
     """Creates `ManagedAsset(asset_type='pdu')` + the `pdu` graph `PowerNode` + the `PDU`
     subtype (the exact sequence `POST /power/pdus`'s `_create_power_asset` performs in
     app/api/v1/power.py), then one `PowerNode(node_type='pdu_outlet')` + `PDUOutlet` pair
@@ -137,6 +137,7 @@ async def instantiate_pdu(
     await db.flush()
 
     outlet_nodes: list[PowerNode] = []
+    outlet_numbers: list[int] = []
     for template in outlets:
         outlet_node = PowerNode(node_type="pdu_outlet", owning_asset_id=asset.id, label=template.label)
         db.add(outlet_node)
@@ -154,6 +155,7 @@ async def instantiate_pdu(
             )
         )
         outlet_nodes.append(outlet_node)
+        outlet_numbers.append(template.outlet_number)
 
     await db.flush()
-    return node, pdu, outlet_nodes
+    return node, pdu, outlet_nodes, outlet_numbers

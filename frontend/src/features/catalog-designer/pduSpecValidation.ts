@@ -57,7 +57,7 @@ export function validatePduInput(
   rows: OutletRow[],
 ): string[] {
   const errors: string[] = [];
-  if (voltage.trim() !== "" && Number(voltage) < 0) errors.push("Input voltage must be >= 0.");
+  if (voltage.trim() !== "" && Number(voltage) <= 0) errors.push("Input voltage must be > 0.");
   if (current.trim() !== "" && Number(current) <= 0) errors.push("Input current must be > 0.");
   if (phase !== "" && !PDU_PHASES.includes(phase as (typeof PDU_PHASES)[number]))
     errors.push(`Phase must be one of (${PDU_PHASES.join(", ")}).`);
@@ -71,6 +71,8 @@ export function validatePduInput(
     const n = Number(row.outlet_number);
     if (row.outlet_number.trim() === "" || !Number.isInteger(n)) {
       errors.push(`outlets[${i}].outlet_number required`);
+    } else if (n <= 0) {
+      errors.push(`outlets[${i}].outlet_number: outlet_number must be > 0`);
     } else if (seen.has(n)) {
       // The server reports each duplicated value once — mirror that instead of
       // repeating the same message for every extra copy.

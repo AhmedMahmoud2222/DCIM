@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.catalog_designer_service import lock_draft_revision_for_edit
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import NotFoundError
 from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision, PDUOutletTemplate
 
 from .validators import validate_pdu_revision
@@ -38,9 +38,11 @@ async def get_pdu_draft(
     *,
     revision_id: uuid.UUID,
 ) -> tuple[CatalogModelRevision, list[PDUOutletTemplate]]:
+    """Load a PDU revision's spec and its outlet templates. Readable for any lifecycle
+    status (draft, published, retired) -- publication immutability is enforced at the
+    PATCH path (`lock_draft_revision_for_edit`) and at instantiation, not here. The
+    category gate (404 for non-`pdu` revisions) still applies."""
     revision = await _require_pdu_revision(db, revision_id=revision_id)
-    if revision.lifecycle_status != "draft":
-        raise ConflictError(detail="This revision is published and immutable.")
     outlets = (await db.execute(
         select(PDUOutletTemplate).where(PDUOutletTemplate.catalog_model_revision_id == revision_id).order_by(
             PDUOutletTemplate.sort_order, PDUOutletTemplate.outlet_number
@@ -74,12 +76,18 @@ async def update_pdu_draft(
     )
     if not s.valid:
         raise ValueError(s.model_dump_json())
-    # delete all and recreate for simplicity in this bounded slice
+    # Database-safe deletion/replacement: flush the deletes first so the unique
+    # constraint slots they free are visible before any new row is inserted. This avoids
+    # transient uniqueness violations on `uq_pdu_outlet_template_cmr_on` when a repeated
+    # edit re-uses outlet numbers (or stable keys) from the previous generation, while
+    # keeping the whole replacement inside one transaction (atomicity preserved - any
+    # failure rolls back deletes and inserts together).
     existing = (await db.execute(
         select(PDUOutletTemplate).where(PDUOutletTemplate.catalog_model_revision_id == revision_id)
     )).scalars().all()
     for e in existing:
         await db.delete(e)
+    await db.flush()
     for o in outlets_in:
         t = PDUOutletTemplate(
             catalog_model_revision_id=revision_id,

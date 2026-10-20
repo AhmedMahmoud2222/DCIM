@@ -90,9 +90,19 @@ async def test_get_pdu_draft_requires_authentication(client: AsyncClient, db_ses
     assert resp.status_code == 401, resp.text
 
 
-async def test_viewer_can_read_a_draft(client: AsyncClient, db_session, make_user, auth_headers):
+async def test_viewer_cannot_read_a_draft(client: AsyncClient, db_session, make_user, auth_headers):
+    """A Viewer holds catalog:read but not catalog:read_draft, so reading a PDU draft
+    through the /pdu sub-resource must be refused - mirroring
+    GET /catalog/revisions/{id}'s conditional gate (spec §10)."""
     revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
     headers = await auth_headers("Viewer")
+    resp = await client.get(_url(revision.id), headers=headers)
+    assert resp.status_code == 403, resp.text
+
+
+async def test_administrator_can_read_a_draft(client: AsyncClient, db_session, make_user, auth_headers):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    headers = await auth_headers("Administrator")
     resp = await client.get(_url(revision.id), headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -103,6 +113,159 @@ async def test_viewer_can_read_a_draft(client: AsyncClient, db_session, make_use
     assert float(body["pdu_input_current_a"]) == 16.0
     assert body["pdu_phase"] == "single"
     assert body["outlets"] == []
+
+
+async def test_viewer_reading_a_published_pdu_revision_returns_read_only_spec(
+    client: AsyncClient, db_session, make_user, auth_headers
+):
+    """Published/retired revisions use plain catalog:read, and the /pdu sub-resource now
+    returns their spec read-only (R6) instead of 409."""
+    revision = await _seed_pdu_revision(
+        db_session, creator_id=await _creator(db_session, make_user), lifecycle_status="published"
+    )
+    headers = await auth_headers("Viewer")
+    resp = await client.get(_url(revision.id), headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["lifecycle_status"] == "published"
+    assert float(body["pdu_input_voltage_v"]) == 230.0
+
+
+async def test_nonexistent_revision_read_is_404_not_403(
+    client: AsyncClient, db_session, make_user, auth_headers
+):
+    """Direct-ID access to an unknown revision is a 404 (category gate), never a
+    permission-derived 403/200 that could probe for existence."""
+    headers = await auth_headers("Viewer")
+    resp = await client.get(_url(uuid.uuid4()), headers=headers)
+    assert resp.status_code == 404, resp.text
+
+
+# ------------------------------------------------------------------------ Validation (R3)
+
+
+async def test_voltage_zero_is_rejected(client: AsyncClient, db_session, make_user, auth_headers):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id), headers={**admin, "If-Match": "1"}, json={"pdu_input_voltage_v": 0.0}
+    )
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert any(e["field"] == "pdu_input_voltage_v" and e["code"] == "invalid_voltage" for e in body["errors"])
+
+
+async def test_voltage_negative_is_rejected(client: AsyncClient, db_session, make_user, auth_headers):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id), headers={**admin, "If-Match": "1"}, json={"pdu_input_voltage_v": -1.0}
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_overflowing_voltage_is_a_422_not_a_500(client: AsyncClient, db_session, make_user, auth_headers):
+    """Overflowing numeric input must produce a controlled validation error, never an
+    HTTP 500 from a PostgreSQL numeric_overflow."""
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id), headers={**admin, "If-Match": "1"}, json={"pdu_input_voltage_v": 999999.0}
+    )
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert any(e["field"] == "pdu_input_voltage_v" for e in body["errors"])
+
+
+async def test_outlet_number_zero_is_rejected(client: AsyncClient, db_session, make_user, auth_headers):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"outlets": [_outlet(0, stable_key="zero")]},
+    )
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert any(
+        e["field"] == "outlets[0].outlet_number" and e["code"] == "invalid_outlet_number" for e in body["errors"]
+    )
+
+
+async def test_outlet_number_negative_is_rejected(client: AsyncClient, db_session, make_user, auth_headers):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"outlets": [_outlet(-3, stable_key="neg")]},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+# ------------------------------------------------------------------------ R6: remaining PDU attributes
+
+
+async def test_draft_update_and_read_includes_rated_capacity_plug_and_monitoring(
+    client: AsyncClient, db_session, make_user, auth_headers
+):
+    """pdu_rated_capacity_kw, pdu_plug_type and pdu_monitoring_* flow through draft
+    validation, persistence and the read surface (R6c)."""
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={
+            "pdu_rated_capacity_kw": 4.8,
+            "pdu_plug_type": "iec_309",
+            "pdu_monitoring_protocol": "snmp",
+            "pdu_monitoring_endpoint": "https://pdu-01.example.com/metrics",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert float(body["pdu_rated_capacity_kw"]) == 4.8
+    assert body["pdu_plug_type"] == "iec_309"
+    assert body["pdu_monitoring_protocol"] == "snmp"
+    assert body["pdu_monitoring_endpoint"] == "https://pdu-01.example.com/metrics"
+
+    # Read back through a fresh authenticated request.
+    fresh = await client.get(_url(revision.id), headers=await auth_headers("Administrator"))
+    assert fresh.status_code == 200, fresh.text
+    assert float(fresh.json()["pdu_rated_capacity_kw"]) == 4.8
+
+
+async def test_monitoring_protocol_requires_endpoint_and_vice_versa(
+    client: AsyncClient, db_session, make_user, auth_headers
+):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+
+    resp = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"pdu_monitoring_protocol": "snmp"},
+    )
+    assert resp.status_code == 422, resp.text
+
+    resp = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"pdu_monitoring_endpoint": "https://example.com/metrics"},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_negative_rated_capacity_is_rejected(client: AsyncClient, db_session, make_user, auth_headers):
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+    resp = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"pdu_rated_capacity_kw": -1.0},
+    )
+    assert resp.status_code == 422, resp.text
 
 
 async def test_viewer_cannot_update_a_draft(client: AsyncClient, db_session, make_user, auth_headers):
@@ -151,7 +314,7 @@ async def test_admin_update_persists_electrical_spec_and_outlets(
 
     # Persistence is real: a *new* authenticated read sees the stored rows, and the
     # mutation produced both an audit entry and an outbox event.
-    fresh = await client.get(_url(revision.id), headers=await auth_headers("Viewer"))
+    fresh = await client.get(_url(revision.id), headers=await auth_headers("Administrator"))
     assert fresh.status_code == 200, fresh.text
     assert fresh.json()["version"] == 2
     assert len(fresh.json()["outlets"]) == 2
@@ -192,7 +355,7 @@ async def test_duplicate_outlet_number_rejected_and_rolled_back(
     # The request-scoped session discards the failed transaction exactly like
     # `app.db.session.get_db` does on an exception path - nothing was committed.
     await db_session.rollback()
-    fresh = await client.get(_url(revision_id), headers=await auth_headers("Viewer"))
+    fresh = await client.get(_url(revision_id), headers=await auth_headers("Administrator"))
     assert fresh.status_code == 200, fresh.text
     body = fresh.json()
     assert body["version"] == 1
@@ -258,6 +421,61 @@ async def test_stale_if_match_is_rejected(client: AsyncClient, db_session, make_
         _url(revision.id), headers={**admin, "If-Match": "1"}, json={"pdu_phase": "single"}
     )
     assert replay.status_code == 409, replay.text
+
+
+async def test_repeated_draft_edits_reuse_outlet_numbers(client: AsyncClient, db_session, make_user, auth_headers):
+    """Repeated edits of the same draft must succeed even when a later generation re-uses
+    outlet numbers from the previous one - no transient uniqueness violations on
+    uq_pdu_outlet_template_cmr_on."""
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+
+    first = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"outlets": [_outlet(1), _outlet(2)]},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["version"] == 2
+
+    # Second generation re-uses outlet_number=1 (and 2) from the first.
+    second = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "2"},
+        json={"outlets": [_outlet(1, outlet_type="iec_c19"), _outlet(2)]},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["version"] == 3
+    assert [(o["outlet_number"], o["outlet_type"]) for o in second.json()["outlets"]] == [
+        (1, "iec_c19"),
+        (2, "iec_c13"),
+    ]
+
+
+async def test_concurrent_draft_edits_one_wins_other_conflicts(
+    client: AsyncClient, db_session, make_user, auth_headers
+):
+    """Two simultaneous edits of the same draft: the first to take the revision lock wins
+    (version 1 -> 2); the second observes the post-commit version through the lock and
+    gets a stale If-Match conflict instead of silently overwriting."""
+    import asyncio
+
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+
+    async def patch(if_match: str, phase: str):
+        return await client.patch(
+            _url(revision.id),
+            headers={**admin, "If-Match": if_match},
+            json={"pdu_phase": phase},
+        )
+
+    results = await asyncio.gather(patch("1", "three"), patch("1", "single"))
+    statuses = sorted([r.status_code for r in results])
+    assert statuses == [200, 409], statuses
+
+    winner = [r for r in results if r.status_code == 200][0]
+    assert winner.json()["version"] == 2
 
 
 # ------------------------------------------------------------------------ Cross-category isolation

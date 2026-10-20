@@ -5,13 +5,22 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.v1.catalog_designer import _request_ids, write_audit_log, write_outbox_event
 from app.application.concurrency import require_if_match
-from app.application.pdu_catalog.draft_service import get_pdu_draft, update_pdu_draft
-from app.application.rbac import AuthContext, require_catalog_administrator, require_permission
+from app.application.pdu_catalog.draft_service import (
+    _require_pdu_revision,
+    get_pdu_draft,
+    update_pdu_draft,
+)
+from app.application.rbac import (
+    AuthContext,
+    get_auth_context,
+    require_catalog_administrator,
+)
 from app.core.errors import ApiError
 from app.domain.catalog.designer_models import PDUOutletTemplate
 
@@ -37,6 +46,10 @@ class PDUDraftUpdateIn(BaseModel):
     pdu_input_current_a: float | None = None
     pdu_phase: str | None = None
     mounting_orientation: str | None = None
+    pdu_rated_capacity_kw: float | None = None
+    pdu_plug_type: str | None = Field(default=None, max_length=32)
+    pdu_monitoring_protocol: str | None = Field(default=None, max_length=16)
+    pdu_monitoring_endpoint: str | None = Field(default=None, max_length=255)
     outlets: list[PDUOutletIn] = []
 
 
@@ -83,6 +96,10 @@ class PDUDraftOut(BaseModel):
     pdu_input_current_a: float | None
     pdu_phase: str | None
     mounting_orientation: str | None
+    pdu_rated_capacity_kw: float | None
+    pdu_plug_type: str | None
+    pdu_monitoring_protocol: str | None
+    pdu_monitoring_endpoint: str | None
     outlets: list[PDUOutletOut]
     version: int
 
@@ -93,8 +110,16 @@ class PDUDraftOut(BaseModel):
 async def get_pdu_draft_endpoint(
     revision_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    ctx: AuthContext = Depends(require_permission("catalog:read")),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> PDUDraftOut:
+    """Conditional-permission PDU draft read (spec §10): `catalog:read_draft` when the
+    revision is a draft, `catalog:read` once it is published or retired — matching
+    `GET /revisions/{id}`'s own gate, so a caller without draft access cannot learn a
+    PDU draft's electrical specification or outlet table through this sub-resource."""
+    revision = await _require_pdu_revision(db, revision_id=revision_id)
+    required = "catalog:read_draft" if revision.lifecycle_status == "draft" else "catalog:read"
+    if not ctx.has_permission(required):
+        raise ApiError(status_code=403, title="Forbidden", detail=f"Missing required permission: {required}")
     rev, outlets = await get_pdu_draft(db, revision_id=revision_id)
     return PDUDraftOut(
         revision_id=rev.id,
@@ -103,6 +128,10 @@ async def get_pdu_draft_endpoint(
         pdu_input_current_a=rev.pdu_input_current_a,
         pdu_phase=rev.pdu_phase,
         mounting_orientation=rev.mounting_orientation,
+        pdu_rated_capacity_kw=rev.pdu_rated_capacity_kw,
+        pdu_plug_type=rev.pdu_plug_type,
+        pdu_monitoring_protocol=rev.pdu_monitoring_protocol,
+        pdu_monitoring_endpoint=rev.pdu_monitoring_endpoint,
         outlets=[_outlet_out(t, rev.version) for t in outlets],
         version=rev.version,
     )
@@ -127,12 +156,21 @@ async def update_pdu_draft_endpoint(
                 "pdu_input_current_a": body.pdu_input_current_a,
                 "pdu_phase": body.pdu_phase,
                 "mounting_orientation": body.mounting_orientation,
+                "pdu_rated_capacity_kw": body.pdu_rated_capacity_kw,
+                "pdu_plug_type": body.pdu_plug_type,
+                "pdu_monitoring_protocol": body.pdu_monitoring_protocol,
+                "pdu_monitoring_endpoint": body.pdu_monitoring_endpoint,
             },
             outlets=[o.model_dump() for o in body.outlets],
             actor_user_id=ctx.user.id,
         )
     except ValueError as e:
         raise ApiError(status_code=422, title="Validation Failed", detail=str(e)) from e
+    except IntegrityError as e:
+        # Any constraint that slipped past validation (unique, numeric range) must not
+        # surface as a raw PostgreSQL 500; report it as a controlled conflict instead.
+        await db.rollback()
+        raise ApiError(status_code=409, title="Conflict", detail=str(e.orig) if getattr(e, "orig", None) else str(e)) from e
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(
         db,
@@ -161,6 +199,10 @@ async def update_pdu_draft_endpoint(
         pdu_input_current_a=rev.pdu_input_current_a,
         pdu_phase=rev.pdu_phase,
         mounting_orientation=rev.mounting_orientation,
+        pdu_rated_capacity_kw=rev.pdu_rated_capacity_kw,
+        pdu_plug_type=rev.pdu_plug_type,
+        pdu_monitoring_protocol=rev.pdu_monitoring_protocol,
+        pdu_monitoring_endpoint=rev.pdu_monitoring_endpoint,
         outlets=[_outlet_out(t, rev.version) for t in outlets],
         version=rev.version,
     )

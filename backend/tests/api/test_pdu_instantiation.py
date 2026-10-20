@@ -122,6 +122,7 @@ async def test_instantiate_creates_asset_node_pdu_and_outlet_children(client: As
     assert body["catalog_model_revision_id"] == revision["id"]
     assert body["outlet_count"] == 2
     assert {o["label"] for o in body["outlets"]} == {"C13-A", "C13-B"}
+    assert {o["outlet_number"] for o in body["outlets"]} == {1, 2}
     assert all(o["node_type"] == "pdu_outlet" and o["owning_asset_id"] == asset_id for o in body["outlets"])
 
     # Row-level snapshot: electrical spec copied from the published revision, not the request.
@@ -208,6 +209,79 @@ async def test_outlet_label_longer_than_64_chars_keeps_full_value_on_the_node(
     assert node.label == long_label
     assert outlet.label == long_label[:64]
     assert resp.json()["outlets"][0]["label"] == long_label
+
+
+async def test_instantiate_outlet_count_matches_declared_templates(
+    client: AsyncClient, auth_headers, db_session
+):
+    """One explicitly numbered outlet-template row = one physical outlet: instantiation
+    creates exactly one PDUOutlet/PowerNode pair per template, and PDU.outlet_count
+    equals the declared template count (never fabricated, never silently ignored)."""
+    headers = await _admin(auth_headers)
+    for declared_count in (1, 4):
+        revision = await _make_published_pdu_revision(
+            client, headers, outlets=[_outlet(n, label=f"Outlet {n}") for n in range(1, declared_count + 1)]
+        )
+
+        resp = await _instantiate(
+            client, headers, revision["id"], asset_tag=f"PDU-COUNT-{declared_count}-{uuid.uuid4().hex[:8]}",
+            name=f"R11-PDU-C{declared_count}",
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["outlet_count"] == declared_count, body
+        assert len(body["outlets"]) == declared_count
+        assert {o["outlet_number"] for o in body["outlets"]} == set(range(1, declared_count + 1))
+
+        asset_id = uuid.UUID(body["managed_asset_id"])
+        pdu = await db_session.get(PDU, asset_id)
+        assert pdu.outlet_count == declared_count
+
+        outlet_rows = (
+            await db_session.execute(
+                select(PDUOutlet).where(PDUOutlet.pdu_asset_id == asset_id).order_by(PDUOutlet.outlet_number)
+            )
+        ).scalars().all()
+        outlet_nodes = (
+            await db_session.execute(
+                select(PowerNode)
+                .where(PowerNode.node_type == "pdu_outlet", PowerNode.owning_asset_id == asset_id)
+                .order_by(PowerNode.label)
+            )
+        ).scalars().all()
+        assert len(outlet_rows) == declared_count
+        assert len(outlet_nodes) == declared_count
+        assert [o.outlet_number for o in outlet_rows] == list(range(1, declared_count + 1))
+        assert {o.power_node_id for o in outlet_rows} == {n.id for n in outlet_nodes}
+
+        assets = (
+            await db_session.execute(select(func.count()).select_from(ManagedAsset).where(ManagedAsset.asset_tag == body["asset_tag"]))
+        ).scalar_one()
+        assert assets == 1
+
+
+async def test_instantiate_ignores_template_outlet_count_as_multiplier(
+    client: AsyncClient, auth_headers, db_session
+):
+    """`PDUOutletTemplate.outlet_count` is per-template metadata (default 1), not an
+    expansion multiplier: one row still creates exactly one outlet pair."""
+    headers = await _admin(auth_headers)
+    revision = await _make_published_pdu_revision(
+        client, headers, outlets=[_outlet(1, outlet_count=5, label="C13-A")]
+    )
+
+    resp = await _instantiate(client, headers, revision["id"], asset_tag=f"PDU-NOMULT-{uuid.uuid4().hex[:8]}")
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["outlet_count"] == 1
+    assert len(body["outlets"]) == 1
+
+    asset_id = uuid.UUID(body["managed_asset_id"])
+    outlet_rows = (
+        await db_session.execute(select(PDUOutlet).where(PDUOutlet.pdu_asset_id == asset_id))
+    ).scalars().all()
+    assert len(outlet_rows) == 1
+    assert outlet_rows[0].outlet_count == 5  # metadata preserved on the row
 
 
 # ------------------------------------------------------------------------- Lifecycle rejections

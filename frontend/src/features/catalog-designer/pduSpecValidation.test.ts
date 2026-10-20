@@ -60,9 +60,14 @@ describe("validatePduInput", () => {
 
   it("mirrors the server's electrical messages", () => {
     expect(validatePduInput("-1", "0", "", "", [])).toEqual([
-      "Input voltage must be >= 0.",
+      "Input voltage must be > 0.",
       "Input current must be > 0.",
     ]);
+  });
+
+  it("rejects a zero or negative outlet number", () => {
+    const errors = validatePduInput("", "", "", "", [makeRow({ outlet_number: "0" })]);
+    expect(errors).toContain("outlets[0].outlet_number: outlet_number must be > 0");
   });
 
   it("rejects values outside the allowed vocabularies (defence in depth behind the selects)", () => {
