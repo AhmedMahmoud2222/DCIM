@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { to: "/floor-plans/3d-layout", label: "3D Layout" },
   { to: "/power", label: "Power Topology" },
   { to: "/events", label: "Events" },
+  { to: "/alarm-rules", label: "Alarm Rules", permission: "alarm:read" },
   { to: "/collectors", label: "Collectors" },
   { to: "/integrations", label: "Integrations" },
   { to: "/discovery", label: "Discovery" },
