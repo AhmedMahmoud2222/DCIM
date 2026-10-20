@@ -292,6 +292,15 @@ async def test_alembic_check_passes_and_preserves_audit_partitions():
                 for child_rel, bound in detached_children:
                     await conn.execute(f"ALTER TABLE public.audit_log ATTACH PARTITION {child_rel} {bound}")
 
+            # 5d. A parent CHECK constraint absent from ORM metadata must be flagged as drift.
+            await conn.execute(
+                "ALTER TABLE public.audit_log ADD CONSTRAINT ck_audit_log_unexpected_probe CHECK (actor_user_id IS NOT NULL OR true)"
+            )
+            result = _run_alembic(app_url, "check")
+            assert result.returncode != 0, "alembic check failed to detect an unexpected parent CHECK"
+            assert "ck_audit_log_unexpected_probe" in result.stderr + result.stdout
+            await conn.execute("ALTER TABLE public.audit_log DROP CONSTRAINT ck_audit_log_unexpected_probe")
+
             # 6. A detached former partition is now an ordinary table and must no
             #    longer be excluded by the partition filter.
             await conn.execute(
