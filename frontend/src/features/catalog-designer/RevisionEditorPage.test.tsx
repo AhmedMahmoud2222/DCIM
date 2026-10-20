@@ -34,6 +34,10 @@ function makePduDraft(overrides: Partial<PDUDraft> = {}): PDUDraft {
     pdu_input_current_a: 16,
     pdu_phase: "single",
     mounting_orientation: "horizontal",
+    pdu_rated_capacity_kw: null,
+    pdu_plug_type: null,
+    pdu_monitoring_protocol: null,
+    pdu_monitoring_endpoint: null,
     outlets: [
       {
         id: "outlet-1",

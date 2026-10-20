@@ -18,6 +18,10 @@ function makeDraft(overrides: Partial<PDUDraft> = {}): PDUDraft {
     pdu_input_current_a: 32,
     pdu_phase: "single",
     mounting_orientation: "vertical",
+    pdu_rated_capacity_kw: null,
+    pdu_plug_type: null,
+    pdu_monitoring_protocol: null,
+    pdu_monitoring_endpoint: null,
     outlets: [
       {
         id: "outlet-1",
@@ -105,9 +109,10 @@ describe("PduSpecPanel", () => {
     expect(screen.getByLabelText("Rated input current (A)")).toHaveValue(32);
     expect(screen.getByLabelText("Phase")).toHaveValue("single");
     expect(screen.getByLabelText("Mounting orientation")).toHaveValue("vertical");
-    // Requirement 5: mounting is catalog metadata, and the UI must not imply the backend
-    // can place an instantiated PDU in a rack.
-    expect(screen.getByText(/no rack-placement API for instantiated PDUs/i)).toBeInTheDocument();
+    // Requirement 5: mounting is catalog metadata; the note clarifies that placing an
+    // instantiated PDU happens separately through the power PDU placement API (R5).
+    expect(screen.getByText(/does not itself create a placement record/i)).toBeInTheDocument();
+    expect(screen.getByText(/power PDU placement API/i)).toBeInTheDocument();
     expect(screen.getAllByTestId("pdu-outlet-row")).toHaveLength(2);
     expect(screen.getByLabelText("Outlet 1 label")).toHaveValue("Outlet 1");
   });
