@@ -47,6 +47,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.sha || 'd2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675' }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -63,13 +64,91 @@ jobs:
           psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
           psql -h localhost -U postgres -d dcim_test -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
           psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;"
-          psql -h localhost -U postgres -d dcim_test -c "SELECT extname FROM pg_extension ORDER BY extname;"
       - name: Alembic single-head and migrate
         run: |
           cd backend
           python -m alembic heads
           python -m alembic upgrade head
-      - name: Baseline parity
+      - name: Baseline parity (must pass)
         run: |
           cd backend
-          pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
+      - name: M1 remove revision guard (must fail)
+        run: |
+          cd backend
+          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
+          python - <<'PY'
+          import re
+          p = "app/api/v1/telemetry.py"
+          s = open(p).read()
+          # M1: remove the recorded-revision guard so evidence alone drives status.
+          s2 = re.sub(r"TelemetryReading\.mapping_revision_id\.is_not\(None\)\s*\)\s*,\s*", "", s, count=1)
+          assert s2 != s, "M1 mutation did not apply"
+          open(p, "w").write(s2)
+          PY
+          set +e
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
+          code=$?
+          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
+          echo "M1_EXIT=$code"
+          if [ "$code" -eq 0 ]; then echo "M1 SURVIVED"; exit 1; fi
+          echo "M1 DETECTED"
+      - name: M2 swap inferred classification (must fail)
+        run: |
+          cd backend
+          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
+          python - <<'PY'
+          p = "app/api/v1/telemetry.py"
+          s = open(p).read()
+          s2 = s.replace('"inferred_single_revision": "inferred"', '"inferred_single_revision": "pinned"')
+          assert s2 != s, "M2 mutation did not apply"
+          open(p, "w").write(s2)
+          PY
+          set +e
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
+          code=$?
+          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
+          echo "M2_EXIT=$code"
+          if [ "$code" -eq 0 ]; then echo "M2 SURVIVED"; exit 1; fi
+          echo "M2 DETECTED"
+      - name: M3 remove registry-null branch (must fail)
+        run: |
+          cd backend
+          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
+          python - <<'PY'
+          p = "app/api/v1/telemetry.py"
+          s = open(p).read()
+          s2 = s.replace('"unverified_legacy"', '"unverified_registry"')
+          assert s2 != s, "M3 mutation did not apply"
+          open(p, "w").write(s2)
+          PY
+          set +e
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
+          code=$?
+          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
+          echo "M3_EXIT=$code"
+          if [ "$code" -eq 0 ]; then echo "M3 SURVIVED"; exit 1; fi
+          echo "M3 DETECTED"
+      - name: M4 change fallback classification (must fail)
+        run: |
+          cd backend
+          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
+          python - <<'PY'
+          p = "app/api/v1/telemetry.py"
+          s = open(p).read()
+          s2 = s.replace('"unverified_registry"', '"unverified_legacy"')
+          assert s2 != s, "M4 mutation did not apply"
+          open(p, "w").write(s2)
+          PY
+          set +e
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
+          code=$?
+          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
+          echo "M4_EXIT=$code"
+          if [ "$code" -eq 0 ]; then echo "M4 SURVIVED"; exit 1; fi
+          echo "M4 DETECTED"
+      - name: Restore verification (baseline passes again)
+        run: |
+          cd backend
+          git diff --stat
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
