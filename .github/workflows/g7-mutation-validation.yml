@@ -54,18 +54,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e "./backend[dev]"
-      - name: Grant schema and DB
+      - name: Provision extensions and roles
         run: |
-          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
-          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "ALTER ROLE dcim_app CREATEDB;" || true
-          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;" || true
-          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "ALTER DATABASE dcim_test OWNER TO postgres;" || true
-          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "GRANT ALL ON SCHEMA public TO dcim_app;" || true
-          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "ALTER SCHEMA public OWNER TO postgres;" || true
-      - name: Migrate
+          export PGPASSWORD=postgres_test_admin_password
+          psql -h localhost -U postgres -d dcim_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+          psql -h localhost -U postgres -d dcim_test -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          psql -h localhost -U postgres -d dcim_test -c "CREATE EXTENSION IF NOT EXISTS btree_gist;"
+          psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
+          psql -h localhost -U postgres -d dcim_test -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
+          psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;"
+          psql -h localhost -U postgres -d dcim_test -c "SELECT extname FROM pg_extension ORDER BY extname;"
+      - name: Alembic single-head and migrate
         run: |
           cd backend
-          alembic upgrade head
+          python -m alembic heads
+          python -m alembic upgrade head
       - name: Baseline parity
         run: |
           cd backend
