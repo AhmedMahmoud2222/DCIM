@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/g7-mutation-validation.yml'
+      - '.github/g7_mutation_runner.py'
 
 jobs:
   g7-mutation:
@@ -44,17 +45,29 @@ jobs:
       CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
       REDIS_URL: redis://localhost:6379/1
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout mutation runner (from workflow branch)
+        uses: actions/checkout@v4
+        with:
+          path: runner
+      - name: Checkout exact G7 baseline
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.sha || 'd2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675' }}
-          fetch-depth: 0
+          path: baseline
+      - name: Record tested SHA
+        id: tested
+        run: |
+          cd baseline
+          echo "tested_sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
+          git rev-parse HEAD > ../tested_sha.txt
+          git log -1 --format='%H %G? %s' > ../tested_commit.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./backend[dev]"
+          python -m pip install -e "./baseline/backend[dev]"
       - name: Provision extensions and roles
         run: |
           export PGPASSWORD=postgres_test_admin_password
@@ -64,91 +77,49 @@ jobs:
           psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
           psql -h localhost -U postgres -d dcim_test -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
           psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;"
+          psql -h localhost -U postgres -d dcim_test -c "SELECT version();" | tee pg_version.txt
       - name: Alembic single-head and migrate
         run: |
-          cd backend
+          cd baseline/backend
           python -m alembic heads
           python -m alembic upgrade head
       - name: Baseline parity (must pass)
         run: |
-          cd backend
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
-      - name: M1 remove revision guard (must fail)
+          cd baseline/backend
+          pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q 2>&1 | tee ../../baseline.log
+      - name: M1-M4 mutation experiments
         run: |
-          cd backend
-          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
-          python - <<'PY'
-          import re
-          p = "app/api/v1/telemetry.py"
-          s = open(p).read()
-          # M1: remove the recorded-revision guard so evidence alone drives status.
-          s2 = re.sub(r"TelemetryReading\.mapping_revision_id\.is_not\(None\)\s*\)\s*,\s*", "", s, count=1)
-          assert s2 != s, "M1 mutation did not apply"
-          open(p, "w").write(s2)
-          PY
+          cp ../runner/.github/g7_mutation_runner.py ../g7_mutation_runner.py
+          cd baseline
           set +e
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
-          code=$?
-          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
-          echo "M1_EXIT=$code"
-          if [ "$code" -eq 0 ]; then echo "M1 SURVIVED"; exit 1; fi
-          echo "M1 DETECTED"
-      - name: M2 swap inferred classification (must fail)
+          overall=0
+          for m in m1 m2 m3 m4; do
+            python ../g7_mutation_runner.py "$m" 2>&1 | tee "../../${m}.log"
+            rc=${PIPESTATUS[0]}
+            echo "${m}_exit=$rc" >> ../mutation_results.txt
+            echo "${m}_exit=$rc"
+            if [ "$rc" -ne 0 ]; then overall=1; fi
+          done
+          echo "overall=$overall" >> ../mutation_results.txt
+          exit $overall
+      - name: Final baseline restore verification
         run: |
-          cd backend
-          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
-          python - <<'PY'
-          p = "app/api/v1/telemetry.py"
-          s = open(p).read()
-          s2 = s.replace('"inferred_single_revision": "inferred"', '"inferred_single_revision": "pinned"')
-          assert s2 != s, "M2 mutation did not apply"
-          open(p, "w").write(s2)
-          PY
-          set +e
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
-          code=$?
-          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
-          echo "M2_EXIT=$code"
-          if [ "$code" -eq 0 ]; then echo "M2 SURVIVED"; exit 1; fi
-          echo "M2 DETECTED"
-      - name: M3 remove registry-null branch (must fail)
-        run: |
-          cd backend
-          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
-          python - <<'PY'
-          p = "app/api/v1/telemetry.py"
-          s = open(p).read()
-          s2 = s.replace('"unverified_legacy"', '"unverified_registry"')
-          assert s2 != s, "M3 mutation did not apply"
-          open(p, "w").write(s2)
-          PY
-          set +e
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
-          code=$?
-          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
-          echo "M3_EXIT=$code"
-          if [ "$code" -eq 0 ]; then echo "M3 SURVIVED"; exit 1; fi
-          echo "M3 DETECTED"
-      - name: M4 change fallback classification (must fail)
-        run: |
-          cd backend
-          cp app/api/v1/telemetry.py /tmp/telemetry.py.bak
-          python - <<'PY'
-          p = "app/api/v1/telemetry.py"
-          s = open(p).read()
-          s2 = s.replace('"unverified_registry"', '"unverified_legacy"')
-          assert s2 != s, "M4 mutation did not apply"
-          open(p, "w").write(s2)
-          PY
-          set +e
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
-          code=$?
-          cp /tmp/telemetry.py.bak app/api/v1/telemetry.py
-          echo "M4_EXIT=$code"
-          if [ "$code" -eq 0 ]; then echo "M4 SURVIVED"; exit 1; fi
-          echo "M4 DETECTED"
-      - name: Restore verification (baseline passes again)
-        run: |
-          cd backend
+          cd baseline
           git diff --stat
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q
+          test -z "$(git status --porcelain)" || { echo "WORKTREE NOT CLEAN"; exit 1; }
+          cd backend
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q 2>&1 | tee ../../final_baseline.log
+      - name: Assemble evidence artifact
+        if: always()
+        run: |
+          mkdir -p evidence
+          cp tested_sha.txt tested_commit.txt baseline.log final_baseline.log evidence/ 2>/dev/null || true
+          cp m1.log m2.log m3.log m4.log evidence/ 2>/dev/null || true
+          cp mutation_results.txt pg_version.txt evidence/ 2>/dev/null || true
+          cp .github/g7_mutation_runner.py evidence/ 2>/dev/null || cp runner/.github/g7_mutation_runner.py evidence/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: g7-mutation-evidence
+          path: evidence/
+          if-no-files-found: warn
