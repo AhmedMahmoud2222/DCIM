@@ -15,13 +15,23 @@ class PreflightReportSecurityError(OSError):
     """Raised when destination directory cannot meet security requirements."""
 
 
-def _validate_directory_security(dir_fd: int) -> None:
-    """Validate the actual opened directory meets security requirements.
+def _validate_directory_security(dir_path: Path) -> None:
+    """Validate directory security using supported APIs.
     
-    Fail closed if directory cannot be verified as safe.
+    Trust model: directory must be controlled by the operator (same effective user on POSIX),
+    not a symlink, not group/world writable on POSIX. On Windows, we enforce basic
+    properties and fail closed if unclear. Unsupported platforms fail closed.
     """
     try:
-        dir_stat = os.fstat(dir_fd)
+        lstat = os.lstat(dir_path)
+    except OSError as exc:
+        raise PreflightReportSecurityError("Cannot access report directory") from exc
+    
+    if stat.S_ISLNK(lstat.st_mode):
+        raise PreflightReportSecurityError("Report directory is a symlink")
+    
+    try:
+        dir_stat = os.stat(dir_path)
     except OSError as exc:
         raise PreflightReportSecurityError("Cannot stat report directory") from exc
     
@@ -30,13 +40,11 @@ def _validate_directory_security(dir_fd: int) -> None:
     
     if os.name == "posix":
         try:
-            euid = os.geteuid()
+            euid = os.geteuid()  # type: ignore[attr-defined]
         except AttributeError as exc:
             raise PreflightReportSecurityError("Cannot determine effective user") from exc
-        
         if dir_stat.st_uid != euid:
             raise PreflightReportSecurityError("Report directory not owned by current user")
-        
         mode = stat.S_IMODE(dir_stat.st_mode)
         if mode & (stat.S_IWGRP | stat.S_IWOTH):
             raise PreflightReportSecurityError("Report directory is group/world writable")
@@ -46,115 +54,47 @@ def _validate_directory_security(dir_fd: int) -> None:
         raise PreflightReportSecurityError("Unsupported platform for secure report storage")
 
 
-def _open_secure_directory(dir_path: Path) -> int:
-    """Validate directory security (use supported APIs)."""
-    try:
-        try:
-            lstat = os.lstat(dir_path)
-            if stat.S_ISLNK(lstat.st_mode):
-                raise PreflightReportSecurityError("Report directory is a symlink")
-        except PreflightReportSecurityError:
-            raise
-        except OSError as exc:
-            raise PreflightReportSecurityError("Cannot access report directory") from exc
-        
-        try:
-            dir_stat = os.stat(dir_path)
-        except OSError as exc:
-            raise PreflightReportSecurityError("Cannot stat report directory") from exc
-        
-        if not stat.S_ISDIR(dir_stat.st_mode):
-            raise PreflightReportSecurityError("Report path is not a directory")
-        
-        if os.name == "posix":
-            try:
-                euid = os.geteuid()
-            except AttributeError as exc:
-                raise PreflightReportSecurityError("Cannot determine effective user") from exc
-            if dir_stat.st_uid != euid:
-                raise PreflightReportSecurityError("Report directory not owned by current user")
-            mode = stat.S_IMODE(dir_stat.st_mode)
-            if mode & (stat.S_IWGRP | stat.S_IWOTH):
-                raise PreflightReportSecurityError("Report directory is group/world writable")
-        elif os.name == "nt":
-            pass
-        else:
-            raise PreflightReportSecurityError("Unsupported platform for secure report storage")
-        
-        # Return a dummy fd -1 since we can't open dirs portably on all platforms
-        return -1
-    except PreflightReportSecurityError:
-        raise
-    except Exception as exc:
-        raise PreflightReportSecurityError("Report directory failed security validation") from exc
-
-
 def _discard_partial(path: Path, identity: tuple[int, int]) -> None:
     """Remove a report this call created but failed to write completely.
     
-    Only deletes if we can prove ownership via identity match from our own
-    descriptor. Uses directory fd operations, re-verifies file is not a symlink,
-    not replaced, has same identity. Fails closed if directory is unsafe.
-    No stat-unlink loops in attacker-writable directories - directory must
-    be trusted/secure. No fallback unsafe deletion path.
+    Design: the directory must be validated as secure before writing; on failure
+    we only delete if we can re-verify the entry is a regular file (not symlink),
+    still has our exact (st_dev, st_ino) identity from creation, and the directory
+    remains secure. We do not do repeated stat-then-unlink races in untrusted dirs;
+    if directory security cannot be confirmed, we fail closed (do not delete).
+    This avoids attacker-controlled pathname deletion by enforcing trust boundary
+    at creation/cleanup validation time.
     """
     try:
         parent = path.parent
-        name = path.name
-        
         try:
-            dir_fd = _open_secure_directory(parent)
+            _validate_directory_security(parent)
         except PreflightReportSecurityError:
             return
         except Exception:
             return
         
         try:
-            if dir_fd == -1:
-                # Path-based operations with re-verification on trusted directory
-                try:
-                    lstat_res = os.lstat(path)
-                    if stat.S_ISLNK(lstat_res.st_mode):
-                        return
-                    st = os.stat(path, follow_symlinks=False)
-                    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
-                        return
-                    if (st.st_dev, st.st_ino) != identity:
-                        return
-                    os.unlink(path)
-                except OSError:
-                    pass
+            lstat_res = os.lstat(path)
+            if stat.S_ISLNK(lstat_res.st_mode):
                 return
-            
-            fstatat_flags = getattr(os, "AT_SYMLINK_NOFOLLOW", 0)
-            try:
-                if fstatat_flags:
-                    try:
-                        st = os.fstatat(dir_fd, name, fstatat_flags)
-                    except Exception:
-                        st = os.fstatat(dir_fd, name, 0)
-                else:
-                    st = os.fstatat(dir_fd, name, 0)
-            except OSError:
-                return
-            
-            if stat.S_ISLNK(st.st_mode):
-                return
-            if not stat.S_ISREG(st.st_mode):
-                return
-            if (st.st_dev, st.st_ino) != identity:
-                return
-            
-            try:
-                os.unlinkat(dir_fd, name, 0)
-            except Exception:
-                pass
-        finally:
-            try:
-                if dir_fd != -1:
-                    os.close(dir_fd)
-            except OSError:
-                pass
+        except OSError:
+            return
+        
+        try:
+            st = os.stat(path)
+        except OSError:
+            return
+        
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            return
+        if (st.st_dev, st.st_ino) != identity:
+            return
+        
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
     except Exception:
         pass
 
@@ -173,12 +113,7 @@ def write_report_file(path: Path, payload: str) -> None:
     """
     parent = path.parent
     try:
-        dir_fd = _open_secure_directory(parent)
-        if dir_fd != -1:
-            try:
-                os.close(dir_fd)
-            except OSError:
-                pass
+        _validate_directory_security(parent)
     except PreflightReportSecurityError as exc:
         raise OSError(str(exc)) from exc
     
