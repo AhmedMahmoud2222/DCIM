@@ -7,6 +7,9 @@ on:
         description: "G7 baseline SHA"
         required: true
         default: "d2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675"
+  pull_request:
+    paths:
+      - '.github/workflows/g7-mutation-validation.yml'
 
 jobs:
   g7-mutation:
@@ -21,7 +24,16 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd=pg_isready -U postgres -d dcim_test
+          --health-cmd="pg_isready -U postgres -d dcim_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -34,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ github.event.inputs.sha || 'd2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675' }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -45,6 +57,8 @@ jobs:
       - name: Provision roles
         run: |
           PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
+          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "ALTER ROLE dcim_app WITH CREATEDB;" || true
+          PGPASSWORD=postgres_test_admin_password psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;" || true
       - name: Migrate
         run: |
           cd backend
