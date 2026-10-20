@@ -39,10 +39,10 @@ def _validate_directory_security(dir_path: Path) -> None:
         raise PreflightReportSecurityError("Report path is not a directory")
     
     if os.name == "posix":
-        try:
-            euid = os.geteuid()  # type: ignore[attr-defined]
-        except AttributeError as exc:
-            raise PreflightReportSecurityError("Cannot determine effective user") from exc
+        geteuid = getattr(os, "geteuid", None)
+        if geteuid is None:
+            raise PreflightReportSecurityError("Cannot determine effective user")
+        euid = geteuid()
         if dir_stat.st_uid != euid:
             raise PreflightReportSecurityError("Report directory not owned by current user")
         mode = stat.S_IMODE(dir_stat.st_mode)
