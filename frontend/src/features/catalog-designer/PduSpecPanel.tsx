@@ -203,9 +203,9 @@ export function PduSpecPanel({
 
         <p className="rounded-sm border border-slate-800 bg-slate-950 p-2 text-xs leading-relaxed text-slate-400">
           Vertical (0U rail) and horizontal (1U shelf) mounting are <strong className="text-slate-300">catalog
-          specification metadata</strong>. The backend has no rack-placement API for instantiated PDUs — selecting an
-          orientation here describes how the physical unit mounts, and does not (and cannot) create a placement record
-          for assets instantiated from this revision.
+          specification metadata</strong>. This describes how the physical unit mounts; it does not itself create a
+          placement record. Placing an instantiated PDU (horizontal rack-mounted or vertical 0U) is done separately
+          through the power PDU placement API, after instantiation.
         </p>
 
         <div>

@@ -147,21 +147,18 @@ async def update_pdu_draft_endpoint(
     if_match_version: int = Depends(require_if_match),
 ) -> PDUDraftOut:
     try:
+        # Partial PATCH semantics: only fields the caller explicitly sent are applied.
+        # `exclude_unset=True` keeps omitted scalars (rated capacity, plug type,
+        # monitoring attributes) untouched instead of silently erasing them, and an
+        # omitted `outlets` key preserves the existing outlet templates.
+        payload = body.model_dump(exclude_unset=True)
+        outlets_provided = "outlets" in payload
         rev, outlets = await update_pdu_draft(
             db,
             revision_id=revision_id,
             if_match_version=if_match_version,
-            draft_updates={
-                "pdu_input_voltage_v": body.pdu_input_voltage_v,
-                "pdu_input_current_a": body.pdu_input_current_a,
-                "pdu_phase": body.pdu_phase,
-                "mounting_orientation": body.mounting_orientation,
-                "pdu_rated_capacity_kw": body.pdu_rated_capacity_kw,
-                "pdu_plug_type": body.pdu_plug_type,
-                "pdu_monitoring_protocol": body.pdu_monitoring_protocol,
-                "pdu_monitoring_endpoint": body.pdu_monitoring_endpoint,
-            },
-            outlets=[o.model_dump() for o in body.outlets],
+            draft_updates={k: v for k, v in payload.items() if k != "outlets"},
+            outlets=payload["outlets"] if outlets_provided else None,
             actor_user_id=ctx.user.id,
         )
     except ValueError as e:

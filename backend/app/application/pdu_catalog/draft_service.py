@@ -60,34 +60,60 @@ async def update_pdu_draft(
     outlets: list[dict[str, Any]] | None = None,
     actor_user_id: uuid.UUID | None = None,
 ) -> tuple[CatalogModelRevision, list[PDUOutletTemplate]]:
+    """Partial PATCH semantics: omitted scalar fields keep their persisted values, and an
+    omitted `outlets` list preserves the existing outlet templates (only an explicitly
+    supplied `outlets` replaces them wholesale)."""
     # Category gate first: a non-PDU revision must never take the draft row lock or the
     # optimistic-concurrency path below - it 404s before any If-Match comparison happens.
     revision = await _require_pdu_revision(db, revision_id=revision_id)
-    outlets_in = outlets or []
+
+    # Load the current outlet templates for validation (and to return when the caller did
+    # not supply a replacement set).
+    existing = (await db.execute(
+        select(PDUOutletTemplate)
+        .where(PDUOutletTemplate.catalog_model_revision_id == revision_id)
+        .order_by(PDUOutletTemplate.sort_order, PDUOutletTemplate.outlet_number)
+    )).scalars().all()
+    if outlets is None:
+        outlets_in = [
+            {
+                "stable_key": t.stable_key,
+                "outlet_number": t.outlet_number,
+                "label": t.label,
+                "outlet_type": t.outlet_type,
+                "outlet_count": t.outlet_count,
+                "phase": t.phase,
+                "rated_voltage_v": t.rated_voltage_v,
+                "rated_current_a": t.rated_current_a,
+                "position": t.position,
+                "side": t.side,
+                "sort_order": t.sort_order,
+            }
+            for t in existing
+        ]
+    else:
+        outlets_in = outlets
 
     # Validate before taking the row lock: an invalid draft must not consume a version
-    # increment or block concurrent writers. Apply draft_updates to the in-memory
-    # revision copy for validation purposes only.
+    # increment or block concurrent writers. Build the proposed scalar state (current
+    # values overlaid with the provided updates) without mutating the ORM object, so a
+    # rejected request leaves the session untouched.
+    proposed = {
+        k: getattr(revision, k)
+        for k in [
+            "pdu_input_voltage_v",
+            "pdu_input_current_a",
+            "pdu_phase",
+            "mounting_orientation",
+            "pdu_rated_capacity_kw",
+            "pdu_plug_type",
+            "pdu_monitoring_protocol",
+            "pdu_monitoring_endpoint",
+        ]
+    }
     if draft_updates:
-        for k, v in draft_updates.items():
-            if hasattr(revision, k):
-                setattr(revision, k, v)
-    s = validate_pdu_revision(
-        {
-            k: getattr(revision, k)
-            for k in [
-                "pdu_input_voltage_v",
-                "pdu_input_current_a",
-                "pdu_phase",
-                "mounting_orientation",
-                "pdu_rated_capacity_kw",
-                "pdu_plug_type",
-                "pdu_monitoring_protocol",
-                "pdu_monitoring_endpoint",
-            ]
-        },
-        outlets_in,
-    )
+        proposed.update(draft_updates)
+    s = validate_pdu_revision(proposed, outlets_in)
     if not s.valid:
         raise ValueError(s.model_dump_json())
 
@@ -99,35 +125,43 @@ async def update_pdu_draft(
             if hasattr(revision, k):
                 setattr(revision, k, v)
 
-    # Database-safe deletion/replacement: flush the deletes first so the unique
-    # constraint slots they free are visible before any new row is inserted. This avoids
-    # transient uniqueness violations on `uq_pdu_outlet_template_cmr_on` when a repeated
-    # edit re-uses outlet numbers (or stable keys) from the previous generation, while
-    # keeping the whole replacement inside one transaction (atomicity preserved - any
-    # failure rolls back deletes and inserts together).
-    existing = (await db.execute(
-        select(PDUOutletTemplate).where(PDUOutletTemplate.catalog_model_revision_id == revision_id)
-    )).scalars().all()
-    for e in existing:
-        await db.delete(e)
-    await db.flush()
-    for o in outlets_in:
-        t = PDUOutletTemplate(
-            catalog_model_revision_id=revision_id,
-            stable_key=o.get("stable_key"),
-            outlet_number=o.get("outlet_number"),
-            label=o.get("label") or str(o.get("outlet_number")),
-            outlet_type=o.get("outlet_type") or "other",
-            outlet_count=int(o.get("outlet_count") or 1),
-            phase=o.get("phase") or "single",
-            rated_voltage_v=o.get("rated_voltage_v"),
-            rated_current_a=o.get("rated_current_a"),
-            position=o.get("position"),
-            side=o.get("side") or "front",
-            sort_order=int(o.get("sort_order") or 0),
-        )
-        db.add(t)
-    await db.flush()
+    # Replace outlets only when the caller supplied a set. When replacing: flush the
+    # deletes first so the unique constraint slots they free are visible before any new
+    # row is inserted. This avoids transient uniqueness violations on
+    # `uq_pdu_outlet_template_cmr_on` when a repeated edit re-uses outlet numbers (or
+    # stable keys) from the previous generation, while keeping the whole replacement
+    # inside one transaction (atomicity preserved - any failure rolls back deletes and
+    # inserts together).
+    if outlets is not None:
+        for e in existing:
+            await db.delete(e)
+        await db.flush()
+        for o in outlets_in:
+            t = PDUOutletTemplate(
+                catalog_model_revision_id=revision_id,
+                stable_key=o.get("stable_key"),
+                outlet_number=o.get("outlet_number"),
+                label=o.get("label") or str(o.get("outlet_number")),
+                outlet_type=o.get("outlet_type") or "other",
+                outlet_count=int(o.get("outlet_count") or 1),
+                phase=o.get("phase") or "single",
+                rated_voltage_v=o.get("rated_voltage_v"),
+                rated_current_a=o.get("rated_current_a"),
+                position=o.get("position"),
+                side=o.get("side") or "front",
+                sort_order=int(o.get("sort_order") or 0),
+            )
+            db.add(t)
+        await db.flush()
+        outlets_out = (await db.execute(
+            select(PDUOutletTemplate).where(PDUOutletTemplate.catalog_model_revision_id == revision_id).order_by(
+                PDUOutletTemplate.sort_order, PDUOutletTemplate.outlet_number
+            )
+        )).scalars().all()
+        return revision, list(outlets_out)
+
+    # Outlets preserved: return the rows re-read after the version bump so callers see the
+    # current stored values (the identity-map copies may be stale after the lock refresh).
     outlets_out = (await db.execute(
         select(PDUOutletTemplate).where(PDUOutletTemplate.catalog_model_revision_id == revision_id).order_by(
             PDUOutletTemplate.sort_order, PDUOutletTemplate.outlet_number

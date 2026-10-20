@@ -286,6 +286,74 @@ async def test_viewer_cannot_update_a_draft(client: AsyncClient, db_session, mak
     assert resp.status_code == 403, resp.text
 
 
+# ------------------------------------------------------------------------ Partial PATCH semantics
+
+
+async def test_omitted_scalar_fields_are_preserved(client: AsyncClient, db_session, make_user, auth_headers):
+    """PATCH is partial: a request that only sets `pdu_input_voltage_v` must not erase the
+    persisted rated capacity, plug type or monitoring attributes."""
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+
+    seed = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={
+            "pdu_input_voltage_v": 400.0,
+            "pdu_input_current_a": 32.0,
+            "pdu_phase": "three",
+            "mounting_orientation": "vertical",
+            "pdu_rated_capacity_kw": 4.8,
+            "pdu_plug_type": "iec_309",
+            "pdu_monitoring_protocol": "snmp",
+            "pdu_monitoring_endpoint": "https://pdu-01.example.com/metrics",
+        },
+    )
+    assert seed.status_code == 200, seed.text
+
+    # Only send the voltage; every other field is omitted and must survive.
+    partial = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "2"},
+        json={"pdu_input_voltage_v": 230.0},
+    )
+    assert partial.status_code == 200, partial.text
+    body = partial.json()
+    assert float(body["pdu_input_voltage_v"]) == 230.0
+    assert float(body["pdu_input_current_a"]) == 32.0
+    assert body["pdu_phase"] == "three"
+    assert body["mounting_orientation"] == "vertical"
+    assert float(body["pdu_rated_capacity_kw"]) == 4.8
+    assert body["pdu_plug_type"] == "iec_309"
+    assert body["pdu_monitoring_protocol"] == "snmp"
+    assert body["pdu_monitoring_endpoint"] == "https://pdu-01.example.com/metrics"
+
+
+async def test_omitted_outlets_are_preserved(client: AsyncClient, db_session, make_user, auth_headers):
+    """A request that omits `outlets` keeps the existing outlet templates (only an
+    explicit `outlets` list replaces them)."""
+    revision = await _seed_pdu_revision(db_session, creator_id=await _creator(db_session, make_user))
+    admin = await auth_headers("Administrator")
+
+    seed = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "1"},
+        json={"pdu_input_voltage_v": 400.0, "outlets": [_outlet(1), _outlet(2)]},
+    )
+    assert seed.status_code == 200, seed.text
+
+    partial = await client.patch(
+        _url(revision.id),
+        headers={**admin, "If-Match": "2"},
+        json={"pdu_input_voltage_v": 230.0},
+    )
+    assert partial.status_code == 200, partial.text
+    assert [(o["outlet_number"], o["stable_key"]) for o in partial.json()["outlets"]] == [
+        (1, "outlet-1"),
+        (2, "outlet-2"),
+    ]
+
+
 # ------------------------------------------------------------------------ Draft persistence
 
 

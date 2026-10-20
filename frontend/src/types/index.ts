@@ -1277,6 +1277,10 @@ export interface PDUDraft {
   pdu_input_current_a: number | null;
   pdu_phase: string | null;
   mounting_orientation: string | null;
+  pdu_rated_capacity_kw: number | null;
+  pdu_plug_type: string | null;
+  pdu_monitoring_protocol: string | null;
+  pdu_monitoring_endpoint: string | null;
   outlets: PDUOutletTemplate[];
   version: number;
 }

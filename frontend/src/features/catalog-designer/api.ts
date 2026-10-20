@@ -149,14 +149,19 @@ export interface PDUOutletInput {
   sort_order?: number;
 }
 
-/** Client mirror of `PDUDraftUpdateIn`; PATCH replaces the outlet set wholesale, so the
- * panel always sends the complete edited table (same contract the backend's
- * delete-and-recreate persistence expects). */
+/** Client mirror of `PDUDraftUpdateIn`. PATCH is partial: only fields the caller sends
+ * are applied, so omitted scalars (rated capacity, plug type, monitoring attributes) keep
+ * their persisted values, and an omitted `outlets` list preserves the existing templates.
+ * The panel always sends the complete edited outlet table, which replaces it wholesale. */
 export interface PDUDraftUpdateInput {
   pdu_input_voltage_v?: number | null;
   pdu_input_current_a?: number | null;
   pdu_phase?: string | null;
   mounting_orientation?: string | null;
+  pdu_rated_capacity_kw?: number | null;
+  pdu_plug_type?: string | null;
+  pdu_monitoring_protocol?: string | null;
+  pdu_monitoring_endpoint?: string | null;
   outlets?: PDUOutletInput[];
 }
 
