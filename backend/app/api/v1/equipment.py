@@ -21,10 +21,11 @@ from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_equipment_template
 from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.equipment_instantiation_service import (
     InstantiationRejected,
     InvalidPortTarget,
+    PortConnectionOwnedByCable,
     PortNotFound,
     connect_port,
     instantiate_equipment,
@@ -33,6 +34,7 @@ from app.application.equipment_instantiation_service import (
     list_port_connections,
 )
 from app.application.idempotency import (
+    ClaimRef,
     IdempotencyConflict,
     IdempotencyStillProcessing,
     complete_claim,
@@ -197,7 +199,7 @@ async def create_equipment(
             assert outcome.cached.response_body is not None
             return EquipmentOut(**outcome.cached.response_body)
         claim = outcome.claim
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         if await db.get(EquipmentModelRevision, body.model_revision_id) is None:
@@ -231,8 +233,8 @@ async def create_equipment(
         return out
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 
@@ -330,10 +332,7 @@ async def update_equipment(
     if_match_version: int = Depends(require_if_match),
     ctx=Depends(require_permission("equipment:manage")),
 ) -> EquipmentOut:
-    equipment = await db.get(Equipment, equipment_id)
-    if equipment is None:
-        raise NotFoundError(f"Equipment {equipment_id} not found.")
-    check_version_match(expected=if_match_version, actual=equipment.version)
+    equipment = await lock_versioned_row(db, Equipment, equipment_id, expected_version=if_match_version)
 
     before = {"hostname": equipment.hostname, "owner": equipment.owner, "version": equipment.version}
     for field in ("hostname", "owner", "service", "environment", "notes"):
@@ -592,7 +591,7 @@ async def instantiate_equipment_endpoint(
             assert outcome.cached.response_body is not None
             return EquipmentInstantiateOut(**outcome.cached.response_body)
         claim = outcome.claim
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         if body.placement_type == "rack_mounted":
@@ -655,8 +654,8 @@ async def instantiate_equipment_endpoint(
         current = exc.current
         current_version = current.version if current is not None else None
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         detail = (
             f"Requested placement conflicts with existing equipment; current version={current_version}."
             if current is not None
@@ -665,8 +664,8 @@ async def instantiate_equipment_endpoint(
         raise ConflictError(detail=detail) from exc
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 
@@ -734,6 +733,9 @@ async def connect_port_endpoint(
     except InvalidPortTarget as exc:
         await db.rollback()
         raise ApiError(status_code=422, title="Invalid Port Target", detail=exc.detail) from exc
+    except PortConnectionOwnedByCable as exc:
+        await db.rollback()
+        raise ConflictError(exc.detail) from exc
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(

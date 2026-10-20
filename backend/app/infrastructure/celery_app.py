@@ -7,10 +7,12 @@ be exercised now."""
 from celery import Celery
 
 from app.core.config import get_settings
+from app.infrastructure.registry_bootstep import RegistryLedgerGate
 
 settings = get_settings()
 
 celery_app = Celery("dcim", broker=settings.redis_url, backend=settings.redis_url)
+celery_app.steps["worker"].add(RegistryLedgerGate)
 
 celery_app.conf.update(
     task_serializer="json",
@@ -42,6 +44,13 @@ celery_app.conf.update(
             "schedule": 3600.0,
             "options": {"queue": "maintenance"},
         },
+        # Issue #128 / G4-R: a strict no-op while monitoring_policy.late_replay_horizon_days is NULL. This prunes consumed-key
+        # tombstones only; it is NOT a telemetry compaction runner and never compacts or deletes telemetry.
+        "prune-consumed-telemetry-keys": {
+            "task": "app.infrastructure.tasks.maintenance.prune_consumed_telemetry_keys",
+            "schedule": 3600.0,
+            "options": {"queue": "maintenance"},
+        },
         "ensure-audit-log-partitions": {
             "task": "app.infrastructure.tasks.audit_partition_maintenance.ensure_future_partitions",
             "schedule": 86400.0,
@@ -51,6 +60,36 @@ celery_app.conf.update(
             "task": "app.infrastructure.tasks.maintenance.purge_expired_staged_catalog_documents",
             "schedule": 86400.0,
             "options": {"queue": "maintenance"},
+        },
+        "snapshot-power-utilization": {
+            "task": "app.infrastructure.tasks.power_analytics.snapshot_power_utilization",
+            "schedule": 3600.0,
+            "options": {"queue": "maintenance"},
+        },
+        "requeue-stuck-power-report-jobs": {
+            "task": "app.infrastructure.tasks.power_analytics.requeue_stuck_power_reports",
+            "schedule": 300.0,
+            "options": {"queue": "maintenance"},
+        },
+        "sweep-collector-health": {
+            "task": "app.infrastructure.tasks.notifications.sweep_collector_health",
+            "schedule": 60.0,
+            "options": {"queue": "maintenance"},
+        },
+        "correlate-events": {
+            "task": "app.infrastructure.tasks.notifications.correlate_events",
+            "schedule": 60.0,
+            "options": {"queue": "maintenance"},
+        },
+        "redispatch-due-notifications": {
+            "task": "app.infrastructure.tasks.notifications.redispatch_due_notifications",
+            "schedule": 30.0,
+            "options": {"queue": "notifications"},
+        },
+        "redispatch-due-itsm-tickets": {
+            "task": "app.infrastructure.tasks.itsm.redispatch_due_tickets",
+            "schedule": 30.0,
+            "options": {"queue": "notifications"},
         },
         "requeue-stuck-catalog-extraction-jobs": {
             "task": "app.infrastructure.tasks.catalog_extraction.requeue_stuck_catalog_extraction_jobs",
@@ -77,6 +116,9 @@ celery_app.conf.imports = (
     "app.infrastructure.tasks.floorplan_import",
     "app.infrastructure.tasks.bulk_import",
     "app.infrastructure.tasks.catalog_extraction",
+    "app.infrastructure.tasks.power_analytics",
+    "app.infrastructure.tasks.notifications",
+    "app.infrastructure.tasks.itsm",
 )
 # `autodiscover_tasks` assumes a Django-style `<package>.tasks` submodule per app and
 # does not fit this project's layout (multiple task modules directly under
@@ -97,5 +139,8 @@ import app.infrastructure.tasks.audit_partition_maintenance  # noqa: E402,F401
 import app.infrastructure.tasks.bulk_import  # noqa: E402,F401
 import app.infrastructure.tasks.catalog_extraction  # noqa: E402,F401
 import app.infrastructure.tasks.floorplan_import  # noqa: E402,F401
+import app.infrastructure.tasks.itsm  # noqa: E402,F401
 import app.infrastructure.tasks.maintenance  # noqa: E402,F401
+import app.infrastructure.tasks.notifications  # noqa: E402,F401
 import app.infrastructure.tasks.outbox_dispatcher  # noqa: E402,F401
+import app.infrastructure.tasks.power_analytics  # noqa: E402,F401

@@ -107,7 +107,7 @@ class CollectorRequestNonce(Base, UUIDPkMixin):
 
     __tablename__ = "collector_request_nonce"
     __table_args__ = (
-        UniqueConstraint("collector_id", "nonce", name="uq_collector_request_nonce_collector_nonce"),
+        UniqueConstraint("collector_id", "nonce", name="uq_collector_request_nonce_collector_id_nonce"),
         Index("ix_collector_request_nonce_seen_at", "seen_at"),
     )
 
@@ -123,7 +123,9 @@ class CollectorCapability(Base, UUIDPkMixin):
     (app/application/collector_service.py), not assumed."""
 
     __tablename__ = "collector_capability"
-    __table_args__ = (UniqueConstraint("collector_id", "protocol_code", name="uq_collector_capability_collector_protocol"),)
+    __table_args__ = (
+        UniqueConstraint("collector_id", "protocol_code", name="uq_collector_capability_collector_id_protocol_code"),
+    )
 
     collector_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("collector.id", ondelete="CASCADE"), nullable=False, index=True)
     protocol_code: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -172,6 +174,12 @@ class Integration(Base, UUIDPkMixin, TimestampMixin):
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     credential_ciphertext: Mapped[str | None] = mapped_column(String(4000))
     poll_interval_seconds: Mapped[int] = mapped_column(nullable=False, default=60)
+    # Issue #101: the explicitly bound device profile (app/domain/network/profile_models.py).
+    # Never set by the matcher itself; an operator binds it. RESTRICT so a bound profile can
+    # only be retired, never deleted.
+    device_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("device_profile.id", ondelete="RESTRICT"), index=True
+    )
 
     # Observability (master prompt §13): last poll/success/failure, kept here (not
     # derived from a telemetry table this phase does not own) since these describe the
@@ -221,7 +229,7 @@ class DiscoveredDevice(Base, UUIDPkMixin):
 
     __tablename__ = "discovered_device"
     __table_args__ = (
-        UniqueConstraint("integration_id", "external_identifier", name="uq_discovered_device_integration_external_id"),
+        UniqueConstraint("integration_id", "external_identifier", name="uq_discovered_device_integration_id_external_identifier"),
         CheckConstraint(f"status IN {DISCOVERED_DEVICE_STATUSES!r}", name="status_allowed"),
     )
 
@@ -233,6 +241,10 @@ class DiscoveredDevice(Base, UUIDPkMixin):
     last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     raw_attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="new")
+    # Issue #101: advisory profile-matcher outcome computed from the device facts in
+    # `raw_attributes` ({"state", "vendor_profile_id", "device_profile_id", "candidates"...}).
+    # Evidence only; an operator binds a profile to the Integration explicitly.
+    profile_match: Mapped[dict | None] = mapped_column(JSONB)
     matched_managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"))
 
 

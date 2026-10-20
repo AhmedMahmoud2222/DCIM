@@ -43,6 +43,43 @@ def _sized_svg(total_bytes: int) -> bytes:
     return prefix + b"<!--" + b"A" * padding + b"-->" + suffix
 
 
+async def _calibrate(client, headers, floor_plan_id, job_id, mm_per_unit=1.0):
+    """Issue #104: nothing can be accepted before the floor plan is calibrated."""
+    fp = (await client.get(f"/api/v1/floor-plans/{floor_plan_id}", headers=headers)).json()
+    resp = await client.post(
+        f"/api/v1/floor-plans/{floor_plan_id}/calibration",
+        json={"method": "manual_scale", "job_id": job_id, "mm_per_unit": mm_per_unit},
+        headers={**headers, "If-Match": str(fp["version"])},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _candidate_versions(client, headers, job_id):
+    items = (await client.get(f"/api/v1/floor-plans/import-jobs/{job_id}/candidates?limit=200", headers=headers)).json()["items"]
+    return {c["id"]: c["version"] for c in items}
+
+
+async def _accept(client, headers, floor_plan, job, candidate_id, body, *, calibrate=True):
+    """Accept with a fresh If-Match (calibrating first unless the test is about the missing calibration)."""
+    fp = (await client.get(f"/api/v1/floor-plans/{floor_plan['id']}", headers=headers)).json()
+    if calibrate and fp["current_calibration"] is None:
+        await _calibrate(client, headers, floor_plan["id"], job["id"])
+    version = (await _candidate_versions(client, headers, job["id"]))[candidate_id]
+    return await client.post(
+        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
+        json=body, headers={**headers, "If-Match": str(version)},
+    )
+
+
+async def _reject(client, headers, job, candidate_id):
+    version = (await _candidate_versions(client, headers, job["id"]))[candidate_id]
+    return await client.post(
+        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/reject",
+        headers={**headers, "If-Match": str(version)},
+    )
+
+
 async def test_create_floor_plan_and_first_revision_number(client, auth_headers):
     headers = await auth_headers("DCIM Manager")
     room_id = await create_room(client, auth_headers)
@@ -442,11 +479,7 @@ async def test_accepting_a_candidate_creates_an_authoritative_spatial_object(cli
     candidates = (await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates", headers=headers)).json()
     rack_candidate = next(c for c in candidates["items"] if c["suggested_object_type"] == "rack")
 
-    accept = await client.post(
-        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{rack_candidate['id']}/accept",
-        json={"object_type": "rack", "label": "Row A Rack 1"},
-        headers=headers,
-    )
+    accept = await _accept(client, headers, floor_plan, job, rack_candidate["id"], {"object_type": "rack", "label": "Row A Rack 1"})
     assert accept.status_code == 200
     assert accept.json()["status"] == "accepted"
     assert accept.json()["resulting_spatial_object_id"] is not None
@@ -473,11 +506,7 @@ async def test_accepting_a_candidate_with_invalid_object_type_is_a_clean_422(cli
     candidates = (await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates", headers=headers)).json()
     candidate_id = candidates["items"][0]["id"]
 
-    resp = await client.post(
-        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
-        json={"object_type": "'; DROP TABLE spatial_object; --"},
-        headers=headers,
-    )
+    resp = await _accept(client, headers, floor_plan, job, candidate_id, {"object_type": "'; DROP TABLE spatial_object; --"})
     assert resp.status_code == 422
 
 
@@ -502,7 +531,7 @@ async def test_engineer_cannot_accept_or_reject_candidates(client, auth_headers)
     resp = await client.post(
         f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
         json={"object_type": "imported_shape"},
-        headers=engineer_headers,
+        headers={**engineer_headers, "If-Match": "1"},
     )
     assert resp.status_code == 403
 
@@ -522,15 +551,12 @@ async def test_accepting_an_already_accepted_candidate_is_a_conflict(client, aut
     candidates = (await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates", headers=headers)).json()
     candidate_id = candidates["items"][0]["id"]
 
-    first = await client.post(
-        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
-        json={"object_type": "imported_shape"}, headers=headers,
-    )
+    first = await _accept(client, headers, floor_plan, job, candidate_id, {"object_type": "imported_shape"})
     assert first.status_code == 200
 
     second = await client.post(
         f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
-        json={"object_type": "imported_shape"}, headers=headers,
+        json={"object_type": "imported_shape"}, headers={**headers, "If-Match": str(first.json()["version"])},
     )
     assert second.status_code == 409
 
@@ -550,9 +576,7 @@ async def test_rejecting_a_candidate_never_creates_a_spatial_object(client, auth
     candidates = (await client.get(f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates", headers=headers)).json()
     candidate_id = candidates["items"][0]["id"]
 
-    reject = await client.post(
-        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/reject", headers=headers
-    )
+    reject = await _reject(client, headers, job, candidate_id)
     assert reject.status_code == 200
     assert reject.json()["status"] == "rejected"
     assert reject.json()["resulting_spatial_object_id"] is None
@@ -645,10 +669,7 @@ async def test_rt1_sequential_acceptance_creates_exactly_one_imported_layer(clie
     floor_plan, job, cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 2)
 
     for cid in cand_ids:
-        resp = await client.post(
-            f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cid}/accept",
-            json={"object_type": "imported_shape"}, headers=headers,
-        )
+        resp = await _accept(client, headers, floor_plan, job, cid, {"object_type": "imported_shape"})
         assert resp.status_code == 200
 
     assert await _imported_layer_count(floor_plan["id"]) == 1
@@ -716,6 +737,8 @@ async def test_rt1_20_concurrent_accepts_of_different_candidates_no_duplicate_la
     headers = await auth_headers("DCIM Manager")
     room_id = await create_room(client, auth_headers)
     floor_plan, job, cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 20)
+    await _calibrate(client, headers, floor_plan["id"], job["id"])
+    versions = await _candidate_versions(client, headers, job["id"])
 
     engine = create_async_engine(TEST_DATABASE_URL, pool_size=25, max_overflow=10)
     session_factory = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
@@ -737,13 +760,13 @@ async def test_rt1_20_concurrent_accepts_of_different_candidates_no_duplicate_la
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            async def _accept(cid):
+            async def _accept_concurrent(cid):
                 return await ac.post(
                     f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cid}/accept",
-                    json={"object_type": "imported_shape"}, headers=headers,
+                    json={"object_type": "imported_shape"}, headers={**headers, "If-Match": str(versions[cid])},
                 )
 
-            results = await asyncio.gather(*[_accept(cid) for cid in cand_ids])
+            results = await asyncio.gather(*[_accept_concurrent(cid) for cid in cand_ids])
     finally:
         if previous_override is not None:
             app.dependency_overrides[get_db] = previous_override
@@ -761,15 +784,14 @@ async def test_rt1_20_concurrent_accepts_of_different_candidates_no_duplicate_la
     # accept against the ORIGINAL floor plan/job via a brand-new candidate to prove the
     # workflow isn't permanently broken (the original defect's compounding failure mode).
     recovery = await client.post(
-        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cand_ids[0]}/reject", headers=headers
+        f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{cand_ids[0]}/reject",
+        headers={**headers, "If-Match": str(versions[cand_ids[0]])},
     )
     # cand_ids[0] was already accepted by the race above — rejecting an already-accepted
     # candidate must be a clean 409, not a 500, proving the endpoint is still healthy.
     assert recovery.status_code == 409
-    fresh_accept = await client.post(
-        f"/api/v1/floor-plans/import-jobs/{job2['id']}/candidates/{more_cand_ids[0]}/accept",
-        json={"object_type": "imported_shape"}, headers=headers,
-    )
+    floor_plan2 = (await client.get(f"/api/v1/floor-plans/{job2['floor_plan_id']}", headers=headers)).json()
+    fresh_accept = await _accept(client, headers, floor_plan2, job2, more_cand_ids[0], {"object_type": "imported_shape"})
     assert fresh_accept.status_code == 200
 
 
@@ -791,6 +813,8 @@ async def test_rt1_20_concurrent_accepts_of_the_same_candidate_exactly_one_wins(
     room_id = await create_room(client, auth_headers)
     floor_plan, job, cand_ids = await _setup_floor_plan_with_n_candidates(client, headers, room_id, 1)
     candidate_id = cand_ids[0]
+    await _calibrate(client, headers, floor_plan["id"], job["id"])
+    version = (await _candidate_versions(client, headers, job["id"]))[candidate_id]
 
     concurrency = 20
     engine = create_async_engine(TEST_DATABASE_URL, pool_size=25, max_overflow=10)
@@ -809,13 +833,13 @@ async def test_rt1_20_concurrent_accepts_of_the_same_candidate_exactly_one_wins(
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            async def _accept():
+            async def _accept_concurrent():
                 return await ac.post(
                     f"/api/v1/floor-plans/import-jobs/{job['id']}/candidates/{candidate_id}/accept",
-                    json={"object_type": "imported_shape"}, headers=headers,
+                    json={"object_type": "imported_shape"}, headers={**headers, "If-Match": str(version)},
                 )
 
-            results = await asyncio.gather(*[_accept() for _ in range(concurrency)])
+            results = await asyncio.gather(*[_accept_concurrent() for _ in range(concurrency)])
     finally:
         if previous_override is not None:
             app.dependency_overrides[get_db] = previous_override

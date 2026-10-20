@@ -44,6 +44,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import TIMESTAMP
@@ -62,13 +63,14 @@ POWER_NODE_TYPES = (
     "pdu",
     "pdu_outlet",
     "equipment_power_input",
+    "protection_device",
 )
 # node_type values that are independently-tracked ManagedAsset subtypes and therefore
 # always carry managed_asset_id (never owning_asset_id).
 POWER_NODE_ASSET_TYPES = ("generator", "ups", "power_panel", "pdu")
 # node_type values that are owned sub-components of another asset and therefore always
 # carry owning_asset_id (never managed_asset_id, never independently commissioned).
-POWER_NODE_SUBCOMPONENT_TYPES = ("power_circuit", "pdu_outlet", "equipment_power_input")
+POWER_NODE_SUBCOMPONENT_TYPES = ("power_circuit", "pdu_outlet", "equipment_power_input", "protection_device")
 
 CONNECTION_TYPES = ("feed", "distribution")
 FEED_LABELS = ("A", "B", "single")
@@ -78,6 +80,22 @@ CONNECTION_STATUSES = ("active", "maintenance", "fault")
 OUTLET_STATES = ("on", "off", "unknown")
 
 REDUNDANCY_FACTORS = ("N", "N+1", "2N", "2N+1")
+
+# Issue #102: protection devices (breakers and their kin) are nodes of the one existing power graph.
+PROTECTION_DEVICE_TYPES = ("breaker", "fuse", "switch", "disconnect")
+# `closed` conducts. `open` (operator action) and `tripped` (protective action) both interrupt the path.
+# `unknown` is an unreported state: it is never assumed to interrupt anything, and every rollup that
+# crosses it says so.
+PROTECTION_STATES = ("closed", "open", "tripped", "unknown")
+INTERRUPTING_STATES = ("open", "tripped")
+PROTECTION_STATUSES = ("in_service", "maintenance", "out_of_service")
+PROTECTION_PHASE_CONFIGS = ("single", "three")
+# Representable envelope. Ratings above 6300 A, voltages outside low voltage (24-1000 V) and pole counts
+# that do not match the phase configuration cannot be turned into a defensible kW figure, so they are
+# rejected rather than stored.
+PROTECTION_MAX_RATING_A = 6300
+PROTECTION_MIN_VOLTAGE_V = 24
+PROTECTION_MAX_VOLTAGE_V = 1000
 
 
 class PDU(Base, TimestampMixin):
@@ -195,7 +213,7 @@ class PDUOutlet(Base, TimestampMixin):
     )
     pdu_asset_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     pdu_asset_expected_type: Mapped[str] = mapped_column(
-        String, Computed("'pdu'", persisted=True), nullable=False
+        Text, Computed("'pdu'", persisted=True), nullable=False
     )
     outlet_number: Mapped[int] = mapped_column(nullable=False)
     label: Mapped[str | None] = mapped_column(String(64))
@@ -213,6 +231,17 @@ class PowerConnection(Base, UUIDPkMixin):
     __tablename__ = "power_connection"
     __table_args__ = (
         CheckConstraint("source_node_id <> target_node_id", name="no_self_loop"),
+        # Duplicate-active-edge prevention (migration 0006, master prompt §5): the same
+        # source->target edge with the same feed_label cannot be opened twice while both
+        # are active. Declared here so ORM metadata matches the migrated schema exactly.
+        Index(
+            "uq_power_connection_active_edge",
+            "source_node_id",
+            "target_node_id",
+            "feed_label",
+            unique=True,
+            postgresql_where="effective_to IS NULL",
+        ),
         CheckConstraint(f"connection_type IN {CONNECTION_TYPES!r}", name="connection_type_allowed"),
         CheckConstraint(f"feed_label IN {FEED_LABELS!r}", name="feed_label_allowed"),
         CheckConstraint(f"phase IS NULL OR phase IN {PHASES!r}", name="phase_allowed"),
@@ -245,6 +274,14 @@ class PowerCapacity(Base, UUIDPkMixin):
 
     __tablename__ = "power_capacity"
     __table_args__ = (
+        # At most one *current* capacity record per node (migration 0006; the same
+        # temporal "current = NULL effective_to" convention as the placement tables).
+        Index(
+            "uq_power_capacity_current_per_node",
+            "power_node_id",
+            unique=True,
+            postgresql_where="effective_to IS NULL",
+        ),
         CheckConstraint("rated_capacity_kw IS NULL OR rated_capacity_kw >= 0", name="rated_capacity_kw_non_negative"),
         CheckConstraint(
             "configured_capacity_kw IS NULL OR configured_capacity_kw >= 0", name="configured_capacity_kw_non_negative"
@@ -279,3 +316,50 @@ class PowerCapacity(Base, UUIDPkMixin):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     effective_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     effective_to: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class ProtectionDevice(Base, TimestampMixin):
+    """Issue #102: a breaker, fuse, switch or disconnect that sits *in* the existing power graph.
+
+    The device's identity is its `PowerNode` (`node_type='protection_device'`, `owning_asset_id` = the
+    panel/UPS/PDU/generator that houses it), so every traversal, capacity roll-up and impact simulation
+    already built on `PowerNode`/`PowerConnection` sees it. Upstream and downstream relationships are
+    ordinary `PowerConnection` rows; there is no second graph.
+
+    `site_id` is the device's topology scope. The service layer rejects a device whose housing asset or
+    linked nodes resolve to another site, so a direct ID cannot weave one site's topology into another's.
+
+    Capacity follows from the device itself when no `PowerCapacity` row overrides it:
+    `rated_kw = rating_a * voltage_v * (sqrt(3) if three-phase else 1) / 1000` (apparent power at unity
+    power factor, a deliberately conservative figure). `state` records what the device reports;
+    `unknown` is never treated as `closed` or as interrupting."""
+
+    __tablename__ = "protection_device"
+    __table_args__ = (
+        CheckConstraint(f"device_type IN {PROTECTION_DEVICE_TYPES!r}", name="device_type_allowed"),
+        CheckConstraint(f"state IN {PROTECTION_STATES!r}", name="state_allowed"),
+        CheckConstraint(f"status IN {PROTECTION_STATUSES!r}", name="status_allowed"),
+        CheckConstraint(f"phase_config IN {PROTECTION_PHASE_CONFIGS!r}", name="phase_config_allowed"),
+        CheckConstraint(f"rating_a > 0 AND rating_a <= {PROTECTION_MAX_RATING_A}", name="rating_a_range"),
+        CheckConstraint(
+            f"voltage_v >= {PROTECTION_MIN_VOLTAGE_V} AND voltage_v <= {PROTECTION_MAX_VOLTAGE_V}", name="voltage_v_range"
+        ),
+        CheckConstraint("poles IN (1, 2, 3)", name="poles_allowed"),
+        CheckConstraint(
+            "(phase_config = 'single' AND poles IN (1, 2)) OR (phase_config = 'three' AND poles = 3)",
+            name="poles_match_phase_config",
+        ),
+        Index("ix_protection_device_site_id", "site_id"),
+    )
+
+    power_node_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("power_node.id", ondelete="CASCADE"), primary_key=True)
+    site_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("site.id", ondelete="RESTRICT"), nullable=False)
+    device_type: Mapped[str] = mapped_column(String(16), nullable=False, default="breaker")
+    rating_a: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    voltage_v: Mapped[float] = mapped_column(Numeric(8, 2), nullable=False)
+    poles: Mapped[int] = mapped_column(nullable=False)
+    phase_config: Mapped[str] = mapped_column(String(8), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="closed")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="in_service")
+    state_changed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    version: Mapped[int] = mapped_column(nullable=False, default=1)

@@ -11,12 +11,39 @@ export interface Organization {
   created_at: string;
 }
 
+export interface Country {
+  id: string;
+  organization_id: string;
+  name: string;
+  iso_code: string | null;
+}
+
+export interface City {
+  id: string;
+  country_id: string;
+  name: string;
+}
+
 export interface Site {
   id: string;
   city_id: string;
   code: string;
   name: string;
   timezone: string;
+}
+
+export interface Building {
+  id: string;
+  site_id: string;
+  code: string;
+  name: string;
+}
+
+export interface Floor {
+  id: string;
+  building_id: string;
+  name: string;
+  level_number: number;
 }
 
 export interface ManagedAsset {
@@ -207,6 +234,26 @@ export interface EquipmentInstantiateResult extends Equipment {
 
 export const FLOOR_PLAN_STATUSES = ["draft", "active", "superseded"] as const;
 
+export interface Calibration {
+  id: string;
+  sequence: number;
+  method: "declared_units" | "two_point" | "room_dimension" | "manual_scale";
+  source_units: string;
+  mm_per_unit: number;
+  origin_x: number;
+  origin_y: number;
+  y_axis: "up" | "down";
+  rotation_quadrants: number;
+  error_bound_mm: number | null;
+  relative_error: number | null;
+  confidence: "high" | "medium" | "low";
+  reference: Record<string, unknown>;
+  warnings: string[];
+  job_id: string | null;
+  supersedes_id: string | null;
+  created_at: string;
+}
+
 export interface FloorPlan {
   id: string;
   room_id: string;
@@ -219,6 +266,7 @@ export interface FloorPlan {
   room_height_mm: number | null;
   version: number;
   created_at: string;
+  current_calibration: Calibration | null;
 }
 
 export interface ImportJob {
@@ -227,14 +275,18 @@ export interface ImportJob {
   status: string;
   original_filename: string;
   file_size_bytes: number;
+  file_hash?: string;
+  detected_format?: string | null;
   rejection_reason: string | null;
   created_at: string;
+  deduplicated?: boolean;
 }
 
 export interface ImportDiagnostics {
   job_id: string;
   source_format: string | null;
   parser_name: string | null;
+  parser_version?: string | null;
   objects_discovered: number;
   objects_classified: number;
   racks_detected: number;
@@ -244,17 +296,131 @@ export interface ImportDiagnostics {
   ambiguous_count: number;
   confirmed_count: number;
   duration_ms: number | null;
+  source_units?: string | null;
+  units_trusted?: boolean | null;
+  y_axis?: "up" | "down" | null;
+  source_bbox?: { min_x: number; min_y: number; max_x: number; max_y: number } | null;
+  candidate_count?: number;
+  sir_sha256?: string | null;
+  failure_code?: string | null;
+}
+
+export type CandidateShape = "rect" | "circle" | "text" | "polygon" | "polyline" | "line";
+
+/** Geometry in the drawing's *source* coordinates (not millimetres) — see ImportCandidate.canonical. */
+export interface CandidateGeometry {
+  shape_type: CandidateShape;
+  x?: number;
+  y?: number;
+  cx?: number;
+  cy?: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  rotation_deg?: number;
+  points?: [number, number][];
+  text?: string | null;
+  layer?: string;
+  source_ref?: string;
+}
+
+export interface MatchEvidence {
+  code: string;
+  detail: string;
+  score?: number;
+  weight?: number;
+  phase?: "match";
+}
+
+export type MatchStatus = "not_applicable" | "unmatched" | "matched" | "ambiguous" | "conflict" | "duplicate";
+
+export interface CanonicalGeometry {
+  geometry_type: string;
+  x_mm: number;
+  y_mm: number;
+  width_mm: number | null;
+  height_mm: number | null;
+  rotation_deg: number;
+  geometry_data: { points: [number, number][] } | null;
 }
 
 export interface ImportCandidate {
   id: string;
   job_id: string;
-  raw_geometry: { shape_type: string; x: number; y: number; width?: number; height?: number; radius?: number; text?: string };
+  version: number;
+  raw_geometry: CandidateGeometry;
+  effective_geometry: CandidateGeometry;
+  canonical: CanonicalGeometry | null;
   suggested_object_type: string | null;
+  effective_object_type: string | null;
   suggested_label: string | null;
+  effective_label: string | null;
   confidence: number | null;
+  evidence: MatchEvidence[];
+  match_status: MatchStatus;
+  match_score: number | null;
+  matched_asset_id: string | null;
+  matched_asset_name: string | null;
+  duplicate_of_spatial_object_id: string | null;
+  reconciled_calibration_id: string | null;
+  source_ref: string | null;
+  correction: Record<string, unknown> | null;
+  can_undo: boolean;
   status: string;
   resulting_spatial_object_id: string | null;
+}
+
+export interface SourceGeometry {
+  job_id: string;
+  source_format: string;
+  source_units: string;
+  units_trusted: boolean;
+  y_axis: "up" | "down";
+  bbox: { min_x: number; min_y: number; max_x: number; max_y: number } | null;
+  layers: string[];
+  sir_sha256: string;
+  entities: {
+    kind: string;
+    ref: string;
+    layer?: string;
+    cx?: number;
+    cy?: number;
+    width?: number;
+    height?: number;
+    radius?: number;
+    rotation_deg?: number;
+    points?: [number, number][];
+    text?: string;
+  }[];
+  total_entities: number;
+  truncated: boolean;
+}
+
+export interface CalibrationRequest {
+  method: Calibration["method"];
+  job_id: string;
+  origin?: [number, number];
+  rotation_degrees?: 0 | 90 | 180 | 270;
+  p1?: [number, number];
+  p2?: [number, number];
+  distance_mm?: number;
+  tolerance_mm?: number;
+  pick_tolerance_src?: number;
+  src_width?: number;
+  real_width_mm?: number;
+  src_height?: number;
+  real_height_mm?: number;
+  mm_per_unit?: number;
+}
+
+export interface AcceptCandidateRequest {
+  object_type?: string;
+  label?: string;
+  matched_asset_id?: string;
+  link_placement?: boolean;
+  apply_position?: boolean;
+  placement_version?: number;
+  boundary_exception_reason?: string;
 }
 
 // ------------------------------------------------------------------- Bulk import
@@ -320,8 +486,10 @@ export interface SpatialObject {
   width_mm: number | null;
   height_mm: number | null;
   rotation_deg: number;
+  geometry_data?: { points: [number, number][] } | null;
   label: string | null;
   source: string;
+  provenance?: Record<string, unknown> | null;
 }
 
 /** Additive (3D layout increment): rack-mounted equipment placed within one of a
@@ -348,6 +516,12 @@ export interface RoomRack {
   spatial_object_id: string | null;
   // Additive (3D layout increment): the rack's own U capacity.
   height_u: number;
+  // Issue #104: authoritative physical dimensions (catalog revision) and position state.
+  width_mm?: number | null;
+  depth_mm?: number | null;
+  height_mm?: number | null;
+  position_state?: "placed" | "missing";
+  placement_version?: number;
 }
 
 export interface RoomEquipment {
@@ -356,6 +530,25 @@ export interface RoomEquipment {
   hostname: string | null;
   placement_type: string;
   spatial_object_id: string | null;
+  x_mm?: number | null;
+  y_mm?: number | null;
+  rotation_deg?: number | null;
+  width_mm?: number | null;
+  depth_mm?: number | null;
+  height_mm?: number | null;
+  position_state?: "placed" | "missing";
+  dimensions_state?: "complete" | "partial" | "missing";
+}
+
+export interface SpatialCalibrationSummary {
+  id: string;
+  method: Calibration["method"];
+  source_units: string;
+  mm_per_unit: number;
+  error_bound_mm: number | null;
+  relative_error: number | null;
+  confidence: Calibration["confidence"];
+  created_at: string;
 }
 
 export interface RoomSpatialView {
@@ -372,6 +565,313 @@ export interface RoomSpatialView {
   // Additive (3D layout increment): rack-mounted equipment, omitted from
   // `equipment` by design — see RoomRackEquipment.
   rack_equipment: RoomRackEquipment[];
+  // Issue #104
+  calibration?: SpatialCalibrationSummary | null;
+  boundary?: SpatialObject | null;
+  rack_unit_mm?: number;
+  layout_state?: "validated" | "incomplete";
+  incomplete_reasons?: string[];
+}
+
+export type OverlayKind = "power" | "network" | "environment";
+export type OverlayState = "normal" | "warning" | "critical" | "unavailable";
+
+export interface OverlayItem {
+  asset_id: string;
+  asset_kind: "rack" | "equipment";
+  state: OverlayState;
+  reason: string;
+  // power
+  redundancy?: string;
+  interrupting_devices?: string[];
+  feed_node_ids?: string[];
+  // network
+  installed_cables?: number;
+  planned_cables?: number;
+  cable_ids?: string[];
+  peer_asset_ids?: string[];
+  discovered_unconfirmed?: number;
+  // environment
+  metric?: string | null;
+  value?: number | null;
+  unit?: string | null;
+  occurred_at?: string | null;
+  age_seconds?: number | null;
+  data_quality?: "measured" | "stale" | "missing" | string;
+}
+
+export interface RoomOverlays {
+  room_id: string;
+  generated_at: string;
+  overlays: Partial<Record<OverlayKind, { source: string; items: OverlayItem[]; truncated: boolean; estimated_values?: boolean }>>;
+}
+
+// ------------------------------------------------------------ Cooling & environment (Issue #105)
+
+export type ThermalMetric = "temperature_c" | "humidity_percent";
+export type SensorValueState = "measured_fresh" | "measured_stale" | "missing" | "invalid";
+export type HeatMapState = "healthy" | "partial" | "degraded" | "unavailable";
+
+export interface ThermalSensorPoint {
+  sensor_id: string;
+  asset_tag: string;
+  name: string;
+  sensor_kind: string;
+  measurement_role: string;
+  metric: string | null;
+  placement_type: string;
+  rack_id: string | null;
+  x_mm: number | null;
+  y_mm: number | null;
+  position_source: "placement" | "rack_footprint" | null;
+  position_exact: boolean;
+  state: SensorValueState;
+  value_provenance: "measured" | "none";
+  value: number | null;
+  unit: string | null;
+  presentation_value: number | null;
+  presentation_unit: string | null;
+  occurred_at: string | null;
+  age_seconds: number | null;
+  expected_poll_interval_seconds: number | null;
+  invalid_reason: string | null;
+  active_alarm_count?: number; // absent when the caller lacks alarm:read
+  used_in_field: boolean;
+  excluded_reason: string | null;
+  source: { integration_id: string; integration_name: string } | null;
+}
+
+export interface HeatMapGrid {
+  value_provenance: "interpolated";
+  origin_x_mm: number;
+  origin_y_mm: number;
+  cell_mm: number;
+  columns: number;
+  rows: number;
+  unit: string;
+  min: number | null;
+  max: number | null;
+  values: (number | null)[];
+  support: number[];
+}
+
+export interface HeatMapThreshold {
+  rule_type: "threshold_high" | "threshold_low";
+  threshold: number;
+  unit: string | null;
+  name: string;
+}
+
+export interface HeatMap {
+  room_id: string;
+  room_name: string;
+  metric: ThermalMetric;
+  unit: string;
+  presentation_unit: string;
+  kind: "interpolated_operational_estimate";
+  disclaimer: string;
+  generated_at: string;
+  as_of: string;
+  floor_plan_id: string | null;
+  floor_plan_revision: number | null;
+  calibration_id: string | null;
+  state: HeatMapState;
+  state_reasons: string[];
+  quality: {
+    sensor_count: number;
+    fresh_count: number;
+    stale_count: number;
+    missing_count: number;
+    invalid_count: number;
+    unlocated_count: number;
+    contributing_count: number;
+    coverage_percent: number;
+    coverage_class: "good" | "fair" | "poor" | "none";
+    interpolation_coverage_percent: number;
+    source_time_range: { oldest: string; newest: string } | null;
+    max_age_skew_seconds: number;
+    max_age_skew_allowed_seconds: number;
+    freshness_cutoff: string;
+  };
+  method: {
+    name: string;
+    power: number;
+    radius_mm: number;
+    cell_mm: number | null;
+    min_sensors: number;
+    min_neighbours_per_cell: number;
+    stale_policy: string;
+    missing_policy: string;
+    barrier_aware: boolean;
+    dimensions: number;
+    assumptions: string[];
+  };
+  grid: HeatMapGrid | null;
+  sensors: ThermalSensorPoint[];
+  source_set: { contributing_sensor_ids: string[]; as_of: string };
+  thresholds: HeatMapThreshold[];
+  thresholds_withheld?: boolean;
+  truncated: boolean;
+}
+
+export interface AirflowElement {
+  id: string;
+  kind: "cooling_supply" | "sensor_airflow";
+  name: string;
+  unit_kind?: string;
+  x_mm: number | null;
+  y_mm: number | null;
+  position_exact: boolean;
+  direction_deg: number | null;
+  direction_provenance: "configured";
+  magnitude_provenance: "measured" | "configured_design" | "none";
+  magnitude_m3_s?: number | null;
+  volume_flow?: ThermalSensorPoint | null;
+  velocity?: ThermalSensorPoint | null;
+  state: string;
+  operating_status?: string;
+  drawable: boolean;
+  not_drawable_reasons: string[];
+}
+
+export interface RoomAirflow {
+  room_id: string;
+  generated_at: string;
+  elements: AirflowElement[];
+  provenance_summary: { measured_magnitude: number; configured_design: number; modelled: number; not_drawable: number };
+  note: string;
+  disclaimer: string;
+}
+
+export interface CapacityUnit {
+  id: string;
+  name: string;
+  kind: string;
+  lifecycle_status: string;
+  operating_status: string;
+  available: boolean;
+  unavailable_reason: string | null;
+  rated_kw: number | null;
+  configured_kw: number | null;
+  effective_kw: number | null;
+  capacity_known: boolean;
+}
+
+export type RedundancyState = "not_configured" | "unavailable" | "single_unit" | "degraded" | "redundant_unverified" | "redundant";
+
+export interface CapacityZone {
+  zone_id: string;
+  name: string;
+  geometry: string;
+  units: CapacityUnit[];
+  installed_rated_kw: number | null;
+  installed_rated_complete: boolean;
+  available_kw: number | null;
+  available_complete: boolean;
+  available_units: number;
+  unit_count: number;
+  thermal_load: {
+    state: "known" | "incomplete" | "unknown" | "withheld_by_scope" | "not_permitted";
+    load_complete?: boolean;
+    electrical_kw: number | null;
+    thermal_kw: number | null;
+    electrical_kw_lower_bound?: number | null;
+    thermal_kw_lower_bound?: number | null;
+    lower_bound_note?: string | null;
+    placed_equipment_count?: number | null;
+    modelled_equipment_count?: number | null;
+    unknown_demand_equipment_count?: number;
+    unmodelled_equipment_count?: number;
+    missing_demand_equipment_count?: number;
+    unattributed_floor_equipment_count?: number;
+    pending_equipment_count?: number;
+    incomplete_reasons?: string[];
+    quality: string | null;
+    rack_count: number;
+    unassigned_rack_count: number;
+    missing_load_rack_count: number;
+    basis: string;
+    assumption: string;
+    electrical_to_thermal_factor: number;
+  };
+  headroom_kw: number | null;
+  headroom_verified?: boolean;
+  headroom_upper_bound_kw?: number | null;
+  headroom_basis?: string;
+  utilization_pct: number | null;
+  level: "ok" | "warning" | "critical" | "unknown" | "not_configured";
+  redundancy: { state: RedundancyState; pools: { scope: string; reason: string | null; n_plus_1_verified: boolean | null; verification_unavailable_reason?: string | null }[] };
+  plant: { note: string; units: CapacityUnit[]; installed_rated_kw: number | null; available_kw: number | null };
+}
+
+export interface RoomCapacity {
+  room_id: string;
+  generated_at: string;
+  load_assumption: string;
+  state: string;
+  reasons: string[];
+  zones: CapacityZone[];
+}
+
+export interface ThermalException {
+  type: string;
+  severity: "critical" | "warning" | "info";
+  subject_type: string;
+  subject_id: string;
+  message: string;
+  source: "alarm" | "derived";
+  metric?: string;
+}
+
+export interface RoomExceptions {
+  room_id: string;
+  generated_at: string;
+  items: ThermalException[];
+  counts: Record<string, number>;
+  truncated: boolean;
+  alarms_omitted?: string;
+}
+
+export interface CoolingLayoutZone {
+  id: string;
+  name: string;
+  zone_kind: "served_zone" | "supply_region" | "return_region" | "hot_aisle" | "cold_aisle";
+  containment: "none" | "contained";
+  geometry_type: "rect" | "polygon" | null;
+  x_mm: number | null;
+  y_mm: number | null;
+  width_mm: number | null;
+  height_mm: number | null;
+  points: number[][] | null;
+  authority: string;
+  elements: { id: string; element_kind: "boundary" | "opening"; x1_mm: number; y1_mm: number; x2_mm: number; y2_mm: number; label: string | null }[];
+}
+
+export interface CoolingLayoutUnit {
+  id: string;
+  asset_tag: string;
+  name: string;
+  unit_kind: "crac" | "crah" | "chiller";
+  operating_status: string;
+  lifecycle_status: string;
+  x_mm: number | null;
+  y_mm: number | null;
+  rotation_deg: number | null;
+  supply_direction_deg: number | null;
+  rated_cooling_capacity_kw: number | null;
+}
+
+export interface CoolingLayout {
+  room_id: string;
+  room_name: string;
+  generated_at: string;
+  floor_plan_id: string | null;
+  calibration_id: string | null;
+  layout_reasons: string[];
+  zones: CoolingLayoutZone[];
+  cooling_units: CoolingLayoutUnit[];
+  sensors: { id: string; name: string; sensor_kind: string; x_mm: number | null; y_mm: number | null; position_exact: boolean }[];
+  relations: { id: string; cooling_unit_id: string; thermal_zone_id: string; relation_kind: string; semantics: string }[];
 }
 
 // --------------------------------------------------------------------- Power

@@ -19,10 +19,42 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
+from app.application.network.profile_matching import DeviceFacts
+from app.application.network.profile_service import resolve_profile
 from app.application.outbox_service import write_outbox_event
 from app.core.errors import ApiError, NotFoundError
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import DiscoveredDevice, ReconciliationDiff
+
+_FACT_FIELDS = ("sys_object_id", "sys_descr", "model", "hardware_revision", "firmware")
+_FACT_MAX_LENGTH = 512
+
+
+def extract_facts(raw_attributes: dict) -> DeviceFacts | None:
+    """Device facts a collector reported under `raw_attributes["facts"]`. Non-string or
+    oversized values are dropped rather than coerced; absent facts stay None."""
+    facts = raw_attributes.get("facts")
+    if not isinstance(facts, dict):
+        return None
+    cleaned = {
+        name: facts[name]
+        for name in _FACT_FIELDS
+        if isinstance(facts.get(name), str) and 0 < len(facts[name]) <= _FACT_MAX_LENGTH
+    }
+    return DeviceFacts(**cleaned) if cleaned else None
+
+
+async def _refresh_profile_match(db: AsyncSession, device: DiscoveredDevice, raw_attributes: dict) -> None:
+    """Advisory only: records what the matcher concluded for the reported facts. Skipped
+    when the facts are unchanged since the last evaluation. Never binds anything."""
+    facts = extract_facts(raw_attributes)
+    if facts is None:
+        return
+    snapshot = {name: getattr(facts, name) for name in _FACT_FIELDS if getattr(facts, name) is not None}
+    if device.profile_match is not None and device.profile_match.get("facts") == snapshot:
+        return
+    result = await resolve_profile(db, facts)
+    device.profile_match = {**result.as_dict(), "facts": snapshot, "evaluated_at": datetime.now(UTC).isoformat()}
 
 
 async def ingest_discovery(
@@ -47,6 +79,7 @@ async def ingest_discovery(
     if existing is not None:
         existing.last_seen_at = now
         existing.raw_attributes = raw_attributes
+        await _refresh_profile_match(db, existing, raw_attributes)
         await db.flush()
         return existing, False
 
@@ -54,6 +87,7 @@ async def ingest_discovery(
         id=uuid.uuid4(), integration_id=integration_id, external_identifier=external_identifier,
         discovered_at=now, last_seen_at=now, raw_attributes=raw_attributes, status="new",
     )
+    await _refresh_profile_match(db, device, raw_attributes)
     db.add(device)
     await db.flush()
 

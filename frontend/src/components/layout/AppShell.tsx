@@ -2,10 +2,12 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
 import { useHasPermission, useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { useAuthStore } from "@/lib/authStore";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
   { to: "/infrastructure", label: "Infrastructure" },
+  { to: "/locations", label: "Locations", permission: "location:read" },
   { to: "/managed-assets", label: "Managed Assets" },
   { to: "/racks", label: "Racks" },
   { to: "/equipment", label: "Equipment" },
@@ -13,10 +15,16 @@ const NAV_ITEMS = [
   { to: "/floor-plans/3d-layout", label: "3D Layout" },
   { to: "/power", label: "Power Topology" },
   { to: "/events", label: "Events" },
+  { to: "/alarm-rules", label: "Alarm Rules", permission: "alarm:read" },
   { to: "/collectors", label: "Collectors" },
   { to: "/integrations", label: "Integrations" },
   { to: "/discovery", label: "Discovery" },
-];
+  { to: "/discovery/neighbors", label: "Neighbors", permission: "discovery:read" },
+  { to: "/network/profiles", label: "Device Profiles", permission: "network_profile:read" },
+  { to: "/cables", label: "Cables", permission: "cable:read" },
+  { to: "/topology/pass-throughs", label: "Pass-throughs", permission: "cable:read" },
+  { to: "/topology/trace", label: "Trace", permission: "cable:read" },
+] as ReadonlyArray<{ to: string; label: string; permission?: string }>;
 
 const ADMIN_NAV_ITEMS = [{ to: "/admin/catalog", label: "Asset Catalog" }];
 const ACCESS_NAV_ITEMS = [
@@ -29,6 +37,8 @@ export function AppShell() {
   const isCatalogAdministrator = useIsCatalogAdministrator();
   const canReadUsers = useHasPermission("user:read");
   const canReadGroups = useHasPermission("group:read");
+  const permissions = useAuthStore((s) => s.user?.permission_codes);
+  const navItems = NAV_ITEMS.filter((item) => !item.permission || permissions?.includes(item.permission));
   const navigate = useNavigate();
   const accessItems = ACCESS_NAV_ITEMS.filter((i) => (i.permission === "user:read" ? canReadUsers : canReadGroups));
   const showAdminHeading = isCatalogAdministrator || accessItems.length > 0;
@@ -46,7 +56,7 @@ export function AppShell() {
       <aside className="w-full border-b border-slate-800 bg-slate-900 p-4 sm:w-56 sm:shrink-0 sm:border-b-0 sm:border-r">
         <div className="mb-6 text-sm font-semibold tracking-wide text-slate-300">DCIM PLATFORM</div>
         <nav aria-label="Primary" className="space-y-1">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

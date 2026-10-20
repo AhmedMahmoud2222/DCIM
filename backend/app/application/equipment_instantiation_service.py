@@ -36,6 +36,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.network.topology_lock import acquire_topology_lock
 from app.core.errors import NotFoundError
 from app.domain.catalog.designer_models import (
     CatalogModel,
@@ -45,6 +46,7 @@ from app.domain.catalog.designer_models import (
 )
 from app.domain.catalog.models import EquipmentModelRevision
 from app.domain.identity.models import ManagedAsset
+from app.domain.network.cable_models import Cable
 from app.domain.physical.models import Equipment
 from app.domain.physical.ports import EquipmentPort, EquipmentPowerInlet, PortConnection
 from app.domain.power.models import PowerNode
@@ -225,6 +227,14 @@ class PortNotFound(Exception):
     pass
 
 
+class PortConnectionOwnedByCable(Exception):
+    """A live cable references the connection, so only the cable lifecycle may change it."""
+
+    def __init__(self, detail: str):
+        self.detail = detail
+        super().__init__(detail)
+
+
 class InvalidPortTarget(Exception):
     def __init__(self, detail: str):
         self.detail = detail
@@ -249,7 +259,11 @@ async def connect_port(
     be given (mirrors `PortConnection`'s own CHECK). Reconnecting an already-connected
     source port replaces its existing connection row instead of erroring, since
     `source_port_id` is unique and a technician re-patching a cable is the expected,
-    ordinary case, not a conflict to reject."""
+    ordinary case, not a conflict to reject. The one exception is a connection a live cable
+    references (Issue #101): retargeting it here would leave the cable and the logical topology
+    disagreeing, so that is refused and the cable must be changed or removed instead. Takes the
+    topology lock like every cable operation, so it cannot interleave with one."""
+    await acquire_topology_lock(db)
     source = await db.get(EquipmentPort, source_port_id)
     if source is None:
         raise PortNotFound(f"EquipmentPort {source_port_id} not found.")
@@ -272,9 +286,20 @@ async def connect_port(
             raise InvalidPortTarget(f"PowerNode {target_power_node_id} is not a pdu_outlet (got {node.node_type!r}).")
 
     existing = (
-        await db.execute(select(PortConnection).where(PortConnection.source_port_id == source_port_id))
+        await db.execute(
+            select(PortConnection).where(PortConnection.source_port_id == source_port_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one_or_none()
     if existing is not None:
+        owner = (
+            await db.execute(select(Cable.label).where(Cable.port_connection_id == existing.id, Cable.is_live).limit(1))
+        ).scalar_one_or_none()
+        if owner is not None:
+            raise PortConnectionOwnedByCable(
+                f"This port's connection belongs to the live cable {owner!r}; change or remove that cable instead. "
+                "Nothing was changed."
+            )
         existing.target_port_id = target_port_id
         existing.target_power_node_id = target_power_node_id
         existing.cable_id = cable_id

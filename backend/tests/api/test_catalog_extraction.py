@@ -693,4 +693,4 @@ def test_celery_wiring_and_compose_workers_consume_the_extraction_queue():
         # The production file uses Compose-only YAML tags, so read the worker's command line as text.
         worker = (root / name).read_text().split("  celery-worker:")[1].split("  celery-beat:")[0]
         command = next(line for line in worker.splitlines() if line.strip().startswith("command:"))
-        assert '"-Q", "default,maintenance,extraction"' in command, name
+        assert '"-Q", "default,maintenance,extraction,reports,notifications"' in command, name

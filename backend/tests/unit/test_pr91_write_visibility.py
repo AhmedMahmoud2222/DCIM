@@ -8,6 +8,7 @@ import pytest
 
 from app.application import user_admin_service as service
 from app.application.access_control import AccessScope, EffectiveAccess
+from app.application.rbac import AuthContext
 from app.core.errors import ForbiddenError, NotFoundError
 
 
@@ -16,14 +17,18 @@ def _scope(site):
 
 
 def _actor(site):
-    return SimpleNamespace(user=SimpleNamespace(id=uuid.uuid4()), scope=_scope(site), permission_codes=frozenset({"user:manage", "group:manage"}), role_names=frozenset())
+    codes = frozenset({"user:manage", "group:manage"})
+    return AuthContext(
+        user=SimpleNamespace(id=uuid.uuid4()), scope=_scope(site), aggregate_scope=_scope(site),
+        permission_codes=codes, role_names=frozenset(), permission_scopes={code: _scope(site) for code in codes},
+    )
 
 
 @pytest.mark.parametrize("mixed", [False, True])
 async def test_hidden_users_checked_before_permission_comparisons(monkeypatch, mixed):
     a, b = uuid.uuid4(), uuid.uuid4()
     actor = _actor(a)
-    peer = EffectiveAccess(uuid.uuid4(), actor.permission_codes, frozenset(), _scope(a))
+    peer = EffectiveAccess(uuid.uuid4(), actor.permission_codes, frozenset(), _scope(a), permission_scopes=actor.permission_scopes)
     hidden = EffectiveAccess(uuid.uuid4(), frozenset({"equipment:read"}), frozenset(), _scope(b))
     targets = [peer, hidden] if mixed else [hidden]
     monkeypatch.setattr(service, "load_effective_access", AsyncMock(return_value={u.user_id: u for u in targets}))
@@ -48,7 +53,10 @@ async def test_hidden_group_grants_are_never_read(monkeypatch):
 async def test_visible_users_keep_strict_outranking(monkeypatch, peer):
     a = uuid.uuid4()
     actor = _actor(a)
-    target = EffectiveAccess(uuid.uuid4(), actor.permission_codes if peer else frozenset(), frozenset(), _scope(a))
+    target = EffectiveAccess(
+        uuid.uuid4(), actor.permission_codes if peer else frozenset(), frozenset(), _scope(a),
+        permission_scopes=actor.permission_scopes if peer else {},
+    )
     monkeypatch.setattr(service, "load_effective_access", AsyncMock(return_value={target.user_id: target}))
     if peer:
         with pytest.raises(ForbiddenError):

@@ -13,7 +13,7 @@ response. See app/application/idempotency.py."""
 
 from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, CheckConstraint, Index, String
+from sqlalchemy import TIMESTAMP, CheckConstraint, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,12 +25,16 @@ class IdempotencyKey(Base, UUIDPkMixin, TimestampMixin):
     __table_args__ = (
         Index("ix_idempotency_key_key_endpoint", "key", "endpoint", unique=True),
         CheckConstraint("status IN ('processing', 'completed')", name="status_allowed"),
+        CheckConstraint("claim_generation >= 1", name="claim_generation_positive"),
     )
 
     key: Mapped[str] = mapped_column(String(255), nullable=False)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="completed")
+    # Fencing token: bumped each time a stale 'processing' claim is reclaimed, so a slow
+    # original owner cannot complete or release the replacement owner's claim.
+    claim_generation: Mapped[int] = mapped_column(nullable=False, server_default=text("1"))
     response_status: Mapped[int | None] = mapped_column(nullable=True)
     response_body: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)

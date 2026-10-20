@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
-from app.application.concurrency import check_version_match, parse_if_match, require_if_match
+from app.application.concurrency import check_version_match, lock_versioned_row, parse_if_match, require_if_match
 from app.application.outbox_service import write_outbox_event
 from app.application.power_capacity import (
     derive_node_capacity_exceptions,
@@ -37,6 +37,7 @@ from app.application.power_graph import (
     lock_node_pair_in_canonical_order,
     with_connection_mutation_lock,
 )
+from app.application.power_protection import assert_link_allowed
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.core.logging import get_logger
@@ -411,6 +412,11 @@ async def create_power_connection(
             if source.retired_at is not None or target.retired_at is not None:
                 raise ApiError(status_code=422, title="Node Retired", detail="Cannot connect a retired PowerNode.")
 
+            await assert_link_allowed(
+                db, source=source, target=target, rated_current_a=body.rated_current_a, voltage=body.voltage,
+                phase=body.phase,
+            )
+
             # Retained beneath the advisory lock for its own same-pair deadlock-avoidance
             # guarantee (§13a); no longer the sole mechanism protecting cross-pair
             # cycles, since the advisory lock above already fully serializes this
@@ -509,10 +515,7 @@ async def update_power_connection(
     connection_id: uuid.UUID, body: PowerConnectionUpdate, request: Request, db: AsyncSession = Depends(get_db),
     if_match_version: int = Depends(require_if_match), ctx=Depends(require_permission("power:manage")),
 ) -> PowerConnectionOut:
-    connection = await db.get(PowerConnection, connection_id)
-    if connection is None:
-        raise NotFoundError(f"PowerConnection {connection_id} not found.")
-    check_version_match(expected=if_match_version, actual=connection.version)
+    connection = await lock_versioned_row(db, PowerConnection, connection_id, expected_version=if_match_version)
 
     before = {
         "connection_type": connection.connection_type, "phase": connection.phase, "voltage": connection.voltage,
@@ -528,6 +531,13 @@ async def update_power_connection(
         connection.rated_current_a = body.rated_current_a
     if body.status is not None:
         connection.status = body.status
+    src_node = await db.get(PowerNode, connection.source_node_id)
+    dst_node = await db.get(PowerNode, connection.target_node_id)
+    if src_node is not None and dst_node is not None:
+        await assert_link_allowed(
+            db, source=src_node, target=dst_node, rated_current_a=connection.rated_current_a,
+            voltage=connection.voltage, phase=connection.phase,
+        )
     connection.version += 1
     await db.flush()
 

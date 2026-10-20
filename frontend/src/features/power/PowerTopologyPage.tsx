@@ -14,6 +14,7 @@ import {
   listPowerNodes,
 } from "@/features/power/api";
 import { ApiError } from "@/lib/apiClient";
+import { Link } from "react-router-dom";
 
 const NODE_TYPE_COLORS: Record<string, string> = {
   utility_intake: "bg-purple-800 text-purple-100",
@@ -24,6 +25,7 @@ const NODE_TYPE_COLORS: Record<string, string> = {
   pdu: "bg-green-800 text-green-100",
   pdu_outlet: "bg-green-900 text-green-200",
   equipment_power_input: "bg-slate-700 text-slate-100",
+  protection_device: "bg-rose-900 text-rose-100",
 };
 
 function NodeBadge({ nodeType }: { nodeType: string }) {
@@ -115,7 +117,9 @@ export function PowerTopologyPage() {
       <h1 className="mb-1 text-lg font-semibold">Power Topology</h1>
       <p className="mb-6 max-w-2xl text-sm text-slate-400">
         Select a power node to inspect its upstream source chain, downstream loads, and capacity. No live telemetry
-        yet — capacity figures come from rated/configured values and topology roll-up only (Phase 3).
+        yet — capacity figures come from rated/configured values and topology roll-up only (Phase 3).{" "}
+        <Link to="/power/analytics" className="text-sky-400 underline">Open capacity analytics</Link> for measured
+        load, breakers, history, forecast and reports.
       </p>
 
       <div className="grid grid-cols-3 gap-6">

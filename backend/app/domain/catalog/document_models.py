@@ -12,7 +12,7 @@ instantiated from it."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,14 @@ class CatalogDocument(Base, UUIDPkMixin, TimestampMixin):
         CheckConstraint("file_size_bytes > 0", name="file_size_positive"),
         CheckConstraint("char_length(sha256) = 64", name="sha256_length"),
         CheckConstraint("supersedes_document_id IS NULL OR version_number > 1", name="supersedes_requires_later_version"),
+        # Migration 0032: dedup of identical document content per catalog model.
+        Index(
+            "uq_catalog_document_model_sha256",
+            "catalog_model_id",
+            "sha256",
+            unique=True,
+            postgresql_where="catalog_model_id IS NOT NULL",
+        ),
     )
 
     document_group_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)

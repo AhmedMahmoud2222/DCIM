@@ -5,7 +5,7 @@ import hmac
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -17,7 +17,6 @@ from edge_collector.client import (
 )
 from edge_collector.queue import QueueRecord
 
-UTC = timezone.utc
 COLLECTOR_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 SECRET = "collector-test-secret"
 

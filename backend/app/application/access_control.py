@@ -1,29 +1,22 @@
-"""Effective-access engine for user groups (docs/USER_GROUP_MANAGEMENT.md).
+"""Effective access with source-bound permission scopes (SEC-ARCH-02 / #163).
 
-Permission rules
-  1. allowed  = role permissions (legacy RoleAssignment) UNION group `allow` grants
-  2. denied   = UNION of group `deny` grants over every active group the user is in
-  3. effective = allowed MINUS denied. An explicit deny beats any allow, from any group or
-     any role. There is no ordering between groups and no inheritance between groups.
+Each group's allow-grant is bound to that group's own site/rack scope. Only
+sources granting the same permission may union their scopes. A global role
+makes only its own permissions global; explicit group denies still win user-wide.
+Unsupported scoped permissions remain inactive for unfiltered endpoints.
 
-Data-scope rules
-  * A user holding a `global` RoleAssignment is UNRESTRICTED: existing users keep exactly
-    the access they had before groups existed.
-  * Every other user is RESTRICTED: they see only the sites granted by their groups (union
-    across groups). Within a site, `rack_scope=all` exposes every rack currently placed
-    there; `rack_scope=selected` exposes only the listed racks. If any group grants `all`
-    on a site, `all` wins for that site. No groups and no roles means no access at all.
-  * Restricted users only keep permissions whose endpoints filter by site/rack
-    (SCOPE_AWARE_PERMISSIONS) plus user/group administration. Anything else is reported as
-    `inactive_permissions` and is not honoured, so a group grant can never expose an
-    endpoint that is not yet site-aware (fail closed).
+`EffectiveAccess.scope` retains aggregate reach for directory masking and the
+unchanged SEC-ARCH-01 scoped-role eligibility rules. Resource authorization uses
+`scope_for(code)`, never that aggregate. Selected racks remain pinned to their
+current placement site. Filtered thermal views intersect their required read
+entitlements; unsupported unfiltered endpoints remain closed.
 """
 
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from sqlalchemy import Select, and_, false, literal, or_, select, true
+from sqlalchemy import Select, and_, false, func, literal, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -44,7 +37,14 @@ from app.domain.location.models import Building, City, Country, Floor, Room, Sit
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 
 SCOPE_AWARE_PERMISSIONS = frozenset(
-    {"organization:read", "location:read", "rack:read", "rack:manage", "rack:place", "equipment:read"}
+    {
+        "organization:read", "location:read", "rack:read", "rack:manage", "rack:place", "equipment:read",
+        # Issue #101: cables and traces are filtered by the visibility of their endpoint equipment.
+        "cable:read", "cable:manage",
+        # Issue #105: cooling configuration is filtered by site (units, groups, zones need full-site scope) and
+        # sensor data by the same site/rack visibility clause used for equipment, before any aggregation.
+        "cooling:read", "cooling:manage",
+    }
 )
 UNSCOPED_ADMIN_RESOURCES = frozenset({"user", "group"})
 
@@ -88,6 +88,41 @@ class AccessScope:
 
 
 UNRESTRICTED = AccessScope(unrestricted=True)
+EMPTY_SCOPE = AccessScope(unrestricted=False)
+
+
+def union_scopes(left: AccessScope, right: AccessScope) -> AccessScope:
+    """Union resources for the SAME permission; never combine unrelated permissions."""
+    if left.unrestricted or right.unrestricted:
+        return UNRESTRICTED
+    full = left.full_site_ids | right.full_site_ids
+    selected = {
+        site: left.selected_racks_by_site.get(site, frozenset()) | right.selected_racks_by_site.get(site, frozenset())
+        for site in (left.site_ids | right.site_ids) - full
+    }
+    return AccessScope(
+        unrestricted=False, site_ids=left.site_ids | right.site_ids, full_site_ids=full,
+        rack_ids=frozenset(r for racks in selected.values() for r in racks), selected_racks_by_site=selected,
+    )
+
+
+def intersect_scopes(left: AccessScope, right: AccessScope) -> AccessScope:
+    """Resources authorized by BOTH permissions of a compound operation."""
+    if left.unrestricted:
+        return right
+    if right.unrestricted:
+        return left
+    sites = left.site_ids & right.site_ids
+    full = left.full_site_ids & right.full_site_ids
+    selected = {}
+    for site in sites - full:
+        a = left.selected_racks_by_site.get(site, frozenset())
+        b = right.selected_racks_by_site.get(site, frozenset())
+        selected[site] = b if site in left.full_site_ids else a if site in right.full_site_ids else a & b
+    return AccessScope(
+        unrestricted=False, site_ids=sites, full_site_ids=full,
+        rack_ids=frozenset(r for racks in selected.values() for r in racks), selected_racks_by_site=selected,
+    )
 
 
 @dataclass
@@ -100,6 +135,76 @@ class EffectiveAccess:
     inactive_permissions: frozenset[str] = frozenset()
     group_ids: frozenset[uuid.UUID] = frozenset()
     sources: dict[str, list[str]] = field(default_factory=dict)  # code -> ["role:Viewer", "group:Ops"]
+    permission_scopes: dict[str, AccessScope] = field(default_factory=dict)
+    """Non-denied source scopes, including inactive grants for filtered thermal views/preflight.
+    `scope` is aggregate reach for legacy-role eligibility/directory visibility, not authorization."""
+
+    def scope_for(self, code: str, *, include_inactive: bool = False) -> AccessScope:
+        if code not in self.permission_codes and not (include_inactive and code in self.inactive_permissions):
+            return EMPTY_SCOPE
+        return self.permission_scopes.get(code, EMPTY_SCOPE)
+
+
+def scoped_role_is_contained(
+    scope_type: str,
+    scope_id: uuid.UUID | None,
+    *,
+    unrestricted: bool,
+    scope: "AccessScope",
+    organization_site_ids: frozenset[uuid.UUID] = frozenset(),
+) -> bool:
+    """May the permissions of a NON-global role assignment be honoured?
+
+    Permissions are one flat set per user, so a scoped assignment cannot be applied to its own
+    scope only. It is therefore honoured only when everything the user can reach (`scope`) lies
+    inside the assignment's scope, so it can never act outside it. Fail closed otherwise:
+      * a user with a global role is unrestricted, which no scoped assignment contains;
+      * `site` assignments need every reachable site to equal the assignment's site;
+      * `organization` assignments need every reachable site to belong to that organization
+        (`organization_site_ids`, the sites under it via Country -> City -> Site);
+      * any other value contributes nothing.
+    """
+    if unrestricted or scope_id is None:
+        return False
+    if scope_type == "site":
+        return scope.site_ids <= {scope_id}
+    if scope_type == "organization":
+        return scope.site_ids <= organization_site_ids
+    return False
+
+
+def scope_with_full_sites(scope: AccessScope, site_ids: frozenset[uuid.UUID]) -> AccessScope:
+    """`scope` plus `site_ids` granted as rack_scope='all' (an `all` grant wins over `selected`)."""
+    if not site_ids:
+        return scope
+    full = scope.full_site_ids | site_ids
+    selected = {k: v for k, v in scope.selected_racks_by_site.items() if k not in full}
+    return AccessScope(
+        unrestricted=False,
+        site_ids=scope.site_ids | site_ids,
+        full_site_ids=full,
+        rack_ids=frozenset(r for racks in selected.values() for r in racks),
+        selected_racks_by_site=selected,
+    )
+
+
+async def organization_site_ids(
+    db: AsyncSession, organization_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, frozenset[uuid.UUID]]:
+    """organization id -> ids of every site under it (Organization -> Country -> City -> Site).
+    An unknown organization, or one with no sites, maps to the empty set."""
+    found: dict[uuid.UUID, set[uuid.UUID]] = {oid: set() for oid in organization_ids}
+    if organization_ids:
+        for org_id, site_id in (
+            await db.execute(
+                select(Country.organization_id, Site.id)
+                .join(City, City.country_id == Country.id)
+                .join(Site, Site.city_id == City.id)
+                .where(Country.organization_id.in_(organization_ids))
+            )
+        ).all():
+            found[org_id].add(site_id)
+    return {oid: frozenset(sites) for oid, sites in found.items()}
 
 
 def build_scope(
@@ -157,53 +262,86 @@ async def load_group_scopes(db: AsyncSession, group_ids: list[uuid.UUID]) -> dic
 
 
 async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, EffectiveAccess]:
-    """Batch-evaluates effective access for the given users (4 queries, independent of N)."""
+    """One PostgreSQL statement/snapshot for permissions, membership and resource grants.
+
+    Separate READ COMMITTED queries can mix an old permission with a newly moved
+    site grant, inventing an entitlement present in neither committed state. A
+    UNION ALL of tagged JSONB rows keeps every source in the same MVCC snapshot,
+    without taking a shared authority lock that admin requests would need to upgrade.
+    """
     if not user_ids:
         return {}
     wanted = list(set(user_ids))
 
-    role_rows = (
-        await db.execute(
-            select(RoleAssignment.user_id, RoleAssignment.scope_type, Role.name, Permission.resource, Permission.action)
+    role_query = (
+            select(literal("role").label("kind"), func.jsonb_build_array(
+                RoleAssignment.user_id, RoleAssignment.scope_type, RoleAssignment.scope_id, Role.name,
+                Permission.resource, Permission.action,
+            ).label("data"))
             .select_from(RoleAssignment)
             .join(Role, Role.id == RoleAssignment.role_id)
             .outerjoin(RolePermission, RolePermission.role_id == Role.id)
             .outerjoin(Permission, Permission.id == RolePermission.permission_id)
             .where(RoleAssignment.user_id.in_(wanted))
-        )
-    ).all()
-    group_perm_rows = (
-        await db.execute(
-            select(
+    )
+    group_query = (
+            select(literal("group"), func.jsonb_build_array(
                 UserGroupMember.user_id, UserGroup.id, UserGroup.name, Permission.resource, Permission.action,
                 UserGroupPermission.effect,
-            )
+            ))
             .select_from(UserGroupMember)
             .join(UserGroup, UserGroup.id == UserGroupMember.group_id)
             .outerjoin(UserGroupPermission, UserGroupPermission.group_id == UserGroup.id)
             .outerjoin(Permission, Permission.id == UserGroupPermission.permission_id)
             .where(UserGroupMember.user_id.in_(wanted))
-        )
-    ).all()
-    site_rows = (
-        await db.execute(
-            select(UserGroupMember.user_id, UserGroupSiteAccess.id, UserGroupSiteAccess.site_id, UserGroupSiteAccess.rack_scope)
+    )
+    site_query = (
+            select(literal("site"), func.jsonb_build_array(
+                UserGroupMember.user_id, UserGroupSiteAccess.id, UserGroupSiteAccess.site_id,
+                UserGroupSiteAccess.rack_scope, UserGroupSiteAccess.group_id,
+            ))
             .select_from(UserGroupMember)
             .join(UserGroupSiteAccess, UserGroupSiteAccess.group_id == UserGroupMember.group_id)
             .where(UserGroupMember.user_id.in_(wanted))
-        )
-    ).all()
-    site_access_ids = {row[1] for row in site_rows}
+    )
+    rack_query = (
+        select(literal("rack"), func.jsonb_build_array(UserGroupRackAccess.site_access_id, UserGroupRackAccess.rack_id))
+        .select_from(UserGroupRackAccess)
+        .join(UserGroupSiteAccess, UserGroupSiteAccess.id == UserGroupRackAccess.site_access_id)
+        .join(UserGroupMember, UserGroupMember.group_id == UserGroupSiteAccess.group_id)
+        .where(UserGroupMember.user_id.in_(wanted))
+    )
+    org_query = (
+        select(literal("organization"), func.jsonb_build_array(RoleAssignment.scope_id, Site.id))
+        .select_from(RoleAssignment)
+        .join(Country, Country.organization_id == RoleAssignment.scope_id)
+        .join(City, City.country_id == Country.id)
+        .join(Site, Site.city_id == City.id)
+        .where(RoleAssignment.user_id.in_(wanted), RoleAssignment.scope_type == "organization")
+    )
+    rows = (await db.execute(role_query.union_all(group_query, site_query, rack_query, org_query))).all()
+    role_rows, group_perm_rows, site_rows = [], [], []
     rack_by_access: dict[uuid.UUID, set[uuid.UUID]] = {}
-    if site_access_ids:
-        for access_id, rack_id in (
-            await db.execute(
-                select(UserGroupRackAccess.site_access_id, UserGroupRackAccess.rack_id).where(
-                    UserGroupRackAccess.site_access_id.in_(site_access_ids)
-                )
-            )
-        ).all():
-            rack_by_access.setdefault(access_id, set()).add(rack_id)
+    org_sets: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for kind, data in rows:
+        if kind == "role":
+            uid, scope_type, scope_id, name, resource, action = data
+            role_rows.append((uuid.UUID(uid), scope_type, uuid.UUID(scope_id) if scope_id else None, name, resource, action))
+            if scope_type == "organization" and scope_id:
+                org_sets.setdefault(uuid.UUID(scope_id), set())
+        elif kind == "group":
+            uid, gid, name, resource, action, effect = data
+            group_perm_rows.append((uuid.UUID(uid), uuid.UUID(gid), name, resource, action, effect))
+        elif kind == "site":
+            uid, access_id, site_id, rack_scope, gid = data
+            site_rows.append((uuid.UUID(uid), uuid.UUID(access_id), uuid.UUID(site_id), rack_scope, uuid.UUID(gid)))
+        elif kind == "rack":
+            access_id, rack_id = data
+            rack_by_access.setdefault(uuid.UUID(access_id), set()).add(uuid.UUID(rack_id))
+        else:
+            org_id, site_id = data
+            org_sets.setdefault(uuid.UUID(org_id), set()).add(uuid.UUID(site_id))
+    org_sites = {oid: frozenset(sites) for oid, sites in org_sets.items()}
 
     roles_by_user: dict[uuid.UUID, list] = {}
     for role_row in role_rows:
@@ -214,6 +352,10 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
     sites_by_user: dict[uuid.UUID, list] = {}
     for site_row in site_rows:
         sites_by_user.setdefault(site_row[0], []).append(site_row)
+    sites_by_group: dict[uuid.UUID, list] = {}
+    for _uid, access_id, site_id, rack_scope, gid in site_rows:
+        sites_by_group.setdefault(gid, []).append((access_id, site_id, rack_scope))
+    group_scopes = {gid: build_scope(rows, rack_by_access) for gid, rows in sites_by_group.items()}
 
     result: dict[uuid.UUID, EffectiveAccess] = {}
     for uid in wanted:
@@ -222,11 +364,49 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
         role_names: set[str] = set()
         has_global_role = False
         group_ids: set[uuid.UUID] = set()
-        for _uid, scope_type, role_name, resource, action in roles_by_user.get(uid, []):
+        permission_scopes: dict[str, AccessScope] = {}
+        user_scope = build_scope(
+            [(r[1], r[2], r[3]) for r in sites_by_user.get(uid, [])],
+            rack_by_access,
+        )
+        user_roles = roles_by_user.get(uid, [])
+        has_global_role = any(row[1] == "global" for row in user_roles)
+        # SEC-ARCH-01 organization scope: an `organization` assignment adds every site under its
+        # organization (rack_scope='all') to the user's reach, independent of group grants, but only
+        # when the user's group sites already lie inside that organization, so no site of another
+        # organization is ever reachable with the role's permissions. Assignments naming two or more
+        # distinct organizations cannot be kept apart in one flat permission set: all fail closed.
+        # It never makes the user unrestricted; only a `global` assignment does.
+        org_ids = {row[2] for row in user_roles if row[1] == "organization" and row[2] is not None}
+        if not has_global_role and len(org_ids) == 1:
+            (honoured_org,) = org_ids
+            if user_scope.site_ids <= org_sites[honoured_org]:
+                user_scope = scope_with_full_sites(user_scope, org_sites[honoured_org])
+        for _uid, scope_type, scope_id, role_name, resource, action in user_roles:
+            if scope_type != "global" and not (
+                (scope_type != "organization" or len(org_ids) == 1)
+                and scoped_role_is_contained(
+                    scope_type, scope_id, unrestricted=has_global_role, scope=user_scope,
+                    organization_site_ids=org_sites.get(scope_id, frozenset()),
+                )
+            ):
+                # SEC-ARCH-01: a scoped assignment never widens beyond its own scope. Its role name is
+                # dropped too, so it cannot satisfy role-membership checks such as "Administrator".
+                continue
+            if scope_type == "organization":
+                # Organization scope bounds data visibility only; role-name checks (catalog administration,
+                # bulk import) are organization-independent and stay reserved for in-scope global/site roles.
+                if resource is not None:
+                    code = f"{resource}:{action}"
+                    allowed.setdefault(code, []).append(f"role:{role_name}")
+                    permission_scopes[code] = union_scopes(permission_scopes.get(code, EMPTY_SCOPE), user_scope)
+                continue
             role_names.add(role_name)
-            has_global_role = has_global_role or scope_type == "global"
             if resource is not None:
-                allowed.setdefault(f"{resource}:{action}", []).append(f"role:{role_name}")
+                code = f"{resource}:{action}"
+                allowed.setdefault(code, []).append(f"role:{role_name}")
+                source_scope = UNRESTRICTED if scope_type == "global" else user_scope
+                permission_scopes[code] = union_scopes(permission_scopes.get(code, EMPTY_SCOPE), source_scope)
         for _uid, group_id, group_name, resource, action, effect in perms_by_user.get(uid, []):
             group_ids.add(group_id)
             if resource is None:
@@ -236,23 +416,24 @@ async def load_effective_access(db: AsyncSession, user_ids: list[uuid.UUID]) -> 
                 denied.add(code)
             else:
                 allowed.setdefault(code, []).append(f"group:{group_name}")
-
-        user_scope = build_scope(
-            [(access_id, site_id, rack_scope) for _uid, access_id, site_id, rack_scope in sites_by_user.get(uid, [])],
-            rack_by_access,
-        )
+                permission_scopes[code] = union_scopes(
+                    permission_scopes.get(code, EMPTY_SCOPE), group_scopes.get(group_id, EMPTY_SCOPE)
+                )
 
         unrestricted = has_global_role
         effective = {code for code in allowed if code not in denied}
         inactive: set[str] = set()
-        if not unrestricted:
-            inactive = {code for code in effective if not is_scope_independent(code)}
-            effective -= inactive
+        inactive = {
+            code for code in effective
+            if not permission_scopes[code].unrestricted and not is_scope_independent(code)
+        }
+        effective -= inactive
         scope = UNRESTRICTED if unrestricted else user_scope
         result[uid] = EffectiveAccess(
             user_id=uid, permission_codes=frozenset(effective), role_names=frozenset(role_names), scope=scope,
             denied_permissions=frozenset(denied & set(allowed)), inactive_permissions=frozenset(inactive),
             group_ids=frozenset(group_ids), sources=allowed,
+            permission_scopes={code: value for code, value in permission_scopes.items() if code not in denied},
         )
     return result
 
@@ -411,7 +592,7 @@ async def ensure_room_access(db: AsyncSession, scope: AccessScope, room_id: uuid
 async def ensure_rack_access(db: AsyncSession, scope: AccessScope, rack_id: uuid.UUID) -> None:
     if scope.unrestricted:
         return
-    lit = literal(rack_id)
+    lit = literal(uuid.UUID(str(rack_id)))  # see ensure_equipment_access: asyncpg's UUID subclass has no inferable bind type
     if (await db.execute(select(lit).where(lit.in_(visible_rack_ids_query(scope))))).first() is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
 
@@ -419,7 +600,9 @@ async def ensure_rack_access(db: AsyncSession, scope: AccessScope, rack_id: uuid
 async def ensure_equipment_access(db: AsyncSession, scope: AccessScope, equipment_id: uuid.UUID) -> None:
     if scope.unrestricted:
         return
-    lit = literal(equipment_id)
+    # asyncpg returns its own UUID subclass for ids loaded from the database; `literal()` cannot infer a
+    # bind type for that subclass and PostgreSQL then rejects the statement as ambiguous. Coerce to a plain UUID.
+    lit = literal(uuid.UUID(str(equipment_id)))
     hit = (await db.execute(select(lit).where(equipment_visible_clause(scope, lit)))).first()
     if hit is None:
         raise NotFoundError(f"Equipment {equipment_id} not found.")
@@ -430,7 +613,10 @@ async def is_user_admin(access: EffectiveAccess | None) -> bool:
 
 
 async def active_administrator_ids(db: AsyncSession) -> list[uuid.UUID]:
-    """Active users who can still manage both users and groups (the 'administrators')."""
+    """Active unrestricted users with both effective management permissions."""
     active = list((await db.execute(select(User.id).where(User.is_active.is_(True)))).scalars())
     accesses = await load_effective_access(db, active)
-    return [uid for uid, acc in accesses.items() if {"user:manage", "group:manage"} <= acc.permission_codes]
+    return [
+        uid for uid, acc in accesses.items()
+        if all(acc.scope_for(code).unrestricted for code in ("user:manage", "group:manage"))
+    ]

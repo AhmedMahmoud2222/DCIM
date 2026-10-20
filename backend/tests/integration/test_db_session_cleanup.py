@@ -52,7 +52,7 @@ import asyncio
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine.base import Transaction
-from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 
 import app.db.session as session_module
 from app.core.config import get_settings
@@ -420,3 +420,216 @@ async def test_snapshot_helper_is_a_public_api_only_no_op_when_no_transaction_is
             assert isinstance(connection, AsyncConnection)
     finally:
         await engine.dispose()
+
+
+# --------------------------------------------------------------------------- Issue #51
+# The residual case PR #49's acceptance left open: the pre-failure connection snapshot ITSELF
+# fails (so `get_db()` holds no connection reference) and rollback/close then fail too. The
+# snapshot is an awaited call on the very connection that is broken, so it cannot be the only
+# source of a reference. `get_db()` now also remembers the connection when the transaction
+# begins (`after_begin`, stored in the session's public `info`) and invalidates that one.
+
+_SNAPSHOT_SECRET = "synthetic-snapshot-ISSUE51-keep-private"
+_ROLLBACK_SECRET = "synthetic-rollback-ISSUE51-keep-private"
+_CLOSE_SECRET = "synthetic-close-ISSUE51-keep-private"
+
+
+def _break_snapshot_rollback_and_close(monkeypatch) -> None:
+    """`AsyncSession.connection()` (the snapshot), `Transaction.rollback` and
+    `Transaction.close` all fail persistently with non-disconnect errors, so the dialect's own
+    invalidate-on-disconnect handling cannot be what recovers the pool."""
+    from sqlalchemy.ext.asyncio import AsyncSession as RealAsyncSession
+
+    async def failing_connection(self, *args, **kwargs):
+        raise RuntimeError(f"snapshot failed: {_SNAPSHOT_SECRET}")
+
+    def failing_rollback(self, *args, **kwargs):
+        raise RuntimeError(f"rollback failed: {_ROLLBACK_SECRET}")
+
+    def failing_close(self, *args, **kwargs):
+        raise RuntimeError(f"close failed: {_CLOSE_SECRET}")
+
+    monkeypatch.setattr(RealAsyncSession, "connection", failing_connection)
+    monkeypatch.setattr(Transaction, "rollback", failing_rollback)
+    monkeypatch.setattr(Transaction, "close", failing_close)
+
+
+def _single_slot_factory(monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    engine = create_async_engine(
+        get_settings().database_url, pool_pre_ping=False, pool_size=1, max_overflow=0, pool_timeout=3
+    )
+    factory = async_sessionmaker(
+        bind=engine, expire_on_commit=False, autoflush=False, sync_session_class=session_module.TrackedSyncSession
+    )
+    monkeypatch.setattr(session_module, "AsyncSessionLocal", factory)
+    return engine, factory
+
+
+async def _next_request_succeeds(factory) -> int:
+    async def _request() -> int:
+        async with factory() as session:
+            return (await session.execute(text("SELECT 1"))).scalar_one()
+
+    # Bounded: a leaked slot would otherwise wait for the pool checkout timeout.
+    return await asyncio.wait_for(_request(), timeout=5.0)
+
+
+async def test_snapshot_rollback_and_close_all_failing_still_frees_the_single_pool_slot(monkeypatch, capsys):
+    from sqlalchemy.ext.asyncio import AsyncSession as RealAsyncSession
+
+    engine, factory = _single_slot_factory(monkeypatch)
+    original_connection = RealAsyncSession.connection
+    original_rollback, original_close = Transaction.rollback, Transaction.close
+    try:
+        gen = real_get_db()
+        session = await gen.__anext__()
+        await session.execute(text("SELECT 1"))
+        assert session.in_transaction() is True
+        assert engine.pool.checkedout() == 1
+
+        _break_snapshot_rollback_and_close(monkeypatch)
+        # The route's own exception, not any cleanup failure, is what reaches the caller.
+        with pytest.raises(RuntimeError, match="route failure ISSUE51"):
+            await gen.athrow(RuntimeError("route failure ISSUE51"))
+        await gen.aclose()
+
+        # Characterization, with `session` still referenced (so garbage collection cannot be
+        # what frees the slot): the slot is released by explicit invalidation.
+        assert engine.pool.checkedout() == 0
+
+        monkeypatch.setattr(RealAsyncSession, "connection", original_connection)
+        monkeypatch.setattr(Transaction, "rollback", original_rollback)
+        monkeypatch.setattr(Transaction, "close", original_close)
+        assert await _next_request_succeeds(factory) == 1
+        assert engine.pool.checkedout() == 0
+        # The broken connection was really discarded, not just returned: no backend is left idle in a transaction.
+        async with engine.connect() as probe:
+            await asyncio.sleep(0.2)
+            leaked = await probe.scalar(
+                text("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'")
+            )
+        assert leaked == 0
+    finally:
+        await engine.dispose()
+
+    log_text = capsys.readouterr().out
+    for secret in (_SNAPSHOT_SECRET, _ROLLBACK_SECRET, _CLOSE_SECRET):
+        assert secret not in log_text
+    assert '"event": "db_session_cleanup_snapshot_failed"' in log_text
+    assert '"event": "db_session_cleanup_rollback_failed"' in log_text
+
+
+async def test_snapshot_and_close_failing_on_a_successful_request_still_frees_the_single_pool_slot(monkeypatch, capsys):
+    from sqlalchemy.ext.asyncio import AsyncSession as RealAsyncSession
+
+    engine, factory = _single_slot_factory(monkeypatch)
+    original_connection = RealAsyncSession.connection
+    original_rollback, original_close = Transaction.rollback, Transaction.close
+    try:
+        gen = real_get_db()
+        session = await gen.__anext__()
+        await session.execute(text("SELECT 1"))
+        assert engine.pool.checkedout() == 1
+
+        _break_snapshot_rollback_and_close(monkeypatch)
+        with pytest.raises(StopAsyncIteration):  # a successful response is not turned into an error
+            await gen.__anext__()
+        await gen.aclose()
+        assert engine.pool.checkedout() == 0
+
+        monkeypatch.setattr(RealAsyncSession, "connection", original_connection)
+        monkeypatch.setattr(Transaction, "rollback", original_rollback)
+        monkeypatch.setattr(Transaction, "close", original_close)
+        assert await _next_request_succeeds(factory) == 1
+    finally:
+        await engine.dispose()
+
+    log_text = capsys.readouterr().out
+    for secret in (_SNAPSHOT_SECRET, _ROLLBACK_SECRET, _CLOSE_SECRET):
+        assert secret not in log_text
+    assert '"event": "db_session_cleanup_finally_snapshot_failed"' in log_text
+    assert '"event": "db_session_cleanup_close_failed"' in log_text
+
+
+async def test_fallback_never_invalidates_a_connection_that_was_already_released(monkeypatch):
+    """After a normal request the remembered `Connection` is closed. The fallback must skip it:
+    the underlying pooled connection may already belong to the next request."""
+    from app.db.session import _invalidate_after_failure
+
+    engine, factory = _single_slot_factory(monkeypatch)
+    try:
+        async with factory() as first:
+            pid_before = (await first.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+            await first.commit()
+        await _invalidate_after_failure(first, None, event="db_session_cleanup_invalidate_failed")
+        async with factory() as second:
+            pid_after = (await second.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+        assert pid_after == pid_before, "the pooled connection must have been reused, not discarded"
+    finally:
+        await engine.dispose()
+
+
+async def test_the_remembered_connection_is_scoped_to_request_sessions(monkeypatch):
+    """The `after_begin` listener belongs to `TrackedSyncSession` only; any other session keeps no connection reference."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    engine, factory = _single_slot_factory(monkeypatch)
+    try:
+        async with factory() as tracked:
+            await tracked.execute(text("SELECT 1"))
+            assert tracked.sync_session.info.get(session_module._LAST_CONNECTION_KEY) is not None
+        plain = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+        async with plain() as untracked:
+            await untracked.execute(text("SELECT 1"))
+            assert session_module._LAST_CONNECTION_KEY not in untracked.sync_session.info
+    finally:
+        await engine.dispose()
+
+
+async def test_http_client_gets_the_sanitized_503_and_the_single_slot_is_free_for_the_next_request(monkeypatch, capsys):
+    """End to end through FastAPI with the real `get_db` dependency: a route holds a live, uncommitted transaction and
+    raises its own sanitized ApiError(503) while the snapshot, rollback and close all fail. The client must see exactly
+    that problem response (no cleanup text), the logs must carry fixed events only, the pool's one slot must be free, and
+    the next request must be served."""
+    from fastapi import Depends, FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.errors import ApiError, register_exception_handlers
+
+    engine, factory = _single_slot_factory(monkeypatch)
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.post("/boom")
+    async def boom(db: AsyncSession = Depends(real_get_db)):
+        await db.execute(text("SELECT 1"))  # live transaction, never committed
+        raise ApiError(status_code=503, title="Service Unavailable", detail="Temporarily unavailable.", type_="urn:test:503")
+
+    @app.get("/ok")
+    async def ok(db: AsyncSession = Depends(real_get_db)):
+        return {"one": (await db.execute(text("SELECT 1"))).scalar_one()}
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            with monkeypatch.context() as broken:
+                _break_snapshot_rollback_and_close(broken)
+                failed = await client.post("/boom")
+            assert failed.status_code == 503
+            assert failed.json()["detail"] == "Temporarily unavailable."
+            for secret in (_SNAPSHOT_SECRET, _ROLLBACK_SECRET, _CLOSE_SECRET):
+                assert secret not in failed.text
+            assert engine.pool.checkedout() == 0
+
+            served = await asyncio.wait_for(client.get("/ok"), timeout=5.0)
+            assert served.status_code == 200 and served.json() == {"one": 1}
+            assert engine.pool.checkedout() == 0
+    finally:
+        await engine.dispose()
+
+    log_text = capsys.readouterr().out
+    for secret in (_SNAPSHOT_SECRET, _ROLLBACK_SECRET, _CLOSE_SECRET):
+        assert secret not in log_text
+    assert '"event": "db_session_cleanup_snapshot_failed"' in log_text
+    assert '"event": "db_session_cleanup_rollback_failed"' in log_text

@@ -2,9 +2,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
 
-type ViewMode = "active" | "history";
+type ViewMode = "active" | "history" | OpsView;
+const OPS_TABS: { id: OpsView; label: string }[] = [
+  { id: "incidents", label: "Incidents" },
+  { id: "collectors", label: "Collector health" },
+  { id: "notifications", label: "Notifications" },
+  { id: "integrations", label: "Integrations" },
+];
 type StatusFilter = "ALL" | Alarm["status"];
 
 const STATUS_COLORS: Record<Alarm["status"], string> = {
@@ -19,9 +26,9 @@ function csvCell(value: string | number | null | undefined) {
 }
 
 function exportCsv(alarms: Alarm[], fileName: string) {
-  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "last_value", "integration_id", "managed_asset_id", "rule_id"];
+  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "presentation_value", "presentation_unit", "last_value", "unit", "integration_id", "managed_asset_id", "rule_id"];
   const rows = alarms.map((alarm) =>
-    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.last_value, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
+    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.presentation_value, alarm.presentation_unit, alarm.last_value, alarm.unit, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
       .map(csvCell)
       .join(","),
   );
@@ -44,6 +51,7 @@ export function EventsPage() {
   const [customEnd, setCustomEnd] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const isOps = view !== "active" && view !== "history";
 
   const activeQuery = useQuery({ queryKey: ["events", "active"], queryFn: () => getOpenAlarms("ACTIVE") });
   const acknowledgedQuery = useQuery({ queryKey: ["events", "acknowledged"], queryFn: () => getOpenAlarms("ACKNOWLEDGED") });
@@ -109,7 +117,7 @@ export function EventsPage() {
         <button
           type="button"
           onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
-          disabled={visibleAlarms.length === 0}
+          disabled={visibleAlarms.length === 0 || isOps}
           className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
         >
           Export current results CSV
@@ -144,8 +152,23 @@ export function EventsPage() {
             >
               History
             </button>
+            {OPS_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={view === tab.id}
+                onClick={() => {
+                  setView(tab.id);
+                  setSelectedId(null);
+                }}
+                className={`rounded-sm px-3 py-1.5 text-sm ${view === tab.id ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" hidden={isOps}>
             {view === "history" && (
               <>
                 <select
@@ -218,11 +241,12 @@ export function EventsPage() {
         )}
       </div>
 
-      {loading && <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Loading requested events…</div>}
-      {error && (
+      {isOps && <OperationsViews view={view as OpsView} />}
+      {!isOps && loading && <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Loading requested events…</div>}
+      {!isOps && error && (
         <div className="mt-4 rounded-sm border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">Unable to retrieve the requested event records.</div>
       )}
-      {!loading && !error && visibleAlarms.length === 0 && (
+      {!isOps && !loading && !error && visibleAlarms.length === 0 && (
         <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
           {view === "active"
             ? "No active or acknowledged alarm condition is currently reported."
@@ -230,7 +254,7 @@ export function EventsPage() {
         </div>
       )}
 
-      {!loading && !error && visibleAlarms.length > 0 && (
+      {!isOps && !loading && !error && visibleAlarms.length > 0 && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
             <div className="overflow-x-auto">
@@ -258,7 +282,7 @@ export function EventsPage() {
                         {alarm.subject_key}
                         <p className="mt-0.5 font-mono text-[11px] text-slate-500">{alarm.id.slice(0, 8)}…</p>
                       </td>
-                      <td className="px-3 py-2">{alarm.last_value}</td>
+                      <td className="px-3 py-2">{alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{new Date(alarm.opened_at).toLocaleString()}</td>
                       <td className="px-3 py-2 text-slate-400">
                         {alarm.acknowledged_at ? new Date(alarm.acknowledged_at).toLocaleString() : "Unacknowledged"}
@@ -291,7 +315,7 @@ export function EventsPage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Event detail</p>
               <div className="mt-3 flex items-center gap-2">
                 <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
-                <span className="text-sm text-slate-400">last value {selected.last_value}</span>
+                <span className="text-sm text-slate-400">last value {selected.presentation_value}{selected.presentation_unit === "%" ? "%" : ` ${selected.presentation_unit ?? ""}`}</span>
               </div>
               <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.subject_key}</h2>
               <dl className="mt-4 space-y-2 text-sm">

@@ -10,7 +10,7 @@
      that is tested object by object in test_pr69_object_matrix_strict.py.
 
 The set of operations a fully-permissioned restricted user can get past the permission layer is pinned
-EXACTLY (REVIEWED_REACHABLE, 58 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
+EXACTLY (REVIEWED_REACHABLE, 72 operations, with no conditional or optional entries). A new route that becomes reachable fails the test until someone reviews it, and
 so does a reviewed route that disappears. The sweep itself is tested against a deliberate regression
 (a non-site-aware permission declared scope-aware)."""
 
@@ -29,6 +29,60 @@ REFUSED_FOR_EVERYONE = {("POST", "/api/v1/auth/refresh"), ("POST", "/api/v1/auth
 #   the reviewed site-aware modules (isolation proven in the object matrix), global reference catalogs,
 #   HMAC-authenticated collector endpoints (a separate trust boundary), and import jobs (per-object, see PR #68).
 REVIEWED_REACHABLE = {
+    # Issue #105 (reviewed): every cooling / thermal route is scope-filtered in its handler -- configuration needs the whole site,
+    # sensors use the equipment visibility clause, thermal views filter sensors before interpolation. See test_thermal_scope.py.
+    ("DELETE", "/api/v1/cooling/relations/{relation_id}"),
+    ("DELETE", "/api/v1/cooling/sensors/{sensor_id}/placement"),
+    ("DELETE", "/api/v1/cooling/units/{unit_id}/placement"),
+    ("DELETE", "/api/v1/cooling/zones/{zone_id}/containment-elements/{element_id}"),
+    ("GET", "/api/v1/cooling/groups"),
+    ("GET", "/api/v1/cooling/groups/{group_id}"),
+    ("GET", "/api/v1/cooling/relations"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/airflow"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/capacity"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/environment"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/exceptions"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/heat-map"),
+    ("GET", "/api/v1/cooling/rooms/{room_id}/layout"),
+    ("GET", "/api/v1/cooling/sensors"),
+    ("GET", "/api/v1/cooling/sensors/{sensor_id}"),
+    ("GET", "/api/v1/cooling/units"),
+    ("GET", "/api/v1/cooling/units/{unit_id}"),
+    ("GET", "/api/v1/cooling/zones"),
+    ("GET", "/api/v1/cooling/zones/{zone_id}"),
+    ("PATCH", "/api/v1/cooling/groups/{group_id}"),
+    ("PATCH", "/api/v1/cooling/sensors/{sensor_id}"),
+    ("PATCH", "/api/v1/cooling/units/{unit_id}"),
+    ("PATCH", "/api/v1/cooling/zones/{zone_id}"),
+    ("POST", "/api/v1/cooling/groups"),
+    ("POST", "/api/v1/cooling/groups/{group_id}/retire"),
+    ("POST", "/api/v1/cooling/relations"),
+    ("POST", "/api/v1/cooling/sensors"),
+    ("POST", "/api/v1/cooling/units"),
+    ("POST", "/api/v1/cooling/units/{unit_id}/retire"),
+    ("POST", "/api/v1/cooling/zones"),
+    ("POST", "/api/v1/cooling/zones/{zone_id}/containment-elements"),
+    ("POST", "/api/v1/cooling/zones/{zone_id}/retire"),
+    ("PUT", "/api/v1/cooling/sensors/{sensor_id}/placement"),
+    ("PUT", "/api/v1/cooling/units/{unit_id}/placement"),
+    # Issue #101: both-endpoint mutation checks and masked reads; test_cables_scope.py.
+    ("DELETE", "/api/v1/cables/{cable_id}"),
+    ("GET", "/api/v1/cables"),
+    ("GET", "/api/v1/cables/{cable_id}"),
+    ("GET", "/api/v1/topology/ports/{port_id}/trace"),
+    ("PATCH", "/api/v1/cables/{cable_id}"),
+    ("POST", "/api/v1/cables"),
+    ("POST", "/api/v1/cables/from-neighbor/{neighbor_id}"),
+    ("POST", "/api/v1/cables/{cable_id}/install"),
+    ("POST", "/api/v1/cables/{cable_id}/remove"),
+    # Issue #101 B5: pass-throughs; hidden equipment is a 404 (test_cables_scope.py).
+    ("DELETE", "/api/v1/pass-throughs/{pass_through_id}"),
+    ("GET", "/api/v1/pass-throughs"),
+    ("GET", "/api/v1/pass-throughs/{pass_through_id}"),
+    ("POST", "/api/v1/pass-throughs"),
+    # HMAC identity/assignment checks are exercised by test_discovery_plan.py.
+    ("GET", "/api/v1/collectors/{collector_id}/discovery-plan"),
+    ("GET", "/api/v1/collectors/{collector_id}/telemetry-contracts"),
     ("DELETE", "/api/v1/groups/{group_id}"),
     ("DELETE", "/api/v1/users/{user_id}"),
     ("GET", "/api/v1/auth/me"),
@@ -144,7 +198,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 58, "the reviewed reachable set is pinned at exactly 58 operations"
+    assert len(REVIEWED_REACHABLE) == 107, "the reviewed reachable set is pinned at exactly 107 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )
@@ -158,4 +212,6 @@ async def test_the_sweep_detects_a_route_that_wrongly_becomes_reachable(client, 
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
     leaked = sorted(reachable - REVIEWED_REACHABLE)
-    assert leaked and all("/alarms" in path for _, path in leaked), leaked
+    # Every route guarded by alarm:read must show up: the alarm API itself and, since Issue #103, the correlation
+    # incident reads that are gated by the same permission.
+    assert leaked and all("/alarms" in path or "/operations/incidents" in path for _, path in leaked), leaked

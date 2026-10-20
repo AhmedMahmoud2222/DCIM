@@ -24,7 +24,7 @@ from app.application.access_control import (
     site_visible_clause,
 )
 from app.application.audit_service import write_audit_log
-from app.application.concurrency import check_version_match, require_if_match
+from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.location.models import Building, City, Country, Floor, Organization, Room, Site
@@ -471,11 +471,7 @@ async def update_room(
 ) -> Room:
     """Optimistic-concurrency demonstration entity (§17): a stale If-Match is rejected
     with 409 before any write happens, never a silent overwrite."""
-    room = await db.get(Room, room_id)
-    if room is None:
-        raise NotFoundError(f"Room {room_id} not found.")
-
-    check_version_match(expected=if_match_version, actual=room.version)
+    room = await lock_versioned_row(db, Room, room_id, expected_version=if_match_version)
 
     before = {"name": room.name, "room_type": room.room_type, "version": room.version}
     if body.name is not None:

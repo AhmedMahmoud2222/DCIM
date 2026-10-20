@@ -45,6 +45,8 @@ class EquipmentPort(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "equipment_port"
     __table_args__ = (
         UniqueConstraint("equipment_id", "stable_key", name="uq_equipment_port_equipment_id_stable_key"),
+        # Lets other tables prove, with a composite foreign key, that a port belongs to a given equipment.
+        UniqueConstraint("id", "equipment_id", name="uq_equipment_port_id_equipment_id"),
         CheckConstraint(f"media_type IN {MEDIA_TYPES!r}", name="media_type_allowed"),
         CheckConstraint(f"role IN {PORT_ROLES!r}", name="role_allowed"),
         CheckConstraint(f"side IN {SIDES!r}", name="side_allowed"),

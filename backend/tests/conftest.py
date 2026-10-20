@@ -46,6 +46,17 @@ TEST_ADMIN_DATABASE_URL = os.environ["TEST_ADMIN_DATABASE_URL"]
 # managed_asset/room automatically. Only the catalog tables (no FK back to either) need
 # to be listed explicitly.
 _APP_TRUNCATE_TABLES = [
+    "itsm_ticket",
+    "itsm_connection",
+    "notification_delivery",
+    "notification_policy",
+    "notification_channel",
+    "correlation_member",
+    "correlation_incident",
+    "collector_transition",
+    "collector_state",
+    "power_report_job",
+    "power_utilization_snapshot",
     "idempotency_key",
     "outbox_event",
     # Bulk-import pipeline (app/domain/bulk_import/models.py) — no FK back to
@@ -58,9 +69,12 @@ _APP_TRUNCATE_TABLES = [
     "alarm",
     "alarm_rule",
     "daily_telemetry_aggregate",
+    "telemetry_consumed_key",
     "telemetry_reading",
     "integration_metric_mapping",
     "integration",
+    # Issue #101 network profiles: integration.device_profile_id references device_profile.
+    "vendor_profile",
     "collector",
     "power_node",  # utility_intake rows have neither managed_asset_id nor owning_asset_id
     # set, so they aren't reached by managed_asset's own CASCADE below — power_connection/
@@ -120,6 +134,16 @@ async def _admin_engine():
 async def _clean_tables(db_engine, _admin_engine):
     async with db_engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {', '.join(_APP_TRUNCATE_TABLES)} CASCADE"))
+        # Scoped-role tests commit custom roles and their permission rows. Keep the
+        # migration-seeded system roles, but remove per-test roles (their permission
+        # rows cascade) so later tests observe the original RBAC seed unchanged.
+        await conn.execute(text("DELETE FROM role WHERE is_system = false"))
+        # G4-R: policy and the ledger state row are not truncated (they are seeded by migrations); reset what tests change.
+        await conn.execute(text("UPDATE monitoring_policy SET late_replay_horizon_days = NULL, raw_retention_days = 365, "
+                                "resolved_hold_retention_days = 365"))
+        await conn.execute(text(
+            "UPDATE telemetry_replay_ledger_state SET ledger_complete_since = '2020-01-01T00:00:00Z', "
+            "last_pruned_at = NULL, last_pruned_count = NULL, pruning_begun_at = NULL"))
     # audit_log: dcim_app is deliberately no longer able to TRUNCATE/DELETE this table
     # (Finding C1 correction) — reset it via the test-admin superuser connection instead.
     async with _admin_engine.begin() as conn:
