@@ -17,6 +17,9 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 
+# Confidential access-control exports (SEC-ARCH-02 preflight)
+sec-arch-02-preflight*.json
+
 # Env / secrets — never commit real values, only .env.example
 .env
 .env.*
