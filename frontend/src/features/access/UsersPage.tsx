@@ -57,8 +57,8 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
     <section aria-label="Effective access" className="space-y-3 text-sm">
       <p className="text-slate-300">
         {access.unrestricted
-          ? "Unrestricted: holds a global role, so all sites and racks are visible."
-          : "Site-restricted: only the sites and racks listed below are visible."}
+          ? "Global role present. Each permission has its own resource scope."
+          : "Site-restricted: each permission applies only within its own resource scope."}
       </p>
       {access.role_names.length > 0 && <p className="text-slate-400">Roles: {access.role_names.join(", ")}</p>}
       <div>
@@ -69,6 +69,20 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
             <li key={code} className="rounded-sm bg-slate-800 px-2 py-1">
               <span className="font-mono text-xs">{code}</span>
               <span className="ml-2 text-xs text-slate-400">via {access.permissions[code].join(", ")}</span>
+              <p className="text-xs text-slate-300">
+                {(() => {
+                  const scope = access.permission_scopes?.[code];
+                  if (!scope) return "Resource scope unavailable";
+                  if (scope.unrestricted) return "All sites and racks";
+                  if (scope.site_ids.length === 0) return "No site resources";
+                  return scope.site_ids.map((site) => {
+                    const name = access.sites.find((s) => s.site_id === site)?.code ?? site;
+                    return scope.full_site_ids.includes(site)
+                      ? `${name}: all racks`
+                      : `${name}: ${scope.selected_racks_by_site[site]?.length ?? 0} selected rack(s)`;
+                  }).join("; ");
+                })()}
+              </p>
             </li>
           ))}
         </ul>
@@ -83,7 +97,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
         <div>
           <h3 className="mb-1 font-semibold text-amber-300">Granted but inactive</h3>
           <p className="text-xs text-slate-400">
-            These endpoints are not site-scoped yet, so a restricted user cannot use them:
+            These grants do not authorize the unscoped endpoints. Filtered thermal views may use their own bounded read grants:
           </p>
           <p className="font-mono text-xs">{access.inactive_permissions.join(", ")}</p>
         </div>

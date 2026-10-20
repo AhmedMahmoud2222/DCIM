@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import load_effective_access, visible_rack_ids_in_site
+from app.application.access_control import intersect_scopes, load_effective_access, visible_rack_ids_in_site
 from app.application.audit_service import write_audit_log
 from app.application.rbac import AuthContext, require_permission
 from app.application.user_admin_service import (
@@ -354,6 +354,16 @@ class EffectiveAccessOut(BaseModel):
     """Granted but not honoured: the endpoint is not site-scoped, so a restricted user
     cannot use it (fail closed)."""
     sites: list[EffectiveSite]
+    permission_scopes: dict[str, "PermissionScopeOut"]
+    """Per-code resource authorization, masked to the querying administrator's scope.
+    The legacy `unrestricted` and `sites` fields describe aggregate reach only."""
+
+
+class PermissionScopeOut(BaseModel):
+    unrestricted: bool
+    site_ids: list[uuid.UUID] = Field(default_factory=list)
+    full_site_ids: list[uuid.UUID] = Field(default_factory=list)
+    selected_racks_by_site: dict[uuid.UUID, list[uuid.UUID]] = Field(default_factory=dict)
 
 
 @router.get("/{user_id}/effective-access", response_model=EffectiveAccessOut)
@@ -368,6 +378,20 @@ async def get_effective_access(
     await assert_user_visible(db, ctx, user_id)
     access = (await load_effective_access(db, [user.id]))[user.id]
     groups = (await _serialize(db, [user]))[0].groups
+    permission_scopes = {}
+    for code in sorted(access.permission_codes | access.inactive_permissions):
+        source_scope = access.scope_for(code, include_inactive=True)
+        if source_scope.unrestricted:
+            permission_scopes[code] = PermissionScopeOut(unrestricted=True)
+            continue
+        scope = intersect_scopes(source_scope, ctx.scope)
+        selected = {}
+        for site_id in scope.site_ids - scope.full_site_ids:
+            selected[site_id] = sorted(await visible_rack_ids_in_site(db, scope, site_id), key=str)
+        permission_scopes[code] = PermissionScopeOut(
+            unrestricted=False, site_ids=sorted(scope.site_ids, key=str),
+            full_site_ids=sorted(scope.full_site_ids, key=str), selected_racks_by_site=selected,
+        )
     sites: list[EffectiveSite] = []
     if access.scope.unrestricted:
         pass
@@ -388,7 +412,7 @@ async def get_effective_access(
         role_names=sorted(access.role_names), groups=groups,
         permissions={c: access.sources[c] for c in sorted(access.permission_codes)},
         denied_permissions=sorted(access.denied_permissions), inactive_permissions=sorted(access.inactive_permissions),
-        sites=sites,
+        sites=sites, permission_scopes=permission_scopes,
     )
 
 

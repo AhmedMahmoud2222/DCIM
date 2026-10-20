@@ -1,12 +1,17 @@
+import json
+import re
 from functools import lru_cache
 from typing import Literal
 
+from cryptography.fernet import Fernet
 from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # hide_input_in_errors: a validation error must never echo configured secrets (JWT key, credential
+    # encryption keys) back into logs or tracebacks (SEC-02, Issue #38).
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True)
 
     environment: Literal["development", "test", "production"] = "development"
 
@@ -26,6 +31,14 @@ class Settings(BaseSettings):
     # `Fernet.generate_key()`. See app/core/secrets.py's own docstring: this is an
     # explicit OPEN DECISION for production KMS migration, not a finished design.
     credential_encryption_key: str = Field(..., min_length=32)
+    # SEC-02 (Issue #38): additional key generations for online rotation, as a JSON object
+    # mapping "v<N>" (N >= 2) to a Fernet key, e.g. '{"v2": "<key>"}'. Precedence:
+    # `credential_encryption_key` is ALWAYS version v1 (so every existing deployment that
+    # sets only that variable keeps working unchanged, and unprefixed legacy ciphertext
+    # keeps decrypting); this map only ADDS v2 and later and may not redefine v1. New
+    # encryptions use the highest version configured. Every key is checked to be a valid
+    # Fernet key when this map is set; errors name the version, never the key value.
+    credential_encryption_keys: str | None = None
 
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
@@ -116,6 +129,43 @@ class Settings(BaseSettings):
     def _validate_db_url(cls, v: str) -> str:
         PostgresDsn(v.replace("postgresql+asyncpg", "postgresql").replace("postgresql+psycopg", "postgresql"))
         return v
+
+    @model_validator(mode="after")
+    def _validate_credential_encryption_keys(self) -> "Settings":
+        self.credential_encryption_key_versions()
+        return self
+
+    def credential_encryption_key_versions(self) -> dict[int, str]:
+        """Every configured credential-encryption key by version number (1 is
+        `credential_encryption_key`). Raises ValueError, naming the version but never the
+        key, when `credential_encryption_keys` is malformed or holds an invalid key."""
+        versions = {1: self.credential_encryption_key}
+        raw = (self.credential_encryption_keys or "").strip()
+        if not raw:
+            # Unchanged single-key behaviour: v1 keeps only its historical min_length check.
+            return versions
+        try:
+            extra = json.loads(raw)
+        except ValueError:
+            raise ValueError("credential_encryption_keys must be a JSON object such as {\"v2\": \"<key>\"}.") from None
+        if not isinstance(extra, dict) or not extra:
+            raise ValueError("credential_encryption_keys must be a non-empty JSON object such as {\"v2\": \"<key>\"}.")
+        for label, key in extra.items():
+            match = re.fullmatch(r"v([1-9][0-9]{0,8})", label) if isinstance(label, str) else None
+            if match is None:
+                raise ValueError(f"credential_encryption_keys: version labels must look like 'v2'; got {label!r}.")
+            number = int(match.group(1))
+            if number == 1:
+                raise ValueError("credential_encryption_keys may not define v1; v1 is always CREDENTIAL_ENCRYPTION_KEY.")
+            if not isinstance(key, str):
+                raise ValueError(f"credential_encryption_keys: the key for {label} must be a string.")
+            versions[number] = key
+        for number, key in sorted(versions.items()):
+            try:
+                Fernet(key.encode())
+            except (ValueError, TypeError):
+                raise ValueError(f"Credential encryption key v{number} is not a valid Fernet key.") from None
+        return versions
 
     @model_validator(mode="after")
     def _production_requires_malware_scanning(self) -> "Settings":

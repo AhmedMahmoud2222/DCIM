@@ -10,7 +10,6 @@ import uuid
 
 from sqlalchemy import CheckConstraint, MetaData, text
 from sqlalchemy.engine import Connection
-from sqlalchemy.exc import SQLAlchemyError
 
 
 class SchemaDriftNormalizationError(RuntimeError):
@@ -194,47 +193,62 @@ def existing_parent_tables(connection: Connection, parents: set[str]) -> set[str
     return {row[0] for row in rows}
 
 
-def _normalize_check_constraint_def(connection: Connection, table_name: str, sqltext_str: str) -> str:
-    """Ask PostgreSQL to parse and normalize a CHECK constraint expression via a temporary probe.
+def _normalize_check_constraint_def(
+    connection: Connection, schema: str, table_name: str, sqltext_str: str
+) -> str:
+    """Ask PostgreSQL to parse and normalize a CHECK expression via a temporary probe.
 
-    Runs inside its own SAVEPOINT, with a per-call unique probe table/constraint name,
-    so a malformed expression — or a prior probe's leftovers — never poisons the
-    caller's outer transaction or collides with another probe: the connection stays
-    fully usable for every other constraint checked in the same run.
+    `sqltext_str` must come from trusted ORM metadata, never from user input. The probe
+    clones `schema.table_name` into a TEMP table with a per-call unique name, inside its
+    own SAVEPOINT, so a malformed expression never poisons the caller's transaction and
+    concurrent probes never collide. The result is read back only from this session's
+    temporary schema.
 
-    Always returns the normalized definition or raises SchemaDriftNormalizationError —
-    never returns None — so a probe failure or a missing catalog row can never be
-    silently treated by a caller as "no drift".
+    Always returns a non-blank normalized definition or raises SchemaDriftNormalizationError
+    (exception, missing row, blank result, blank input) so a caller can never mistake a
+    failed normalization for "no drift".
     """
+    if not isinstance(sqltext_str, str) or not sqltext_str.strip():
+        raise SchemaDriftNormalizationError(
+            f"blank CHECK expression for {schema}.{table_name} cannot be normalized"
+        )
+    preparer = connection.dialect.identifier_preparer
     probe_id = uuid.uuid4().hex
     probe_table = f"_norm_probe_{probe_id}"
     probe_constraint = f"_norm_probe_c_{probe_id}"
+    parent_ref = f"{preparer.quote_schema(schema)}.{preparer.quote(table_name)}"
+    probe_ref = f"pg_temp.{preparer.quote(probe_table)}"
     try:
         with connection.begin_nested():
             connection.execute(
-                text(f"CREATE TEMP TABLE {probe_table} (LIKE {table_name} INCLUDING DEFAULTS) ON COMMIT DROP")
+                text(f"CREATE TEMP TABLE {preparer.quote(probe_table)} (LIKE {parent_ref} INCLUDING DEFAULTS)")
             )
             connection.execute(
-                text(f"ALTER TABLE {probe_table} ADD CONSTRAINT {probe_constraint} CHECK ({sqltext_str})")
+                text(
+                    f"ALTER TABLE {probe_ref} ADD CONSTRAINT {preparer.quote(probe_constraint)} "
+                    f"CHECK ({sqltext_str})"
+                )
             )
             norm_def = connection.execute(
                 text(
-                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                    "WHERE conrelid = :probe_table ::regclass AND conname = :probe_constraint"
+                    "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE t.relnamespace = pg_my_temp_schema() AND t.relname = :probe_table "
+                    "AND c.conname = :probe_constraint AND c.contype = 'c'"
                 ),
                 {"probe_table": probe_table, "probe_constraint": probe_constraint},
             ).scalar()
-            connection.execute(text(f"DROP TABLE {probe_table}"))
-    except SQLAlchemyError as exc:
+            connection.execute(text(f"DROP TABLE {probe_ref}"))
+    except Exception as exc:
         raise SchemaDriftNormalizationError(
-            f"could not normalize CHECK expression against {table_name}: {exc}"
+            f"could not normalize CHECK expression against {schema}.{table_name}: {exc}"
         ) from exc
-    if norm_def is None:
+    if norm_def is None or not str(norm_def).strip():
         raise SchemaDriftNormalizationError(
-            f"normalizing CHECK expression against {table_name} produced no catalog definition "
+            f"normalizing CHECK expression against {schema}.{table_name} produced no catalog definition "
             f"(probe {probe_table}.{probe_constraint})"
         )
-    return norm_def
+    return str(norm_def)
 
 
 def missing_or_modified_parent_metadata_constraints(
@@ -264,6 +278,11 @@ def missing_or_modified_parent_metadata_constraints(
                 {"parent_name": parent_name},
             )
         }
+        declared = {c.name for c in table.constraints if isinstance(c, CheckConstraint) and c.name}
+        drift.extend(
+            f"unexpected parent constraint {schema}.{parent_name}.{name}"
+            for name in sorted(set(db_constraints) - declared)
+        )
         for c in table.constraints:
             if not (isinstance(c, CheckConstraint) and c.name):
                 continue
@@ -272,7 +291,7 @@ def missing_or_modified_parent_metadata_constraints(
                 continue
             actual = db_constraints[c.name]
             try:
-                norm = _normalize_check_constraint_def(connection, f"{schema}.{parent_name}", str(c.sqltext))
+                norm = _normalize_check_constraint_def(connection, schema, parent_name, str(c.sqltext))
             except SchemaDriftNormalizationError as exc:
                 # Fail closed: an expression that cannot be verified is reported as
                 # drift rather than silently accepted as matching.
