@@ -283,7 +283,13 @@ async def lock_draft_revision_for_edit(
     `.version` by one and returns the locked, still-open-transaction revision; the caller
     performs its own specific mutation (revision scalar fields, or a child row's add/
     edit/delete) and flushes once — both changes land in the same statement batch."""
-    revision = await db.get(CatalogModelRevision, revision_id, with_for_update=True)
+    # `populate_existing=True` is mandatory: `update_pdu_draft` pre-loads this revision
+    # via `_require_pdu_revision`, so without it SQLAlchemy returns the stale
+    # identity-map copy instead of refreshing the row we just locked (lost update).
+    # Same primitive as `lock_versioned_row` in concurrency.py.
+    revision = await db.get(
+        CatalogModelRevision, revision_id, with_for_update=True, populate_existing=True
+    )
     if revision is None:
         raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
     if revision.lifecycle_status != "draft":

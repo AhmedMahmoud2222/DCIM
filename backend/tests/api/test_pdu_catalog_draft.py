@@ -9,16 +9,19 @@ for fixture-scope reasons (the M3 suite `test_pdu_catalog_publish.py` covers the
 designer endpoints so existing catalog behavior is exercised alongside the new `/pdu`
 sub-resource."""
 
+import asyncio
 import json
 import uuid
 
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db.session import get_db
 from app.domain.audit.models import AuditLog
 from app.domain.catalog.designer_models import CatalogModel, CatalogModelRevision, Manufacturer
 from app.domain.outbox.models import OutboxEvent
+from app.main import app
 
 PASSWORD = "correct horse battery staple"
 
@@ -523,3 +526,103 @@ async def test_rack_revision_is_not_exposed_and_designer_path_still_works(
     )
     assert patched.status_code == 200, patched.text
     assert patched.json()["version"] == 2
+
+
+# ------------------------------------------------------------------------ Concurrent edits (P1)
+
+
+async def test_concurrent_draft_edits_one_wins_one_conflicts(
+    client: AsyncClient,
+    db_session,
+    make_user,
+    auth_headers,
+    db_engine,
+):
+    """Two concurrent PATCH requests to the same PDU draft: serialized by the per-revision
+    row lock (`lock_draft_revision_for_edit` with `populate_existing=True`).
+
+    Reproduces the lost-update scenario:
+      1. Session A and Session B both load revision version N into their own sessions.
+      2. Session B commits first, advancing the revision to N+1.
+      3. Session A requests the lock (blocked until B commits, then refreshed via
+         `populate_existing=True`), sees version N+1, and fails its `If-Match: N` check
+         with HTTP 409 instead of silently overwriting Session B's changes.
+      4. Exactly one audit/outbox event is written (the winner's); the loser writes none.
+
+    Without `populate_existing=True` on the locked `db.get`, SQLAlchemy returns the stale
+    identity-map copy (version N) instead of refreshing the locked row, so both requests
+    would pass the version check and the last commit would silently win (lost update).
+    """
+    revision = await _seed_pdu_revision(
+        db_session, creator_id=await _creator(db_session, make_user), version=1
+    )
+    admin_headers = await auth_headers("Administrator")
+
+    # Each HTTP request gets its own DB session, so the two requests below are genuine
+    # concurrent sessions (Session A and Session B) rather than two coroutines sharing one.
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+
+    async def per_request_session():
+        async with factory() as session:
+            try:
+                yield session
+            except Exception:
+                await session.rollback()
+                raise
+
+    app.dependency_overrides[get_db] = per_request_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            first, second = await asyncio.gather(
+                c.patch(
+                    _url(revision.id),
+                    headers={**admin_headers, "If-Match": "1"},
+                    json={"pdu_phase": "three"},
+                ),
+                c.patch(
+                    _url(revision.id),
+                    headers={**admin_headers, "If-Match": "1"},
+                    json={"pdu_phase": "single"},
+                ),
+            )
+        statuses = sorted([first.status_code, second.status_code])
+        assert statuses == [200, 409], statuses
+
+        # The winner's phase persisted; exactly one audit + outbox event was written.
+        # Read back from a fresh session because db_session holds a pre-concurrency
+        # identity-map copy (expire_on_commit=False) and its .get() would return the
+        # cached stale object without hitting the database.
+        async with async_sessionmaker(bind=db_engine, expire_on_commit=False)() as fresh:
+            final = await fresh.get(CatalogModelRevision, revision.id)
+            assert final.version == 2
+            assert final.pdu_phase in ("three", "single")
+
+            audits = (
+                await fresh.execute(
+                    select(AuditLog).where(AuditLog.action == "catalog.pdu_draft.update")
+                )
+            ).scalars().all()
+            assert len(audits) == 1
+
+            outboxes = (
+                await fresh.execute(
+                    select(OutboxEvent).where(OutboxEvent.event_type == "PDUDraftUpdated")
+                )
+            ).scalars().all()
+            assert len(outboxes) == 1
+
+        audits = (
+            await db_session.execute(
+                select(AuditLog).where(AuditLog.action == "catalog.pdu_draft.update")
+            )
+        ).scalars().all()
+        assert len(audits) == 1
+
+        outboxes = (
+            await db_session.execute(
+                select(OutboxEvent).where(OutboxEvent.event_type == "PDUDraftUpdated")
+            )
+        ).scalars().all()
+        assert len(outboxes) == 1
+    finally:
+        app.dependency_overrides.clear()
