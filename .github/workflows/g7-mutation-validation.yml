@@ -45,7 +45,7 @@ jobs:
       CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
       REDIS_URL: redis://localhost:6379/1
     steps:
-      - name: Checkout mutation runner (from workflow branch)
+      - name: Checkout mutation runner (workflow branch)
         uses: actions/checkout@v4
         with:
           path: runner
@@ -55,19 +55,17 @@ jobs:
           ref: ${{ github.event.inputs.sha || 'd2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675' }}
           path: baseline
       - name: Record tested SHA
-        id: tested
         run: |
-          cd baseline
-          echo "tested_sha=$(git rev-parse HEAD)" | tee -a "$GITHUB_OUTPUT"
-          git rev-parse HEAD > ../tested_sha.txt
-          git log -1 --format='%H %G? %s' > ../tested_commit.txt
+          cd "$GITHUB_WORKSPACE/baseline"
+          git rev-parse HEAD | tee "$GITHUB_WORKSPACE/tested_sha.txt"
+          git log -1 --format='%H %G? %s' | tee "$GITHUB_WORKSPACE/tested_commit.txt"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./baseline/backend[dev]"
+          python -m pip install -e "$GITHUB_WORKSPACE/baseline/backend[dev]"
       - name: Provision extensions and roles
         run: |
           export PGPASSWORD=postgres_test_admin_password
@@ -77,46 +75,48 @@ jobs:
           psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
           psql -h localhost -U postgres -d dcim_test -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
           psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;"
-          psql -h localhost -U postgres -d dcim_test -c "SELECT version();" | tee pg_version.txt
+          psql -h localhost -U postgres -d dcim_test -c "SELECT version();" | tee "$GITHUB_WORKSPACE/pg_version.txt"
       - name: Alembic single-head and migrate
         run: |
-          cd baseline/backend
+          cd "$GITHUB_WORKSPACE/baseline/backend"
           python -m alembic heads
           python -m alembic upgrade head
       - name: Baseline parity (must pass)
         run: |
-          cd baseline/backend
-          pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q 2>&1 | tee ../../baseline.log
+          cd "$GITHUB_WORKSPACE/baseline/backend"
+          pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q 2>&1 | tee "$GITHUB_WORKSPACE/baseline.log"
       - name: M1-M4 mutation experiments
         run: |
-          cp ../runner/.github/g7_mutation_runner.py ../g7_mutation_runner.py
-          cd baseline
-          set +e
+          cp "$GITHUB_WORKSPACE/runner/.github/g7_mutation_runner.py" "$GITHUB_WORKSPACE/g7_mutation_runner.py"
+          cd "$GITHUB_WORKSPACE/baseline"
           overall=0
           for m in m1 m2 m3 m4; do
-            python ../g7_mutation_runner.py "$m" 2>&1 | tee "../../${m}.log"
+            set +e
+            python "$GITHUB_WORKSPACE/g7_mutation_runner.py" "$m" 2>&1 | tee "$GITHUB_WORKSPACE/${m}.log"
             rc=${PIPESTATUS[0]}
-            echo "${m}_exit=$rc" >> ../mutation_results.txt
-            echo "${m}_exit=$rc"
+            set -e
+            echo "${m}_exit=$rc" | tee -a "$GITHUB_WORKSPACE/mutation_results.txt"
             if [ "$rc" -ne 0 ]; then overall=1; fi
           done
-          echo "overall=$overall" >> ../mutation_results.txt
+          echo "overall=$overall" | tee -a "$GITHUB_WORKSPACE/mutation_results.txt"
           exit $overall
       - name: Final baseline restore verification
         run: |
-          cd baseline
+          cd "$GITHUB_WORKSPACE/baseline"
           git diff --stat
-          test -z "$(git status --porcelain)" || { echo "WORKTREE NOT CLEAN"; exit 1; }
+          if [ -n "$(git status --porcelain)" ]; then echo "WORKTREE NOT CLEAN"; git status --porcelain; exit 1; fi
           cd backend
-          pytest tests/integration/test_g7_provenance_parity_postgres.py -q 2>&1 | tee ../../final_baseline.log
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q 2>&1 | tee "$GITHUB_WORKSPACE/final_baseline.log"
       - name: Assemble evidence artifact
         if: always()
         run: |
+          cd "$GITHUB_WORKSPACE"
           mkdir -p evidence
           cp tested_sha.txt tested_commit.txt baseline.log final_baseline.log evidence/ 2>/dev/null || true
           cp m1.log m2.log m3.log m4.log evidence/ 2>/dev/null || true
           cp mutation_results.txt pg_version.txt evidence/ 2>/dev/null || true
-          cp .github/g7_mutation_runner.py evidence/ 2>/dev/null || cp runner/.github/g7_mutation_runner.py evidence/ 2>/dev/null || true
+          cp g7_mutation_runner.py evidence/ 2>/dev/null || true
+          ls -la evidence/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
