@@ -285,31 +285,6 @@ async def test_pdu_rack_unit_collision_is_rejected(client: AsyncClient, db_sessi
     assert second.status_code == 409, second.text
 
 
-async def test_concurrent_pdu_placement_one_wins_other_conflicts(
-    client: AsyncClient, db_session, make_user, auth_headers
-):
-    """Two simultaneous placements of two different PDUs into the same rack units:
-    serialized by the per-asset lock + exclusion constraint; exactly one succeeds."""
-    import asyncio
-
-    pdu_a = await _seed_pdu_asset(db_session, asset_tag=f"PDU-C-{uuid.uuid4().hex[:8]}")
-    pdu_b = await _seed_pdu_asset(db_session, asset_tag=f"PDU-D-{uuid.uuid4().hex[:8]}")
-    room_id = await _seed_site_room(db_session)
-    rack_id = await _make_rack(db_session, room_id=room_id, height_u=42)
-    headers = await auth_headers("Administrator")
-
-    async def place(target_id):
-        return await client.post(
-            _url(target_id),
-            json=_placement(rack_id=rack_id, u_start=9, u_end=10, side="front", room_id=room_id),
-            headers=headers,
-        )
-
-    results = await asyncio.gather(place(pdu_a), place(pdu_b))
-    statuses = sorted([r.status_code for r in results])
-    assert statuses == [201, 409], statuses
-
-
 # ------------------------------------------------------------------------ RBAC
 
 

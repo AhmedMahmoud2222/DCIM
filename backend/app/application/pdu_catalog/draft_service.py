@@ -71,7 +71,19 @@ async def update_pdu_draft(
     # validate before touching outlet templates
     outlets_in = outlets or []
     s = validate_pdu_revision(
-        {k: getattr(revision, k) for k in ["pdu_input_voltage_v", "pdu_input_current_a", "pdu_phase", "mounting_orientation"]},
+        {
+            k: getattr(revision, k)
+            for k in [
+                "pdu_input_voltage_v",
+                "pdu_input_current_a",
+                "pdu_phase",
+                "mounting_orientation",
+                "pdu_rated_capacity_kw",
+                "pdu_plug_type",
+                "pdu_monitoring_protocol",
+                "pdu_monitoring_endpoint",
+            ]
+        },
         outlets_in,
     )
     if not s.valid:

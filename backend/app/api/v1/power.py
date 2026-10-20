@@ -265,7 +265,8 @@ async def instantiate_pdu_endpoint(
             outlet_count=len(outlet_nodes),
             outlets=[
                 PowerNodeOut(
-                    **PowerNodeOut.model_validate(n).model_dump(mode="python"), outlet_number=num
+                    **PowerNodeOut.model_validate(n).model_dump(mode="python", exclude={"outlet_number"}),
+                    outlet_number=num,
                 )
                 for n, num in zip(outlet_nodes, outlet_numbers, strict=True)
             ],

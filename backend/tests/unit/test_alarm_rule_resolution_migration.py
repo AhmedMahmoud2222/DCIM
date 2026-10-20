@@ -22,8 +22,11 @@ def test_resolution_migration_follows_aggregate_lineage_as_single_head():
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "migrations"))
     directory = ScriptDirectory.from_config(config)
-    assert directory.get_heads() == ["0055_alarm_rule_resolution"]
+    # Issue #150 B7: 0055_pdu_catalog_outlet_template follows 0055_alarm_rule_resolution,
+    # so the PDU migration is the single head.
+    assert directory.get_heads() == ["0055_pdu_catalog_outlet_template"]
     assert directory.get_revision("0055_alarm_rule_resolution").down_revision == "0051_aggregate_lineage"
+    assert directory.get_revision("0055_pdu_catalog_outlet_template").down_revision == "0055_alarm_rule_resolution"
 
 
 def test_upgrade_is_nullable_without_backfill():
