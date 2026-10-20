@@ -1,4 +1,4 @@
-"""Offline validation of the OpenCode authorization gate and workflow policy (tests v2.0).
+"""Offline validation of the OpenCode authorization gate and workflow policy (tests v3.0).
 
 Covers the gate decision logic and static policy over .github/workflows/opencode.yml.
 Live behaviour (agent edits, Draft PR creation, signing, branch protection) needs
@@ -36,8 +36,13 @@ def comment_event(body, user_id=OWNER_ID, assoc='OWNER', user_type='User', repo=
     return event
 
 
-def pr(head_repo=REPO, state='open', ref='feature/x'):
-    return {'state': state, 'head': {'ref': ref, 'repo': {'full_name': head_repo}}}
+HEAD = 'c' * 40
+
+
+def pr(head_repo=REPO, state='open', ref='feature/x', number=5, base_repo=REPO, merged=False, sha=HEAD):
+    return {'number': number, 'state': state, 'merged': merged,
+            'base': {'repo': {'full_name': base_repo}},
+            'head': {'ref': ref, 'sha': sha, 'repo': {'full_name': head_repo}}}
 
 
 class GateDecisionTests(unittest.TestCase):
@@ -98,6 +103,19 @@ class GateDecisionTests(unittest.TestCase):
         self.assertFalse(self.run_gate(event, pr_obj=pr(state='closed'))[0])
         self.assertTrue(self.run_gate(event, pr_obj=pr())[0])
 
+    def test_pr_binding_rejects_mismatches(self):
+        event = comment_event('/oc x', issue={'number': 5, 'pull_request': {}})
+        for bad in (pr(number=6), pr(merged=True), pr(base_repo='evil/DCIM'), pr(sha='not-a-sha'),
+                    pr(sha='C' * 40)):
+            self.assertFalse(self.run_gate(event, pr_obj=bad)[0], bad)
+
+    def test_binding_fixes_trusted_baseline_at_authorization(self):
+        event = comment_event('/oc x', issue={'number': 5, 'pull_request': {}})
+        target = gate.binding(event, pr(), 'd' * 40)
+        self.assertEqual(target, {'kind': 'pr', 'number': 5, 'authorized_sha': HEAD, 'head_ref': 'feature/x'})
+        target = gate.binding(comment_event('/oc x'), None, 'd' * 40)
+        self.assertEqual(target, {'kind': 'issue', 'number': 5, 'authorized_sha': 'd' * 40, 'head_ref': ''})
+
     def test_review_comment_events_are_not_privileged(self):
         # pull_request_review_comment runs the workflow file from the PR merge ref,
         # so it must never reach the agent even from the owner.
@@ -114,7 +132,7 @@ class GateDecisionTests(unittest.TestCase):
             pr_path.write_text(json.dumps(pr(ref='feature/x')))
             env = {'GITHUB_EVENT_PATH': str(event_path), 'GITHUB_OUTPUT': str(out_path),
                    'GITHUB_EVENT_NAME': 'issue_comment', 'PR_JSON_PATH': str(pr_path),
-                   'GITHUB_REPOSITORY': REPO, 'ALLOWED_ACTOR_IDS': str(OWNER_ID)}
+                   'GITHUB_REPOSITORY': REPO, 'ALLOWED_ACTOR_IDS': str(OWNER_ID), 'GITHUB_SHA': 'd' * 40}
             event_path.write_text(json.dumps(
                 comment_event('/oc fix', issue={'number': 5, 'pull_request': {}})))
             old = dict(os.environ)
@@ -122,8 +140,18 @@ class GateDecisionTests(unittest.TestCase):
                 os.environ.update(env)
                 gate.main()
                 text = out_path.read_text()
-                self.assertIn('authorized=true', text)
-                self.assertIn('head_ref=feature/x', text)
+                for expected in ('authorized=true', 'kind=pr', 'number=5', f'authorized_sha={HEAD}',
+                                 'head_ref=feature/x'):
+                    self.assertIn(expected, text)
+                out_path.write_text('')
+                event_path.write_text(json.dumps(comment_event('/oc fix')))
+                gate.main()
+                self.assertIn(f"authorized_sha={'d' * 40}", out_path.read_text())
+                out_path.write_text('')
+                os.environ['GITHUB_SHA'] = 'not-a-sha'  # baseline cannot be established: fail closed
+                gate.main()
+                self.assertIn('authorized=false', out_path.read_text())
+                self.assertNotIn('task<<', out_path.read_text())
                 out_path.write_text('')
                 event_path.write_text('{not json')
                 gate.main()
@@ -153,44 +181,67 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_permissions_are_minimal_per_job(self):
         self.assertEqual(self.wf['permissions'], {})
         self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
-        self.assertEqual(self.jobs['opencode']['permissions'],
-                         {'contents': 'read', 'issues': 'write', 'pull-requests': 'write'})
+        self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['publish']['permissions'], {'contents': 'read'})
+        self.assertEqual(self.jobs['report']['permissions'], {})
         for job in self.jobs.values():
             for forbidden in ('id-token', 'actions', 'workflows', 'administration', 'deployments'):
                 self.assertNotIn(forbidden, job['permissions'])
 
-    def test_agent_job_cannot_write_repository_contents(self):
-        self.assertEqual(self.jobs['opencode']['permissions']['contents'], 'read')
-        agent_job = yaml.dump(self.jobs['opencode'])
-        self.assertNotIn('APP_PRIVATE_KEY', agent_job)
-        self.assertNotIn('create-github-app-token', agent_job)
+    def test_untrusted_generation_job_has_no_github_write_rights(self):
+        job = self.jobs['opencode']
+        self.assertEqual(job['permissions'], {'contents': 'read'})
+        text = yaml.dump(job)
+        for banned in ('APP_PRIVATE_KEY', 'create-github-app-token', 'github.token', 'GITHUB_TOKEN',
+                       'GH_TOKEN', 'issues: write', 'gh issue', 'gh pr'):
+            self.assertNotIn(banned, text)
 
     def test_secret_scoping(self):
         self.assertNotIn('secrets.', yaml.dump(self.jobs['gate']))
         self.assertEqual(self.jobs['opencode']['environment'], 'opencode-agent')
         self.assertEqual(self.jobs['publish']['environment'], 'opencode-publish')
-        self.assertEqual(sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(self.jobs['opencode'])))),
-                         ['OPENCODE_API_KEY'])
-        self.assertEqual(sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(self.jobs['publish'])))),
-                         ['OPENCODE_APP_PRIVATE_KEY'])
+        self.assertEqual(self.jobs['report']['environment'], 'opencode-publish')
+        def used(job):
+            return sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(self.jobs[job]))))
+        self.assertEqual(used('opencode'), ['OPENCODE_API_KEY'])
+        self.assertEqual(used('publish'), ['OPENCODE_APP_PRIVATE_KEY'])
+        self.assertEqual(used('report'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertNotIn('DCIM_GIT_SIGNING_KEY', self.text)
 
     def test_job_ordering_and_authorization_condition(self):
         self.assertEqual(self.jobs['opencode']['needs'], 'gate')
         self.assertEqual(self.jobs['opencode']['if'], "needs.gate.outputs.authorized == 'true'")
         self.assertEqual(self.jobs['publish']['needs'], ['gate', 'opencode'])
-        self.assertIn("needs.opencode.result == 'success'", self.jobs['publish']['if'])
+        condition = self.jobs['publish']['if']
+        for required in ("needs.opencode.result == 'success'", "outputs.generation == 'success'",
+                         "outputs.has_changes == 'true'"):
+            self.assertIn(required, condition)
+        self.assertIn("needs.gate.outputs.authorized == 'true'", self.jobs['report']['if'])
 
-    def test_app_token_is_repo_scoped_and_least_privilege(self):
-        step = next(s for s in self.steps_of('publish') if 'create-github-app-token' in s.get('uses', ''))
-        with_ = step['with']
-        self.assertEqual(with_['repositories'], '${{ github.event.repository.name }}')
-        granted = {k for k in with_ if k.startswith('permission-')}
-        self.assertEqual(granted, {'permission-contents', 'permission-pull-requests', 'permission-issues'})
-        self.assertEqual({with_[k] for k in granted}, {'write'})
-        self.assertNotIn('permission-workflows', with_)
-        self.assertNotIn('permission-administration', with_)
+    def test_concurrency_cannot_be_displaced_by_unauthorized_comments(self):
+        self.assertNotIn('concurrency', self.wf)
+        self.assertNotIn('concurrency', self.jobs['gate'])
+        for name in ('opencode', 'publish'):
+            self.assertIn('group', self.jobs[name]['concurrency'])
+            self.assertIs(self.jobs[name]['concurrency']['cancel-in-progress'], False)
+
+    def test_app_tokens_are_repo_scoped_and_least_privilege(self):
+        for job, expected in (('publish', {'permission-contents', 'permission-pull-requests', 'permission-issues'}),
+                              ('report', {'permission-issues'})):
+            step = next(s for s in self.steps_of(job) if 'create-github-app-token' in s.get('uses', ''))
+            with_ = step['with']
+            self.assertEqual(with_['repositories'], '${{ github.event.repository.name }}')
+            self.assertEqual({k for k in with_ if k.startswith('permission-')}, expected)
+            self.assertEqual({with_[k] for k in expected}, {'write'})
+
+    def test_publisher_target_identity_comes_from_gate_not_artifact(self):
+        env = next(s for s in self.steps_of('publish') if s.get('id') == 'publish')['env']
+        for key, source in (('AUTHORIZED_SHA', 'needs.gate.outputs.authorized_sha'),
+                            ('TARGET_NUMBER', 'needs.gate.outputs.number'),
+                            ('EVENT_KIND', 'needs.gate.outputs.kind'),
+                            ('PR_HEAD_REF', 'needs.gate.outputs.head_ref'),
+                            ('GENERATION_STATUS', 'needs.opencode.outputs.generation')):
+            self.assertIn(source, env[key])
 
     def test_agent_never_sees_publish_credentials(self):
         env_text = yaml.dump([s.get('env', {}) for s in self.steps_of('opencode')])
@@ -212,18 +263,30 @@ class WorkflowPolicyTests(unittest.TestCase):
                     self.assertRegex(step['uses'], r'^[^@\s]+@[0-9a-f]{40}$')
                 if step.get('uses', '').startswith('actions/checkout@'):
                     self.assertIs(step['with']['persist-credentials'], False)
-                    self.assertEqual(step['with']['ref'], '${{ github.sha }}')
 
-    def test_agent_inputs_valid_and_model_comes_from_router(self):
-        step = next(s for s in self.steps_of('opencode') if 'dceoy/opencode-action' in s.get('uses', ''))
-        self.assertEqual(step['with']['model'], '${{ steps.route.outputs.model }}')
-        self.assertEqual(step['with']['use-github-token'], 'true')
-        self.assertIn('needs.gate.outputs.task', step['with']['prompt'])
-        self.assertTrue(step['continue-on-error'])
-        self.assertIn('"*.env":"deny"', step['env']['OPENCODE_CONFIG_CONTENT'])
-        action_yml = Path('/home/user/dceoy/opencode-action/action.yml')
-        if action_yml.exists():
-            self.assertLessEqual(set(step['with']), set(yaml.safe_load(action_yml.read_text())['inputs']))
+    def test_agent_runs_in_the_sandbox_with_no_third_party_action(self):
+        self.assertNotIn('dceoy/opencode-action', self.text)
+        steps = {s.get('name'): s for s in self.steps_of('opencode')}
+        run = steps['Run agent (loopback-only, credential held by proxy)']['run']
+        self.assertIn('--uid-owner ocagent', run)
+        self.assertLess(run.index('still has network egress'), run.index('opencode_guard.py'))
+        self.assertIn('unset OPENCODE_API_KEY', run)
+        self.assertLess(run.index('opencode_proxy.py'), run.index('unset OPENCODE_API_KEY'))
+        self.assertLess(run.index('unset OPENCODE_API_KEY'), run.index('opencode_guard.py'))
+        self.assertIn('/etc/opencode/opencode.json', run)
+        self.assertIn('chmod 700 "${HOME}"', steps['Create isolated agent user']['run'])
+        order = [s.get('name') for s in self.steps_of('opencode')]
+        self.assertLess(order.index('Read live model catalog'), order.index('Select model'))
+        self.assertLess(order.index('Select model'), order.index('Build sanitized sandbox copy'))
+        self.assertLess(order.index('Build sanitized sandbox copy'),
+                        order.index('Run agent (loopback-only, credential held by proxy)'))
+
+    def test_collection_and_upload_only_after_verified_generation(self):
+        steps = {s.get('name'): s for s in self.steps_of('opencode')}
+        self.assertEqual(steps['Collect changes as data']['if'], "steps.agent.outputs.generation == 'success'")
+        self.assertIn("has_changes == 'true'", steps['Upload changes']['if'])
+        self.assertNotIn('always()', yaml.dump(steps['Collect changes as data']))
+        self.assertNotIn('continue-on-error', yaml.dump(self.jobs['opencode']))
 
     def test_no_hardcoded_paid_or_unapproved_model(self):
         self.assertNotRegex(self.text, r'opencode-go/|kimi|anthropic/|openai/')
@@ -234,6 +297,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.steps_of('publish')[0]['uses'].split('@')[0], 'actions/checkout')
         self.assertTrue(any('re-verify' in n for n in names))
         self.assertIn('opencode_publish.py', yaml.dump(self.steps_of('publish')))
+
+    def test_job_timeout_preserved(self):
+        self.assertEqual(self.jobs['opencode']['timeout-minutes'], 35)
 
 
 if __name__ == '__main__':

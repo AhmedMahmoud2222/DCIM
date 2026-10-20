@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authorize an OpenCode comment command before any secret is exposed (gate v2.0).
+"""Authorize an OpenCode comment command before any secret is exposed (gate v3.0).
 
 Reads only GitHub-signed event metadata (the webhook payload at GITHUB_EVENT_PATH
 and, for PR conversation comments, the PR object fetched from the GitHub API).
@@ -26,6 +26,7 @@ TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
 # mentions never match.
 COMMAND_RE = re.compile(r'\A(?:/opencode|/oc)\s+(?P<task>\S[\s\S]*)\Z')
 MAX_TASK_CHARS = 8000
+SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 
 
 def parse_allowlist(raw: str) -> set[int]:
@@ -88,10 +89,15 @@ def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
         pr_obj = None
     if pr_obj is not None:
         head_repo = ((pr_obj.get('head') or {}).get('repo') or {}).get('full_name')
-        if head_repo != repository:
-            return False, 'pull request head is not in this repository', ''
-        if pr_obj.get('state') != 'open':
+        base_repo = ((pr_obj.get('base') or {}).get('repo') or {}).get('full_name')
+        if head_repo != repository or base_repo != repository:
+            return False, 'pull request head or base is not in this repository', ''
+        if pr_obj.get('state') != 'open' or pr_obj.get('merged') is True:
             return False, 'pull request is not open', ''
+        if pr_obj.get('number') != (event.get('issue') or {}).get('number'):
+            return False, 'pull request number does not match the event', ''
+        if not SHA_RE.match(str((pr_obj.get('head') or {}).get('sha', ''))):
+            return False, 'pull request head SHA is invalid', ''
     return True, 'authorized', task
 
 
@@ -100,15 +106,24 @@ def pr_head_ref(event_name: str, event: dict, pr: dict | None) -> str:
     return ref if re.fullmatch(r'[A-Za-z0-9._/-]{1,255}', ref) else ''
 
 
+def binding(event: dict, pr: dict | None, event_sha: str) -> dict:
+    """Trusted target identity, fixed at authorization time and never taken from artifacts."""
+    number = (event.get('issue') or {}).get('number')
+    if 'pull_request' in (event.get('issue') or {}):
+        return {'kind': 'pr', 'number': number, 'authorized_sha': (pr or {})['head']['sha'],
+                'head_ref': pr_head_ref('issue_comment', event, pr)}
+    return {'kind': 'issue', 'number': number, 'authorized_sha': event_sha, 'head_ref': ''}
+
+
 def write_output(path: str | None, authorized: bool, reason: str, task: str,
-                 head_ref: str = '') -> None:
+                 target: dict | None = None) -> None:
     lines = [f'authorized={"true" if authorized else "false"}']
     if path:
         with open(path, 'a', encoding='utf-8') as handle:
             handle.write(lines[0] + '\n')
             handle.write(f'reason={reason}\n')
-            if authorized and head_ref:
-                handle.write(f'head_ref={head_ref}\n')
+            for key, value in (target or {}).items():
+                handle.write(f'{key}={value}\n')
             if task:
                 delimiter = f'EOF_{secrets.token_hex(16)}'
                 handle.write(f'task<<{delimiter}\n{task}\n{delimiter}\n')
@@ -132,8 +147,16 @@ def main() -> int:
         )
     except (KeyError, ValueError, OSError):
         authorized, reason, task = False, 'gate failed closed on malformed input', ''
-    head_ref = pr_head_ref(event_name, event, pr) if authorized else ''
-    write_output(os.environ.get('GITHUB_OUTPUT'), authorized, reason, task, head_ref)
+    target = None
+    if authorized:
+        try:
+            target = binding(event, pr, os.environ.get('GITHUB_SHA', ''))
+            if not SHA_RE.match(target['authorized_sha']) or not isinstance(target['number'], int) \
+                    or (target['kind'] == 'pr' and not target['head_ref']):
+                raise ValueError('invalid binding')
+        except (KeyError, ValueError, TypeError):
+            authorized, reason, task, target = False, 'could not establish a trusted baseline', '', None
+    write_output(os.environ.get('GITHUB_OUTPUT'), authorized, reason, task, target)
     print(f'opencode gate: authorized={authorized} ({reason})')
     return 0
 

@@ -1,4 +1,4 @@
-"""OpenCode model router tests (tests v1.0): allowlist, determinism, fallback, data policy."""
+"""OpenCode model router tests (tests v2.0): allowlist, determinism, fallback, data policy."""
 import copy
 import importlib.util
 import json
@@ -19,6 +19,21 @@ EXPECTED = {
     'opencode/nemotron-3.5-lightning-free', 'opencode/nemotron-3-ultra-free',
 }
 ALL = set(EXPECTED)
+REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
+FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
+        'opencode/minimax-m3.1-flash-free')
+
+
+def enable(registry, *model_ids):
+    registry = copy.deepcopy(registry)
+    for model_id in model_ids:
+        registry['models'][model_id].update(terms_verified=True, terms_review=dict(REVIEW),
+                                            repo_code_approved=True, operational_status='healthy')
+    return registry
+
+
+# Test-only registry: the shipped one has every model disabled until the owner reviews terms.
+ENABLED = enable(REGISTRY, *FOUR)
 
 
 class RegistryTests(unittest.TestCase):
@@ -47,15 +62,55 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(router.RoutingError):
             router.load_registry(registry)
 
-    def test_nemotron_models_blocked_from_repo_code_until_owner_review(self):
+    def test_shipped_registry_enables_no_model_until_owner_review(self):
+        for model_id, meta in REGISTRY['models'].items():
+            self.assertIs(meta['terms_verified'], False, model_id)
+            self.assertIs(meta['repo_code_approved'], False, model_id)
+            self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
+            self.assertTrue(router.blockers(meta), model_id)
+        for task in ('fix a typo', 'new api endpoint', 'update the react component'):
+            with self.assertRaises(router.RoutingError, msg=task):
+                router.route(task, REGISTRY, ALL)
+
+    def test_every_requirement_is_individually_mandatory(self):
+        base = enable(REGISTRY, *FOUR)
+        model = 'opencode/mimo-v2.6-flash-free'
+        self.assertEqual(self.route_backend(base)['model'], model)
+        breakers = {
+            'terms_verified': lambda m: m.update(terms_verified=False),
+            'terms_review_missing': lambda m: m.update(terms_review=None),
+            'terms_review_incomplete': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '', 'source': 'x'}),
+            'repo_code_approved': lambda m: m.update(repo_code_approved=False),
+            'operational_status': lambda m: m.update(operational_status='degraded'),
+        }
+        for name, breaker in breakers.items():
+            broken = copy.deepcopy(base)
+            breaker(broken['models'][model])
+            self.assertNotEqual(self.route_backend(broken)['model'], model, name)
+        self.assertNotEqual(self.route_backend(base, available=ALL - {model})['model'], model)
+
+    def route_backend(self, registry, available=ALL):
+        return router.route('new api endpoint', registry, set(available))
+
+    def test_mimo_with_unverified_terms_is_never_selected(self):
+        registry = enable(REGISTRY, *FOUR)
+        registry['models']['opencode/mimo-v2.6-flash-free']['terms_verified'] = False
+        for task in ('new api endpoint', 'add database migration', 'backend schema change'):
+            result = router.route(task, registry, ALL)
+            self.assertNotEqual(result['model'], 'opencode/mimo-v2.6-flash-free')
+            self.assertIn('ineligible', result['reason'])
+
+    def test_free_does_not_mean_enabled_nemotron_stays_off(self):
         for model_id in ('opencode/nemotron-3-ultra-free', 'opencode/nemotron-3.5-lightning-free'):
-            self.assertFalse(REGISTRY['models'][model_id]['repo_code_approved'])
+            self.assertTrue(router.blockers(ENABLED['models'][model_id]))
+        for task in ('audit the architecture across modules', 'explain what does this do'):
+            self.assertNotIn('nemotron', router.route(task, ENABLED, ALL)['model'])
         for chain in REGISTRY['routes'].values():
             self.assertLessEqual(len(chain), REGISTRY['max_candidates'])
 
 
 class RoutingTests(unittest.TestCase):
-    def pick(self, task, available=ALL, hints=None, registry=REGISTRY):
+    def pick(self, task, available=ALL, hints=None, registry=ENABLED):
         return router.route(task, registry, set(available), hints)
 
     def test_every_category_selects_an_approved_model(self):
@@ -70,7 +125,7 @@ class RoutingTests(unittest.TestCase):
             result = self.pick(task)
             self.assertEqual(result['category'], category, task)
             self.assertIn(result['model'], EXPECTED)
-            self.assertTrue(REGISTRY['models'][result['model']]['repo_code_approved'])
+            self.assertEqual(router.blockers(ENABLED['models'][result['model']]), [])
 
     def test_preferred_models_for_repo_approved_categories(self):
         self.assertEqual(self.pick('fix a typo')['model'], 'opencode/glm-5.3-flash-free')
@@ -101,17 +156,16 @@ class RoutingTests(unittest.TestCase):
         with self.assertRaises(router.RoutingError):
             self.pick('new api endpoint', available={'opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3'})
 
-    def test_data_policy_blocks_nemotron_and_falls_back(self):
+    def test_ineligible_nemotron_falls_back_and_owner_enable_works(self):
         result = self.pick('audit the architecture across modules')
         self.assertNotIn('nemotron', result['model'])
-        self.assertIn('data-policy-blocked', result['reason'])
-        approved = copy.deepcopy(REGISTRY)
-        approved['models']['opencode/nemotron-3-ultra-free']['repo_code_approved'] = True
+        self.assertIn('ineligible', result['reason'])
+        approved = enable(ENABLED, 'opencode/nemotron-3-ultra-free')
         self.assertEqual(self.pick('audit the architecture', registry=approved)['model'],
                          'opencode/nemotron-3-ultra-free')
 
     def test_no_repo_approved_candidate_stops_safely(self):
-        registry = copy.deepcopy(REGISTRY)
+        registry = copy.deepcopy(ENABLED)
         for meta in registry['models'].values():
             meta['repo_code_approved'] = False
         with self.assertRaises(router.RoutingError):
@@ -125,7 +179,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_confidential_looking_tasks_never_reach_a_model(self):
         for task in ('use password: hunter22secret in the config', 'key ghp_' + 'a' * 30,
-                     '-----BEGIN RSA PRIVATE KEY----- abc', 'summarize production data export',
+                     '-----BEGIN RSA ' + 'PRIVATE KEY----- abc', 'summarize production data export',
                      'rotate the credentials'):
             with self.assertRaises(router.RoutingError, msg=task):
                 self.pick(task)
@@ -143,7 +197,11 @@ class RoutingTests(unittest.TestCase):
             old = dict(os.environ)
             try:
                 os.environ.update({'TASK': 'fix a typo', 'GITHUB_OUTPUT': str(out)})
-                reg = str(ROOT / '.github/opencode/model-registry.json')
+                reg_path = Path(tmp, 'registry.json')
+                reg_path.write_text(json.dumps(ENABLED))
+                reg = str(reg_path)
+                shipped = str(ROOT / '.github/opencode/model-registry.json')
+                self.assertEqual(router.main(['--registry', shipped, '--available', str(avail)]), 1)
                 self.assertEqual(router.main(['--registry', reg, '--available', str(avail)]), 0)
                 self.assertIn('model=opencode/glm-5.3-flash-free', out.read_text())
                 avail.write_text('[]')

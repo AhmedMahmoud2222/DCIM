@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Publish agent changes as one GitHub-signed commit and a Draft PR (publisher v1.0).
+"""Publish agent changes as one GitHub-signed commit and a Draft PR (publisher v2.0).
 
-Runs in a fresh job that never executed agent code. Inputs are untrusted data:
-the collector manifest and file blobs. Commits go through GraphQL
-createCommitOnBranch with a GitHub App installation token, so GitHub itself signs
-and attributes them to the App; no signing key exists anywhere in this flow.
+Runs in a fresh job that never executed agent code. Target identity and the baseline
+come ONLY from trusted workflow values (the gate's outputs and the event). The artifact
+manifest is untrusted data: it must agree with them, and is otherwise used only as file
+content. Commits use GraphQL createCommitOnBranch with a GitHub App installation token,
+so GitHub signs them and attributes them to the App; no signing key exists here.
 
-Environment: GH_PUBLISH_TOKEN (never printed), GITHUB_REPOSITORY, DEFAULT_BRANCH,
-EVENT_KIND (issue|pr), TARGET_NUMBER, PR_HEAD_REF (pr only), RUN_URL, RUN_ID,
-RUN_ATTEMPT, ACTOR_LOGIN, AGENT_OUTCOME (optional), EXPECT_BOT_LOGIN, TASK, MODEL, CATEGORY, ROUTE_REASON.
+Existing PR branches are never touched until the commit is verified: the commit is
+created on a fresh staging branch, verified, and only then fast-forwarded onto the PR
+branch with a non-forced ref update.
+
+Environment (trusted): GH_PUBLISH_TOKEN (never printed), GITHUB_REPOSITORY, DEFAULT_BRANCH,
+EVENT_KIND (issue|pr), TARGET_NUMBER, AUTHORIZED_SHA, PR_HEAD_REF (pr only),
+GENERATION_STATUS, RUN_URL, RUN_ID, RUN_ATTEMPT, ACTOR_LOGIN, EXPECT_BOT_LOGIN, TASK, MODEL,
+CATEGORY, ROUTE_REASON; ARTIFACT_DIR for the downloaded artifact.
 """
 from __future__ import annotations
 
@@ -23,11 +29,18 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import opencode_sandbox as sandbox  # noqa: E402
+
 MAX_CHANGES = 200
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 BRANCH_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$')
+TOP_KEYS = {'version', 'base_sha', 'changes', 'unsupported'}
+CHANGE_KEYS = {'delete': {'path', 'op'}, 'add': {'path', 'op', 'size', 'sha256', 'blob'},
+               'modify': {'path', 'op', 'size', 'sha256', 'blob'}}
 # Authorization and credential controls the agent may never change. The App has no
 # `workflows` permission either; this list also covers non-workflow control files.
 PROTECTED_PREFIXES = (
@@ -42,17 +55,27 @@ class PublishError(Exception):
     pass
 
 
+class PartialPublication(PublishError):
+    """Something durable exists on GitHub although the run did not complete."""
+
+    def __init__(self, message: str, branch: str, commit: str):
+        super().__init__(message)
+        self.branch, self.commit = branch, commit
+
+
 def is_protected_path(path: str) -> bool:
     lowered = path.lower()
     if lowered.startswith(PROTECTED_PREFIXES) or lowered.startswith(PROTECTED_BASENAME_PREFIXES):
         return True
-    return posixpath.basename(lowered) in PROTECTED_NAMES
+    if posixpath.basename(lowered) in PROTECTED_NAMES:
+        return True
+    return sandbox.is_sensitive_name(path) or sandbox.is_untrusted_config(path)
 
 
 def safe_path(path: str) -> str:
-    if (not path or len(path) > 300 or path.startswith('/') or '\\' in path or
-            any(ord(ch) < 32 or ord(ch) == 127 for ch in path)):
-        raise PublishError(f'unsafe path rejected: {path[:80]!r}')
+    if (not isinstance(path, str) or not path or len(path) > 300 or path.startswith('/') or '\\' in path
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in path)):
+        raise PublishError(f'unsafe path rejected: {str(path)[:80]!r}')
     parts = path.split('/')
     if any(part in ('', '.', '..') or part.lower() == '.git' for part in parts):
         raise PublishError(f'unsafe path rejected: {path[:80]!r}')
@@ -61,44 +84,78 @@ def safe_path(path: str) -> str:
     return path
 
 
-def validate_manifest(manifest: dict, root: str) -> dict:
-    if manifest.get('version') != 1 or not SHA_RE.match(str(manifest.get('base_sha', ''))):
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def validate_manifest(manifest: object, root: str) -> dict:
+    """Strictly validate untrusted manifest data and the artifact tree. Raises PublishError."""
+    if not isinstance(manifest, dict) or set(manifest) != TOP_KEYS:
+        raise PublishError('manifest has missing or unexpected keys')
+    if manifest['version'] != 2 or not isinstance(manifest['base_sha'], str) \
+            or not SHA_RE.match(manifest['base_sha']):
         raise PublishError('manifest version or base_sha invalid')
-    if manifest.get('unsupported'):
-        names = ', '.join(item.get('path', '?') for item in manifest['unsupported'][:5])
+    unsupported = manifest['unsupported']
+    if not isinstance(unsupported, list) or not isinstance(manifest['changes'], list):
+        raise PublishError('manifest changes/unsupported must be lists')
+    if unsupported:
+        names = ', '.join(str(item.get('path', '?')) if isinstance(item, dict) else '?' for item in unsupported[:5])
         raise PublishError(f'unsupported change types (symlink, mode change or submodule): {names}')
-    changes = manifest.get('changes') or []
+    changes = manifest['changes']
     if len(changes) > MAX_CHANGES:
         raise PublishError('too many changed files')
-    seen, total, additions, deletions = set(), 0, [], []
+    seen, total, additions, deletions, blobs = set(), 0, [], [], set()
     for change in changes:
-        path = safe_path(change.get('path', ''))
+        if not isinstance(change, dict) or change.get('op') not in CHANGE_KEYS:
+            raise PublishError('malformed change entry')
+        if set(change) != CHANGE_KEYS[change['op']]:
+            raise PublishError('change entry has missing or unexpected keys')
+        path = safe_path(change['path'])
         if path.lower() in seen:
             raise PublishError(f'duplicate path {path}')
         seen.add(path.lower())
         if is_protected_path(path):
-            raise PublishError(f'protected control file cannot be changed by the agent: {path}')
-        if change.get('op') == 'delete':
+            raise PublishError(f'protected control or credential-like file cannot be changed by the agent: {path}')
+        if change['op'] == 'delete':
             deletions.append(path)
             continue
-        if change.get('op') not in ('add', 'modify'):
-            raise PublishError(f'unknown operation for {path}')
-        blob = str(change.get('blob', ''))
-        if not re.fullmatch(r'files/\d{1,6}', blob):
+        blob, size, digest = change['blob'], change['size'], change['sha256']
+        if not isinstance(blob, str) or not re.fullmatch(r'files/\d{1,6}', blob) or blob in blobs:
             raise PublishError(f'invalid blob reference for {path}')
-        full = os.path.realpath(os.path.join(root, blob))
-        if not full.startswith(os.path.realpath(root) + os.sep) or not os.path.isfile(full) \
-                or os.path.islink(os.path.join(root, blob)):
+        if not _is_int(size) or size < 0 or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise PublishError(f'invalid size or checksum field for {path}')
+        blobs.add(blob)
+        full = os.path.join(root, blob)
+        if os.path.islink(full) or not os.path.isfile(full) \
+                or not os.path.realpath(full).startswith(os.path.realpath(root) + os.sep):
             raise PublishError(f'blob missing or unsafe for {path}')
+        if os.path.getsize(full) > MAX_FILE_BYTES:
+            raise PublishError(f'blob too large for {path}')
         with open(full, 'rb') as handle:
             data = handle.read()
-        if len(data) > MAX_FILE_BYTES or hashlib.sha256(data).hexdigest() != change.get('sha256'):
-            raise PublishError(f'blob size or checksum mismatch for {path}')
+        if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+            raise PublishError(f'declared size or checksum does not match blob for {path}')
         total += len(data)
         if total > MAX_TOTAL_BYTES:
             raise PublishError('total change size exceeds limit')
         additions.append({'path': path, 'contents': base64.b64encode(data).decode()})
+    on_disk = set()
+    for name in os.listdir(os.path.join(root, 'files')) if os.path.isdir(os.path.join(root, 'files')) else []:
+        on_disk.add(f'files/{name}')
+    if on_disk != blobs or set(os.listdir(root)) - {'manifest.json', 'files'}:
+        raise PublishError('artifact contains files not declared in the manifest')
     return {'base_sha': manifest['base_sha'], 'additions': additions, 'deletions': deletions}
+
+
+def load_manifest(root: str) -> dict:
+    path = os.path.join(root, 'manifest.json')
+    if os.path.islink(path) or not os.path.isfile(path) or os.path.getsize(path) > MAX_MANIFEST_BYTES:
+        raise PublishError('manifest missing or too large')
+    with open(path, encoding='utf-8') as handle:
+        try:
+            return validate_manifest(json.load(handle), root)
+        except ValueError:
+            raise PublishError('manifest is not valid JSON') from None
 
 
 def one_line(text: str, limit: int) -> str:
@@ -151,7 +208,8 @@ def verify_commit(api, sha: str, expect_login: str, sleep=time.sleep) -> str:
         data = api.call('GET', f'commits/{sha}')
         verification = (data.get('commit') or {}).get('verification') or {}
         login = (data.get('author') or {}).get('login', '')
-        if verification.get('verified') is True and login.lower() == expect_login.lower():
+        if verification.get('verified') is True and verification.get('reason') == 'valid' \
+                and login.lower() == expect_login.lower():
             return ''
         reason = f"verified={verification.get('verified')} reason={verification.get('reason')} author={login}"
         if attempt < 2:
@@ -159,96 +217,162 @@ def verify_commit(api, sha: str, expect_login: str, sleep=time.sleep) -> str:
     return reason
 
 
+def bind_target(api, env: dict, base: str) -> str:
+    """Independently fetch the target from GitHub and bind it to the trusted values.
+
+    Returns the branch whose tip is the baseline. Raises before any mutation on mismatch.
+    """
+    repo, default, number = env['GITHUB_REPOSITORY'], env['DEFAULT_BRANCH'], env['TARGET_NUMBER']
+    authorized = env['AUTHORIZED_SHA']
+    if not SHA_RE.match(authorized):
+        raise PublishError('trusted baseline is not a full SHA')
+    if base != authorized:
+        raise PublishError('artifact baseline does not match the trusted authorized baseline')
+    meta = api.call('GET', '')
+    if meta.get('default_branch') != default or meta.get('full_name', repo).lower() != repo.lower():
+        raise PublishError('repository identity or default branch differs from the event context')
+    if not api.call('GET', f'branches/{default}').get('protected'):
+        raise PublishError('default branch is not protected; refusing to publish')
+    if env['EVENT_KIND'] == 'issue':
+        issue = api.call('GET', f'issues/{number}')
+        if issue.get('number') != int(number) or 'pull_request' in issue or issue.get('state') != 'open':
+            raise PublishError('target is not an open issue with the authorized number')
+        if api.call('GET', f'compare/{default}...{authorized}').get('status') not in ('behind', 'identical'):
+            raise PublishError('authorized baseline is not reachable from the default branch')
+        return ''
+    pr = api.call('GET', f'pulls/{number}')
+    head, pr_base = pr.get('head') or {}, pr.get('base') or {}
+    checks = [
+        (pr.get('number') == int(number), 'pull request number does not match the authorized event'),
+        (pr.get('state') == 'open' and not pr.get('merged'), 'pull request is not open and unmerged'),
+        (((pr_base.get('repo') or {}).get('full_name') or '').lower() == repo.lower(), 'unexpected base repository'),
+        (((head.get('repo') or {}).get('full_name') or '').lower() == repo.lower(), 'unexpected head repository'),
+        (head.get('ref') == env['PR_HEAD_REF'], 'head branch is not the approved branch'),
+        (head.get('sha') == authorized, 'pull request head moved since authorization'),
+    ]
+    for ok, message in checks:
+        if not ok:
+            raise PublishError(message)
+    branch = env['PR_HEAD_REF']
+    info = api.call('GET', f'branches/{branch}')
+    check_branch('pr', branch, default, bool(info.get('protected')))
+    if (info.get('commit') or {}).get('sha') != authorized:
+        raise PublishError('live branch tip does not match the authorized baseline')
+    return branch
+
+
+def delete_ref(api, branch: str) -> str:
+    try:
+        api.call('DELETE', f'git/refs/heads/{branch}')
+        return ''
+    except PublishError as error:
+        return f'could not delete {branch}: {error}'
+
+
 def publish(api, env: dict, plan: dict, sleep=time.sleep) -> dict:
-    repo, default = env['GITHUB_REPOSITORY'], env['DEFAULT_BRANCH']
-    kind, number = env['EVENT_KIND'], env['TARGET_NUMBER']
+    if env.get('GENERATION_STATUS') != 'success':
+        raise PublishError('generation did not complete successfully; nothing is published')
     if not plan['additions'] and not plan['deletions']:
         return {'published': False, 'reason': 'no file changes'}
-    if api.call('GET', '')['default_branch'] != default:
-        raise PublishError('default branch differs from the event context')
-    base = plan['base_sha']
-    created_ref = False
-    if kind == 'issue':
-        branch = f"opencode/issue{number}-{env['RUN_ID']}-{env['RUN_ATTEMPT']}"
-        check_branch(kind, branch, default, protected=False)
-        if api.call('GET', f'compare/{default}...{base}')['status'] not in ('behind', 'identical'):
-            raise PublishError('base commit is not reachable from the default branch')
-        api.call('POST', 'git/refs', {'ref': f'refs/heads/{branch}', 'sha': base})
-        created_ref = True
-    else:
-        branch = env['PR_HEAD_REF']
-        info = api.call('GET', f'branches/{branch}')
-        check_branch(kind, branch, default, bool(info.get('protected')))
-        if info['commit']['sha'] != base:
-            raise PublishError('pull request branch moved since the agent started; rerun the command')
+    base, kind, number, default = plan['base_sha'], env['EVENT_KIND'], env['TARGET_NUMBER'], env['DEFAULT_BRANCH']
+    pr_branch = bind_target(api, env, base)  # no mutation before this returns
+    suffix = f"{env['RUN_ID']}-{env['RUN_ATTEMPT']}"
+    work_branch = f'opencode/issue{number}-{suffix}' if kind == 'issue' else f'opencode/pr{number}-{suffix}'
+    check_branch('issue', work_branch, default, protected=False)
+    api.call('POST', 'git/refs', {'ref': f'refs/heads/{work_branch}', 'sha': base})
     headline = 'opencode: ' + (one_line(env['TASK'], 60) or 'automated change')
     body = '\n'.join([
         f"OpenCode-Run: {env['RUN_URL']}", f"OpenCode-Model: {env['MODEL']}",
         f"OpenCode-Category: {env['CATEGORY']}", f"Requested-By: {one_line(env['ACTOR_LOGIN'], 60)}"])
     try:
         data = api.graphql(COMMIT_MUTATION, {'input': {
-            'branch': {'repositoryNameWithOwner': repo, 'branchName': branch},
+            'branch': {'repositoryNameWithOwner': env['GITHUB_REPOSITORY'], 'branchName': work_branch},
             'message': {'headline': headline, 'body': body}, 'expectedHeadOid': base,
             'fileChanges': {'additions': plan['additions'], 'deletions': [{'path': p} for p in plan['deletions']]},
         }})
         sha = data['createCommitOnBranch']['commit']['oid']
         problem = verify_commit(api, sha, env['EXPECT_BOT_LOGIN'], sleep)
     except PublishError:
-        if created_ref:
-            api.call('DELETE', f'git/refs/heads/{branch}')
+        delete_ref(api, work_branch)
         raise
     if problem:
-        if created_ref:  # nothing is exposed yet: remove the branch before any PR exists
-            api.call('DELETE', f'git/refs/heads/{branch}')
+        leftover = delete_ref(api, work_branch)
+        if leftover:
+            raise PartialPublication(f'commit {sha[:12]} is not GitHub-verified ({problem}) and {leftover}',
+                                     work_branch, sha)
         raise PublishError(f'commit {sha[:12]} is not GitHub-verified ({problem}); publication stopped')
-    result = {'published': True, 'branch': branch, 'commit': sha, 'verified': True, 'pr': None}
-    if kind == 'issue':
-        pr = api.call('POST', 'pulls', {
-            'title': headline, 'head': branch, 'base': default, 'draft': True,
-            'body': '\n'.join([
-                f"Draft PR opened by the OpenCode agent for #{number}.", '',
-                f"- Model: `{env['MODEL']}` (category `{env['CATEGORY']}`)",
-                f"- Routing: {one_line(env['ROUTE_REASON'], 300)}",
-                f"- Run: {env['RUN_URL']}", f"- Commit: {sha} (GitHub-verified)", '',
-                f"Agent step outcome: {one_line(env.get('AGENT_OUTCOME', 'unknown'), 20)} "
-                '(failure is expected when its read-only token blocks its own push).',
-                'Tests were not run by the publisher; review the CI checks on this PR.',
-                f"Refs #{number}"])})
-        result['pr'] = {'number': pr['number'], 'url': pr['html_url']}
-    where = f"PR #{result['pr']['number']}" if result['pr'] else f'branch `{branch}`'
-    api.call('POST', f'issues/{number}/comments', {'body': (
-        f"OpenCode published commit `{sha[:12]}` (GitHub-verified) to {where} using "
-        f"`{env['MODEL']}`. It did not merge anything; CI and review remain required.")})
+    result = {'published': True, 'branch': work_branch, 'commit': sha, 'verified': True, 'pr': None,
+              'warnings': []}
+    if kind == 'pr':
+        try:  # fast-forward only, after verification; a moved branch makes this fail safely
+            api.call('PATCH', f'git/refs/heads/{pr_branch}', {'sha': sha, 'force': False})
+        except PublishError as error:
+            leftover = delete_ref(api, work_branch)
+            raise PublishError(f'could not fast-forward {pr_branch}: {error}; PR branch unchanged'
+                               + (f'; {leftover}' if leftover else '')) from None
+        cleanup = delete_ref(api, work_branch)
+        if cleanup:
+            result['warnings'].append(cleanup)
+        result['branch'] = pr_branch
+    else:
+        try:
+            pr = api.call('POST', 'pulls', {
+                'title': headline, 'head': work_branch, 'base': default, 'draft': True,
+                'body': '\n'.join([
+                    f'Draft PR opened by the OpenCode agent for #{number}.', '',
+                    f"- Model: `{env['MODEL']}` (category `{env['CATEGORY']}`)",
+                    f"- Routing: {one_line(env['ROUTE_REASON'], 300)}",
+                    f"- Run: {env['RUN_URL']}", f'- Commit: {sha} (GitHub-verified)', '',
+                    'Generation was confirmed complete by the run guard. Tests were not run by the publisher; '
+                    'review the CI checks on this PR.', f'Refs #{number}'])})
+            result['pr'] = {'number': pr['number'], 'url': pr['html_url']}
+        except (PublishError, KeyError) as error:
+            raise PartialPublication(
+                f'verified commit {sha[:12]} is on branch {work_branch} but the Draft PR could not be opened: {error}',
+                work_branch, sha) from None
+    where = f"PR #{result['pr']['number']}" if result['pr'] else f"branch `{result['branch']}`"
+    try:
+        api.call('POST', f'issues/{number}/comments', {'body': (
+            f"OpenCode published commit `{sha[:12]}` (GitHub-verified) to {where} using "
+            f"`{env['MODEL']}`. It did not merge anything; CI and review remain required.")})
+    except PublishError as error:
+        result['warnings'].append(f'status comment failed: {error}')
     return result
 
 
 def main() -> int:
+    out = os.environ.get('GITHUB_OUTPUT')
+
+    def emit(**values):
+        if out:
+            with open(out, 'a', encoding='utf-8') as handle:
+                for key, value in values.items():
+                    handle.write(f'{key}={value}\n')
+
     try:
-        root = os.environ['ARTIFACT_DIR']
-        with open(os.path.join(root, 'manifest.json'), encoding='utf-8') as handle:
-            plan = validate_manifest(json.load(handle), root)
+        plan = load_manifest(os.environ['ARTIFACT_DIR'])
         env = {key: os.environ[key] for key in (
-            'GITHUB_REPOSITORY', 'DEFAULT_BRANCH', 'EVENT_KIND', 'TARGET_NUMBER', 'RUN_URL', 'RUN_ID',
-            'RUN_ATTEMPT', 'ACTOR_LOGIN', 'EXPECT_BOT_LOGIN', 'TASK', 'MODEL', 'CATEGORY', 'ROUTE_REASON')}
+            'GITHUB_REPOSITORY', 'DEFAULT_BRANCH', 'EVENT_KIND', 'TARGET_NUMBER', 'AUTHORIZED_SHA', 'GENERATION_STATUS',
+            'RUN_URL', 'RUN_ID', 'RUN_ATTEMPT', 'ACTOR_LOGIN', 'EXPECT_BOT_LOGIN', 'TASK', 'MODEL', 'CATEGORY',
+            'ROUTE_REASON')}
         env['PR_HEAD_REF'] = os.environ.get('PR_HEAD_REF', '')
-        env['AGENT_OUTCOME'] = os.environ.get('AGENT_OUTCOME', 'unknown')
         if env['EVENT_KIND'] not in ('issue', 'pr') or not env['TARGET_NUMBER'].isdigit():
             raise PublishError('invalid event context')
         result = publish(Api(os.environ['GH_PUBLISH_TOKEN'], env['GITHUB_REPOSITORY']), env, plan)
     except KeyError as error:
         print(f'::error::missing required configuration {error}')
         return 1
+    except PartialPublication as error:
+        print(f'::error::PARTIAL PUBLICATION: {error}')
+        emit(published='partial', branch=error.branch, commit=error.commit)
+        return 1
     except (PublishError, OSError, ValueError) as error:
         print(f'::error::OpenCode publication stopped: {error}')
+        emit(published='false')
         return 1
     print(json.dumps(result))
-    out = os.environ.get('GITHUB_OUTPUT')
-    if out:
-        with open(out, 'a', encoding='utf-8') as handle:
-            handle.write(f"published={'true' if result['published'] else 'false'}\n")
-            for key in ('commit', 'branch'):
-                if result.get(key):
-                    handle.write(f'{key}={result[key]}\n')
+    emit(published='true' if result['published'] else 'false',
+         **{k: result[k] for k in ('commit', 'branch') if result.get(k)})
     return 0
 
 

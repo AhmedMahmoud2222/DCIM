@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic OpenCode model router (router v1.0).
+"""Deterministic OpenCode model router (router v2.0).
 
 Selects one model from the version-controlled registry. No LLM is consulted and
 nothing in the task text can name a provider or model: text is only matched
@@ -96,23 +96,43 @@ def load_registry(registry: dict) -> dict:
     return registry
 
 
+def blockers(meta: dict) -> list[str]:
+    """Static (owner-controlled) requirements a model must meet before repository code may reach it."""
+    found = []
+    review = meta.get('terms_review')
+    if meta.get('terms_verified') is not True or not (
+            isinstance(review, dict) and all(isinstance(review.get(k), str) and review.get(k).strip()
+                                             for k in ('reviewed_by', 'date', 'source'))):
+        found.append('terms not verified with recorded evidence')
+    if meta.get('repo_code_approved') is not True:
+        found.append('repository-code use not approved by owner')
+    if meta.get('operational_status') != 'healthy':
+        found.append('not marked operationally healthy')
+    return found
+
+
 def select(registry: dict, category: str, available: set[str]) -> tuple[str, list[str], str]:
-    """Return (model, ordered_candidates, reason). Raise RoutingError when none qualify."""
+    """Return (model, ordered_candidates, reason). Raise RoutingError when none qualify.
+
+    A model needs every requirement: terms verified (with evidence), owner approval for
+    repository code, operational status healthy, and presence in the live catalog.
+    """
     registry = load_registry(registry)
     chain = registry['routes'][category]
     limit = int(registry.get('max_candidates', 3))
-    eligible = [m for m in chain if registry['models'][m].get('repo_code_approved') is True]
+    eligible = [m for m in chain if not blockers(registry['models'][m])]
     skipped = [m for m in chain if m not in eligible]
     candidates = eligible[:limit]
     if not candidates:
-        raise RoutingError(f'no repo-approved model for category {category}; owner data review needed')
+        raise RoutingError(f'no eligible model for category {category}; owner must verify terms and '
+                           'approve repository-code use in the model registry')
     live = [m for m in candidates if m in available]
     if not live:
         raise RoutingError('every approved candidate is unavailable: ' + ', '.join(candidates))
     model = live[0]
     reason = f'category {category}'
     if skipped:
-        reason += f'; skipped data-policy-blocked: {", ".join(skipped)}'
+        reason += f'; ineligible: {", ".join(skipped)}'
     if model != candidates[0]:
         reason += f'; fell back from {candidates[0]} (unavailable)'
     return model, candidates, reason
@@ -130,9 +150,9 @@ def route(task: str, registry: dict, available: set[str],
 
 
 def parse_available(raw: object) -> set[str]:
-    items = raw.get('data', raw) if isinstance(raw, dict) else raw
+    items = raw.get('data') if isinstance(raw, dict) else raw
     ids = set()
-    for item in items or []:
+    for item in items if isinstance(items, list) else []:
         value = item.get('id') if isinstance(item, dict) else item
         if isinstance(value, str) and value:
             ids.add(normalize(value))

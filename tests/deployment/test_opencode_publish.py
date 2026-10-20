@@ -1,4 +1,4 @@
-"""OpenCode collector, publisher and signature-verifier tests (tests v1.0). No network."""
+"""OpenCode manifest, publisher and signature-verifier tests (tests v2.0). No network."""
 import base64
 import hashlib
 import importlib.util
@@ -10,10 +10,14 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / '.github/scripts'
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / f'.github/scripts/{name}.py')
+    import sys
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f'{name}.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -21,20 +25,25 @@ def load(name):
 
 collect = load('opencode_collect')
 publish = load('opencode_publish')
+sandbox = load('opencode_sandbox')
 verify = load('opencode_verify_signatures')
 BASE = 'a' * 40
 NEW = 'b' * 40
+MOVED = 'c' * 40
 BOT = 'dcim-opencode-agent[bot]'
 ENV = {
     'GITHUB_REPOSITORY': 'AhmedMahmoud2222/DCIM', 'DEFAULT_BRANCH': 'main', 'EVENT_KIND': 'issue',
-    'TARGET_NUMBER': '7', 'RUN_URL': 'https://github.com/x/y/actions/runs/1', 'RUN_ID': '1',
-    'RUN_ATTEMPT': '1', 'ACTOR_LOGIN': 'AhmedMahmoud2222', 'EXPECT_BOT_LOGIN': BOT,
+    'TARGET_NUMBER': '7', 'AUTHORIZED_SHA': BASE, 'GENERATION_STATUS': 'success',
+    'RUN_URL': 'https://github.com/x/y/actions/runs/1', 'RUN_ID': '1', 'RUN_ATTEMPT': '1',
+    'ACTOR_LOGIN': 'AhmedMahmoud2222', 'EXPECT_BOT_LOGIN': BOT,
     'TASK': 'fix the alarm bug\nsecond line', 'MODEL': 'opencode/deepseek-v4.1-flash-free',
-    'CATEGORY': 'general', 'ROUTE_REASON': 'category general', 'PR_HEAD_REF': '', 'AGENT_OUTCOME': 'failure',
+    'CATEGORY': 'general', 'ROUTE_REASON': 'category general', 'PR_HEAD_REF': '',
 }
+PR_ENV = {**ENV, 'EVENT_KIND': 'pr', 'TARGET_NUMBER': '9', 'PR_HEAD_REF': 'feature/x'}
+PLAN = {'base_sha': BASE, 'additions': [{'path': 'a.txt', 'contents': 'eA=='}], 'deletions': []}
 
 
-def manifest_dir(tmp, changes, unsupported=None):
+def build_artifact(tmp, changes, **top):
     root = Path(tmp)
     (root / 'files').mkdir(exist_ok=True)
     entries = []
@@ -45,42 +54,69 @@ def manifest_dir(tmp, changes, unsupported=None):
         (root / 'files' / str(index)).write_bytes(data)
         entries.append({'path': path, 'op': op, 'blob': f'files/{index}', 'size': len(data),
                         'sha256': hashlib.sha256(data).hexdigest()})
-    manifest = {'version': 1, 'base_sha': BASE, 'changes': entries, 'unsupported': unsupported or []}
+    manifest = {'version': 2, 'base_sha': BASE, 'changes': entries, 'unsupported': []}
+    manifest.update(top)
     return manifest, str(root)
 
 
 class FakeApi:
-    def __init__(self, verified=True, login=BOT, pr_tip=BASE, protected=False, compare='behind'):
+    """Records every call. `mutations()` lists calls that change GitHub state."""
+
+    def __init__(self, verified=True, login=BOT, branch_tip=BASE, protected=False, compare='behind',
+                 default_protected=True, pr=None, issue=None, patch_fails=False, delete_fails=False,
+                 pulls_fails=False):
         self.calls, self.verified, self.login = [], verified, login
-        self.pr_tip, self.protected, self.compare = pr_tip, protected, compare
+        self.branch_tip, self.protected, self.compare = branch_tip, protected, compare
+        self.default_protected, self.patch_fails, self.delete_fails = default_protected, patch_fails, delete_fails
+        self.pulls_fails = pulls_fails
+        self.pr = pr if pr is not None else {
+            'number': 9, 'state': 'open', 'merged': False, 'base': {'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}},
+            'head': {'ref': 'feature/x', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}
+        self.issue = issue if issue is not None else {'number': 7, 'state': 'open'}
 
     def call(self, method, path, body=None):
         self.calls.append((method, path, body))
         if method == 'GET' and path == '':
-            return {'default_branch': 'main'}
+            return {'default_branch': 'main', 'full_name': 'AhmedMahmoud2222/DCIM'}
+        if path == 'branches/main':
+            return {'protected': self.default_protected, 'commit': {'sha': 'f' * 40}}
+        if path.startswith('branches/'):
+            return {'protected': self.protected, 'commit': {'sha': self.branch_tip}}
+        if path.startswith('issues/') and method == 'GET':
+            return self.issue
+        if path.startswith('pulls/') and method == 'GET':
+            return self.pr
         if path.startswith('compare/'):
             return {'status': self.compare}
-        if path.startswith('branches/'):
-            return {'protected': self.protected, 'commit': {'sha': self.pr_tip}}
         if path.startswith('commits/'):
-            return {'commit': {'verification': {'verified': self.verified, 'reason': 'valid' if self.verified else 'unsigned'}},
+            return {'commit': {'verification': {'verified': self.verified,
+                                                'reason': 'valid' if self.verified else 'unsigned'}},
                     'author': {'login': self.login}}
-        if path == 'pulls':
-            return {'number': 9, 'html_url': 'https://github.com/x/y/pull/9'}
+        if method == 'PATCH' and self.patch_fails:
+            raise publish.PublishError('HTTP 422')
+        if method == 'DELETE' and self.delete_fails:
+            raise publish.PublishError('HTTP 500')
+        if path == 'pulls' and method == 'POST':
+            if self.pulls_fails:
+                raise publish.PublishError('HTTP 500')
+            return {'number': 12, 'html_url': 'https://github.com/x/y/pull/12'}
         return {}
 
     def graphql(self, query, variables):
         self.calls.append(('GRAPHQL', 'createCommitOnBranch', variables))
         return {'createCommitOnBranch': {'commit': {'oid': NEW}}}
 
+    def mutations(self):
+        return [(m, p) for m, p, _ in self.calls if m not in ('GET',)]
+
     def methods(self):
         return [(m, p) for m, p, _ in self.calls]
 
 
 class ManifestValidationTests(unittest.TestCase):
-    def check(self, changes, unsupported=None):
+    def check(self, changes, **top):
         with tempfile.TemporaryDirectory() as tmp:
-            manifest, root = manifest_dir(tmp, changes, unsupported)
+            manifest, root = build_artifact(tmp, changes, **top)
             return publish.validate_manifest(manifest, root)
 
     def test_valid_manifest_builds_file_changes(self):
@@ -93,27 +129,36 @@ class ManifestValidationTests(unittest.TestCase):
             with self.assertRaises(publish.PublishError, msg=path):
                 self.check([(path, 'add', b'x')])
 
-    def test_agent_cannot_modify_its_own_controls(self):
+    def test_agent_cannot_modify_its_own_controls_or_add_credential_files(self):
         for path in ('.github/workflows/ci.yml', '.github/scripts/opencode_gate.py',
-                     '.github/opencode/model-registry.json', '.github/CODEOWNERS', 'CODEOWNERS',
-                     'docs/security/OPENCODE_AGENT_AUTHORITY.md', 'tests/deployment/test_opencode_router.py',
-                     '.opencode/commands/x.md', 'opencode.json', 'sub/AGENTS.md', '.GitHub/Workflows/x.yml'):
+                     '.github/opencode/model-registry.json', '.github/opencode/secret-scan-allowlist.txt',
+                     '.github/CODEOWNERS', 'CODEOWNERS', 'docs/security/OPENCODE_AGENT_AUTHORITY.md',
+                     'tests/deployment/test_opencode_router.py', '.opencode/commands/x.md', 'opencode.json',
+                     'sub/AGENTS.md', '.GitHub/Workflows/x.yml', '.claude/settings.json', 'sub/opencode.jsonc',
+                     '.env', 'backend/.env.production', 'keys/server.pem', 'id_rsa'):
             with self.assertRaises(publish.PublishError, msg=path):
                 self.check([(path, 'modify', b'x')])
 
     def test_ordinary_code_paths_allowed(self):
         self.check([('backend/app/main.py', 'modify', b'x'), ('frontend/src/a.tsx', 'add', b'y'),
-                    ('.github/scripts/clamd_probe.py', 'modify', b'z')])
+                    ('.github/scripts/clamd_probe.py', 'modify', b'z'), ('.env.example', 'modify', b'A=1')])
 
-    def test_unsupported_changes_symlinks_and_tampered_blobs_rejected(self):
+    def test_unsupported_changes_and_tampered_blobs_rejected(self):
         with self.assertRaises(publish.PublishError):
             self.check([('a.txt', 'add', b'x')], unsupported=[{'path': 'link', 'reason': 'mode'}])
         with tempfile.TemporaryDirectory() as tmp:
-            manifest, root = manifest_dir(tmp, [('a.txt', 'add', b'x')])
+            manifest, root = build_artifact(tmp, [('a.txt', 'add', b'x')])
             Path(root, 'files/0').write_bytes(b'tampered')
             with self.assertRaises(publish.PublishError):
                 publish.validate_manifest(manifest, root)
             manifest['changes'][0]['blob'] = 'files/../manifest.json'
+            with self.assertRaises(publish.PublishError):
+                publish.validate_manifest(manifest, root)
+
+    def test_declared_size_must_match_actual_blob(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, root = build_artifact(tmp, [('a.txt', 'add', b'hello')])
+            manifest['changes'][0]['size'] = 3
             with self.assertRaises(publish.PublishError):
                 publish.validate_manifest(manifest, root)
 
@@ -123,50 +168,155 @@ class ManifestValidationTests(unittest.TestCase):
         with self.assertRaises(publish.PublishError):
             self.check([('big.bin', 'add', b'x' * (publish.MAX_FILE_BYTES + 1))])
 
+    def test_schema_rejects_wrong_types_unknown_keys_and_old_versions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good, root = build_artifact(tmp, [('a.txt', 'add', b'x')])
+            def mutate(fn):
+                bad = json.loads(json.dumps(good))
+                fn(bad)
+                with self.assertRaises(publish.PublishError):
+                    publish.validate_manifest(bad, root)
+            mutate(lambda m: m.update(target={'pr': 1, 'branch': 'main'}))      # forged target identity
+            mutate(lambda m: m.pop('unsupported'))
+            mutate(lambda m: m.update(version=1))
+            mutate(lambda m: m.update(version='2'))
+            mutate(lambda m: m.update(base_sha='A' * 40))
+            mutate(lambda m: m.update(base_sha=None))
+            mutate(lambda m: m.update(changes='not-a-list'))
+            mutate(lambda m: m.update(changes=['x']))
+            mutate(lambda m: m['changes'][0].update(extra='x'))
+            mutate(lambda m: m['changes'][0].update(size=True))
+            mutate(lambda m: m['changes'][0].update(size='1'))
+            mutate(lambda m: m['changes'][0].update(size=-1))
+            mutate(lambda m: m['changes'][0].update(sha256='XYZ'))
+            mutate(lambda m: m['changes'][0].update(sha256=123))
+            mutate(lambda m: m['changes'][0].update(op='rename'))
+            mutate(lambda m: m['changes'][0].update(path=['a']))
+            mutate(lambda m: m['changes'][0].update(blob=5))
+            mutate(lambda m: m['changes'].append(dict(m['changes'][0])))           # duplicate path/blob
+            for junk in (None, [], 'x', 5):
+                with self.assertRaises(publish.PublishError):
+                    publish.validate_manifest(junk, root)
+
+    def test_undeclared_artifact_files_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, root = build_artifact(tmp, [('a.txt', 'add', b'x')])
+            Path(root, 'files/99').write_bytes(b'smuggled')
+            with self.assertRaises(publish.PublishError):
+                publish.validate_manifest(manifest, root)
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, root = build_artifact(tmp, [('a.txt', 'add', b'x')])
+            Path(root, 'extra.sh').write_text('x')
+            with self.assertRaises(publish.PublishError):
+                publish.validate_manifest(manifest, root)
+
+    def test_load_manifest_handles_malformed_files_safely(self):
+        for content in ('{not json', '[]', '"x"', 'null', ''):
+            with tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, 'manifest.json').write_text(content)
+                with self.assertRaises(publish.PublishError, msg=content):
+                    publish.load_manifest(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(publish.PublishError):
+                publish.load_manifest(tmp)
+
+
+class CodexReproductionTests(unittest.TestCase):
+    """The three publisher failures from the independent review must not publish."""
+
+    def run_publish(self, api, env=ENV, plan=PLAN):
+        return publish.publish(api, env, plan, sleep=lambda _s: None)
+
+    def test_agent_failure_cannot_publish(self):
+        for status in ('failure', 'failed', 'cancelled', 'timeout', '', 'Success'):
+            api = FakeApi()
+            with self.assertRaises(publish.PublishError, msg=status):
+                self.run_publish(api, env={**ENV, 'GENERATION_STATUS': status})
+            self.assertEqual(api.calls, [], status)  # not even a read
+
+    def test_unrelated_branch_and_mismatched_pr_number_cannot_publish(self):
+        cases = {
+            'pr number differs': FakeApi(pr={**FakeApi().pr, 'number': 99}),
+            'unrelated head branch': FakeApi(pr={**FakeApi().pr, 'head': {
+                'ref': 'someone/else', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}),
+            'fork head': FakeApi(pr={**FakeApi().pr, 'head': {
+                'ref': 'feature/x', 'sha': BASE, 'repo': {'full_name': 'evil/DCIM'}}}),
+            'foreign base repo': FakeApi(pr={**FakeApi().pr, 'base': {'repo': {'full_name': 'evil/DCIM'}}}),
+            'closed pr': FakeApi(pr={**FakeApi().pr, 'state': 'closed'}),
+            'merged pr': FakeApi(pr={**FakeApi().pr, 'merged': True}),
+            'head moved': FakeApi(pr={**FakeApi().pr, 'head': {
+                'ref': 'feature/x', 'sha': MOVED, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}),
+            'branch tip moved': FakeApi(branch_tip=MOVED),
+            'protected branch': FakeApi(protected=True),
+        }
+        for name, api in cases.items():
+            with self.assertRaises(publish.PublishError, msg=name):
+                self.run_publish(api, env=PR_ENV)
+            self.assertEqual(api.mutations(), [], name)
+
+    def test_artifact_cannot_redirect_the_target(self):
+        # The command targeted PR 9 on feature/x; the artifact cannot name another target.
+        api = FakeApi(pr={**FakeApi().pr, 'number': 3, 'head': {
+            'ref': 'unrelated', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}})
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(api, env={**PR_ENV, 'TARGET_NUMBER': '3'})
+        self.assertEqual(api.mutations(), [])
+
+    def test_forged_artifact_baseline_cannot_publish(self):
+        for forged in (MOVED, 'd' * 40):
+            for env in (ENV, PR_ENV):
+                api = FakeApi()
+                with self.assertRaises(publish.PublishError):
+                    self.run_publish(api, env=env, plan={**PLAN, 'base_sha': forged})
+                self.assertEqual(api.mutations(), [])
+
+    def test_three_way_agreement_required_for_pr_updates(self):
+        # trusted == manifest == live branch is the only passing combination
+        self.assertTrue(self.run_publish(FakeApi(), env=PR_ENV)['published'])
+        with self.assertRaises(publish.PublishError):  # trusted differs from manifest and live
+            self.run_publish(FakeApi(), env={**PR_ENV, 'AUTHORIZED_SHA': MOVED})
+        api = FakeApi(branch_tip=MOVED)  # live differs
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(api, env=PR_ENV)
+        self.assertEqual(api.mutations(), [])
+
+    def test_non_sha_trusted_baseline_rejected(self):
+        api = FakeApi()
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(api, env={**ENV, 'AUTHORIZED_SHA': 'HEAD'}, plan={**PLAN, 'base_sha': 'HEAD'})
+        self.assertEqual(api.mutations(), [])
+
 
 class PublishFlowTests(unittest.TestCase):
-    plan = {'base_sha': BASE, 'additions': [{'path': 'a.txt', 'contents': 'eA=='}], 'deletions': []}
+    def run_publish(self, api, env=ENV, plan=PLAN):
+        return publish.publish(api, env, plan, sleep=lambda _s: None)
 
-    def run_publish(self, api, **overrides):
-        return publish.publish(api, {**ENV, **overrides}, self.plan, sleep=lambda _s: None)
-
-    def test_issue_flow_creates_branch_signed_commit_and_draft_pr(self):
+    def test_new_branch_flow_creates_signed_commit_and_draft_pr(self):
         api = FakeApi()
         result = self.run_publish(api)
         self.assertEqual(result['branch'], 'opencode/issue7-1-1')
         self.assertTrue(result['verified'])
-        pr_call = next(c for c in api.calls if c[1] == 'pulls')
+        pr_call = next(c for c in api.calls if c[1] == 'pulls' and c[0] == 'POST')
         self.assertIs(pr_call[2]['draft'], True)
         self.assertEqual(pr_call[2]['base'], 'main')
         self.assertIn('Refs #7', pr_call[2]['body'])
         self.assertNotIn('Closes', pr_call[2]['body'])
         graphql = next(c for c in api.calls if c[0] == 'GRAPHQL')[2]['input']
         self.assertEqual(graphql['expectedHeadOid'], BASE)
-        self.assertEqual(graphql['branch']['branchName'], 'opencode/issue7-1-1')
         self.assertNotIn('\n', graphql['message']['headline'])
         self.assertIn('OpenCode-Model: opencode/deepseek-v4.1-flash-free', graphql['message']['body'])
         self.assertNotIn(('DELETE', 'git/refs/heads/opencode/issue7-1-1'), api.methods())
 
-    def test_never_writes_to_default_or_protected_branch(self):
-        with self.assertRaises(publish.PublishError):
-            self.run_publish(FakeApi(), EVENT_KIND='pr', PR_HEAD_REF='main')
-        with self.assertRaises(publish.PublishError):
-            self.run_publish(FakeApi(protected=True), EVENT_KIND='pr', PR_HEAD_REF='release/1')
-        with self.assertRaises(publish.PublishError):
-            publish.check_branch('issue', 'feature/x', 'main', False)
+    def test_new_branch_requires_open_non_pr_issue_and_reachable_base(self):
+        for api in (FakeApi(issue={'number': 7, 'state': 'closed'}),
+                    FakeApi(issue={'number': 7, 'state': 'open', 'pull_request': {}}),
+                    FakeApi(issue={'number': 8, 'state': 'open'}),
+                    FakeApi(compare='diverged'), FakeApi(default_protected=False)):
+            with self.assertRaises(publish.PublishError):
+                self.run_publish(api)
+            self.assertEqual(api.mutations(), [])
 
-    def test_pr_flow_updates_head_branch_only_and_opens_no_pr(self):
-        api = FakeApi()
-        result = self.run_publish(api, EVENT_KIND='pr', PR_HEAD_REF='feature/x')
-        self.assertIsNone(result['pr'])
-        self.assertNotIn(('POST', 'pulls'), api.methods())
-        self.assertNotIn(('POST', 'git/refs'), api.methods())
-
-    def test_moved_pr_branch_stops_publication(self):
-        with self.assertRaises(publish.PublishError):
-            self.run_publish(FakeApi(pr_tip='c' * 40), EVENT_KIND='pr', PR_HEAD_REF='feature/x')
-
-    def test_unverified_commit_stops_publication_and_removes_new_branch(self):
+    def test_new_branch_unverified_commit_deletes_branch_and_opens_no_pr(self):
         api = FakeApi(verified=False)
         with self.assertRaises(publish.PublishError) as caught:
             self.run_publish(api)
@@ -174,15 +324,70 @@ class PublishFlowTests(unittest.TestCase):
         self.assertIn(('DELETE', 'git/refs/heads/opencode/issue7-1-1'), api.methods())
         self.assertNotIn(('POST', 'pulls'), api.methods())
 
-    def test_commit_by_wrong_identity_is_rejected(self):
-        with self.assertRaises(publish.PublishError):
-            self.run_publish(FakeApi(login='AhmedMahmoud2222'))
-
-    def test_base_not_reachable_from_default_stops_before_any_write(self):
-        api = FakeApi(compare='diverged')
-        with self.assertRaises(publish.PublishError):
+    def test_new_branch_unverified_and_undeletable_is_reported_as_partial(self):
+        api = FakeApi(verified=False, delete_fails=True)
+        with self.assertRaises(publish.PartialPublication) as caught:
             self.run_publish(api)
-        self.assertNotIn(('POST', 'git/refs'), api.methods())
+        self.assertEqual(caught.exception.branch, 'opencode/issue7-1-1')
+        self.assertEqual(caught.exception.commit, NEW)
+
+    def test_new_branch_pr_creation_failure_is_reported_as_partial(self):
+        api = FakeApi(pulls_fails=True)
+        with self.assertRaises(publish.PartialPublication) as caught:
+            self.run_publish(api)
+        self.assertIn('Draft PR could not be opened', str(caught.exception))
+
+    def test_existing_branch_commits_on_staging_then_fast_forwards_after_verification(self):
+        api = FakeApi()
+        result = self.run_publish(api, env=PR_ENV)
+        self.assertEqual(result['branch'], 'feature/x')
+        self.assertIsNone(result['pr'])
+        order = api.methods()
+        staging = 'opencode/pr9-1-1'
+        graphql = next(c for c in api.calls if c[0] == 'GRAPHQL')[2]['input']
+        self.assertEqual(graphql['branch']['branchName'], staging)  # never committed on the PR branch directly
+        verify_index = order.index(('GET', f'commits/{NEW}'))
+        patch_index = order.index(('PATCH', 'git/refs/heads/feature/x'))
+        self.assertLess(verify_index, patch_index)
+        self.assertEqual(next(c for c in api.calls if c[0] == 'PATCH')[2], {'sha': NEW, 'force': False})
+        self.assertIn(('DELETE', f'git/refs/heads/{staging}'), order)
+        self.assertNotIn(('POST', 'pulls'), order)
+
+    def test_existing_branch_verification_failure_leaves_pr_branch_untouched(self):
+        api = FakeApi(verified=False)
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(api, env=PR_ENV)
+        self.assertNotIn(('PATCH', 'git/refs/heads/feature/x'), api.methods())
+        self.assertIn(('DELETE', 'git/refs/heads/opencode/pr9-1-1'), api.methods())
+
+    def test_existing_branch_commit_by_wrong_identity_is_never_applied(self):
+        api = FakeApi(login='AhmedMahmoud2222')
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(api, env=PR_ENV)
+        self.assertNotIn(('PATCH', 'git/refs/heads/feature/x'), api.methods())
+
+    def test_existing_branch_concurrent_push_fails_fast_forward_without_rewrite(self):
+        api = FakeApi(patch_fails=True)
+        with self.assertRaises(publish.PublishError) as caught:
+            self.run_publish(api, env=PR_ENV)
+        self.assertIn('PR branch unchanged', str(caught.exception))
+        patches = [c for c in api.calls if c[0] == 'PATCH']
+        self.assertEqual(len(patches), 1)
+        self.assertIs(patches[0][2]['force'], False)  # never a forced rewrite
+
+    def test_cleanup_failure_after_success_is_a_warning_not_a_rewrite(self):
+        api = FakeApi(delete_fails=True)
+        result = self.run_publish(api, env=PR_ENV)
+        self.assertTrue(result['warnings'])
+        self.assertTrue(result['published'])
+
+    def test_never_writes_to_default_or_protected_branch(self):
+        with self.assertRaises(publish.PublishError):
+            self.run_publish(FakeApi(), env={**PR_ENV, 'PR_HEAD_REF': 'main'})
+        with self.assertRaises(publish.PublishError):
+            publish.check_branch('issue', 'feature/x', 'main', False)
+        with self.assertRaises(publish.PublishError):
+            publish.check_branch('pr', 'release/1', 'main', True)
 
     def test_empty_plan_publishes_nothing(self):
         api = FakeApi()
@@ -200,49 +405,101 @@ class PublishFlowTests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old)
 
+    def test_main_reports_partial_publication_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, 'a').mkdir()
+            artifact, _root = build_artifact(Path(tmp, 'a'), [('a.txt', 'add', b'x')])
+            Path(tmp, 'a', 'manifest.json').write_text(json.dumps(artifact))
+            out = Path(tmp, 'out')
+            old = dict(os.environ)
+            original = publish.publish
+            try:
+                os.environ.clear()
+                os.environ.update({**ENV, 'ARTIFACT_DIR': str(Path(tmp, 'a')), 'GH_PUBLISH_TOKEN': 'x',
+                                   'GITHUB_OUTPUT': str(out)})
+                publish.publish = lambda *a, **k: (_ for _ in ()).throw(
+                    publish.PartialPublication('x', 'opencode/issue7-1-1', NEW))
+                self.assertEqual(publish.main(), 1)
+                text = out.read_text()
+                self.assertIn('published=partial', text)
+                self.assertIn('branch=opencode/issue7-1-1', text)
+            finally:
+                publish.publish = original
+                os.environ.clear()
+                os.environ.update(old)
+
     def test_api_errors_do_not_leak_tokens(self):
         api = publish.Api('ghs_SECRETTOKENVALUE', 'o/r')
-        try:
+        with self.assertRaises(publish.PublishError) as caught:
             api.call('GET', 'https://127.0.0.1:1/never')
-        except publish.PublishError as error:
-            self.assertNotIn('SECRETTOKENVALUE', str(error))
-        except Exception as error:  # connection error text must not contain it either
-            self.assertNotIn('SECRETTOKENVALUE', str(error))
+        self.assertNotIn('SECRETTOKENVALUE', str(caught.exception))
 
 
 class CollectorTests(unittest.TestCase):
     def git(self, repo, *args):
-        subprocess.run(['git', '-C', repo, *args], check=True, capture_output=True)
+        subprocess.run(['git', '-C', repo, '-c', 'commit.gpgsign=false', *args], check=True, capture_output=True)
 
-    def test_collects_add_modify_delete_and_flags_unsupported(self):
+    def make_repo(self, tmp):
+        repo = os.path.join(tmp, 'repo')
+        os.makedirs(repo)
+        self.git(repo, 'init', '-q')
+        self.git(repo, 'config', 'user.email', 't@example.com')
+        self.git(repo, 'config', 'user.name', 't')
+        for name, body in (('keep.txt', 'one\n'), ('gone.txt', 'bye\n'), ('.env', 'A=1\n'), ('.gitignore', '*.log\n')):
+            Path(repo, name).write_text(body)
+        os.makedirs(os.path.join(repo, '.opencode'))
+        Path(repo, '.opencode', 'cmd.md').write_text('x')
+        self.git(repo, 'add', '-A', '-f')
+        self.git(repo, 'commit', '-qm', 'base')
+        return repo, subprocess.run(['git', '-C', repo, 'rev-parse', 'HEAD'], capture_output=True, text=True,
+                                    check=True).stdout.strip()
+
+    def test_collects_changes_against_sanitized_baseline(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo, out = os.path.join(tmp, 'repo'), os.path.join(tmp, 'out')
-            os.makedirs(repo)
-            self.git(repo, 'init', '-q')
-            self.git(repo, 'config', 'user.email', 't@example.com')
-            self.git(repo, 'config', 'user.name', 't')
-            self.git(repo, 'config', 'commit.gpgsign', 'false')
-            for name, body in (('keep.txt', 'one\n'), ('gone.txt', 'bye\n')):
-                Path(repo, name).write_text(body)
-            self.git(repo, 'add', '-A')
-            self.git(repo, 'commit', '-qm', 'base')
-            base = subprocess.run(['git', '-C', repo, 'rev-parse', 'HEAD'], capture_output=True,
-                                  text=True, check=True).stdout.strip()
-            Path(repo, 'keep.txt').write_text('two\n')
-            Path(repo, 'new.txt').write_text('new\n')
-            Path(repo, 'gone.txt').unlink()
-            os.symlink('keep.txt', os.path.join(repo, 'link'))
-            Path(repo, 'ignored.log').write_text('x')
-            Path(repo, '.gitignore').write_text('*.log\n')
-            manifest = collect.collect(repo, base, out)
+            repo, sha = self.make_repo(tmp)
+            work, state, out = (os.path.join(tmp, n) for n in ('work', 'state', 'out'))
+            meta = sandbox.prepare(repo, work, state, sha, set())
+            excluded = {item['path'] for item in meta['excluded']}
+            self.assertIn('.env', excluded)
+            self.assertIn('.opencode/cmd.md', excluded)
+            self.assertFalse(os.path.exists(os.path.join(work, '.env')))
+            Path(work, 'keep.txt').write_text('two\n')
+            Path(work, 'new.txt').write_text('new\n')
+            Path(work, 'gone.txt').unlink()
+            os.symlink('keep.txt', os.path.join(work, 'link'))
+            Path(work, 'ignored.log').write_text('x')
+            manifest = collect.collect(work, state, out)
             ops = {c['path']: c['op'] for c in manifest['changes']}
-            self.assertEqual(ops['keep.txt'], 'modify')
-            self.assertEqual(ops['new.txt'], 'add')
-            self.assertEqual(ops['gone.txt'], 'delete')
-            self.assertNotIn('ignored.log', ops)
+            self.assertEqual(ops, {'keep.txt': 'modify', 'new.txt': 'add', 'gone.txt': 'delete'})
+            self.assertEqual(manifest['base_sha'], sha)  # the trusted authorized SHA, not a derived value
             self.assertEqual([u['path'] for u in manifest['unsupported']], ['link'])
             with self.assertRaises(publish.PublishError):  # symlink blocks publication
-                publish.validate_manifest(json.loads(Path(out, 'manifest.json').read_text()), out)
+                publish.load_manifest(out)
+
+    def test_excluded_files_are_not_reported_as_deletions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, sha = self.make_repo(tmp)
+            work, state, out = (os.path.join(tmp, n) for n in ('work', 'state', 'out'))
+            sandbox.prepare(repo, work, state, sha, set())
+            manifest = collect.collect(work, state, out)
+            self.assertEqual(manifest['changes'], [])
+
+    def test_agent_planted_git_config_is_never_executed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, sha = self.make_repo(tmp)
+            work, state, out = (os.path.join(tmp, n) for n in ('work', 'state', 'out'))
+            sandbox.prepare(repo, work, state, sha, set())
+            marker = os.path.join(tmp, 'pwned')
+            hook = os.path.join(tmp, 'evil.sh')
+            Path(hook).write_text(f'#!/bin/sh\ntouch {marker}\n')
+            os.chmod(hook, 0o755)
+            os.makedirs(os.path.join(work, '.git', 'hooks'))
+            Path(work, '.git', 'config').write_text(f'[core]\n\tfsmonitor = {hook}\n\thooksPath = {tmp}\n'
+                                                     f'[diff]\n\texternal = {hook}\n')
+            Path(work, '.gitattributes').write_text('* filter=evil diff=evil\n')
+            Path(work, 'keep.txt').write_text('two\n')
+            collect.collect(work, state, out)
+            self.assertFalse(os.path.exists(marker))
 
 
 class SignatureVerifierTests(unittest.TestCase):
