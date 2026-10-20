@@ -1,6 +1,6 @@
 # Issue #106: validated CFD / thermal analysis
 
-Document version: 0.2.0 (M1: dependency verification and architecture handoff; documentation only)
+Document version: 0.2.1 (M1: dependency verification and architecture handoff; documentation only; 0.2.1 records confirmed signature status)
 Supersedes: 0.1.0 (the 15-line planning stub from commit `1b544f3`)
 Status: DRAFT for independent architecture/dependency review. Not accepted.
 
@@ -50,16 +50,16 @@ exists.
 
 ### Signing-policy implications (reported separately from the technical work)
 
-1. The owner reported commit `1b544f3` as unsigned. The GitHub commit API surface available to this session returns no
-   `verification` object, and `git log --format=%G?` reports `N` locally. The local value is not evidence: the checkout has no
-   `gpg.ssh.allowedSignersFile`, so every commit reads `N` or an error here. Signature status of `1b544f3` is therefore
-   unconfirmed by this session.
+1. The GitHub REST commit endpoint (`commit.verification`) reports `1b544f3`: `verified: false`, `reason: unsigned`. The
+   owner's report is confirmed. The same endpoint reports the merge commit `6667c3a712accfecdb394b5729b0248867c65614`
+   and the M1 documentation commit `073bfec86c56e79fef54acf18b7074620e59d02e` as `verified: true`, `reason: valid`
+   (checked 2026-10-20). Local `git log --format=%G?` reads `N` for every commit because the checkout has no
+   `gpg.ssh.allowedSignersFile`; the local value is not evidence.
 2. If branch protection requires verified signatures on every commit of a PR branch, an unsigned `1b544f3` blocks a merge
    commit or rebase merge. A squash merge made in the GitHub web UI carries a GitHub signature and sidesteps the rule. The
    owner decides between that, a documented waiver, or a replacement branch. This increment does none of them.
-3. Commits added in this increment are signed by the environment's signing helper (`gpgsig` header). The helper's public key
-   file in this container is empty, so this session cannot verify them locally. The PR progress comment reports what GitHub
-   shows after publication.
+3. Commits added in this increment are signed by the environment's signing helper (`gpgsig` header) and show as verified on
+   GitHub. The commits that follow this note are verified the same way before the PR comment reports them.
 
 ## B. Dependency readiness matrix
 
