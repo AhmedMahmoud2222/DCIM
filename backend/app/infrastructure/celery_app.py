@@ -7,10 +7,12 @@ be exercised now."""
 from celery import Celery
 
 from app.core.config import get_settings
+from app.infrastructure.registry_bootstep import RegistryLedgerGate
 
 settings = get_settings()
 
 celery_app = Celery("dcim", broker=settings.redis_url, backend=settings.redis_url)
+celery_app.steps["worker"].add(RegistryLedgerGate)
 
 celery_app.conf.update(
     task_serializer="json",
@@ -39,6 +41,13 @@ celery_app.conf.update(
         },
         "prune-collector-nonces-and-heartbeats": {
             "task": "app.infrastructure.tasks.maintenance.prune_collector_nonces_and_heartbeats",
+            "schedule": 3600.0,
+            "options": {"queue": "maintenance"},
+        },
+        # Issue #128 / G4-R: a strict no-op while monitoring_policy.late_replay_horizon_days is NULL. This prunes consumed-key
+        # tombstones only; it is NOT a telemetry compaction runner and never compacts or deletes telemetry.
+        "prune-consumed-telemetry-keys": {
+            "task": "app.infrastructure.tasks.maintenance.prune_consumed_telemetry_keys",
             "schedule": 3600.0,
             "options": {"queue": "maintenance"},
         },

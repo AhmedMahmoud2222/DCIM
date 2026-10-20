@@ -15,6 +15,12 @@ from sqlalchemy import text
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0048_daily_aggregate_exact_sum.py"
 NEW_COLUMNS = {"sum_value", "arithmetic_basis", "legacy_sample_count"}
+G4_CHECKS = {
+    "ck_daily_telemetry_aggregate_arithmetic_basis_allowed",
+    "ck_daily_telemetry_aggregate_basis_has_sum",
+    "ck_daily_telemetry_aggregate_legacy_sample_count_scope",
+    "ck_daily_telemetry_aggregate_exact_sum_within_extremes",
+}
 
 
 def _run_migration(connection, direction):
@@ -111,10 +117,10 @@ async def test_validation_runs_after_a_commit_so_no_exclusive_lock_blocks_reader
         assert seen["read_ok"] and seen["write_ok"]
         assert "AccessExclusiveLock" not in seen["modes"], seen["modes"]
         assert NEW_COLUMNS <= await _columns(conn)
-        states = [row[0] for row in await conn.execute(text(
-            "SELECT convalidated FROM pg_constraint WHERE conrelid = 'daily_telemetry_aggregate'::regclass "
-            "AND conname LIKE 'ck_daily_telemetry_aggregate_%'"))]
-        assert states == [True] * 4
+        states = dict((await conn.execute(text(
+            "SELECT conname, convalidated FROM pg_constraint WHERE conrelid = 'daily_telemetry_aggregate'::regclass "
+            "AND conname = ANY(:names)"), {"names": list(G4_CHECKS)})).all())
+        assert states == dict.fromkeys(G4_CHECKS, True)
         await conn.execute(text("DELETE FROM daily_telemetry_aggregate"))
         await conn.execute(text("DELETE FROM integration WHERE id = :i"), {"i": integration})
         await conn.commit()
@@ -128,8 +134,8 @@ async def test_an_interrupted_upgrade_can_be_run_again(db_engine):
         assert NEW_COLUMNS <= await _columns(conn)
         count = await conn.scalar(text(
             "SELECT count(*) FROM pg_constraint WHERE conrelid = 'daily_telemetry_aggregate'::regclass "
-            "AND conname LIKE 'ck_daily_telemetry_aggregate_%'"))
-        assert count == 4
+            "AND conname = ANY(:names)"), {"names": list(G4_CHECKS)})
+        assert count == len(G4_CHECKS)
 
 
 async def test_populated_downgrade_refuses_once_an_exact_sum_exists_and_history_is_untouched(db_engine):
@@ -138,8 +144,9 @@ async def test_populated_downgrade_refuses_once_an_exact_sum_exists_and_history_
         try:
             integration = await _seed_integration(conn)
             await _aggregate(conn, integration, "2025-08-15")
-            legacy = tuple((await conn.execute(text("SELECT * FROM daily_telemetry_aggregate"))).one())
-            assert legacy[-3:] == (None, None, None)  # the new columns are NULL on a legacy row
+            legacy = tuple((await conn.execute(text(
+                "SELECT sum_value, arithmetic_basis, legacy_sample_count FROM daily_telemetry_aggregate"))).one())
+            assert legacy == (None, None, None)  # named G4 columns remain NULL even after later schema additions
             await _aggregate(conn, integration, "2025-08-16", basis="decimal_exact", total=Decimal("6"))
             with pytest.raises(RuntimeError, match="Cannot downgrade 0048"):
                 await conn.run_sync(_run_migration, "downgrade")

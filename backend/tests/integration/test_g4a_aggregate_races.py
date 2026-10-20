@@ -94,7 +94,7 @@ async def _late(session, arena, value, minute):
     reading = arena["make"](value, minute)
     session.add(reading)
     await session.flush()
-    merged = await merge_late_reading(session, reading, now=NOW, retention_days=365)
+    merged = bool(await merge_late_reading(session, reading, now=NOW, retention_days=365))
     if merged:
         await session.delete(reading)
         await session.flush()

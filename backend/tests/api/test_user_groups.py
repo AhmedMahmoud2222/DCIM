@@ -218,9 +218,12 @@ async def test_selected_rack_scope(client, admin, auth_headers):
     _, headers = await _group_user(client, admin, [gid])
     assert [r["id"] for r in (await client.get("/api/v1/racks", headers=headers)).json()["items"]] == [r1]
     assert (await client.get(f"/api/v1/racks/{r2}", headers=headers)).status_code == 404
-    # A second group granting the whole site widens access (union; 'all' wins).
+    # Scope-only groups do not widen another group's permission (SEC-ARCH-02).
     g2 = await _group(client, admin, sites=[{"site_id": a["site"], "rack_scope": "all"}])
     user, headers = await _group_user(client, admin, [gid, g2])
+    assert (await client.get("/api/v1/racks", headers=headers)).json()["total"] == 1
+    # A source of the SAME permission may widen it: 'all' still wins over selected.
+    await client.put(f"/api/v1/groups/{g2}/permissions", json={"allow": ["rack:read"], "deny": []}, headers=admin)
     assert (await client.get("/api/v1/racks", headers=headers)).json()["total"] == 2
 
 

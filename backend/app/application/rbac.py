@@ -1,6 +1,7 @@
 """RBAC enforcement (§39 of v1.0, §32/§32a). H7 = Option B: Phase 1 enforces permissions
-globally only — RoleAssignment.scope_type/scope_id are populated but never filtered on.
-Every protected route depends on require_permission(), never on frontend hiding (§13 of
+globally for role permissions; data scope comes from group site/rack grants, and a non-global
+RoleAssignment is honoured only inside its own scope (access_control.scoped_role_is_contained,
+SEC-ARCH-01). Every protected route depends on require_permission(), never on frontend hiding (§13 of
 the Phase 1 prompt).
 
 Phase 10A PR-2 (docs/superpowers/specs/2026-09-23-phase-10a-asset-catalog-designer-
@@ -11,13 +12,13 @@ permission and Administrator role membership, not permission alone — see
 `require_catalog_administrator()`'s own docstring below for why this is a narrowly scoped
 exception, not a new general mechanism."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.application.access_control import AccessScope, load_effective_access
+from app.application.access_control import EMPTY_SCOPE, AccessScope, load_effective_access
 from app.core.errors import ForbiddenError
 from app.domain.auth.models import User
 
@@ -222,15 +223,26 @@ class AuthContext:
     user: User
     permission_codes: frozenset[str]
     role_names: frozenset[str]
-    """Every Role.name the user is assigned to, independent of that role's current
+    """Every Role.name the user is assigned to that is in force (a non-global assignment outside its
+    scope is not, see access_control.scoped_role_is_contained), independent of that role's current
     permission grants — deliberately not derived by joining through RolePermission,
     since a role stripped of every permission would then vanish from this set even
     though the user is still formally assigned to it (spec §9.1)."""
     scope: AccessScope = AccessScope(unrestricted=False)
-    """Site/rack data scope (see app/application/access_control.py). Unrestricted for
-    every user holding a global role, so pre-existing users are unaffected. The default is
-    the empty restricted scope so a context built without a scope fails closed."""
+    """Request scope selected by require_permission(code). Before that selection it is
+    aggregate reach; secondary gates must use scope_for(their_own_code). A context
+    missing permission scopes fails closed rather than inheriting global reach."""
     inactive_permissions: frozenset[str] = frozenset()
+    permission_scopes: dict[str, AccessScope] = field(default_factory=dict)
+    aggregate_scope: AccessScope = EMPTY_SCOPE
+
+    def scope_for(self, code: str, *, include_inactive: bool = False) -> AccessScope:
+        if code not in self.permission_codes and not (include_inactive and code in self.inactive_permissions):
+            return EMPTY_SCOPE
+        return self.permission_scopes.get(code, EMPTY_SCOPE)
+
+    def for_permission(self, code: str) -> "AuthContext":
+        return replace(self, scope=self.scope_for(code))
 
     def has_permission(self, code: str) -> bool:
         return code in self.permission_codes
@@ -251,6 +263,8 @@ async def get_auth_context(
         role_names=access.role_names,
         scope=access.scope,
         inactive_permissions=access.inactive_permissions,
+        permission_scopes=access.permission_scopes,
+        aggregate_scope=access.scope,
     )
 
 
@@ -258,7 +272,7 @@ def require_permission(code: str):
     async def _dependency(ctx: AuthContext = Depends(get_auth_context)) -> AuthContext:
         if not ctx.has_permission(code):
             raise ForbiddenError(f"Missing required permission: {code}")
-        return ctx
+        return ctx.for_permission(code)
 
     return _dependency
 
@@ -286,6 +300,6 @@ def require_catalog_administrator(code: str):
             raise ForbiddenError(f"Missing required permission: {code}")
         if not ctx.has_role("Administrator"):
             raise ForbiddenError(f"'{code}' additionally requires Administrator role membership.")
-        return ctx
+        return ctx.for_permission(code)
 
     return _dependency

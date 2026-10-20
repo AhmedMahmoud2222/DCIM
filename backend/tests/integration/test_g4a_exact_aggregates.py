@@ -60,7 +60,7 @@ async def world(db_session):
             reading = make(v, day_at(day, start_minute + i))
             db_session.add(reading)
             await db_session.flush()
-            ok = await merge_late_reading(db_session, reading, now=NOW, retention_days=retention_days)
+            ok = bool(await merge_late_reading(db_session, reading, now=NOW, retention_days=retention_days))
             merged.append(ok)
             if ok:
                 await db_session.delete(reading)

@@ -8,7 +8,7 @@ from the MVP `TelemetryReading` pipeline above)."""
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation, localcontext
 
 import structlog
 from sqlalchemy import select
@@ -46,8 +46,33 @@ from app.domain.telemetry.registry import (
     UnknownMetric,
     UnknownRegistryVersion,
     UnknownUnit,
-    convert_to_canonical,
+    convert_value,
+    registry_snapshot,
+    validate_metric_unit,
+    validate_metric_value,
 )
+
+
+def canonical_storage_value(
+    metric: str, raw_value: Decimal, source_unit: str, source_scale: Decimal, registry_version: str,
+) -> tuple[Decimal, str]:
+    """One pinned conversion, numeric storage validation, then metric semantics."""
+    snapshot = registry_snapshot(registry_version)
+    with localcontext(Context(prec=snapshot.decimal_precision, rounding=snapshot.rounding)):
+        scaled_value = ensure_storable(raw_value * source_scale, "scaled value")
+        normalized_unit = validate_metric_unit(metric, source_unit, registry_version=registry_version)
+        definition = snapshot.metrics[metric]
+        try:
+            converted = convert_value(
+                scaled_value, normalized_unit, definition.canonical_unit, registry_version=registry_version,
+            )
+        except InvalidOperation as error:
+            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
+        # Numeric storage failures keep their existing error code even when a value
+        # also violates a v2 physical domain.
+        stored_value = ensure_storable(converted, "canonical value")
+        validate_metric_value(metric, stored_value, registry_version=registry_version)
+        return stored_value, definition.canonical_unit
 
 
 def exact_decimal(value: float | int | Decimal | str) -> Decimal:
@@ -241,17 +266,10 @@ async def ingest_reading(
         stored_unit = revision.source_unit
         registry_version = None
     else:
-        ensure_storable(raw_value * source_scale_value, "scaled value")
-        try:
-            canonical = convert_to_canonical(
-                revision.canonical_metric, raw_value, revision.source_unit,
-                source_scale=source_scale_value, registry_version=revision.registry_version,
-            )
-        except InvalidOperation as error:
-            raise InvalidTelemetryValue("Telemetry canonical value is outside the storable range.") from error
-        stored_value = ensure_storable(canonical.value, "canonical value")
-        stored_unit = canonical.unit
-        registry_version = canonical.registry_version
+        stored_value, stored_unit = canonical_storage_value(
+            revision.canonical_metric, raw_value, revision.source_unit, source_scale_value, revision.registry_version,
+        )
+        registry_version = revision.registry_version
     received_at = datetime.now(UTC)
     statement = (
         insert(TelemetryReading)
@@ -286,19 +304,25 @@ async def ingest_reading(
     )
     reading_id = (await db.execute(statement)).scalar_one_or_none()
     if reading_id is not None:
+        reading = await db.get(TelemetryReading, reading_id)
+        assert reading is not None
+        # A delayed edge replay for a day already compacted is incorporated into the
+        # authoritative daily statistics; occurred_at, never receipt time, chooses it.
+        # The merge is decided before alarm evaluation so that a replay of an already-counted record (Issue #128 / G4-R)
+        # has no alarm side effects. A finite replay horizon raises ReplayHorizonExceeded here, which the caller's savepoint
+        # turns into a rejection of this record alone.
+        from app.application.telemetry_retention import LateMergeOutcome, merge_late_reading
+
+        outcome = await merge_late_reading(db, reading)
+        if outcome is LateMergeOutcome.DUPLICATE:
+            await db.delete(reading)  # its key was consumed earlier; the sample is already counted
+            return TelemetryIngestResult(reading_id=None, duplicate=True)
         # The explicit application boundary prevents the telemetry ORM domain from
         # depending on alarm persistence while retaining one transaction.
         from app.application.alarm_service import evaluate_reading
 
-        reading = await db.get(TelemetryReading, reading_id)
-        assert reading is not None
         await evaluate_reading(db, reading)
-        # A delayed edge replay for a day already compacted is incorporated into the
-        # authoritative daily statistics; occurred_at, never receipt time, chooses it.
-        from app.application.telemetry_retention import merge_late_reading
-
-        merged = await merge_late_reading(db, reading)
-        if merged:
+        if outcome is LateMergeOutcome.MERGED:
             await db.delete(reading)  # aggregate update is in the same transaction
     return TelemetryIngestResult(reading_id=reading_id, duplicate=reading_id is None)
 

@@ -668,6 +668,8 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
                 catalog_model_revision_id=clone.id, stable_key=metric.stable_key, protocol=metric.protocol,
                 protocol_other_label=metric.protocol_other_label, metric_name=metric.metric_name, oid=metric.oid,
                 value_type=metric.value_type, unit=metric.unit, scale=metric.scale, transform=metric.transform,
+                registry_metric=metric.registry_metric, registry_version=metric.registry_version,
+                threshold_unit=metric.threshold_unit,
                 offset=metric.offset, default_collection_interval_seconds=metric.default_collection_interval_seconds,
                 default_warning_threshold=metric.default_warning_threshold,
                 default_critical_threshold=metric.default_critical_threshold, sort_order=metric.sort_order,

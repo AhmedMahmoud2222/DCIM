@@ -3,31 +3,75 @@
 import base64
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import acknowledge_alarm
+from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
 from app.domain.alarm.models import ALARM_STATUSES, RULE_TYPES, Alarm, AlarmRule
-from app.domain.telemetry.registry import METRIC_REGISTRY, REGISTRY_VERSION, convert_to_presentation
+from app.domain.telemetry.models import TelemetryReading
+from app.domain.telemetry.registry import REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
 
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 
 
 class AlarmRuleIn(BaseModel):
+    registry_version: str = REGISTRY_VERSION
     integration_id: uuid.UUID
     metric: str = Field(max_length=64)
     rule_type: str
     threshold: float | None = None
     name: str = Field(max_length=128)
+
+
+class AlarmRuleUpdateIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=2048)
+    expected_updated_at: AwareDatetime
+
+    @field_validator("reason")
+    @classmethod
+    def nonblank_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A nonblank reason is required.")
+        return value.strip()
+
+
+class AlarmRuleResolveIn(AlarmRuleUpdateIn):
+    unit: str = Field(min_length=1, max_length=32)
+
+
+class AlarmRuleOut(BaseModel):
+    id: uuid.UUID
+    integration_id: uuid.UUID
+    metric: str
+    rule_type: str
+    threshold: float | None
+    unit: str | None
+    registry_version: str | None
+    enabled: bool
+    name: str
+    updated_at: datetime
+    unit_status: str
+    needs_attention: bool
+    blocked_notified_at: datetime | None
+    unit_resolved_by: uuid.UUID | None
+    unit_resolved_at: datetime | None
+    unit_resolution_reason: str | None
+
+
+class AlarmRuleResolutionOut(AlarmRuleOut):
+    retained_blocked_window_readings: int
+    blocked_window_count_complete: bool = False
+    retroactive_evaluation: bool = False
 
 
 class AlarmOut(BaseModel):
@@ -59,11 +103,19 @@ async def create_alarm_rule(
         from app.core.errors import ApiError
 
         raise ApiError(status_code=422, title="Invalid alarm rule", detail="Rule type and threshold are inconsistent.")
-    definition = METRIC_REGISTRY.get(body.metric)
+    try:
+        definition = registry_snapshot(body.registry_version).metrics.get(body.metric)
+        if definition is not None:
+            validate_metric_rule(body.metric, body.rule_type,
+                                 Decimal(str(body.threshold)) if body.threshold is not None else None,
+                                 definition.canonical_unit, registry_version=body.registry_version)
+    except ValueError as error:
+        from app.core.errors import ApiError
+        raise ApiError(status_code=422, title="Invalid alarm semantics", detail=str(error)) from error
     if definition is None:
         from app.core.errors import ApiError
         raise ApiError(status_code=422, title="Invalid alarm metric", detail="Metric is not in the active registry.")
-    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit, registry_version=REGISTRY_VERSION,
+    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit,
                      **body.model_dump())
     db.add(rule)
     await db.flush()
@@ -86,6 +138,77 @@ async def create_alarm_rule(
     )
     await db.commit()
     return {"id": rule.id}
+
+
+@router.get("/rules", response_model=list[AlarmRuleOut])
+async def list_alarm_rules(
+    needs_attention: bool = False, integration_id: uuid.UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:read")),
+) -> list[AlarmRuleOut]:
+    stmt = select(AlarmRule).order_by(AlarmRule.id).limit(limit).offset(offset)
+    if needs_attention:
+        stmt = stmt.where(AlarmRule.enabled.is_(True), AlarmRule.unit.is_(None))
+    if integration_id is not None:
+        stmt = stmt.where(AlarmRule.integration_id == integration_id)
+    return [_rule_out(row) for row in (await db.execute(stmt)).scalars().all()]
+
+
+async def _locked_rule(db: AsyncSession, rule_id: uuid.UUID) -> AlarmRule:
+    rule = (await db.execute(select(AlarmRule).where(AlarmRule.id == rule_id).with_for_update()
+                            .execution_options(populate_existing=True))).scalar_one_or_none()
+    if rule is None:
+        raise NotFoundError("Alarm rule not found.")
+    return rule
+
+
+@router.post("/rules/{rule_id}/resolve-unit", response_model=AlarmRuleResolutionOut)
+async def resolve_alarm_rule_unit(
+    rule_id: uuid.UUID, body: AlarmRuleResolveIn,
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:manage")),
+) -> AlarmRuleResolutionOut:
+    rule = await _locked_rule(db, rule_id)
+    await resolve_rule_unit(db, rule=rule, unit=body.unit, reason=body.reason,
+                           expected_updated_at=body.expected_updated_at, actor_user_id=ctx.user.id)
+    count = 0
+    if rule.blocked_notified_at is not None:
+        # Count only retained raw readings received during the block window. Raw
+        # expiry/late compaction can remove rows, so never present this as complete.
+        end = rule.unit_resolved_at or datetime.now(UTC)
+        count = (await db.execute(select(func.count()).select_from(TelemetryReading).where(
+            TelemetryReading.integration_id == rule.integration_id,
+            TelemetryReading.metric == rule.metric,
+            TelemetryReading.received_at >= rule.blocked_notified_at,
+            TelemetryReading.received_at <= end,
+        ))).scalar_one()
+    result = AlarmRuleResolutionOut(**_rule_out(rule).model_dump(), retained_blocked_window_readings=count)
+    await db.commit()
+    return result
+
+
+@router.post("/rules/{rule_id}/disable", response_model=AlarmRuleOut)
+async def disable_alarm_rule(
+    rule_id: uuid.UUID, body: AlarmRuleUpdateIn,
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:manage")),
+) -> AlarmRuleOut:
+    rule = await _locked_rule(db, rule_id)
+    await disable_rule(db, rule=rule, reason=body.reason, expected_updated_at=body.expected_updated_at,
+                       actor_user_id=ctx.user.id)
+    result = _rule_out(rule)
+    await db.commit()
+    return result
+
+
+def _rule_out(rule: AlarmRule) -> AlarmRuleOut:
+    return AlarmRuleOut(
+        id=rule.id, integration_id=rule.integration_id, metric=rule.metric, rule_type=rule.rule_type,
+        threshold=float(rule.threshold) if rule.threshold is not None else None,
+        unit=rule.unit, registry_version=rule.registry_version, enabled=rule.enabled, name=rule.name,
+        updated_at=rule.updated_at, unit_status=rule_unit_status(rule),
+        needs_attention=rule.enabled and rule.unit is None, blocked_notified_at=rule.blocked_notified_at,
+        unit_resolved_by=rule.unit_resolved_by, unit_resolved_at=rule.unit_resolved_at,
+        unit_resolution_reason=rule.unit_resolution_reason,
+    )
 
 
 @router.get("", response_model=list[AlarmOut])

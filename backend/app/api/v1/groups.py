@@ -388,7 +388,7 @@ async def set_permissions(
     await assert_can_modify_group(db, ctx, group_id)
     allow = await resolve_permission_codes(db, body.allow)
     deny = await resolve_permission_codes(db, body.deny)
-    assert_can_grant_permissions(ctx, set(allow))
+    assert_can_grant_permissions(ctx, set(allow), await group_scope(db, group_id))
     before = await _detail(db, group)
 
     for row in (await db.execute(select(UserGroupPermission).where(UserGroupPermission.group_id == group_id))).scalars():
@@ -457,6 +457,14 @@ async def set_site_access(
     await assert_can_modify_group(db, ctx, group_id)
     rack_ids = {r for s in body.sites for r in s.rack_ids}
     await assert_can_grant_sites(db, ctx, [(s.site_id, s.rack_scope, list(s.rack_ids)) for s in body.sites])
+    # Permissions and scope may be configured in separate requests. Validate the
+    # resulting combination even for an empty group, before it can confer access.
+    from app.application.user_admin_service import group_grants, scope_from_entries
+
+    codes, _ = await group_grants(db, group_id)
+    assert_can_grant_permissions(
+        ctx, codes, scope_from_entries([(s.site_id, s.rack_scope, list(s.rack_ids)) for s in body.sites])
+    )
 
     if rack_ids:
         sub = _current_rack_sites().subquery()
