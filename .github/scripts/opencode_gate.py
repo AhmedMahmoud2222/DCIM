@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authorize an OpenCode comment command before any secret is exposed (gate v3.0).
+"""Authorize an OpenCode comment command before any secret is exposed (gate v4.0).
 
 Reads only GitHub-signed event metadata (the webhook payload at GITHUB_EVENT_PATH
 and, for PR conversation comments, the PR object fetched from the GitHub API).
@@ -39,6 +39,17 @@ def parse_allowlist(raw: str) -> set[int]:
             return set()  # malformed list: fail closed
         ids.add(int(item))
     return ids
+
+
+REVIEW_RE = re.compile(r'\Areview(?:\s+(?P<focus>[\s\S]*))?\Z')
+
+
+def split_mode(task: str) -> tuple[str, str]:
+    """`review [focus]` selects the read-only reviewer; anything else is implementation."""
+    match = REVIEW_RE.match(task)
+    if match:
+        return 'review', (match.group('focus') or '').strip()
+    return 'implement', task
 
 
 def extract_task(body: str) -> tuple[str | None, str]:
@@ -106,13 +117,15 @@ def pr_head_ref(event_name: str, event: dict, pr: dict | None) -> str:
     return ref if re.fullmatch(r'[A-Za-z0-9._/-]{1,255}', ref) else ''
 
 
-def binding(event: dict, pr: dict | None, event_sha: str) -> dict:
+def binding(event: dict, pr: dict | None, event_sha: str, mode: str = 'implement') -> dict:
     """Trusted target identity, fixed at authorization time and never taken from artifacts."""
     number = (event.get('issue') or {}).get('number')
     if 'pull_request' in (event.get('issue') or {}):
         return {'kind': 'pr', 'number': number, 'authorized_sha': (pr or {})['head']['sha'],
-                'head_ref': pr_head_ref('issue_comment', event, pr)}
-    return {'kind': 'issue', 'number': number, 'authorized_sha': event_sha, 'head_ref': ''}
+                'head_ref': pr_head_ref('issue_comment', event, pr), 'mode': mode}
+    if mode == 'review':
+        raise ValueError('review applies to pull requests only')
+    return {'kind': 'issue', 'number': number, 'authorized_sha': event_sha, 'head_ref': '', 'mode': mode}
 
 
 def write_output(path: str | None, authorized: bool, reason: str, task: str,
@@ -150,7 +163,8 @@ def main() -> int:
     target = None
     if authorized:
         try:
-            target = binding(event, pr, os.environ.get('GITHUB_SHA', ''))
+            mode, task = split_mode(task)
+            target = binding(event, pr, os.environ.get('GITHUB_SHA', ''), mode)
             if not SHA_RE.match(target['authorized_sha']) or not isinstance(target['number'], int) \
                     or (target['kind'] == 'pr' and not target['head_ref']):
                 raise ValueError('invalid binding')

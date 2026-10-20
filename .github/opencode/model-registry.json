@@ -1,5 +1,5 @@
 {
-  "registry_version": "2.0",
+  "registry_version": "3.0",
   "provider": "opencode",
   "catalog_reference": "anomalyco/opencode packages/core/src/models-dev/snapshot.txt @ 50c5fce (2026-10-20): all six ids present under provider 'opencode' with cost 0",
   "models": {
@@ -80,5 +80,15 @@
       "opencode/deepseek-v4.1-flash-free"
     ]
   },
-  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. All six ship disabled; the owner enables each one after reading the provider terms."
+  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. All six ship disabled; the owner enables each one after reading the provider terms.",
+  "agent_separation": {
+    "enabled": true,
+    "scope": "same_branch_or_pr",
+    "require_distinct_models": true,
+    "require_distinct_sessions": true,
+    "review_read_only": true,
+    "reviewer_selection": "best_verified_capability",
+    "block_if_no_eligible_reviewer": true,
+    "external_acceptance_required": true
+  }
 }

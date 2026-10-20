@@ -1,0 +1,41 @@
+{
+  "matrix_version": "1.0",
+  "purpose": "Reviewer capability evidence per approved model. Scores come only from recorded, reproducible evaluation runs; speed and price are never inputs.",
+  "dimensions": {
+    "code_reasoning_correctness": 0.25,
+    "security_vulnerability_identification": 0.25,
+    "database_transaction_safety": 0.15,
+    "test_quality_regression_detection": 0.15,
+    "cross_module_dependency_analysis": 0.1,
+    "complex_change_inspection": 0.1
+  },
+  "minimum_dimension_score": 0.5,
+  "evaluation_record_format": {
+    "suite": "name of the seeded-defect suite",
+    "suite_version": "version or commit of the suite",
+    "date": "YYYY-MM-DD",
+    "run_url": "https URL of the evaluation run",
+    "results_sha256": "sha256 of the stored results file",
+    "scores": "every dimension, number in [0,1]"
+  },
+  "models": {
+    "opencode/glm-5.3-flash-free": {
+      "evaluation": null
+    },
+    "opencode/deepseek-v4.1-flash-free": {
+      "evaluation": null
+    },
+    "opencode/mimo-v2.6-flash-free": {
+      "evaluation": null
+    },
+    "opencode/minimax-m3.1-flash-free": {
+      "evaluation": null
+    },
+    "opencode/nemotron-3-ultra-free": {
+      "evaluation": null
+    },
+    "opencode/nemotron-3.5-lightning-free": {
+      "evaluation": null
+    }
+  }
+}

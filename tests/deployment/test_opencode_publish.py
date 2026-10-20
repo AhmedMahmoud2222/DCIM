@@ -38,6 +38,7 @@ ENV = {
     'ACTOR_LOGIN': 'AhmedMahmoud2222', 'EXPECT_BOT_LOGIN': BOT,
     'TASK': 'fix the alarm bug\nsecond line', 'MODEL': 'opencode/deepseek-v4.1-flash-free',
     'CATEGORY': 'general', 'ROUTE_REASON': 'category general', 'PR_HEAD_REF': '',
+    'SESSION_ID': 'ses_impl000111',
 }
 PR_ENV = {**ENV, 'EVENT_KIND': 'pr', 'TARGET_NUMBER': '9', 'PR_HEAD_REF': 'feature/x'}
 PLAN = {'base_sha': BASE, 'additions': [{'path': 'a.txt', 'contents': 'eA=='}], 'deletions': []}

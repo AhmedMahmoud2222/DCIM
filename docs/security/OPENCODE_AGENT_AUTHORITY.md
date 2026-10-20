@@ -1,6 +1,6 @@
-# OpenCode agent authority (v3.0)
+# OpenCode agent authority (v3.1)
 
-Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,proxy,guard,collect,publish,verify_signatures}.py`, `.github/opencode/`, and `tests/deployment/test_opencode_*.py`. Delivered through PR #180.
+Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist), and `tests/deployment/test_opencode_*.py`. Delivered through PR #180.
 
 Status: implemented and unit-validated offline. Not live-validated. Not accepted: the independent review of this revision has not run. The previous head (`29740c6`) was rejected by Codex and is not evidence of anything.
 
@@ -17,6 +17,7 @@ Status: implemented and unit-validated offline. Not live-validated. Not accepted
 | P2 failure recovery | Existing PR branches are updated only by non-forced fast-forward after the commit is verified on a staging branch. Residual state is reported as partial. | `publish` |
 | P2 concurrency | Concurrency applies only to jobs that run after authorization. | workflow |
 | P3 schema validation | Strict manifest schema, declared sizes checked against blobs, undeclared artifact files rejected. | `validate_manifest` |
+| Separation rule (added request) | Distinct reviewer model and session, read-only reviewer, evidence-based reviewer ranking, `REVIEW_BLOCKED`, commit-bound COMMENT review, staleness. | see "Implementer-reviewer separation" |
 
 ## Architecture
 
@@ -59,6 +60,34 @@ Execution isolation (not only OpenCode permissions):
 - Collection runs against a runner-owned baseline git dir with the sandbox as a bare work tree, so no `.git` content the agent plants is consulted. A test plants a `core.fsmonitor` hook and checks it never runs.
 
 Not covered: a model can still send what it reads from the sanitized copy to the OpenCode endpoint, which is the point of using it. Free-model terms decide what happens to that data (see below).
+
+## Implementer-reviewer separation
+
+Rule IMPLEMENTER_REVIEWER_SEPARATION applies when OpenCode implements and reviews on the same branch or PR. It is configured by `agent_separation` in the model registry. Every field is enforced in code and the registry may not weaken any of them: a missing, extended or altered policy blocks all routing, including implementation routing.
+
+| Field | Enforced by |
+| --- | --- |
+| `enabled`, `scope: same_branch_or_pr` | implementer records are read from the PR being reviewed |
+| `require_distinct_models` | `check_separation`; the selector also excludes every model that implemented on the PR |
+| `require_distinct_sessions` | `check_separation`; the guard records the OpenCode session id, a missing id fails the run |
+| `review_read_only` | review config denies edit tools, the work tree is `root`-owned and `a-w`, and `verify-readonly` fails on any change |
+| `reviewer_selection: best_verified_capability` | `select_reviewer` ranks only on recorded evaluation evidence |
+| `block_if_no_eligible_reviewer` | no eligible reviewer produces `REVIEW_BLOCKED` and a PR comment |
+| `external_acceptance_required` | every review states it is not an approval; `acceptance_status` never returns accepted |
+
+Flow. `/oc <task>` implements (existing path). The publisher writes the implementer into the signed commit as trailers: `OpenCode-Model`, `OpenCode-Session`, `OpenCode-Run`, `OpenCode-Mode: implement`, and posts a comment naming implementer model, session, branch and commit. `/oc review [focus]`, on a PR only, starts the review path: the gate fixes the PR head as the reviewed commit; the review job reads implementer records from GitHub-verified commits authored by the App bot (forged trailers on other commits are ignored), selects a reviewer, and runs it as a new OpenCode session in the same loopback-only sandbox with all edit tools denied. Chaining implementation into review automatically is not done: the owner issues both commands.
+
+Reviewer choice. A model qualifies only if it passes the implementation requirements (terms verified, repository code approved, healthy, in the live catalog), did not implement on this PR, and has a complete evaluation record in `.github/opencode/reviewer-capability-matrix.json`. Among those the highest weighted score wins; ties go to the stronger weakest dimension, then the model id. Weights follow the requested priorities: correctness 0.25, security 0.25, database and transaction safety 0.15, test quality and regression detection 0.15, cross-module dependencies 0.10, complex-change inspection 0.10. A record needs suite, suite version, date, an https run URL, a results hash and a score for every dimension, with each score at least `minimum_dimension_score` (0.5). Speed, latency and price are not inputs, and extra fields invalidate a record. The same provider can supply both models; only the model id and session matter.
+
+No model has evaluation evidence yet, so the matrix ships empty and every review ends in `REVIEW_BLOCKED`. I have not run an evaluation and the matrix does not claim any model is better. Evaluation protocol for the owner: build a seeded-defect corpus (changes with known planted defects across the six dimensions, kept out of the repo's production paths), run each candidate through the same sandbox in review mode, score the fraction of planted defects found with the right severity and file, store the raw results, and enter the scores with the results hash and run URL through a normal PR.
+
+Review output. The reviewer ends with one JSON block. The trusted publisher validates it (severity, affected files, evidence required for critical and high, recommendation), strips mentions, hidden markers and slash commands, and recomputes the verdict: any critical or high finding makes it `BLOCKING_FINDINGS` whatever the model claimed; an approval-style verdict is rejected. It posts one PR review with event `COMMENT` and `commit_id` set to the reviewed commit, containing implementer model, session, commit and branch, reviewer model and session, findings, and the verification evidence the reviewer reported (not re-run by the publisher). The review job and reviewer have no merge, approval or branch write path; its App token is `pull-requests: write` only.
+
+Staleness. The review marker carries the reviewed commit and must match GitHub's own `commit_id` for the review. `acceptance_status` returns `CURRENT` only when the newest OpenCode review covers exactly the PR head, otherwise `STALE`, and never `accepted`. When a new OpenCode implementation commit lands on a PR that has an earlier OpenCode review, the publisher's comment says the review is stale. A commit by anyone else needs a new review request; a review cannot be dismissed through the API because it is a COMMENT review.
+
+Confidentiality. The reviewer sees the sanitized copy plus `REVIEW/diff.patch`. The review is blocked if the diff touches credential-like or agent-configuration files, contains secret-like text, exceeds 1.5 MB, or if the PR head is not the authorized commit.
+
+External acceptance by Codex or Jules is unchanged and still required before merge.
 
 ## Model eligibility
 
@@ -119,7 +148,7 @@ Rotation: replace `OPENCODE_APP_PRIVATE_KEY` and delete the old App key; rotate 
 3. Variables: `OPENCODE_APP_CLIENT_ID`, `OPENCODE_APP_SLUG`, `OPENCODE_ALLOWED_ACTOR_IDS` (last).
 4. Confirm the ruleset requires PRs, status checks and verified signatures, and that the App is not a bypass actor. Put `.github/` and `docs/security/` under CODEOWNERS.
 
-Do not install or activate the production App until the independent review passes and the activation plan is accepted.
+Reviews stay `REVIEW_BLOCKED` until the owner fills the capability matrix. Do not install or activate the production App until the independent review passes and the activation plan is accepted.
 
 ## First activation (disposable)
 
@@ -131,9 +160,9 @@ Do not install or activate the production App until the independent review passe
 
 ## Validation status
 
-Offline, local: 139 tests in `tests/deployment` pass (105 in the four OpenCode files, up from 58). They include reproductions of the three publisher failures from the review (failed generation, unrelated branch with mismatched PR number, forged artifact baseline), the confidentiality cases, guard failure modes (provider error, timeout, crash, cancellation signal, truncation, garbage output), proxy header injection with a stub upstream, router eligibility, and schema attacks. Ten deliberate code mutations of the key checks were each caught by a test. `actionlint` 1.7.12 and `shellcheck` 0.11.0 report nothing on the workflows.
+Offline, local: 182 tests in `tests/deployment` pass (148 in the five OpenCode test files, up from 58). They include reproductions of the three publisher failures from the review (failed generation, unrelated branch with mismatched PR number, forged artifact baseline), the confidentiality cases, guard failure modes (provider error, timeout, crash, cancellation signal, truncation, garbage output), proxy header injection with a stub upstream, router eligibility, and schema attacks. Twenty-four deliberate code mutations of the key checks (publisher binding, guard contract, router eligibility, secret scan, separation, read-only review, staleness) were each caught by a test. `actionlint` 1.7.12 and `shellcheck` 0.11.0 report nothing on the workflows.
 
-Not validated, because it needs a runner, secrets or your App: `useradd`, `iptables` owner rules, the proxy against the real endpoint, OpenCode honoring the managed config path, `OPENCODE_DISABLE_*` flags and permission schema in v1.19.3, `opencode run` exit and event behavior in a real run, the installer's trust (it downloads from `opencode.ai`; the version is pinned, the script is not checksummed), GitHub's signature on API-created commits, CI triggering on bot-created PRs, and ruleset behavior. Any of these failing stops the run without publication; none can publish by failing.
+Not validated, because it needs a runner, secrets or your App (the review path adds: reviewer output format from a real model, `gh api` pagination and diff media type, and a review run end to end): `useradd`, `iptables` owner rules, the proxy against the real endpoint, OpenCode honoring the managed config path, `OPENCODE_DISABLE_*` flags and permission schema in v1.19.3, `opencode run` exit and event behavior in a real run, the installer's trust (it downloads from `opencode.ai`; the version is pinned, the script is not checksummed), GitHub's signature on API-created commits, CI triggering on bot-created PRs, and ruleset behavior. Any of these failing stops the run without publication; none can publish by failing.
 
 ## Remaining risks
 

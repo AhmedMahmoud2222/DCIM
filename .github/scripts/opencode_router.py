@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic OpenCode model router (router v2.0).
+"""Deterministic OpenCode model router (router v3.0).
 
 Selects one model from the version-controlled registry. No LLM is consulted and
 nothing in the task text can name a provider or model: text is only matched
@@ -57,6 +57,23 @@ class RoutingError(Exception):
     pass
 
 
+# IMPLEMENTER_REVIEWER_SEPARATION: every field is enforced by opencode_review.py. The
+# registry may not weaken any of them; a missing or altered policy blocks all routing.
+SEPARATION_POLICY = {
+    'enabled': True, 'scope': 'same_branch_or_pr', 'require_distinct_models': True,
+    'require_distinct_sessions': True, 'review_read_only': True,
+    'reviewer_selection': 'best_verified_capability', 'block_if_no_eligible_reviewer': True,
+    'external_acceptance_required': True,
+}
+
+
+def separation_policy(registry: dict) -> dict:
+    policy = registry.get('agent_separation')
+    if not isinstance(policy, dict) or policy != SEPARATION_POLICY:
+        raise RoutingError('agent_separation policy is missing or weakened; routing is blocked')
+    return policy
+
+
 def classify(task: str, hint_paths: list[str] | None = None) -> tuple[str, str]:
     text = (task or '').lower()
     scores = {name: 0 for name in CATEGORIES}
@@ -84,6 +101,7 @@ def load_registry(registry: dict) -> dict:
     for model_id in models:
         if model_id not in APPROVED_MODELS or not model_id.endswith('-free'):
             raise RoutingError(f'registry lists a model outside the approved free allowlist: {model_id}')
+    separation_policy(registry)
     routes = registry.get('routes') or {}
     if set(routes) != set(CATEGORIES):
         raise RoutingError('registry routes must cover exactly the defined categories')

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the confidentiality boundary for the sandboxed agent (sandbox v1.0).
+"""Build the confidentiality boundary for the sandboxed agent (sandbox v2.0).
 
 The model can only see (a) the fixed instruction plus the authorized command text,
 and (b) files the agent reads from a sanitized copy of the repository. This module
@@ -12,8 +12,8 @@ runner user, never executes repository code, and never prints file contents.
       when high-confidence secrets remain. Writes STATE_DIR/baseline.git (runner-owned
       git dir used later to diff DEST without trusting any .git inside DEST) and
       STATE_DIR/baseline.json.
-  config MODEL PORT
-      print the managed OpenCode configuration JSON.
+  config MODEL PORT [MODE]
+      print the managed OpenCode configuration JSON (MODE implement|review).
 """
 from __future__ import annotations
 
@@ -126,8 +126,13 @@ def prepare(src: str, dest: str, state: str, authorized_sha: str, allowlist: set
     return meta
 
 
-def agent_config(model: str, port: int) -> dict:
-    """Managed configuration. Written to /etc/opencode so project config cannot override it."""
+def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
+    """Managed configuration. Written to /etc/opencode so project config cannot override it.
+
+    Review mode denies every editing tool; the work tree is also made read-only at the OS level.
+    """
+    if mode not in ('implement', 'review'):
+        raise SandboxError('unknown agent mode')
     if not re.fullmatch(r'opencode/[a-z0-9.-]+-free', model):
         raise SandboxError('model is not an approved free OpenCode model identifier')
     return {
@@ -140,7 +145,7 @@ def agent_config(model: str, port: int) -> dict:
             'baseURL': f'http://127.0.0.1:{int(port)}/inference/openai/v1', 'apiKey': 'sandbox-placeholder'}}},
         'permission': {
             'read': {'*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow'},
-            'edit': 'allow', 'glob': 'allow', 'grep': 'allow', 'list': 'allow', 'bash': 'allow',
+            'edit': 'deny' if mode == 'review' else 'allow', 'glob': 'allow', 'grep': 'allow', 'list': 'allow', 'bash': 'allow',
             'task': 'deny', 'webfetch': 'deny', 'websearch': 'deny',
             'external_directory': 'deny', 'doom_loop': 'deny',
         },
@@ -157,8 +162,8 @@ def main(argv: list[str]) -> int:
             meta = prepare(argv[2], argv[3], argv[4], argv[5], allowlist)
             print(f"sandbox: copied {meta['copied']} files, excluded {len(meta['excluded'])}")
             return 0
-        if len(argv) == 4 and argv[1] == 'config':
-            print(json.dumps(agent_config(argv[2], int(argv[3]))))
+        if len(argv) in (4, 5) and argv[1] == 'config':
+            print(json.dumps(agent_config(argv[2], int(argv[3]), argv[4] if len(argv) == 5 else 'implement')))
             return 0
     except (SandboxError, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(f'::error::sandbox preparation stopped: {error}')

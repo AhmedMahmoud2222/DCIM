@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the sandboxed agent and decide whether generation truly succeeded (guard v1.0).
+"""Run the sandboxed agent and decide whether generation truly succeeded (guard v2.0).
 
 Uses `opencode run --format json`, which only generates in the working tree: it makes
 no commit, push, PR or comment. Generation counts as successful only when ALL hold:
@@ -14,7 +14,9 @@ This script runs as the runner user; the agent runs as a different OS user and c
 modify it or its result file.
 
 Usage: opencode_guard.py RESULT_JSON MODEL CONFIG_JSON AGENT_HOME WORKDIR TIMEOUT_MIN
-Task text is read from the TASK environment variable.
+Task text is read from the TASK environment variable. GUARD_MODE=review selects the
+read-only reviewer preface and GUARD_TEXT_OUT receives the final assistant text.
+The agent session id is recorded so implementer and reviewer sessions can be compared.
 """
 from __future__ import annotations
 
@@ -30,7 +32,44 @@ PREFACE = (
     'the network, and do not read or write outside the working directory. Stop when the change '
     'is complete and describe what you changed. Task:\n'
 )
+REVIEW_PREFACE = (
+    'You are an independent code reviewer in a read-only sandbox. The change under review is in '
+    'REVIEW/diff.patch; inspect it, the surrounding source, the tests and the security '
+    'implications yourself. Do not modify any file and do not try to reach the network. Check '
+    'correctness, security, database and transaction safety, test quality and cross-module '
+    'effects. Finish with ONE fenced json block of this shape and nothing after it: '
+    '{"verdict": "no_blocking_findings" | "blocking_findings", "summary": "...", "findings": '
+    '[{"severity": "critical|high|medium|low|info", "title": "...", "files": ["path"], '
+    '"evidence": "reproduction or code evidence", "recommendation": "..."}], '
+    '"verification": [{"command": "...", "result": "..."}]}. Never approve the change. Focus:\n'
+)
 AGENT_USER = 'ocagent'
+SESSION_RE = re.compile(r'^[A-Za-z0-9_-]{6,80}$')
+
+
+def extract_session(lines: list[str]) -> str:
+    for line in lines:
+        try:
+            value = json.loads(line).get('sessionID')
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(value, str) and SESSION_RE.match(value):
+            return value
+    return ''
+
+
+def extract_final_text(lines: list[str]) -> str:
+    texts = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get('type') == 'text':
+            text = (event.get('part') or {}).get('text')
+            if isinstance(text, str):
+                texts.append(text)
+    return texts[-1] if texts else ''
 
 
 def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[str, str]:
@@ -61,7 +100,8 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
     return 'success', ''
 
 
-def build_command(model: str, config: str, home: str, workdir: str, timeout_min: int, task: str) -> list[str]:
+def build_command(model: str, config: str, home: str, workdir: str, timeout_min: int, task: str,
+                  mode: str = 'implement') -> list[str]:
     env = {
         'HOME': home, 'XDG_CONFIG_HOME': f'{home}/.config', 'XDG_DATA_HOME': f'{home}/.local/share',
         'XDG_CACHE_HOME': f'{home}/.cache', 'XDG_STATE_HOME': f'{home}/.local/state',
@@ -72,7 +112,8 @@ def build_command(model: str, config: str, home: str, workdir: str, timeout_min:
     assignments = [f'{key}={value}' for key, value in env.items()]
     return ['sudo', '-n', '-u', AGENT_USER, 'timeout', '--kill-after=30s', f'{timeout_min}m',
             'env', '-i', *assignments,
-            'opencode', 'run', '--format', 'json', '--model', model, '--dir', workdir, '--', PREFACE + task]
+            'opencode', 'run', '--format', 'json', '--model', model, '--dir', workdir, '--',
+            (REVIEW_PREFACE if mode == 'review' else PREFACE) + task]
 
 
 def main(argv: list[str]) -> int:
@@ -82,7 +123,8 @@ def main(argv: list[str]) -> int:
     result_path, model, config_path, home, workdir, timeout_min = argv[1:]
     with open(config_path, encoding='utf-8') as handle:
         config = handle.read().strip()
-    command = build_command(model, config, home, workdir, int(timeout_min), os.environ.get('TASK', ''))
+    mode = os.environ.get('GUARD_MODE', 'implement')
+    command = build_command(model, config, home, workdir, int(timeout_min), os.environ.get('TASK', ''), mode)
     lines: list[str] = []
     timed_out = False
     try:
@@ -95,12 +137,18 @@ def main(argv: list[str]) -> int:
         subprocess.run(['sudo', '-n', 'pkill', '-KILL', '-u', AGENT_USER], check=False)
         exit_code, timed_out = None, True
     status, reason = evaluate(lines, exit_code, timed_out)
+    session = extract_session(lines) if status == 'success' else ''
+    if status == 'success' and not session:
+        status, reason = 'failed', 'no_session_identity'
+    if status == 'success' and os.environ.get('GUARD_TEXT_OUT'):
+        with open(os.environ['GUARD_TEXT_OUT'], 'w', encoding='utf-8') as handle:
+            handle.write(extract_final_text(lines))
     with open(result_path, 'w', encoding='utf-8') as handle:
-        json.dump({'status': status, 'reason': reason, 'events': len(lines)}, handle)
+        json.dump({'status': status, 'reason': reason, 'events': len(lines), 'session_id': session}, handle)
     out = os.environ.get('GITHUB_OUTPUT')
     if out:
         with open(out, 'a', encoding='utf-8') as handle:
-            handle.write(f'generation={status}\ngeneration_reason={reason}\n')
+            handle.write(f'generation={status}\ngeneration_reason={reason}\nsession_id={session}\n')
     print(f'opencode guard: generation={status} reason={reason or "-"} events={len(lines)}')
     return 0 if status == 'success' else 1
 

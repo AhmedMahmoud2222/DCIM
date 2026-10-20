@@ -132,9 +132,9 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
 class GuardTests(unittest.TestCase):
     @staticmethod
     def ok_events():
-        return [json.dumps({'type': 'step_start', 'part': {}}),
-                json.dumps({'type': 'text', 'part': {'text': 'done'}}),
-                json.dumps({'type': 'step_finish', 'part': {'reason': 'stop'}})]
+        return [json.dumps({'type': 'step_start', 'sessionID': 'ses_abc123XYZ', 'part': {}}),
+                json.dumps({'type': 'text', 'sessionID': 'ses_abc123XYZ', 'part': {'text': 'done'}}),
+                json.dumps({'type': 'step_finish', 'sessionID': 'ses_abc123XYZ', 'part': {'reason': 'stop'}})]
 
     def test_only_a_clean_complete_run_is_success(self):
         self.assertEqual(guard.evaluate(self.ok_events(), 0, False), ('success', ''))

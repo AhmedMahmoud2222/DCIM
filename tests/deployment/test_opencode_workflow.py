@@ -112,9 +112,11 @@ class GateDecisionTests(unittest.TestCase):
     def test_binding_fixes_trusted_baseline_at_authorization(self):
         event = comment_event('/oc x', issue={'number': 5, 'pull_request': {}})
         target = gate.binding(event, pr(), 'd' * 40)
-        self.assertEqual(target, {'kind': 'pr', 'number': 5, 'authorized_sha': HEAD, 'head_ref': 'feature/x'})
+        self.assertEqual(target, {'kind': 'pr', 'number': 5, 'authorized_sha': HEAD, 'head_ref': 'feature/x',
+                                  'mode': 'implement'})
         target = gate.binding(comment_event('/oc x'), None, 'd' * 40)
-        self.assertEqual(target, {'kind': 'issue', 'number': 5, 'authorized_sha': 'd' * 40, 'head_ref': ''})
+        self.assertEqual(target, {'kind': 'issue', 'number': 5, 'authorized_sha': 'd' * 40, 'head_ref': '',
+                                  'mode': 'implement'})
 
     def test_review_comment_events_are_not_privileged(self):
         # pull_request_review_comment runs the workflow file from the PR merge ref,
@@ -184,6 +186,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['publish']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['report']['permissions'], {})
+        self.assertEqual(self.jobs['review']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(self.jobs['review_publish']['permissions'], {'contents': 'read'})
         for job in self.jobs.values():
             for forbidden in ('id-token', 'actions', 'workflows', 'administration', 'deployments'):
                 self.assertNotIn(forbidden, job['permissions'])
@@ -201,16 +205,24 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs['opencode']['environment'], 'opencode-agent')
         self.assertEqual(self.jobs['publish']['environment'], 'opencode-publish')
         self.assertEqual(self.jobs['report']['environment'], 'opencode-publish')
+        self.assertEqual(self.jobs['review']['environment'], 'opencode-agent')
+        self.assertEqual(self.jobs['review_publish']['environment'], 'opencode-publish')
         def used(job):
             return sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(self.jobs[job]))))
         self.assertEqual(used('opencode'), ['OPENCODE_API_KEY'])
         self.assertEqual(used('publish'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertEqual(used('report'), ['OPENCODE_APP_PRIVATE_KEY'])
+        self.assertEqual(used('review'), ['OPENCODE_API_KEY'])
+        self.assertEqual(used('review_publish'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertNotIn('DCIM_GIT_SIGNING_KEY', self.text)
 
     def test_job_ordering_and_authorization_condition(self):
         self.assertEqual(self.jobs['opencode']['needs'], 'gate')
-        self.assertEqual(self.jobs['opencode']['if'], "needs.gate.outputs.authorized == 'true'")
+        self.assertEqual(self.jobs['opencode']['if'],
+                         "needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'implement'")
+        self.assertEqual(self.jobs['review']['needs'], 'gate')
+        self.assertEqual(self.jobs['review']['if'],
+                         "needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'review'")
         self.assertEqual(self.jobs['publish']['needs'], ['gate', 'opencode'])
         condition = self.jobs['publish']['if']
         for required in ("needs.opencode.result == 'success'", "outputs.generation == 'success'",
@@ -221,7 +233,7 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_concurrency_cannot_be_displaced_by_unauthorized_comments(self):
         self.assertNotIn('concurrency', self.wf)
         self.assertNotIn('concurrency', self.jobs['gate'])
-        for name in ('opencode', 'publish'):
+        for name in ('opencode', 'review', 'publish'):
             self.assertIn('group', self.jobs[name]['concurrency'])
             self.assertIs(self.jobs[name]['concurrency']['cancel-in-progress'], False)
 

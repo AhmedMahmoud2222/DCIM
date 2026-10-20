@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish agent changes as one GitHub-signed commit and a Draft PR (publisher v2.0).
+"""Publish agent changes as one GitHub-signed commit and a Draft PR (publisher v3.0).
 
 Runs in a fresh job that never executed agent code. Target identity and the baseline
 come ONLY from trusted workflow values (the gate's outputs and the event). The artifact
@@ -12,7 +12,7 @@ created on a fresh staging branch, verified, and only then fast-forwarded onto t
 branch with a non-forced ref update.
 
 Environment (trusted): GH_PUBLISH_TOKEN (never printed), GITHUB_REPOSITORY, DEFAULT_BRANCH,
-EVENT_KIND (issue|pr), TARGET_NUMBER, AUTHORIZED_SHA, PR_HEAD_REF (pr only),
+EVENT_KIND (issue|pr), TARGET_NUMBER, SESSION_ID, AUTHORIZED_SHA, PR_HEAD_REF (pr only),
 GENERATION_STATUS, RUN_URL, RUN_ID, RUN_ATTEMPT, ACTOR_LOGIN, EXPECT_BOT_LOGIN, TASK, MODEL,
 CATEGORY, ROUTE_REASON; ARTIFACT_DIR for the downloaded artifact.
 """
@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import opencode_review as review  # noqa: E402
 import opencode_sandbox as sandbox  # noqa: E402
 
 MAX_CHANGES = 200
@@ -283,7 +284,8 @@ def publish(api, env: dict, plan: dict, sleep=time.sleep) -> dict:
     headline = 'opencode: ' + (one_line(env['TASK'], 60) or 'automated change')
     body = '\n'.join([
         f"OpenCode-Run: {env['RUN_URL']}", f"OpenCode-Model: {env['MODEL']}",
-        f"OpenCode-Category: {env['CATEGORY']}", f"Requested-By: {one_line(env['ACTOR_LOGIN'], 60)}"])
+        f"OpenCode-Category: {env['CATEGORY']}", f"OpenCode-Session: {env['SESSION_ID']}",
+        'OpenCode-Mode: implement', f"Requested-By: {one_line(env['ACTOR_LOGIN'], 60)}"])
     try:
         data = api.graphql(COMMIT_MUTATION, {'input': {
             'branch': {'repositoryNameWithOwner': env['GITHUB_REPOSITORY'], 'branchName': work_branch},
@@ -331,10 +333,22 @@ def publish(api, env: dict, plan: dict, sleep=time.sleep) -> dict:
                 f'verified commit {sha[:12]} is on branch {work_branch} but the Draft PR could not be opened: {error}',
                 work_branch, sha) from None
     where = f"PR #{result['pr']['number']}" if result['pr'] else f"branch `{result['branch']}`"
+    notes = []
+    if kind == 'pr':  # a new implementation commit voids any earlier OpenCode review
+        try:
+            reviews = api.call('GET', f'pulls/{number}/reviews?per_page=100')
+            prior = review.acceptance_status(reviews, sha, env['EXPECT_BOT_LOGIN'])
+            if prior['status'] == 'STALE':
+                notes.append(f"The earlier OpenCode review of `{prior['reviewed_commit'][:12]}` is now STALE: "
+                             'it does not cover this commit. Request a new review.')
+        except PublishError as error:
+            result['warnings'].append(f'review staleness check failed: {error}')
     try:
-        api.call('POST', f'issues/{number}/comments', {'body': (
-            f"OpenCode published commit `{sha[:12]}` (GitHub-verified) to {where} using "
-            f"`{env['MODEL']}`. It did not merge anything; CI and review remain required.")})
+        api.call('POST', f'issues/{number}/comments', {'body': '\n'.join([
+            f"OpenCode published commit `{sha[:12]}` (GitHub-verified) to {where}. It did not merge anything; "
+            'CI, independent review and external acceptance (Codex or Jules) remain required.', '',
+            f"- Implementer model: `{env['MODEL']}`", f"- Implementer session: `{env['SESSION_ID']}`",
+            f"- Branch: `{result['branch']}`", f"- Commit: `{sha}`", *notes])})
     except PublishError as error:
         result['warnings'].append(f'status comment failed: {error}')
     return result
@@ -354,8 +368,10 @@ def main() -> int:
         env = {key: os.environ[key] for key in (
             'GITHUB_REPOSITORY', 'DEFAULT_BRANCH', 'EVENT_KIND', 'TARGET_NUMBER', 'AUTHORIZED_SHA', 'GENERATION_STATUS',
             'RUN_URL', 'RUN_ID', 'RUN_ATTEMPT', 'ACTOR_LOGIN', 'EXPECT_BOT_LOGIN', 'TASK', 'MODEL', 'CATEGORY',
-            'ROUTE_REASON')}
+            'ROUTE_REASON', 'SESSION_ID')}
         env['PR_HEAD_REF'] = os.environ.get('PR_HEAD_REF', '')
+        if not review.SESSION_RE.match(env['SESSION_ID']):
+            raise PublishError('agent session identity is missing or malformed')
         if env['EVENT_KIND'] not in ('issue', 'pr') or not env['TARGET_NUMBER'].isdigit():
             raise PublishError('invalid event context')
         result = publish(Api(os.environ['GH_PUBLISH_TOKEN'], env['GITHUB_REPOSITORY']), env, plan)
