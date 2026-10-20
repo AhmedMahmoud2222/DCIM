@@ -368,9 +368,17 @@ async def place_pdu(
             detail=f"placement_type must be one of {PLACEMENT_TYPES}",
         )
     validate_rotation_degrees(body.rotation_deg)
+    # Destination-scope check: the room the PDU is being placed into must be visible to
+    # the caller's scope.
     await _visible_room_site(db, ctx, body.room_id)
+    # Source-scope check: a move must not take an asset out of a room/site the caller
+    # cannot see. The current placement (if any) must also be within the caller's scope.
+    current_placement = await get_current_equipment_placement(db, pdu_id)
+    if current_placement is not None:
+        await _visible_room_site(db, ctx, current_placement.room_id)
 
     mounting_method: str | None = None
+    orientation: str | None = None
     if body.placement_type == "rack_mounted":
         if None in (body.rack_id, body.u_start, body.u_end, body.side):
             raise ApiError(
@@ -422,6 +430,10 @@ async def place_pdu(
             raise ApiError(
                 status_code=422, title="Validation Error", detail="The rack is not currently placed in this room."
             )
+        # Vertical 0U discriminator: `orientation` marks this row as a vertical PDU so the
+        # partial unique index (0056) can enforce at most one current vertical placement per
+        # rack + side. The human-readable mounting position rides on `mounting_method`.
+        orientation = "pdu_vertical_0u"
         mounting_method = body.position
     else:
         if body.rack_id is not None or body.u_start is not None or body.u_end is not None:
@@ -443,6 +455,7 @@ async def place_pdu(
             side=body.side,
             rotation_deg=body.rotation_deg,
             mounting_method=mounting_method,
+            orientation=orientation,
             if_match_version=if_match_version,
         )
     except PlacementConflict as exc:
@@ -457,7 +470,8 @@ async def place_pdu(
     except IntegrityError as exc:
         await db.rollback()
         raise ConflictError(
-            detail="That placement conflicts with existing placement constraints (for example overlapping rack units)."
+            detail="That placement conflicts with an existing placement: either the rack units "
+            "overlap (horizontal) or another vertical (0U) PDU already occupies that rack side."
         ) from exc
 
     request_id, correlation_id = _request_ids(request)

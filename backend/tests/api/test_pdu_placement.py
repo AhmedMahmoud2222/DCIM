@@ -21,6 +21,8 @@ from app.domain.location.models import Building, City, Country, Floor, Organizat
 from app.domain.physical.models import Rack
 from app.domain.placement.models import RackPlacement
 from app.domain.power.models import PDU
+from tests.api.test_user_groups import _group, _group_user, _make_site
+from tests.api.test_user_groups import _make_rack as _make_rack_via_api
 
 PASSWORD = "correct horse battery staple"
 
@@ -161,6 +163,38 @@ async def test_place_pdu_vertical_zero_u(client: AsyncClient, db_session, make_u
     assert body["position"] == "left-rear"
 
 
+async def test_vertical_zero_u_collision_is_rejected(client: AsyncClient, db_session, make_user, auth_headers):
+    """A vertical (0U) PDU occupies the full rack height on one side, so a second vertical
+    PDU on the same rack + side must be refused (partial unique index, migration 0056)."""
+    pdu_a = await _seed_pdu_asset(db_session, asset_tag=f"PDU-VA-{uuid.uuid4().hex[:8]}")
+    pdu_b = await _seed_pdu_asset(db_session, asset_tag=f"PDU-VB-{uuid.uuid4().hex[:8]}")
+    room_id = await _seed_site_room(db_session)
+    rack_id = await _make_rack(db_session, room_id=room_id, height_u=42)
+    headers = await auth_headers("Administrator")
+
+    first = await client.post(
+        _url(pdu_a),
+        json=_placement(rack_id=rack_id, u_start=None, u_end=None, side="rear", room_id=room_id, placement_type="other"),
+        headers=headers,
+    )
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        _url(pdu_b),
+        json=_placement(rack_id=rack_id, u_start=None, u_end=None, side="rear", room_id=room_id, placement_type="other"),
+        headers=headers,
+    )
+    assert second.status_code == 409, second.text
+
+    # A different side is still allowed.
+    third = await client.post(
+        _url(pdu_b),
+        json=_placement(rack_id=rack_id, u_start=None, u_end=None, side="front", room_id=room_id, placement_type="other"),
+        headers=headers,
+    )
+    assert third.status_code == 201, third.text
+
+
 async def test_place_pdu_exceeds_rack_capacity_is_422(client: AsyncClient, db_session, make_user, auth_headers):
     pdu_id = await _seed_pdu_asset(db_session)
     room_id = await _seed_site_room(db_session)
@@ -283,6 +317,90 @@ async def test_pdu_rack_unit_collision_is_rejected(client: AsyncClient, db_sessi
         headers=headers,
     )
     assert second.status_code == 409, second.text
+
+
+# ------------------------------------------------------------------------ Elevation rendering
+
+
+async def test_placed_pdu_appears_in_rack_elevation(client: AsyncClient, db_session, make_user, auth_headers):
+    """A rack-mounted PDU placement is rendered in `GET /racks/{id}/elevation` (R5)."""
+    pdu_id = await _seed_pdu_asset(db_session, asset_tag=f"PDU-ELEV-{uuid.uuid4().hex[:8]}")
+    room_id = await _seed_site_room(db_session)
+    rack_id = await _make_rack(db_session, room_id=room_id, height_u=42)
+    headers = await auth_headers("Administrator")
+
+    placed = await client.post(
+        _url(pdu_id),
+        json=_placement(rack_id=rack_id, u_start=10, u_end=12, side="front", room_id=room_id),
+        headers=headers,
+    )
+    assert placed.status_code == 201, placed.text
+
+    elevation = await client.get(f"/api/v1/racks/{rack_id}/elevation", headers=headers)
+    assert elevation.status_code == 200, elevation.text
+    slots = elevation.json()["slots"]
+    pdu_slots = [s for s in slots if s["equipment_id"] == str(pdu_id)]
+    assert len(pdu_slots) == 1, slots
+    assert pdu_slots[0]["u_start"] == 10
+    assert pdu_slots[0]["u_end"] == 12
+    assert pdu_slots[0]["side"] == "front"
+
+
+# ------------------------------------------------------------------------ Cross-site scope
+
+
+async def test_restricted_user_cannot_place_pdu(client: AsyncClient, db_session, make_user, auth_headers):
+    """PDU placement requires `power:manage`, which is not scope-independent: a site-restricted
+    user cannot hold it effectively, so they are refused regardless of the destination room.
+    The source-scope check in `place_pdu` is therefore defense-in-depth for an unrestricted
+    caller; this test documents the boundary."""
+    admin = await auth_headers("Administrator")
+    site_a = await _make_site(client, admin)
+    room_a = site_a["room"]
+    rack_a = await _make_rack_via_api(client, admin, auth_headers, room_a)
+
+    gid = await _group(
+        client,
+        admin,
+        allow=["power:manage", "power:read", "rack:read"],
+        sites=[{"site_id": site_a["site"], "rack_scope": "all"}],
+    )
+    _, restricted = await _group_user(client, admin, [gid])
+
+    pdu_id = await _seed_pdu_asset(db_session, asset_tag=f"PDU-XS-{uuid.uuid4().hex[:8]}")
+    resp = await client.post(
+        _url(pdu_id),
+        json=_placement(rack_id=rack_a, u_start=1, u_end=2, side="front", room_id=room_a),
+        headers=restricted,
+    )
+    assert resp.status_code == 403, resp.text
+
+
+async def test_unrestricted_user_can_move_pdu_across_sites(client: AsyncClient, db_session, make_user, auth_headers):
+    """An unrestricted caller passes both the destination- and source-scope checks and can
+    move a PDU between sites."""
+    admin = await auth_headers("Administrator")
+    site_a = await _make_site(client, admin)
+    site_b = await _make_site(client, admin, site_a["org"])
+    rack_b = await _make_rack_via_api(client, admin, auth_headers, site_b["room"])
+    rack_a = await _make_rack_via_api(client, admin, auth_headers, site_a["room"])
+
+    pdu_id = await _seed_pdu_asset(db_session, asset_tag=f"PDU-XM-{uuid.uuid4().hex[:8]}")
+    placed = await client.post(
+        _url(pdu_id),
+        json=_placement(rack_id=rack_b, u_start=1, u_end=2, side="front", room_id=site_b["room"]),
+        headers=admin,
+    )
+    assert placed.status_code == 201, placed.text
+    first_version = placed.json()["version"]
+
+    moved = await client.post(
+        _url(pdu_id),
+        json=_placement(rack_id=rack_a, u_start=3, u_end=4, side="front", room_id=site_a["room"]),
+        headers={**admin, "If-Match": str(first_version)},
+    )
+    assert moved.status_code == 201, moved.text
+    assert moved.json()["room_id"] == str(site_a["room"])
 
 
 # ------------------------------------------------------------------------ RBAC

@@ -232,7 +232,12 @@ export function PduSpecPanel({
                   <th className="border-b border-slate-800 px-1 py-1">Type</th>
                   <th className="border-b border-slate-800 px-1 py-1">Phase</th>
                   <th className="border-b border-slate-800 px-1 py-1">Side</th>
-                  <th className="border-b border-slate-800 px-1 py-1">Qty</th>
+                  <th
+                    className="border-b border-slate-800 px-1 py-1"
+                    title="Per-template metadata. Each row is one physical outlet; this count does not multiply outlets at instantiation."
+                  >
+                    Qty
+                  </th>
                   <th className="border-b border-slate-800 px-1 py-1">V</th>
                   <th className="border-b border-slate-800 px-1 py-1">A</th>
                   <th className="border-b border-slate-800 px-1 py-1" />

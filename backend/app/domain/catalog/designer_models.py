@@ -358,7 +358,12 @@ class MonitoringMetricTemplate(Base, UUIDPkMixin, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 class PDUOutletTemplate(Base, UUIDPkMixin, TimestampMixin):
-    """PDU catalog revision outlet template (Issue #150)."""
+    """PDU catalog revision outlet template (Issue #150).
+
+    One row is one physical outlet: `outlet_number` is unique per revision and
+    instantiation creates exactly one `PDUOutlet`/`PowerNode` pair per row. `outlet_count`
+    is per-template metadata only (default 1) -- it is NOT an expansion multiplier and never
+    fabricates additional outlets."""
 
     __tablename__ = "pdu_outlet_template"
     __table_args__ = (
@@ -374,6 +379,7 @@ class PDUOutletTemplate(Base, UUIDPkMixin, TimestampMixin):
     outlet_number: Mapped[int] = mapped_column(Integer, nullable=False)
     label: Mapped[str] = mapped_column(String(128), nullable=False)
     outlet_type: Mapped[str] = mapped_column(String(16), nullable=False, default="other", server_default="other")
+    # Metadata only: the physical outlet count is the number of template rows, not this value.
     outlet_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     phase: Mapped[str] = mapped_column(String(8), nullable=False, default="single", server_default="single")
     rated_voltage_v: Mapped[float | None] = mapped_column(Numeric(6, 1))
