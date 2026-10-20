@@ -55,8 +55,10 @@ async def test_collection_endpoints_exclude_other_site_and_report_true_totals(cl
     assert racks["total"] == len(_ids(racks)) == 2  # count must not include Site B racks
     assert (await client.get(f"/api/v1/racks?site_id={world['b']['site']}", headers=ua)).json()["total"] == 0
     eq = (await client.get("/api/v1/equipment?limit=200", headers=ua)).json()
-    assert world["eq_b1"] not in _ids(eq) and eq["total"] == len(_ids(eq))
-    assert {world["eq_a1"], world["eq_a2"]} <= _ids(eq)
+    # Exactly the three Site A items (two rack-mounted, one floor-standing in the room): no Site B equipment, and the
+    # count must include the floor-standing item that is not in any rack.
+    assert _ids(eq) == {world["eq_a1"], world["eq_a2"], world["eq_room_a"]}
+    assert eq["total"] == len(eq["items"]) == 3
     for path, own in (("sites", world["a"]["site"]), ("rooms", world["a"]["room"]), ("organizations", world["a"]["org"])):
         page = (await client.get(f"/api/v1/{path}?limit=200", headers=ua)).json()
         assert _ids(page) == {own}, path
