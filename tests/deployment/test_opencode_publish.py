@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -69,7 +70,7 @@ class FakeApi:
 
     def __init__(self, verified=True, login=BOT, branch_tip=BASE, protected=False, compare='behind',
                  default_protected=True, pr=None, issue=None, delete_fails=False, pulls_fails=False,
-                 push_fails=False, ambiguous=None, lookup_fails=False):
+                 push_fails=False, ambiguous=None, lookup_fails=False, descent=None):
         self.calls, self.verified, self.login = [], verified, login
         self.refs = {'feature/x': branch_tip}
         self.protected, self.compare = protected, compare
@@ -77,6 +78,7 @@ class FakeApi:
         self.pulls_fails, self.push_fails = pulls_fails, push_fails
         self.ambiguous = ambiguous or {}
         self.lookup_fails = lookup_fails
+        self.descent = descent or {'status': 'ahead', 'behind_by': 0}
         self.pr = pr if pr is not None else {
             'number': 9, 'state': 'open', 'merged': False, 'base': {'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}},
             'head': {'ref': 'feature/x', 'sha': BASE, 'repo': {'full_name': 'AhmedMahmoud2222/DCIM'}}}
@@ -124,7 +126,7 @@ class FakeApi:
             return pr
         if path.startswith('compare/'):
             if path == f'compare/{BASE}...{NEW}':      # does the verified commit descend from the baseline?
-                return {'status': 'ahead', 'behind_by': 0}
+                return dict(self.descent)
             return {'status': self.compare}            # default...baseline reachability
         if path.startswith('commits/'):
             return {'commit': {'verification': {'verified': self.verified, 'reason': 'valid' if self.verified else 'unsigned'}},
@@ -423,6 +425,16 @@ class PublishFlowTests(unittest.TestCase):
         self.assertNotIn(('POST', 'pulls'), order)
         self.assertFalse([m for m, _ in order if m == 'PATCH'])       # the non-CAS REST update is never used
 
+    def test_the_update_requires_the_verified_commit_to_descend_from_the_authorized_baseline(self):
+        for descent in ({'status': 'diverged', 'behind_by': 1}, {'status': 'ahead', 'behind_by': 2},
+                        {'status': 'behind', 'behind_by': 0}, {'status': 'identical', 'behind_by': 0}, {}):
+            api = FakeApi(descent=descent or {'status': None})
+            with self.assertRaises(publish.PublishError) as caught:
+                self.run_publish(api, env=PR_ENV)
+            self.assertIn('does not descend from the authorized baseline', str(caught.exception), descent)
+            self.assertFalse([c for c in api.calls if c[0] == 'PUSH'], f'{descent}: the branch was pushed')
+            self.assertEqual(api.refs['feature/x'], BASE, descent)
+
     def test_final_authorization_refetches_the_pr_immediately_before_the_update(self):
         api = FakeApi()
         self.run_publish(api, env=PR_ENV)
@@ -638,6 +650,22 @@ class PublishFlowTests(unittest.TestCase):
                 publish.publish = original
                 os.environ.clear()
                 os.environ.update(old)
+
+    def test_http_status_classification_decides_whether_an_outcome_is_ambiguous(self):
+        import urllib.error
+        api = publish.Api('ghs_TOKEN', 'o/r')
+        for code in (500, 502, 503, 504):
+            error = urllib.error.HTTPError('https://api.github.com/x', code, 'server error', {}, None)
+            with unittest.mock.patch.object(publish.urllib.request, 'urlopen', side_effect=error):
+                with self.assertRaises(publish.AmbiguousApiError, msg=str(code)) as caught:
+                    api.call('PATCH', 'git/refs/heads/x', {'sha': NEW})
+            self.assertEqual(caught.exception.status, code)
+        for code in (400, 401, 403, 404, 409, 422):
+            error = urllib.error.HTTPError('https://api.github.com/x', code, 'client error', {}, None)
+            with unittest.mock.patch.object(publish.urllib.request, 'urlopen', side_effect=error):
+                with self.assertRaises(publish.PublishError, msg=str(code)) as caught:
+                    api.call('PATCH', 'git/refs/heads/x', {'sha': NEW})
+            self.assertNotIsInstance(caught.exception, publish.AmbiguousApiError, code)   # a definite answer, not a guess
 
     def test_api_errors_do_not_leak_tokens_and_classify_ambiguity(self):
         api = publish.Api('ghs_SECRETTOKENVALUE', 'o/r')

@@ -590,6 +590,19 @@ class ReadOnlyAndConfidentialityTests(unittest.TestCase):
                     review.prepare_inputs(self.compare_fetch(diff, files), 'o/r', '9', SHA, BASE_C, BOT, tmp)
                 self.assertFalse(os.path.exists(os.path.join(tmp, 'diff.patch')), name)
 
+    def test_a_file_list_at_the_api_page_limit_is_treated_as_truncated(self):
+        # the diff and the list agree on every name, so the only reason to refuse is that GitHub caps the list at 300
+        names = [f'f{i}.py' for i in range(300)]
+        diff = ''.join(f'diff --git a/{n} b/{n}\n+x\n' for n in names)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(review.ReviewBlocked) as caught:
+                review.prepare_inputs(self.compare_fetch(diff, names), 'o/r', '9', SHA, BASE_C, BOT, tmp)
+        self.assertIn('truncated', str(caught.exception))
+        names = names[:299]
+        diff = ''.join(f'diff --git a/{n} b/{n}\n+x\n' for n in names)
+        with tempfile.TemporaryDirectory() as tmp:
+            review.prepare_inputs(self.compare_fetch(diff, names), 'o/r', '9', SHA, BASE_C, BOT, tmp)   # 299 is accepted
+
     def test_review_material_comes_from_the_two_immutable_revisions_not_the_live_pr(self):
         fetch = self.compare_fetch('diff --git a/backend/a.py b/backend/a.py\n+x = 1\n', ['backend/a.py'])
         result, wrote = self.prepare(fetch)

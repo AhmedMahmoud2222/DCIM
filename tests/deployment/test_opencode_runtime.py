@@ -8,6 +8,8 @@ sudo, or no way to create a user) a test is SKIPPED and says so; a skip is not a
 import glob
 import importlib
 import os
+import errno
+import re
 import shutil
 import subprocess
 import sys
@@ -32,7 +34,10 @@ publish = importlib.import_module('opencode_publish')
 sandbox = importlib.import_module('opencode_sandbox')
 collect = importlib.import_module('opencode_collect')
 
-AGENT = 'ocprobe'
+# The mutation runner gives every isolated suite its own account name, so parallel runs never share (or remove) one.
+AGENT = os.environ.get('OPENCODE_TEST_ACCOUNT', 'ocprobe')
+if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,30}', AGENT):
+    raise RuntimeError(f'OPENCODE_TEST_ACCOUNT {AGENT!r} is not a valid account name')
 
 
 def privileged_prefix():
@@ -1141,6 +1146,51 @@ class MountLifecycleTests(unittest.TestCase):
         self.assertIn('leaked', str(caught.exception))
 
 
+class FsIsolateUnitTests(unittest.TestCase):
+    """Unprivileged unit checks of the building blocks of the reviewer filesystem preflight."""
+
+    def test_a_permission_verdict_requires_a_permission_class_error(self):
+        denied = fsisolate._denied
+        for code in (errno.EACCES, errno.EPERM, errno.EROFS):
+            def refuse(code=code):
+                raise OSError(code, os.strerror(code))
+            self.assertTrue(denied(refuse)[0], os.strerror(code))
+        def missing():
+            raise OSError(errno.ENOENT, 'no such file')
+        self.assertFalse(denied(missing)[0], 'a missing path is not evidence that writing is denied')
+        def broken():
+            raise OSError(errno.EIO, 'input/output error')
+        self.assertFalse(denied(broken)[0])
+        ok, detail = denied(lambda: None)
+        self.assertFalse(ok)                                        # an operation that succeeded is never "denied"
+        self.assertIn('SUCCEEDED', detail)
+
+    def test_the_ownership_chain_rejects_group_and_world_writable_directories(self):
+        base = temp_dir(self, 'occhain-')
+        middle = os.path.join(base, 'middle')
+        leaf = os.path.join(middle, 'leaf')
+        os.makedirs(leaf)
+        os.chmod(leaf, 0o755)
+        os.chmod(middle, 0o755)
+        quiet = [p for p in fsisolate.chain_problems(leaf, os.getuid()) if 'writable' in p]
+        for mode, who in ((0o777, 'world'), (0o775, 'group'), (0o757, 'world')):
+            os.chmod(middle, mode)
+            problems = [p for p in fsisolate.chain_problems(leaf, os.getuid()) if 'writable' in p]
+            self.assertTrue(any(middle in p for p in problems), f'{who}-writable ancestor {oct(mode)} was accepted')
+        os.chmod(middle, 0o755)
+        self.assertEqual([p for p in fsisolate.chain_problems(leaf, os.getuid()) if middle in p and 'writable' in p], [])
+        self.assertEqual([p for p in quiet if middle in p], [])
+
+    def test_the_ownership_chain_rejects_symlinks_and_non_directories(self):
+        base = temp_dir(self, 'occhain-')
+        real = os.path.join(base, 'real')
+        os.mkdir(real)
+        os.symlink(real, os.path.join(base, 'link'))
+        Path(base, 'file').write_text('x')
+        self.assertTrue(any('symlink' in p for p in fsisolate.chain_problems(os.path.join(base, 'link'), os.getuid())))
+        self.assertTrue(any('not a directory' in p for p in fsisolate.chain_problems(os.path.join(base, 'file'), os.getuid())))
+
+
 class RealGitRepo:
     """A bare 'remote' plus helpers, for realistic history transitions."""
 
@@ -1251,8 +1301,16 @@ class ExactShaConcurrencyTests(unittest.TestCase):
         self.assertEqual(self.repo.remote_tip('feature'), self.a)
 
     def test_refuses_non_sha_expectations_and_a_staging_ref_that_is_not_the_verified_commit(self):
-        with self.assertRaises(publish.PushRejected):
+        real_run, commands = subprocess.run, []
+
+        def recording(command, *args, **kwargs):
+            commands.append(list(command))
+            return real_run(command, *args, **kwargs)
+
+        with unittest.mock.patch.object(publish.subprocess, 'run', recording), self.assertRaises(publish.PushRejected) as caught:
             self.repo.cas('feature', 'feature', self.n)
+        self.assertIn('non-SHA', str(caught.exception))               # refused by the validation, not by git failing
+        self.assertFalse([c for c in commands if 'push' in c or 'fetch' in c], commands)   # nothing was sent to the remote
         with self.assertRaises(publish.PushRejected):
             self.repo.cas('feature', self.b, self.a)   # staging branch holds n, not a
         self.assertEqual(self.repo.remote_tip('feature'), self.b)

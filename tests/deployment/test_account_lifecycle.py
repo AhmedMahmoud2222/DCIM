@@ -368,31 +368,45 @@ class MutationWorktreeGuardTests(unittest.TestCase):
     def table_for(self, work):
         return f'1 2 0:3 / {work}/sub rw - ext4 /dev/vda rw\n'
 
-    def test_a_replaced_worktree_is_refused_before_any_mount_is_detached(self):
+    def test_a_replaced_worktree_is_refused_and_nothing_in_the_replacement_is_touched(self):
         work, ident = self.worktree()
         os.rename(work, str(work) + '.moved')
         self.addCleanup(shutil.rmtree, str(work) + '.moved', True)
         work.mkdir()
         (work / 'sub').mkdir()
-        detached = []
-        with unittest.mock.patch.object(mutation_check, 'detach_mounts', lambda p, e: detached.append(p) or 1):
+        (work / 'sub' / 'unrelated.txt').write_text('unrelated')
+        deleted = []
+        with unittest.mock.patch.object(mutation_check, 'delete_tree', lambda p, e: deleted.append(p)):
             outcome = mutation_check.cleanup_worktree(work, ident)
         self.assertEqual(outcome['state'], 'FAILED')
         self.assertIn('identity changed', outcome['detail'])
-        self.assertEqual(detached, [])                             # nothing was detached
-        self.assertTrue((work / 'sub').exists())
+        self.assertEqual(deleted, [])                              # not even a delete was attempted
+        self.assertEqual((work / 'sub' / 'unrelated.txt').read_text(), 'unrelated')
 
-    def test_a_renamed_worktree_and_a_symlink_in_its_place_are_refused_without_detaching(self):
+    def test_a_renamed_worktree_and_a_symlink_in_its_place_are_refused(self):
         work, ident = self.worktree()
         os.rename(work, str(work) + '.moved')
         self.addCleanup(shutil.rmtree, str(work) + '.moved', True)
         os.symlink(str(work) + '.moved', work)
         self.addCleanup(lambda: os.path.islink(work) and os.unlink(work))
-        detached = []
-        with unittest.mock.patch.object(mutation_check, 'detach_mounts', lambda p, e: detached.append(p) or 1):
+        deleted = []
+        with unittest.mock.patch.object(mutation_check, 'delete_tree', lambda p, e: deleted.append(p)):
             outcome = mutation_check.cleanup_worktree(work, ident)
         self.assertEqual(outcome['state'], 'FAILED')
-        self.assertEqual(detached, [])
+        self.assertEqual(deleted, [])
+
+    def test_a_mount_visible_in_the_host_namespace_is_a_failure_and_nothing_is_unmounted_or_deleted(self):
+        work, ident = self.worktree()
+        table = self.table_for(work)
+        deleted, unmounted = [], []
+        with unittest.mock.patch.object(sc, 'read_mountinfo', lambda: table), \
+                unittest.mock.patch.object(mutation_check, 'delete_tree', lambda p, e: deleted.append(p)), \
+                unittest.mock.patch.object(subprocess, 'run', lambda *a, **k: unmounted.append(a)):
+            outcome = mutation_check.cleanup_worktree(work, ident, leaked=1)
+        self.assertEqual(outcome['state'], 'FAILED')
+        self.assertIn('host namespace', outcome['detail'])
+        self.assertIn('nothing was unmounted or deleted', outcome['detail'])
+        self.assertEqual((deleted, unmounted), ([], []))
 
     @unittest.skipUnless(MOUNTS, 'bind mounts are not permitted in this environment')
     def test_an_unrelated_live_mount_in_a_replacement_directory_stays_mounted(self):

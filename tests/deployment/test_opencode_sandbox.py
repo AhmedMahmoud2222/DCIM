@@ -232,6 +232,22 @@ def fixture_lines(name):
     return (FIXTURES / f'{name}.jsonl').read_text().splitlines()
 
 
+class AgentConfigTests(unittest.TestCase):
+    """OpenCode makes side requests (session titles) with `small_model`; unless it is the bound model it picks another
+    model on another API, which the model-bound proxy has to refuse. The end-to-end tests cover this with the real
+    binary but are skipped in mutation runs, so the configuration is also checked directly."""
+
+    def test_small_model_is_the_bound_model_in_both_modes(self):
+        for mode in ('implement', 'review'):
+            config = sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, mode)
+            self.assertEqual(config['model'], 'opencode/glm-5.3-flash-free')
+            self.assertEqual(config['small_model'], config['model'], mode)
+
+    def test_review_mode_denies_editing_and_implement_mode_allows_it(self):
+        self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'review')['permission']['edit'], 'deny')
+        self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'implement')['permission']['edit'], 'allow')
+
+
 class GuardTests(unittest.TestCase):
     """Command construction and the guard entry point. Lifecycle rules: test_opencode_guard_fixtures."""
 

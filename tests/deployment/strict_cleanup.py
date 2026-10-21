@@ -1,4 +1,4 @@
-"""Strict cleanup helpers for the deployment tests (strict_cleanup v3.0).
+"""Strict cleanup helpers for the deployment tests (strict_cleanup v4.0).
 
 Not collected by unittest (no test_ prefix). Everything here fails loudly: a mount that survives, a
 path that is not the directory the test created, or a delete that errors raises instead of passing.
@@ -114,95 +114,133 @@ def check_identity(path: str, expected: tuple[int, int]) -> None:
         raise CleanupRefused(f'refusing to act on {path}: it is not the directory that was created (identity changed)')
 
 
-def _umount2(path: str) -> None:
-    """umount(2) on `path`, plain first and then MNT_DETACH. Needs root. `path` may be a /proc/self/fd/N
-    path, which the kernel resolves through the descriptor rather than through a pathname."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    for flags in (0, 2):
-        if libc.umount2(os.fsencode(path), flags) == 0:
-            return
-        last = ctypes.get_errno()
-    raise OSError(last, os.strerror(last), path)
+class BoundaryUnavailable(CleanupRefused):
+    """The kernel facility that makes recursive deletion safe (openat2 with RESOLVE_NO_XDEV, statx mount ids)
+    is missing, forbidden or unsupported here. Deletion is refused; there is no pathname fallback."""
 
 
-def detach_mounts_anchored(path: str, expected: tuple[int, int], hook=None, umount2=None) -> int:
-    """Detach every mount at or below the directory with identity `expected`, anchored to a descriptor.
+_RESOLVE = 0x01 | 0x02 | 0x04          # RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS
+_SYS_OPENAT2 = 437                      # the same number on x86_64 and arm64
+_SYS_ARCH_OK = ('x86_64', 'aarch64', 'arm64')
 
-    The directory is opened once (O_NOFOLLOW), its identity checked with fstat on that descriptor, and the
-    descriptor stays open for the whole operation. The directory's *current* location is read from
-    /proc/self/fd/N (so a rename is followed), mounts are taken from one consistent mountinfo snapshot,
-    and each mount is detached through /proc/self/fd/N/<relative path>, which the kernel resolves inside
-    the anchored directory. The original pathname is never used again, so a directory created at that
-    pathname afterwards, with or without mounts of its own, is never looked at or touched.
 
-    If the location cannot be established consistently, or a mount cannot be detached, this raises and
-    nothing is retried by pathname. `hook(stage)` is a test seam called between the steps.
-    Returns the number of mounts detached. Needs root.
-    """
-    hook = hook or (lambda stage: None)
-    umount2 = umount2 or _umount2
-    fd = os.open(path, _DIR_FLAGS)
+class _OpenHow(ctypes.Structure):
+    _fields_ = [('flags', ctypes.c_uint64), ('mode', ctypes.c_uint64), ('resolve', ctypes.c_uint64)]
+
+
+class _Timespec(ctypes.Structure):
+    _fields_ = [('sec', ctypes.c_int64), ('nsec', ctypes.c_uint32), ('pad', ctypes.c_int32)]
+
+
+class _Statx(ctypes.Structure):
+    _fields_ = [('mask', ctypes.c_uint32), ('blksize', ctypes.c_uint32), ('attributes', ctypes.c_uint64),
+                ('nlink', ctypes.c_uint32), ('uid', ctypes.c_uint32), ('gid', ctypes.c_uint32),
+                ('mode', ctypes.c_uint16), ('pad', ctypes.c_uint16), ('ino', ctypes.c_uint64),
+                ('size', ctypes.c_uint64), ('blocks', ctypes.c_uint64), ('attributes_mask', ctypes.c_uint64),
+                ('atime', _Timespec), ('btime', _Timespec), ('ctime', _Timespec), ('mtime', _Timespec),
+                ('rdev_major', ctypes.c_uint32), ('rdev_minor', ctypes.c_uint32),
+                ('dev_major', ctypes.c_uint32), ('dev_minor', ctypes.c_uint32),
+                ('mnt_id', ctypes.c_uint64), ('rest', ctypes.c_uint64 * 13)]
+
+
+def _libc():
+    return ctypes.CDLL(None, use_errno=True)
+
+
+def _open_below(dir_fd: int, name: str, flags: int) -> int:
+    """openat2(dir_fd, name) that cannot cross a mount point (including a bind mount of the same filesystem,
+    which an st_dev comparison does not see), follow a symlink or follow a magic link. EXDEV means the name is
+    a mount point or leads into one."""
+    import platform
+    if platform.machine() not in _SYS_ARCH_OK:
+        raise BoundaryUnavailable(f'openat2 is not wired up for {platform.machine()}; refusing to delete')
+    how = _OpenHow(flags | os.O_CLOEXEC | os.O_NOFOLLOW, 0, _RESOLVE)
+    fd = _libc().syscall(_SYS_OPENAT2, dir_fd, os.fsencode(name), ctypes.byref(how), ctypes.sizeof(how))
+    if fd >= 0:
+        return fd
+    code = ctypes.get_errno()
+    if code == errno.EXDEV:
+        raise MountLeak(f'refusing to delete through {name!r}: it is, or leads into, a mount point')
+    if code in (errno.ENOSYS, errno.EPERM, errno.EINVAL, errno.E2BIG):
+        raise BoundaryUnavailable(f'openat2(RESOLVE_NO_XDEV) is unavailable here ({os.strerror(code)}); refusing to delete')
+    raise OSError(code, os.strerror(code), name)
+
+
+def mount_id(fd: int) -> int:
+    """The kernel's unique id of the mount that holds the object `fd` refers to (statx STATX_MNT_ID)."""
+    libc = _libc()
+    if not hasattr(libc, 'statx'):
+        raise BoundaryUnavailable('statx is unavailable; refusing to delete')
+    buffer = _Statx()
+    if libc.statx(fd, b'', 0x1000, 0x1000, ctypes.byref(buffer)) != 0:       # AT_EMPTY_PATH, STATX_MNT_ID
+        code = ctypes.get_errno()
+        raise BoundaryUnavailable(f'statx failed ({os.strerror(code)}); refusing to delete')
+    if not buffer.mask & 0x1000:
+        raise BoundaryUnavailable('this kernel does not report mount ids (statx STATX_MNT_ID); refusing to delete')
+    return buffer.mnt_id
+
+
+def boundary_available() -> bool:
+    """True when the primitives the deletion boundary needs work on this machine."""
     try:
-        info = os.fstat(fd)
-        if (info.st_dev, info.st_ino) != tuple(expected):
-            raise CleanupRefused(f'refusing to detach mounts under {path}: it is not the directory that was created')
-        anchor = f'/proc/self/fd/{fd}'
-        detached = 0
-        for _ in range(16):
-            hook('opened')
-            for _attempt in range(5):
-                here = os.readlink(anchor)
-                text = read_mountinfo()
-                if os.readlink(anchor) == here:
-                    break
-            else:
-                raise CleanupRefused(f'{path} kept moving while its mounts were being enumerated')
-            if here.endswith(' (deleted)') or not os.path.isabs(here):
-                raise CleanupRefused(f'the anchored directory for {path} no longer has a location ({here})')
-            hook('enumerated')
-            prefix = here.rstrip('/') + '/'
-            below = [m for m in parse_mountinfo(text) if m == here or m.startswith(prefix)]
-            if not below:
-                return detached
-            for target in sorted(below, key=len, reverse=True):
-                relative = os.path.relpath(target, here)
-                umount2(anchor if relative == '.' else f'{anchor}/{relative}')
-                detached += 1
-                hook('detached')
-        raise MountLeak(f'mounts below {path} could not be detached')
-    finally:
-        os.close(fd)
+        fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.close(_open_below(fd, '.', os.O_PATH))
+            mount_id(fd)
+        finally:
+            os.close(fd)
+    except (CleanupRefused, OSError):
+        return False
+    return True
 
 
-def _children(dir_fd: int, here: str, root_dev: int, mounted: set[str]) -> None:
-    """Delete everything under an already-open directory, relative to its descriptor. Symlinks are
-    unlinked, never followed; a mount point or a directory on another device stops the walk."""
+def _children(dir_fd: int, here: str, root_mount: int, hook=None) -> None:
+    """Delete everything under an already-open directory, relative to its descriptor.
+
+    Every entry is opened with openat2(RESOLVE_NO_XDEV | NO_SYMLINKS | NO_MAGICLINKS) from the directory
+    descriptor and its mount id is compared with the worktree's, so the walk cannot enter another mount
+    (bind mounts of the same filesystem included), whatever happens to any pathname meanwhile. Nothing here
+    consults a mount table or a pathname. A mount point is refused, never unmounted. `hook(stage, name)` is
+    a test seam."""
+    hook = hook or (lambda stage, name: None)
     with os.scandir(dir_fd) as scan:
         names = [entry.name for entry in scan]
+    hook('listed', here)
     for name in names:
         info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        hook('before-open', name)
+        below = os.path.join(here, name)
         if not stat.S_ISDIR(info.st_mode):
+            handle = _open_below(dir_fd, name, os.O_PATH)                 # a file mount point is refused too
+            try:
+                if mount_id(handle) != root_mount:
+                    raise MountLeak(f'refusing to delete {below}: it is on another mount')
+            finally:
+                os.close(handle)
             os.unlink(name, dir_fd=dir_fd)
             continue
-        below = os.path.join(here, name)
-        if info.st_dev != root_dev or below in mounted:
-            raise MountLeak(f'refusing to delete through {below}: it is a mount point')
-        child = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+        child = _open_below(dir_fd, name, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            if os.fstat(child).st_ino != info.st_ino:
+            opened = os.fstat(child)
+            if opened.st_ino != info.st_ino or opened.st_dev != info.st_dev:
                 raise CleanupRefused(f'{below} changed while it was being deleted')
-            _children(child, below, root_dev, mounted)
+            if mount_id(child) != root_mount:
+                raise MountLeak(f'refusing to delete {below}: it is on another mount')
+            _children(child, below, root_mount, hook)
         finally:
             os.close(child)
         os.rmdir(name, dir_fd=dir_fd)
 
 
-def remove_verified(path: str, expected: tuple[int, int]) -> None:
-    """Delete `path` only if it is still the directory that was created (same st_dev and st_ino).
+def remove_verified(path: str, expected: tuple[int, int], hook=None) -> None:
+    """Delete `path` only if it is still the directory that was created (same st_dev and st_ino), without
+    ever leaving that directory's mount.
 
     The directory is opened with O_NOFOLLOW and checked with fstat on the descriptor, so a rename-and-
-    replace at the same pathname, a symlink swap, or a swapped ancestor is refused, and everything below
-    is removed relative to that descriptor. No live mount at or below the path is ever deleted through.
+    replace at the same pathname, a symlink swap or a swapped ancestor is refused. It must not itself be a
+    mount point (its parent must be reachable without crossing a mount). Everything below is removed
+    relative to the descriptor through openat2(RESOLVE_NO_XDEV), checked again by statx mount id. If those
+    kernel facilities are unavailable the deletion is refused: there is no fallback to pathnames.
     Works as root or as the owner; failures raise.
     """
     refusal = f'refusing to delete {path}: it is not the directory that was created (identity changed, or a symlink)'
@@ -216,10 +254,12 @@ def remove_verified(path: str, expected: tuple[int, int]) -> None:
         info = os.fstat(fd)
         if (info.st_dev, info.st_ino) != tuple(expected):
             raise CleanupRefused(refusal)
-        live = mounts_under(path)
-        if live:
-            raise MountLeak(f'refusing to delete {path}: still mounted at {live}')
-        _children(fd, canonical(path), info.st_dev, set(mount_points()))
+        root_mount = mount_id(fd)
+        try:
+            os.close(_open_below(fd, '..', os.O_RDONLY | os.O_DIRECTORY))     # fails with EXDEV at a mount root
+        except MountLeak as error:
+            raise MountLeak(f'refusing to delete {path}: the directory is itself a mount point') from error
+        _children(fd, canonical(path), root_mount, hook)
     finally:
         os.close(fd)
     parent = os.open(os.path.dirname(os.path.abspath(path)) or '.', _DIR_FLAGS)
@@ -255,30 +295,16 @@ def remove_privileged_tree(path: str, priv: list[str] | None, expected: tuple[in
     and cannot be redirected by a swapped path. Failures raise with the helper's message."""
     if os.path.islink(path):
         raise CleanupRefused(f'refusing to delete {path}: it is a symlink')
-    live = mounts_under(path)
-    if live:
-        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')
     done = subprocess.run([*(priv or []), sys.executable, '-I', os.path.abspath(__file__), 'rm-verified',
                            path, str(expected[0]), str(expected[1])], capture_output=True, text=True)
     if done.returncode == 3:
         raise CleanupRefused(done.stderr.strip() or f'refusing to delete {path}')
     if done.returncode == 4:
         raise MountLeak(done.stderr.strip() or f'refusing to delete {path}: mounted')
+    if done.returncode == 6:
+        raise BoundaryUnavailable(done.stderr.strip() or 'the deletion boundary is unavailable')
     if done.returncode != 0 or os.path.lexists(path):
         raise OSError(f'could not remove {path}: {done.stderr.strip() or "it still exists"}')
-
-
-def detach_privileged(path: str, priv: list[str] | None, expected: tuple[int, int]) -> int:
-    """detach_mounts_anchored() in a root helper process (this file, `detach-verified`)."""
-    done = subprocess.run([*(priv or []), sys.executable, '-I', os.path.abspath(__file__), 'detach-verified',
-                           path, str(expected[0]), str(expected[1])], capture_output=True, text=True)
-    if done.returncode == 3:
-        raise CleanupRefused(done.stderr.strip() or f'refusing to detach mounts under {path}')
-    if done.returncode == 4:
-        raise MountLeak(done.stderr.strip() or f'mounts below {path} could not be detached')
-    if done.returncode != 0:
-        raise OSError(f'could not detach mounts under {path}: {done.stderr.strip() or "unknown error"}')
-    return int(done.stdout.strip() or 0)
 
 
 def privileged_temp_dir(case, prefix: str, priv: list[str] | None) -> str:
@@ -293,6 +319,9 @@ def _main(argv: list[str]) -> int:
     if len(argv) == 5 and argv[1] == 'rm-verified':
         try:
             remove_verified(argv[2], (int(argv[3]), int(argv[4])))
+        except BoundaryUnavailable as error:
+            print(error, file=sys.stderr)
+            return 6
         except CleanupRefused as error:
             print(error, file=sys.stderr)
             return 3
@@ -303,20 +332,7 @@ def _main(argv: list[str]) -> int:
             print(f'{argv[2]}: {error}', file=sys.stderr)
             return 5
         return 0
-    if len(argv) == 5 and argv[1] == 'detach-verified':
-        try:
-            print(detach_mounts_anchored(argv[2], (int(argv[3]), int(argv[4]))))
-        except CleanupRefused as error:
-            print(error, file=sys.stderr)
-            return 3
-        except MountLeak as error:
-            print(error, file=sys.stderr)
-            return 4
-        except OSError as error:
-            print(f'{argv[2]}: {error}', file=sys.stderr)
-            return 5
-        return 0
-    print('usage: strict_cleanup.py rm-verified|detach-verified PATH DEV INO', file=sys.stderr)
+    print('usage: strict_cleanup.py rm-verified PATH DEV INO', file=sys.stderr)
     return 2
 
 
