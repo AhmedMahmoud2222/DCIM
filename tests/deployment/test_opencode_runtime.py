@@ -5,6 +5,7 @@ an unprivileged user against the layout the workflow builds; the git tests push 
 repositories. When the machine cannot provide the capability (no root and no passwordless
 sudo, or no way to create a user) a test is SKIPPED and says so; a skip is not a pass.
 """
+import glob
 import importlib
 import os
 import shutil
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -557,23 +559,219 @@ def bind_for_test(case, root, runner):
     return fsisolate.mount_readonly(root, run=runner)
 
 
+class MountLeak(RuntimeError):
+    """A mount created by the test harness could not be removed."""
+
+
+def mounts_under(path):
+    """Mount points at or below `path`."""
+    prefix = path.rstrip('/') + '/'
+    found = []
+    with open('/proc/self/mountinfo') as handle:
+        for line in handle:
+            point = line.split()[4]
+            if point == path or point.startswith(prefix):
+                found.append(point)
+    return found
+
+
+def remove_unmounted_tree(path, rmtree=shutil.rmtree):
+    """Delete a temporary tree that may once have held a mount. Never deletes through a live mount and
+    never hides a failure: a surviving mount or a failed delete raises."""
+    live = mounts_under(path)
+    if live:
+        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')
+    rmtree(path)
+
+
+def probe_mount_capability(run, mounted, remove, mkdtemp=tempfile.mkdtemp):
+    """True when a bind mount can really be created here; False when it cannot.
+
+    The probe mount is always verified gone through mount-state inspection (`mounted`), not trusted
+    to an exit status. Unmounting is retried (ordinary, lazy, lazy again). If the mount cannot be
+    removed, or the throwaway directory cannot be deleted, MountLeak is raised rather than returning
+    a verdict. The directory is deleted only after the mount is confirmed gone.
+    """
+    probe = mkdtemp(prefix='ocmnt-probe-')
+    target = os.path.join(probe, 'src')
+    verdict, failure = False, None
+    try:
+        os.makedirs(target)
+        verdict = run(['mount', '--bind', target, target]).returncode == 0
+    except BaseException as error:             # cleanup below must still run; the error is re-raised after
+        failure = error
+    try:
+        for attempt in (['umount', target], ['umount', '-l', target], ['umount', '-l', target]):
+            if not mounted(target):
+                break
+            run(attempt)                        # exit status is advisory; the mount table decides
+        if mounted(target):
+            raise MountLeak(f'probe bind mount at {target} could not be removed')
+        remove(probe)
+    except MountLeak:
+        raise
+    except BaseException as error:
+        raise MountLeak(f'probe directory {probe} could not be cleaned up: {error}') from error
+    if failure is not None:
+        raise failure
+    return verdict
+
+
 def can_mount():
-    """True when this machine really lets us create a bind mount (probed on a throwaway directory)."""
     if PRIV is None:
         return False
-    probe = tempfile.mkdtemp(prefix='ocmnt-probe-')
-    try:
-        os.makedirs(os.path.join(probe, 'src'))
-        target = os.path.join(probe, 'src')
-        made = subprocess.run([*PRIV, 'mount', '--bind', target, target], capture_output=True).returncode == 0
-        if made:
-            subprocess.run([*PRIV, 'umount', '-l', target], capture_output=True)
-        return made
-    finally:
-        shutil.rmtree(probe, ignore_errors=True)
+    return probe_mount_capability(
+        run=lambda cmd: subprocess.run([*PRIV, *cmd], capture_output=True),
+        mounted=lambda target: bool(mounts_at(target)),
+        remove=remove_unmounted_tree)
 
 
 MOUNTS_AVAILABLE = can_mount()
+
+
+class FakeKernel:
+    """Stands in for the mount table so every failure ordering can be produced without privileges."""
+
+    def __init__(self, bind_ok=True, umount_ok=(), plain_fails_but_unmounts=False, lies_success=False):
+        self.bind_ok, self.umount_ok = bind_ok, list(umount_ok)
+        self.plain_fails_but_unmounts, self.lies_success = plain_fails_but_unmounts, lies_success
+        self.is_mounted, self.calls, self.removed = False, [], []
+
+    def run(self, cmd):
+        self.calls.append(list(cmd))
+        if cmd[:2] == ['mount', '--bind']:
+            self.is_mounted = self.bind_ok
+            return subprocess.CompletedProcess(cmd, 0 if self.bind_ok else 1)
+        worked = self.umount_ok.pop(0) if self.umount_ok else False
+        if self.plain_fails_but_unmounts:
+            self.is_mounted = False
+            return subprocess.CompletedProcess(cmd, 1)
+        if self.lies_success:
+            return subprocess.CompletedProcess(cmd, 0)           # claims success, mount stays
+        if worked:
+            self.is_mounted = False
+        return subprocess.CompletedProcess(cmd, 0 if worked else 1)
+
+    def mounted(self, target):
+        return self.is_mounted
+
+    def remove(self, path):
+        self.removed.append(path)
+
+
+class MountCapabilityProbeTests(unittest.TestCase):
+    """can_mount() must never leave a probe mount behind or hide that it did. No real mounts needed."""
+
+    def probe(self, kernel, remove=None):
+        made = []
+
+        def mkdtemp(prefix):
+            path = tempfile.mkdtemp(prefix=prefix)
+            made.append(path)
+            self.addCleanup(shutil.rmtree, path, True)       # test-owned directory, never mounted here
+            return path
+
+        result = probe_mount_capability(kernel.run, kernel.mounted, remove or kernel.remove, mkdtemp=mkdtemp)
+        return result, made
+
+    def test_clean_unmount_returns_true_and_removes_the_directory(self):
+        kernel = FakeKernel(umount_ok=[True])
+        result, made = self.probe(kernel)
+        self.assertTrue(result)
+        self.assertEqual(kernel.removed, made)
+        self.assertEqual([c[0] for c in kernel.calls], ['mount', 'umount'])
+
+    def test_failed_ordinary_unmount_is_retried_lazily(self):
+        kernel = FakeKernel(umount_ok=[False, True])
+        result, made = self.probe(kernel)
+        self.assertTrue(result)
+        self.assertEqual([c[:2] for c in kernel.calls[1:]], [['umount', made[0] + '/src'], ['umount', '-l']])
+        self.assertEqual(kernel.removed, made)
+
+    def test_failed_lazy_unmount_is_retried_once_more(self):
+        kernel = FakeKernel(umount_ok=[False, False, True])
+        result, _ = self.probe(kernel)
+        self.assertTrue(result)
+        self.assertEqual(len(kernel.calls), 4)
+
+    def test_persistent_leak_raises_and_never_deletes_through_the_mount(self):
+        kernel = FakeKernel(umount_ok=[False, False, False])
+        with self.assertRaises(MountLeak) as caught:
+            self.probe(kernel)
+        self.assertIn('could not be removed', str(caught.exception))
+        self.assertEqual(kernel.removed, [])                      # directory untouched while mounted
+        self.assertTrue(kernel.is_mounted)
+
+    def test_exit_status_zero_is_not_trusted_when_the_mount_table_still_shows_the_mount(self):
+        kernel = FakeKernel(lies_success=True)
+        with self.assertRaises(MountLeak):
+            self.probe(kernel)
+        self.assertEqual(kernel.removed, [])
+
+    def test_failing_exit_status_is_accepted_when_the_mount_is_in_fact_gone(self):
+        kernel = FakeKernel(plain_fails_but_unmounts=True)
+        result, made = self.probe(kernel)
+        self.assertTrue(result)
+        self.assertEqual(kernel.removed, made)
+
+    def test_bind_failure_reports_unavailable_without_unmounting_and_still_removes_the_directory(self):
+        kernel = FakeKernel(bind_ok=False)
+        result, made = self.probe(kernel)
+        self.assertFalse(result)
+        self.assertEqual([c[0] for c in kernel.calls], ['mount'])
+        self.assertEqual(kernel.removed, made)
+
+    def test_directory_removal_failure_is_raised_not_suppressed(self):
+        kernel = FakeKernel(umount_ok=[True])
+
+        def broken(path):
+            raise OSError('device busy')
+
+        with self.assertRaises(MountLeak) as caught:
+            self.probe(kernel, remove=broken)
+        self.assertIn('could not be cleaned up', str(caught.exception))
+        self.assertIn('device busy', str(caught.exception))
+
+    def test_an_unexpected_error_during_the_probe_still_cleans_up_and_is_then_raised(self):
+        kernel = FakeKernel(umount_ok=[True])
+        original = kernel.run
+
+        def exploding(cmd):
+            result = original(cmd)
+            if cmd[:2] == ['mount', '--bind']:
+                raise RuntimeError('probe crashed after the bind')
+            return result
+
+        with self.assertRaises(RuntimeError) as caught:
+            probe_mount_capability(exploding, kernel.mounted, kernel.remove,
+                                   mkdtemp=lambda prefix: tempfile.mkdtemp(prefix=prefix))
+        self.assertIn('probe crashed', str(caught.exception))
+        self.assertFalse(kernel.is_mounted)                       # the bind it created was removed first
+        self.assertEqual(len(kernel.removed), 1)
+        shutil.rmtree(kernel.removed[0], ignore_errors=True)
+
+    def test_unmounted_tree_remover_refuses_a_live_mount_and_raises_real_delete_errors(self):
+        path = tempfile.mkdtemp(prefix='ocmnt-rm-')
+        self.addCleanup(shutil.rmtree, path, True)
+        called = []
+        with unittest.mock.patch(f'{__name__}.mounts_under', lambda p: [p + '/src']):
+            with self.assertRaises(MountLeak):
+                remove_unmounted_tree(path, rmtree=called.append)
+        self.assertEqual(called, [])                              # nothing deleted through a live mount
+
+        def broken(_):
+            raise OSError('cannot delete')
+
+        with self.assertRaises(OSError):
+            remove_unmounted_tree(path, rmtree=broken)
+
+    @unittest.skipIf(PRIV is None, 'needs root or passwordless sudo')
+    def test_the_real_probe_leaves_no_mount_and_no_directory(self):
+        before = set(glob.glob(os.path.join(tempfile.gettempdir(), 'ocmnt-probe-*')))
+        can_mount()
+        after = set(glob.glob(os.path.join(tempfile.gettempdir(), 'ocmnt-probe-*')))
+        self.assertEqual(after - before, set())
+        self.assertEqual([m for m in mounts_under(tempfile.gettempdir()) if 'ocmnt-probe-' in m], [])
 
 
 class MountLifecycleTests(unittest.TestCase):
@@ -587,7 +785,7 @@ class MountLifecycleTests(unittest.TestCase):
         Path(self.src, 'app', 'main.py').write_text('print("original")\n')
         Path(self.src, 'README.md').write_text('readme\n')
         os.chmod(self.src, 0o755)
-        self.addCleanup(shutil.rmtree, self.base, True)
+        self.addCleanup(remove_unmounted_tree, self.base)
         # registered after the removal, so it runs just before it and after every test cleanup:
         # nothing may remain mounted and no source file may have changed
         self.before = RuntimeFilesystemTests.snapshot(self.src) if PRIV is not None else None

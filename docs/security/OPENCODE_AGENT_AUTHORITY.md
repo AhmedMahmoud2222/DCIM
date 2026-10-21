@@ -1,4 +1,4 @@
-# OpenCode agent authority (v4.3)
+# OpenCode agent authority (v4.4)
 
 Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/` and `tests/deployment/mutation_check.py`. Delivered through PR #180.
 
@@ -191,7 +191,7 @@ Reviews stay `REVIEW_BLOCKED` until the owner fills the capability matrix. Do no
 
 ## Validation
 
-Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 305 tests (one ACL test skips where `setfacl` is missing), both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
+Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 316 tests (one ACL test skips where `setfacl` is missing), both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
 
 - 37 proxy tests against a live proxy with crafted raw HTTP (model substitution, duplicate keys, routing fields, other endpoints and methods, path tricks, compressed and chunked bodies, malformed JSON, oversized lengths, log hygiene, startup refusals);
 - 6 end-to-end tests that run the real binary through the real proxy against a stub provider (normal run, CLI model substitution, config model substitution, side-request substitution, provider redirection);
