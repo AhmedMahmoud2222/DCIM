@@ -26,7 +26,6 @@ BIN = os.environ.get('OPENCODE_BIN') or (str(DEFAULT_BIN) if DEFAULT_BIN.exists(
 MODEL = 'opencode/glm-5.3-flash-free'
 
 
-@unittest.skipIf(os.environ.get('OPENCODE_SKIP_E2E') == '1', 'skipped on request (mutation runs); the end-to-end tests are slow')
 @unittest.skipUnless(BIN and os.path.exists(BIN), 'real OpenCode 1.19.3 binary not installed (set OPENCODE_BIN)')
 class RealOpenCodeThroughProxyTests(unittest.TestCase):
     @classmethod

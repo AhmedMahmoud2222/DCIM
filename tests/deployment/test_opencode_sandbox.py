@@ -23,8 +23,18 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / '.github/scripts'
 sys.path.insert(0, str(SCRIPTS))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from strict_cleanup import class_temp_dir, temp_dir  # noqa: E402
+
+
+def temp_dir(case, prefix):
+    holder = tempfile.TemporaryDirectory(prefix=prefix)
+    case.addCleanup(holder.cleanup)
+    return holder.name
+
+
+def class_temp_dir(cls, prefix):
+    holder = tempfile.TemporaryDirectory(prefix=prefix)
+    cls.addClassCleanup(holder.cleanup)
+    return holder.name
 
 
 def load(name):
@@ -371,7 +381,7 @@ class ProxyBindingTests(unittest.TestCase):
         cls.addClassCleanup(cls.upstream.server_close)
         threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
         cls.addClassCleanup(cls.upstream.shutdown)          # runs even if a later line of setUpClass raises
-        cls.tmp = class_temp_dir(cls, 'ocsb-')              # strict removal registered before anything can fail
+        cls.tmp = class_temp_dir(cls, 'ocsb-')              # removal registered before anything can fail
         cls.log = os.path.join(cls.tmp, 'rejections.log')
         cls.server, cls.proxy = proxy.serve('REAL-KEY', f'http://127.0.0.1:{cls.upstream.server_address[1]}', BOUND,
                                             log_path=cls.log)

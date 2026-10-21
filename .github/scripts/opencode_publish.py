@@ -58,7 +58,8 @@ PROTECTED_PREFIXES = (
     '.opencode/', 'docs/security/opencode_agent_authority.md', 'opencode.json', 'opencode.jsonc',
 )
 PROTECTED_BASENAME_PREFIXES = ('.github/scripts/opencode_', 'tests/deployment/test_opencode_',
-                               'tests/deployment/mutation_check', 'tests/deployment/fixtures/')
+                               'tests/deployment/mutation_check', 'tests/deployment/fixtures/',
+                               'tests/deployment/opencode_validation/')
 PROTECTED_NAMES = ('codeowners', 'agents.md')
 
 

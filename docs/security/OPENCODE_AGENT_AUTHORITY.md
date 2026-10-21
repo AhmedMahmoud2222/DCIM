@@ -1,8 +1,8 @@
-# OpenCode agent authority (v5.1)
+# OpenCode agent authority (v6.0)
 
-Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/` and `tests/deployment/mutation_check.py`. Delivered through PR #180.
+Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/`, `tests/deployment/opencode_validation/` and `.github/workflows/opencode-security-validation.yml`. Delivered through PR #180.
 
-Status: implemented and tested locally, including against the real OpenCode 1.19.3 binary. Not run on GitHub-hosted runners with real secrets. Not accepted: independent review of this revision has not happened. Earlier heads (`29740c6`, `bc54f2e`) were rejected and are not evidence for this one.
+Status: implemented; test infrastructure simplified in v6.0 (architecture proposal v1.0 to v1.2 on PR #180). Not run on GitHub-hosted runners with real secrets. Not accepted: exact-head independent review of this revision has not happened. Earlier heads (`29740c6`, `bc54f2e`) were rejected and are not evidence for this one.
 
 ## Review disposition (second review)
 
@@ -191,84 +191,102 @@ Reviews stay `REVIEW_BLOCKED` until the owner fills the capability matrix. Do no
 
 ## Validation
 
-Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 461 tests (one ACL test skips where `setfacl` is missing), both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
+The test infrastructure follows architecture proposal v1.0 with addendum v1.1 and the corrections recorded in v1.2 (PR #180). The production controls above are unchanged except that the publisher also protects `tests/deployment/opencode_validation/`.
 
-- 37 proxy tests against a live proxy with crafted raw HTTP (model substitution, duplicate keys, routing fields, other endpoints and methods, path tricks, compressed and chunked bodies, malformed JSON, oversized lengths, log hygiene, startup refusals);
-- 6 end-to-end tests that run the real binary through the real proxy against a stub provider (normal run, CLI model substitution, config model substitution, side-request substitution, provider redirection);
-- 23 runtime tests: filesystem operations executed as an unprivileged user (rejected creates, renames, replacements, symlink swaps, hard-link and `/proc` aliases, truncation, chmod and chown, modify-then-restore, the old agent-owned-parent layout shown vulnerable and detected) and real-git history transitions;
-- 20 guard tests on the real transcripts and their mutations.
+### Where tests run
 
-Not run locally or not yet run on GitHub: the CI workflow on this head (queued results are reported separately), `useradd`/`iptables` in the workflow itself (the runtime tests exercise the permission model with `setpriv`; the firewall rules and the read-only bind mount were not exercised here), the proxy against the real OpenCode endpoint, GitHub's server-side behavior for the lease push (verified against local bare repositories only; the shallow fetch of the staging commit into an unrelated checkout is verified over `file://`, not HTTPS), App-token scopes, GitHub's signature on API-created commits, and CI triggering on bot-created PRs.
+- **Developer hosts.** `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` runs every unprivileged test. Privileged tests (another UID, root-owned trees, real mounts) are skipped because `OPENCODE_DISPOSABLE_HOST` is unset.
+- **Required CI** (`deploy-tools-test.yml`, job `Deployment tooling regressions`). This runs on a GitHub-hosted `ubuntu-24.04` VM, which GitHub discards after the job.
+  - The job asserts `runner.environment == github-hosted` and passwordless sudo, installs `acl` and the pinned OpenCode binary, and runs every deployment test with `OPENCODE_DISPOSABLE_HOST=1`.
+  - `opencode_validation/suite.py` records one outcome per test ID. `suite.py check-ci` fails the job on any infrastructure error (import, `setUpClass`, a test discovered but never reported), on any failure, and on any skip that is not listed in `allowed_skips.txt` (empty).
+  - It also fails when any ID in `privileged_required.txt` is missing or did not pass. The log ends with `privileged required: N/N passed, 0 skipped` and the manifest's SHA-256.
+- **Privileged fixtures.** These live in root-owned directories under `OPENCODE_DISPOSABLE_ROOT` and are never deleted or unmounted by a test; the VM teardown removes them.
+  - The suite creates the `ocprobe` account once per host and refuses an account that already existed.
+  - Unprivileged fixtures use `tempfile.TemporaryDirectory`, whose removal errors surface.
+  - With `OPENCODE_DISPOSABLE_HOST=1` but no root or sudo, the runtime module fails to import instead of skipping.
 
-`actionlint` 1.7.12 with `shellcheck` 0.11.0 reports nothing on all workflows (including the shell in `opencode.yml`).
+### Mutation validation (`opencode-security-validation.yml`)
 
-Mutation check, local evidence (not GitHub CI). Command: `python3 tests/deployment/mutation_check.py --workers 4 --json mutation-results.json` (the end-to-end tests are skipped inside it for time and were run separately). Method: the runner first executes a **control run** of the UNMUTATED suite in the same isolated copy; if the control does not pass it exits with status 2 and produces no verdict. Then it applies each entry of the inventory (166 entries on this head, with their exact snippets in the script) to a private copy, runs the suite and requires at least one test to fail.
+**Start and authorization.**
+- The repository owner applies the `security-validation` label to the PR (`pull_request: labeled`, before merge), or dispatches the workflow once it exists on the default branch.
+- The first job refuses any sender other than `github.repository_owner` and any runner that is not GitHub-hosted, before the matrix is scheduled. Applying a label is not taken as proof of write access.
+- Only the `labeled` event starts a run, so a label left on the PR never covers a later head. To re-run, remove and re-apply the label. `pull_request_target` is never used.
 
-Result on this head: the control run and the verdicts of the single clean run of that command are recorded in the pull request comment for the exact head (this file cannot hold its own head's result). The 150-entry result of `12bd362` is superseded: that run proved the namespace teardown only for a suite that exits normally.
+**Isolation.**
+- Each job checks out `github.event.pull_request.head.sha`, the exact head at label time, not GitHub's merge commit.
+- The control run and each of the 78 mutants run in separate fresh `ubuntu-24.04` VMs, with no job containers and no caches. Mutant jobs start only after the control passes.
+- **Control run:** the suite (all `test_opencode_*.py`, privileged and end-to-end included, nothing skipped) must pass completely on a disposable host. Otherwise there is no verdict.
+- **Mutant job steps:**
+  1. Apply one inventory entry (`mutants.py apply`). The snippet must occur once, the result must compile, and the change must be exactly the intended one.
+  2. Run the same suite under a time limit.
+  3. Judge the result against the control.
+  4. Upload one verdict.
 
-**Correction to earlier evidence.** The 67-, 116-, 127- and 138-entry results reported earlier in this pull request were not valid evidence. The runner copied only `.github/` and `tests/`, so five tests in `test_deploy_script.py` (which read `scripts/`) failed in every copy, including unmutated ones, and there was no control run to reveal it: every mutation "failed the suite" regardless of what it changed. In the 138-entry result, 12 entries had exactly those five failures and nothing else (`P1-1l`, `P1-2d`, `P1-2f`, `P2-i3`, `P2-i5`, `P2-p2`, `P2-p3`, `P2-2b`, `P2-2c`, `P2-5e`, `P2-3f`, `P2-4a`); they had not been shown caught. Every earlier "caught" verdict must be treated as unproven. After copying what the tests read (`scripts/`, `docs/`, the compose files) and adding the control run, the first valid run showed 9 missed mutations and 1 hang; I fixed them by adding tests (the privileged helper result, the directory mount-id layer in isolation, the report check, PID-namespace isolation, descent from the baseline, non-SHA expectations, HTTP 5xx classification, the 300-file truncation limit and the file-size limit) and by replacing three equivalent mutations. A second valid run then exposed 5 more (`P1-1l`, `P1-2d`, `P1-2f`, `P2-i5` and one equivalent), partly from a real defect of my own: parallel isolated suites shared one test-account name, so one suite's lease logic could remove the account under another. Each isolated run now has its own account name. The runs before the last one are listed here only to show how the evidence got there.
+**Verdicts.**
 
-Result categories the runner reports, and what each means for the exit code:
-
-| Result | Meaning | Exit code |
-|---|---|---|
-| `CAUGHT` | the suite failed under the mutation, and the control run had passed | 0 |
-| `MISSED` | the suite passed under the mutation (a control is untested) | 1 |
-| `INVALID` | the snippet did not occur exactly once | 1 |
-| `TIMEOUT` | the mutated suite hung | 1 |
-| `ERROR` | the runner itself failed, isolation was unavailable (nothing was started) or the namespace wrapper produced no report | 1 |
-| `CLEANUP_FAILED` | the worktree could not be deleted, a mount was visible in the host namespace, the deletion boundary was unavailable, the test account could not be removed, or the identity no longer matched; the suite verdict is kept as `suite_result` | 1 |
-| (control failed) | the unmutated suite did not pass in the isolated copy; no mutation is run and the exit status is 2 | 2 |
-
-### Mount boundary of the test infrastructure (architecture decision)
-
-The mutation runner executes code it has just modified, as root or through `sudo`, and then deletes the tree that code worked in. The security contract is: **a cleanup must never delete a file outside the disposable worktree, and must never unmount anything.** The design that satisfies it:
-
-1. *Execution is isolated.* Each mutated suite runs as PID 1 of private PID and mount namespaces (`unshare --mount --pid --fork --kill-child --mount-proc --propagation private`, through `sudo` and `setpriv` back to the invoking user when not root). Every mount it creates lives only in that namespace, and when PID 1 exits the kernel kills every process the suite left behind and discards the namespace. When deletion starts, nothing of the suite is running and none of its mounts is visible, so there is nothing to race and nothing to unmount. The wrapper (`ns_run.py`) refuses to run if the namespace's root mount carries a propagation tag, so a shared root cannot leak mounts to the host.
-2. *Deletion is bounded by the kernel.* `strict_cleanup.remove_verified` opens the worktree with `O_NOFOLLOW`, checks `st_dev`/`st_ino` on the descriptor, requires that the directory is not itself a mount point (its `..` must be reachable without crossing a mount), and removes everything relative to that descriptor. Every entry is opened with `openat2(RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)`, which the kernel refuses with `EXDEV` at any mount point, including a bind mount of the same filesystem that an `st_dev` comparison cannot see, and the `statx` mount id is compared as a second, independent layer. Nothing consults a mount table or a pathname after the open, so renaming or replacing the worktree, an ancestor or a descendant mid-walk changes nothing about what is deleted. A mount point is refused, never unmounted.
-3. *Unavailable means refused.* If `openat2`, `statx` mount ids or the architecture wiring are missing or forbidden, deletion raises `BoundaryUnavailable` (exit status 6 from the root helper) and removes nothing; if namespaces are unavailable the mutated suite is not started. There is no pathname fallback.
-
-The previous design (enumerate mounts from a pathname snapshot, then detach them through a descriptor) was rejected: it could delete files outside the worktree when the worktree was renamed between the identity check and the snapshot (reproduced), and detaching a mount through `/proc/self/fd/N/<relative>` could be redirected by replacing an interior directory. The code that unmounts was removed; a test fails if any reappears.
-
-| Alternative | Verdict |
+| Verdict | Meaning |
 |---|---|
-| Pathname mount snapshot plus descriptor traversal | rejected: reproduced deleting outside the worktree |
-| Descriptor-anchored `umount2` per mount | rejected: interior directories can be swapped between enumeration and detach; the code is unnecessary once mounts cannot outlive the suite |
-| `openat2` + mount ids only (no namespace) | not enough alone: a hostile process still running can race the walk, and leaked mounts need handling |
-| Mount + PID namespaces plus `openat2` deletion | chosen: removes concurrency and mount leakage, then deletes a quiescent tree inside a kernel-enforced boundary |
-| Disposable container or VM | stronger isolation (network, user, filesystem) but needs a runtime and image on every runner, and the bind-mounted worktree would still be deleted by the host; not needed to meet the contract, so not adopted. Revisit if the mutated code ever has to be treated as adversarial rather than faulty |
-| Unprivileged user namespaces | rejected: the tests need real root-owned files, account creation and mounts, and user namespaces are often disabled |
+| `CAUGHT` | the suite completed, discovered exactly the control's test IDs, had no infrastructure error and no skip, and at least one named test failed inside its own body |
+| `MISSED` | every test passed under the mutation |
+| `INVALID` | the mutant could not be applied, the set of test IDs changed, or a test was skipped or had an expected-failure outcome |
+| `ERROR` | no usable report, an infrastructure error, or a failure outside a test body (setUp, setUpClass, import) |
+| `TIMEOUT` | the suite hit the time limit |
 
-### Namespace lifecycle (v5.1)
+**Aggregate.**
+- A final job, which runs no mutated code, reads the verdicts as data.
+- It requires a passed control and exactly the inventory's ID set: no missing, duplicate, extra or malformed results.
+- It requires one run identity across all results: PR, head, base, run ID, run attempt, and the hashes of the inventory, both manifests and all validator files including the workflow.
+- It passes only with 78 of 78 `CAUGHT`. Results are bound to that head; any later push makes them stale.
 
-Finding (P1, [r4336588303](https://github.com/AhmedMahmoud2222/DCIM/pull/180#discussion_r4336588303)): the outer `subprocess.run(..., timeout=...)` killed only the direct child (`sudo` or `unshare`). Without `--kill-child`, the namespace's PID 1 and the suite's descendants kept running, and the runner deleted the worktree under them. I reproduced it on `12bd362`: after the outer timeout the result was `TIMEOUT`, cleanup `clean`, the worktree gone, and a detached descendant still writing its heartbeat file.
+**Credentials.**
+- Both test workflows declare `permissions: {}` at the top and `contents: read` per job. They use no secrets, OIDC, environments or write permissions, and every checkout sets `persist-credentials: false` (enforced by `test_opencode_validation.py`).
+- Root code inside a job can still reach that job's read-only token and its artifact upload token. A deliberately malicious mutant could therefore forge its own verdict; the aggregate's identity checks do not make a compromised job's result cryptographically independent. The mutants are reviewed snippets in the inventory, not attacker input, so this residual risk is accepted.
 
-The runner now guarantees that no worktree is deleted before every process of its isolated run is proven gone:
+### What was removed in v6.0, and what keeps the coverage
 
-1. `unshare` runs with `--kill-child`, so the namespace init receives SIGKILL when `unshare` dies.
-2. The isolated command starts in its own session (`start_new_session=True`) and is registered in `_ACTIVE`. On an outer timeout, any exception, `KeyboardInterrupt` or a SIGTERM/SIGINT/SIGHUP to the runner (`abort_all`), the run's process group is killed with SIGKILL, through `sudo kill` when the runner is not root. After a signal no further suite starts.
-3. `ns_run.py` (v1.1) starts the suite in its own process group, handles SIGTERM/SIGINT/SIGHUP, kills and reaps that group on timeout, signal or normal exit before it writes the report, and marks a signalled run `interrupted`, which the runner reports as `ERROR`, not as a verdict.
-4. The `finally` block of every run calls `terminate_and_verify` before anything is deleted. It kills the group, reaps the direct child (30 s limit), then runs `strict_cleanup.processes_using` as root up to 40 times, killing what it finds. The scan reports any live non-zombie process that has the worktree as working directory, root or executable, holds a descriptor or mapping below it, lives in a mount namespace with a mount below it, or names the worktree or the run's report directory in its command line or initial environment. A process it cannot inspect counts as present (`unverifiable`). Only an empty scan is positive evidence. The exit of `unshare` is not.
-5. If the proof is missing (processes survive, the scan fails or cannot run, the child cannot be reaped), the worktree and the report directory are **not** deleted, the result is `CLEANUP_FAILED`, `termination_verified` is `false`, `suite_result` keeps the original verdict (`TIMEOUT`, `ERROR`, `CAUGHT`) and `detail` keeps the original message followed by the failed proof and the path left on disk.
+| Removed | Why | Coverage kept by |
+|---|---|---|
+| `strict_cleanup.py`, `test_strict_cleanup.py` (openat2/statx deletion, mountinfo parser, `/proc` scanner, root helper) | host-safety code for deleting what mutated code touched on a long-lived host; the disposable VM replaces it | nothing to keep: it tested only itself (37 harness mutants retired) |
+| `account_lease.py`, `test_account_lifecycle.py` | shared test-account leasing across parallel suites on one host | `create_agent_account()` on a disposable host (11 harness mutants retired) |
+| `mutation_check.py`, `ns_run.py` (namespaced root runner, process termination) | one VM per mutant replaces namespaces, cleanup and process management | `opencode_validation/`; the 78 production mutants carried over unchanged (32 harness mutants retired) |
+| mount-probe, mountinfo-decoding, temp-dir and cleanup-guarantee test classes in `test_opencode_runtime.py` | they tested the removed helpers | `MountHelperTests` (production `mount_readonly` with a recording runner) and `RealMountTests` (real bind, remount, failure and CLI on a disposable host) |
+| 8 harness mutants of runtime and sandbox test helpers | their targets are gone | nothing to keep |
 
-Tests (deterministic, in `NamespaceTerminationTests`, `WrapperLifecycleTests`, `ProcessScanTests`): an outer timeout with a detached descendant leaves no live process and a clean parent directory; the same with `--kill-child` removed from `UNSHARE`, which proves the scan terminates the namespace init by itself; a descendant chdir'd into a suite mount dies with the namespace and the host never sees the mount; a stand-in process that cannot be killed, and a scan that cannot run, both refuse deletion and keep the `TIMEOUT`/`CAUGHT` verdict beside `CLEANUP_FAILED`; failed namespace startup is an `ERROR` with a verified clean-up; an exception inside the runner and a signal to the runner end the run and verify first; each way a process can touch the path (working directory, descriptor, marker, mount namespace, unreadable) is detected on its own.
+All production assertions in `RuntimeFilesystemTests` (ownership, chmod, ACL, hard links, symlinks, modify-and-restore, non-destructive preflight on populated trees, destructive-probe refusal, the collector), the real-git publication and concurrency tests, proxy, end-to-end, guard fixtures, gate, router, review and publish tests are kept unchanged. The previous 166-entry local result is retired; acceptance uses only the exact-head GitHub run.
 
-### Cleanup and account semantics
+### Complexity budget
 
-The worktree identity (`st_dev`, `st_ino`) is recorded at creation; the whole body, including identity capture, runs inside the guard; a worktree whose identity could not be recorded is removed only with `rmdir` (it is empty) or reported; mutated suites get a private `TMPDIR` inside the worktree and their own test-account name (`OPENCODE_TEST_ACCOUNT`), which the runner removes afterwards.
+The test tree contains no custom host-safety subsystem: no process scanning or signalling, no namespaces, no account leasing, no custom recursive deletion and no `ctypes`. `ComplexityBudgetTests` enforces this with import, call and command-reference checks. Short calls to standard utilities (`useradd`, `setfacl`, `mount` through the production `fsisolate`, `findmnt`) remain. Privileged custom code exists only in production: `opencode_fsisolate.py` (scope frozen: `build`, `chain`, `probe`, `probe-parent`, `digest`, `mount`) and the root steps of `opencode.yml`. Any new privileged component needs owner approval.
 
-The runtime tests need an unprivileged account. `tests/deployment/account_lease.py` creates it only if absent, marks it in its comment field, shares it between parallel workers in one PID namespace through lease files under one `flock`, never touches an account that existed without the marker, removes a suite-owned account when the last live lease is released (also after a failing `setUpClass`), refuses to remove an account that still has running processes, and rolls back an account it created if lease initialisation then fails (a failed rollback raises `AccountCleanupFailed` naming both errors, with the original as `__cause__`). Leases use process ids, which are only meaningful inside one PID namespace; that is why each isolated mutation run has its own account name. A worker killed with SIGKILL leaves a stale lease that the next release prunes. The lease directory `/tmp/oc-test-account-leases` and its lock files are infrastructure and stay. Mutants of the lease module itself can leave an account behind (two did, and I removed them by hand after the run).
+### Acceptance checklist (finite)
 
-### Residual races and runner dependence (test infrastructure, not the OpenCode workflow)
+Acceptance of an exact head requires every item below, with GitHub evidence on that SHA. Local runs are supporting evidence only. A demonstrated production security defect, or a defect that invalidates the validator's result, blocks acceptance even if every item holds.
 
-- Namespaces and account management need root or passwordless `sudo`; without them the mount tests skip and the mutation runner refuses to start a suite.
-- Deletion needs Linux 5.8 or later (`openat2`, `STATX_MNT_ID`) on x86_64 or arm64, and a seccomp profile that allows `openat2`. Verified on Linux 6.18 here; **unverified on GitHub runners**, where the same code path runs only in the deployment tests (not in a mutation run).
-- A small window remains between the root helper's last identity check and its final `rmdir` of the worktree's own name; `rmdir` removes only an empty directory, and a swapped name makes the identity re-check fail.
-- If the outer timeout of a mutation run expires, or the runner is signalled or raises, the run's process group is killed and `terminate_and_verify` scans `/proc` until nothing of the run is left (next section). If that proof cannot be produced, the worktree stays on disk and the run is `CLEANUP_FAILED`; someone has to inspect it by hand.
-- The scan identifies a run's processes by the worktree path (working directory, root, executable, descriptors, mappings, mount namespace) and by the unique report directory in the command line. A process that has exited and left no trace cannot be found, which is the intended meaning of "gone". The scan needs root to read every process; as a non-root runner it goes through `sudo`.
-- A SIGKILLed test worker leaves a stale lease until the next release.
+1. Every result names the exact head SHA; nothing is inherited from an older head or from `main`.
+2. Required CI is green on that SHA, and the branch has no conflict with its base.
+3. `Deployment tooling regressions` exists on the SHA with conclusion `success`; its log shows `privileged required: N/N passed, 0 skipped`, the manifest hash and a GitHub-hosted runner. A missing check is not acceptance.
+4. Only eligible registry models run; others fail closed.
+5. The proxy rejects model substitution, unknown endpoints and redirected providers.
+6. Implementer and reviewer differ in model, session and identity; reuse fails closed.
+7. The reviewer cannot modify its source: root-owned tree, no agent-owned entry or ancestor, digest unchanged, and the read-only mount when available.
+8. The agent UID has no network except the local proxy, and never sees publication credentials.
+9. Inputs respect size, encoding, NUL and secret-scan limits.
+10. The guard rejects every failing transcript fixture and accepts only the success fixtures.
+11. Publication refuses a forged baseline, a non-descending head, stale reviews and unsigned commits, posts COMMENT reviews only, and records ambiguous outcomes.
+12. Only an authorized commenter triggers the gate; per-job least privilege; actions pinned to full SHAs.
+13. One owner-requested validation run whose recorded head equals the accepted head: control passed, the aggregate shows 78 of 78 `CAUGHT` from separate jobs, and the validator and inventory hashes match the reviewed versions.
+14. `tests/` contains no custom host-safety subsystem (`ComplexityBudgetTests`).
+15. The change set contains no merge, deployment, OpenCode activation or credential provisioning.
+16. Every `actions/checkout` in the OpenCode and test workflows sets `persist-credentials: false`; no test or validation job has a write permission, OIDC or a secret.
 
-Local results are separate from GitHub CI: CI results for each head are reported on the pull request, and a local pass is not evidence that the GitHub runner passes (one test already failed on the runner for an environment-dependent mount count that did not occur locally).
+Items 4 to 12 are each shown by named negative tests in `test_opencode_*.py`, which the CI run executes. All six models stay disabled, and the capability matrix stays unqualified, until the owner approves them. App provisioning, real provider and App integration, and activation are separate operational gates.
+
+### Residual risks (test infrastructure)
+
+- Privileged behaviour is proven only on GitHub-hosted Ubuntu runners, not on developer machines.
+- Mutation evidence is produced on request, not per push; regression tests run on every push.
+- GitHub's per-job VM isolation is trusted for tests, as production already trusts it; self-hosted runners are refused.
+- The validator itself is not mutation-tested; `test_opencode_validation.py` tests its logic directly.
 
 ## Remaining risks
 
