@@ -87,7 +87,6 @@ MUTATIONS = [
     ('P2-i5', 'identity captured from a followed symlink', 'tests/deployment/strict_cleanup.py', "    info = os.lstat(path)\n    if not stat.S_ISDIR(info.st_mode):\n        raise CleanupRefused(f'{path} is not a real directory')", "    info = os.stat(path)\n    if not stat.S_ISDIR(info.st_mode):\n        raise CleanupRefused(f'{path} is not a real directory')"),
     ('P2-i6', 'walk deletes through mount points', 'tests/deployment/strict_cleanup.py', "        if info.st_dev != root_dev or below in mounted:\n            raise MountLeak(f'refusing to delete through {below}: it is a mount point')", "        if False:\n            pass"),
     ('P2-i7', 'walk follows symlinks inside the tree', 'tests/deployment/strict_cleanup.py', "        if not stat.S_ISDIR(info.st_mode):\n            os.unlink(name, dir_fd=dir_fd)\n            continue", "        if not stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):\n            os.unlink(name, dir_fd=dir_fd)\n            continue"),
-    ('P2-p1', 'privileged cleanup passes no identity to the root helper', 'tests/deployment/strict_cleanup.py', "path, str(expected[0]), str(expected[1])], capture_output=True, text=True)", "path, '0', '0'], capture_output=True, text=True)"),
     ('P2-p2', 'privileged cleanup ignores the helper result', 'tests/deployment/strict_cleanup.py', "    if done.returncode != 0 or os.path.lexists(path):\n        raise OSError", "    if False:\n        raise OSError"),
     ('P2-p3', 'privileged cleanup deletes through a live mount', 'tests/deployment/strict_cleanup.py', "def remove_privileged_tree(path: str, priv: list[str] | None, expected: tuple[int, int]) -> None:", "def remove_privileged_tree(path: str, priv: list[str] | None, expected: tuple[int, int]) -> None:\n    mounts_under = lambda p: []  # noqa: E731"),
     ('P2-p4', 'privileged temp dir records no identity', 'tests/deployment/strict_cleanup.py', "    case.addCleanup(remove_privileged_tree, path, priv, identity(path))", "    case.addCleanup(remove_privileged_tree, path, priv, (0, 0))"),
@@ -96,21 +95,33 @@ MUTATIONS = [
     ('P2-k3', 'class cleanup registered after setup can fail', 'tests/deployment/strict_cleanup.py', "    cls.addClassCleanup(remove_verified, path, identity(path))", "    pass"),
     ('P2-r1', 'mutation worktree cleanup ignores errors', 'tests/deployment/mutation_check.py', "    except Exception as error:      # noqa: BLE001 - every failure is reported, none is hidden\n        return {'state': 'FAILED'", "    except ZeroDivisionError as error:\n        return {'state': 'FAILED'"),
     ('P2-r2', 'mutation runner hides cleanup failure behind the suite verdict', 'tests/deployment/mutation_check.py', "    if outcome['state'] == 'FAILED':\n        # a worktree", "    if False:\n        # a worktree"),
-    ('P2-r3', 'mutation runner ignores leaked mounts', 'tests/deployment/mutation_check.py', "        if strict_cleanup.mounts_under(str(work)):\n            return {'state': 'FAILED'", "        if False:\n            return {'state': 'FAILED'"),
     ('P2-r4', 'mutation runner exit code ignores cleanup failures', 'tests/deployment/mutation_check.py', "def exit_code(summary):\n    return 1 if", "def exit_code(summary):\n    return 0 if True else 1 if"),
     ('P2-r5', 'mutated suite temp trees escape the worktree', 'tests/deployment/mutation_check.py', "'TMPDIR': str(scratch)}\n        done = subprocess.run(suite", "}\n        done = subprocess.run(suite"),
-    ('P2-r6', 'non-root mutation runner cannot detach leaked mounts', 'tests/deployment/mutation_check.py', "else [])\n\n        def umount(target):", "else [])\n        prefix = []\n\n        def umount(target):"),
-    ('P2-a1', 'worktree identity not verified before unmounting', 'tests/deployment/mutation_check.py', "            strict_cleanup.check_identity(str(work), expected)      # before looking at, or detaching, any mount\n", ""),
-    ('P2-a2', 'unidentified worktree handled like an identified one', 'tests/deployment/mutation_check.py', "    finally:\n        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected, umount=umount)", "    finally:\n        outcome = cleanup_worktree(work, expected, umount=umount) if expected else {'state': 'clean', 'leaked_mounts': 0, 'detail': ''}"),
+    ('P2-a2', 'unidentified worktree handled like an identified one', 'tests/deployment/mutation_check.py', "    finally:\n        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected)", "    finally:\n        outcome = cleanup_worktree(work, expected) if expected else {'state': 'clean', 'leaked_mounts': 0, 'detail': ''}"),
     ('P2-a3', 'worker errors escape the guard', 'tests/deployment/mutation_check.py', "    except Exception as error:      # noqa: BLE001 - a worker error must not abort the run or skip cleanup\n        result.update", "    except ZeroDivisionError as error:      # noqa: BLE001\n        result.update"),
     ('P2-a4', 'worker errors do not fail the run', 'tests/deployment/mutation_check.py', "or summary['TIMEOUT'] or summary['ERROR']\n", "or summary['TIMEOUT']\n"),
     ('P2-l1', 'a pre-existing account can be removed', 'tests/deployment/account_lease.py', "            if self.role == 'preexisting' or self.passwd.comment(self.name) is None:\n                return\n            if not (self.passwd.comment(self.name) or '').startswith(MARKER):\n                return                                     # not ours (or changed since): never removed\n", "            if self.passwd.comment(self.name) is None:\n                return\n"),
     ('P2-l2', 'account removed while another worker uses it', 'tests/deployment/account_lease.py', "            if _live_leases(self.lock_path, self.name):\n                return", "            if False:\n                return"),
     ('P2-l3', 'account removed while processes run as it', 'tests/deployment/account_lease.py', "            if self.passwd.running(self.name):\n                raise AccountInUse", "            if False:\n                raise AccountInUse"),
     ('P2-l4', 'account release not registered as class cleanup', 'tests/deployment/account_lease.py', "    cls.addClassCleanup(lease.release)", "    pass"),
-    ('P2-l5', 'account kept after a failure following its creation', 'tests/deployment/account_lease.py', "            if created:\n                passwd.remove(name)\n            raise", "            raise"),
     ('P2-l6', 'created account carries no ownership marker', 'tests/deployment/account_lease.py', "'--comment', f'{MARKER} (created by the deployment tests)', name],", "name],"),
     ('P2-l7', 'stale leases are never pruned', 'tests/deployment/account_lease.py', "            try:\n                os.unlink(path)                            # stale lease of a dead process", "            try:\n                pass                            # stale lease of a dead process"),
+    ('P2-n1', 'mounts detached by pathname instead of through the directory descriptor', 'tests/deployment/strict_cleanup.py', "                relative = os.path.relpath(target, here)\n                umount2(anchor if relative == '.' else f'{anchor}/{relative}')", "                relative = os.path.relpath(target, here)\n                umount2(target)"),
+    ('P2-n2', 'anchored detach skips the identity check on the descriptor', 'tests/deployment/strict_cleanup.py', "        if (info.st_dev, info.st_ino) != tuple(expected):\n            raise CleanupRefused(f'refusing to detach mounts under", "        if False:\n            raise CleanupRefused(f'refusing to detach mounts under"),
+    ('P2-n3', 'anchored detach locates the directory by its old pathname', 'tests/deployment/strict_cleanup.py', "                here = os.readlink(anchor)\n", "                here = path\n"),
+    ('P2-n4', 'anchored detach accepts an inconsistent location', 'tests/deployment/strict_cleanup.py', "                if os.readlink(anchor) == here:\n                    break", "                break"),
+    ('P2-n5', 'anchored detach continues on a deleted directory', 'tests/deployment/strict_cleanup.py', "            if here.endswith(' (deleted)') or not os.path.isabs(here):", "            if False:"),
+    ('P2-n7', 'root helper detaches without the recorded identity', 'tests/deployment/strict_cleanup.py', "        try:\n            print(detach_mounts_anchored(argv[2], (int(argv[3]), int(argv[4]))))", "        try:\n            print(detach_mounts_anchored(argv[2], (os.stat(argv[2]).st_dev, os.stat(argv[2]).st_ino)))"),
+    ('P2-l8', 'account rollback result is not verified', 'tests/deployment/account_lease.py', "        removed = passwd.remove(name) and passwd.comment(name) is None\n", "        passwd.remove(name)\n        removed = True\n"),
+    ('P2-l9', 'a failed account rollback is swallowed', 'tests/deployment/account_lease.py', "    if not removed:\n        raise AccountCleanupFailed(", "    if False:\n        raise AccountCleanupFailed("),
+    ('P2-l10', 'rollback can remove an account this call did not create', 'tests/deployment/account_lease.py', "            if created:                                    # only an account THIS call created is ever rolled back\n", "            if True:\n"),
+    ('P2-l11', 'rollback failure drops the original error', 'tests/deployment/account_lease.py', "remove it by hand') from failure\n\n\nclass Lease:", "remove it by hand') from None\n\n\nclass Lease:"),
+    ('P2-r3', 'mutation runner never detaches leaked mounts', 'tests/deployment/mutation_check.py', "        leaked = detach_mounts(str(work), expected)\n        delete_tree", "        leaked = 0\n        delete_tree"),
+    ('P2-a1', 'worktree identity not pre-checked before detaching', 'tests/deployment/mutation_check.py', "        strict_cleanup.check_identity(str(work), expected)\n        leaked = detach_mounts", "        leaked = detach_mounts"),
+    ('P2-n6', 'mutation cleanup detaches nothing', 'tests/deployment/mutation_check.py', "    return strict_cleanup.detach_privileged(path, _privilege_prefix(), expected)\n\n\ndef delete_tree", "    return 0\n\n\ndef delete_tree"),
+    ('P2-p1', 'privileged cleanup passes no identity to the root helper', 'tests/deployment/strict_cleanup.py', "'rm-verified',\n                           path, str(expected[0]), str(expected[1])]", "'rm-verified',\n                           path, '0', '0']"),
+    ('P2-r6', 'non-root mutation runner cannot detach leaked mounts', 'tests/deployment/mutation_check.py', "    return [] if os.geteuid() == 0 else (['sudo', '-n'] if shutil.which('sudo') else [])\n\n\ndef detach_mounts", "    return []\n\n\ndef detach_mounts"),
+    ('P2-l5', 'account kept after a failure following its creation', 'tests/deployment/account_lease.py', "                _roll_back(passwd, name, failure)\n            raise", "                pass\n            raise"),
     ('P1-2h', 'collector follows a swapped work tree', S + 'opencode_collect.py', "if os.path.islink(worktree) or os.path.realpath(worktree) != os.path.abspath(worktree):", 'if False:'),
     ('P1-2i', 'collector ignores agent-owned ancestors', S + 'opencode_collect.py', "if os.environ.get('OPENCODE_REQUIRE_ROOT_CHAIN') == '1' else []", 'if False else []'),
     ('P1-2j', 'read-only check accepts modifications', S + 'opencode_review.py', "if not (change.get('path') == 'REVIEW/diff.patch'", "if False and not (change.get('path') == 'REVIEW/diff.patch'"),
@@ -170,37 +181,44 @@ MUTATIONS = [
 SUITE = [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/deployment', '-p', 'test_*.py']
 
 
-def cleanup_worktree(work, expected, umount=None):
+def _privilege_prefix():
+    """Mounts and root-owned leftovers are root's to handle; a non-root runner uses passwordless sudo, as the
+    mount tests themselves do."""
+    return [] if os.geteuid() == 0 else (['sudo', '-n'] if shutil.which('sudo') else [])
+
+
+def detach_mounts(path, expected):
+    """Detach every mount below the worktree, anchored to a descriptor of the directory with the recorded
+    identity (see strict_cleanup.detach_mounts_anchored). A seam: tests replace it."""
+    return strict_cleanup.detach_privileged(path, _privilege_prefix(), expected)
+
+
+def delete_tree(path, expected):
+    """Identity-verified, descriptor-relative delete of the worktree. A seam: tests replace it."""
+    if os.geteuid() == 0:
+        strict_cleanup.remove_verified(path, expected)
+    else:
+        strict_cleanup.remove_privileged_tree(path, _privilege_prefix(), expected)
+
+
+def cleanup_worktree(work, expected):
     """Remove a mutation worktree strictly. A mutated suite may leave a bind mount behind (several
     mutations disable mount cleanup on purpose), so leaked mounts under the worktree are reported and
-    then detached before the identity-verified delete. The worktree's identity is verified BEFORE any
-    mount is enumerated or detached, so a renamed or replaced worktree never has its mounts touched.
-    Anything that cannot be detached or deleted is returned as a failure; nothing is suppressed.
+    then detached before the identity-verified delete.
+
+    The detach step is bound to the directory, not to its pathname: it opens the worktree once, checks the
+    saved st_dev/st_ino on that descriptor and keeps the descriptor for the whole operation, so a directory
+    created at the old pathname afterwards (even one with mounts of its own) is never examined. The
+    identity is also checked here first, which only refuses early; it is not what protects the mounts.
+    If the identity cannot be maintained the cleanup fails and nothing is retried by pathname.
 
     Returns {'state': 'clean' | 'reclaimed' | 'FAILED', 'leaked_mounts': n, 'detail': str}.
     """
-    if umount is None:
-        # mounts are root's to detach; a non-root runner uses passwordless sudo, as the mount tests themselves do
-        prefix = [] if os.geteuid() == 0 else (['sudo', '-n'] if shutil.which('sudo') else [])
-
-        def umount(target):
-            return (subprocess.run([*prefix, 'umount', target], capture_output=True).returncode == 0
-                    or subprocess.run([*prefix, 'umount', '-l', target], capture_output=True).returncode == 0)
     leaked = 0
     try:
-        for _ in range(8):
-            strict_cleanup.check_identity(str(work), expected)      # before looking at, or detaching, any mount
-            live = sorted(strict_cleanup.mounts_under(str(work)), key=len, reverse=True)
-            if not live:
-                break
-            leaked = max(leaked, len(live))
-            for target in live:
-                umount(target)
         strict_cleanup.check_identity(str(work), expected)
-        if strict_cleanup.mounts_under(str(work)):
-            return {'state': 'FAILED', 'leaked_mounts': leaked,
-                    'detail': f'mount(s) still present under {work}: {strict_cleanup.mounts_under(str(work))}'}
-        strict_cleanup.remove_verified(str(work), expected)
+        leaked = detach_mounts(str(work), expected)
+        delete_tree(str(work), expected)
     except Exception as error:      # noqa: BLE001 - every failure is reported, none is hidden
         return {'state': 'FAILED', 'leaked_mounts': leaked, 'detail': f'{type(error).__name__}: {error}'}
     return {'state': 'reclaimed' if leaked else 'clean', 'leaked_mounts': leaked, 'detail': ''}
@@ -217,7 +235,7 @@ def discard_unidentified(work):
     return {'state': 'clean', 'leaked_mounts': 0, 'detail': ''}
 
 
-def run_one(item, keep=False, suite=None, umount=None, parent=None):
+def run_one(item, keep=False, suite=None, parent=None):
     ident, finding, rel, old, new = item
     source = ROOT / rel
     text = source.read_text()
@@ -247,7 +265,7 @@ def run_one(item, keep=False, suite=None, umount=None, parent=None):
     except Exception as error:      # noqa: BLE001 - a worker error must not abort the run or skip cleanup
         result.update({'result': 'ERROR', 'detail': f'{type(error).__name__}: {error}'})
     finally:
-        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected, umount=umount)
+        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected)
     result['cleanup'] = outcome['state']
     result['leaked_mounts'] = outcome['leaked_mounts']
     if outcome['state'] == 'FAILED':

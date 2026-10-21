@@ -84,6 +84,20 @@ class Passwd:
         return subprocess.run(['pgrep', '-u', name], capture_output=True).returncode == 0
 
 
+def _roll_back(passwd, name, failure):
+    """Undo the creation after a later step failed, and check that it worked. If the account is still
+    there, raise AccountCleanupFailed naming both problems; the original error stays as __cause__."""
+    try:
+        removed = passwd.remove(name) and passwd.comment(name) is None
+        problem = '' if removed else 'userdel failed or the account is still present'
+    except Exception as error:      # noqa: BLE001 - reported below together with the original failure
+        removed, problem = False, f'{type(error).__name__}: {error}'
+    if not removed:
+        raise AccountCleanupFailed(
+            f'lease initialisation for {name} failed ({type(failure).__name__}: {failure}) and the account '
+            f'created just before could not be rolled back ({problem}); remove it by hand') from failure
+
+
 class Lease:
     def __init__(self, name, role, path, passwd, lock_path):
         self.name, self.role, self.path, self.passwd, self.lock_path = name, role, path, passwd, lock_path
@@ -166,9 +180,9 @@ def acquire(name, priv, passwd=None, lease_root=None):
         try:
             with open(path, 'w') as handle:
                 handle.write(f'{os.getpid()} {_start_time(os.getpid())} {role}\n')
-        except BaseException:
-            if created:
-                passwd.remove(name)
+        except BaseException as failure:
+            if created:                                    # only an account THIS call created is ever rolled back
+                _roll_back(passwd, name, failure)
             raise
     return Lease(name, role, path, passwd, lock_path)
 

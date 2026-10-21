@@ -30,10 +30,12 @@ MOUNTS = runtime.MOUNTS_AVAILABLE
 class FakePasswd:
     """An in-memory account database that records every change."""
 
-    def __init__(self, accounts=None, running=(), fail_remove=False):
+    def __init__(self, accounts=None, running=(), fail_remove=False, zombie=False, remove_raises=None):
         self.accounts = dict(accounts or {})
         self.running_names = set(running)
         self.fail_remove = fail_remove
+        self.zombie = zombie                # userdel reports success but the account stays
+        self.remove_raises = remove_raises
         self.log = []
 
     def comment(self, name):
@@ -45,9 +47,12 @@ class FakePasswd:
 
     def remove(self, name):
         self.log.append(('remove', name))
+        if self.remove_raises:
+            raise self.remove_raises
         if self.fail_remove:
             return False
-        self.accounts.pop(name, None)
+        if not self.zombie:
+            self.accounts.pop(name, None)
         return True
 
     def running(self, name):
@@ -135,6 +140,78 @@ class AccountLeaseTests(unittest.TestCase):
                 self.acquire()
         self.assertNotIn('ocprobe', self.passwd.accounts)
         self.assertEqual(self.passwd.log, [('create', 'ocprobe'), ('remove', 'ocprobe')])
+
+    def failing_lease_file(self):
+        real_open = open
+
+        def selective(path, *a, **k):
+            if str(path).startswith(self.leases) and not str(path).endswith('.lock'):
+                raise OSError('disk full while writing the lease')
+            return real_open(path, *a, **k)
+
+        return unittest.mock.patch('builtins.open', selective)
+
+    def test_a_lease_file_failure_rolls_the_new_account_back_and_keeps_the_original_error(self):
+        with self.failing_lease_file(), self.assertRaises(OSError) as caught:
+            self.acquire()
+        self.assertIn('disk full', str(caught.exception))
+        self.assertNotIn('ocprobe', self.passwd.accounts)
+        self.assertEqual(self.passwd.log, [('create', 'ocprobe'), ('remove', 'ocprobe')])
+
+    def test_a_failed_userdel_after_a_lease_failure_is_reported_with_the_original_error(self):
+        self.passwd.fail_remove = True
+        with self.failing_lease_file(), self.assertRaises(al.AccountCleanupFailed) as caught:
+            self.acquire()
+        message = str(caught.exception)
+        self.assertIn('disk full while writing the lease', message)          # the original error is in the report
+        self.assertIn('could not be rolled back', message)
+        self.assertIn('remove it by hand', message)
+        self.assertIsInstance(caught.exception.__cause__, OSError)            # and preserved as the cause
+        self.assertIn('ocprobe', self.passwd.accounts)                        # the leftover is real, not hidden
+
+    def test_a_userdel_that_claims_success_but_leaves_the_account_is_still_a_rollback_failure(self):
+        self.passwd.zombie = True
+        with self.failing_lease_file(), self.assertRaises(al.AccountCleanupFailed) as caught:
+            self.acquire()
+        self.assertIn('still present', str(caught.exception))
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+
+    def test_an_exception_from_the_rollback_itself_is_reported_with_the_original_error(self):
+        self.passwd.remove_raises = PermissionError('userdel not permitted')
+        with self.failing_lease_file(), self.assertRaises(al.AccountCleanupFailed) as caught:
+            self.acquire()
+        message = str(caught.exception)
+        self.assertIn('userdel not permitted', message)
+        self.assertIn('disk full while writing the lease', message)
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+
+    def test_a_lease_failure_never_removes_a_pre_existing_account(self):
+        self.passwd.accounts['ocprobe'] = 'created by somebody else'
+        with self.failing_lease_file(), self.assertRaises(OSError):
+            self.acquire()
+        self.assertEqual(self.passwd.accounts, {'ocprobe': 'created by somebody else'})
+        self.assertEqual(self.passwd.log, [])
+
+    def test_a_lease_failure_never_removes_an_account_this_call_only_joined(self):
+        self.passwd.accounts['ocprobe'] = f'{al.MARKER} (created by the deployment tests)'
+        with self.failing_lease_file(), self.assertRaises(OSError):
+            self.acquire()
+        self.assertIn('ocprobe', self.passwd.accounts)
+        self.assertEqual(self.passwd.log, [])
+
+    def test_setup_and_rollback_errors_both_reach_the_test_result_in_a_class_setup(self):
+        self.passwd.fail_remove = True
+
+        def set_up(cls):
+            with self.failing_lease_file():
+                al.lease_for_class(cls, 'ocprobe', [], passwd=self.passwd, lease_root=self.leases)
+
+        result = self.run_inner(set_up)
+        self.assertEqual(len(result.errors), 1)
+        text = result.errors[0][1]
+        self.assertIn('AccountCleanupFailed', text)
+        self.assertIn('disk full while writing the lease', text)
+        self.assertIn('OSError', text)                                         # the chained original is in the traceback
 
     def run_inner(self, set_up):
         class Inner(unittest.TestCase):
@@ -298,11 +375,11 @@ class MutationWorktreeGuardTests(unittest.TestCase):
         work.mkdir()
         (work / 'sub').mkdir()
         detached = []
-        with unittest.mock.patch.object(sc, 'read_mountinfo', lambda: self.table_for(work)):
-            outcome = mutation_check.cleanup_worktree(work, ident, umount=lambda target: detached.append(target) or True)
+        with unittest.mock.patch.object(mutation_check, 'detach_mounts', lambda p, e: detached.append(p) or 1):
+            outcome = mutation_check.cleanup_worktree(work, ident)
         self.assertEqual(outcome['state'], 'FAILED')
         self.assertIn('identity changed', outcome['detail'])
-        self.assertEqual(detached, [])                             # the replacement's mount was never touched
+        self.assertEqual(detached, [])                             # nothing was detached
         self.assertTrue((work / 'sub').exists())
 
     def test_a_renamed_worktree_and_a_symlink_in_its_place_are_refused_without_detaching(self):
@@ -312,8 +389,8 @@ class MutationWorktreeGuardTests(unittest.TestCase):
         os.symlink(str(work) + '.moved', work)
         self.addCleanup(lambda: os.path.islink(work) and os.unlink(work))
         detached = []
-        with unittest.mock.patch.object(sc, 'read_mountinfo', lambda: self.table_for(str(work) + '.moved')):
-            outcome = mutation_check.cleanup_worktree(work, ident, umount=lambda target: detached.append(target) or True)
+        with unittest.mock.patch.object(mutation_check, 'detach_mounts', lambda p, e: detached.append(p) or 1):
+            outcome = mutation_check.cleanup_worktree(work, ident)
         self.assertEqual(outcome['state'], 'FAILED')
         self.assertEqual(detached, [])
 
@@ -382,7 +459,7 @@ class MutationWorktreeGuardTests(unittest.TestCase):
         parent = sc.temp_dir(self, 'ocmutparent-')
         self.addCleanup(lambda: [shutil.rmtree(os.path.join(parent, d)) for d in os.listdir(parent)])
         with unittest.mock.patch.object(mutation_check.os, 'chmod', side_effect=OSError('read-only filesystem')), \
-                unittest.mock.patch.object(sc, 'remove_verified', side_effect=OSError('device busy')):
+                unittest.mock.patch.object(mutation_check, 'delete_tree', side_effect=OSError('device busy')):
             result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', 'pass'], parent=parent)
         self.assertEqual(result['result'], 'CLEANUP_FAILED')
         self.assertEqual(result['suite_result'], 'ERROR')

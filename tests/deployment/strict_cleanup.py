@@ -1,4 +1,4 @@
-"""Strict cleanup helpers for the deployment tests (strict_cleanup v2.0).
+"""Strict cleanup helpers for the deployment tests (strict_cleanup v3.0).
 
 Not collected by unittest (no test_ prefix). Everything here fails loudly: a mount that survives, a
 path that is not the directory the test created, or a delete that errors raises instead of passing.
@@ -9,6 +9,7 @@ on LF alone, fields on ASCII space alone, and the file is read without newline t
 """
 from __future__ import annotations
 
+import ctypes
 import errno
 import os
 import re
@@ -113,6 +114,66 @@ def check_identity(path: str, expected: tuple[int, int]) -> None:
         raise CleanupRefused(f'refusing to act on {path}: it is not the directory that was created (identity changed)')
 
 
+def _umount2(path: str) -> None:
+    """umount(2) on `path`, plain first and then MNT_DETACH. Needs root. `path` may be a /proc/self/fd/N
+    path, which the kernel resolves through the descriptor rather than through a pathname."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    for flags in (0, 2):
+        if libc.umount2(os.fsencode(path), flags) == 0:
+            return
+        last = ctypes.get_errno()
+    raise OSError(last, os.strerror(last), path)
+
+
+def detach_mounts_anchored(path: str, expected: tuple[int, int], hook=None, umount2=None) -> int:
+    """Detach every mount at or below the directory with identity `expected`, anchored to a descriptor.
+
+    The directory is opened once (O_NOFOLLOW), its identity checked with fstat on that descriptor, and the
+    descriptor stays open for the whole operation. The directory's *current* location is read from
+    /proc/self/fd/N (so a rename is followed), mounts are taken from one consistent mountinfo snapshot,
+    and each mount is detached through /proc/self/fd/N/<relative path>, which the kernel resolves inside
+    the anchored directory. The original pathname is never used again, so a directory created at that
+    pathname afterwards, with or without mounts of its own, is never looked at or touched.
+
+    If the location cannot be established consistently, or a mount cannot be detached, this raises and
+    nothing is retried by pathname. `hook(stage)` is a test seam called between the steps.
+    Returns the number of mounts detached. Needs root.
+    """
+    hook = hook or (lambda stage: None)
+    umount2 = umount2 or _umount2
+    fd = os.open(path, _DIR_FLAGS)
+    try:
+        info = os.fstat(fd)
+        if (info.st_dev, info.st_ino) != tuple(expected):
+            raise CleanupRefused(f'refusing to detach mounts under {path}: it is not the directory that was created')
+        anchor = f'/proc/self/fd/{fd}'
+        detached = 0
+        for _ in range(16):
+            hook('opened')
+            for _attempt in range(5):
+                here = os.readlink(anchor)
+                text = read_mountinfo()
+                if os.readlink(anchor) == here:
+                    break
+            else:
+                raise CleanupRefused(f'{path} kept moving while its mounts were being enumerated')
+            if here.endswith(' (deleted)') or not os.path.isabs(here):
+                raise CleanupRefused(f'the anchored directory for {path} no longer has a location ({here})')
+            hook('enumerated')
+            prefix = here.rstrip('/') + '/'
+            below = [m for m in parse_mountinfo(text) if m == here or m.startswith(prefix)]
+            if not below:
+                return detached
+            for target in sorted(below, key=len, reverse=True):
+                relative = os.path.relpath(target, here)
+                umount2(anchor if relative == '.' else f'{anchor}/{relative}')
+                detached += 1
+                hook('detached')
+        raise MountLeak(f'mounts below {path} could not be detached')
+    finally:
+        os.close(fd)
+
+
 def _children(dir_fd: int, here: str, root_dev: int, mounted: set[str]) -> None:
     """Delete everything under an already-open directory, relative to its descriptor. Symlinks are
     unlinked, never followed; a mount point or a directory on another device stops the walk."""
@@ -207,6 +268,19 @@ def remove_privileged_tree(path: str, priv: list[str] | None, expected: tuple[in
         raise OSError(f'could not remove {path}: {done.stderr.strip() or "it still exists"}')
 
 
+def detach_privileged(path: str, priv: list[str] | None, expected: tuple[int, int]) -> int:
+    """detach_mounts_anchored() in a root helper process (this file, `detach-verified`)."""
+    done = subprocess.run([*(priv or []), sys.executable, '-I', os.path.abspath(__file__), 'detach-verified',
+                           path, str(expected[0]), str(expected[1])], capture_output=True, text=True)
+    if done.returncode == 3:
+        raise CleanupRefused(done.stderr.strip() or f'refusing to detach mounts under {path}')
+    if done.returncode == 4:
+        raise MountLeak(done.stderr.strip() or f'mounts below {path} could not be detached')
+    if done.returncode != 0:
+        raise OSError(f'could not detach mounts under {path}: {done.stderr.strip() or "unknown error"}')
+    return int(done.stdout.strip() or 0)
+
+
 def privileged_temp_dir(case, prefix: str, priv: list[str] | None) -> str:
     """mktemp -d as root; its identity is recorded and the verified privileged removal registered at once."""
     made = subprocess.run([*(priv or []), 'mktemp', '-d', os.path.join(tempfile.gettempdir(), f'{prefix}XXXXXX')], capture_output=True, text=True, check=True)
@@ -229,7 +303,20 @@ def _main(argv: list[str]) -> int:
             print(f'{argv[2]}: {error}', file=sys.stderr)
             return 5
         return 0
-    print('usage: strict_cleanup.py rm-verified PATH DEV INO', file=sys.stderr)
+    if len(argv) == 5 and argv[1] == 'detach-verified':
+        try:
+            print(detach_mounts_anchored(argv[2], (int(argv[3]), int(argv[4]))))
+        except CleanupRefused as error:
+            print(error, file=sys.stderr)
+            return 3
+        except MountLeak as error:
+            print(error, file=sys.stderr)
+            return 4
+        except OSError as error:
+            print(f'{argv[2]}: {error}', file=sys.stderr)
+            return 5
+        return 0
+    print('usage: strict_cleanup.py rm-verified|detach-verified PATH DEV INO', file=sys.stderr)
     return 2
 
 

@@ -325,6 +325,231 @@ class NothingLeftBehindTests(unittest.TestCase):
         self.assertEqual([m for m in sc.mount_points() if m.startswith(sc.canonical(private) + '/')], [])
 
 
+class AnchoredDetachTests(unittest.TestCase):
+    """detach_mounts_anchored() is bound to the directory it opened, not to its pathname. Each test replaces
+    the directory at a different step and checks that nothing belonging to the replacement is detached."""
+
+    def worktree(self, *subs):
+        parent = sc.temp_dir(self, 'ocanch-')
+        work = os.path.join(parent, 'work')
+        os.mkdir(work)
+        for name in subs:
+            os.mkdir(os.path.join(work, name))
+        return work, sc.identity(work)
+
+    def swap_in_replacement(self, work, *subs, mount=True):
+        """Rename the original aside and create a replacement (with its own mounts) at the same pathname."""
+        moved = work + '.moved'
+        os.rename(work, moved)
+        os.mkdir(work)
+        for name in subs:
+            target = os.path.join(work, name)
+            os.mkdir(target)
+            Path(target, 'replacement.txt').write_text('replacement')
+            if mount:
+                subprocess.run([*PRIV, 'mount', '--bind', target, target], check=True)
+                self.addCleanup(runtime.unmount_all, target, 0)
+        return moved
+
+    def scenario(self, body):
+        """Run `body` (Python source) as root in a fresh interpreter and return the JSON it prints.
+        Mount operations need root, and they must work the same whether the suite runs as root or through sudo."""
+        parent = sc.privileged_temp_dir(self, 'ocanch-', PRIV)
+        prelude = ('import json, os, subprocess, sys\n'
+                   f'sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
+                   'import strict_cleanup as sc\n'
+                   'import mutation_check\n'
+                   f'parent = {parent!r}\n'
+                   'def sh(*cmd):\n    subprocess.run(list(cmd), check=True)\n')
+        done = subprocess.run([*PRIV, sys.executable, '-I', '-c', prelude + body], capture_output=True, text=True)
+        self.addCleanup(runtime.unmount_all, parent, 0)
+        for leftover in sc.mounts_under(parent):
+            self.addCleanup(runtime.unmount_all, leftover, 0)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        import json
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    @unittest.skipUnless(MOUNTS, 'bind mounts are not permitted in this environment')
+    def test_replacement_created_during_enumeration_keeps_its_mount(self):
+        outcome = self.scenario('''
+results = {}
+for stage in ('opened', 'enumerated', 'detached'):
+    work = os.path.join(parent, 'work-' + stage)
+    os.mkdir(work)
+    for name in ('a', 'b'):
+        os.mkdir(os.path.join(work, name))
+        sh('mount', '--bind', os.path.join(work, name), os.path.join(work, name))
+    ident = sc.identity(work)
+    fired = []
+
+    def hook(seen, work=work, stage=stage, fired=fired):
+        if seen == stage and not fired:
+            moved = work + '.moved'
+            os.rename(work, moved)               # the race: the directory is replaced mid-operation
+            os.mkdir(work)
+            for name in ('a', 'b'):
+                target = os.path.join(work, name)
+                os.mkdir(target)
+                open(os.path.join(target, 'replacement.txt'), 'w').write('replacement')
+                sh('mount', '--bind', target, target)
+            fired.append(moved)
+
+    detached = sc.detach_mounts_anchored(work, ident, hook=hook)
+    moved = fired[0]
+    results[stage] = {
+        'detached': detached,
+        'original_mounts_left': [len(sc.mounts_at(os.path.join(moved, n))) for n in ('a', 'b')],
+        'replacement_mounts': [len(sc.mounts_at(os.path.join(work, n))) for n in ('a', 'b')],
+        'replacement_files': [open(os.path.join(work, n, 'replacement.txt')).read() for n in ('a', 'b')],
+    }
+    for n in ('a', 'b'):                          # leave nothing mounted
+        for base in (work, moved):
+            while sc.mounts_at(os.path.join(base, n)):
+                sh('umount', os.path.join(base, n))
+print(json.dumps(results))
+''')
+        for stage, seen in outcome.items():
+            self.assertGreaterEqual(seen['detached'], 2, stage)
+            self.assertEqual(seen['original_mounts_left'], [0, 0], f'{stage}: the original directory kept a mount')
+            self.assertEqual(seen['replacement_mounts'], [1, 1], f'{stage}: the replacement lost a mount')
+            self.assertEqual(seen['replacement_files'], ['replacement', 'replacement'], stage)
+
+    def test_every_detach_goes_through_the_descriptor_never_the_old_pathname(self):
+        work, ident = self.worktree('a', 'b')
+        table = (f'1 2 0:3 / {work}/a rw - ext4 /dev/vda rw\n1 2 0:3 / {work}/b rw - ext4 /dev/vda rw\n')
+        seen, calls = [], []
+
+        def hook(stage):
+            if stage == 'enumerated' and not seen:
+                seen.append(self.swap_in_replacement(work, 'a', mount=False))
+
+        state = {'moved': False}
+
+        def read():
+            return table if not state['moved'] else ''
+
+        with unittest.mock.patch.object(sc, 'read_mountinfo', read):
+            def umount2(path):
+                calls.append(path)
+                state['moved'] = True
+
+            # the table still lists the ORIGINAL pathname; after the swap the original lives at '.moved'
+            sc.detach_mounts_anchored(work, ident, hook=hook, umount2=umount2)
+        self.assertTrue(calls, 'nothing was detached')
+        for path in calls:
+            self.assertTrue(path.startswith('/proc/self/fd/'), path)       # resolved by the kernel inside the directory
+            self.assertNotIn(work + '/', path)
+
+    def test_a_directory_that_is_not_the_one_created_is_refused_before_anything_is_enumerated(self):
+        work, ident = self.worktree('a')
+        moved = self.swap_in_replacement(work, 'a', mount=False)
+        self.addCleanup(shutil.rmtree, moved, True)
+        read = unittest.mock.Mock(return_value='')
+        with unittest.mock.patch.object(sc, 'read_mountinfo', read), self.assertRaises(sc.CleanupRefused):
+            sc.detach_mounts_anchored(work, ident)
+        read.assert_not_called()
+
+    def test_a_directory_that_loses_its_location_fails_safe_without_detaching(self):
+        work, ident = self.worktree('a')
+        calls = []
+
+        def hook(stage):
+            if stage == 'opened':
+                shutil.rmtree(work)                                        # the anchored directory is deleted
+
+        with self.assertRaises(sc.CleanupRefused) as caught:
+            sc.detach_mounts_anchored(work, ident, hook=hook, umount2=calls.append)
+        self.assertIn('no longer has a location', str(caught.exception))
+        self.assertEqual(calls, [])
+
+    def test_a_directory_that_keeps_moving_fails_safe_without_detaching(self):
+        work, ident = self.worktree('a')
+        calls = []
+        real = os.readlink
+        counter = {'n': 0}
+
+        def moving(path, *a, **k):
+            if str(path).startswith('/proc/self/fd/'):
+                counter['n'] += 1
+                return f'/tmp/somewhere-{counter["n"]}'                  # a different answer on every read
+            return real(path, *a, **k)
+
+        with unittest.mock.patch.object(sc.os, 'readlink', moving), self.assertRaises(sc.CleanupRefused) as caught:
+            sc.detach_mounts_anchored(work, ident, umount2=calls.append)
+        self.assertIn('kept moving', str(caught.exception))
+        self.assertEqual(calls, [])
+
+    def test_when_proc_is_unavailable_it_fails_instead_of_falling_back_to_the_pathname(self):
+        work, ident = self.worktree('a')
+        calls = []
+        with unittest.mock.patch.object(sc.os, 'readlink', side_effect=OSError('/proc is not mounted')), \
+                self.assertRaises(OSError):
+            sc.detach_mounts_anchored(work, ident, umount2=calls.append)
+        self.assertEqual(calls, [])
+
+    def test_a_mount_that_cannot_be_detached_raises_and_is_not_retried_by_pathname(self):
+        work, ident = self.worktree('a')
+        table = f'1 2 0:3 / {work}/a rw - ext4 /dev/vda rw\n'
+        calls = []
+
+        def failing(path):
+            calls.append(path)
+            raise OSError(16, 'busy', path)
+
+        with unittest.mock.patch.object(sc, 'read_mountinfo', lambda: table), self.assertRaises(OSError):
+            sc.detach_mounts_anchored(work, ident, umount2=failing)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].startswith('/proc/self/fd/'))
+
+    @unittest.skipIf(PRIV is None, 'needs root or passwordless sudo')
+    def test_the_root_helper_refuses_a_replacement_and_detaches_the_original_when_asked(self):
+        work, ident = self.worktree('a')
+        wrong = (ident[0], ident[1] + 1)
+        done = subprocess.run([*PRIV, sys.executable, '-I', sc.__file__, 'detach-verified', work, str(wrong[0]), str(wrong[1])],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 3)
+        with self.assertRaises(sc.CleanupRefused):
+            sc.detach_privileged(work, PRIV, wrong)
+
+    @unittest.skipUnless(MOUNTS, 'bind mounts are not permitted in this environment')
+    def test_cleanup_worktree_with_a_replacement_swapped_in_during_the_detach_leaves_the_replacement_whole(self):
+        outcome = self.scenario('''
+from pathlib import Path
+work = os.path.join(parent, 'work')
+os.makedirs(os.path.join(work, 'a'))
+sh('mount', '--bind', os.path.join(work, 'a'), os.path.join(work, 'a'))
+ident = sc.identity(work)
+moved = []
+
+def racing_detach(path, expected):
+    def hook(stage):
+        if stage == 'enumerated' and not moved:
+            os.rename(work, work + '.moved')
+            os.makedirs(os.path.join(work, 'a'))
+            open(os.path.join(work, 'a', 'replacement.txt'), 'w').write('replacement')
+            sh('mount', '--bind', os.path.join(work, 'a'), os.path.join(work, 'a'))
+            moved.append(work + '.moved')
+    return sc.detach_mounts_anchored(path, expected, hook=hook)
+
+mutation_check.detach_mounts = racing_detach
+result = mutation_check.cleanup_worktree(Path(work), ident)
+out = {'state': result['state'], 'detail': result['detail'],
+       'replacement_mounts': len(sc.mounts_at(os.path.join(work, 'a'))),
+       'replacement_file': open(os.path.join(work, 'a', 'replacement.txt')).read(),
+       'original_kept': os.path.isdir(moved[0]),
+       'original_mounts': len(sc.mounts_at(os.path.join(moved[0], 'a')))}
+while sc.mounts_at(os.path.join(work, 'a')):
+    sh('umount', os.path.join(work, 'a'))
+print(json.dumps(out))
+''')
+        self.assertEqual(outcome['state'], 'FAILED')                      # the original was moved; the delete is refused
+        self.assertIn('not the directory that was created', outcome['detail'])
+        self.assertEqual(outcome['replacement_mounts'], 1)               # the replacement's mount survived
+        self.assertEqual(outcome['replacement_file'], 'replacement')
+        self.assertTrue(outcome['original_kept'])                        # and the original is left for inspection
+        self.assertEqual(outcome['original_mounts'], 0)                  # its own mount was detached through the descriptor
+
+
 class MutationRunnerCleanupTests(unittest.TestCase):
     """The mutation runner must not report a result while hiding a leaked mount or an undeletable worktree."""
 
@@ -343,7 +568,7 @@ class MutationRunnerCleanupTests(unittest.TestCase):
 
     def test_an_undeletable_worktree_is_a_failure_not_a_pass(self):
         work, ident = self.worktree()
-        with unittest.mock.patch.object(sc, 'remove_verified', side_effect=PermissionError('cannot delete')):
+        with unittest.mock.patch.object(mutation_check, 'delete_tree', side_effect=PermissionError('cannot delete')):
             outcome = mutation_check.cleanup_worktree(work, ident)
         self.assertEqual(outcome['state'], 'FAILED')
         self.assertIn('cannot delete', outcome['detail'])
@@ -362,12 +587,13 @@ class MutationRunnerCleanupTests(unittest.TestCase):
 
     def test_a_leaked_mount_that_cannot_be_detached_is_a_failure_and_nothing_is_deleted(self):
         work, ident = self.worktree()
-        table = f"1 2 0:3 / {work}/sub rw - ext4 /dev/vda rw\n"
-        with unittest.mock.patch.object(sc, 'read_mountinfo', lambda: table):
-            outcome = mutation_check.cleanup_worktree(work, ident, umount=lambda target: False)
+        deleted = []
+        with unittest.mock.patch.object(mutation_check, 'detach_mounts', side_effect=sc.MountLeak('mounts below could not be detached')), \
+                unittest.mock.patch.object(mutation_check, 'delete_tree', lambda p, e: deleted.append(p)):
+            outcome = mutation_check.cleanup_worktree(work, ident)
         self.assertEqual(outcome['state'], 'FAILED')
-        self.assertEqual(outcome['leaked_mounts'], 1)
-        self.assertIn('still present', outcome['detail'])
+        self.assertIn('could not be detached', outcome['detail'])
+        self.assertEqual(deleted, [])
         self.assertTrue((work / 'sub' / 'f.txt').exists())
 
     @unittest.skipUnless(MOUNTS, 'bind mounts are not permitted in this environment')
@@ -385,7 +611,7 @@ class MutationRunnerCleanupTests(unittest.TestCase):
         item = mutation_check.MUTATIONS[0]
         failing_suite = [sys.executable, '-c', 'import sys; sys.exit(1)']
         parent = sc.temp_dir(self, 'ocmutparent-')
-        with unittest.mock.patch.object(sc, 'remove_verified', side_effect=OSError('device busy')):
+        with unittest.mock.patch.object(mutation_check, 'delete_tree', side_effect=OSError('device busy')):
             result = mutation_check.run_one(item, suite=failing_suite, parent=parent)
         self.addCleanup(lambda: [shutil.rmtree(os.path.join(parent, d)) for d in os.listdir(parent)])
         self.assertEqual(result['result'], 'CLEANUP_FAILED')
