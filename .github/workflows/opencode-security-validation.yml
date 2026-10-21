@@ -83,6 +83,7 @@ jobs:
           sudo -n true
           sudo apt-get update -qq
           sudo apt-get install -y acl
+          python3 -m pip install PyYAML==6.0.2
           (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
           .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
       - name: Run the unmutated suite
@@ -133,6 +134,7 @@ jobs:
           sudo -n true
           sudo apt-get update -qq
           sudo apt-get install -y acl
+          python3 -m pip install PyYAML==6.0.2
           (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
           .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

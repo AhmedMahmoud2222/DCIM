@@ -292,6 +292,15 @@ class WorkflowPolicyTests(unittest.TestCase):
                          '${{ github.event.pull_request.head.sha || github.sha }}')
         self.assertNotIn('cache', VALIDATION.read_text().replace('cancel-in-progress', ''))
 
+    def test_control_and_mutant_runners_install_the_same_pinned_test_dependencies(self):
+        jobs = self.validation['jobs']
+        prepared = [s['run'] for name in ('control', 'mutant') for s in jobs[name]['steps']
+                    if s.get('name') == 'Prepare the disposable runner']
+        self.assertEqual(len(prepared), 2)
+        self.assertEqual(prepared[0], prepared[1])                  # control and mutants run on identical setups
+        self.assertIn('python3 -m pip install PyYAML==6.0.2', prepared[0])
+        self.assertIn('PyYAML==6.0.2', TOOLS.read_text())          # the same pin as the required CI job
+
     def test_least_privilege_and_no_persisted_credentials(self):
         for path in (VALIDATION, TOOLS):
             workflow = load(path)
