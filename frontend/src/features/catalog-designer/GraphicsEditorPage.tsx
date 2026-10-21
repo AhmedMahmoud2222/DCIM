@@ -40,15 +40,27 @@ export function GraphicsEditorPage({
   revision,
   readOnly,
   onChanged,
+  markerLabelSuggestions = [],
 }: {
   revision: CatalogModelRevisionDetail;
   readOnly: boolean;
   onChanged: () => void;
+  /** Suggested free-text marker labels (Issue #150 M5: PDU outlet labels), offered as a
+   * datalist when placing a Module/Other marker so an outlet position can be tagged
+   * with the exact label its template uses. Ignored when empty. */
+  markerLabelSuggestions?: string[];
 }) {
   return (
     <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
       {SIDES.map((side) => (
-        <SideGraphicPanel key={side} side={side} revision={revision} readOnly={readOnly} onChanged={onChanged} />
+        <SideGraphicPanel
+          key={side}
+          side={side}
+          revision={revision}
+          readOnly={readOnly}
+          onChanged={onChanged}
+          markerLabelSuggestions={markerLabelSuggestions}
+        />
       ))}
     </div>
   );
@@ -59,11 +71,13 @@ function SideGraphicPanel({
   revision,
   readOnly,
   onChanged,
+  markerLabelSuggestions,
 }: {
   side: Side;
   revision: CatalogModelRevisionDetail;
   readOnly: boolean;
   onChanged: () => void;
+  markerLabelSuggestions: string[];
 }) {
   const graphic = revision.graphics.find((g) => g.side === side) ?? null;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -102,7 +116,14 @@ function SideGraphicPanel({
         </p>
       )}
       {graphic ? (
-        <FrontRearImageCanvas graphic={graphic} side={side} revision={revision} readOnly={readOnly} onChanged={onChanged} />
+        <FrontRearImageCanvas
+          graphic={graphic}
+          side={side}
+          revision={revision}
+          readOnly={readOnly}
+          onChanged={onChanged}
+          markerLabelSuggestions={markerLabelSuggestions}
+        />
       ) : (
         <p className="text-xs italic text-slate-500">No {side} image uploaded yet.</p>
       )}
@@ -145,12 +166,14 @@ function FrontRearImageCanvas({
   revision,
   readOnly,
   onChanged,
+  markerLabelSuggestions,
 }: {
   graphic: CatalogGraphic;
   side: Side;
   revision: CatalogModelRevisionDetail;
   readOnly: boolean;
   onChanged: () => void;
+  markerLabelSuggestions: string[];
 }) {
   const imageUrl = useGraphicImageUrl(revision.id, side, graphic.id);
   const [placingType, setPlacingType] = useState<MarkerType | null>(null);
@@ -336,6 +359,8 @@ function FrontRearImageCanvas({
           revision={revision}
           isPending={createMutation.isPending}
           error={createMutation.error instanceof ApiError ? createMutation.error.detail : null}
+          labelSuggestions={markerLabelSuggestions}
+          datalistId={`pdu-outlet-labels-${side}`}
           onCancel={() => setPendingPlacement(null)}
           onCreate={(body) => createMutation.mutate(body)}
         />
@@ -360,6 +385,8 @@ function MarkerPlacementForm({
   revision,
   isPending,
   error,
+  labelSuggestions = [],
+  datalistId,
   onCancel,
   onCreate,
 }: {
@@ -367,6 +394,9 @@ function MarkerPlacementForm({
   revision: CatalogModelRevisionDetail;
   isPending: boolean;
   error: string | null;
+  /** Free-text label suggestions (PDU outlet labels) offered via a datalist. */
+  labelSuggestions?: string[];
+  datalistId?: string;
   onCancel: () => void;
   onCreate: (body: CatalogGraphicMarkerInput) => void;
 }) {
@@ -375,6 +405,7 @@ function MarkerPlacementForm({
 
   const needsTarget = placement.type === "network_port" || placement.type === "power_supply";
   const targetOptions = placement.type === "network_port" ? revision.network_ports : placement.type === "power_supply" ? revision.power_supplies : [];
+  const showSuggestions = !needsTarget && labelSuggestions.length > 0 && datalistId !== undefined;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -407,12 +438,23 @@ function MarkerPlacementForm({
           ))}
         </select>
       ) : (
-        <input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="Label (optional)"
-          className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
-        />
+        <>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={showSuggestions ? "Outlet label (pick a suggestion or type)" : "Label (optional)"}
+            list={showSuggestions ? datalistId : undefined}
+            aria-label="Marker label"
+            className="w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100"
+          />
+          {showSuggestions && (
+            <datalist id={datalistId}>
+              {labelSuggestions.map((suggestion) => (
+                <option key={suggestion} value={suggestion} />
+              ))}
+            </datalist>
+          )}
+        </>
       )}
       <div className="flex gap-2">
         <button

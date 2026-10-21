@@ -143,4 +143,42 @@ describe("GraphicsEditorPage", () => {
 
     expect(screen.queryByRole("button", { name: /Network port/ })).not.toBeInTheDocument();
   });
+
+  it("offers PDU outlet labels as datalist suggestions when placing a free-text marker", async () => {
+    const user = userEvent.setup();
+    const graphic = makeGraphic();
+
+    renderWithProviders(
+      <GraphicsEditorPage
+        revision={makeRevision({ graphics: [graphic] })}
+        readOnly={false}
+        onChanged={vi.fn()}
+        markerLabelSuggestions={["Outlet 1", "Outlet 2"]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "+ Module" }));
+    await user.click(screen.getByTestId("graphic-canvas"));
+
+    const labelInput = screen.getByLabelText("Marker label");
+    expect(labelInput).toHaveAttribute("list", "pdu-outlet-labels-front");
+    const datalist = document.getElementById("pdu-outlet-labels-front");
+    expect(datalist).not.toBeNull();
+    expect(Array.from(datalist!.querySelectorAll("option")).map((o) => o.getAttribute("value"))).toEqual([
+      "Outlet 1",
+      "Outlet 2",
+    ]);
+  });
+
+  it("keeps the plain label input when no suggestions are supplied", async () => {
+    const user = userEvent.setup();
+    const graphic = makeGraphic();
+
+    renderWithProviders(<GraphicsEditorPage revision={makeRevision({ graphics: [graphic] })} readOnly={false} onChanged={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "+ Module" }));
+    await user.click(screen.getByTestId("graphic-canvas"));
+
+    expect(screen.getByLabelText("Marker label")).not.toHaveAttribute("list");
+  });
 });

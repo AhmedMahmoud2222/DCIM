@@ -5,9 +5,69 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "@/features/catalog-designer/api";
 import { RevisionEditorPage } from "@/features/catalog-designer/RevisionEditorPage";
 import { renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
-import { CatalogModelRevisionDetail } from "@/types";
+import { CatalogModelDetail, CatalogModelRevisionDetail, PDUDraft } from "@/types";
 
 vi.mock("@/features/catalog-designer/api");
+
+function makeModel(overrides: Partial<CatalogModelDetail> = {}): CatalogModelDetail {
+  return {
+    id: "model-1",
+    manufacturer_id: "mfr-1",
+    category: "rack",
+    subtype: null,
+    model_name: "Test model",
+    model_number: null,
+    description: null,
+    tags: [],
+    status: "active",
+    created_at: "2026-01-01T00:00:00Z",
+    revisions: [],
+    ...overrides,
+  };
+}
+
+function makePduDraft(overrides: Partial<PDUDraft> = {}): PDUDraft {
+  return {
+    revision_id: "rev-1",
+    lifecycle_status: "draft",
+    pdu_input_voltage_v: 230,
+    pdu_input_current_a: 16,
+    pdu_phase: "single",
+    mounting_orientation: "horizontal",
+    pdu_rated_capacity_kw: null,
+    pdu_plug_type: null,
+    pdu_monitoring_protocol: null,
+    pdu_monitoring_endpoint: null,
+    outlets: [
+      {
+        id: "outlet-1",
+        stable_key: "c13-1",
+        outlet_number: 1,
+        label: "Outlet 1",
+        outlet_type: "iec_c13",
+        outlet_count: 1,
+        phase: "single",
+        rated_voltage_v: 230,
+        rated_current_a: 10,
+        position: null,
+        side: "front",
+        sort_order: 0,
+      },
+    ],
+    version: 1,
+    ...overrides,
+  };
+}
+
+/** A user with the power:manage permission the instantiate endpoint requires
+ * (Administrator/DCIM Manager/Engineer on the backend — the frontend only needs the
+ * code present, the API re-checks it). */
+const POWER_MANAGER_TEST_USER = {
+  ...VIEWER_TEST_USER,
+  id: "user-power",
+  role_names: ["Engineer"],
+  permission_codes: ["catalog:read", "power:read", "power:manage"],
+};
 
 function makeRevision(overrides: Partial<CatalogModelRevisionDetail> = {}): CatalogModelRevisionDetail {
   return {
@@ -53,6 +113,9 @@ const routeOptions = { route: "/admin/catalog/revisions/rev-1", path: "/admin/ca
 describe("RevisionEditorPage", () => {
   beforeEach(() => {
     vi.mocked(api.getRevision).mockResolvedValue(makeRevision());
+    // The page resolves the owning model's category to decide whether the PDU panels
+    // apply; default the suite to a non-PDU model so those panels stay out of the way.
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel());
   });
 
   it("renders draft scalar fields as editable and shows Validate/Publish controls", async () => {
@@ -191,5 +254,107 @@ describe("RevisionEditorPage", () => {
     await screen.findByRole("heading", { name: "Revision 1" });
 
     expect(screen.queryByRole("button", { name: "Retire this revision" })).not.toBeInTheDocument();
+  });
+
+  it("renders the PDU specification editor for a pdu-category draft revision", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getPduDraft).mockResolvedValue(makePduDraft());
+
+    renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    expect(await screen.findByRole("heading", { name: "PDU Electrical Specification" })).toBeInTheDocument();
+    expect(api.getPduDraft).toHaveBeenCalledWith("rev-1");
+    expect(screen.getByLabelText("Rated input voltage (V)")).toHaveValue(230);
+    expect(screen.getAllByTestId("pdu-outlet-row")).toHaveLength(1);
+  });
+
+  it("never requests the PDU sub-resource for a non-pdu revision", async () => {
+    renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    await waitFor(() => expect(api.getCatalogModel).toHaveBeenCalledWith("model-1"));
+    expect(api.getPduDraft).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "PDU Electrical Specification" })).not.toBeInTheDocument();
+  });
+
+  it("does not request the PDU sub-resource once a pdu revision is published (it is immutable and 409s)", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getRevision).mockResolvedValue(
+      makeRevision({ lifecycle_status: "published", published_at: "2026-01-05T00:00:00Z" }),
+    );
+
+    renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    await waitFor(() => expect(api.getCatalogModel).toHaveBeenCalled());
+    expect(api.getPduDraft).not.toHaveBeenCalled();
+  });
+
+  it("offers PDU instantiation on a published pdu revision to a power:manage user", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getRevision).mockResolvedValue(
+      makeRevision({ lifecycle_status: "published", published_at: "2026-01-05T00:00:00Z" }),
+    );
+
+    renderWithProviders(<RevisionEditorPage />, { ...routeOptions, user: POWER_MANAGER_TEST_USER });
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    expect(await screen.findByRole("button", { name: "Instantiate PDU" })).toBeInTheDocument();
+  });
+
+  it("hides PDU instantiation from a user without power:manage", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getRevision).mockResolvedValue(
+      makeRevision({ lifecycle_status: "published", published_at: "2026-01-05T00:00:00Z" }),
+    );
+
+    renderWithProviders(<RevisionEditorPage />, routeOptions);
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    await waitFor(() => expect(api.getCatalogModel).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Instantiate PDU" })).not.toBeInTheDocument();
+  });
+
+  it("blocks PDU instantiation on a retired revision that has no retirement override", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getRevision).mockResolvedValue(
+      makeRevision({ lifecycle_status: "retired", retired_at: "2026-02-01T00:00:00Z", retirement_reason: "EOL" }),
+    );
+
+    renderWithProviders(<RevisionEditorPage />, { ...routeOptions, user: POWER_MANAGER_TEST_USER });
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    expect(await screen.findByText(/new PDU installations from this revision are blocked/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Instantiate PDU" })).not.toBeInTheDocument();
+  });
+
+  it("allows PDU instantiation on a retired revision whose override permits installations", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getRevision).mockResolvedValue(
+      makeRevision({
+        lifecycle_status: "retired",
+        retired_at: "2026-02-01T00:00:00Z",
+        retirement_reason: "EOL",
+        allow_installation_when_retired: true,
+      }),
+    );
+
+    renderWithProviders(<RevisionEditorPage />, { ...routeOptions, user: POWER_MANAGER_TEST_USER });
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    expect(await screen.findByRole("button", { name: "Instantiate PDU" })).toBeInTheDocument();
+  });
+
+  it("shows the PDU spec read-only to a viewer on a pdu draft", async () => {
+    vi.mocked(api.getCatalogModel).mockResolvedValue(makeModel({ category: "pdu" }));
+    vi.mocked(api.getPduDraft).mockResolvedValue(makePduDraft());
+
+    renderWithProviders(<RevisionEditorPage />, { ...routeOptions, user: VIEWER_TEST_USER });
+    await screen.findByRole("heading", { name: "Revision 1" });
+
+    expect(await screen.findByRole("heading", { name: "PDU Electrical Specification" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Rated input voltage (V)")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save PDU specification" })).not.toBeInTheDocument();
   });
 });
