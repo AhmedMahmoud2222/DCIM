@@ -168,7 +168,17 @@ Before a separately authorized rollout, run the **new code's** read-only preflig
 python scripts/sec_arch_02_preflight.py --output sec-arch-02-preflight.json
 ```
 
-The CLI opens a READ ONLY, REPEATABLE READ transaction. It reports impacted user IDs, permission sources, before/after active status, raw site/rack scopes (including latent selected-rack grants), proposed narrow entitlements, and surviving genuinely global administrators. It never applies grants. Protect the report like an access-control export. The owner must review intended reach and approve any additional explicit source-local grant; do not automatically recreate the old permission/site cross-product. Abort rollout if no qualifying global administrator remains.
+The CLI opens a READ ONLY, REPEATABLE READ transaction. It reports impacted user IDs, permission sources, before/after active status, raw site/rack scopes (including latent selected-rack grants), proposed narrow entitlements, and surviving genuinely global administrators. It never applies grants. Protect the report like an access-control export (see *Handling the preflight report* below). The owner must review intended reach and approve any additional explicit source-local grant; do not automatically recreate the old permission/site cross-product. Abort rollout if no qualifying global administrator remains.
+
+### Handling the preflight report
+
+The report lists user IDs, permission codes, grant-source names/IDs and raw site/rack scopes. Treat it as confidential access-control data.
+
+- Use `--output`. The file is created owner-only (`0600`) and the command fails if the path already exists or is a symlink; it never overwrites. Without `--output` the report goes to stdout with a warning on stderr, so avoid it in shared terminals, CI logs and pipelines that are captured.
+- On Windows the POSIX mode is not enforced: write into a directory only the operator can read, or restrict the ACL (`icacls <file> /inheritance:r /grant:r "%USERNAME%:F"`).
+- Never upload the report as a CI artifact, attach it to an issue or PR, or commit it (`sec-arch-02-preflight*.json` is git-ignored as a safety net). Share it only over an access-controlled channel with the owner.
+- Delete it after the rollout decision is recorded; keep only a sanitized summary (counts, no IDs).
+- On failure the command prints only the exception class name, so errors cannot leak connection details or report content. Run it with debug tooling only on an authorized host.
 
 Validate both fresh and populated PostgreSQL states, then require independent exact-HEAD Jules acceptance and all required CI before merge. Deployment and production grant changes require separate owner authorization. Reverting to the flattened evaluator reintroduces F1/F2; use a reviewed forward fix or suspend affected operations instead of silently restoring that behavior.
 

@@ -57,6 +57,22 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Refuse SEC-ARCH-02 preflight reports in the checkout (issue #175)
+        # The preflight report is confidential access-control data. `.gitignore` keeps it
+        # out of normal commits; this guard also fails a force-added/tracked copy, so a
+        # report can never sit in a CI checkout and ride along in any uploaded artifact.
+        working-directory: ${{ github.workspace }}
+        run: |
+          tracked="$(git ls-files | grep -E '(^|/)sec-arch-02-preflight.*\.json$' || true)"
+          stray="$(find . -name 'sec-arch-02-preflight*.json' -not -path './.git/*' -print)"
+          if [ -n "$tracked" ]; then
+            echo "Confidential preflight report is tracked by git: $tracked" >&2
+            exit 1
+          fi
+          if [ -n "$stray" ]; then
+            echo "Confidential preflight report present in the checkout: $stray" >&2
+            exit 1
+          fi
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.11"
