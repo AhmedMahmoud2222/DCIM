@@ -76,6 +76,16 @@ class EquipmentPlacement(Base, UUIDPkMixin):
             "room_id",
             postgresql_where="effective_to IS NULL",
         ),
+        # Migration 0056 (Issue #150 R5 follow-up): a vertical (0U) PDU occupies the full
+        # rack height on one side, so at most one current vertical placement per rack + side.
+        # The discriminator is the `orientation` value 'pdu_vertical_0u'.
+        Index(
+            "uq_equipment_placement_pdu_vertical_0u",
+            "rack_id",
+            "side",
+            unique=True,
+            postgresql_where="placement_type = 'other' AND orientation = 'pdu_vertical_0u' AND effective_to IS NULL",
+        ),
     )
 
     equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_asset.id", ondelete="RESTRICT"), nullable=False)
