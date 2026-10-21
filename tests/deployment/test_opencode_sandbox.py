@@ -23,6 +23,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / '.github/scripts'
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from strict_cleanup import remove_unmounted_tree, temp_dir  # noqa: E402
 
 
 def load(name):
@@ -55,8 +57,7 @@ def make_repo(tmp, files):
 
 class ConfidentialityBoundaryTests(unittest.TestCase):
     def prepare(self, files, allowlist=frozenset()):
-        tmp = tempfile.mkdtemp()
-        self.addCleanup(lambda: __import__('shutil').rmtree(tmp, ignore_errors=True))
+        tmp = temp_dir(self, 'ocsb-')
         repo = make_repo(tmp, files)
         return tmp, sandbox.prepare(repo, os.path.join(tmp, 'w'), os.path.join(tmp, 's'), 'a' * 40, set(allowlist))
 
@@ -363,7 +364,7 @@ class ProxyBindingTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.upstream.shutdown()
-        __import__('shutil').rmtree(cls.tmp, ignore_errors=True)
+        remove_unmounted_tree(cls.tmp)
 
     def setUp(self):
         _Upstream.seen.clear()

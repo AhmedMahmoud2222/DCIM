@@ -8,7 +8,6 @@ sudo, or no way to create a user) a test is SKIPPED and says so; a skip is not a
 import glob
 import importlib
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +15,11 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from strict_cleanup import (CleanupRefused, MountLeak, canonical, decode_mountinfo, mounts_at,  # noqa: E402
+                            mounts_under, parse_mountinfo, privileged_temp_dir, remove_unmounted_tree, temp_dir)
+import strict_cleanup  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / '.github/scripts'
@@ -77,15 +81,13 @@ class RuntimeFilesystemTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tool, ignore_errors=True)
+        remove_unmounted_tree(cls.tool)
 
     def setUp(self):
         # Root owns the base directory, like /srv on the runner, so every ancestor of the tree is root-controlled.
-        self.base = run_priv('mktemp', '-d', '/tmp/ocfs-XXXXXX').stdout.strip()
+        self.base = privileged_temp_dir(self, 'ocfs-', PRIV)     # strict removal registered at creation
         run_priv('chmod', '755', self.base)
-        self.addCleanup(lambda: run_priv('rm', '-rf', self.base, check=False))
-        stage = tempfile.mkdtemp(prefix='ocfs-stage-')
-        self.addCleanup(shutil.rmtree, stage, True)
+        stage = temp_dir(self, 'ocfs-stage-')
         os.makedirs(os.path.join(stage, 'app'))
         Path(stage, 'app', 'main.py').write_text('print("original")\n')
         Path(stage, 'README.md').write_text('readme\n')
@@ -301,8 +303,7 @@ class RuntimeFilesystemTests(unittest.TestCase):
 
     def test_reviewer_preflight_leaves_the_populated_source_tree_exactly_as_it_was(self):
         self.review2 = os.path.join(self.base, 'review2')
-        stage = tempfile.mkdtemp(prefix='ocfs-stage2-')
-        self.addCleanup(shutil.rmtree, stage, True)
+        stage = temp_dir(self, 'ocfs-stage2-')
         self.populate_plain(stage)
         run_priv(sys.executable, '-I', self.tool_script, 'build', stage, self.review2)
         src = os.path.join(self.review2, 'src')
@@ -488,8 +489,7 @@ class RuntimeFilesystemTests(unittest.TestCase):
             self.assertEqual('CLEAN' in actual.stdout, expect_clean, actual.stdout + actual.stderr)
 
     def test_collector_refuses_a_worktree_the_agent_could_swap(self):
-        scratch = tempfile.mkdtemp(prefix='ocfs-link-')
-        self.addCleanup(shutil.rmtree, scratch, True)
+        scratch = temp_dir(self, 'ocfs-link-')
         link = os.path.join(scratch, 'worktree-link')
         os.symlink(self.src, link)
         state = os.path.join(scratch, 'state')
@@ -508,28 +508,6 @@ class RuntimeFilesystemTests(unittest.TestCase):
                 os.environ.pop('OPENCODE_REQUIRE_ROOT_CHAIN')
             else:
                 os.environ['OPENCODE_REQUIRE_ROOT_CHAIN'] = old
-
-
-_MOUNTINFO_ESCAPE = re.compile(r'\\([0-7]{3})')
-
-
-def decode_mountinfo(field):
-    """Undo the kernel's octal escapes (space \\040, tab \\011, newline \\012, backslash \\134) in a
-    mountinfo path field. One pass over the text, so an escaped backslash followed by digits is not decoded twice."""
-    return _MOUNTINFO_ESCAPE.sub(lambda m: chr(int(m.group(1), 8)), field)
-
-
-def mount_points(lines=None):
-    """Decoded mount point of every entry in the mount table (or in `lines`, for tests)."""
-    if lines is None:
-        with open('/proc/self/mountinfo') as handle:
-            lines = handle.read().splitlines()
-    return [decode_mountinfo(line.split()[4]) for line in lines if line.strip()]
-
-
-def mounts_at(path, lines=None):
-    """Mount points equal to `path`; one entry per stacked mount."""
-    return [point for point in mount_points(lines) if point == path]
 
 
 def unmount_all(path, baseline=0):
@@ -570,34 +548,6 @@ def bind_for_test(case, root, runner):
     baseline = len(mounts_at(target))
     case.addCleanup(unmount_all, target, baseline)
     return fsisolate.mount_readonly(root, run=runner)
-
-
-class MountLeak(RuntimeError):
-    """A mount created by the test harness could not be removed."""
-
-
-def temp_dir(case, prefix, parent=None):
-    """Create a temporary directory and register its removal in the same breath, before anything that can
-    fail. Removal is strict: a mount still present or a failed delete is reported as a cleanup error next to
-    whatever the test itself did, not suppressed."""
-    path = tempfile.mkdtemp(prefix=prefix, dir=parent)
-    case.addCleanup(remove_unmounted_tree, path)
-    return path
-
-
-def mounts_under(path, lines=None):
-    """Mount points at or below `path`."""
-    prefix = path.rstrip('/') + '/'
-    return [point for point in mount_points(lines) if point == path or point.startswith(prefix)]
-
-
-def remove_unmounted_tree(path, rmtree=shutil.rmtree):
-    """Delete a temporary tree that may once have held a mount. Never deletes through a live mount and
-    never hides a failure: a surviving mount or a failed delete raises."""
-    live = mounts_under(path)
-    if live:
-        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')
-    rmtree(path)
 
 
 def probe_mount_capability(run, mounted, remove, mkdtemp=tempfile.mkdtemp):
@@ -767,7 +717,7 @@ class MountCapabilityProbeTests(unittest.TestCase):
     def test_unmounted_tree_remover_refuses_a_live_mount_and_raises_real_delete_errors(self):
         path = temp_dir(self, 'ocmnt-rm-')
         called = []
-        with unittest.mock.patch(f'{__name__}.mounts_under', lambda p: [p + '/src']):
+        with unittest.mock.patch.object(strict_cleanup, 'mounts_under', lambda p: [p + '/src']):
             with self.assertRaises(MountLeak):
                 remove_unmounted_tree(path, rmtree=called.append)
         self.assertEqual(called, [])                              # nothing deleted through a live mount
@@ -787,38 +737,116 @@ class MountCapabilityProbeTests(unittest.TestCase):
         self.assertEqual([m for m in mounts_under(tempfile.gettempdir()) if 'ocmnt-probe-' in m], [])
 
 
-WEIRD_NAMES = ('with space', 'with\ttab', 'with\nnewline', 'with\\backslash', 'all \t\n\\ together', 'octal\\040literal')
+WEIRD_NAMES = ('with space', 'with\ttab', 'with\nnewline', 'with\\backslash', 'all \t\n\\ together', 'octal\\040literal',
+               'with\rcarriage', 'with\x0bvtab', 'with\x0cformfeed', 'mixed \r\x0b\x0c \t\n\\')
 
 
 class MountinfoDecodingTests(unittest.TestCase):
-    """Paths in /proc/self/mountinfo are octal-escaped; helpers must compare decoded paths."""
+    """Paths in /proc/self/mountinfo are octal-escaped (space, tab, newline, backslash only) and canonical."""
 
-    def line(self, point):
-        escaped = (point.replace('\\', '\\134').replace(' ', '\\040').replace('\t', '\\011').replace('\n', '\\012'))
+    def record(self, point):
+        escaped = point.replace('\\', '\\134').replace(' ', '\\040').replace('\t', '\\011').replace('\n', '\\012')
         return f'36 25 0:32 / {escaped} rw,relatime shared:1 - ext4 /dev/vda rw'
+
+    def table(self, *points):
+        return '\n'.join(self.record(p) for p in points) + '\n'
 
     def test_the_decoder_handles_each_escape_and_is_a_single_pass(self):
         self.assertEqual(decode_mountinfo('/a\\040b\\011c\\012d\\134e'), '/a b\tc\nd\\e')
         self.assertEqual(decode_mountinfo('/x\\134040'), '/x\\040')       # escaped backslash then digits: not decoded twice
         self.assertEqual(decode_mountinfo('/plain/path'), '/plain/path')
 
+    def test_literal_cr_vt_ff_stay_inside_their_field_and_record(self):
+        for char, label in (('\r', 'CR'), ('\x0b', 'VT'), ('\x0c', 'FF')):
+            point = f'/mnt/a{char}b/src'
+            text = self.table('/', point, '/mnt/other')
+            self.assertIn(char, text)                                     # the kernel does not escape these
+            self.assertEqual(parse_mountinfo(text).count(canonical(point)), 1, label)
+            self.assertEqual(len(parse_mountinfo(text)), 3, label)        # no phantom records or fields
+            self.assertEqual(mounts_at(point, text), [canonical(point)], label)
+            self.assertEqual(sorted(mounts_under('/mnt', text)), sorted([canonical('/mnt/other'), canonical(point)]), label)
+
+    def test_records_split_on_lf_only_and_fields_on_space_only(self):
+        text = '1 2 3:4 / /a\rb rw - x y z\n5 6 7:8 / /c\x0cd rw - x y z'      # no trailing LF, CR and FF inside
+        self.assertEqual(parse_mountinfo(text), [canonical('/a\rb'), canonical('/c\x0cd')])
+        self.assertEqual(parse_mountinfo('\n\nshort record\n'), [])         # malformed records are skipped, not crashes
+
+    def test_the_real_table_is_read_without_newline_translation(self):
+        text = strict_cleanup.read_mountinfo()
+        self.assertNotIn('\r\n', text.replace('\n', '\n'))               # nothing was rewritten
+        self.assertTrue(text.endswith('\n'))
+
     def test_every_weird_name_is_recognized_by_all_mount_state_helpers(self):
         for name in WEIRD_NAMES:
             point = f'/tmp/{name}/src'
-            lines = [self.line('/'), self.line(point), self.line(point), self.line('/tmp/other')]
-            self.assertEqual(mounts_at(point, lines), [point, point], repr(name))      # stacked mounts both seen
-            self.assertEqual(mounts_under(f'/tmp/{name}', lines), [point, point], repr(name))
-            self.assertEqual(mounts_at('/tmp/other', lines), ['/tmp/other'])
-            self.assertEqual(mounts_under('/tmp/with', lines), [], repr(name))          # no prefix confusion
+            text = self.table('/', point, point, '/tmp/other')
+            self.assertEqual(mounts_at(point, text), [canonical(point)] * 2, repr(name))      # stacked mounts both seen
+            self.assertEqual(mounts_under(f'/tmp/{name}', text), [canonical(point)] * 2, repr(name))
+            self.assertEqual(mounts_at('/tmp/other', text), [canonical('/tmp/other')])
+            self.assertEqual(mounts_under('/tmp/with', text), [], repr(name))                 # no prefix confusion
 
-    def test_remover_and_probe_use_the_decoded_table(self):
-        name = WEIRD_NAMES[4]
-        point = f'/tmp/{name}'
-        lines = [self.line(point + '/src')]
-        real = mount_points
-        with unittest.mock.patch(f'{__name__}.mount_points', lambda l=None: real(lines)):
+    def test_prefix_collisions_do_not_match(self):
+        text = self.table('/tmp/ab/src', '/tmp/a b/src', '/tmp/abc')
+        self.assertEqual(mounts_under('/tmp/a', text), [])
+        self.assertEqual(mounts_under('/tmp/ab', text), [canonical('/tmp/ab/src')])
+        self.assertEqual(mounts_at('/tmp/ab', text), [])
+
+    def test_symlink_aliases_are_canonicalized_on_both_sides(self):
+        real = temp_dir(self, 'ocmnt-real-')
+        parent = temp_dir(self, 'ocmnt-alias-')
+        alias = os.path.join(parent, 'alias')
+        os.symlink(real, alias)
+        os.makedirs(os.path.join(real, 'x', 'src'))
+        kernel_view = os.path.join(real, 'x', 'src')                         # the kernel reports the resolved path
+        text = self.table(kernel_view, kernel_view)
+        via_alias = os.path.join(alias, 'x', 'src')
+        self.assertEqual(mounts_at(via_alias, text), [canonical(kernel_view)] * 2)     # query by alias, table by real path
+        self.assertEqual(mounts_under(os.path.join(alias, 'x'), text), [canonical(kernel_view)] * 2)
+        alias_in_table = self.table(via_alias)                                        # and a table that holds the alias
+        self.assertEqual(mounts_at(kernel_view, alias_in_table), [canonical(kernel_view)])
+
+    def test_aliases_combined_with_escaped_characters(self):
+        real = temp_dir(self, 'ocmnt-real-')
+        weird = os.path.join(real, 'sp ace\ttab\nnl\\bs')
+        os.makedirs(os.path.join(weird, 'src'))
+        alias = os.path.join(temp_dir(self, 'ocmnt-alias-'), 'link')
+        os.symlink(weird, alias)
+        text = self.table(os.path.join(weird, 'src'))
+        self.assertEqual(mounts_at(os.path.join(alias, 'src'), text), [canonical(os.path.join(weird, 'src'))])
+
+    def test_remover_refuses_a_live_mount_found_through_an_alias(self):
+        real = temp_dir(self, 'ocmnt-real-')
+        os.makedirs(os.path.join(real, 'sub'))
+        alias = os.path.join(temp_dir(self, 'ocmnt-alias-'), 'link')
+        os.symlink(real, alias)
+        text = self.table(os.path.join(real, 'sub'))
+        original = strict_cleanup.read_mountinfo
+        with unittest.mock.patch.object(strict_cleanup, 'read_mountinfo', lambda: text):
+            with self.assertRaises(CleanupRefused):                          # a symlink is never deleted through
+                remove_unmounted_tree(alias, rmtree=lambda p: self.fail('followed the alias'))
             with self.assertRaises(MountLeak):
-                remove_unmounted_tree(point, rmtree=lambda p: self.fail('deleted through a live mount'))
+                remove_unmounted_tree(real, rmtree=lambda p: self.fail('deleted through a live mount'))
+        self.assertIs(strict_cleanup.read_mountinfo, original)
+        self.assertTrue(os.path.isdir(os.path.join(real, 'sub')))
+
+    def test_cleanup_cannot_leave_the_disposable_tree(self):
+        outside = tempfile.mkdtemp(prefix='ocmnt-outside-')
+        marker = os.path.join(outside, 'keep.txt')
+        Path(marker).write_text('must survive')
+        self.addCleanup(remove_unmounted_tree, outside)
+        class Inner(unittest.TestCase):
+            def test_it(inner):
+                inner.created = temp_dir(inner, 'ocmnt-swap-')
+                shutil.rmtree(inner.created)
+                os.symlink(outside, inner.created)               # the directory is swapped for a link to elsewhere
+
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
+        self.assertEqual(len(result.errors), 1)                    # reported, not silently ignored
+        self.assertIn('no longer resolves', result.errors[0][1])
+        self.assertEqual(Path(marker).read_text(), 'must survive')  # nothing outside was deleted
+        for leftover in glob.glob(os.path.join(tempfile.gettempdir(), 'ocmnt-swap-*')):
+            os.unlink(leftover)
 
     @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
     def test_real_mounts_under_weird_directory_names_are_found_unmounted_and_removed(self):
@@ -842,14 +870,37 @@ class MountinfoDecodingTests(unittest.TestCase):
             self.assertFalse(os.path.exists(made[0]), repr(name))                      # directory cleaned up too
 
     @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
-    def test_a_stuck_real_mount_under_a_weird_name_is_still_detected(self):
+    def test_a_real_mount_under_a_symlinked_parent_is_found_and_removed(self):
+        real = temp_dir(self, 'ocmnt-real-')
+        alias_parent = temp_dir(self, 'ocmnt-alias-')
+        alias = os.path.join(alias_parent, 'tmp-alias')
+        os.symlink(real, alias)
+        made = []
+
+        def mkdtemp(prefix):
+            path = tempfile.mkdtemp(prefix=prefix, dir=alias)       # lexical path goes through the symlink
+            made.append(path)
+            return path
+
+        result = probe_mount_capability(
+            run=lambda cmd: subprocess.run([*PRIV, *cmd], capture_output=True),
+            mounted=lambda target: bool(mounts_at(target)),
+            remove=remove_unmounted_tree, mkdtemp=mkdtemp)
+        self.assertTrue(result)
+        self.assertTrue(made[0].startswith(alias))
+        self.assertEqual(mounts_under(real), [])
+        self.assertFalse(os.path.exists(made[0]))
+
+    @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
+    def test_stacked_real_mounts_and_a_stuck_mount_under_a_weird_name_are_detected(self):
         parent = temp_dir(self, 'ocmnt-weird-')
-        weird = os.path.join(parent, WEIRD_NAMES[4])
+        weird = os.path.join(parent, WEIRD_NAMES[-1])
         target = os.path.join(weird, 'src')
         os.makedirs(target)
-        run_priv('mount', '--bind', target, target)
         self.addCleanup(unmount_all, target, 0)
-        self.assertEqual(len(mounts_at(target)), 1)
+        run_priv('mount', '--bind', target, target)
+        run_priv('mount', '--bind', target, target)
+        self.assertEqual(len(mounts_at(target)), 2)                                    # stacked mounts counted separately
         with self.assertRaises(MountLeak):
             remove_unmounted_tree(weird)
         self.assertTrue(os.path.isdir(target))                                          # nothing deleted through it
@@ -870,7 +921,7 @@ class TempDirCleanupTests(unittest.TestCase):
         if remover is None:
             unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
         else:
-            with unittest.mock.patch(f'{__name__}.remove_unmounted_tree', remover):
+            with unittest.mock.patch.object(strict_cleanup, 'remove_unmounted_tree', remover):
                 unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
         return result, made[0]
 
@@ -915,13 +966,18 @@ class TempDirCleanupTests(unittest.TestCase):
         self.assertFalse(result.wasSuccessful())
         shutil.rmtree(path)
 
-    def test_mount_related_tests_never_suppress_deletion_errors(self):
-        source = Path(__file__).read_text()
-        section = source[source.index('def probe_mount_capability'):source.index('class RealGitRepo')]
-        body = section.split('    def test_mount_related_tests_never_suppress_deletion_errors')[0]
-        self.assertNotIn('ignore_errors=True', body)
-        self.assertNotIn('rmtree, path, True', body)
-        self.assertNotIn('rmtree, self.base, True', body)
+    def test_no_deployment_test_suppresses_a_cleanup_error(self):
+        """Audit every deployment test module for the patterns that hide a failed delete or a leftover tree."""
+        forbidden = ('ignore_' + 'errors=True', 'rmtree, self.tmp, ' + 'True', 'rmtree, stage, ' + 'True',
+                     'rmtree, scratch, ' + 'True', 'rmtree, path, ' + 'True', "'rm', '-rf', self.base, check=" + 'False',
+                     'check=False)\n        self.addCleanup(lambda: run_priv(\'rm\'')
+        offenders = []
+        for module in sorted(Path(__file__).parent.glob('test_*.py')):
+            text = module.read_text()
+            for pattern in forbidden:
+                if pattern in text:
+                    offenders.append(f'{module.name}: {pattern}')
+        self.assertEqual(offenders, [])
 
 
 class MountLifecycleTests(unittest.TestCase):
@@ -1132,8 +1188,7 @@ class RealGitRepo:
 
 class ExactShaConcurrencyTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix='ocgit-')
-        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.tmp = temp_dir(self, 'ocgit-')
         self.repo = RealGitRepo(self.tmp)
         self.a, self.b, self.n = self.repo.history()
 
@@ -1262,8 +1317,7 @@ PR_ENV = {'GITHUB_REPOSITORY': 'o/r', 'DEFAULT_BRANCH': 'main', 'EVENT_KIND': 'p
 
 class PublishAgainstRealHistoryTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix='ocpub-')
-        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.tmp = temp_dir(self, 'ocpub-')
         self.repo = RealGitRepo(self.tmp)
         a = self.repo.commit('a')
         b = self.repo.commit('b')
