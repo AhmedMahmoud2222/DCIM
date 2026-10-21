@@ -1,4 +1,4 @@
-# OpenCode agent authority (v4.7)
+# OpenCode agent authority (v4.8)
 
 Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/` and `tests/deployment/mutation_check.py`. Delivered through PR #180.
 
@@ -191,7 +191,7 @@ Reviews stay `REVIEW_BLOCKED` until the owner fills the capability matrix. Do no
 
 ## Validation
 
-Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 366 tests (one ACL test skips where `setfacl` is missing), both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
+Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 391 tests (one ACL test skips where `setfacl` is missing), both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
 
 - 37 proxy tests against a live proxy with crafted raw HTTP (model substitution, duplicate keys, routing fields, other endpoints and methods, path tricks, compressed and chunked bodies, malformed JSON, oversized lengths, log hygiene, startup refusals);
 - 6 end-to-end tests that run the real binary through the real proxy against a stub provider (normal run, CLI model substitution, config model substitution, side-request substitution, provider redirection);
@@ -202,7 +202,26 @@ Not run locally or not yet run on GitHub: the CI workflow on this head (queued r
 
 `actionlint` 1.7.12 with `shellcheck` 0.11.0 reports nothing on all workflows (including the shell in `opencode.yml`).
 
-Mutation check: `python3 tests/deployment/mutation_check.py` applies each entry in its inventory (67 single-snippet changes covering every finding above and the earlier controls) to a copy of the repository and requires the suite to fail. Result on the final code in this session: 67 caught, 0 missed, 0 invalid, 0 hung. The inventory and the exact snippets are in the script; end-to-end tests are skipped in those runs for time (they were run separately).
+Mutation check, local evidence (not GitHub CI). Command: `OPENCODE_SKIP_E2E=1 python3 tests/deployment/mutation_check.py --workers 4 --json mutation-results.json`. It applies each entry of its inventory to a private copy of the repository, runs the deployment suite against the copy and requires the suite to fail. The inventory (127 entries on this head, listed with their exact snippets in the script) covers every finding above, the earlier controls (proxy, isolation, ownership, guard, publication, review, separation) and the cleanup machinery itself. End-to-end tests are skipped in those runs for time and were run separately.
+
+Result on this head, from the JSON produced by that command: 127 caught, 0 missed, 0 invalid, 0 hung, 0 worker errors, 0 cleanup failures. Nine of the 127 mutated suites deliberately leaked mounts (23 in all, because the mutations disable mount cleanup); every one was inside the mutation's own worktree, was reported as `leaked_mounts` with `cleanup: reclaimed`, and was detached before the identity-verified delete.
+
+Result categories the runner reports, and what each means for the exit code:
+
+| Result | Meaning | Exit code |
+|---|---|---|
+| `CAUGHT` | the suite failed under the mutation | 0 |
+| `MISSED` | the suite passed under the mutation (a control is untested) | 1 |
+| `INVALID` | the snippet did not occur exactly once | 1 |
+| `TIMEOUT` | the mutated suite hung | 1 |
+| `ERROR` | the runner itself failed before or after the suite (for example `chmod` or scratch creation); the worktree is still cleaned up | 1 |
+| `CLEANUP_FAILED` | a mount could not be detached, the worktree could not be deleted, or its identity no longer matched; the suite verdict is kept as `suite_result` | 1 |
+
+Cleanup semantics of the runner: the worktree identity (`st_dev`, `st_ino`) is recorded at creation and verified before any mount is enumerated or detached, so a renamed or replaced worktree never has its mounts touched; the whole body, including identity capture, runs inside the guard; a worktree whose identity could not be recorded is removed only with `rmdir` (it is empty) or reported; mutated suites get a private `TMPDIR` inside the worktree.
+
+Test-account lifecycle: the runtime tests need an unprivileged account (`ocprobe`). `tests/deployment/account_lease.py` creates it only if absent, marks it in its comment field, shares it between parallel workers through lease files under one `flock`, never touches an account that existed without the marker, removes a suite-owned account when the last live lease is released (also after a failing `setUpClass`), and refuses to remove an account that still has running processes. A worker killed with SIGKILL leaves a stale lease; the next release prunes it. The lease directory `/tmp/oc-test-account-leases` and its lock files are infrastructure and stay. Mutations of the lease module itself (for example the ones that drop the marker or the class cleanup) can leave a test account behind on the machine that runs the mutation check; the runner reports the suite verdict only, so remove such an account by hand (`userdel`) after a mutation run.
+
+Local results are separate from GitHub CI: CI results for each head are reported on the pull request, and a local pass is not evidence that the GitHub runner passes (one test already failed on the runner for an environment-dependent mount count that did not occur locally).
 
 ## Remaining risks
 

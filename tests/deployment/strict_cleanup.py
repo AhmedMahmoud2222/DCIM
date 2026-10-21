@@ -96,6 +96,23 @@ def identity(path: str) -> tuple[int, int]:
     return (info.st_dev, info.st_ino)
 
 
+def check_identity(path: str, expected: tuple[int, int]) -> None:
+    """Raise CleanupRefused unless `path` is, right now, the directory with the recorded identity.
+    Opens with O_NOFOLLOW and compares fstat of the descriptor, so a symlink, a renamed original or a
+    replacement at the same pathname is refused. Call it before any operation that acts on the path."""
+    try:
+        fd = os.open(path, _DIR_FLAGS)
+    except OSError as error:
+        raise CleanupRefused(f'refusing to act on {path}: it cannot be opened as the directory that was created '
+                             f'({error.strerror})') from error
+    try:
+        info = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if (info.st_dev, info.st_ino) != tuple(expected):
+        raise CleanupRefused(f'refusing to act on {path}: it is not the directory that was created (identity changed)')
+
+
 def _children(dir_fd: int, here: str, root_dev: int, mounted: set[str]) -> None:
     """Delete everything under an already-open directory, relative to its descriptor. Symlinks are
     unlinked, never followed; a mount point or a directory on another device stops the walk."""

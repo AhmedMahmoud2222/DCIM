@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from strict_cleanup import (CleanupRefused, MountLeak, canonical, class_temp_dir, decode_mountinfo, identity,  # noqa: E402
                             mounts_at, mounts_under, parse_mountinfo, privileged_temp_dir,
                             remove_unmounted_tree, remove_verified, temp_dir)
+import account_lease  # noqa: E402
+from account_lease import lease_for_class  # noqa: E402
 import strict_cleanup  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,10 +72,12 @@ class RuntimeFilesystemTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if subprocess.run(['id', AGENT], capture_output=True).returncode != 0:
-            made = run_priv('useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', AGENT, check=False)
-            if made.returncode != 0:
-                raise unittest.SkipTest(f'cannot create the test user: {made.stderr.strip()}')
+        # The account is leased: created only if absent, shared with parallel workers, never removed if it
+        # pre-existed, and given back by a class cleanup registered before anything else can fail.
+        try:
+            cls.account = lease_for_class(cls, AGENT, PRIV)
+        except account_lease.AccountCleanupFailed as error:
+            raise unittest.SkipTest(f'cannot create the test user: {error}')
         cls.tool = class_temp_dir(cls, 'ocfs-tool-')     # strict class cleanup registered before anything can fail
         os.chmod(cls.tool, 0o755)
         cls.tool_script = os.path.join(cls.tool, 'fsisolate.py')

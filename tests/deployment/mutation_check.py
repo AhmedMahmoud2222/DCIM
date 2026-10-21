@@ -100,6 +100,17 @@ MUTATIONS = [
     ('P2-r4', 'mutation runner exit code ignores cleanup failures', 'tests/deployment/mutation_check.py', "def exit_code(summary):\n    return 1 if", "def exit_code(summary):\n    return 0 if True else 1 if"),
     ('P2-r5', 'mutated suite temp trees escape the worktree', 'tests/deployment/mutation_check.py', "'TMPDIR': str(scratch)}\n        done = subprocess.run(suite", "}\n        done = subprocess.run(suite"),
     ('P2-r6', 'non-root mutation runner cannot detach leaked mounts', 'tests/deployment/mutation_check.py', "else [])\n\n        def umount(target):", "else [])\n        prefix = []\n\n        def umount(target):"),
+    ('P2-a1', 'worktree identity not verified before unmounting', 'tests/deployment/mutation_check.py', "            strict_cleanup.check_identity(str(work), expected)      # before looking at, or detaching, any mount\n", ""),
+    ('P2-a2', 'unidentified worktree handled like an identified one', 'tests/deployment/mutation_check.py', "    finally:\n        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected, umount=umount)", "    finally:\n        outcome = cleanup_worktree(work, expected, umount=umount) if expected else {'state': 'clean', 'leaked_mounts': 0, 'detail': ''}"),
+    ('P2-a3', 'worker errors escape the guard', 'tests/deployment/mutation_check.py', "    except Exception as error:      # noqa: BLE001 - a worker error must not abort the run or skip cleanup\n        result.update", "    except ZeroDivisionError as error:      # noqa: BLE001\n        result.update"),
+    ('P2-a4', 'worker errors do not fail the run', 'tests/deployment/mutation_check.py', "or summary['TIMEOUT'] or summary['ERROR']\n", "or summary['TIMEOUT']\n"),
+    ('P2-l1', 'a pre-existing account can be removed', 'tests/deployment/account_lease.py', "            if self.role == 'preexisting' or self.passwd.comment(self.name) is None:\n                return\n            if not (self.passwd.comment(self.name) or '').startswith(MARKER):\n                return                                     # not ours (or changed since): never removed\n", "            if self.passwd.comment(self.name) is None:\n                return\n"),
+    ('P2-l2', 'account removed while another worker uses it', 'tests/deployment/account_lease.py', "            if _live_leases(self.lock_path, self.name):\n                return", "            if False:\n                return"),
+    ('P2-l3', 'account removed while processes run as it', 'tests/deployment/account_lease.py', "            if self.passwd.running(self.name):\n                raise AccountInUse", "            if False:\n                raise AccountInUse"),
+    ('P2-l4', 'account release not registered as class cleanup', 'tests/deployment/account_lease.py', "    cls.addClassCleanup(lease.release)", "    pass"),
+    ('P2-l5', 'account kept after a failure following its creation', 'tests/deployment/account_lease.py', "            if created:\n                passwd.remove(name)\n            raise", "            raise"),
+    ('P2-l6', 'created account carries no ownership marker', 'tests/deployment/account_lease.py', "'--comment', f'{MARKER} (created by the deployment tests)', name],", "name],"),
+    ('P2-l7', 'stale leases are never pruned', 'tests/deployment/account_lease.py', "            try:\n                os.unlink(path)                            # stale lease of a dead process", "            try:\n                pass                            # stale lease of a dead process"),
     ('P1-2h', 'collector follows a swapped work tree', S + 'opencode_collect.py', "if os.path.islink(worktree) or os.path.realpath(worktree) != os.path.abspath(worktree):", 'if False:'),
     ('P1-2i', 'collector ignores agent-owned ancestors', S + 'opencode_collect.py', "if os.environ.get('OPENCODE_REQUIRE_ROOT_CHAIN') == '1' else []", 'if False else []'),
     ('P1-2j', 'read-only check accepts modifications', S + 'opencode_review.py', "if not (change.get('path') == 'REVIEW/diff.patch'", "if False and not (change.get('path') == 'REVIEW/diff.patch'"),
@@ -162,8 +173,9 @@ SUITE = [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/deployment',
 def cleanup_worktree(work, expected, umount=None):
     """Remove a mutation worktree strictly. A mutated suite may leave a bind mount behind (several
     mutations disable mount cleanup on purpose), so leaked mounts under the worktree are reported and
-    then detached before the identity-verified delete. Anything that cannot be detached or deleted is
-    returned as a failure; nothing is suppressed.
+    then detached before the identity-verified delete. The worktree's identity is verified BEFORE any
+    mount is enumerated or detached, so a renamed or replaced worktree never has its mounts touched.
+    Anything that cannot be detached or deleted is returned as a failure; nothing is suppressed.
 
     Returns {'state': 'clean' | 'reclaimed' | 'FAILED', 'leaked_mounts': n, 'detail': str}.
     """
@@ -177,12 +189,14 @@ def cleanup_worktree(work, expected, umount=None):
     leaked = 0
     try:
         for _ in range(8):
+            strict_cleanup.check_identity(str(work), expected)      # before looking at, or detaching, any mount
             live = sorted(strict_cleanup.mounts_under(str(work)), key=len, reverse=True)
             if not live:
                 break
             leaked = max(leaked, len(live))
             for target in live:
                 umount(target)
+        strict_cleanup.check_identity(str(work), expected)
         if strict_cleanup.mounts_under(str(work)):
             return {'state': 'FAILED', 'leaked_mounts': leaked,
                     'detail': f'mount(s) still present under {work}: {strict_cleanup.mounts_under(str(work))}'}
@@ -192,6 +206,17 @@ def cleanup_worktree(work, expected, umount=None):
     return {'state': 'reclaimed' if leaked else 'clean', 'leaked_mounts': leaked, 'detail': ''}
 
 
+def discard_unidentified(work):
+    """The worktree was just created and nothing was put in it, but its identity could not be recorded.
+    An empty directory can be removed safely with rmdir; anything else is reported, never deleted."""
+    try:
+        os.rmdir(work)
+    except Exception as error:      # noqa: BLE001
+        return {'state': 'FAILED', 'leaked_mounts': 0,
+                'detail': f'identity of {work} could not be recorded and it could not be removed: {type(error).__name__}: {error}'}
+    return {'state': 'clean', 'leaked_mounts': 0, 'detail': ''}
+
+
 def run_one(item, keep=False, suite=None, umount=None, parent=None):
     ident, finding, rel, old, new = item
     source = ROOT / rel
@@ -199,13 +224,16 @@ def run_one(item, keep=False, suite=None, umount=None, parent=None):
     if text.count(old) != 1:
         return {'id': ident, 'finding': finding, 'file': rel, 'result': 'INVALID', 'detail': f'snippet occurs {text.count(old)} times'}
     work = Path(tempfile.mkdtemp(prefix='mut-', dir=parent))
-    expected = strict_cleanup.identity(str(work))          # identity captured at creation
-    os.chmod(work, 0o755)                                  # the unprivileged test user must be able to traverse it
-    scratch = work / 'tmp'                                 # every temporary tree the mutated suite makes lives here,
-    scratch.mkdir(mode=0o755)                              # so a leaked mount is found, reported and reclaimed by
-    os.chmod(scratch, 0o755)                               # cleanup_worktree instead of outliving the run in /tmp
+    # From here on the worktree exists: every step that follows, including recording its identity, is inside
+    # the guard, and the guard always ends in an explicit cleanup outcome.
+    expected = None
     result = {'id': ident, 'finding': finding, 'file': rel}
     try:
+        expected = strict_cleanup.identity(str(work))      # identity captured at creation
+        os.chmod(work, 0o755)                              # the unprivileged test user must be able to traverse it
+        scratch = work / 'tmp'                             # every temporary tree the mutated suite makes lives here,
+        scratch.mkdir(mode=0o755)                          # so a leaked mount is found, reported and reclaimed by
+        os.chmod(scratch, 0o755)                           # cleanup_worktree instead of outliving the run in /tmp
         shutil.copytree(ROOT / '.github', work / '.github', ignore=shutil.ignore_patterns('node_modules'))
         shutil.copytree(ROOT / 'tests', work / 'tests')
         (work / rel).write_text(text.replace(old, new, 1))
@@ -216,25 +244,28 @@ def run_one(item, keep=False, suite=None, umount=None, parent=None):
                        'first_failure': failing[0][:140] if failing else ''})
     except subprocess.TimeoutExpired:
         result.update({'result': 'TIMEOUT', 'detail': 'suite hung under the mutation'})
+    except Exception as error:      # noqa: BLE001 - a worker error must not abort the run or skip cleanup
+        result.update({'result': 'ERROR', 'detail': f'{type(error).__name__}: {error}'})
     finally:
-        outcome = cleanup_worktree(work, expected, umount=umount)
+        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected, umount=umount)
     result['cleanup'] = outcome['state']
     result['leaked_mounts'] = outcome['leaked_mounts']
     if outcome['state'] == 'FAILED':
         # a worktree or mount that could not be removed is a failure of the run, whatever the suite said
         result['suite_result'] = result.get('result')
         result['result'] = 'CLEANUP_FAILED'
-        result['detail'] = outcome['detail']
+        result['detail'] = (result.get('detail', '') + ' | ' if result.get('detail') else '') + outcome['detail']
     return result
 
 
 def summarize(results):
-    keys = ('CAUGHT', 'MISSED', 'INVALID', 'TIMEOUT', 'CLEANUP_FAILED')
+    keys = ('CAUGHT', 'MISSED', 'INVALID', 'TIMEOUT', 'ERROR', 'CLEANUP_FAILED')
     return {k: sum(1 for r in results if r['result'] == k) for k in keys}
 
 
 def exit_code(summary):
-    return 1 if summary['MISSED'] or summary['INVALID'] or summary['TIMEOUT'] or summary['CLEANUP_FAILED'] else 0
+    return 1 if (summary['MISSED'] or summary['INVALID'] or summary['TIMEOUT'] or summary['ERROR']
+                 or summary['CLEANUP_FAILED']) else 0
 
 
 def main():
@@ -250,7 +281,7 @@ def main():
         note = ''
         if r.get('leaked_mounts'):
             note += f"  leaked {r['leaked_mounts']} mount(s), cleanup {r['cleanup']}"
-        if r['result'] == 'CLEANUP_FAILED':
+        if r['result'] in ('CLEANUP_FAILED', 'ERROR'):
             note += f"  {r['detail']}"
         print(f"{r['result']:14} {r['id']:7} {r['finding']}  [{r.get('failing_tests', '-')} failing]{note}")
     if args.json:
