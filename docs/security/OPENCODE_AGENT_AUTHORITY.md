@@ -1,4 +1,4 @@
-# OpenCode agent authority (v4.0)
+# OpenCode agent authority (v4.1)
 
 Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/` and `tests/deployment/mutation_check.py`. Delivered through PR #180.
 
@@ -9,7 +9,7 @@ Status: implemented and tested locally, including against the real OpenCode 1.19
 | Finding | Disposition | Where |
 | --- | --- | --- |
 | P1-1 proxy does not bind the model | One proxy per run, bound to the router's model. It validates method, exact path, headers and the JSON body (no duplicate keys, allow-listed fields, `model` equals the bound model) before the real key is attached. It refuses to start for a model that is unapproved, paid, disabled, unverified, unhealthy, or (for the reviewer) one that implemented. Rejections log code, method and a sanitized path only. | `opencode_proxy.py`, `test_opencode_sandbox.py`, `test_opencode_e2e.py` |
-| P1-2 reviewer filesystem | `/srv/ocreview` and `src` are root-owned (dirs 0555, files 0444/0555) with a read-only bind mount when the platform allows it. The agent user cannot rename, replace, delete, symlink or write. Effective permissions are probed as the reviewer UID before and after the run, plus an ownership-chain check and a byte digest. The implementation work tree sits under a root-owned parent for the same reason. | `opencode_fsisolate.py`, `test_opencode_runtime.py` |
+| P1-2 reviewer filesystem | `/srv/ocreview` and `src` are root-owned (dirs 0555, files 0444/0555) with a read-only bind mount when the platform allows it. The agent user cannot rename, replace, delete, symlink or write. Effective permissions are checked as the reviewer UID before and after the run through `access(2)` with effective IDs (ownership, modes, ACLs and read-only mounts), plus an ownership-chain check and a byte digest. The preflight reads metadata only. It never writes, renames, deletes or links anything under the real trees; destructive operations run only against disposable fixtures in tests, where they confirm that the permission verdicts match what the kernel does. The implementation work tree sits under a root-owned parent for the same reason. | `opencode_fsisolate.py`, `test_opencode_runtime.py` |
 | P1-3 transcript validation | Lifecycle validator built from the real 1.19.3 event format: one session, strictly nested steps, matching message ids, ordered timestamps, only `tool-calls` then a final `stop`, no error event, exit 0, no timeout. Real fixtures captured from the 1.19.3 binary. | `opencode_guard.py`, `test_opencode_guard_fixtures.py` |
 | P2-1 final authorization | The PR and branch are refetched and every condition rechecked immediately before the update. | `check_pr_target`, `publish` |
 | P2-2 concurrency | The PR branch moves only by `git push --force-with-lease=REF:EXPECTED_SHA`, an exact-SHA compare-and-swap that a reset to an ancestor cannot satisfy. The REST ref update is gone. Tested against real bare repositories, including a server-side race. | `git_cas_push`, `test_opencode_runtime.py` |
@@ -97,7 +97,7 @@ Rule IMPLEMENTER_REVIEWER_SEPARATION applies when OpenCode implements and review
 | `enabled`, `scope: same_branch_or_pr` | implementer records are read from the PR being reviewed |
 | `require_distinct_models` | `check_separation`; the selector also excludes every model that implemented on the PR |
 | `require_distinct_sessions` | `check_separation`; the guard records the OpenCode session id, a missing id fails the run |
-| `review_read_only` | review config denies edit tools; the source lives under a root-owned parent and tree (read-only mount when available); effective write, rename, replace and symlink attempts are probed as the reviewer UID before and after the run; the tree digest and `verify-readonly` must match |
+| `review_read_only` | review config denies edit tools; the source lives under a root-owned parent and tree (read-only mount when available); effective write, rename, replace and symlink permissions are checked non-destructively as the reviewer UID before and after the run; the tree digest and `verify-readonly` must match |
 | `reviewer_selection: best_verified_capability` | `select_reviewer` ranks only on recorded evaluation evidence |
 | `block_if_no_eligible_reviewer` | no eligible reviewer produces `REVIEW_BLOCKED` and a PR comment |
 | `external_acceptance_required` | every review states it is not an approval; `acceptance_status` never returns accepted |
@@ -191,7 +191,7 @@ Reviews stay `REVIEW_BLOCKED` until the owner fills the capability matrix. Do no
 
 ## Validation
 
-Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 278 tests with none skipped, both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
+Run locally in this session (Python 3.13, root, `setpriv`, git 2.43, real OpenCode 1.19.3 binary): `python3 -m unittest discover -s tests/deployment -p 'test_*.py'` passes 286 tests with none skipped, both as root and as an ordinary user with passwordless sudo (which is how the GitHub runner runs them; that second run found and fixed a harness defect), including:
 
 - 37 proxy tests against a live proxy with crafted raw HTTP (model substitution, duplicate keys, routing fields, other endpoints and methods, path tricks, compressed and chunked bodies, malformed JSON, oversized lengths, log hygiene, startup refusals);
 - 6 end-to-end tests that run the real binary through the real proxy against a stub provider (normal run, CLI model substitution, config model substitution, side-request substitution, provider redirection);

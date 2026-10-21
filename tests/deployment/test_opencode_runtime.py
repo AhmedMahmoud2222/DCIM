@@ -106,11 +106,12 @@ class RuntimeFilesystemTests(unittest.TestCase):
         lines = result.stdout.splitlines()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         passes = [l for l in lines if l.startswith('PASS')]
-        self.assertGreaterEqual(len(passes), 25)
+        self.assertGreaterEqual(len(passes), 12)
         self.assertFalse([l for l in lines if l.startswith('FAIL')])
         for expected in ('rename source tree away', 'replace source tree with symlink', 'replace source tree with attacker dir',
-                         'delete source tree', 'symlink in parent directory', 'open existing file for write',
-                         'write through hard-link alias', 'forbidden path unreadable', 'read existing file (positive control)'):
+                         'delete source tree', 'create entry or symlink in parent directory',
+                         'write/truncate/append/chmod of any source file', 'forbidden path unreadable',
+                         'read existing file (positive control)'):
             self.assertTrue(any(expected in l for l in passes), expected)
         self.assertEqual(self.digest(), before)  # nothing changed
 
@@ -214,6 +215,168 @@ class RuntimeFilesystemTests(unittest.TestCase):
         run_priv('chown', f'{AGENT}:{AGENT}', impl)
         bad = as_agent(sys.executable, '-I', self.tool_script, 'probe-parent', work, '--writable', self.home)
         self.assertEqual(bad.returncode, 1, bad.stdout)
+
+    # ---- preflight must never modify the trees it inspects --------------------------------
+
+    @staticmethod
+    def snapshot(root, as_root=True):
+        """Names, types, modes, owners, link counts, mtimes, inodes, symlink targets and sha256 of bytes."""
+        script = (
+            "import hashlib, json, os, stat, sys\n"
+            "root = sys.argv[1]\nout = {}\n"
+            "for base, dirs, files in os.walk(root, followlinks=False):\n"
+            "  for name in ['.'] + sorted(dirs + files):\n"
+            "    full = os.path.normpath(os.path.join(base, name))\n"
+            "    i = os.lstat(full)\n"
+            "    rec = [stat.S_IFMT(i.st_mode), stat.S_IMODE(i.st_mode), i.st_uid, i.st_gid, i.st_nlink, i.st_mtime_ns, i.st_ino, i.st_size]\n"
+            "    if stat.S_ISLNK(i.st_mode): rec.append(os.readlink(full))\n"
+            "    elif stat.S_ISREG(i.st_mode): rec.append(hashlib.sha256(open(full,'rb').read()).hexdigest())\n"
+            "    out[os.path.relpath(full, root)] = rec\n"
+            "print(json.dumps(out, sort_keys=True))\n")
+        return run_priv(sys.executable, '-I', '-c', script, root).stdout
+
+    def populate(self, root, owner):
+        """A nested tree with representative files: text, binary, executable, empty, dotfile, odd names."""
+        files = {
+            'README.md': (b'# project\n', 0o644),
+            'app/main.py': (b'print("original")\n', 0o644),
+            'app/pkg/__init__.py': (b'', 0o644),
+            'app/pkg/data.bin': (bytes(range(256)) * 8, 0o600),
+            'app/pkg/deep/er/est/leaf.txt': (b'leaf\n', 0o640),
+            'scripts/run.sh': (b'#!/bin/sh\necho run\n', 0o755),
+            '.github/CODEOWNERS': (b'* @owner\n', 0o644),
+            'docs/name with spaces.md': (b'spaces\n', 0o644),
+            'docs/\u00fcnicode.txt': ('\u00fc\n'.encode(), 0o644),
+        }
+        for rel, (data, mode) in files.items():
+            full = os.path.join(root, rel)
+            run_priv('mkdir', '-p', os.path.dirname(full))
+            tmp = tempfile.NamedTemporaryFile(delete=False)
+            tmp.write(data)
+            tmp.close()
+            os.chmod(tmp.name, 0o644)
+            run_priv('install', '-m', f'{mode:o}', tmp.name, full)
+            os.unlink(tmp.name)
+        run_priv('mkdir', '-p', os.path.join(root, 'empty-dir'))
+        run_priv('ln', '-s', 'app/main.py', os.path.join(root, 'link-to-main'))
+        run_priv('chown', '-R', f'{owner}:{owner}', root)
+        run_priv('touch', '-d', '2020-01-02 03:04:05', os.path.join(root, 'README.md'))
+
+    def agent_layout(self, parent_owner='root'):
+        impl = os.path.join(self.base, 'impl')
+        work = os.path.join(impl, 'work')
+        priv_dir(impl, parent_owner)
+        priv_dir(work, AGENT)
+        self.populate(work, AGENT)
+        return impl, work
+
+    def test_parent_preflight_leaves_a_populated_work_tree_exactly_as_it_was(self):
+        _impl, work = self.agent_layout()
+        before = self.snapshot(work)
+        self.assertGreater(len(before), 400)
+        forbidden = os.path.join(self.base, 'secret')
+        priv_dir(forbidden, 'root', '700')
+        result = as_agent(sys.executable, '-I', self.tool_script, 'probe-parent', work, '--writable', self.home,
+                          '--forbidden', forbidden)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.snapshot(work), before)
+        self.assertEqual(sorted(os.listdir(os.path.dirname(work))), ['work'])    # nothing added beside it either
+        self.assertEqual(os.listdir(self.home), [])                              # nor in the agent's home
+
+    def test_parent_preflight_failure_leaves_the_tree_intact_and_reports_accurately(self):
+        # Worst case: the agent owns the parent, so a destructive probe WOULD have been able to delete or swap the tree.
+        impl, work = self.agent_layout(parent_owner=AGENT)
+        before = self.snapshot(work)
+        result = as_agent(sys.executable, '-I', self.tool_script, 'probe-parent', work, '--writable', self.home)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        failed = [l for l in result.stdout.splitlines() if l.startswith('FAIL')]
+        for name in ('rename work tree away', 'replace work tree with symlink', 'delete work tree'):
+            self.assertTrue(any(name in l for l in failed), (name, result.stdout))
+        self.assertIn('isolation check(s) failed', result.stdout)
+        self.assertEqual(self.snapshot(work), before)
+        self.assertEqual(sorted(os.listdir(impl)), ['work'])
+
+    def test_reviewer_preflight_leaves_the_populated_source_tree_exactly_as_it_was(self):
+        self.review2 = os.path.join(self.base, 'review2')
+        stage = tempfile.mkdtemp(prefix='ocfs-stage2-')
+        self.addCleanup(shutil.rmtree, stage, True)
+        self.populate_plain(stage)
+        run_priv(sys.executable, '-I', self.tool_script, 'build', stage, self.review2)
+        src = os.path.join(self.review2, 'src')
+        before = self.snapshot(src)
+        result = self.probe(src)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.snapshot(src), before)
+        self.assertEqual(sorted(os.listdir(self.review2)), ['src'])
+
+    def populate_plain(self, stage):
+        for rel, data in {'a/b/c/d.txt': b'd\n', 'a/b/e.bin': bytes(range(255)), 'top.py': b'x = 1\n', '.hidden': b'h\n'}.items():
+            full = os.path.join(stage, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            Path(full).write_bytes(data)
+        os.chmod(os.path.join(stage, 'top.py'), 0o755)
+
+    def test_reviewer_preflight_failure_on_a_writable_layout_changes_nothing(self):
+        # Previous behaviour: with an agent-owned parent the probe itself renamed/replaced/deleted the tree.
+        before = self.snapshot(self.src)
+        run_priv('chown', f'{AGENT}:{AGENT}', self.review)
+        run_priv('chown', '-R', f'{AGENT}:{AGENT}', self.src)         # also make every file and directory agent-writable
+        run_priv('chmod', '-R', 'u+w', self.src)
+        writable_before = self.snapshot(self.src)
+        self.assertNotEqual(writable_before, before)
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        failed = [l for l in result.stdout.splitlines() if l.startswith('FAIL')]
+        self.assertTrue(any('write/truncate/append/chmod of any source file' in l for l in failed), result.stdout)
+        self.assertTrue(any('inside any source directory' in l for l in failed), result.stdout)
+        self.assertEqual(self.snapshot(self.src), writable_before)    # still exactly what the failing preflight found
+        self.assertEqual(sorted(os.listdir(self.review)), ['src'])
+
+    def test_preflight_does_not_follow_a_symlink_swapped_in_for_the_tree(self):
+        _impl, work = self.agent_layout()
+        target = os.path.join(self.base, 'victim-dir')
+        priv_dir(target, AGENT)
+        run_priv('sh', '-c', 'echo keep > "$0/keep.txt"', target)
+        run_priv('rm', '-rf', work)
+        run_priv('ln', '-s', target, work)
+        before = self.snapshot(target)
+        result = as_agent(sys.executable, '-I', self.tool_script, 'probe-parent', work, '--writable', self.home)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('not a symlink' in l for l in result.stdout.splitlines() if l.startswith('FAIL')), result.stdout)
+        self.assertEqual(self.snapshot(target), before)
+
+    def test_destructive_probes_refuse_anything_not_marked_disposable(self):
+        _impl, work = self.agent_layout()
+        before = self.snapshot(work)
+        for fn in ('destructive_probe', 'destructive_probe_parent'):
+            code = ("import sys; sys.path.insert(0, %r)\nimport opencode_fsisolate as f\n"
+                    "try:\n  f.%s(%r, [], [%r])\nexcept f.IsolationError as e:\n  print('REFUSED', e)\n"
+                    % (str(SCRIPTS), fn, work, self.home))
+            out = as_agent(sys.executable, '-c', code)
+            self.assertIn('REFUSED', out.stdout, out.stdout + out.stderr)
+        self.assertEqual(self.snapshot(work), before)
+
+    def test_production_cli_cannot_reach_the_destructive_probes(self):
+        source = (SCRIPTS / 'opencode_fsisolate.py').read_text()
+        cli = source[source.index('def main('):]
+        self.assertNotIn('destructive', cli)
+
+    def test_permission_verdict_matches_real_destructive_outcomes_on_a_disposable_fixture(self):
+        """The access-based verdict is only trustworthy if it agrees with what the kernel really does."""
+        for parent_owner, expect_clean in (('root', True), (AGENT, False)):
+            impl = os.path.join(self.base, f'fixture-{parent_owner}')
+            fixture = os.path.join(impl, 'work')
+            priv_dir(impl, parent_owner)
+            priv_dir(fixture, AGENT)
+            self.populate(fixture, AGENT)
+            run_priv('sh', '-c', f'touch "{impl}/{fsisolate.FIXTURE_MARKER}"')
+            predicted = as_agent(sys.executable, '-I', self.tool_script, 'probe-parent', fixture, '--writable', self.home)
+            code = ("import sys; sys.path.insert(0, %r)\nimport opencode_fsisolate as f\n"
+                    "r = f.destructive_probe_parent(%r, [], [%r])\n"
+                    "print('BAD' if [x for x in r if not x[1]] else 'CLEAN')\n" % (str(SCRIPTS), fixture, self.home))
+            actual = as_agent(sys.executable, '-c', code)
+            self.assertEqual(predicted.returncode == 0, expect_clean, predicted.stdout)
+            self.assertEqual('CLEAN' in actual.stdout, expect_clean, actual.stdout + actual.stderr)
 
     def test_collector_refuses_a_worktree_the_agent_could_swap(self):
         scratch = tempfile.mkdtemp(prefix='ocfs-link-')

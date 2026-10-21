@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Filesystem isolation for the sandboxed agent (fsisolate v1.0).
+"""Filesystem isolation for the sandboxed agent (fsisolate v2.0).
 
 Review layout (all of it controlled by root, so the agent user cannot rename, replace,
 delete or symlink anything on the path to the reviewed source):
@@ -20,9 +20,14 @@ The agent's writable area is a separate tree (its HOME). Subcommands:
                             into (the implementation work tree): its parent must not let the agent
                             rename, replace, delete or symlink the work tree itself
   probe PATH [--forbidden P ...] [--writable P ...]
-                            run AS THE AGENT UID: every write-type operation against PATH and
-                            its parent must be denied; reads must work; forbidden paths must
-                            not be readable; writable paths must be writable. Exit 1 on any miss.
+                            run AS THE AGENT UID: the kernel must report no write, rename, delete or
+                            link permission over PATH or its ancestors; reads must work; forbidden
+                            paths must not be readable. Exit 1 on any miss.
+
+Both probes only ask the kernel for permissions (access(2), effective IDs) and read metadata.
+They never modify, rename or delete anything under the real trees. The destructive variants
+(destructive_probe*) refuse to run unless the tree sits next to a .fsisolate-disposable marker,
+and exist so tests can confirm the permission verdicts against real operations on a fixture.
 """
 from __future__ import annotations
 
@@ -131,8 +136,148 @@ def _denied(operation) -> tuple[bool, str]:
     return False, 'operation SUCCEEDED'
 
 
+FIXTURE_MARKER = '.fsisolate-disposable'
+
+
+def require_disposable(path: str) -> None:
+    """Destructive probes may run only inside a fixture that a test created for them."""
+    marker = os.path.join(os.path.dirname(os.path.abspath(path)), FIXTURE_MARKER)
+    if not os.path.isfile(marker):
+        raise IsolationError(f'refusing destructive probe: {path} is not marked as a disposable fixture')
+
+
+def _can(path: str, mode: int) -> bool:
+    """Kernel permission verdict for the effective UID. Reads metadata only; never modifies anything."""
+    return os.access(path, mode, effective_ids=True, follow_symlinks=False)
+
+
+def _removable(parent: str, name: str) -> bool:
+    """Could this UID rename, replace, delete or symlink-over the entry `name` in `parent`?"""
+    if not (_can(parent, os.W_OK) and _can(parent, os.X_OK)):
+        return False
+    info = os.lstat(parent)
+    if info.st_mode & stat.S_ISVTX:
+        entry = os.lstat(os.path.join(parent, name))
+        return os.geteuid() in (0, info.st_uid, entry.st_uid)
+    return True
+
+
+def _ancestor_exposure(path: str) -> list[str]:
+    """Every ancestor entry on the way to `path` that this UID could rename or replace."""
+    exposed = []
+    current = os.path.abspath(path)
+    while True:
+        parent = os.path.dirname(current)
+        if parent == current:
+            return exposed
+        if _removable(parent, os.path.basename(current)):
+            exposed.append(current)
+        current = parent
+
+
+def _tree_exposure(path: str) -> tuple[list[str], list[str], int, str | None]:
+    """Walk the tree without touching it: (writable dirs, writable files/symlinks, entries, a sample file)."""
+    bad_dirs, bad_files, count, sample = [], [], 0, None
+    for base, dirs, files in os.walk(path, followlinks=False):
+        if _can(base, os.W_OK):
+            bad_dirs.append(base)
+        for name in dirs + files:
+            count += 1
+            full = os.path.join(base, name)
+            info = os.lstat(full)
+            if stat.S_ISLNK(info.st_mode):
+                bad_files.append(full + ' (symlink)')
+            elif stat.S_ISREG(info.st_mode):
+                sample = sample or full
+                if _can(full, os.W_OK):
+                    bad_files.append(full)
+    return bad_dirs, bad_files, count, sample
+
+
+def _verdict(results, name, ok, detail):
+    results.append((name, ok, detail))
+
+
+def _forbidden_and_writable(results, forbidden, writable):
+    for target in forbidden:
+        ok, detail = _denied(lambda t=target: os.listdir(t))
+        results.append((f'forbidden path unreadable: {target}', ok, detail))
+    for target in writable:
+        ok = _can(target, os.W_OK | os.X_OK)
+        results.append((f'agent area writable: {target}', ok, 'access check'))
+
+
 def probe(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[str, bool, str]]:
-    """Attempt every write-type operation as the current (agent) UID. ok=True means correct."""
+    """Non-destructive isolation check for a tree the agent may only read (the reviewer source).
+
+    Runs as the agent UID. It asks the kernel what this UID may do (access(2) with effective IDs,
+    which honours ownership, mode bits, ACLs and read-only mounts) and never writes, renames,
+    deletes or links anything under PATH or its ancestors. Destructive behaviour is exercised
+    separately, against disposable fixtures only (destructive_probe).
+    """
+    results: list[tuple[str, bool, str]] = []
+    root = os.path.dirname(os.path.abspath(path))
+    info = os.lstat(path)
+    _verdict(results, 'source is a real directory, not a symlink', stat.S_ISDIR(info.st_mode), 'lstat')
+    parent_open = _removable(root, os.path.basename(path))
+    _verdict(results, 'create entry or symlink in parent directory denied',
+             not (_can(root, os.W_OK) and _can(root, os.X_OK)), 'access check')
+    _verdict(results, 'rename source tree away denied', not parent_open, 'access check')
+    _verdict(results, 'rename source tree in place denied', not parent_open, 'access check')
+    _verdict(results, 'replace source tree with attacker dir denied', not parent_open, 'access check')
+    _verdict(results, 'replace source tree with symlink denied', not parent_open, 'access check')
+    _verdict(results, 'delete source tree denied', not parent_open, 'access check')
+    exposed = _ancestor_exposure(path)
+    _verdict(results, 'no ancestor of the source can be renamed or replaced', not exposed,
+             'exposed: ' + ', '.join(exposed) if exposed else 'access check')
+    bad_dirs, bad_files, count, sample = _tree_exposure(path)
+    _verdict(results, 'create/delete/rename/symlink inside any source directory denied', not bad_dirs,
+             ('writable: ' + ', '.join(bad_dirs[:5])) if bad_dirs else f'{count} entries checked')
+    _verdict(results, 'write/truncate/append/chmod of any source file denied, no symlinks', not bad_files,
+             ('writable: ' + ', '.join(bad_files[:5])) if bad_files else 'access check')
+    mount = os.statvfs(path)
+    results.append(('read-only mount (informational)', True,
+                    'mounted read-only' if mount.f_flag & os.ST_RDONLY else 'permission checks only'))
+    if sample:
+        results.append(('read existing file (positive control)', _readable(sample), 'read'))
+    results.append(('list source tree (positive control)', _listable(path), 'list'))
+    _forbidden_and_writable(results, forbidden, writable)
+    return results
+
+
+def probe_parent(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[str, bool, str]]:
+    """Non-destructive check for a work tree the agent writes into: the tree itself must be
+    writable, but the agent must not be able to rename, replace, delete or symlink the tree.
+    Never modifies PATH, its contents or its ancestors."""
+    results: list[tuple[str, bool, str]] = []
+    root = os.path.dirname(os.path.abspath(path))
+    info = os.lstat(path)
+    _verdict(results, 'work tree is a real directory, not a symlink', stat.S_ISDIR(info.st_mode), 'lstat')
+    _verdict(results, 'create entry or symlink next to the work tree denied',
+             not (_can(root, os.W_OK) and _can(root, os.X_OK)), 'access check')
+    parent_open = _removable(root, os.path.basename(path))
+    for name in ('rename work tree away', 'rename work tree in place', 'replace work tree with attacker dir',
+                 'replace work tree with symlink', 'delete work tree'):
+        _verdict(results, name + ' denied', not parent_open, 'access check')
+    exposed = _ancestor_exposure(path)
+    _verdict(results, 'no ancestor of the work tree can be renamed or replaced', not exposed,
+             'exposed: ' + ', '.join(exposed) if exposed else 'access check')
+    for target in forbidden:
+        ok, detail = _denied(lambda t=target: os.listdir(t))
+        results.append((f'forbidden path unreadable: {target}', ok, detail))
+    results.append(('work tree writable (positive control)', _can(path, os.W_OK | os.X_OK), 'access check'))
+    for target in writable:
+        results.append((f'agent area writable: {target}', _can(target, os.W_OK | os.X_OK), 'access check'))
+    return results
+
+
+def destructive_probe(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[str, bool, str]]:
+    """Attempt every write-type operation as the current (agent) UID. ok=True means correct.
+
+    DESTRUCTIVE: a layout that is wrong lets these operations succeed. It runs only against a
+    disposable fixture (see require_disposable); the CLI never reaches it.
+    """
+    require_disposable(path)
     results: list[tuple[str, bool, str]] = []
     root = os.path.dirname(path)
     victim = None
@@ -210,7 +355,9 @@ def probe(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[st
     return results
 
 
-def probe_parent(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[str, bool, str]]:
+def destructive_probe_parent(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[str, bool, str]]:
+    """DESTRUCTIVE counterpart of probe_parent; disposable fixtures only."""
+    require_disposable(path)
     results: list[tuple[str, bool, str]] = []
     root = os.path.dirname(path)
     scratch = tempfile.mkdtemp(prefix='probe-', dir=writable[0] if writable else None)
@@ -232,20 +379,9 @@ def probe_parent(path: str, forbidden: list[str], writable: list[str]) -> list[t
     for target in forbidden:
         ok, detail = _denied(lambda t=target: os.listdir(t))
         results.append((f'forbidden path unreadable: {target}', ok, detail))
-    results.append(('work tree writable (positive control)', _writable_dir(path), 'write'))
+    results.append(('work tree writable (positive control)', _can(path, os.W_OK | os.X_OK), 'access check'))
     shutil.rmtree(scratch, ignore_errors=True)
     return results
-
-
-def _writable_dir(path: str) -> bool:
-    try:
-        probe_file = os.path.join(path, '.agent-write-probe')
-        with open(probe_file, 'w') as handle:
-            handle.write('x')
-        os.unlink(probe_file)
-        return True
-    except OSError:
-        return False
 
 
 def _readable(path: str) -> bool:
