@@ -169,7 +169,7 @@ test.describe("Issue #150: PDU catalog workflow", () => {
     // --- 3. Electrical specification + outlet templates (the PDU editor is draft-only).
     const pduSpec = page.locator('[aria-label="PDU electrical specification"]');
     await expect(pduSpec).toBeVisible();
-    await expect(pduSpec).toContainText("no rack-placement API");
+    await expect(pduSpec).toContainText("does not itself create a placement record");
     await pduSpec.getByRole("spinbutton", { name: "Rated input voltage (V)" }).fill("230");
     await pduSpec.getByRole("spinbutton", { name: "Rated input current (A)" }).fill("32");
     await pduSpec.getByRole("combobox", { name: "Phase" }).selectOption("single");
