@@ -1,4 +1,4 @@
-"""Strict cleanup helpers for the deployment tests (strict_cleanup v4.0).
+"""Strict cleanup helpers for the deployment tests (strict_cleanup v4.1).
 
 Not collected by unittest (no test_ prefix). Everything here fails loudly: a mount that survives, a
 path that is not the directory the test created, or a delete that errors raises instead of passing.
@@ -315,7 +315,95 @@ def privileged_temp_dir(case, prefix: str, priv: list[str] | None) -> str:
     return path
 
 
+def _own_chain() -> set[int]:
+    """This process and every ancestor: their command lines may name the path being checked."""
+    chain, pid = set(), os.getpid()
+    while pid > 0 and pid not in chain:
+        chain.add(pid)
+        try:
+            with open(f'/proc/{pid}/status', 'rb') as handle:
+                pid = next((int(line.split()[1]) for line in handle.read().split(b'\n') if line.startswith(b'PPid:')), 0)
+        except (OSError, ValueError, IndexError):
+            break
+    return chain
+
+
+def processes_using(path: str, markers: tuple[str, ...] = ()) -> list[tuple[int, str]]:
+    """Every live process (this one and its ancestors excluded) that still refers to `path`: working or root
+    directory, executable, an open descriptor or mapped file at or below it, a mount namespace holding a mount
+    at or below it, or `path` / a marker in its command line or initial environment. A process this function
+    cannot inspect is reported as unverifiable, never assumed gone. Zombies hold nothing and are skipped.
+    Run as root: only root can read every process. An empty list is the positive evidence that nothing of the
+    suite is left."""
+    wanted = canonical(path)
+    needles = [value.encode() for value in {wanted, path, *markers}]
+    own, own_ns = _own_chain(), None
+    try:
+        own_ns = os.readlink('/proc/self/ns/mnt')
+    except OSError:
+        pass
+    found, seen_ns = [], set()
+    below = lambda target: target == wanted or target.startswith(wanted + '/')       # noqa: E731
+    for name in os.listdir('/proc'):
+        if not name.isdigit() or int(name) in own:
+            continue
+        pid, base, why = int(name), f'/proc/{name}', None
+        try:
+            with open(f'{base}/stat', 'rb') as handle:
+                if handle.read().rpartition(b')')[2].split()[0] == b'Z':
+                    continue
+            for link in ('cwd', 'root', 'exe'):
+                try:
+                    target = os.readlink(f'{base}/{link}')
+                except FileNotFoundError:
+                    continue                                    # a kernel thread has no cwd link target to read
+                if below(target):
+                    why = f'{link} is {target}'
+                    break
+            if why is None:
+                for fd in os.listdir(f'{base}/fd'):
+                    try:
+                        target = os.readlink(f'{base}/fd/{fd}')
+                    except FileNotFoundError:
+                        continue
+                    if below(target):
+                        why = f'fd {fd} is {target}'
+                        break
+            if why is None:
+                with open(f'{base}/maps', 'rb') as handle:
+                    if any(wanted.encode() + b'/' in line for line in handle.read().split(b'\n')):
+                        why = 'maps a file below the path'
+            if why is None:
+                namespace = os.readlink(f'{base}/ns/mnt')
+                if namespace != own_ns and namespace not in seen_ns:
+                    seen_ns.add(namespace)
+                    with open(f'{base}/mountinfo', 'rb') as handle:
+                        held = mounts_under(path, handle.read().decode('utf-8', 'surrogateescape'))
+                    if held:
+                        why = f'its mount namespace holds a mount at {held[0]}'
+            if why is None:
+                for source in ('cmdline', 'environ'):
+                    with open(f'{base}/{source}', 'rb') as handle:
+                        blob = handle.read()
+                    if any(needle in blob for needle in needles):
+                        why = f'{source} names the path or run marker'
+                        break
+        except (FileNotFoundError, ProcessLookupError):
+            continue                                            # it exited while being inspected
+        except OSError as error:
+            if not os.path.exists(base):
+                continue
+            why = f'unverifiable: {type(error).__name__}: {error}'
+        if why is not None:
+            found.append((pid, why))
+    return found
+
+
 def _main(argv: list[str]) -> int:
+    if len(argv) >= 3 and argv[1] == 'procs-using':
+        for pid, why in processes_using(argv[2], tuple(argv[3:])):
+            print(f'{pid}\t{why}')
+        return 0
     if len(argv) == 5 and argv[1] == 'rm-verified':
         try:
             remove_verified(argv[2], (int(argv[3]), int(argv[4])))

@@ -5,6 +5,8 @@ Every directory here is a throwaway tree the test creates; destructive operation
 import ctypes
 import errno
 import importlib
+import json
+import signal
 import time
 import os
 import shutil
@@ -1016,3 +1018,368 @@ class NamespaceIsolationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def _spawn(code, *args, cwd='/', env=None, **kw):
+    """A throwaway process the test controls; the caller kills it through the returned handle's cleanup."""
+    return subprocess.Popen([sys.executable, '-c', code, *args], cwd=cwd, env=env, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, text=True, start_new_session=True, **kw)
+
+
+class ProcessScanTests(unittest.TestCase):
+    """strict_cleanup.processes_using is the positive evidence that nothing of a suite is left: each way a
+    process can still touch a worktree is detected on its own, and the absence of all of them is an empty list."""
+
+    def holder(self, code, *args, cwd='/', env=None):
+        process = _spawn(code, *args, cwd=cwd, env=env)
+        self.addCleanup(self.release, process)
+        return process
+
+    @staticmethod
+    def release(process):
+        mutation_check._kill_group(process.pid)
+        process.wait()
+        for stream in (process.stdin, process.stdout):
+            if stream is not None:
+                stream.close()
+
+    def ready(self, process):
+        self.assertEqual(process.stdout.readline().strip(), 'ready')
+
+    def scan(self, path, markers=()):
+        """The production path: the scan runs as root through the privilege prefix, so it can read every process."""
+        if PRIV is None:
+            self.skipTest('needs root or passwordless sudo to read every process')
+        done = subprocess.run([*PRIV, sys.executable, '-I', sc.__file__, 'procs-using', path, *markers], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return [tuple(line.split('\t', 1)) for line in done.stdout.splitlines()]
+
+    def reasons(self, path, markers=()):
+        return [why for pid, why in self.scan(path, markers)]
+
+    def test_nothing_is_reported_when_nothing_holds_the_path(self):
+        self.assertEqual(self.scan(sc.temp_dir(self, 'ocscan-')), [])
+
+    def test_a_process_whose_only_link_is_its_working_directory_is_found_and_then_gone(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        process = self.holder('import time\nprint("ready", flush=True)\ntime.sleep(60)', cwd=directory)
+        self.ready(process)
+        self.assertTrue(any(why.startswith('cwd ') for why in self.reasons(directory)))
+        mutation_check._kill_group(process.pid)
+        process.wait()
+        self.assertEqual(self.scan(directory), [])
+
+    def test_a_process_whose_only_link_is_an_open_descriptor_is_found(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        target = os.path.join(directory, 'held')
+        Path(target).write_text('x')
+        process = self.holder('import sys, time\nf = open(sys.stdin.readline().strip())\nprint("ready", flush=True)\ntime.sleep(60)')
+        process.stdin.write(target + '\n')
+        process.stdin.flush()
+        self.ready(process)
+        self.assertTrue(any(why.startswith('fd ') for why in self.reasons(directory)), self.reasons(directory))
+
+    def test_a_process_known_only_by_the_run_marker_is_found(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        marker = os.path.join(sc.temp_dir(self, 'ocscan-'), 'run-marker')
+        process = self.holder('import sys, time\nprint("ready", flush=True)\ntime.sleep(60)', marker)
+        self.ready(process)
+        self.assertEqual(self.reasons(directory), [])
+        self.assertTrue(any('run marker' in why for why in self.reasons(directory, (marker,))))
+
+    def test_a_process_that_exited_leaves_nothing_behind_to_report(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        process = _spawn('import sys', cwd=directory)
+        process.wait()                                          # reaped: nothing remains, not even a zombie
+        process.stdin.close()
+        process.stdout.close()
+        self.assertEqual(self.scan(directory), [])
+
+    def test_the_scan_reports_an_unreadable_process_as_unverifiable_never_as_gone(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        real = open
+
+        def deny(path, *a, **k):
+            if str(path).endswith('/maps'):
+                raise PermissionError(13, 'denied', str(path))
+            return real(path, *a, **k)
+        process = self.holder('import time\nprint("ready", flush=True)\ntime.sleep(60)')
+        self.ready(process)
+        with unittest.mock.patch('builtins.open', deny):
+            found = dict(sc.processes_using(directory))
+        self.assertTrue(any(why.startswith('unverifiable') for why in found.values()))
+
+    @unittest.skipIf(PRIV is None, 'needs root or passwordless sudo for a mount namespace')
+    def test_a_process_whose_only_link_is_a_mount_namespace_holding_a_mount_below_the_path_is_found(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        target = os.path.join(directory, 'src')
+        os.mkdir(target)
+        process = subprocess.Popen([*PRIV, 'unshare', '--mount', '--propagation', 'private', 'sh', '-c',
+                                    'read t; mount --bind "$t" "$t"; echo ready; exec sleep 60'],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True)
+        self.addCleanup(self.release, process)
+        process.stdin.write(target + '\n')
+        process.stdin.flush()
+        self.ready(process)
+        scan = subprocess.run([*PRIV, sys.executable, '-I', sc.__file__, 'procs-using', directory], capture_output=True, text=True)
+        self.assertEqual(scan.returncode, 0, scan.stderr)
+        self.assertIn('mount namespace holds a mount', scan.stdout)
+        self.assertEqual(sc.mounts_under(directory), [])             # the host itself never saw the mount
+
+    def test_the_command_line_helper_lists_pid_and_reason(self):
+        directory = sc.temp_dir(self, 'ocscan-')
+        process = self.holder('import time\nprint("ready", flush=True)\ntime.sleep(60)', cwd=directory)
+        self.ready(process)
+        scan = subprocess.run([sys.executable, '-I', sc.__file__, 'procs-using', directory], capture_output=True, text=True)
+        self.assertEqual(scan.returncode, 0)
+        self.assertIn(f'{process.pid}\tcwd ', scan.stdout)
+
+
+BOOT = ('import sys\nsys.path.insert(0, {here!r})\nimport strict_cleanup, ns_run\n'
+        'strict_cleanup.read_mountinfo = lambda: "1 2 0:3 / / rw - ext4 /dev/vda rw\\n"\n'
+        'sys.exit(ns_run.main(["ns_run.py", {report!r}, {cwd!r}, {timeout!r}, "--", *{command!r}]))\n')
+
+
+class WrapperLifecycleTests(unittest.TestCase):
+    """ns_run reaps the suite's whole process group on every exit path (the namespace then kills the rest)."""
+
+    def setUp(self):
+        self.flags = sc.temp_dir(self, 'ocwrap-')
+        self.beat, self.pids = os.path.join(self.flags, 'beat'), os.path.join(self.flags, 'pid')
+        self.report = os.path.join(self.flags, 'report.json')
+        code = (f'import os, time\nopen({self.pids!r}, "w").write(str(os.getpid()))\n'
+                f'while True:\n    open({self.beat!r}, "w").write(str(time.time()))\n    time.sleep(0.1)\n')
+        self.suite = ('import subprocess, sys, time\n'
+                      f'subprocess.Popen([sys.executable, "-c", {code!r}])\n'          # same process group as the suite
+                      'time.sleep(60)\n')
+        self.addCleanup(self.reap)
+
+    def reap(self):
+        if os.path.exists(self.pids):
+            try:
+                os.kill(int(Path(self.pids).read_text()), 9)
+            except (OSError, ValueError):
+                pass
+
+    def start(self, timeout):
+        boot = BOOT.format(here=os.path.dirname(os.path.abspath(sc.__file__)), report=self.report, cwd=self.flags,
+                           timeout=str(timeout), command=[sys.executable, '-c', self.suite])
+        return subprocess.Popen([sys.executable, '-c', boot])
+
+    def wait_for_beat(self):
+        for _ in range(100):
+            if os.path.exists(self.beat):
+                return
+            time.sleep(0.1)
+        self.fail('the descendant never started')
+
+    def assert_descendant_dead(self):
+        os.unlink(self.beat)
+        time.sleep(0.6)
+        self.assertFalse(os.path.exists(self.beat), 'the suite\'s descendant is still running')
+
+    def test_a_suite_timeout_kills_the_whole_process_group_not_just_the_direct_child(self):
+        wrapper = self.start(2)
+        self.wait_for_beat()
+        self.assertEqual(wrapper.wait(30), 1)
+        report = json.loads(Path(self.report).read_text())
+        self.assertTrue(report['timed_out'])
+        self.assert_descendant_dead()
+
+    def test_sigterm_to_the_wrapper_kills_the_suite_group_and_is_reported_as_interrupted(self):
+        wrapper = self.start(60)
+        self.wait_for_beat()
+        wrapper.send_signal(signal.SIGTERM)
+        wrapper.wait(30)
+        report = json.loads(Path(self.report).read_text())
+        self.assertTrue(report['interrupted'])
+        self.assertFalse(report['timed_out'])
+        self.assert_descendant_dead()
+
+
+def descendant_suite(beat):
+    """A suite that starts a detached heartbeat process (its own session) and then hangs."""
+    return [sys.executable, '-c', 'import subprocess, sys, time\n'
+            f'code = "import time\\nwhile True:\\n    open({beat!r}, \'w\').write(str(time.time()))\\n    time.sleep(0.1)\\n"\n'
+            'subprocess.Popen([sys.executable, "-c", code], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+            'time.sleep(120)\n']
+
+
+@unittest.skipUnless(ISOLATION, 'private PID/mount namespaces and the openat2 boundary are unavailable here')
+class NamespaceTerminationTests(unittest.TestCase):
+    """No worktree is deleted while a process of its isolated suite is alive. Termination is proven by a /proc
+    scan, not inferred from the parent `unshare` exiting; unproven termination refuses the delete."""
+
+    def setUp(self):
+        self.parent = sc.temp_dir(self, 'ocmutparent-')
+        self.flags = sc.temp_dir(self, 'ocmutflags-')
+        self.beat = os.path.join(self.flags, 'beat')
+        self.addCleanup(mutation_check._ABORT.clear)
+
+    def run_hung(self, outer=4, **extra):
+        with unittest.mock.patch.object(mutation_check, 'OUTER_TIMEOUT', outer):
+            return mutation_check.run_one(mutation_check.MUTATIONS[0], suite=descendant_suite(self.beat), parent=self.parent)
+
+    def wait_for_beat(self):
+        for _ in range(300):
+            if os.path.exists(self.beat):
+                return
+            time.sleep(0.1)
+        self.fail('the suite\'s descendant never started')
+
+    def assert_descendant_dead(self):
+        self.assertTrue(os.path.exists(self.beat), 'the descendant never ran')
+        os.unlink(self.beat)
+        time.sleep(0.8)
+        self.assertFalse(os.path.exists(self.beat), 'a process of the mutated suite is still running')
+
+    def assert_nothing_holds(self):
+        self.assertEqual(mutation_check.processes_left(self.parent, []), ([], ''))
+        self.assertEqual(os.listdir(self.parent), [])
+
+    def test_an_outer_timeout_leaves_no_live_descendant_and_is_deleted_only_afterwards(self):
+        result = self.run_hung()
+        self.assertEqual(result['result'], 'TIMEOUT')
+        self.assertTrue(result['termination_verified'])
+        self.assertEqual(result['cleanup'], 'clean')
+        self.assert_descendant_dead()
+        self.assert_nothing_holds()
+
+    def test_termination_is_proven_by_the_scan_even_when_unshare_cannot_kill_the_namespace_init(self):
+        without = [flag for flag in mutation_check.UNSHARE if flag != '--kill-child']
+        self.assertNotEqual(without, mutation_check.UNSHARE)
+        with unittest.mock.patch.object(mutation_check, 'UNSHARE', without):
+            result = self.run_hung()
+        self.assertEqual(result['result'], 'TIMEOUT')
+        self.assertTrue(result['termination_verified'])
+        self.assertEqual(result['cleanup'], 'clean')
+        self.assert_descendant_dead()
+        self.assert_nothing_holds()
+
+    def test_the_unshare_command_line_carries_kill_child(self):
+        self.assertIn('--kill-child', mutation_check.UNSHARE)
+        command = mutation_check.isolated_command(Path('/w'), Path('/r'), ['true'], {'K': 'V'})
+        self.assertIn('--kill-child', command)
+
+    def test_unverifiable_termination_refuses_deletion_keeps_the_evidence_and_the_original_timeout(self):
+        stuck = lambda work, markers: ([(4242, 'stand-in that never dies')], '')      # noqa: E731
+        with unittest.mock.patch.object(mutation_check, 'processes_left', stuck), \
+                unittest.mock.patch.object(mutation_check, 'kill_pids', lambda pids: None), \
+                unittest.mock.patch.object(mutation_check, 'TERMINATION_ATTEMPTS', 2), \
+                unittest.mock.patch.object(mutation_check, 'TERMINATION_PAUSE', 0), \
+                unittest.mock.patch.object(mutation_check, 'delete_tree') as deleted:
+            result = self.run_hung(outer=3)
+        self.addCleanup(self.remove_left_behind)
+        self.assertEqual(result['result'], 'CLEANUP_FAILED')
+        self.assertEqual(result['suite_result'], 'TIMEOUT')
+        self.assertFalse(result['termination_verified'])
+        self.assertIn('outer timeout', result['detail'])                    # the original failure is kept
+        self.assertIn('NOT deleted', result['detail'])
+        self.assertIn('4242', result['detail'])
+        deleted.assert_not_called()
+        self.assertTrue(any(name.startswith('mut-report-') for name in os.listdir(self.parent)))       # evidence kept
+        self.assertTrue(any(name.startswith('mut-') and not name.startswith('mut-report-') for name in os.listdir(self.parent)))
+        self.assertEqual(mutation_check.exit_code(mutation_check.summarize([result])), 1)
+
+    def remove_left_behind(self):
+        for name in os.listdir(self.parent):
+            path = os.path.join(self.parent, name)
+            mutation_check.delete_tree(path, sc.identity(path))
+
+    def test_a_scan_that_cannot_run_is_not_evidence_and_refuses_deletion(self):
+        broken = lambda work, markers: ([], 'process scan failed (exit 2): boom')       # noqa: E731
+        with unittest.mock.patch.object(mutation_check, 'processes_left', broken), \
+                unittest.mock.patch.object(mutation_check, 'delete_tree') as deleted:
+            result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', 'import sys; sys.exit(1)'],
+                                            parent=self.parent)
+        self.addCleanup(self.remove_left_behind)
+        self.assertEqual(result['result'], 'CLEANUP_FAILED')
+        self.assertEqual(result['suite_result'], 'CAUGHT')
+        self.assertIn('process scan failed', result['detail'])
+        deleted.assert_not_called()
+
+    def test_a_failed_namespace_startup_is_an_error_with_everything_cleaned_and_verified(self):
+        with unittest.mock.patch.object(mutation_check, 'UNSHARE', ['unshare', '--no-such-option']):
+            result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', 'pass'], parent=self.parent)
+        self.assertEqual(result['result'], 'ERROR')
+        self.assertTrue(result['termination_verified'])
+        self.assertEqual(result['cleanup'], 'clean')
+        self.assert_nothing_holds()
+
+    def test_an_exception_while_the_suite_runs_still_terminates_it_before_cleanup(self):
+        original = subprocess.Popen.communicate
+
+        def boom(process, *a, **k):
+            if 'unshare' in process.args:
+                raise RuntimeError('reader failed')
+            return original(process, *a, **k)
+        with unittest.mock.patch.object(subprocess.Popen, 'communicate', boom):
+            result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=descendant_suite(self.beat), parent=self.parent)
+        self.assertEqual(result['result'], 'ERROR')
+        self.assertIn('reader failed', result['detail'])
+        self.assertTrue(result['termination_verified'])
+        time.sleep(0.5)
+        if os.path.exists(self.beat):
+            self.assert_descendant_dead()
+        self.assert_nothing_holds()
+
+    def test_a_signal_to_the_runner_terminates_every_run_in_flight_and_verifies_before_cleanup(self):
+        import threading
+        holder = {}
+        worker = threading.Thread(target=lambda: holder.update(result=mutation_check.run_one(
+            mutation_check.MUTATIONS[0], suite=descendant_suite(self.beat), parent=self.parent)))
+        worker.start()
+        self.wait_for_beat()
+        mutation_check.abort_all(signal.SIGTERM, None)
+        worker.join(120)
+        self.assertFalse(worker.is_alive())
+        result = holder['result']
+        self.assertEqual(result['result'], 'ERROR')
+        self.assertTrue(result['termination_verified'])
+        self.assertEqual(result['cleanup'], 'clean')
+        self.assert_descendant_dead()
+        self.assert_nothing_holds()
+        later = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', 'pass'], parent=self.parent)
+        self.assertEqual((later['result'], later['cleanup']), ('ERROR', 'not started'))     # nothing new starts after a signal
+
+    @unittest.skipIf(PRIV is None, 'needs root or passwordless sudo to mount')
+    def test_a_descendant_inside_a_suite_mount_dies_with_the_namespace_before_the_worktree_is_deleted(self):
+        suite = ('import os, subprocess, sys, tempfile, time\n'
+                 'd = tempfile.mkdtemp(); t = os.path.join(d, "src"); os.mkdir(t)\n'
+                 f'subprocess.run({list(PRIV)!r} + ["mount", "--bind", t, t], check=True)\n'
+                 f'code = "import os, time\\nos.chdir({{}})\\nwhile True:\\n    open({self.beat!r}, \'w\').write(str(time.time()))\\n    time.sleep(0.1)\\n".format(repr(t))\n'
+                 'subprocess.Popen([sys.executable, "-c", code], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+                 'time.sleep(120)\n')
+        with unittest.mock.patch.object(mutation_check, 'OUTER_TIMEOUT', 6):
+            result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', suite], parent=self.parent)
+        self.assertEqual(result['result'], 'TIMEOUT')
+        self.assertTrue(result['termination_verified'])
+        self.assertEqual(result['cleanup'], 'clean')
+        self.assertEqual([m for m in sc.mount_points() if m.startswith(sc.canonical(self.parent) + '/')], [])
+        self.assert_descendant_dead()
+        self.assert_nothing_holds()
+
+    def test_processes_the_scan_finds_are_killed_and_deletion_waits_for_an_empty_scan(self):
+        rounds = iter([([(4242, 'stand-in')], ''), ([], '')])
+        killed = []
+        with unittest.mock.patch.object(mutation_check, 'processes_left', lambda work, markers: next(rounds)), \
+                unittest.mock.patch.object(mutation_check, 'kill_pids', killed.append), \
+                unittest.mock.patch.object(mutation_check, 'TERMINATION_PAUSE', 0):
+            result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', 'import sys; sys.exit(1)'],
+                                            parent=self.parent)
+        self.assertEqual(killed, [[4242]])
+        self.assertTrue(result['termination_verified'])
+        self.assertEqual((result['result'], result['cleanup']), ('CAUGHT', 'clean'))
+        self.assertEqual(os.listdir(self.parent), [])
+
+    def test_a_suite_interrupted_by_a_signal_is_an_error_not_a_verdict(self):
+        def fake(work, report, suite, env):
+            code = ('import json, sys\n'
+                    f'json.dump({{"rc": -9, "timed_out": False, "interrupted": True, "leaked_mounts": 0}}, open({str(report)!r}, "w"))\n'
+                    'sys.exit(137)\n')
+            return [sys.executable, '-c', code]
+        with unittest.mock.patch.object(mutation_check, 'isolated_command', fake):
+            result = mutation_check.run_one(mutation_check.MUTATIONS[0], suite=[sys.executable, '-c', 'pass'], parent=self.parent)
+        self.assertEqual(result['result'], 'ERROR')
+        self.assertIn('interrupted by a signal', result['detail'])
+        self.assertEqual(os.listdir(self.parent), [])

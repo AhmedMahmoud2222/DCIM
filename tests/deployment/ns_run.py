@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs one mutated test suite as PID 1 of a private PID + mount namespace (ns_run v1.0).
+"""Runs one mutated test suite as PID 1 of a private PID + mount namespace (ns_run v1.1).
 
     ns_run.py REPORT CWD TIMEOUT -- COMMAND...
 
@@ -13,6 +13,7 @@ Not collected by unittest (no test_ prefix).
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 
@@ -31,6 +32,15 @@ def root_is_private(table):
     return False
 
 
+def _kill_group(process):
+    """SIGKILL the suite's process group and reap the suite. Whatever else it left running dies when this PID 1 exits."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
 def main(argv):
     if len(argv) < 6 or argv[4] != '--':
         print(__doc__, file=sys.stderr)
@@ -39,14 +49,24 @@ def main(argv):
     if not root_is_private(strict_cleanup.read_mountinfo()):
         print('ns_run: the root mount of this namespace is not private; refusing to run the suite', file=sys.stderr)
         return 3
-    timed_out = False
+    timed_out, interrupted = False, []
+    suite = subprocess.Popen(command, cwd=cwd, start_new_session=True)       # its own process group: one kill reaches it all
+
+    def stop(signum, frame):
+        # PID 1 ignores signals it has no handler for; with one, a SIGTERM/SIGINT from outside ends the suite here
+        interrupted.append(signum)
+        _kill_group(suite)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, stop)
     try:
-        rc = subprocess.run(command, cwd=cwd, timeout=timeout).returncode
+        rc = suite.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         rc, timed_out = 1, True
+    finally:
+        _kill_group(suite)             # the suite is reaped and its group is dead before anything is reported
     leaked = len(strict_cleanup.mounts_under(cwd))
     with open(report, 'w') as handle:
-        json.dump({'rc': rc, 'timed_out': timed_out, 'leaked_mounts': leaked, 'pid': os.getpid()}, handle)
+        json.dump({'rc': rc, 'timed_out': timed_out, 'interrupted': bool(interrupted), 'leaked_mounts': leaked, 'pid': os.getpid()}, handle)
     return rc
 
 

@@ -18,9 +18,12 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,13 +128,29 @@ MUTATIONS = [
     ('P2-s6', 'the namespace wrapper reports no leaked mounts', 'tests/deployment/ns_run.py', "    leaked = len(strict_cleanup.mounts_under(cwd))", "    leaked = 0"),
     ('P2-s8', 'a mount in the host namespace does not stop the delete', 'tests/deployment/mutation_check.py', "        if live:\n            return {'state': 'FAILED', 'leaked_mounts': leaked,\n                    'detail': f'mount(s) are present", "        if False:\n            return {'state': 'FAILED', 'leaked_mounts': leaked,\n                    'detail': f'mount(s) are present"),
     ('P2-s9', 'the worktree identity is not re-checked before the delete', 'tests/deployment/mutation_check.py', "        strict_cleanup.check_identity(str(work), expected)\n        live = ", "        live = "),
-    ('P2-s10', 'a worktree without a recorded identity is deleted like an identified one', 'tests/deployment/mutation_check.py', "    finally:\n        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected, leaked)", "    finally:\n        outcome = cleanup_worktree(work, expected, leaked)"),
-    ('P2-s1', 'mutated suites do not get a private PID namespace', 'tests/deployment/mutation_check.py', "UNSHARE = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', '--propagation', 'private']\nWRAPPER", "UNSHARE = ['unshare', '--mount', '--fork', '--propagation', 'private']\nWRAPPER"),
+    ('P2-s10', 'a worktree without a recorded identity is deleted like an identified one', 'tests/deployment/mutation_check.py', "        elif expected is None:\n            outcome = discard_unidentified(work)\n        else:\n            outcome = cleanup_worktree(work, expected, leaked)\n", "        else:\n            outcome = cleanup_worktree(work, expected, leaked)\n"),
+    ('P1-n1', 'the namespace init is not killed when its unshare parent dies', 'tests/deployment/mutation_check.py', "'--fork', '--kill-child', '--mount-proc', '--propagation', 'private']\nWRAPPER", "'--fork', '--mount-proc', '--propagation', 'private']\nWRAPPER"),
+    ('P1-n2', 'a failing process scan counts as "no process left"', 'tests/deployment/mutation_check.py', "        if error:\n            return False, error\n        if not remaining:", "        if not remaining:"),
+    ('P1-n3', 'the worktree is deleted although termination was not verified', 'tests/deployment/mutation_check.py', "        if not verified:\n            outcome = {'state': 'FAILED'", "        if False:\n            outcome = {'state': 'FAILED'"),
+    ('P1-n4', 'the outer timeout does not kill the run\'s process group', 'tests/deployment/mutation_check.py', "        if process.poll() is None:\n            _kill_group(process.pid)\n", "        if False:\n            _kill_group(process.pid)\n"),
+    ('P1-n5', 'the isolated run shares the runner\'s process group', 'tests/deployment/mutation_check.py', "text=True, env=env, start_new_session=True)\n            _ACTIVE[process.pid]", "text=True, env=env)\n            _ACTIVE[process.pid]"),
+    ('P1-n6', 'processes the scan finds are not killed', 'tests/deployment/mutation_check.py', "        kill_pids([pid for pid, _ in remaining])\n        time.sleep", "        time.sleep"),
+    ('P1-n7', 'a signal to the runner kills no isolated run', 'tests/deployment/mutation_check.py', "    for pgid in groups:\n        _kill_group(pgid)\n", "    for pgid in groups:\n        pass\n"),
+    ('P1-n8', 'a suite interrupted by a signal is judged as a verdict', 'tests/deployment/mutation_check.py', "        if interrupted:\n            raise RuntimeError(", "        if False:\n            raise RuntimeError("),
+    ('P1-n9', 'the report directory is deleted although termination was not verified', 'tests/deployment/mutation_check.py', "        if report_dir is not None and verified:\n            try:", "        if report_dir is not None:\n            try:"),
+    ('P1-n10', 'the wrapper leaves the suite\'s process group alive on timeout', 'tests/deployment/ns_run.py', "    finally:\n        _kill_group(suite)             #", "    finally:\n        pass             #"),
+    ('P1-n11', 'the wrapper ignores SIGTERM like any PID 1', 'tests/deployment/ns_run.py', "    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):\n        signal.signal(signum, stop)\n", ""),
+    ('P1-n12', 'the scan ignores a process whose only link is an open descriptor', 'tests/deployment/strict_cleanup.py', "                for fd in os.listdir(f'{base}/fd'):", "                for fd in []:"),
+    ('P1-n13', 'the scan ignores a process whose only link is its working directory', 'tests/deployment/strict_cleanup.py', "            for link in ('cwd', 'root', 'exe'):", "            for link in ():"),
+    ('P1-n14', 'the scan ignores the run marker in command lines and environments', 'tests/deployment/strict_cleanup.py', "                    if any(needle in blob for needle in needles):", "                    if False:"),
+    ('P1-n15', 'the scan ignores a mount namespace that still holds a mount below the worktree', 'tests/deployment/strict_cleanup.py', "                    if held:\n                        why = f'its mount namespace", "                    if False:\n                        why = f'its mount namespace"),
+    ('P1-n16', 'a process the scan cannot inspect is treated as gone', 'tests/deployment/strict_cleanup.py', "            why = f'unverifiable: {type(error).__name__}: {error}'", "            continue"),
+    ('P2-s1', 'mutated suites do not get a private PID namespace', 'tests/deployment/mutation_check.py', "UNSHARE = ['unshare', '--mount', '--pid', '--fork', '--kill-child', '--mount-proc', '--propagation', 'private']\nWRAPPER", "UNSHARE = ['unshare', '--mount', '--fork', '--propagation', 'private']\nWRAPPER"),
     ('P2-s7', 'the isolated copy lacks scripts/', 'tests/deployment/mutation_check.py', "COPY_TREES = ('.github', 'tests', 'scripts', 'docs')              # everything the deployment tests read from the repo\n", "COPY_TREES = ('.github', 'tests', 'docs')\n"),
     ('P2-4a', 'oversized files reach the model (both size checks removed)', '.github/scripts/opencode_sandbox.py', "        if size > MAX_FILE_BYTES:\n            return 'excluded', 'larger than the per-file limit'\n        with open(path, 'rb') as handle:\n            data = handle.read(MAX_FILE_BYTES + 1)\n    except OSError:\n        return 'excluded', 'unreadable'\n    if len(data) > MAX_FILE_BYTES:\n        return 'excluded', 'larger than the per-file limit'\n", "        with open(path, 'rb') as handle:\n            data = handle.read()\n    except OSError:\n        return 'excluded', 'unreadable'\n"),
     ('P2-s2', 'the wrapper runs the suite in a namespace whose root is not private', 'tests/deployment/ns_run.py', "    if not root_is_private(strict_cleanup.read_mountinfo()):", "    if False:"),
     ('P2-s13', 'a root mount with propagation tags is treated as private', 'tests/deployment/ns_run.py', "            return not any(tag.startswith(('shared:', 'master:')) or tag == 'unbindable' for tag in optional)", "            return True"),
-    ('P2-s12', 'the report is trusted even when it is absent', 'tests/deployment/mutation_check.py', '            raise RuntimeError(f\'the namespace wrapper produced no usable report (exit status {done.returncode}): \'\n                               f\'{(done.stderr or "")[-300:].strip()}\') from None', '            leaked, timed_out = 0, False'),
+    ('P2-s12', 'the report is trusted even when it is absent', 'tests/deployment/mutation_check.py', '            raise RuntimeError(f\'the namespace wrapper produced no usable report (exit status {done.returncode}): \'\n                               f\'{(done.stderr or "")[-300:].strip()}\') from None', '            leaked, timed_out, interrupted = 0, False, False'),
     ('P2-u2', 'a leaked test account is not removed after the run', 'tests/deployment/mutation_check.py', "    removed = subprocess.run([*_privilege_prefix(), 'userdel', name], capture_output=True, text=True)\n", "    removed = subprocess.CompletedProcess([], 0, '', '')\n"),
     ('P2-u3', 'a test account that cannot be removed does not fail the run', 'tests/deployment/mutation_check.py', "        if account_error:\n            outcome = {'state': 'FAILED'", "        if False:\n            outcome = {'state': 'FAILED'"),
     ('P2-s11', 'mutated suites keep the shared temporary directory', 'tests/deployment/mutation_check.py', "'TMPDIR': str(scratch), 'OPENCODE_TEST_ACCOUNT': account}\n        report = ", "'OPENCODE_TEST_ACCOUNT': account}\n        report = "),
@@ -202,9 +221,12 @@ def _privilege_prefix():
 
 COPY_TREES = ('.github', 'tests', 'scripts', 'docs')              # everything the deployment tests read from the repo
 COPY_FILES = ('docker-compose.yml', 'docker-compose.production.yml')
-UNSHARE = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', '--propagation', 'private']
+UNSHARE = ['unshare', '--mount', '--pid', '--fork', '--kill-child', '--mount-proc', '--propagation', 'private']
 WRAPPER = str(Path(__file__).resolve().parent / 'ns_run.py')
 SUITE_TIMEOUT = 400
+OUTER_TIMEOUT = SUITE_TIMEOUT + 120      # the wrapper enforces SUITE_TIMEOUT itself; this bounds a wrapper that hangs
+TERMINATION_ATTEMPTS = 40                # scan-and-kill rounds before termination is declared unverifiable
+TERMINATION_PAUSE = 0.25
 _ISOLATION = {}
 
 
@@ -231,6 +253,86 @@ def isolated_command(work, report, suite, env):
     drop = ['setpriv', f'--reuid={os.getuid()}', f'--regid={os.getgid()}',
             f'--groups={groups}' if groups else '--clear-groups']
     return [*prefix, *UNSHARE, '--', *drop, 'env', '-i', *[f'{k}={v}' for k, v in env.items()], *inner]
+
+
+_ACTIVE = {}                  # pgid -> Popen of every isolated run in flight, so a signal can reach all of them
+_ACTIVE_LOCK = threading.Lock()
+_ABORT = threading.Event()
+
+
+def _kill_group(pgid):
+    """SIGKILL a process group, with root when this runner is not root (the group leader is sudo, owned by root)."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        return
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        pass
+    subprocess.run([*_privilege_prefix(), 'kill', '-KILL', '--', f'-{pgid}'], capture_output=True)
+
+
+def processes_left(work, markers):
+    """Positive evidence query: (pids_and_reasons, error). Runs strict_cleanup's /proc scan as root. An empty list
+    with no error means no live process holds the worktree, its run marker or a mount below it. A scan that
+    fails is an error, never an empty list."""
+    scan = subprocess.run([*_privilege_prefix(), sys.executable, '-I', strict_cleanup.__file__, 'procs-using',
+                           str(work), *markers], capture_output=True, text=True, timeout=120)
+    if scan.returncode != 0:
+        return [], f'process scan failed (exit {scan.returncode}): {scan.stderr.strip()[-200:]}'
+    found = []
+    for line in scan.stdout.splitlines():
+        pid, _, why = line.partition('\t')
+        found.append((int(pid), why))
+    return found, ''
+
+
+def kill_pids(pids):
+    """SIGKILL the given pids as root. A seam: tests replace it so a stand-in pid is never signalled."""
+    subprocess.run([*_privilege_prefix(), 'kill', '-KILL', *[str(pid) for pid in pids]], capture_output=True)
+
+
+def terminate_and_verify(process, work, markers):
+    """Kill everything the isolated run started and prove it is gone. Returns (verified, detail).
+
+    The parent `unshare` exiting proves nothing about the namespace's processes, so: (1) kill the run's process
+    group and reap the direct child; (2) scan /proc until no live process has the worktree as cwd, root, exe,
+    descriptor or mapping, no mount namespace holds a mount below it, and no command line or initial environment
+    names it or the run marker, killing whatever the scan finds. Only an empty scan is `verified`; a scan that
+    cannot run, a process that will not die or a child that cannot be reaped is not."""
+    if process is not None:
+        if process.poll() is None:
+            _kill_group(process.pid)
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            return False, f'the isolated run (pid {process.pid}) could not be reaped after SIGKILL'
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+    remaining = []
+    for _ in range(TERMINATION_ATTEMPTS):
+        try:
+            remaining, error = processes_left(work, markers)
+        except (OSError, subprocess.SubprocessError) as failure:
+            return False, f'process scan could not run: {type(failure).__name__}: {failure}'
+        if error:
+            return False, error
+        if not remaining:
+            return True, ''
+        kill_pids([pid for pid, _ in remaining])
+        time.sleep(TERMINATION_PAUSE)
+    return False, 'processes of the isolated run are still alive: ' + '; '.join(f'{pid} ({why})' for pid, why in remaining[:5])
+
+
+def abort_all(signum=None, frame=None):
+    """Signal handler for the runner: stop starting runs and kill every run in flight. Each run's own `finally`
+    then verifies termination before it touches its worktree."""
+    _ABORT.set()
+    with _ACTIVE_LOCK:
+        groups = list(_ACTIVE)
+    for pgid in groups:
+        _kill_group(pgid)
 
 
 def delete_tree(path, expected):
@@ -313,12 +415,16 @@ def _execute(result, rel, mutated_text, suite, parent):
                 'leaked_mounts': 0, 'detail': 'private PID/mount namespaces or the openat2 deletion boundary are '
                                               'unavailable (need root or passwordless sudo, unshare, Linux >= 5.8); '
                                               'the mutated suite was not started'}
+    if _ABORT.is_set():
+        return {**result, 'result': 'ERROR', 'cleanup': 'not started', 'leaked_mounts': 0,
+                'detail': 'the run was aborted by a signal before this suite started'}
     work = Path(tempfile.mkdtemp(prefix='mut-', dir=parent))
     # From here on the worktree exists: every step that follows, including recording its identity, is inside
     # the guard, and the guard always ends in an explicit cleanup outcome.
     expected = None
     report_dir = report_identity = None
     leaked = 0
+    process, markers = None, []
     account = 'ocm' + secrets.token_hex(5)                 # this run's own test account (see test_opencode_runtime.AGENT)
     try:
         expected = strict_cleanup.identity(str(work))      # identity captured at creation
@@ -336,17 +442,28 @@ def _execute(result, rel, mutated_text, suite, parent):
             (work / rel).write_text(mutated_text)
         env = {**os.environ, 'OPENCODE_SKIP_E2E': '1', 'TMPDIR': str(scratch), 'OPENCODE_TEST_ACCOUNT': account}
         report = report_dir / 'report.json'
-        done = subprocess.run(isolated_command(work, report, suite or SUITE, env), capture_output=True, text=True,
-                              env=env, timeout=SUITE_TIMEOUT + 120)
+        markers = [str(report_dir)]                          # unique to this run; it is in the command line of every wrapper process
+        with _ACTIVE_LOCK:
+            if _ABORT.is_set():
+                raise RuntimeError('the run was aborted by a signal before this suite started')
+            # its own session and process group: one SIGKILL reaches sudo and unshare, whatever the suite did
+            process = subprocess.Popen(isolated_command(work, report, suite or SUITE, env), stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+            _ACTIVE[process.pid] = process
+        stdout, stderr = process.communicate(timeout=OUTER_TIMEOUT)
+        done = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
         try:
             seen = json.loads(report.read_text())            # untrusted telemetry: only integers are used
             leaked = int(seen['leaked_mounts']) if isinstance(seen.get('leaked_mounts'), int) else 0
             timed_out = seen.get('timed_out') is True
+            interrupted = seen.get('interrupted') is True
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             # no usable report means the wrapper (and so the isolation) did not run to completion: whatever the exit
             # status says, it is not a verdict about the mutation
             raise RuntimeError(f'the namespace wrapper produced no usable report (exit status {done.returncode}): '
                                f'{(done.stderr or "")[-300:].strip()}') from None
+        if interrupted:
+            raise RuntimeError('the suite was interrupted by a signal; its exit status is not a verdict')
         failing = [line for line in done.stderr.splitlines() if line.startswith(('FAIL:', 'ERROR:'))]
         ran = [line for line in done.stderr.splitlines() if line.startswith('Ran ')]
         result['tests_run'] = int(ran[-1].split()[1]) if ran else 0
@@ -360,19 +477,36 @@ def _execute(result, rel, mutated_text, suite, parent):
     except Exception as error:      # noqa: BLE001 - a worker error must not abort the run or skip cleanup
         result.update({'result': 'ERROR', 'detail': f'{type(error).__name__}: {error}'})
     finally:
-        outcome = discard_unidentified(work) if expected is None else cleanup_worktree(work, expected, leaked)
+        # Nothing is deleted until every process of the isolated run is proven gone. The original verdict (a
+        # timeout, an error, a signal) stays in `result`; a failed proof only adds CLEANUP_FAILED beside it.
+        try:
+            verified, why = terminate_and_verify(process, work, markers)
+        except Exception as error:      # noqa: BLE001 - an unexpected failure is "not verified", never "gone"
+            verified, why = False, f'{type(error).__name__}: {error}'
+        finally:
+            if process is not None:
+                with _ACTIVE_LOCK:
+                    _ACTIVE.pop(process.pid, None)
+        if not verified:
+            outcome = {'state': 'FAILED', 'leaked_mounts': leaked,
+                       'detail': f'termination of the isolated run could not be verified, so {work} was NOT deleted: {why}'}
+        elif expected is None:
+            outcome = discard_unidentified(work)
+        else:
+            outcome = cleanup_worktree(work, expected, leaked)
         left, account_error = reap_account(account)
         if account_error:
             outcome = {'state': 'FAILED', 'leaked_mounts': outcome['leaked_mounts'],
                        'detail': (outcome['detail'] + ' | ' if outcome['detail'] else '') + account_error}
         result['account_left_behind'] = left
-        if report_dir is not None:
+        if report_dir is not None and verified:
             try:
                 strict_cleanup.remove_verified(str(report_dir), report_identity)
             except Exception as error:      # noqa: BLE001
                 outcome = {'state': 'FAILED', 'leaked_mounts': outcome['leaked_mounts'],
                            'detail': (outcome['detail'] + ' | ' if outcome['detail'] else '')
                            + f'report directory: {type(error).__name__}: {error}'}
+    result['termination_verified'] = verified
     result['cleanup'] = outcome['state']
     result['leaked_mounts'] = outcome['leaked_mounts']
     if outcome['state'] == 'FAILED':
@@ -415,6 +549,8 @@ def main():
     parser.add_argument('--no-control', action='store_true',
                         help='skip the unmutated control run (development only; the verdicts are then NOT evidence)')
     args = parser.parse_args()
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, abort_all)          # a signal kills every isolated run; each verifies its own cleanup
     items = [m for m in MUTATIONS if not args.only or m[0] in args.only]
     control, results = run_all(items, workers=args.workers, control=not args.no_control)
     if control is not None:
