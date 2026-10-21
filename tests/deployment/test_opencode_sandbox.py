@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / '.github/scripts'
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from strict_cleanup import remove_unmounted_tree, temp_dir  # noqa: E402
+from strict_cleanup import class_temp_dir, temp_dir  # noqa: E402
 
 
 def load(name):
@@ -352,19 +352,17 @@ class ProxyBindingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.upstream = http.server.ThreadingHTTPServer(('127.0.0.1', 0), _Upstream)
+        cls.addClassCleanup(cls.upstream.server_close)
         threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
-        cls.tmp = tempfile.mkdtemp()
+        cls.addClassCleanup(cls.upstream.shutdown)          # runs even if a later line of setUpClass raises
+        cls.tmp = class_temp_dir(cls, 'ocsb-')              # strict removal registered before anything can fail
         cls.log = os.path.join(cls.tmp, 'rejections.log')
         cls.server, cls.proxy = proxy.serve('REAL-KEY', f'http://127.0.0.1:{cls.upstream.server_address[1]}', BOUND,
                                             log_path=cls.log)
+        cls.addClassCleanup(cls.server.server_close)
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.addClassCleanup(cls.server.shutdown)
         cls.port = cls.server.server_address[1]
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.shutdown()
-        cls.upstream.shutdown()
-        remove_unmounted_tree(cls.tmp)
 
     def setUp(self):
         _Upstream.seen.clear()

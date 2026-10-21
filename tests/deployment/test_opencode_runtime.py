@@ -17,8 +17,9 @@ import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from strict_cleanup import (CleanupRefused, MountLeak, canonical, decode_mountinfo, mounts_at,  # noqa: E402
-                            mounts_under, parse_mountinfo, privileged_temp_dir, remove_unmounted_tree, temp_dir)
+from strict_cleanup import (CleanupRefused, MountLeak, canonical, class_temp_dir, decode_mountinfo, identity,  # noqa: E402
+                            mounts_at, mounts_under, parse_mountinfo, privileged_temp_dir,
+                            remove_unmounted_tree, remove_verified, temp_dir)
 import strict_cleanup  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -73,15 +74,11 @@ class RuntimeFilesystemTests(unittest.TestCase):
             made = run_priv('useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', AGENT, check=False)
             if made.returncode != 0:
                 raise unittest.SkipTest(f'cannot create the test user: {made.stderr.strip()}')
-        cls.tool = tempfile.mkdtemp(prefix='ocfs-tool-')
+        cls.tool = class_temp_dir(cls, 'ocfs-tool-')     # strict class cleanup registered before anything can fail
         os.chmod(cls.tool, 0o755)
         cls.tool_script = os.path.join(cls.tool, 'fsisolate.py')
         shutil.copy(SCRIPTS / 'opencode_fsisolate.py', cls.tool_script)
         os.chmod(cls.tool_script, 0o755)
-
-    @classmethod
-    def tearDownClass(cls):
-        remove_unmounted_tree(cls.tool)
 
     def setUp(self):
         # Root owns the base directory, like /srv on the runner, so every ancestor of the tree is root-controlled.
@@ -586,10 +583,18 @@ def probe_mount_capability(run, mounted, remove, mkdtemp=tempfile.mkdtemp):
 def can_mount():
     if PRIV is None:
         return False
+    created = {}
+
+    def mkdtemp(prefix):
+        path = tempfile.mkdtemp(prefix=prefix)
+        created[path] = identity(path)                      # identity captured at creation
+        return path
+
     return probe_mount_capability(
         run=lambda cmd: subprocess.run([*PRIV, *cmd], capture_output=True),
         mounted=lambda target: bool(mounts_at(target)),
-        remove=remove_unmounted_tree)
+        remove=lambda path: remove_verified(path, created[path]),
+        mkdtemp=mkdtemp)
 
 
 MOUNTS_AVAILABLE = can_mount()
@@ -843,7 +848,7 @@ class MountinfoDecodingTests(unittest.TestCase):
         result = unittest.TestResult()
         unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
         self.assertEqual(len(result.errors), 1)                    # reported, not silently ignored
-        self.assertIn('no longer resolves', result.errors[0][1])
+        self.assertIn('not the directory that was created', result.errors[0][1])
         self.assertEqual(Path(marker).read_text(), 'must survive')  # nothing outside was deleted
         for leftover in glob.glob(os.path.join(tempfile.gettempdir(), 'ocmnt-swap-*')):
             os.unlink(leftover)
@@ -900,7 +905,7 @@ class MountinfoDecodingTests(unittest.TestCase):
         self.addCleanup(unmount_all, target, 0)
         run_priv('mount', '--bind', target, target)
         run_priv('mount', '--bind', target, target)
-        self.assertEqual(len(mounts_at(target)), 2)                                    # stacked mounts counted separately
+        self.assertGreaterEqual(len(mounts_at(target)), 2)                             # stacked mounts counted separately (a runner may propagate extra entries)
         with self.assertRaises(MountLeak):
             remove_unmounted_tree(weird)
         self.assertTrue(os.path.isdir(target))                                          # nothing deleted through it
@@ -921,7 +926,7 @@ class TempDirCleanupTests(unittest.TestCase):
         if remover is None:
             unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
         else:
-            with unittest.mock.patch.object(strict_cleanup, 'remove_unmounted_tree', remover):
+            with unittest.mock.patch.object(strict_cleanup, 'remove_verified', remover):
                 unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
         return result, made[0]
 
@@ -946,7 +951,7 @@ class TempDirCleanupTests(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
 
     def test_removal_failure_is_reported_alongside_the_original_failure(self):
-        def refuse(path, rmtree=None):
+        def refuse(path, expected=None):
             raise OSError(f'cannot delete {path}')
 
         result, path = self.run_inner(lambda case, p: case.fail('verification failed'), remover=refuse)
@@ -958,7 +963,7 @@ class TempDirCleanupTests(unittest.TestCase):
         shutil.rmtree(path)
 
     def test_removal_failure_on_a_passing_test_makes_it_an_error(self):
-        def refuse(path, rmtree=None):
+        def refuse(path, expected=None):
             raise OSError('device busy')
 
         result, path = self.run_inner(lambda case, p: None, remover=refuse)

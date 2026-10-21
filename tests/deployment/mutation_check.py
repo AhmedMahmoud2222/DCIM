@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation inventory for the OpenCode security controls (mutation check v1.0).
+"""Mutation inventory for the OpenCode security controls (mutation check v2.0).
 
 Each entry replaces one exact snippet in a copy of the repository, runs the deployment test
 suite against the copy, and expects at least one test to fail ("caught"). A "MISSED" mutation
@@ -21,6 +21,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import strict_cleanup  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 S = '.github/scripts/'
@@ -75,12 +78,28 @@ MUTATIONS = [
     ('P2-d7', 'mountinfo read with newline translation', 'tests/deployment/strict_cleanup.py', "errors='surrogateescape', newline='') as handle", "errors='surrogateescape') as handle"),
     ('P2-d8', 'queried path not canonicalized (mounts_at)', 'tests/deployment/strict_cleanup.py', "    wanted = canonical(path)\n    return [point for point in mount_points(text) if point == wanted]", "    wanted = path\n    return [point for point in mount_points(text) if point == wanted]"),
     ('P2-d9', 'mount points not canonicalized', 'tests/deployment/strict_cleanup.py', "            points.append(canonical(decode_mountinfo(fields[4])))", "            points.append(decode_mountinfo(fields[4]))"),
-    ('P2-t1', 'temp directory cleanup not registered at creation', 'tests/deployment/strict_cleanup.py', "    case.addCleanup(remove_registered, path, canonical(path))\n    return path", "    return path"),
-    ('P2-t2', 'tree remover swallows deletion errors', 'tests/deployment/strict_cleanup.py', "    rmtree(path)\n\n\ndef remove_registered", "    try:\n        rmtree(path)\n    except OSError:\n        pass\n\n\ndef remove_registered"),
-    ('P2-t3', 'cleanup follows a swapped path out of the tree', 'tests/deployment/strict_cleanup.py', "    if canonical(path) != expected or os.path.islink(path):", "    if False:"),
-    ('P2-t4', 'remover deletes a symlink target path', 'tests/deployment/strict_cleanup.py', "    if os.path.islink(path):\n        raise CleanupRefused(f'refusing to delete {path}: it is a symlink')\n    live = mounts_under(path)\n    if live:\n        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')\n    rmtree(path)", "    live = mounts_under(path)\n    if live:\n        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')\n    rmtree(path)"),
-    ('P2-t5', 'privileged remover ignores rm failure', 'tests/deployment/strict_cleanup.py', "    if done.returncode != 0 or os.path.lexists(path):", "    if False:"),
-    ('P2-t6', 'privileged remover deletes through a live mount', 'tests/deployment/strict_cleanup.py', "    live = mounts_under(path)\n    if live:\n        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')\n    done = ", "    done = "),
+    ('P2-t1', 'temp directory cleanup not registered at creation', 'tests/deployment/strict_cleanup.py', "    case.addCleanup(remove_verified, path, identity(path))\n    return path", "    return path"),
+    ('P2-t2', 'tree remover swallows deletion errors', 'tests/deployment/strict_cleanup.py', "        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')\n    rmtree(path)", "        raise MountLeak(f'refusing to delete {path}: still mounted at {live}')\n    try:\n        rmtree(path)\n    except OSError:\n        pass"),
+    ('P2-i1', 'cleanup does not check directory identity', 'tests/deployment/strict_cleanup.py', "        if (info.st_dev, info.st_ino) != tuple(expected):\n            raise CleanupRefused(refusal)\n        live", "        live"),
+    ('P2-i2', 'identity compares inode only', 'tests/deployment/strict_cleanup.py', "        if (info.st_dev, info.st_ino) != tuple(expected):\n            raise CleanupRefused(refusal)\n        live", "        if info.st_ino != tuple(expected)[1] + 0 * info.st_dev and False:\n            raise CleanupRefused(refusal)\n        live"),
+    ('P2-i3', 'final rmdir skips the identity re-check', 'tests/deployment/strict_cleanup.py', "        if (again.st_dev, again.st_ino) != tuple(expected):\n            raise CleanupRefused(refusal)\n        os.rmdir", "        os.rmdir"),
+    ('P2-i4', 'cleanup follows a symlinked path', 'tests/deployment/strict_cleanup.py', "_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)", "_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_CLOEXEC', 0)"),
+    ('P2-i5', 'identity captured from a followed symlink', 'tests/deployment/strict_cleanup.py', "    info = os.lstat(path)\n    if not stat.S_ISDIR(info.st_mode):\n        raise CleanupRefused(f'{path} is not a real directory')", "    info = os.stat(path)\n    if not stat.S_ISDIR(info.st_mode):\n        raise CleanupRefused(f'{path} is not a real directory')"),
+    ('P2-i6', 'walk deletes through mount points', 'tests/deployment/strict_cleanup.py', "        if info.st_dev != root_dev or below in mounted:\n            raise MountLeak(f'refusing to delete through {below}: it is a mount point')", "        if False:\n            pass"),
+    ('P2-i7', 'walk follows symlinks inside the tree', 'tests/deployment/strict_cleanup.py', "        if not stat.S_ISDIR(info.st_mode):\n            os.unlink(name, dir_fd=dir_fd)\n            continue", "        if not stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):\n            os.unlink(name, dir_fd=dir_fd)\n            continue"),
+    ('P2-p1', 'privileged cleanup passes no identity to the root helper', 'tests/deployment/strict_cleanup.py', "path, str(expected[0]), str(expected[1])], capture_output=True, text=True)", "path, '0', '0'], capture_output=True, text=True)"),
+    ('P2-p2', 'privileged cleanup ignores the helper result', 'tests/deployment/strict_cleanup.py', "    if done.returncode != 0 or os.path.lexists(path):\n        raise OSError", "    if False:\n        raise OSError"),
+    ('P2-p3', 'privileged cleanup deletes through a live mount', 'tests/deployment/strict_cleanup.py', "def remove_privileged_tree(path: str, priv: list[str] | None, expected: tuple[int, int]) -> None:", "def remove_privileged_tree(path: str, priv: list[str] | None, expected: tuple[int, int]) -> None:\n    mounts_under = lambda p: []  # noqa: E731"),
+    ('P2-p4', 'privileged temp dir records no identity', 'tests/deployment/strict_cleanup.py', "    case.addCleanup(remove_privileged_tree, path, priv, identity(path))", "    case.addCleanup(remove_privileged_tree, path, priv, (0, 0))"),
+    ('P2-k1', 'runtime tool directory not registered as class cleanup', 'tests/deployment/test_opencode_runtime.py', "cls.tool = class_temp_dir(cls, 'ocfs-tool-')", "cls.tool = tempfile.mkdtemp(prefix='ocfs-tool-')"),
+    ('P2-k2', 'proxy log directory not registered as class cleanup', 'tests/deployment/test_opencode_sandbox.py', "cls.tmp = class_temp_dir(cls, 'ocsb-')", "cls.tmp = tempfile.mkdtemp(prefix='ocsb-')"),
+    ('P2-k3', 'class cleanup registered after setup can fail', 'tests/deployment/strict_cleanup.py', "    cls.addClassCleanup(remove_verified, path, identity(path))", "    pass"),
+    ('P2-r1', 'mutation worktree cleanup ignores errors', 'tests/deployment/mutation_check.py', "    except Exception as error:      # noqa: BLE001 - every failure is reported, none is hidden\n        return {'state': 'FAILED'", "    except ZeroDivisionError as error:\n        return {'state': 'FAILED'"),
+    ('P2-r2', 'mutation runner hides cleanup failure behind the suite verdict', 'tests/deployment/mutation_check.py', "    if outcome['state'] == 'FAILED':\n        # a worktree", "    if False:\n        # a worktree"),
+    ('P2-r3', 'mutation runner ignores leaked mounts', 'tests/deployment/mutation_check.py', "        if strict_cleanup.mounts_under(str(work)):\n            return {'state': 'FAILED'", "        if False:\n            return {'state': 'FAILED'"),
+    ('P2-r4', 'mutation runner exit code ignores cleanup failures', 'tests/deployment/mutation_check.py', "def exit_code(summary):\n    return 1 if", "def exit_code(summary):\n    return 0 if True else 1 if"),
+    ('P2-r5', 'mutated suite temp trees escape the worktree', 'tests/deployment/mutation_check.py', "'TMPDIR': str(scratch)}\n        done = subprocess.run(suite", "}\n        done = subprocess.run(suite"),
+    ('P2-r6', 'non-root mutation runner cannot detach leaked mounts', 'tests/deployment/mutation_check.py', "else [])\n\n        def umount(target):", "else [])\n        prefix = []\n\n        def umount(target):"),
     ('P1-2h', 'collector follows a swapped work tree', S + 'opencode_collect.py', "if os.path.islink(worktree) or os.path.realpath(worktree) != os.path.abspath(worktree):", 'if False:'),
     ('P1-2i', 'collector ignores agent-owned ancestors', S + 'opencode_collect.py', "if os.environ.get('OPENCODE_REQUIRE_ROOT_CHAIN') == '1' else []", 'if False else []'),
     ('P1-2j', 'read-only check accepts modifications', S + 'opencode_review.py', "if not (change.get('path') == 'REVIEW/diff.patch'", "if False and not (change.get('path') == 'REVIEW/diff.patch'"),
@@ -137,27 +156,85 @@ MUTATIONS = [
 ]
 
 
-def run_one(item, keep=False):
+SUITE = [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/deployment', '-p', 'test_*.py']
+
+
+def cleanup_worktree(work, expected, umount=None):
+    """Remove a mutation worktree strictly. A mutated suite may leave a bind mount behind (several
+    mutations disable mount cleanup on purpose), so leaked mounts under the worktree are reported and
+    then detached before the identity-verified delete. Anything that cannot be detached or deleted is
+    returned as a failure; nothing is suppressed.
+
+    Returns {'state': 'clean' | 'reclaimed' | 'FAILED', 'leaked_mounts': n, 'detail': str}.
+    """
+    if umount is None:
+        # mounts are root's to detach; a non-root runner uses passwordless sudo, as the mount tests themselves do
+        prefix = [] if os.geteuid() == 0 else (['sudo', '-n'] if shutil.which('sudo') else [])
+
+        def umount(target):
+            return (subprocess.run([*prefix, 'umount', target], capture_output=True).returncode == 0
+                    or subprocess.run([*prefix, 'umount', '-l', target], capture_output=True).returncode == 0)
+    leaked = 0
+    try:
+        for _ in range(8):
+            live = sorted(strict_cleanup.mounts_under(str(work)), key=len, reverse=True)
+            if not live:
+                break
+            leaked = max(leaked, len(live))
+            for target in live:
+                umount(target)
+        if strict_cleanup.mounts_under(str(work)):
+            return {'state': 'FAILED', 'leaked_mounts': leaked,
+                    'detail': f'mount(s) still present under {work}: {strict_cleanup.mounts_under(str(work))}'}
+        strict_cleanup.remove_verified(str(work), expected)
+    except Exception as error:      # noqa: BLE001 - every failure is reported, none is hidden
+        return {'state': 'FAILED', 'leaked_mounts': leaked, 'detail': f'{type(error).__name__}: {error}'}
+    return {'state': 'reclaimed' if leaked else 'clean', 'leaked_mounts': leaked, 'detail': ''}
+
+
+def run_one(item, keep=False, suite=None, umount=None, parent=None):
     ident, finding, rel, old, new = item
     source = ROOT / rel
     text = source.read_text()
     if text.count(old) != 1:
         return {'id': ident, 'finding': finding, 'file': rel, 'result': 'INVALID', 'detail': f'snippet occurs {text.count(old)} times'}
-    work = Path(tempfile.mkdtemp(prefix='mut-'))
+    work = Path(tempfile.mkdtemp(prefix='mut-', dir=parent))
+    expected = strict_cleanup.identity(str(work))          # identity captured at creation
+    os.chmod(work, 0o755)                                  # the unprivileged test user must be able to traverse it
+    scratch = work / 'tmp'                                 # every temporary tree the mutated suite makes lives here,
+    scratch.mkdir(mode=0o755)                              # so a leaked mount is found, reported and reclaimed by
+    os.chmod(scratch, 0o755)                               # cleanup_worktree instead of outliving the run in /tmp
+    result = {'id': ident, 'finding': finding, 'file': rel}
     try:
         shutil.copytree(ROOT / '.github', work / '.github', ignore=shutil.ignore_patterns('node_modules'))
         shutil.copytree(ROOT / 'tests', work / 'tests')
         (work / rel).write_text(text.replace(old, new, 1))
-        env = {**os.environ, 'OPENCODE_SKIP_E2E': '1'}
-        done = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/deployment', '-p', 'test_*.py'],
-                              cwd=work, capture_output=True, text=True, env=env, timeout=400)
+        env = {**os.environ, 'OPENCODE_SKIP_E2E': '1', 'TMPDIR': str(scratch)}
+        done = subprocess.run(suite or SUITE, cwd=work, capture_output=True, text=True, env=env, timeout=400)
         failing = [line for line in done.stderr.splitlines() if line.startswith(('FAIL:', 'ERROR:'))]
-        return {'id': ident, 'finding': finding, 'file': rel, 'result': 'CAUGHT' if done.returncode else 'MISSED',
-                'failing_tests': len(failing), 'first_failure': failing[0][:140] if failing else ''}
+        result.update({'result': 'CAUGHT' if done.returncode else 'MISSED', 'failing_tests': len(failing),
+                       'first_failure': failing[0][:140] if failing else ''})
     except subprocess.TimeoutExpired:
-        return {'id': ident, 'finding': finding, 'file': rel, 'result': 'TIMEOUT', 'detail': 'suite hung under the mutation'}
+        result.update({'result': 'TIMEOUT', 'detail': 'suite hung under the mutation'})
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        outcome = cleanup_worktree(work, expected, umount=umount)
+    result['cleanup'] = outcome['state']
+    result['leaked_mounts'] = outcome['leaked_mounts']
+    if outcome['state'] == 'FAILED':
+        # a worktree or mount that could not be removed is a failure of the run, whatever the suite said
+        result['suite_result'] = result.get('result')
+        result['result'] = 'CLEANUP_FAILED'
+        result['detail'] = outcome['detail']
+    return result
+
+
+def summarize(results):
+    keys = ('CAUGHT', 'MISSED', 'INVALID', 'TIMEOUT', 'CLEANUP_FAILED')
+    return {k: sum(1 for r in results if r['result'] == k) for k in keys}
+
+
+def exit_code(summary):
+    return 1 if summary['MISSED'] or summary['INVALID'] or summary['TIMEOUT'] or summary['CLEANUP_FAILED'] else 0
 
 
 def main():
@@ -170,12 +247,17 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(run_one, items))
     for r in results:
-        print(f"{r['result']:8} {r['id']:7} {r['finding']}  [{r.get('failing_tests', '-')} failing]")
+        note = ''
+        if r.get('leaked_mounts'):
+            note += f"  leaked {r['leaked_mounts']} mount(s), cleanup {r['cleanup']}"
+        if r['result'] == 'CLEANUP_FAILED':
+            note += f"  {r['detail']}"
+        print(f"{r['result']:14} {r['id']:7} {r['finding']}  [{r.get('failing_tests', '-')} failing]{note}")
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=2))
-    summary = {k: sum(1 for r in results if r['result'] == k) for k in ('CAUGHT', 'MISSED', 'INVALID', 'TIMEOUT')}
+    summary = summarize(results)
     print(summary)
-    return 1 if summary['MISSED'] or summary['INVALID'] or summary['TIMEOUT'] else 0
+    return exit_code(summary)
 
 
 if __name__ == '__main__':
