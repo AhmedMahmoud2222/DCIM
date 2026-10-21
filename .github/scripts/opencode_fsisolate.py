@@ -151,6 +151,11 @@ def _can(path: str, mode: int) -> bool:
     return os.access(path, mode, effective_ids=True, follow_symlinks=False)
 
 
+def _owner_can_chmod(info: os.stat_result) -> bool:
+    """An owner can chmod its own entry (and setfacl it), so an entry the agent owns is never read-only to it."""
+    return os.geteuid() != 0 and info.st_uid == os.geteuid()
+
+
 def _removable(parent: str, name: str) -> bool:
     """Could this UID rename, replace, delete or symlink-over the entry `name` in `parent`?"""
     if not (_can(parent, os.W_OK) and _can(parent, os.X_OK)):
@@ -170,14 +175,24 @@ def _ancestor_exposure(path: str) -> list[str]:
         parent = os.path.dirname(current)
         if parent == current:
             return exposed
-        if _removable(parent, os.path.basename(current)):
+        if _removable(parent, os.path.basename(current)) or _owner_can_chmod(os.lstat(parent)):
             exposed.append(current)
         current = parent
 
 
-def _tree_exposure(path: str) -> tuple[list[str], list[str], int, str | None]:
-    """Walk the tree without touching it: (writable dirs, writable files/symlinks, entries, a sample file)."""
-    bad_dirs, bad_files, count, sample = [], [], 0, None
+def _tree_exposure(path: str) -> tuple[list[str], list[str], list[str], list[str], int, str | None]:
+    """Walk the tree without touching it. Returns (writable dirs, writable files and symlinks,
+    entries the agent owns, entries not owned by root, entries checked, a sample file).
+    Hard-linked files are reported with the writable files: a second name could sit anywhere."""
+    bad_dirs, bad_files, agent_owned, not_root, count, sample = [], [], [], [], 0, None
+
+    def examine(full, info):
+        if _owner_can_chmod(info):
+            agent_owned.append(full)
+        elif info.st_uid != 0:
+            not_root.append(full)
+
+    examine(path, os.lstat(path))
     for base, dirs, files in os.walk(path, followlinks=False):
         if _can(base, os.W_OK):
             bad_dirs.append(base)
@@ -185,13 +200,18 @@ def _tree_exposure(path: str) -> tuple[list[str], list[str], int, str | None]:
             count += 1
             full = os.path.join(base, name)
             info = os.lstat(full)
+            examine(full, info)
+            if stat.S_ISDIR(info.st_mode):
+                continue
             if stat.S_ISLNK(info.st_mode):
                 bad_files.append(full + ' (symlink)')
             elif stat.S_ISREG(info.st_mode):
                 sample = sample or full
-                if _can(full, os.W_OK):
+                if info.st_nlink > 1:
+                    bad_files.append(full + ' (hard-linked)')
+                elif _can(full, os.W_OK):
                     bad_files.append(full)
-    return bad_dirs, bad_files, count, sample
+    return bad_dirs, bad_files, agent_owned, not_root, count, sample
 
 
 def _verdict(results, name, ok, detail):
@@ -230,10 +250,14 @@ def probe(path: str, forbidden: list[str], writable: list[str]) -> list[tuple[st
     exposed = _ancestor_exposure(path)
     _verdict(results, 'no ancestor of the source can be renamed or replaced', not exposed,
              'exposed: ' + ', '.join(exposed) if exposed else 'access check')
-    bad_dirs, bad_files, count, sample = _tree_exposure(path)
+    bad_dirs, bad_files, agent_owned, not_root, count, sample = _tree_exposure(path)
     _verdict(results, 'create/delete/rename/symlink inside any source directory denied', not bad_dirs,
              ('writable: ' + ', '.join(bad_dirs[:5])) if bad_dirs else f'{count} entries checked')
-    _verdict(results, 'write/truncate/append/chmod of any source file denied, no symlinks', not bad_files,
+    _verdict(results, 'no source entry is owned by the agent (owner could chmod, then modify)', not agent_owned,
+             ('agent-owned: ' + ', '.join(agent_owned[:5])) if agent_owned else f'{count} entries checked')
+    _verdict(results, 'every source entry is root-owned', not not_root,
+             ('not root-owned: ' + ', '.join(not_root[:5])) if not_root else 'lstat')
+    _verdict(results, 'write/truncate/append/chmod of any source file denied, no symlinks or hard links', not bad_files,
              ('writable: ' + ', '.join(bad_files[:5])) if bad_files else 'access check')
     mount = os.statvfs(path)
     results.append(('read-only mount (informational)', True,

@@ -345,13 +345,129 @@ class RuntimeFilesystemTests(unittest.TestCase):
         self.assertTrue(any('not a symlink' in l for l in result.stdout.splitlines() if l.startswith('FAIL')), result.stdout)
         self.assertEqual(self.snapshot(target), before)
 
+    # ---- agent-owned entries inside the protected source (Codex P1) -------------------------
+
+    def own(self, path, mode):
+        run_priv('chown', f'{AGENT}:{AGENT}', path)
+        run_priv('chmod', mode, path)
+
+    def modify_and_restore_as_agent(self, victim):
+        """What an owner can do: chmod, edit, restore the mode and bytes. Returns the outcome text."""
+        script = ("import os, stat, sys\n"
+                  f"v = {victim!r}\n"
+                  "orig = open(v, 'rb').read(); mode = stat.S_IMODE(os.stat(v).st_mode)\n"
+                  "os.chmod(v, 0o644); open(v, 'wb').write(b'evil'); open(v, 'wb').write(orig); os.chmod(v, mode)\n"
+                  "print('MODIFIED-AND-RESTORED')\n")
+        return as_agent(sys.executable, '-I', '-c', script)
+
+    def test_agent_owned_0444_file_is_rejected_and_the_attack_really_works(self):
+        victim = os.path.join(self.src, 'app', 'main.py')
+        self.own(victim, '0444')
+        before = self.snapshot(self.src)
+        digest = self.digest()
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        failed = [l for l in result.stdout.splitlines() if l.startswith('FAIL')]
+        self.assertTrue(any('owned by the agent' in l and victim in l for l in failed), result.stdout)
+        self.assertEqual(self.snapshot(self.src), before)             # the preflight itself changed nothing
+        # The weakness is real: the owner chmods, edits and restores, and the content digest cannot see it
+        # because the post-run digest matches again except for ownership, which the probe now rejects up front.
+        attack = self.modify_and_restore_as_agent(victim)
+        self.assertIn('MODIFIED-AND-RESTORED', attack.stdout, attack.stderr)
+        self.assertEqual(self.digest(), digest)                       # same bytes, mode and owner as before the attack
+
+    def test_agent_owned_0555_directory_is_rejected_at_any_depth(self):
+        for rel in ('app', os.path.join('app', 'sub')):
+            run_priv('mkdir', '-p', os.path.join(self.src, rel))
+            run_priv('chmod', '0555', os.path.join(self.src, rel))
+        deep = os.path.join(self.src, 'app', 'sub')
+        run_priv('sh', '-c', 'echo x > "$0/f.txt" && chown 0:0 "$0/f.txt" && chmod 0444 "$0/f.txt"', deep)
+        self.own(deep, '0555')
+        before = self.snapshot(self.src)
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        failed = [l for l in result.stdout.splitlines() if l.startswith('FAIL')]
+        self.assertTrue(any('owned by the agent' in l and deep in l for l in failed), result.stdout)
+        self.assertEqual(self.snapshot(self.src), before)
+        # as the owner the agent can chmod the directory and then add or replace entries
+        script = f"import os; d = {deep!r}; os.chmod(d, 0o755); open(d + '/planted', 'w').write('x'); print('PLANTED')"
+        self.assertIn('PLANTED', as_agent(sys.executable, '-I', '-c', script).stdout)
+
+    def test_agent_owned_source_root_is_rejected(self):
+        self.own(self.src, '0555')
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('owned by the agent' in l for l in result.stdout.splitlines() if l.startswith('FAIL')))
+
+    def test_entry_owned_by_a_third_uid_is_not_root_owned_and_is_rejected(self):
+        victim = os.path.join(self.src, 'README.md')
+        run_priv('chown', 'nobody', victim)
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('every source entry is root-owned' in l for l in result.stdout.splitlines() if l.startswith('FAIL')))
+
+    def test_agent_owned_ancestor_with_read_only_mode_is_rejected(self):
+        # an owner can chmod its directory, so a 0555 directory it owns on the path is not a boundary
+        self.own(self.review, '0555')
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('no ancestor of the source' in l for l in result.stdout.splitlines() if l.startswith('FAIL')), result.stdout)
+
+    def test_supplementary_group_write_access_is_rejected(self):
+        victim = os.path.join(self.src, 'app', 'main.py')
+        run_priv('chgrp', AGENT, victim)
+        run_priv('chmod', '0664', victim)       # root-owned, group-writable by the agent's group
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('write/truncate/append/chmod' in l for l in result.stdout.splitlines() if l.startswith('FAIL')))
+
+    def test_posix_acl_granting_the_agent_write_is_rejected(self):
+        if not shutil.which('setfacl'):
+            self.skipTest('setfacl is not installed')
+        victim = os.path.join(self.src, 'app', 'main.py')
+        done = run_priv('setfacl', '-m', f'u:{AGENT}:rw', victim, check=False)
+        if done.returncode != 0:
+            self.skipTest('filesystem has no ACL support')
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('write/truncate/append/chmod' in l for l in result.stdout.splitlines() if l.startswith('FAIL')))
+
+    def test_hard_linked_source_file_and_symlink_are_rejected(self):
+        victim = os.path.join(self.src, 'app', 'main.py')
+        run_priv('ln', victim, os.path.join(self.base, 'alias-elsewhere'))
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('hard-linked' in l for l in result.stdout.splitlines()), result.stdout)
+        run_priv('rm', '-f', os.path.join(self.base, 'alias-elsewhere'))
+        run_priv('ln', '-s', '/etc/passwd', os.path.join(self.src, 'sneaky'))
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(any('(symlink)' in l for l in result.stdout.splitlines()), result.stdout)
+
+    def test_clean_root_owned_tree_still_passes_and_is_unchanged(self):
+        before = self.snapshot(self.src)
+        result = self.probe(self.src)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('PASS no source entry is owned by the agent', result.stdout)
+        self.assertEqual(self.snapshot(self.src), before)
+
+    def test_read_only_bind_mount_blocks_even_an_owner_when_the_platform_allows_it(self):
+        victim = os.path.join(self.src, 'app', 'main.py')
+        self.own(victim, '0444')
+        if run_priv(sys.executable, '-I', self.tool_script, 'mount', self.review, check=False).returncode != 0 \
+                or 'unavailable' in run_priv(sys.executable, '-I', self.tool_script, 'mount', self.review, check=False).stdout:
+            self.skipTest('bind mounts are not available here')
+        self.addCleanup(lambda: run_priv('umount', '-l', self.src, check=False))
+        attack = self.modify_and_restore_as_agent(victim)
+        self.assertNotIn('MODIFIED-AND-RESTORED', attack.stdout, attack.stdout)
+
     def test_destructive_probes_refuse_anything_not_marked_disposable(self):
         _impl, work = self.agent_layout()
         before = self.snapshot(work)
         for fn in ('destructive_probe', 'destructive_probe_parent'):
-            code = ("import sys; sys.path.insert(0, %r)\nimport opencode_fsisolate as f\n"
+            code = ("import sys; sys.path.insert(0, %r)\nimport fsisolate as f\n"
                     "try:\n  f.%s(%r, [], [%r])\nexcept f.IsolationError as e:\n  print('REFUSED', e)\n"
-                    % (str(SCRIPTS), fn, work, self.home))
+                    % (self.tool, fn, work, self.home))
             out = as_agent(sys.executable, '-c', code)
             self.assertIn('REFUSED', out.stdout, out.stdout + out.stderr)
         self.assertEqual(self.snapshot(work), before)
@@ -371,9 +487,9 @@ class RuntimeFilesystemTests(unittest.TestCase):
             self.populate(fixture, AGENT)
             run_priv('sh', '-c', f'touch "{impl}/{fsisolate.FIXTURE_MARKER}"')
             predicted = as_agent(sys.executable, '-I', self.tool_script, 'probe-parent', fixture, '--writable', self.home)
-            code = ("import sys; sys.path.insert(0, %r)\nimport opencode_fsisolate as f\n"
+            code = ("import sys; sys.path.insert(0, %r)\nimport fsisolate as f\n"
                     "r = f.destructive_probe_parent(%r, [], [%r])\n"
-                    "print('BAD' if [x for x in r if not x[1]] else 'CLEAN')\n" % (str(SCRIPTS), fixture, self.home))
+                    "print('BAD' if [x for x in r if not x[1]] else 'CLEAN')\n" % (self.tool, fixture, self.home))
             actual = as_agent(sys.executable, '-c', code)
             self.assertEqual(predicted.returncode == 0, expect_clean, predicted.stdout)
             self.assertEqual('CLEAN' in actual.stdout, expect_clean, actual.stdout + actual.stderr)
