@@ -451,16 +451,6 @@ class RuntimeFilesystemTests(unittest.TestCase):
         self.assertIn('PASS no source entry is owned by the agent', result.stdout)
         self.assertEqual(self.snapshot(self.src), before)
 
-    def test_read_only_bind_mount_blocks_even_an_owner_when_the_platform_allows_it(self):
-        victim = os.path.join(self.src, 'app', 'main.py')
-        self.own(victim, '0444')
-        if run_priv(sys.executable, '-I', self.tool_script, 'mount', self.review, check=False).returncode != 0 \
-                or 'unavailable' in run_priv(sys.executable, '-I', self.tool_script, 'mount', self.review, check=False).stdout:
-            self.skipTest('bind mounts are not available here')
-        self.addCleanup(lambda: run_priv('umount', '-l', self.src, check=False))
-        attack = self.modify_and_restore_as_agent(victim)
-        self.assertNotIn('MODIFIED-AND-RESTORED', attack.stdout, attack.stdout)
-
     def test_destructive_probes_refuse_anything_not_marked_disposable(self):
         _impl, work = self.agent_layout()
         before = self.snapshot(work)
@@ -516,14 +506,227 @@ class RuntimeFilesystemTests(unittest.TestCase):
             else:
                 os.environ['OPENCODE_REQUIRE_ROOT_CHAIN'] = old
 
-    def test_read_only_bind_mount_when_the_platform_allows_it(self):
-        mounted = run_priv(sys.executable, '-I', self.tool_script, 'mount', self.review, check=False)
-        if 'active' not in mounted.stdout:
-            self.skipTest('bind mounts are not permitted in this environment')
-        self.addCleanup(lambda: run_priv('umount', self.src, check=False))
-        write = run_priv('sh', '-c', f'echo x > {self.src}/app/main.py', check=False)   # even root cannot write through it
+
+def mounts_at(path):
+    """Mount points equal to `path` in the kernel's table; one entry per stacked mount."""
+    found = []
+    with open('/proc/self/mountinfo') as handle:
+        for line in handle:
+            if line.split()[4] == path:
+                found.append(line)
+    return found
+
+
+def unmount_all(path, baseline=0):
+    """Remove every mount the test stacked on `path`. Fails loudly if any survives."""
+    for _ in range(8):
+        if len(mounts_at(path)) <= baseline:
+            return
+        run_priv('umount', path, check=False)
+    run_priv('umount', '-l', path, check=False)
+    leftover = len(mounts_at(path)) - baseline
+    if leftover > 0:
+        raise AssertionError(f'{leftover} mount(s) leaked at {path}')
+
+
+class Runner:
+    """Records every command the helper runs. Optionally forces the remount to fail or everything to fail."""
+
+    def __init__(self, real=False, fail_bind=False, fail_remount=False, fail_umount=False, raises=None):
+        self.real, self.fail_bind, self.fail_remount = real, fail_bind, fail_remount
+        self.fail_umount, self.raises, self.calls = fail_umount, raises, []
+
+    def __call__(self, cmd):
+        self.calls.append(list(cmd))
+        if self.raises:
+            raise self.raises
+        refuse = ((cmd[:2] == ['mount', '--bind'] and self.fail_bind)
+                  or (cmd[:2] == ['mount', '-o'] and self.fail_remount)
+                  or (cmd[0] == 'umount' and self.fail_umount))
+        if self.real and not (cmd[:2] == ['mount', '-o'] and self.fail_remount) and not refuse:
+            return subprocess.run([*PRIV, *cmd], capture_output=True)
+        return subprocess.CompletedProcess(cmd, 1 if refuse else 0)
+
+
+def bind_for_test(case, root, runner):
+    """Run the mount helper exactly once for a test. The cleanup is registered BEFORE the helper runs,
+    so a skip, assertion failure or exception afterwards cannot leak a mount, whether or not the remount worked."""
+    target = os.path.join(root, 'src')
+    baseline = len(mounts_at(target))
+    case.addCleanup(unmount_all, target, baseline)
+    return fsisolate.mount_readonly(root, run=runner)
+
+
+def can_mount():
+    """True when this machine really lets us create a bind mount (probed on a throwaway directory)."""
+    if PRIV is None:
+        return False
+    probe = tempfile.mkdtemp(prefix='ocmnt-probe-')
+    try:
+        os.makedirs(os.path.join(probe, 'src'))
+        target = os.path.join(probe, 'src')
+        made = subprocess.run([*PRIV, 'mount', '--bind', target, target], capture_output=True).returncode == 0
+        if made:
+            subprocess.run([*PRIV, 'umount', '-l', target], capture_output=True)
+        return made
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
+
+
+MOUNTS_AVAILABLE = can_mount()
+
+
+class MountLifecycleTests(unittest.TestCase):
+    """Every mount here lives on a throwaway directory; nothing touches a real workspace."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix='ocmnt-')
+        self.root = os.path.join(self.base, 'review')
+        self.src = os.path.join(self.root, 'src')
+        os.makedirs(os.path.join(self.src, 'app'))
+        Path(self.src, 'app', 'main.py').write_text('print("original")\n')
+        Path(self.src, 'README.md').write_text('readme\n')
+        os.chmod(self.src, 0o755)
+        self.addCleanup(shutil.rmtree, self.base, True)
+        # registered after the removal, so it runs just before it and after every test cleanup:
+        # nothing may remain mounted and no source file may have changed
+        self.before = RuntimeFilesystemTests.snapshot(self.src) if PRIV is not None else None
+        self.addCleanup(self.assert_pristine)
+
+    def assert_pristine(self):
+        self.assertEqual(mounts_at(self.src), [], 'a mount leaked')
+        if self.before is not None:
+            self.assertEqual(RuntimeFilesystemTests.snapshot(self.src), self.before, 'source files changed')
+
+    # -- helper behaviour, with no privileges needed ------------------------------------------
+
+    def test_bind_failure_creates_no_mount_and_runs_only_the_bind(self):
+        runner = Runner(fail_bind=True)
+        self.assertFalse(bind_for_test(self, self.root, runner))
+        self.assertEqual([c[0] for c in runner.calls], ['mount'])
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_missing_privileges_or_mount_binary_is_unavailable_not_an_error(self):
+        for error in (PermissionError('denied'), FileNotFoundError('mount')):
+            runner = Runner(raises=error)
+            self.assertFalse(bind_for_test(self, self.root, runner))
+            self.assertEqual(len(runner.calls), 1)
+
+    def test_remount_failure_after_a_bind_removes_the_bind(self):
+        runner = Runner(fail_remount=True)
+        self.assertFalse(bind_for_test(self, self.root, runner))
+        self.assertEqual([c[:2] for c in runner.calls],
+                         [['mount', '--bind'], ['mount', '-o'], ['umount', self.src]])
+
+    def test_a_bind_that_cannot_be_removed_is_reported_not_swallowed(self):
+        runner = Runner(fail_remount=True, fail_umount=True)
+        with self.assertRaises(fsisolate.IsolationError) as caught:
+            bind_for_test(self, self.root, runner)
+        self.assertIn('could not be removed', str(caught.exception))
+        self.assertEqual([c[0] for c in runner.calls], ['mount', 'mount', 'umount', 'umount'])
+
+    def test_cli_reports_a_stuck_partial_mount_with_a_failing_exit_code(self):
+        # drive the real CLI entry point with a runner that leaves the bind in place
+        fsisolate_main = fsisolate.main
+        original = fsisolate.mount_readonly
+        fsisolate.mount_readonly = lambda root, run=None: original(root, run=Runner(fail_remount=True, fail_umount=True))
+        self.addCleanup(setattr, fsisolate, 'mount_readonly', original)
+        self.assertEqual(fsisolate_main(['x', 'mount', self.root]), 1)
+
+    # -- real mounts, skipped (not failed) where the platform forbids them --------------------
+
+    @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
+    def test_real_bind_and_remount_succeed_once_and_block_writes(self):
+        runner = Runner(real=True)
+        self.assertTrue(bind_for_test(self, self.root, runner))
+        self.assertEqual(len(runner.calls), 2)                                    # exactly one bind, one remount
+        self.assertEqual(len(mounts_at(self.src)), 1)
+        write = run_priv('sh', '-c', f'echo x > {self.src}/app/main.py', check=False)   # even root is refused
         self.assertNotEqual(write.returncode, 0)
         self.assertIn('Read-only file system', write.stderr)
+
+    @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
+    def test_real_bind_followed_by_remount_failure_leaves_no_mount(self):
+        runner = Runner(real=True, fail_remount=True)
+        self.assertFalse(bind_for_test(self, self.root, runner))
+        self.assertEqual(mounts_at(self.src), [])                                 # the helper itself cleaned up
+        self.assertEqual([c[:2] for c in runner.calls], [['mount', '--bind'], ['mount', '-o'], ['umount', self.src]])
+
+    @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
+    def test_real_stuck_partial_mount_is_cleaned_by_the_test_cleanup_not_leaked(self):
+        # the helper raises because umount "fails"; the real bind it made is still removed by the registered cleanup
+        runner = Runner(real=True, fail_remount=True, fail_umount=True)
+        with self.assertRaises(fsisolate.IsolationError):
+            bind_for_test(self, self.root, runner)
+        self.assertEqual(len(mounts_at(self.src)), 1)                             # genuinely leaked by the helper...
+        # ...and assert_pristine (run last) proves the test cleanup removed it
+
+    @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
+    def test_the_cli_mounts_once(self):
+        before = len(mounts_at(self.src))
+        self.addCleanup(unmount_all, self.src, before)
+        out = run_priv(sys.executable, '-I', str(SCRIPTS / 'opencode_fsisolate.py'), 'mount', self.root)
+        self.assertIn('active', out.stdout)
+        self.assertEqual(len(mounts_at(self.src)), before + 1)
+
+    # -- the cleanup guarantee itself: success, failed assertion, exception and skip -----------
+
+    def run_inner(self, body):
+        outer = self
+
+        class Inner(unittest.TestCase):
+            def test_it(inner):
+                body(inner, outer)
+
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.loadTestsFromTestCase(Inner).run(result)
+        return result
+
+    @unittest.skipUnless(MOUNTS_AVAILABLE, 'bind mounts are not permitted in this environment')
+    def test_cleanup_runs_after_success_failure_exception_and_skip(self):
+        def partial(inner, outer):
+            return bind_for_test(inner, outer.root, Runner(real=True))
+
+        def succeed(inner, outer):
+            self.assertTrue(partial(inner, outer))
+
+        def fail_assertion(inner, outer):
+            partial(inner, outer)
+            inner.fail('verification found a problem')
+
+        def raise_error(inner, outer):
+            partial(inner, outer)
+            raise RuntimeError('verification crashed')
+
+        def skip_after_partial(inner, outer):
+            try:
+                bind_for_test(inner, outer.root, Runner(real=True, fail_remount=True, fail_umount=True))
+            except fsisolate.IsolationError:
+                inner.skipTest('mount is only partly available')
+
+        outcomes = {}
+        for name, body in (('success', succeed), ('assertion', fail_assertion), ('exception', raise_error),
+                           ('skip', skip_after_partial)):
+            result = self.run_inner(body)
+            outcomes[name] = (len(result.failures), len(result.errors), len(result.skipped))
+            self.assertEqual(mounts_at(self.src), [], f'{name}: mount leaked')
+            self.assertEqual(RuntimeFilesystemTests.snapshot(self.src), self.before, f'{name}: source changed')
+        self.assertEqual(outcomes, {'success': (0, 0, 0), 'assertion': (1, 0, 0),
+                                    'exception': (0, 1, 0), 'skip': (0, 0, 1)})
+
+    def test_a_cleanup_that_cannot_unmount_is_an_error_not_a_pass(self):
+        # simulate a mount that survives every umount: unmount_all must raise, not return quietly
+        original = run_priv
+        real_mounts_at = mounts_at
+        globals()['mounts_at'] = lambda path: ['stuck']
+        globals()['run_priv'] = lambda *a, **k: subprocess.CompletedProcess(a, 1, '', '')
+        try:
+            with self.assertRaises(AssertionError) as caught:
+                unmount_all(self.src)
+        finally:
+            globals()['mounts_at'] = real_mounts_at
+            globals()['run_priv'] = original
+        self.assertIn('leaked', str(caught.exception))
 
 
 class RealGitRepo:

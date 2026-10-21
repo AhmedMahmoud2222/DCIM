@@ -77,12 +77,33 @@ def build(src: str, root: str) -> str:
     return dest
 
 
-def mount_readonly(root: str) -> bool:
+def mount_readonly(root: str, run=None) -> bool:
+    """Read-only bind mount of ROOT/src over itself. True only when both steps succeeded.
+
+    A bind that succeeded followed by a failed read-only remount leaves a writable self-bind
+    behind, so that mount is removed before returning False. If it cannot be removed the
+    function raises: a leftover mount must never be reported as "unavailable".
+    `run` takes an argv list and returns an object with .returncode (default: subprocess).
+    """
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True))
     target = os.path.join(root, 'src')
-    for cmd in (['mount', '--bind', target, target], ['mount', '-o', 'remount,ro,bind', target]):
-        if subprocess.run(cmd, capture_output=True).returncode != 0:
-            return False
-    return True
+    try:
+        if run(['mount', '--bind', target, target]).returncode != 0:
+            return False                           # no mount was created
+    except OSError:
+        return False                               # no mount binary or no permission to use it
+    try:
+        if run(['mount', '-o', 'remount,ro,bind', target]).returncode == 0:
+            return True
+    except OSError:
+        pass
+    for cmd in (['umount', target], ['umount', '-l', target]):
+        try:
+            if run(cmd).returncode == 0:
+                return False
+        except OSError:
+            continue
+    raise IsolationError(f'bind mount at {target} could not be made read-only and could not be removed')
 
 
 def chain_problems(path: str, final_uid: int = 0) -> list[str]:
