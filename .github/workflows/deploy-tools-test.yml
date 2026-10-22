@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/scripts/verify_release_sha.py'
       - '.github/scripts/opencode_*.py'
+      - '.github/scripts/model_health_diagnostic.py'
       - '.github/opencode/**'
       - '.github/workflows/**'
       - '.github/dependabot.yml'
@@ -29,6 +30,7 @@ on:
     paths:
       - '.github/scripts/verify_release_sha.py'
       - '.github/scripts/opencode_*.py'
+      - '.github/scripts/model_health_diagnostic.py'
       - '.github/opencode/**'
       - '.github/workflows/**'
       - '.github/dependabot.yml'
