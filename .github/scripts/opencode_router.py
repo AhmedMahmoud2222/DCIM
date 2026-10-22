@@ -13,10 +13,13 @@ Task text arrives through the TASK environment variable, never argv or shell.
 from __future__ import annotations
 
 import argparse
+import datetime
+import ipaddress
 import json
 import os
 import re
 import sys
+import urllib.parse
 
 # The only models this router can ever emit. Changing this set needs a code
 # change, a test change and owner review (CODEOWNERS), not just a registry edit.
@@ -114,13 +117,47 @@ def load_registry(registry: dict) -> dict:
     return registry
 
 
+def valid_review_source(value: str) -> bool:
+    """Accept a public, canonical HTTPS URL with a DNS hostname."""
+    if value != value.strip() or any(character.isspace() or ord(character) < 32 for character in value):
+        return False
+    try:
+        source = urllib.parse.urlsplit(value)
+        hostname = source.hostname
+        source.port  # Force validation of a malformed or out-of-range port.
+    except ValueError:
+        return False
+    if source.scheme != 'https' or source.username is not None or source.password is not None:
+        return False
+    if hostname is None or len(hostname) > 253 or hostname.startswith('.') or hostname.endswith('.'):
+        return False
+    try:
+        ipaddress.ip_address(hostname)
+        return False
+    except ValueError:
+        pass
+    labels = hostname.split('.')
+    valid_tld = re.fullmatch(r'[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', labels[-1])
+    return len(labels) > 1 and valid_tld is not None and all(
+        re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+        for label in labels)
+
+
 def blockers(meta: dict) -> list[str]:
     """Static (owner-controlled) requirements a model must meet before repository code may reach it."""
     found = []
     review = meta.get('terms_review')
+    valid_review = False
+    if isinstance(review, dict) and set(review) == {'reviewed_by', 'date', 'source'} and all(
+            isinstance(review.get(key), str) and review[key].strip() for key in review):
+        try:
+            datetime.date.fromisoformat(review['date'])
+            valid_date = re.fullmatch(r'\d{4}-\d{2}-\d{2}', review['date']) is not None
+        except ValueError:
+            valid_date = False
+        valid_review = valid_date and valid_review_source(review['source'])
     if meta.get('terms_verified') is not True or not (
-            isinstance(review, dict) and all(isinstance(review.get(k), str) and review.get(k).strip()
-                                             for k in ('reviewed_by', 'date', 'source'))):
+            valid_review):
         found.append('terms not verified with recorded evidence')
     if meta.get('repo_code_approved') is not True:
         found.append('repository-code use not approved by owner')
