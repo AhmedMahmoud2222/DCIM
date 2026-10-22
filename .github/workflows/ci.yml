@@ -57,9 +57,9 @@ jobs:
       - name: Route from the policy of the PR base commit
         id: route
         # The router and policy come from the base commit, not from the PR head, so a PR
-        # cannot change the route of its own run. When the base has no policy (the PR
-        # that adds it) the router gets a non-PR event name and selects full. Push events
-        # always select full.
+        # cannot change the route of its own run. When the base has no policy (the PR that
+        # adds it), and for every event except pull_request, this step writes the full
+        # route itself: no Python file of the checkout runs on that path.
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -68,19 +68,29 @@ jobs:
           set -euo pipefail
           trusted="$RUNNER_TEMP/trusted-ci-policy"
           mkdir -p "$trusted"
-          event="$CI_EVENT_NAME"
-          if [ "$event" = pull_request ] \
+          if [ "$CI_EVENT_NAME" = pull_request ] \
             && git show "$CI_BASE_SHA:.github/scripts/ci_policy.py" > "$trusted/ci_policy.py" \
             && git show "$CI_BASE_SHA:.github/scripts/ci_router.py" > "$trusted/ci_router.py"; then
             echo "Routing policy source: base commit $CI_BASE_SHA"
-          else
-            if [ "$event" = pull_request ]; then
-              event=pull_request-without-base-policy
-            fi
-            cp .github/scripts/ci_policy.py .github/scripts/ci_router.py "$trusted/"
-            echo "Routing policy source: checkout (event $event selects full)"
+            python3 "$trusted/ci_router.py"
+            exit 0
           fi
-          CI_EVENT_NAME="$event" python3 "$trusted/ci_router.py"
+          event="$CI_EVENT_NAME"
+          if [ "$event" = pull_request ]; then
+            event=pull_request-without-base-policy
+          fi
+          echo "Routing policy source: none (event $event selects full)"
+          jobs=""
+          for job in backend-suite frontend-suite backend-runtime-matrix edge-collector edge-interop browser-e2e; do
+            jobs="$jobs${jobs:+, }\"$job\": true"
+            echo "run-$job=true" >> "$GITHUB_OUTPUT"
+          done
+          {
+            echo "level=full"
+            echo "head-sha=$CI_HEAD_SHA"
+            printf 'route={"degraded": false, "event": "%s", "head": "%s", "jobs": {%s}, "level": "full", "policy_version": 0, "reasons": ["no trusted policy for event %s"]}\n' \
+              "$event" "$CI_HEAD_SHA" "$jobs" "$event"
+          } >> "$GITHUB_OUTPUT"
 
   # The routing, gate and mutation tests for the files above. Always required.
   ci-policy:

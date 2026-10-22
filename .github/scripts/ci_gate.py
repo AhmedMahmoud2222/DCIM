@@ -3,7 +3,8 @@
 The gate jobs run with `if: always()` and read `toJSON(needs)`. A gate passes only
 when all of these are true:
 * The route job succeeded and its outputs are a valid route for the expected
-  head SHA.
+  head SHA. A route below full must come from a pull_request diff that did not
+  degrade.
 * The ci-policy job succeeded.
 * Each worker that the route selects finished with result `success`.
 * Each worker that the route does not select is `skipped` or `success`.
@@ -83,6 +84,8 @@ def evaluate(gate: str, needs: object, expected_head: str) -> list[str]:
         return [f"route: invalid or inconsistent level {level!r}/{outputs.get('level')!r}"]
     if route.get("head") != expected_head or outputs.get("head-sha") != expected_head:
         return [f"route: head {route.get('head')!r} is not the expected head {expected_head}"]
+    if level != "full" and (route.get("event") != "pull_request" or route.get("degraded") is not False):
+        return [f"route: level {level} is allowed only for a clean pull_request detection"]
     jobs = route["jobs"]
     if any(not isinstance(value, bool) for value in jobs.values()):
         return ["route: a job flag is not a boolean"]

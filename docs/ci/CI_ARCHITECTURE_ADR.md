@@ -29,9 +29,12 @@ names on each release commit of `main`: `backend`, `frontend`,
    gate. A worker that the base policy does not know is always required.
 3. **The route comes from the base commit.** The `route` job copies `ci_policy.py` and
    `ci_router.py` from `github.event.pull_request.base.sha` and runs that copy. A PR
-   cannot change the route of its own run. If the base has no policy, the route is
-   full. Every event except `pull_request` gives full, so each push to `main` runs every
-   job and the release verifier finds every job name.
+   cannot change the route of its own run through these files. If the base has no
+   policy, and for every event except `pull_request`, the route step writes the full
+   route itself and runs no Python file of the checkout. Each push to `main` therefore
+   runs every job, and the release verifier finds every job name. The gate accepts a
+   route below full only from a clean `pull_request` detection (`event` is
+   `pull_request` and `degraded` is false).
 4. **Change detection fails closed.** The router diffs `merge-base(base, head)..head`
    with `git diff --no-renames --name-only -z`. A rename gives the old path and the new
    path. A malformed SHA, a missing commit, a failed merge-base or a failed diff gives
@@ -49,13 +52,25 @@ names on each release commit of `main`: `backend`, `frontend`,
 ## Enforcement and residual risk
 
 - `ci-policy` runs `tests/ci` on each event: the policy scenarios, real git histories
-  (multi-commit, rename, delete, moved base, bad SHAs), the 400-case gate truth table,
-  the workflow structure rules and the mutation tests.
-- The workflow file and `ci_gate.py` come from the PR head. A PR that edits them can
-  change the gate of its own run. The route of such a PR is full, but only a review by
-  the owner stops a malicious edit of `.github/`. A CODEOWNERS file for `.github/` and a
-  ruleset that requires code-owner review close this gap. That change needs
-  authorization from the repository owner. This PR does not change the ruleset.
+  (multi-commit, rename, delete, moved base, bad SHAs), the gate truth table, the
+  workflow structure rules, a bash run of the real route step against a hostile PR
+  router, and the mutation tests. These tests are regression tests. They come from the
+  PR head, so they are not a trust boundary.
+- **Open (P1-07): the code in this workflow is not an independent boundary.** For a
+  `pull_request` event, GitHub runs `ci.yml` from the PR merge commit, and the gates
+  run `ci_gate.py` from the checkout. A PR that edits `.github/workflows/ci.yml` or
+  `.github/scripts/ci_gate.py` can change the required checks of its own run. No code
+  in a `pull_request` workflow can prevent this. A `pull_request_target` workflow that
+  runs PR code is not an acceptable fix.
+- Two controls can close the gap. Both need a ruleset change by the repository owner,
+  and this PR does not make it:
+  1. A ruleset "require workflows to pass" rule with a workflow from `main`. GitHub runs
+     that workflow from the ruleset ref, not from the PR, so the PR cannot edit it. The
+     workflow can recompute the route with the policy of `main` and fail when the PR
+     changes `.github/` without a full route.
+  2. A `CODEOWNERS` entry for `/.github/` and "require review from code owners" in the
+     ruleset. This needs a code owner who is not the PR author, because GitHub does
+     not accept the author's own approval.
 - A change to the policy interface (a new worker or output) needs two steps: the base
   policy does not know the new output, so the gate treats the new worker as required.
 

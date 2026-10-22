@@ -220,7 +220,7 @@ def router_mismatches(router: Path) -> list[str]:
 
 def route_needs(level: str, selected: set[str], head: str = HEAD, gate_scope=WORKERS) -> dict:
     jobs = {job: (level == "full" or job in selected) for job in WORKERS}
-    route = {"level": level, "head": head, "jobs": jobs}
+    route = {"level": level, "head": head, "jobs": jobs, "event": "pull_request", "degraded": False}
     outputs = {"level": level, "head-sha": head, "route": json.dumps(route)}
     outputs.update({f"run-{job}": "true" if jobs[job] else "false" for job in WORKERS})
     needs = {"route": {"result": "success", "outputs": outputs}, "ci-policy": {"result": "success", "outputs": {}}}
@@ -299,6 +299,11 @@ def gate_cases():
         ("job flags are integers", set_route("jobs", {job: int(job == "frontend-suite") for job in WORKERS})),
         ("route and output level unknown", lambda needs: (set_route("level", "partial")(needs),
                                                          set_output("level", "partial")(needs))),
+        ("component route from a push event", set_route("event", "push")),
+        ("component route from the bootstrap event", set_route("event", "pull_request-without-base-policy")),
+        ("component route without an event", set_route("event", None)),
+        ("component route after degraded detection", set_route("degraded", True)),
+        ("component route with degraded missing", set_route("degraded", None)),
         ("component selects nothing", lambda needs: (
             set_route("jobs", {job: False for job in WORKERS})(needs),
             set_output("run-frontend-suite", "false")(needs),
@@ -421,6 +426,21 @@ def emitted_names(doc: dict) -> list[str]:
     return names
 
 
+def executable(script: object) -> str:
+    """The shell text of a run script without comment lines and trailing comments."""
+    lines = []
+    for line in str(script).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        lines.append(stripped.split(" #", 1)[0])
+    return " ".join(lines)
+
+
+def route_script(doc: dict) -> str:
+    return next(step["run"] for step in doc["jobs"]["route"]["steps"] if step.get("id") == "route")
+
+
 def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
     """Structural rules that make the required checks fail closed."""
     errors = []
@@ -462,11 +482,15 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
     for job_id in ("route", "ci-policy"):
         if job_id not in jobs or "if" in jobs[job_id] or "needs" in jobs[job_id]:
             errors.append(f"control job {job_id} missing or conditional")
-    route_runs = " ".join(step.get("run", "") for step in route.get("steps", []))
+    route_runs = executable(" ".join(step.get("run", "") for step in route.get("steps", [])))
     if 'git show "$CI_BASE_SHA:.github/scripts/ci_policy.py"' not in route_runs or \
             'python3 "$trusted/ci_router.py"' not in route_runs:
         errors.append("route job does not run the base-commit policy")
-    policy_runs = " ".join(step.get("run", "") for step in jobs.get("ci-policy", {}).get("steps", []))
+    if ".github/scripts/" in route_runs.replace("$CI_BASE_SHA:.github/scripts/", ""):
+        errors.append("route job reads a routing file from the checkout")
+    if f"for job in {' '.join(workers)}; do" not in route_runs:
+        errors.append("route job bootstrap does not select every worker")
+    policy_runs = " ".join(executable(step.get("run", "")) for step in jobs.get("ci-policy", {}).get("steps", []))
     if policy_runs.strip() != "python3 -m pip install PyYAML==6.0.2 python3 -m unittest discover -s tests/ci -v":
         errors.append("ci-policy job does not run tests/ci")
     outputs = route.get("outputs", {})
@@ -494,7 +518,7 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
         for step in steps:
             if step.get("continue-on-error") and "clamav-daemon" not in step.get("run", ""):
                 errors.append(f"worker {job_id} step {step.get('name')!r} is continue-on-error")
-        text = " ".join(str(step.get("run", "")) + " " + str(step.get("with", "")) for step in steps)
+        text = " ".join(executable(step.get("run", "")) + " " + str(step.get("with", "")) for step in steps)
         for command in COMMAND_INVENTORY.get(job_id, ()):
             if command not in text:
                 errors.append(f"worker {job_id} no longer runs {command!r}")
@@ -510,3 +534,67 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
         if set(ports(jobs["browser-e2e"])) & set(ports(jobs["backend-suite"])):
             errors.append("browser-e2e shares service ports with backend-suite")
     return errors
+
+
+def run_route_step(doc: dict, repo: Path, event: str, base: str, head: str) -> dict:
+    """Run the route step of the workflow with bash. Return the step outputs."""
+    with tempfile.TemporaryDirectory() as directory:
+        output_file = Path(directory) / "output"
+        output_file.write_text("")
+        env = dict(os.environ, CI_EVENT_NAME=event, CI_BASE_SHA=base, CI_HEAD_SHA=head,
+                   GITHUB_OUTPUT=str(output_file), RUNNER_TEMP=directory)
+        result = subprocess.run(["bash", "-c", route_script(doc)], cwd=repo, env=env,
+                                capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise AssertionError(f"route step failed: {result.stderr}")
+        outputs = dict(line.split("=", 1) for line in output_file.read_text().splitlines())
+    return outputs
+
+
+def route_step_mismatches(doc: dict, gate_module) -> list[str]:
+    """Run the real route step against repositories with and without a base policy.
+
+    The outputs go to the real gate. A full route must require every worker.
+    """
+    mismatches = []
+    with tempfile.TemporaryDirectory() as directory:
+        repo = Path(directory)
+        git(repo, "init", "-q")
+        bare = commit(repo, "base without policy", write=["README.md"])
+        # A PR head whose own router and policy would claim fast.
+        (repo / ".github/scripts").mkdir(parents=True)
+        (repo / ".github/scripts/ci_router.py").write_text(
+            "import os\nopen(os.environ['GITHUB_OUTPUT'], 'a').write('level=fast\\n')\n")
+        (repo / ".github/scripts/ci_policy.py").write_text("")
+        hostile = commit(repo, "hostile head", write=["docs/a.md"])
+        git(repo, "checkout", "-q", "-b", "policy", bare)
+        for name in ("ci_policy.py", "ci_router.py"):
+            (repo / ".github/scripts").mkdir(parents=True, exist_ok=True)
+            (repo / ".github/scripts" / name).write_text((SCRIPTS / name).read_text())
+        trusted = commit(repo, "base with policy")
+        docs = commit(repo, "docs head", write=["docs/b.md"])
+        git(repo, "checkout", "-q", hostile)
+        cases = (
+            ("bootstrap PR", "pull_request", bare, hostile, "full"),
+            ("push", "push", "", hostile, "full"),
+            ("workflow_dispatch", "workflow_dispatch", "", hostile, "full"),
+            ("base policy, docs PR", "pull_request", trusted, docs, "fast"),
+        )
+        for name, event, base, head, level in cases:
+            outputs = run_route_step(doc, repo, event, base, head)
+            if outputs.get("level") != level or outputs.get("head-sha") != head:
+                mismatches.append(f"{name}: outputs {outputs}")
+                continue
+            needs = {"route": {"result": "success", "outputs": outputs},
+                     "ci-policy": {"result": "success", "outputs": {}}}
+            for job in WORKERS:
+                needs[job] = {"result": "skipped", "outputs": {}}
+            skipped_passes = gate_module.evaluate("backend", needs, head) == []
+            for job in WORKERS:
+                needs[job]["result"] = "success"
+            if gate_module.evaluate("backend", needs, head) != []:
+                mismatches.append(f"{name}: gate rejects a valid {level} route: "
+                                  f"{gate_module.evaluate('backend', needs, head)}")
+            if skipped_passes != (level == "fast"):
+                mismatches.append(f"{name}: gate with skipped workers passed={skipped_passes}")
+    return mismatches

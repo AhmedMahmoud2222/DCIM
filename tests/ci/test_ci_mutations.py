@@ -20,6 +20,7 @@ from ci_support import (
     load_module,
     load_workflow,
     policy_mismatches,
+    route_step_mismatches,
     router_mismatches,
     workflow_errors,
 )
@@ -70,6 +71,12 @@ GATE_MUTANTS = (
     ("if any(not isinstance(value, bool) for value in jobs.values()):", "if False:"),
     ('if not SHA.fullmatch(expected_head or ""):', "if False:"),
     ('if level not in LEVELS or outputs.get("level") != level:', 'if outputs.get("level") != level:'),
+    ('if level != "full" and (route.get("event") != "pull_request" or route.get("degraded") is not False):',
+     "if False:"),
+    ('route.get("event") != "pull_request" or route.get("degraded") is not False',
+     'route.get("event") != "pull_request"'),
+    ('route.get("event") != "pull_request" or route.get("degraded") is not False',
+     'route.get("degraded") is True'),
     ('"frontend": CONTROL_JOBS + ("frontend-suite", "browser-e2e"),',
      '"frontend": CONTROL_JOBS + ("frontend-suite",),'),
     ('if job in CONTROL_JOBS:\n            continue', "if job in CONTROL_JOBS or job == 'browser-e2e':\n            continue"),
@@ -88,6 +95,14 @@ def _set_run(job_id, needle, run):
     return lambda doc: _step(doc, job_id, needle).__setitem__("run", run)
 
 
+def _set_route_script(old, new):
+    def mutate(doc):
+        step = next(s for s in doc["jobs"]["route"]["steps"] if s.get("id") == "route")
+        assert step["run"].count(old) == 1, old
+        step["run"] = step["run"].replace(old, new)
+    return mutate
+
+
 WORKFLOW_MUTANTS = {
     # The three review P2 mutations.
     "backend display name changed": lambda doc: _job(doc, "backend").__setitem__("name", "arbitrary-success"),
@@ -96,6 +111,25 @@ WORKFLOW_MUTANTS = {
         "if", "false && " + _job(doc, "backend-runtime-matrix")["if"]),
     "regression pytest replaced with echo": _set_run(
         "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py", "echo removed"),
+    # Review re-check P2: a shell comment is not an executed command.
+    "regression pytest commented out": _set_run(
+        "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py",
+        "# pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py"),
+    "regression pytest behind a trailing comment": _set_run(
+        "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py",
+        "true # pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py"),
+    "mypy commented out": _set_run("backend-runtime-matrix", "mypy app", "# mypy app"),
+    # Review re-check P1-07: the bootstrap route must not run checkout code.
+    "bootstrap runs the checkout router": _set_route_script(
+        'echo "Routing policy source: none (event $event selects full)"',
+        'CI_EVENT_NAME="$event" python3 .github/scripts/ci_router.py; exit 0'),
+    "bootstrap copies the checkout policy": _set_route_script(
+        'echo "Routing policy source: none (event $event selects full)"',
+        'cp .github/scripts/ci_*.py "$trusted/"; CI_EVENT_NAME="$event" python3 "$trusted/ci_router.py"; exit 0'),
+    "bootstrap drops a worker": _set_route_script("edge-interop browser-e2e; do", "browser-e2e; do"),
+    "bootstrap writes fast": _set_route_script('echo "level=full"', 'echo "level=fast"'),
+    "bootstrap for push uses the router": _set_route_script(
+        'if [ "$CI_EVENT_NAME" = pull_request ] \\\n', 'if true \\\n'),
     # Gate wiring.
     "gate if success()": lambda doc: _job(doc, "backend").__setitem__("if", "success()"),
     "gate if false && always()": lambda doc: _job(doc, "frontend").__setitem__("if", "false && always()"),
@@ -176,7 +210,13 @@ class MutationTests(unittest.TestCase):
             with self.subTest(mutant=name):
                 doc = copy.deepcopy(original)
                 mutate(doc)
-                self.assertNotEqual(workflow_errors(doc, GATE.GATES), [], "mutant survived")
+                errors = workflow_errors(doc, GATE.GATES)
+                if not errors:
+                    try:
+                        errors = route_step_mismatches(doc, GATE)
+                    except AssertionError as error:
+                        errors = [str(error)]
+                self.assertNotEqual(errors, [], "mutant survived")
 
 
 if __name__ == "__main__":

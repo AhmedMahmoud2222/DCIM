@@ -9,6 +9,7 @@ from ci_support import (
     emitted_names,
     load_module,
     load_workflow,
+    route_step_mismatches,
     workflow_errors,
 )
 
@@ -22,6 +23,11 @@ class WorkflowTests(unittest.TestCase):
 
     def test_workflow_is_fail_closed(self):
         self.assertEqual(workflow_errors(self.doc, gate.GATES), [])
+
+    def test_route_step_never_runs_checkout_routing_code(self):
+        # Review P1-07: without a base policy the step writes the full route itself,
+        # so a hostile router in the PR head cannot select fast.
+        self.assertEqual(route_step_mismatches(self.doc, gate), [])
 
     def test_required_check_names_are_exact_and_unique(self):
         names = emitted_names(self.doc)
