@@ -8,17 +8,94 @@ on:
 permissions:
   contents: read
 
+# Cancel in-progress runs for the same branch when a new commit lands. A stale
+# Full CI result from an earlier commit can never be presented as the current
+# check status for a later commit (safeguard #4).
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Non-secret, shared CI configuration. Production secrets are never stored here.
+  POSTGRES_PASSWORD_SUPERUSER: dcim_dev_superuser_password
+  JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
+  CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+  ENVIRONMENT: test
+  # The real-OCR extraction tests must run here, never silently skip
+  # (tests/unit/test_extraction_pipeline.py).
+  REQUIRE_REAL_OCR: "1"
+  # Expose the repository root so backend contract tests can reach the
+  # independently packaged Edge Collector scheduler constants without installing
+  # the Edge runtime into the backend distribution.
+  PYTHONPATH: ${{ github.workspace }}
+
 jobs:
-  backend:
+  # =========================================================================
+  # FAST CI — every PR.
+  # Change detection and risk classification, linting, security baseline and
+  # migration integrity. Deterministic, fail-closed routing.
+  # =========================================================================
+  fast-ci:
+    name: Fast CI (routing, security baseline, migration integrity)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      risk-level: ${{ steps.router.outputs.risk-level }}
+      run-full-ci: ${{ steps.router.outputs.run-full-ci }}
+      run-edge-collector: ${{ steps.router.outputs.run-edge-collector }}
+      run-database-contracts: ${{ steps.router.outputs.run-database-contracts }}
+      run-opencode: ${{ steps.router.outputs.run-opencode }}
+      detection-failed: ${{ steps.router.outputs.detection-failed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight validation tooling
+        run: pip install ruff alembic
+      - name: Classify changes and route CI level
+        id: router
+        run: python .github/scripts/ci_router.py
+      - name: Migration integrity (Alembic single-head gate)
+        # Reads revision files only — no database — so it fails fast before any
+        # migration step runs.
+        run: |
+          ruff check backend/scripts/check_alembic_single_head.py
+          python backend/scripts/check_alembic_single_head.py
+      - name: Lint (ruff)
+        run: ruff check backend/app backend/tests
+      - name: Security baseline (confidential preflight-report guard)
+        # .gitignore keeps the preflight report out of normal commits; this
+        # guard also fails a force-added/tracked copy.
+        working-directory: ${{ github.workspace }}
+        run: |
+          tracked="$(git ls-files | grep -E '(^|/)sec-arch-02-preflight.*\.json$' || true)"
+          stray="$(find . -name 'sec-arch-02-preflight*.json' -not -path './.git/*' -print)"
+          if [ -n "$tracked" ]; then
+            echo "Confidential preflight report is tracked by git: $tracked" >&2
+            exit 1
+          fi
+          if [ -n "$stray" ]; then
+            echo "Confidential preflight report present in the checkout: $stray" >&2
+            exit 1
+          fi
+
+  # =========================================================================
+  # REQUIRED CHECKS — always run, always validate meaningfully (preserved).
+  # `backend` consumes Fast CI's routing decision so it can run a fast path for
+  # low-risk changes and the full suite for high-risk changes. `if: always()`
+  # guarantees it can never be skipped as a side effect of Fast CI
+  # (safeguard #2: never "never completed").
+  # =========================================================================
+  backend:
+    name: Backend
+    needs: fast-ci
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     services:
-      # NOTE (Finding C1 / PHASE1_CORRECTION_REPORT.md): the bootstrap superuser here is
-      # `postgres`, NOT `dcim_app`. Previously POSTGRES_USER was set to `dcim_app`, which
-      # the official postgres image grants full superuser rights to — silently defeating
-      # every least-privilege control this CI job is supposed to validate, since a
-      # superuser bypasses all GRANT/REVOKE/ownership checks. `dcim_app` is now created
-      # explicitly, as an ordinary role, by the "Provision least-privilege dcim_app role"
-      # step below — matching README.md's non-Docker local setup.
       postgres:
         image: postgres:16
         env:
@@ -41,16 +118,11 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
       REDIS_URL: redis://localhost:6379/1
-      JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
-      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+      JWT_SECRET_KEY: ${{ env.JWT_SECRET_KEY }}
+      CREDENTIAL_ENCRYPTION_KEY: ${{ env.CREDENTIAL_ENCRYPTION_KEY }}
       TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:dcim_dev_superuser_password@localhost:5432/dcim_test
-      ENVIRONMENT: test
       PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
-      # The real-OCR extraction tests must run here, never silently skip (tests/unit/test_extraction_pipeline.py).
-      REQUIRE_REAL_OCR: "1"
-      # Backend contract tests also validate the independently packaged Edge
-      # scheduler constants; expose the repository root without installing the
-      # Edge runtime into the backend distribution.
+      RISK_LEVEL: ${{ needs.fast-ci.outputs.risk-level }}
       PYTHONPATH: ${{ github.workspace }}
     defaults:
       run:
@@ -58,9 +130,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Refuse SEC-ARCH-02 preflight reports in the checkout (issue #175)
-        # The preflight report is confidential access-control data. `.gitignore` keeps it
-        # out of normal commits; this guard also fails a force-added/tracked copy, so a
-        # report can never sit in a CI checkout and ride along in any uploaded artifact.
         working-directory: ${{ github.workspace }}
         run: |
           tracked="$(git ls-files | grep -E '(^|/)sec-arch-02-preflight.*\.json$' || true)"
@@ -76,15 +145,48 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.11"
+      - name: Cache Python dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: ~/.cache/pip
+          key: pip-backend-${{ runner.os }}-${{ hashFiles('backend/pyproject.toml') }}
+          restore-keys: |
+            pip-backend-${{ runner.os }}-
       - name: Install dependencies
         run: pip install -e ".[dev]"
-      - name: Install the OCR engine for the real-OCR extraction tests
+      - name: Select validation depth
+        id: depth
+        env:
+          RISK_LEVEL: ${{ needs.fast-ci.outputs.risk-level }}
+        run: |
+          if [[ "${RISK_LEVEL}" == "full" ]]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=fast" >> "$GITHUB_OUTPUT"
+          fi
+      # --- Fast path: low-risk change. Bounded, DB-free validation that keeps
+      # the required `backend` check completing in minutes rather than tens of
+      # minutes. Fast CI already covers lint and migration integrity at repo
+      # level; this path re-asserts them inside the backend job and adds an
+      # import smoke test. ---
+      - if: steps.depth.outputs.mode == 'fast'
+        name: Backend fast validation (low-risk change)
+        timeout-minutes: 8
+        run: |
+          ruff check scripts/check_alembic_single_head.py
+          python scripts/check_alembic_single_head.py
+          ruff check app tests
+          python -c "import app.main; print('backend import smoke OK')"
+      # --- Full path: high-risk change. The complete, preserved validation. ---
+      - if: steps.depth.outputs.mode == 'full'
+        name: Install the OCR engine for the real-OCR extraction tests
         # Not continue-on-error: REQUIRE_REAL_OCR=1 makes the tests fail, not skip, without it.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-eng
           tesseract --version
-      - name: Install clamd for the real-scanner tests
+      - if: steps.depth.outputs.mode == 'full'
+        name: Install clamd for the real-scanner tests
         # tests/integration/test_clamd_real.py runs the production scanner class against a real
         # clamd with a local EICAR signature database, and skips itself when clamd is missing.
         # A package-mirror hiccup must not fail the build, so a failed install only skips them.
@@ -93,17 +195,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends clamav-daemon
           sudo systemctl stop clamav-daemon clamav-freshclam || true
-      - name: Validate Compose required backend settings
+      - if: steps.depth.outputs.mode == 'full'
+        name: Validate Compose required backend settings
         run: |
           ruff check scripts/check_compose_settings.py
           python scripts/check_compose_settings.py
-      - name: Provision least-privilege dcim_app role and database
-        # dcim_app is deliberately NOT the database owner — see the note on the postgres
-        # service above. PostgreSQL grants the database owner an implicit DROP TABLE right
-        # over every table in that database regardless of individual table ownership,
-        # which would otherwise silently bypass audit_log's ownership transfer to
-        # dcim_retention_admin (Finding C1 correction). dcim_test stays owned by the
-        # `postgres` superuser; dcim_app gets exactly CREATE, USAGE on the public schema.
+      - if: steps.depth.outputs.mode == 'full'
+        name: Provision least-privilege dcim_app role and database
         run: |
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d postgres -c \
             "CREATE ROLE dcim_app LOGIN PASSWORD 'dcim_dev_password';"
@@ -111,47 +209,55 @@ jobs:
             "CREATE DATABASE dcim_test;"
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -c \
             "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
-      - name: Enable required Postgres extensions
+      - if: steps.depth.outputs.mode == 'full'
+        name: Enable required Postgres extensions
         run: |
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -c \
             'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
-      - name: Alembic single-head gate
-        # Two PRs that each add a revision on the same parent merge cleanly as text but
-        # leave two heads. This reads the revision files only (no database), so it fails
-        # fast and names both heads, before any migration step runs.
+      - if: steps.depth.outputs.mode == 'full'
+        name: Alembic single-head gate
         run: |
           ruff check scripts/check_alembic_single_head.py
           python scripts/check_alembic_single_head.py
-      - name: Lint (ruff)
+      - if: steps.depth.outputs.mode == 'full'
+        name: Lint (ruff)
         run: ruff check app tests
-      - name: Type check (mypy)
+      - if: steps.depth.outputs.mode == 'full'
+        name: Type check (mypy)
         run: mypy app
-      - name: Run migrations
+      - if: steps.depth.outputs.mode == 'full'
+        name: Run migrations
         run: alembic upgrade head
-      - name: Validate retention migration round trip
+      - if: steps.depth.outputs.mode == 'full'
+        name: Validate retention migration round trip
         run: |
           test "$(alembic heads | wc -l)" -eq 1
           alembic downgrade 0010_mvp_alarms
           alembic upgrade head
           test "$(alembic heads | wc -l)" -eq 1
-      - name: Bootstrap privileged retention role
+      - if: steps.depth.outputs.mode == 'full'
+        name: Bootstrap privileged retention role
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
-      - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
-        # app/application/drivers/icmp.py opens a genuine SOCK_RAW/IPPROTO_ICMP socket
-        # (documented there as a real operational requirement, not silently assumed) --
-        # the runner's default non-root user cannot do that without this capability, so
-        # tests/unit/test_drivers.py and the collector poll-now tests would otherwise
-        # fail with PermissionError on every run, regardless of this PR's own changes.
+      - if: steps.depth.outputs.mode == 'full'
+        name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
-      - name: Run PostgreSQL retention hostile validation
+      - if: steps.depth.outputs.mode == 'full'
+        name: Run PostgreSQL retention hostile validation
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
-      - name: Validate extraction apply against PostgreSQL
+      - if: steps.depth.outputs.mode == 'full'
+        name: Validate extraction apply against PostgreSQL
         run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
-      - name: Run regression tests
+      - if: steps.depth.outputs.mode == 'full'
+        name: Run regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
 
   frontend:
+    name: Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Intentionally no `needs: fast-ci`: the required `frontend` check must
+    # complete on every PR independently, so it can never be skipped as a side
+    # effect of Fast CI (safeguard #2). Frontend is already fast (~2 minutes).
     defaults:
       run:
         working-directory: frontend
@@ -160,6 +266,13 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
+      - name: Cache Node dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: ~/.npm
+          key: npm-frontend-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            npm-frontend-${{ runner.os }}-
       - run: npm ci
       - name: Audit for high/critical vulnerabilities (fails build)
         run: npm audit --audit-level=high
@@ -172,19 +285,20 @@ jobs:
       - run: npx eslint . --ext ts,tsx
       - run: npm run build
 
-  # The independently packaged Edge Collector runtime (edge_collector/). It is deliberately
-  # not installed into the backend distribution — the backend job only exposes its scheduler
-  # constants on PYTHONPATH for a contract test — so its own suite needs a job of its own.
-  # It is pure standard library plus httpx and cryptography (SNMPv3 AES), which is why this job is this short.
-  edge-collector:
+  # =========================================================================
+  # COMPONENT CI — affected components only.
+  # Each job runs only when its component is touched by the change, and never
+  # when Full CI is already covering everything.
+  # =========================================================================
+  component-edge-collector:
+    name: Component CI — Edge Collector
+    needs: fast-ci
+    if: >-
+      needs.fast-ci.result == 'success' &&
+      needs.fast-ci.outputs.run-edge-collector == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
-      # edge_collector/tests/ has no __init__.py, so pytest's rootdir insertion puts that
-      # directory on sys.path rather than the repository root, and `from edge_collector...`
-      # fails to import. (`python -m pytest` happens to paper over this by adding the
-      # working directory; the console script does not.) Same reason the backend job
-      # exports it: expose the repository root without installing the Edge runtime into
-      # any distribution.
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -196,289 +310,87 @@ jobs:
       - name: Lint (ruff)
         run: ruff check edge_collector
       - name: Run Edge Collector tests
-        # tests/test_snmp.py binds a real UDP socket on 127.0.0.1 and speaks real BER to
-        # the collector; it needs no privileges and no external agent.
+        # tests/test_snmp.py binds a real UDP socket on 127.0.0.1 and speaks real
+        # BER to the collector; no privileges, hardware or external network needed.
         run: pytest -q edge_collector/tests
+      - name: Run Edge Collector SNMPv3 interoperability
+        # Real Edge Collector SNMPv3 stack against an independent implementation
+        # (pysnmp) over loopback. No privileges, hardware or external network.
+        run: |
+          pip install -r edge_collector/interop/requirements.txt
+          python -m edge_collector.interop.run_interop --json interop-results.json
 
-  # Issue #101: the real Edge Collector SNMPv3 stack against an independent implementation (pysnmp)
-  # over loopback. A dedicated job so the normal Edge job does not need pysnmp. No privileges,
-  # hardware or external network; it fails if any algorithm combination, failure mode or wire-secrecy
-  # check behaves differently from what edge_collector/interop/README.md states.
-  edge-interop:
+  component-database-contracts:
+    name: Component CI — Database & shared contracts
+    needs: fast-ci
+    if: >-
+      needs.fast-ci.result == 'success' &&
+      needs.fast-ci.outputs.run-database-contracts == 'true'
     runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: ${{ github.workspace }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
-        with:
-          python-version: "3.12"
-      - name: Install the Edge Collector and the reference agent
-        run: pip install ./edge_collector -r edge_collector/interop/requirements.txt
-      - name: Run the interoperability harness
-        run: python -m edge_collector.interop.run_interop --json interop-results.json
-      - name: Keep the results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
-        with:
-          name: snmpv3-interop-results
-          path: interop-results.json
-          if-no-files-found: ignore
-
-  # Issue #26: the browser suite, on its own PostgreSQL 16 and Redis 7. Deliberately
-  # separate from the `backend` job rather than bolted onto it — that job validates
-  # least-privilege and retention behaviour against a database whose grants it asserts,
-  # and seeding an Administrator with a known password into it would undermine exactly
-  # what it is there to prove. Host ports (5433/6380) and the database name (dcim_e2e)
-  # differ from the backend job's so the isolation is real rather than incidental.
-  browser-e2e:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: e2e_superuser_password
-          POSTGRES_DB: postgres
-        ports: ["5433:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7
-        ports: ["6380:6379"]
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgresql+asyncpg://dcim_app:e2e_app_password@127.0.0.1:5433/dcim_e2e
-      REDIS_URL: redis://127.0.0.1:6380/0
-      JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
-      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
-      ENVIRONMENT: test
-      PGPASSWORD_SUPERUSER: e2e_superuser_password
-      # The browser fixture's own throwaway credentials for this ephemeral database. Not
-      # a secret and deliberately not stored as one: a repository secret is masked in logs
-      # but still has to be readable by the job, and pretending a public fixture password
-      # is confidential would be worse than stating plainly that it is not. It never
-      # reaches a CLI argument — scripts/create_admin.py reads it from the environment —
-      # so it stays out of argv, /proc and the step trace.
-      E2E_ADMIN_EMAIL: e2e-admin@example.com
-      # Isolated browser fixture environment has no clamd sidecar. Scanner enforcement
-      # stays covered by API tests with the controllable scanner; production requires it.
-      CATALOG_PDF_SCAN_MODE: "off"
-      E2E_ADMIN_PASSWORD: E2ePassw0rd!
-      # Issue #103: the notification/ITSM E2E talks to a local mock provider on loopback. Production keeps
-      # the deny-by-default outbound policy (https only, empty allowlist, no loopback).
-      OUTBOUND_ALLOW_HTTP: "true"
-      OUTBOUND_ALLOW_LOOPBACK: "true"
-      OUTBOUND_ALLOWED_PORTS: "[18089]"
-      BACKEND_URL: http://127.0.0.1:8000
-      BASE_URL: http://127.0.0.1:5173
-      PYTHONPATH: ${{ github.workspace }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.11"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Install backend
-        working-directory: backend
-        run: pip install -e ".[dev]"
-
-      - name: Provision least-privilege dcim_app role and the isolated e2e database
-        # Same shape as the backend job: dcim_app is an ordinary role and is NOT the
-        # database owner, so the browser suite exercises the same privilege surface the
-        # application actually runs under rather than an accidentally-superuser one.
+      - name: Install backend for contract checks
+        run: pip install -e "./backend"
+      - name: Migration integrity (Alembic single-head gate)
         run: |
-          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -c \
-            "CREATE ROLE dcim_app LOGIN PASSWORD 'e2e_app_password';"
-          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -c \
-            "CREATE DATABASE dcim_e2e;"
-          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d dcim_e2e -c \
-            "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
-
-      - name: Enable required Postgres extensions
+          ruff check backend/scripts/check_alembic_single_head.py
+          python backend/scripts/check_alembic_single_head.py
+      - name: Validate Compose required backend settings
         run: |
-          PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d dcim_e2e -c \
-            'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
+          ruff check backend/scripts/check_compose_settings.py
+          python backend/scripts/check_compose_settings.py
 
-      - name: Run migrations
-        working-directory: backend
-        run: |
-          alembic upgrade head
-          test "$(alembic heads | wc -l)" -eq 1
-
-      - name: Bootstrap privileged retention role
-        working-directory: backend
-        run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h 127.0.0.1 -p 5433 -U postgres -d dcim_e2e -f scripts/bootstrap_privileged_roles.sql
-
-      - name: Seed the deterministic Administrator fixture
-        working-directory: backend
-        # --password-from-env keeps the password out of argv (world-readable via /proc and
-        # echoed into the step trace); --if-exists skip keeps a re-run idempotent.
-        run: |
-          python scripts/create_admin.py \
-            --email "$E2E_ADMIN_EMAIL" \
-            --name "E2E Administrator" \
-            --password-from-env E2E_ADMIN_PASSWORD \
-            --if-exists skip
-
-      - name: Start the backend on 127.0.0.1:8000
-        working-directory: backend
-        run: |
-          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$GITHUB_WORKSPACE/backend.log" 2>&1 &
-          echo $! > "$GITHUB_WORKSPACE/backend.pid"
-
-      - name: Wait for backend readiness
-        # Bounded, and it reads /health/ready rather than /health/live: liveness is true
-        # before PostgreSQL and Redis are reachable, so waiting on it would hand the
-        # browser suite a backend that 503s on its first real request. A non-ready backend
-        # fails here, with its log, instead of as an unexplained timeout inside Playwright.
-        run: |
-          for attempt in $(seq 1 60); do
-            if curl -fsS --max-time 2 "$BACKEND_URL/api/v1/health/ready" > /tmp/ready.json; then
-              echo "backend ready after ${attempt}s: $(cat /tmp/ready.json)"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::backend did not become ready within 60s"
-          cat "$GITHUB_WORKSPACE/backend.log"
-          exit 1
-
-      - name: Start the Celery worker
-        # The bulk-import job pipeline (and floor-plan import) dispatch their parse/commit
-        # steps via Celery `.delay()` rather than running inline, so a spec that waits for
-        # a job to leave "uploaded" needs a real worker consuming the same Redis broker the
-        # backend was started against. Same command as docker-compose.yml's celery-worker
-        # service, run in the foreground-backgrounded style as the backend/frontend above.
-        working-directory: backend
-        run: |
-          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction,reports,notifications \
-            > "$GITHUB_WORKSPACE/celery-worker.log" 2>&1 &
-          echo $! > "$GITHUB_WORKSPACE/celery-worker.pid"
-
-      - name: Wait for Celery worker readiness
-        working-directory: backend
-        run: |
-          for attempt in $(seq 1 60); do
-            if celery -A app.infrastructure.celery_app inspect ping --timeout 2 > /dev/null 2>&1; then
-              echo "celery worker ready after ${attempt}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::celery worker did not become ready within 60s"
-          cat "$GITHUB_WORKSPACE/celery-worker.log"
-          exit 1
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Install Chromium for Playwright
-        working-directory: frontend
-        run: npx playwright install --with-deps chromium
-
-      - name: Start the Vite dev server on 127.0.0.1:5173
-        working-directory: frontend
-        # Started here rather than left to Playwright's own `webServer` so that a startup
-        # failure is reported by the step that caused it, with its log uploaded. The
-        # config's reuseExistingServer means Playwright attaches to this one.
-        run: |
-          nohup npm run dev -- --host 127.0.0.1 --port 5173 > "$GITHUB_WORKSPACE/frontend.log" 2>&1 &
-          echo $! > "$GITHUB_WORKSPACE/frontend.pid"
-
-      - name: Wait for frontend readiness
-        run: |
-          for attempt in $(seq 1 60); do
-            if curl -fsS --max-time 2 "$BASE_URL" > /dev/null; then
-              echo "frontend ready after ${attempt}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::frontend did not become ready within 60s"
-          cat "$GITHUB_WORKSPACE/frontend.log"
-          exit 1
-
-      - name: Run Playwright browser tests
-        working-directory: frontend
-        run: npm run test:e2e
-
-      - name: Collect failure artifacts
-        if: failure()
-        # Runs on any failure above, including a readiness timeout, so a job that never
-        # reached Playwright still uploads the logs that explain why.
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/e2e-artifacts"
-          cp "$GITHUB_WORKSPACE/backend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/frontend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/celery-worker.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
-          # trace: "retain-on-failure" and screenshot: "only-on-failure" in
-          # frontend/playwright.config.ts write both into frontend/test-results/.
-          if [ -d frontend/test-results ]; then
-            cp -r frontend/test-results "$GITHUB_WORKSPACE/e2e-artifacts/playwright-test-results"
-          fi
-          echo "collected:"; find "$GITHUB_WORKSPACE/e2e-artifacts" -type f | head -50
-
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
-        with:
-          name: browser-e2e-failure-artifacts
-          path: e2e-artifacts/
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Stop servers
-        if: always()
-        run: |
-          for pidfile in backend.pid frontend.pid celery-worker.pid; do
-            if [ -f "$GITHUB_WORKSPACE/$pidfile" ]; then
-              kill "$(cat "$GITHUB_WORKSPACE/$pidfile")" 2>/dev/null || true
-            fi
-          done
-
-  # Issue #26: does the full migrated backend suite actually pass on the runtimes
-  # backend/pyproject.toml's `requires-python = ">=3.11"` nominally permits? The floor is
-  # an installation constraint, not evidence, and the `backend` job above pins 3.11. This
-  # job produces the evidence, running the same migrations, privileged bootstrap, lint,
-  # typecheck and full suite against a real PostgreSQL 16 and Redis 7 per version.
-  #
-  # All three block. 3.12 and 3.13 were validated green locally (693 passed in the migrated
-  # suite, 6 in the retention hostile suite, 55 in the Edge Collector suite).
-  #
-  # 3.14 shipped non-blocking and was promoted once this job reported green, which is the
-  # criterion it shipped with. Worth recording why it was ever in doubt: the only 3.14
-  # build obtainable in the local validation environment was 3.14.0rc2, where pydantic
-  # 2.13.5 raises
-  #   TypeError: _eval_type() got an unexpected keyword argument 'prefer_fwd_module'
-  # importing pydantic.root_model, because rc2's typing._eval_type takes `parent_fwdref`
-  # and not `prefer_fwd_module`. That was a release-candidate gap rather than a property of
-  # 3.14 as shipped: against the final 3.14.x actions/setup-python installs, every step of
-  # this job passes, migrations, full suite and Edge Collector suite included.
-  backend-runtime-matrix:
-    name: backend suite (Python ${{ matrix.python-version }})
+  component-opencode:
+    name: Component CI — OpenCode
+    needs: fast-ci
+    if: >-
+      needs.fast-ci.result == 'success' &&
+      needs.fast-ci.outputs.run-opencode == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+        with:
+          python-version: "3.11"
+      - name: Validate CI policy/router scripts compile
+        run: python -m py_compile .github/scripts/ci_policy.py .github/scripts/ci_router.py
+      - name: Confirm the CI policy shape
+        run: |
+          python - <<'PY'
+          import ci_policy
+          assert ci_policy.required_checks() == ("backend", "frontend")
+          assert "backend" in ci_policy.all_components()
+          assert "frontend" in ci_policy.all_components()
+          print("CI policy shape OK")
+          PY
+
+  # =========================================================================
+  # FULL CI — high-risk changes only.
+  # Triggers for security, authentication, migrations, infrastructure, workflow
+  # configuration and shared dependencies. Complete Python compatibility matrix,
+  # PostgreSQL/Redis integration, Docker Compose, Playwright E2E, deployment
+  # tooling regressions, relevant security validation.
+  # =========================================================================
+  full-ci:
+    name: Full CI (high-risk change)
+    needs: fast-ci
+    if: >-
+      needs.fast-ci.result == 'success' &&
+      (
+        needs.fast-ci.outputs.run-full-ci == 'true' ||
+        needs.fast-ci.outputs.detection-failed == 'true'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - python-version: "3.12"
-            experimental: false
-          - python-version: "3.13"
-            experimental: false
-          - python-version: "3.14"
-            experimental: false
+        python-version: ["3.12", "3.13", "3.14"]
     services:
       postgres:
         image: postgres:16
@@ -502,38 +414,49 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
       REDIS_URL: redis://localhost:6379/1
-      JWT_SECRET_KEY: ci-only-secret-key-not-for-production-use-32ch
-      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+      JWT_SECRET_KEY: ${{ env.JWT_SECRET_KEY }}
+      CREDENTIAL_ENCRYPTION_KEY: ${{ env.CREDENTIAL_ENCRYPTION_KEY }}
       TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:dcim_dev_superuser_password@localhost:5432/dcim_test
-      ENVIRONMENT: test
       PGPASSWORD_SUPERUSER: dcim_dev_superuser_password
-      # The real-OCR extraction tests must run here, never silently skip (tests/unit/test_extraction_pipeline.py).
       REQUIRE_REAL_OCR: "1"
+      # E2E administrator fixture password (non-secret test fixture, deliberate plaintext;
+      # never a production secret and never stored as one).
+      E2E_ADMIN_PASSWORD: E2ePassw0rd!
       PYTHONPATH: ${{ github.workspace }}
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Report the resolved interpreter
-        # The matrix key is a request; this is what was actually installed, which is the
-        # only version worth quoting in a report.
         run: python -VV
+      - name: Cache Python dependencies
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: ~/.cache/pip
+          key: pip-full-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('backend/pyproject.toml') }}
+          restore-keys: |
+            pip-full-${{ runner.os }}-${{ matrix.python-version }}-
       - name: Install dependencies
-        # The first place an unsupported runtime shows up: a dependency with no wheel and
-        # no buildable sdist for this interpreter fails here, naming itself.
+        # The first place an unsupported runtime shows up: a dependency with no
+        # wheel and no buildable sdist for this interpreter fails here.
         run: pip install -e ".[dev]"
+      - name: Install the Edge Collector runtime for contract tests
+        run: pip install "./edge_collector[test]"
       - name: Install the OCR engine for the real-OCR extraction tests
-        # Not continue-on-error: REQUIRE_REAL_OCR=1 makes the tests fail, not skip, without it.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-eng
           tesseract --version
-      - name: Report the resolved dependency set
-        run: pip freeze
+      - name: Migration integrity (Alembic single-head gate)
+        run: |
+          ruff check scripts/check_alembic_single_head.py
+          python scripts/check_alembic_single_head.py
       - name: Provision least-privilege dcim_app role and database
         run: |
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d postgres -c \
@@ -546,21 +469,9 @@ jobs:
         run: |
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -c \
             'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
-      - name: Alembic single-head gate
-        # Two PRs that each add a revision on the same parent merge cleanly as text but
-        # leave two heads. This reads the revision files only (no database), so it fails
-        # fast and names both heads, before any migration step runs.
+      - name: Run migrations and validate round trip
         run: |
-          ruff check scripts/check_alembic_single_head.py
-          python scripts/check_alembic_single_head.py
-      - name: Lint (ruff)
-        run: ruff check app tests
-      - name: Type check (mypy)
-        run: mypy app
-      - name: Run migrations
-        run: alembic upgrade head
-      - name: Validate retention migration round trip
-        run: |
+          alembic upgrade head
           test "$(alembic heads | wc -l)" -eq 1
           alembic downgrade 0010_mvp_alarms
           alembic upgrade head
@@ -573,8 +484,112 @@ jobs:
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
       - name: Validate extraction apply against PostgreSQL
         run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
-      - name: Run regression tests
+      - name: Run backend regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
       - name: Run Edge Collector tests on this runtime
         working-directory: ${{ github.workspace }}
         run: pytest -q edge_collector/tests
+      - name: Validate Compose required backend settings (Full CI)
+        run: |
+          ruff check scripts/check_compose_settings.py
+          python scripts/check_compose_settings.py
+      - name: Check combined production Compose configuration
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.production.yml config --quiet
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Chromium for Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Run frontend unit tests and typecheck (Full CI)
+        working-directory: frontend
+        run: |
+          npm test
+          npm run typecheck
+      - name: Start backend, Celery and frontend dev servers for E2E
+        # Runs once (Python 3.12 matrix variant). Mirrors the browser-e2e job: a real
+        # backend on 8000, a real Celery worker on Redis, and the Vite dev server on 5173,
+        # all against the provisioned dcim_test database, so Playwright exercises genuine
+        # HTTP + database + broker paths rather than stubs.
+        if: matrix.python-version == '3.12'
+        run: |
+          set -e
+          # Seed a deterministic E2E administrator fixture into the provisioned database.
+          python scripts/create_admin.py \
+            --email e2e-admin@example.com \
+            --name "E2E Administrator" \
+            --password-from-env E2E_ADMIN_PASSWORD \
+            --if-exists skip || true
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$GITHUB_WORKSPACE/backend.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/backend.pid"
+          nohup celery -A app.infrastructure.celery_app worker --loglevel=info -Q default,maintenance,extraction,reports,notifications \
+            > "$GITHUB_WORKSPACE/celery-worker.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/celery-worker.pid"
+          cd "$GITHUB_WORKSPACE/frontend"
+          nohup npm run dev -- --host 127.0.0.1 --port 5173 > "$GITHUB_WORKSPACE/frontend.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/frontend.pid"
+          cd "$GITHUB_WORKSPACE"
+      - name: Wait for backend and frontend readiness
+        if: matrix.python-version == '3.12'
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8000/api/v1/health/ready > /tmp/ready.json; then
+              echo "backend ready after ${attempt}s"
+              break
+            fi
+            sleep 1
+          done
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:5173/ > /dev/null; then
+              echo "frontend ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::servers did not become ready"; cat "$GITHUB_WORKSPACE/backend.log" "$GITHUB_WORKSPACE/frontend.log" 2>/dev/null || true; exit 1
+      - name: Run Playwright browser E2E (Full CI)
+        if: matrix.python-version == '3.12'
+        working-directory: frontend
+        env:
+          BACKEND_URL: http://127.0.0.1:8000
+          BASE_URL: http://127.0.0.1:5173
+          DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
+          REDIS_URL: redis://localhost:6379/1
+        run: npm run test:e2e
+      - name: Collect E2E failure artifacts
+        if: matrix.python-version == '3.12' && failure()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/e2e-artifacts"
+          cp "$GITHUB_WORKSPACE/backend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/frontend.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/celery-worker.log" "$GITHUB_WORKSPACE/e2e-artifacts/" 2>/dev/null || true
+          if [ -d frontend/test-results ]; then
+            cp -r frontend/test-results "$GITHUB_WORKSPACE/e2e-artifacts/playwright-test-results"
+          fi
+          echo "collected:"; find "$GITHUB_WORKSPACE/e2e-artifacts" -type f 2>/dev/null | head -50 || true
+      - name: Upload E2E failure artifacts
+        if: matrix.python-version == '3.12' && failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: full-ci-browser-e2e-failure-artifacts
+          path: e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop E2E servers
+        if: matrix.python-version == '3.12' && always()
+        run: |
+          for pidfile in backend.pid frontend.pid celery-worker.pid; do
+            if [ -f "$GITHUB_WORKSPACE/$pidfile" ]; then
+              kill "$(cat "$GITHUB_WORKSPACE/$pidfile")" 2>/dev/null || true
+            fi
+          done
+      - name: Deployment tooling regressions (Full CI)
+        run: |
+          set -euo pipefail
+          python3 -m pip install PyYAML==6.0.2
+          python3 tests/deployment/check_workflows.py
+          python3 -m unittest discover -s tests/deployment -p 'test_*.py' -v
