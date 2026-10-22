@@ -127,7 +127,9 @@ class RegistryTests(unittest.TestCase):
         model = 'opencode/mimo-v2.6-flash-free'
         for source in ('javascript:bad', 'https:// example.com', 'https://.',
                        'https://example.com:bad', 'https://[', 'https://user@example.com',
-                       'https://example.com./terms', 'https://example..com/terms'):
+                       'https://example.com./terms', 'https://example..com/terms',
+                       'https://127.0.0.1/terms', 'https://10.0.0.1/terms',
+                       'https://169.254.169.254/latest/meta-data'):
             registry = enable(REGISTRY, *FOUR)
             registry['models'][model]['terms_review']['source'] = source
             self.assertIn('terms not verified with recorded evidence',

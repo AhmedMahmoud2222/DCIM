@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import ipaddress
 import json
 import os
 import re
@@ -130,6 +131,11 @@ def valid_review_source(value: str) -> bool:
         return False
     if hostname is None or len(hostname) > 253 or hostname.startswith('.') or hostname.endswith('.'):
         return False
+    try:
+        ipaddress.ip_address(hostname)
+        return False
+    except ValueError:
+        pass
     labels = hostname.split('.')
     return len(labels) > 1 and all(
         re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
