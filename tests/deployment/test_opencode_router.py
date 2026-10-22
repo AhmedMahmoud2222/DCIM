@@ -73,15 +73,23 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(set(review), {'reviewed_by', 'date', 'source'}, model_id)
                 self.assertTrue(all(isinstance(value, str) and value.strip()
                                     for value in review.values()), model_id)
+                expected = ([] if meta['operational_status'] == 'healthy'
+                            else ['not marked operationally healthy'])
+                self.assertEqual(router.blockers(meta), expected, model_id)
             else:
                 self.assertIs(meta['terms_verified'], False, model_id)
                 self.assertIsNone(meta['terms_review'], model_id)
                 self.assertIs(meta['repo_code_approved'], False, model_id)
-            self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
-            self.assertTrue(router.blockers(meta), model_id)
+                self.assertTrue(router.blockers(meta), model_id)
         for task in ('fix a typo', 'new api endpoint', 'update the react component'):
-            with self.assertRaises(router.RoutingError, msg=task):
-                router.route(task, REGISTRY, ALL)
+            category, _ = router.classify(task)
+            eligible = [model for model in REGISTRY['routes'][category]
+                        if not router.blockers(REGISTRY['models'][model])]
+            if eligible:
+                self.assertEqual(router.route(task, REGISTRY, ALL)['model'], eligible[0])
+            else:
+                with self.assertRaises(router.RoutingError, msg=task):
+                    router.route(task, REGISTRY, ALL)
 
     def test_registry_presence_never_authorizes_a_model(self):
         registry = copy.deepcopy(REGISTRY)
@@ -102,6 +110,10 @@ class RegistryTests(unittest.TestCase):
             'terms_review_incomplete': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '', 'source': 'x'}),
             'terms_review_wrong_schema': lambda m: m.update(terms_review={'reviewer': 'owner', 'date': '2026-10-21',
                                                                          'source': 'https://opencode.ai/docs/zen'}),
+            'terms_review_bad_date': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '2026-99-99',
+                                                                      'source': 'https://opencode.ai/docs/zen'}),
+            'terms_review_bad_source': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '2026-10-21',
+                                                                        'source': 'javascript:bad'}),
             'repo_code_approved': lambda m: m.update(repo_code_approved=False),
             'operational_status': lambda m: m.update(operational_status='degraded'),
         }

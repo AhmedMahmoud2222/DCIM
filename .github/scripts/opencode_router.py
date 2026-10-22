@@ -13,10 +13,12 @@ Task text arrives through the TASK environment variable, never argv or shell.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
 import sys
+import urllib.parse
 
 # The only models this router can ever emit. Changing this set needs a code
 # change, a test change and owner review (CODEOWNERS), not just a registry edit.
@@ -118,9 +120,20 @@ def blockers(meta: dict) -> list[str]:
     """Static (owner-controlled) requirements a model must meet before repository code may reach it."""
     found = []
     review = meta.get('terms_review')
+    valid_review = False
+    if isinstance(review, dict) and set(review) == {'reviewed_by', 'date', 'source'} and all(
+            isinstance(review.get(key), str) and review[key].strip() for key in review):
+        source = urllib.parse.urlsplit(review['source'])
+        try:
+            datetime.date.fromisoformat(review['date'])
+            valid_date = re.fullmatch(r'\d{4}-\d{2}-\d{2}', review['date']) is not None
+        except ValueError:
+            valid_date = False
+        valid_source = (source.scheme == 'https' and source.hostname is not None
+                        and source.username is None and source.password is None)
+        valid_review = valid_date and valid_source
     if meta.get('terms_verified') is not True or not (
-            isinstance(review, dict) and all(isinstance(review.get(k), str) and review.get(k).strip()
-                                             for k in ('reviewed_by', 'date', 'source'))):
+            valid_review):
         found.append('terms not verified with recorded evidence')
     if meta.get('repo_code_approved') is not True:
         found.append('repository-code use not approved by owner')
