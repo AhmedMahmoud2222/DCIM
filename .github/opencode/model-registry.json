@@ -17,17 +17,17 @@
       "repo_code_approved": false,
       "operational_status": "unknown"
     },
-  "opencode/mimo-v2.6-flash-free": {
-  "label": "MiMo-V2.6-Flash Free",
-  "terms_verified": true,
-  "terms_review": {
-    "reviewer": "AhmedMahmoud2222",
-    "date": "2026-10-22",
-    "source": "https://opencode.ai/v2/docs/console/models/"
-  },
-  "repo_code_approved": true,
-  "operational_status": "healthy"
-},
+    "opencode/mimo-v2.6-flash-free": {
+      "label": "MiMo-V2.6-Flash Free",
+      "terms_verified": true,
+      "terms_review": {
+        "reviewed_by": "AhmedMahmoud2222",
+        "date": "2026-10-22",
+        "source": "https://opencode.ai/v2/docs/console/models/"
+      },
+      "repo_code_approved": true,
+      "operational_status": "unknown"
+    },
     "opencode/minimax-m3.1-flash-free": {
       "label": "MiniMax M3.1 Flash Free",
       "terms_verified": false,
@@ -84,7 +84,7 @@
       "opencode/deepseek-v4.1-flash-free"
     ]
   },
-  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. All six ship disabled; the owner enables each one after reading the provider terms.",
+  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. Registry presence never enables a model; every requirement must be recorded explicitly.",
   "agent_separation": {
     "enabled": true,
     "scope": "same_branch_or_pr",

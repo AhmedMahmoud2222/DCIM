@@ -22,6 +22,7 @@ ALL = set(EXPECTED)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
         'opencode/minimax-m3.1-flash-free')
+SHIPPED_OWNER_APPROVED = {'opencode/mimo-v2.6-flash-free'}
 
 
 def enable(registry, *model_ids):
@@ -32,7 +33,8 @@ def enable(registry, *model_ids):
     return registry
 
 
-# Test-only registry: the shipped one has every model disabled until the owner reviews terms.
+# Test-only registry with four fully eligible models. The shipped registry stays fail-closed
+# whenever an owner-reviewed model has no supported healthy status.
 ENABLED = enable(REGISTRY, *FOUR)
 
 
@@ -62,15 +64,33 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(router.RoutingError):
             router.load_registry(registry)
 
-    def test_shipped_registry_enables_no_model_until_owner_review(self):
+    def test_shipped_registry_distinguishes_owner_approved_models_without_enabling_unhealthy_ones(self):
         for model_id, meta in REGISTRY['models'].items():
-            self.assertIs(meta['terms_verified'], False, model_id)
-            self.assertIs(meta['repo_code_approved'], False, model_id)
+            if model_id in SHIPPED_OWNER_APPROVED:
+                self.assertIs(meta['terms_verified'], True, model_id)
+                self.assertIs(meta['repo_code_approved'], True, model_id)
+                review = meta['terms_review']
+                self.assertEqual(set(review), {'reviewed_by', 'date', 'source'}, model_id)
+                self.assertTrue(all(isinstance(value, str) and value.strip()
+                                    for value in review.values()), model_id)
+            else:
+                self.assertIs(meta['terms_verified'], False, model_id)
+                self.assertIsNone(meta['terms_review'], model_id)
+                self.assertIs(meta['repo_code_approved'], False, model_id)
             self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
             self.assertTrue(router.blockers(meta), model_id)
         for task in ('fix a typo', 'new api endpoint', 'update the react component'):
             with self.assertRaises(router.RoutingError, msg=task):
                 router.route(task, REGISTRY, ALL)
+
+    def test_registry_presence_never_authorizes_a_model(self):
+        registry = copy.deepcopy(REGISTRY)
+        model = 'opencode/nemotron-3-ultra-free'
+        registry['models'][model] = {'label': 'Nemotron 3 Ultra Free'}
+        router.load_registry(registry)
+        self.assertTrue(router.blockers(registry['models'][model]))
+        with self.assertRaises(router.RoutingError):
+            router.route('audit the architecture across modules', registry, {model})
 
     def test_every_requirement_is_individually_mandatory(self):
         base = enable(REGISTRY, *FOUR)
@@ -80,6 +100,8 @@ class RegistryTests(unittest.TestCase):
             'terms_verified': lambda m: m.update(terms_verified=False),
             'terms_review_missing': lambda m: m.update(terms_review=None),
             'terms_review_incomplete': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '', 'source': 'x'}),
+            'terms_review_wrong_schema': lambda m: m.update(terms_review={'reviewer': 'owner', 'date': '2026-10-21',
+                                                                         'source': 'https://opencode.ai/docs/zen'}),
             'repo_code_approved': lambda m: m.update(repo_code_approved=False),
             'operational_status': lambda m: m.update(operational_status='degraded'),
         }

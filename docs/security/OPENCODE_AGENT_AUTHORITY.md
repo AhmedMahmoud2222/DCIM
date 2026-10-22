@@ -130,7 +130,7 @@ Registry: `.github/opencode/model-registry.json`. The router hard-codes the six 
 | Approved for repository code | `repo_code_approved: true`, set by the owner |
 | Operationally healthy | `operational_status: "healthy"`, set by the owner; no automated health probe exists |
 
-All six models ship with every requirement unmet except catalog presence, so the router stops before any model call until the owner enables models. A free price does not enable a model, including Nemotron. There is no paid fallback: a chain has at most three registered free entries and the run stops if none qualifies.
+Registry presence never enables a model. MiMo-V2.6-Flash Free currently records the owner's terms review and repository-code approval, but remains ineligible while operational health is `unknown`; the other five models remain unreviewed and disabled. A free price does not enable a model, including Nemotron. There is no paid fallback: a chain has at most three registered free entries and the run stops if none qualifies.
 
 Catalog: all six IDs appear under provider `opencode` at zero cost in OpenCode's bundled model snapshot (anomalyco/opencode `50c5fce`, 2026-10-20), served from `https://opencode.ai/inference/openai/v1`. The workflow lists models from `.../inference/openai/v1/models` first and falls back to `/zen/v1/models`, which OpenCode's gateway still routes (`inference-proxy.ts`). Neither endpoint has been called with a real key.
 
