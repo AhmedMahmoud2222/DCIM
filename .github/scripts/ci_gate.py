@@ -126,7 +126,7 @@ def pr_paths(base: str, head: str) -> list[str] | None:
         return None
     diff = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", merge_base.stdout.strip(), head],
                           capture_output=True, text=True, check=False)
-    if diff.returncode != 0:
+    if diff.returncode != 0 or (diff.stdout and not diff.stdout.endswith("\0")):
         return None
     return [path for path in diff.stdout.split("\0") if path]
 

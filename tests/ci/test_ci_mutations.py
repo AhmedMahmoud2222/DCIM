@@ -19,6 +19,7 @@ from ci_support import (
     gate_mismatches,
     load_module,
     load_workflow,
+    parser_mismatches,
     policy_mismatches,
     route_step_mismatches,
     router_mismatches,
@@ -63,6 +64,8 @@ SCOPE_MUTANTS = (
     ('if level == "full":\n        return []', 'if level != "fast":\n        return []'),
     ("errors = scope_errors(level, paths)", "errors = []"),
     ('"git", "diff", "--no-renames",', '"git", "diff",'),
+    ('if diff.returncode != 0 or (diff.stdout and not diff.stdout.endswith("\\0")):',
+     "if diff.returncode != 0:"),
 )
 
 GATE_MUTANTS = (
@@ -221,7 +224,8 @@ class MutationTests(unittest.TestCase):
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "ci_gate.py"
                 path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
-                self.assertNotEqual(scope_mismatches(load_module("ci_gate", path)), [], "mutant survived")
+                module = load_module("ci_gate", path)
+                self.assertNotEqual(scope_mismatches(module) + parser_mismatches(module), [], "mutant survived")
 
     def test_workflow_mutants_are_killed(self):
         original = load_workflow()

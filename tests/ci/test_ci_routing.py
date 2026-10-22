@@ -15,6 +15,7 @@ from ci_support import (
     WORKERS,
     gate_mismatches,
     load_module,
+    parser_mismatches,
     policy_mismatches,
     route_needs,
     router_mismatches,
@@ -72,6 +73,10 @@ class GateTests(unittest.TestCase):
     def test_gate_diffs_the_pr_itself(self):
         # Review P1-07: a PR that changes the CI controls can never pass with fast or component.
         self.assertEqual(scope_mismatches(gate), [])
+
+    def test_gate_rejects_malformed_diff_output(self):
+        # Review P2 (b71ca2d): a git diff that exits 0 with output that is not NUL-terminated is incomplete.
+        self.assertEqual(parser_mismatches(gate), [])
 
     def test_gate_command_exit_codes(self):
         self.assertEqual(self.run_gate("backend", route_needs("full", set(WORKERS))).returncode, 0)

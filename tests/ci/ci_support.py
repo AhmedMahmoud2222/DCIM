@@ -647,3 +647,23 @@ def scope_mismatches(gate_module) -> list[str]:
             if (result.returncode == 0) != expected:
                 mismatches.append(f"{name}: exit {result.returncode}: {result.stdout.strip()[-200:]}")
     return mismatches
+
+
+def parser_mismatches(gate_module) -> list[str]:
+    """Fault injection: git exits 0 but its output is malformed. pr_paths must give None."""
+    from unittest import mock
+
+    merge_base = subprocess.CompletedProcess([], 0, stdout="c" * 40 + "\n", stderr="")
+    mismatches = []
+    for name, stdout, expected in (
+        ("not NUL-terminated", "docs/a.md", None),
+        ("last path cut off", "docs/a.md\0.github/workflows/ci", None),
+        ("well formed", "docs/a.md\0frontend/x.ts\0", ["docs/a.md", "frontend/x.ts"]),
+        ("empty diff", "", []),
+    ):
+        diff = subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+        with mock.patch.object(gate_module.subprocess, "run", side_effect=[merge_base, diff]):
+            got = gate_module.pr_paths("a" * 40, "b" * 40)
+        if got != expected:
+            mismatches.append(f"{name}: pr_paths returned {got!r}, expected {expected!r}")
+    return mismatches
