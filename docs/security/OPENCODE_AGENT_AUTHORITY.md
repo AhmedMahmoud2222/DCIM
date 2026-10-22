@@ -1,4 +1,4 @@
-# OpenCode agent authority (v6.0)
+# OpenCode agent authority (v6.1)
 
 Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/`, `tests/deployment/opencode_validation/` and `.github/workflows/opencode-security-validation.yml`. Delivered through PR #180.
 
@@ -46,6 +46,9 @@ The previous integration ran `dceoy/opencode-action`, which runs its own commit 
 - every `step_finish` reason is `tool-calls` (and the step ran at least one tool) or the single final `stop` (with no tool call in that step)
 - no `error` event anywhere, no tool call left pending
 - the transcript ends in a supported termination (`stop`)
+- no process of the agent account survives the run (guard v3.1)
+
+After every run, successful or not, the guard kills every process of the agent account (`sudo -n pkill -KILL -u ocagent`) and proves none is left (`sudo -n pgrep -u ocagent` finds nothing), retrying up to ten times. A survivor (`agent_processes_survived`) or a check that cannot run (`agent_process_check_failed:N`) fails the run, so nothing is collected or published. This closes Codex P1 [r4338780471](https://github.com/AhmedMahmoud2222/DCIM/pull/180#discussion_r4338780471): a process an agent tool detached could outlive OpenCode and keep writing to the working tree while the collector read it. Matching by account is safe because the account exists only for the job on a disposable runner. `pgrep` runs through sudo so that a restricted `/proc` cannot hide a survivor. The implementer and the reviewer jobs both run through the guard. A real test starts a detached writer as the agent account, reaps it with the production function and shows the file stops growing.
 
 A valid transcript shows that the run ended normally. It does not show that the change is correct; CI and review decide that.
 
@@ -214,7 +217,7 @@ The test infrastructure follows architecture proposal v1.0 with addendum v1.1 an
 
 **Isolation.**
 - Each job checks out `github.event.pull_request.head.sha`, the exact head at label time, not GitHub's merge commit.
-- The control run and each of the 78 mutants run in separate fresh `ubuntu-24.04` VMs, with no job containers and no caches. Mutant jobs start only after the control passes.
+- The control run and each of the 84 mutants run in separate fresh `ubuntu-24.04` VMs, with no job containers and no caches. Mutant jobs start only after the control passes.
 - **Control run:** the suite (all `test_opencode_*.py`, privileged and end-to-end included, nothing skipped) must pass completely on a disposable host. Otherwise there is no verdict.
 - **Mutant job steps:**
   1. Apply one inventory entry (`mutants.py apply`). The snippet must occur once, the result must compile, and the change must be exactly the intended one.
@@ -236,7 +239,7 @@ The test infrastructure follows architecture proposal v1.0 with addendum v1.1 an
 - A final job, which runs no mutated code, reads the verdicts as data.
 - It requires a passed control and exactly the inventory's ID set: no missing, duplicate, extra or malformed results.
 - It requires one run identity across all results: PR, head, base, run ID, run attempt, and the hashes of the inventory, both manifests and all validator files including the workflow.
-- It passes only with 78 of 78 `CAUGHT`. Results are bound to that head; any later push makes them stale.
+- It passes only with 84 of 84 `CAUGHT`. Results are bound to that head; any later push makes them stale.
 
 **Credentials.**
 - Both test workflows declare `permissions: {}` at the top and `contents: read` per job. They use no secrets, OIDC, environments or write permissions, and every checkout sets `persist-credentials: false` (enforced by `test_opencode_validation.py`).
@@ -248,7 +251,7 @@ The test infrastructure follows architecture proposal v1.0 with addendum v1.1 an
 |---|---|---|
 | `strict_cleanup.py`, `test_strict_cleanup.py` (openat2/statx deletion, mountinfo parser, `/proc` scanner, root helper) | host-safety code for deleting what mutated code touched on a long-lived host; the disposable VM replaces it | nothing to keep: it tested only itself (37 harness mutants retired) |
 | `account_lease.py`, `test_account_lifecycle.py` | shared test-account leasing across parallel suites on one host | `create_agent_account()` on a disposable host (11 harness mutants retired) |
-| `mutation_check.py`, `ns_run.py` (namespaced root runner, process termination) | one VM per mutant replaces namespaces, cleanup and process management | `opencode_validation/`; the 78 production mutants carried over unchanged (32 harness mutants retired) |
+| `mutation_check.py`, `ns_run.py` (namespaced root runner, process termination) | one VM per mutant replaces namespaces, cleanup and process management | `opencode_validation/`; the 78 production mutants carried over unchanged, 6 guard mutants added in v6.1 (32 harness mutants retired) |
 | mount-probe, mountinfo-decoding, temp-dir and cleanup-guarantee test classes in `test_opencode_runtime.py` | they tested the removed helpers | `MountHelperTests` (production `mount_readonly` with a recording runner) and `RealMountTests` (real bind, remount, failure and CLI on a disposable host) |
 | 8 harness mutants of runtime and sandbox test helpers | their targets are gone | nothing to keep |
 
@@ -274,7 +277,7 @@ Acceptance of an exact head requires every item below, with GitHub evidence on t
 10. The guard rejects every failing transcript fixture and accepts only the success fixtures.
 11. Publication refuses a forged baseline, a non-descending head, stale reviews and unsigned commits, posts COMMENT reviews only, and records ambiguous outcomes.
 12. Only an authorized commenter triggers the gate; per-job least privilege; actions pinned to full SHAs.
-13. One owner-requested validation run whose recorded head equals the accepted head: control passed, the aggregate shows 78 of 78 `CAUGHT` from separate jobs, and the validator and inventory hashes match the reviewed versions.
+13. One owner-requested validation run whose recorded head equals the accepted head: control passed, the aggregate shows every inventory mutant (84 at v6.1) `CAUGHT` from separate jobs, and the validator and inventory hashes match the reviewed versions.
 14. `tests/` contains no custom host-safety subsystem (`ComplexityBudgetTests`).
 15. The change set contains no merge, deployment, OpenCode activation or credential provisioning.
 16. Every `actions/checkout` in the OpenCode and test workflows sets `persist-credentials: false`; no test or validation job has a write permission, OIDC or a secret.

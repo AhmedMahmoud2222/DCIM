@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the sandboxed agent and decide whether generation truly succeeded (guard v3.0).
+"""Run the sandboxed agent and decide whether generation truly succeeded (guard v3.1).
 
 Uses `opencode run --format json`, which only generates in the working tree: it makes
 no commit, push, PR or comment. Generation counts as successful only when ALL hold:
@@ -7,8 +7,13 @@ no commit, push, PR or comment. Generation counts as successful only when ALL ho
   - every stdout line parsed as a JSON event
   - no `error` event was emitted
   - at least one `step_finish` event arrived and the last one has reason "stop"
-Anything else (provider error, timeout, crash, truncated or tool-call-pending output)
-is a failure, and the caller must not publish.
+  - no process of the agent account is left once OpenCode has exited
+Anything else (provider error, timeout, crash, truncated or tool-call-pending output, or an
+agent process that survives) is a failure, and the caller must not publish.
+
+After every run, successful or not, every process of the agent account is killed and the
+guard proves none is left before it reports. A detached process started by an agent tool
+could otherwise keep writing to the working tree while the next step collects it.
 
 This script runs as the runner user; the agent runs as a different OS user and cannot
 modify it or its result file.
@@ -25,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 PREFACE = (
     'You are working in a sandboxed copy of a repository. Make the requested change by editing '
@@ -44,6 +50,8 @@ REVIEW_PREFACE = (
     '"verification": [{"command": "...", "result": "..."}]}. Never approve the change. Focus:\n'
 )
 AGENT_USER = 'ocagent'
+REAP_ATTEMPTS = 10
+REAP_PAUSE = 0.5
 SESSION_RE = re.compile(r'^[A-Za-z0-9_-]{6,80}$')
 
 
@@ -162,6 +170,22 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
     return 'success', ''
 
 
+def reap_agent_processes() -> str:
+    """Kill every process of the agent account and prove none is left: '' when none is, else the failure reason.
+
+    The account exists only for this job on a disposable runner, so matching by UID cannot reach another
+    user's process. pgrep runs through sudo so that a restricted /proc cannot hide a survivor."""
+    for _ in range(REAP_ATTEMPTS):
+        subprocess.run(['sudo', '-n', 'pkill', '-KILL', '-u', AGENT_USER], check=False, capture_output=True)
+        left = subprocess.run(['sudo', '-n', 'pgrep', '-u', AGENT_USER], check=False, capture_output=True, text=True)
+        if left.returncode == 1:                     # pgrep: no process matched
+            return ''
+        if left.returncode != 0:
+            return f'agent_process_check_failed:{left.returncode}'
+        time.sleep(REAP_PAUSE)
+    return 'agent_processes_survived'
+
+
 def build_command(model: str, config: str, home: str, workdir: str, timeout_min: int, task: str,
                   mode: str = 'implement') -> list[str]:
     env = {
@@ -196,9 +220,11 @@ def main(argv: list[str]) -> int:
         if completed.stderr.strip():
             print('agent stderr (first 2000 chars):', completed.stderr[:2000])
     except subprocess.TimeoutExpired:
-        subprocess.run(['sudo', '-n', 'pkill', '-KILL', '-u', AGENT_USER], check=False)
         exit_code, timed_out = None, True
+    survivor = reap_agent_processes()                  # on every path, before anything is reported or collected
     status, reason = evaluate(lines, exit_code, timed_out)
+    if survivor:
+        status, reason = 'failed', survivor
     session = extract_session(lines) if status == 'success' else ''
     if status == 'success' and not session:
         status, reason = 'failed', 'no_session_identity'

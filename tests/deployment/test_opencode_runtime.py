@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -30,6 +31,7 @@ fsisolate = importlib.import_module('opencode_fsisolate')
 publish = importlib.import_module('opencode_publish')
 sandbox = importlib.import_module('opencode_sandbox')
 collect = importlib.import_module('opencode_collect')
+guard = importlib.import_module('opencode_guard')
 
 AGENT = 'ocprobe'
 DISPOSABLE = os.environ.get('OPENCODE_DISPOSABLE_HOST') == '1'
@@ -522,6 +524,34 @@ class RuntimeFilesystemTests(unittest.TestCase):
             actual = as_agent(sys.executable, '-c', code)
             self.assertEqual(predicted.returncode == 0, expect_clean, predicted.stdout)
             self.assertEqual('CLEAN' in actual.stdout, expect_clean, actual.stdout + actual.stderr)
+
+    def test_a_detached_agent_process_is_killed_and_proven_gone_before_collection(self):
+        """Codex P1 r4338780471: a process an agent tool detaches outlives OpenCode and keeps writing to the tree.
+        The guard's reap kills every process of the agent account and returns '' only when none is left."""
+        work = os.path.join(self.base, 'work')
+        priv_dir(work, AGENT)
+        target = os.path.join(work, 'late-write.txt')
+        code = ('import os, sys, time\n'
+                'if os.fork():\n    os._exit(0)\n'                       # the direct child exits, like OpenCode
+                'os.setsid()\n'
+                'null = os.open(os.devnull, os.O_RDWR)\n'
+                'for fd in (0, 1, 2):\n    os.dup2(null, fd)\n'           # release the launcher's pipes
+                'while True:\n    open(sys.argv[1], "a").write("x")\n    time.sleep(0.05)\n')
+        launcher = as_agent(sys.executable, '-c', code, target)
+        self.assertEqual(launcher.returncode, 0, launcher.stderr)
+        for _ in range(100):
+            if os.path.exists(target) and os.path.getsize(target) > 0:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail('the detached writer never started')
+        self.assertEqual(subprocess.run([*PRIV, 'pgrep', '-u', AGENT], capture_output=True).returncode, 0)
+        with unittest.mock.patch.object(guard, 'AGENT_USER', AGENT):
+            self.assertEqual(guard.reap_agent_processes(), '')
+        self.assertEqual(subprocess.run([*PRIV, 'pgrep', '-u', AGENT], capture_output=True).returncode, 1)
+        size = os.path.getsize(target)
+        time.sleep(0.5)
+        self.assertEqual(os.path.getsize(target), size, 'the agent process kept writing after the reap')
 
     def test_collector_refuses_a_worktree_the_agent_could_swap(self):
         scratch = temp_dir(self, 'ocfs-link-')

@@ -280,7 +280,25 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn('--auto', run)
         self.assertNotIn('--dangerously-skip-permissions', run)
 
-    def run_main(self, completed=None, raises=None):
+    def run_main(self, completed=None, raises=None, survivors=0, pgrep_error=None):
+        """Run guard.main with the agent run faked. `survivors` is how many pgrep checks still find an agent process."""
+        calls, left = [], [survivors]
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append(list(cmd))
+            if cmd[:3] == ['sudo', '-n', 'pkill']:
+                return mock.Mock(returncode=0)
+            if cmd[:3] == ['sudo', '-n', 'pgrep']:
+                if pgrep_error is not None:
+                    return mock.Mock(returncode=pgrep_error, stdout='', stderr='')
+                if left[0] > 0:
+                    left[0] -= 1
+                    return mock.Mock(returncode=0, stdout='4242\n', stderr='')
+                return mock.Mock(returncode=1, stdout='', stderr='')
+            if raises:
+                raise raises
+            return completed
+
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp, 'c.json')
             config.write_text('{}')
@@ -288,12 +306,10 @@ class GuardTests(unittest.TestCase):
             old = dict(os.environ)
             try:
                 os.environ.update({'TASK': 'do it', 'GITHUB_OUTPUT': str(out)})
-                with mock.patch.object(guard.subprocess, 'run') as run:
-                    if raises:
-                        run.side_effect = [raises, mock.Mock(returncode=0)]
-                    else:
-                        run.return_value = completed
+                with mock.patch.object(guard.subprocess, 'run', side_effect=fake_run), \
+                        mock.patch.object(guard.time, 'sleep'):
                     code = guard.main(['g', str(result), 'opencode/x-free', str(config), '/h', '/w', '25'])
+                self.calls = calls
                 return code, json.loads(result.read_text()), out.read_text()
             finally:
                 os.environ.clear()
@@ -322,6 +338,35 @@ class GuardTests(unittest.TestCase):
         code, result, out = self.run_main(raises=subprocess.TimeoutExpired('x', 1))
         self.assertEqual((code, result['status'], result['reason']), (1, 'failed', 'timeout'))
         self.assertIn('generation=failed', out)
+        self.assertIn(['sudo', '-n', 'pkill', '-KILL', '-u', 'ocagent'], self.calls)
+
+    def test_every_agent_process_is_killed_and_proven_gone_after_a_successful_run(self):
+        ok = mock.Mock(stdout='\n'.join(fixture_lines('success_edit')), stderr='', returncode=0)
+        code, result, _out = self.run_main(ok)
+        self.assertEqual((code, result['status']), (0, 'success'))
+        agent_run = next(i for i, c in enumerate(self.calls) if 'opencode' in c)
+        after = self.calls[agent_run + 1:]
+        self.assertEqual(after[0], ['sudo', '-n', 'pkill', '-KILL', '-u', 'ocagent'])
+        self.assertEqual(after[1], ['sudo', '-n', 'pgrep', '-u', 'ocagent'])       # through sudo: /proc may be restricted
+
+    def test_a_surviving_agent_process_fails_even_a_clean_transcript(self):
+        ok = mock.Mock(stdout='\n'.join(fixture_lines('success_edit')), stderr='', returncode=0)
+        code, result, out = self.run_main(ok, survivors=100)
+        self.assertEqual((code, result['status'], result['reason']), (1, 'failed', 'agent_processes_survived'))
+        self.assertEqual(result['session_id'], '')
+        self.assertIn('generation=failed', out)
+        self.assertEqual(sum(1 for c in self.calls if c[:3] == ['sudo', '-n', 'pkill']), guard.REAP_ATTEMPTS)
+
+    def test_a_process_that_dies_on_a_later_round_is_accepted(self):
+        ok = mock.Mock(stdout='\n'.join(fixture_lines('success_edit')), stderr='', returncode=0)
+        code, result, _out = self.run_main(ok, survivors=2)
+        self.assertEqual((code, result['status']), (0, 'success'))
+
+    def test_a_process_check_that_cannot_run_is_a_failure_not_a_pass(self):
+        ok = mock.Mock(stdout='\n'.join(fixture_lines('success_edit')), stderr='', returncode=0)
+        for status in (2, 3, 127):
+            code, result, _out = self.run_main(ok, pgrep_error=status)
+            self.assertEqual((code, result['status'], result['reason']), (1, 'failed', f'agent_process_check_failed:{status}'))
 
     def test_review_mode_requires_a_session_identity_and_writes_the_final_text(self):
         with tempfile.TemporaryDirectory() as tmp:
