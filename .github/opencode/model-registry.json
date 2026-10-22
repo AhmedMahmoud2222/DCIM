@@ -17,13 +17,17 @@
       "repo_code_approved": false,
       "operational_status": "unknown"
     },
-    "opencode/mimo-v2.6-flash-free": {
-      "label": "MiMo-V2.6-Flash Free",
-      "terms_verified": false,
-      "terms_review": null,
-      "repo_code_approved": false,
-      "operational_status": "unknown"
-    },
+  "opencode/mimo-v2.6-flash-free": {
+  "label": "MiMo-V2.6-Flash Free",
+  "terms_verified": true,
+  "terms_review": {
+    "reviewer": "AhmedMahmoud2222",
+    "date": "2026-10-22",
+    "source": "https://opencode.ai/console/org_01M5H21CNR1HB93PPRR41TPSMS/models"
+  },
+  "repo_code_approved": true,
+  "operational_status": "healthy"
+},
     "opencode/minimax-m3.1-flash-free": {
       "label": "MiniMax M3.1 Flash Free",
       "terms_verified": false,
