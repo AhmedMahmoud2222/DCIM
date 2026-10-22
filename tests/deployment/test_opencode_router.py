@@ -23,6 +23,15 @@ REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://openc
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
         'opencode/minimax-m3.1-flash-free')
 SHIPPED_OWNER_APPROVED = {'opencode/mimo-v2.6-flash-free'}
+# One task per routing category, used to prove the shipped registry blocks every route.
+SHIPPED_TASKS = {
+    'small_fix': 'fix a typo in the README',
+    'general': 'make the dashboard smarter',
+    'backend': 'add an API endpoint with an alembic migration',
+    'frontend': 'adjust the React component css',
+    'analysis_large': 'audit the architecture across modules',
+    'triage': 'explain what does this do',
+}
 
 
 def enable(registry, *model_ids):
@@ -64,7 +73,12 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(router.RoutingError):
             router.load_registry(registry)
 
-    def test_shipped_registry_distinguishes_owner_approved_models_without_enabling_unhealthy_ones(self):
+    def test_shipped_registry_keeps_owner_approved_unhealthy_models_disabled(self):
+        # Pinned shipped state: MiMo has owner terms evidence and repository-code approval, but
+        # no shipped model may route while operational health is unproven. Marking MiMo healthy
+        # requires recorded health evidence (health is a manual owner flag with no automated
+        # probe; see OPENCODE_AGENT_AUTHORITY.md, "Model eligibility") and an edit to this test
+        # in the same PR.
         for model_id, meta in REGISTRY['models'].items():
             if model_id in SHIPPED_OWNER_APPROVED:
                 self.assertIs(meta['terms_verified'], True, model_id)
@@ -73,23 +87,23 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(set(review), {'reviewed_by', 'date', 'source'}, model_id)
                 self.assertTrue(all(isinstance(value, str) and value.strip()
                                     for value in review.values()), model_id)
-                expected = ([] if meta['operational_status'] == 'healthy'
-                            else ['not marked operationally healthy'])
-                self.assertEqual(router.blockers(meta), expected, model_id)
+                self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
+                self.assertEqual(router.blockers(meta), ['not marked operationally healthy'], model_id)
             else:
                 self.assertIs(meta['terms_verified'], False, model_id)
                 self.assertIsNone(meta['terms_review'], model_id)
                 self.assertIs(meta['repo_code_approved'], False, model_id)
                 self.assertTrue(router.blockers(meta), model_id)
-        for task in ('fix a typo', 'new api endpoint', 'update the react component'):
-            category, _ = router.classify(task)
-            eligible = [model for model in REGISTRY['routes'][category]
-                        if not router.blockers(REGISTRY['models'][model])]
-            if eligible:
-                self.assertEqual(router.route(task, REGISTRY, ALL)['model'], eligible[0])
-            else:
-                with self.assertRaises(router.RoutingError, msg=task):
-                    router.route(task, REGISTRY, ALL)
+        self.assertEqual(
+            [model_id for model_id, meta in REGISTRY['models'].items() if not router.blockers(meta)],
+            [], 'the shipped registry must stay fail-closed')
+        self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
+        for category, task in SHIPPED_TASKS.items():
+            self.assertEqual(router.classify(task)[0], category, task)
+            self.assertTrue(all(router.blockers(REGISTRY['models'][model])
+                                for model in REGISTRY['routes'][category]), category)
+            with self.assertRaises(router.RoutingError, msg=task):
+                router.route(task, REGISTRY, ALL)
 
     def test_registry_presence_never_authorizes_a_model(self):
         registry = copy.deepcopy(REGISTRY)
