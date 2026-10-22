@@ -137,7 +137,8 @@ def valid_review_source(value: str) -> bool:
     except ValueError:
         pass
     labels = hostname.split('.')
-    return len(labels) > 1 and all(
+    valid_tld = re.fullmatch(r'[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', labels[-1])
+    return len(labels) > 1 and valid_tld is not None and all(
         re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
         for label in labels)
 

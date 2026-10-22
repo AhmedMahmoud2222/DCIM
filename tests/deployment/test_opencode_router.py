@@ -129,7 +129,9 @@ class RegistryTests(unittest.TestCase):
                        'https://example.com:bad', 'https://[', 'https://user@example.com',
                        'https://example.com./terms', 'https://example..com/terms',
                        'https://127.0.0.1/terms', 'https://10.0.0.1/terms',
-                       'https://169.254.169.254/latest/meta-data'):
+                       'https://169.254.169.254/latest/meta-data',
+                       'https://127.000.000.001/terms', 'https://0177.0.0.1/terms',
+                       'https://0x7f.0.0.1/terms'):
             registry = enable(REGISTRY, *FOUR)
             registry['models'][model]['terms_review']['source'] = source
             self.assertIn('terms not verified with recorded evidence',
