@@ -467,7 +467,7 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
             'python3 "$trusted/ci_router.py"' not in route_runs:
         errors.append("route job does not run the base-commit policy")
     policy_runs = " ".join(step.get("run", "") for step in jobs.get("ci-policy", {}).get("steps", []))
-    if "unittest discover -s tests/ci" not in policy_runs:
+    if policy_runs.strip() != "python3 -m pip install PyYAML==6.0.2 python3 -m unittest discover -s tests/ci -v":
         errors.append("ci-policy job does not run tests/ci")
     outputs = route.get("outputs", {})
     for key in ("level", "head-sha", "route"):

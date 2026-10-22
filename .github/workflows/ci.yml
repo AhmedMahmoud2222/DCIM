@@ -96,7 +96,7 @@ jobs:
       - name: Install the pinned YAML parser
         run: python3 -m pip install PyYAML==6.0.2
       - name: Run the CI routing, gate and mutation tests
-        run: python3 -m unittest discover -s tests/ci -t . -v
+        run: python3 -m unittest discover -s tests/ci -v
 
   backend-suite:
     needs: route
