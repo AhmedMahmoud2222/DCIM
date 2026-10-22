@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic model-health diagnostic (diagnostic v1.0).
+"""Synthetic model-health diagnostic (diagnostic v1.1).
 
 Reads the live OpenCode model catalog and performs minimal non-sensitive
 synthetic inference on two allowlisted free models. Records sanitized status
@@ -15,6 +15,9 @@ operational_status, never writes code, and never creates Draft PRs.
 
 Usage: model_health_diagnostic.py OUT_JSON
 Environment: OPENCODE_API_KEY (read from environment, never printed).
+
+Exit code: 0 only when the catalog is fetchable, both allowlisted models are
+present in the catalog, and both are healthy. Otherwise exit 1.
 """
 from __future__ import annotations
 
@@ -39,19 +42,65 @@ CATALOG_ENDPOINT = 'https://opencode.ai/inference/openai/v1/models'
 INFERENCE_ENDPOINT = 'https://opencode.ai/inference/openai/v1/chat/completions'
 REQUEST_TIMEOUT = 30  # seconds
 MAX_TOKENS = 5
+READ_CAP = 2_000_000  # bytes; larger responses are treated as truncated
+
+# Trusted host: only opencode.ai may receive the credential.
+TRUSTED_HOST = 'opencode.ai'
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that rejects every redirect to prevent credential leakage."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            newurl, code, f'redirect blocked to {newurl}', headers, fp
+        )
+
+
+def _build_opener() -> urllib.request.OpenerDirector:
+    """Build an opener that rejects redirects and verifies TLS by default."""
+    opener = urllib.request.build_opener()
+    # Remove the default HTTPRedirectHandler so credentials are never
+    # copied to a redirect target. Then install a handler that rejects
+    # every redirect before any request is made.
+    opener.handlers = [
+        h for h in opener.handlers
+        if not isinstance(h, urllib.request.HTTPRedirectHandler)
+    ]
+    opener.add_handler(_NoRedirect())
+    return opener
+
+
+_OPENER = _build_opener()
+
+
+def _assert_trusted(url: str) -> None:
+    """Reject any URL that is not https://opencode.ai."""
+    if not url.startswith('https://'):
+        raise urllib.error.URLError(f'non-https scheme blocked: {url[:80]}')
+    host = url[len('https://'):].split('/', 1)[0].split('?', 1)[0].split('#', 1)[0]
+    if host != TRUSTED_HOST:
+        raise urllib.error.URLError(f'untrusted host blocked: {host[:80]}')
 
 
 def http_get_json(url: str, key: str) -> object:
+    _assert_trusted(url)
     request = urllib.request.Request(
         url,
         headers={'Authorization': f'Bearer {key}',
                  'User-Agent': 'dcim-model-health-diagnostic'},
     )
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
-        return json.loads(response.read(2_000_000))
+    with _OPENER.open(request, timeout=REQUEST_TIMEOUT) as response:
+        raw = response.read(READ_CAP + 1)
+        if len(raw) > READ_CAP:
+            raise urllib.error.HTTPError(
+                url, 0, 'response body exceeds read cap', response.headers, None
+            )
+        return json.loads(raw.decode('utf-8'))
 
 
 def http_post_json(url: str, key: str, model: str, prompt: str) -> dict:
+    _assert_trusted(url)
     body = json.dumps({
         'model': model,
         'messages': [{'role': 'user', 'content': prompt}],
@@ -67,9 +116,13 @@ def http_post_json(url: str, key: str, model: str, prompt: str) -> dict:
         },
         method='POST',
     )
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
-        raw = response.read(2_000_000).decode('utf-8')
-    return json.loads(raw)
+    with _OPENER.open(request, timeout=REQUEST_TIMEOUT) as response:
+        raw = response.read(READ_CAP + 1)
+        if len(raw) > READ_CAP:
+            raise urllib.error.HTTPError(
+                url, 0, 'response body exceeds read cap', response.headers, None
+            )
+        return json.loads(raw.decode('utf-8'))
 
 
 def classify_error(error: Exception) -> str:
@@ -83,7 +136,7 @@ def classify_error(error: Exception) -> str:
             return 'rate_limit'
         if error.code == 404:
             return 'model_not_available'
-        if 500 <= error.code < 600:
+        if 500 <= error.code < 600 or error.code == 0:
             return 'upstream_error'
         return f'http_{error.code}'
     if isinstance(error, urllib.error.URLError):
@@ -116,6 +169,34 @@ def fetch_catalog(key: str, get=http_get_json) -> set[str]:
     return extract_ids(payload)
 
 
+def _validate_healthy_response(response: dict, model: str) -> None:
+    """Require a well-formed completion response before marking healthy.
+
+    Raises ValueError with a sanitized message if the response is not a valid
+    completion for the requested model.
+    """
+    if not isinstance(response, dict):
+        raise ValueError('response is not a JSON object')
+    response_id = response.get('id')
+    if not isinstance(response_id, str) or not response_id:
+        raise ValueError('missing response id')
+    choices = response.get('choices')
+    if not isinstance(choices, list) or len(choices) == 0:
+        raise ValueError('missing or empty choices')
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise ValueError('choices[0] is not an object')
+    message = first.get('message')
+    if not isinstance(message, dict):
+        raise ValueError('missing message object')
+    content = message.get('content')
+    if not isinstance(content, str) or not content:
+        raise ValueError('missing or empty message content')
+    response_model = response.get('model')
+    if response_model != model:
+        raise ValueError(f'response model mismatch: expected {model}')
+
+
 def probe_model(key: str, model: str) -> dict:
     """Run one synthetic inference probe. Returns a sanitized status record."""
     record = {
@@ -133,13 +214,13 @@ def probe_model(key: str, model: str) -> dict:
     start = time.monotonic()
     try:
         response = http_post_json(INFERENCE_ENDPOINT, key, model, SYNTHETIC_PROMPT)
+        _validate_healthy_response(response, model)
         latency_ms = int((time.monotonic() - start) * 1000)
         record['status'] = 'healthy'
         record['latency_ms'] = latency_ms
         # Sanitized evidence only: a short hash of the response id, never content.
-        response_id = (response.get('id') or '') if isinstance(response, dict) else ''
-        if response_id:
-            record['response_id_hash'] = hashlib.sha256(response_id.encode()).hexdigest()[:12]
+        response_id = response.get('id') or ''
+        record['response_id_hash'] = hashlib.sha256(response_id.encode()).hexdigest()[:12]
     except Exception as error:  # noqa: BLE001 — classify any failure path
         latency_ms = int((time.monotonic() - start) * 1000)
         record['status'] = 'unhealthy'
@@ -171,19 +252,25 @@ def main(argv: list[str]) -> int:
             record['status'] = 'not_in_catalog'
         results.append(record)
 
+    healthy_count = sum(1 for r in results if r['status'] == 'healthy')
+    all_in_catalog = all(r['catalog_present'] for r in results)
+    all_healthy = healthy_count == len(results)
+    overall = 'healthy' if (all_in_catalog and all_healthy) else 'unhealthy'
+
     report = {
-        'diagnostic_version': '1.0',
+        'diagnostic_version': '1.1',
         'catalog_endpoint': CATALOG_ENDPOINT,
         'catalog_model_count': len(catalog_ids),
         'models_tested': len(results),
+        'healthy_count': healthy_count,
+        'overall': overall,
         'results': results,
     }
     with open(argv[1], 'w', encoding='utf-8') as handle:
         json.dump(report, handle, indent=2)
-    print(f'diagnostic: {len(results)} model(s) probed, '
-          f'{sum(1 for r in results if r["status"] == "healthy")} healthy, '
-          f'{sum(1 for r in results if r["status"] == "unhealthy")} unhealthy')
-    return 0
+    print(f'diagnostic: {healthy_count}/{len(results)} model(s) healthy, '
+          f'overall={overall}')
+    return 0 if overall == 'healthy' else 1
 
 
 if __name__ == '__main__':

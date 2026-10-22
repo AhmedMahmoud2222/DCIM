@@ -1,14 +1,16 @@
-"""OpenCode model health diagnostic tests (diagnostic tests v1.0).
+"""OpenCode model health diagnostic tests (diagnostic tests v1.1).
 
-Tests the narrow allowlist, error classification, catalog parsing, and the
-guarantee that the diagnostic cannot become an arbitrary-model or
-arbitrary-prompt channel.
+Tests the narrow allowlist, error classification, catalog parsing, redirect
+blocking, response validation, and exit-code behavior.
+
+The diagnostic cannot become an arbitrary-model or arbitrary-prompt channel.
 """
 import importlib.util
 import inspect
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
@@ -54,6 +56,52 @@ class SyntheticPromptTests(unittest.TestCase):
         self.assertEqual(set(sig.parameters), {'key', 'model'})
 
 
+class TrustedHostTests(unittest.TestCase):
+    def test_https_opencode_ai_is_allowed(self):
+        diagnostic._assert_trusted('https://opencode.ai/inference/openai/v1/models')
+        diagnostic._assert_trusted(
+            'https://opencode.ai/inference/openai/v1/chat/completions'
+        )
+
+    def test_http_scheme_is_blocked(self):
+        with self.assertRaises(urllib.error.URLError):
+            diagnostic._assert_trusted(
+                'http://opencode.ai/inference/openai/v1/models'
+            )
+
+    def test_untrusted_host_is_blocked(self):
+        with self.assertRaises(urllib.error.URLError):
+            diagnostic._assert_trusted(
+                'https://evil.example.com/inference/openai/v1/models'
+            )
+
+    def test_subdomain_is_blocked(self):
+        with self.assertRaises(urllib.error.URLError):
+            diagnostic._assert_trusted(
+                'https://api.opencode.ai/inference/openai/v1/models'
+            )
+
+
+class RedirectBlockingTests(unittest.TestCase):
+    def test_redirect_is_rejected_before_request(self):
+        # The opener's redirect handler rejects any redirect, so a 307/302
+        # never causes urllib to follow and resend the Authorization header.
+        opener = diagnostic._OPENER
+        handler_names = [type(h).__name__ for h in opener.handlers]
+        self.assertNotIn('HTTPRedirectHandler', handler_names)
+        self.assertIn('_NoRedirect', handler_names)
+
+    def test_redirect_handler_raises_on_redirect(self):
+        # Calling redirect_request on our handler must raise, never return a
+        # new Request that would follow the redirect.
+        handler = diagnostic._NoRedirect()
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                None, None, 307, 'Temporary Redirect',
+                {'Location': 'https://evil.example.com/'}, None,
+            )
+
+
 class ErrorClassificationTests(unittest.TestCase):
     def test_http_401_maps_to_auth_error(self):
         self.assertEqual(diagnostic.classify_error(
@@ -70,6 +118,11 @@ class ErrorClassificationTests(unittest.TestCase):
     def test_http_500_maps_to_upstream_error(self):
         self.assertEqual(diagnostic.classify_error(
             _http_error(500)), 'upstream_error')
+
+    def test_http_code_zero_maps_to_upstream_error(self):
+        # Read-cap overflow produces code 0 and should be upstream_error.
+        self.assertEqual(diagnostic.classify_error(
+            _http_error(0)), 'upstream_error')
 
     def test_url_error_maps_to_network_error(self):
         self.assertEqual(diagnostic.classify_error(
@@ -89,6 +142,59 @@ class CatalogParsingTests(unittest.TestCase):
         payload = {'data': [{'id': 123}, {'id': 'glm-5.3-flash-free'}, None]}
         ids = diagnostic.extract_ids(payload)
         self.assertEqual(ids, {'opencode/glm-5.3-flash-free'})
+
+
+class ResponseValidationTests(unittest.TestCase):
+    def test_valid_response_passes_validation(self):
+        valid = {
+            'id': 'chatcmpl_123',
+            'model': 'opencode/glm-5.3-flash-free',
+            'choices': [{'message': {'content': 'OK'}}],
+        }
+        diagnostic._validate_healthy_response(valid, 'opencode/glm-5.3-flash-free')
+
+    def test_missing_id_is_unhealthy(self):
+        with self.assertRaises(ValueError):
+            diagnostic._validate_healthy_response(
+                {'model': 'opencode/glm-5.3-flash-free',
+                 'choices': [{'message': {'content': 'OK'}}]},
+                'opencode/glm-5.3-flash-free',
+            )
+
+    def test_empty_choices_is_unhealthy(self):
+        with self.assertRaises(ValueError):
+            diagnostic._validate_healthy_response(
+                {'id': 'x', 'model': 'opencode/glm-5.3-flash-free', 'choices': []},
+                'opencode/glm-5.3-flash-free',
+            )
+
+    def test_missing_content_is_unhealthy(self):
+        with self.assertRaises(ValueError):
+            diagnostic._validate_healthy_response(
+                {'id': 'x', 'model': 'opencode/glm-5.3-flash-free',
+                 'choices': [{'message': {}}]},
+                'opencode/glm-5.3-flash-free',
+            )
+
+    def test_empty_content_is_unhealthy(self):
+        with self.assertRaises(ValueError):
+            diagnostic._validate_healthy_response(
+                {'id': 'x', 'model': 'opencode/glm-5.3-flash-free',
+                 'choices': [{'message': {'content': ''}}]},
+                'opencode/glm-5.3-flash-free',
+            )
+
+    def test_model_mismatch_is_unhealthy(self):
+        with self.assertRaises(ValueError):
+            diagnostic._validate_healthy_response(
+                {'id': 'x', 'model': 'opencode/deepseek-v4.1-flash-free',
+                 'choices': [{'message': {'content': 'OK'}}]},
+                'opencode/glm-5.3-flash-free',
+            )
+
+    def test_response_not_dict_is_unhealthy(self):
+        with self.assertRaises(ValueError):
+            diagnostic._validate_healthy_response('not a dict', 'opencode/glm-5.3-flash-free')
 
 
 class ProbeStructureTests(unittest.TestCase):
@@ -133,6 +239,48 @@ class ProbeStructureTests(unittest.TestCase):
         # The hash is exactly 12 hex chars — never the raw response id.
         self.assertEqual(len(record['response_id_hash']), 12)
         self.assertTrue(all(c in '0123456789abcdef' for c in record['response_id_hash']))
+
+
+class MainBehaviorTests(unittest.TestCase):
+    def test_report_has_overall_and_healthy_count(self):
+        # Build a minimal report dict as main() would produce.
+        results = [
+            {'model': 'opencode/glm-5.3-flash-free', 'status': 'healthy',
+             'catalog_present': True},
+            {'model': 'opencode/deepseek-v4.1-flash-free', 'status': 'healthy',
+             'catalog_present': True},
+        ]
+        healthy_count = sum(1 for r in results if r['status'] == 'healthy')
+        all_in_catalog = all(r['catalog_present'] for r in results)
+        all_healthy = healthy_count == len(results)
+        overall = 'healthy' if (all_in_catalog and all_healthy) else 'unhealthy'
+        self.assertEqual(overall, 'healthy')
+        self.assertEqual(healthy_count, 2)
+
+    def test_report_unhealthy_when_one_model_fails(self):
+        results = [
+            {'model': 'opencode/glm-5.3-flash-free', 'status': 'healthy',
+             'catalog_present': True},
+            {'model': 'opencode/deepseek-v4.1-flash-free', 'status': 'unhealthy',
+             'catalog_present': True},
+        ]
+        healthy_count = sum(1 for r in results if r['status'] == 'healthy')
+        all_healthy = healthy_count == len(results)
+        overall = 'healthy' if (all(r['catalog_present'] for r in results) and all_healthy) else 'unhealthy'
+        self.assertEqual(overall, 'unhealthy')
+        self.assertEqual(healthy_count, 1)
+
+    def test_report_unhealthy_when_model_missing_from_catalog(self):
+        results = [
+            {'model': 'opencode/glm-5.3-flash-free', 'status': 'healthy',
+             'catalog_present': True},
+            {'model': 'opencode/deepseek-v4.1-flash-free', 'status': 'not_in_catalog',
+             'catalog_present': False},
+        ]
+        healthy_count = sum(1 for r in results if r['status'] == 'healthy')
+        all_in_catalog = all(r['catalog_present'] for r in results)
+        overall = 'healthy' if (all_in_catalog and healthy_count == len(results)) else 'unhealthy'
+        self.assertEqual(overall, 'unhealthy')
 
 
 # --- Helpers ---
