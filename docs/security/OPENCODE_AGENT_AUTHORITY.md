@@ -1,8 +1,8 @@
-# OpenCode agent authority (v6.1)
+# OpenCode agent authority (v6.2)
 
 Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/`, `tests/deployment/opencode_validation/` and `.github/workflows/opencode-security-validation.yml`. Delivered through PR #180.
 
-Status: implemented; test infrastructure simplified in v6.0 (architecture proposal v1.0 to v1.2 on PR #180). Not run on GitHub-hosted runners with real secrets. Not accepted: exact-head independent review of this revision has not happened. Earlier heads (`29740c6`, `bc54f2e`) were rejected and are not evidence for this one.
+Status: implemented and merged through PR #180 (merge commit `83a83d8`, 2026-10-22); test infrastructure simplified in v6.0 (architecture proposal v1.0 to v1.2 on PR #180). Accepted at exact head `2a1aca3` against the checklist under Validation: CI passed on that SHA, including 38 of 38 required privileged tests with none skipped; validation run 39703229056 caught 84 of 84 mutants; the independent Codex review of that head found no major issues. The [acceptance report](https://github.com/AhmedMahmoud2222/DCIM/pull/180#issuecomment-6330964917) on PR #180 holds the evidence. Not run on GitHub-hosted runners with real secrets. The GitHub App gate and the model eligibility gate stay closed, with every registry model disabled, until the owner completes the setup and first activation below. Earlier heads (`29740c6`, `bc54f2e`) were rejected and are not evidence for this one.
 
 ## Review disposition (second review)
 
