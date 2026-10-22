@@ -1,117 +1,52 @@
-# Dependency-Aware Routing Matrix
+# CI routing matrix
 
-**Repository:** `AhmedMahmoud2222/DCIM`
-**Generated from:** `.github/scripts/ci_policy.py` (policy v1.0) and
-`.github/scripts/ci_router.py` (router v1.0)
-**Enforced by:** `.github/workflows/ci.yml` (Fast CI → Component CI / Full CI)
+Source: `.github/scripts/ci_policy.py` (policy version 2). The router loads the policy
+from the PR base commit. `tests/ci/ci_support.py` (`POLICY_CASES`) checks each row below.
 
-## 1. Classification rules (first match wins)
+## Rules, in order
 
-Rules are evaluated in the order listed. Full-risk rules are placed before the broader
-component rules they contain, so any Full-risk change wins regardless of component.
-A path matching no rule escalates to Full CI (fail-closed: unknown paths never route to
-Fast CI).
+| Order | Path | Route |
+|---|---|---|
+| 1 | No changed paths, or a path that is empty, absolute or has `\` | full |
+| 2 | A path in `HIGH_RISK_PATHS`: `.github/`, `tests/`, `scripts/`, `backend/migrations/`, `backend/scripts/`, `backend/app/core/`, `backend/app/db/`, `backend/app/domain/auth/`, the auth, RBAC, authority and access-control modules, `backend/app/main.py`, `backend/app/api/deps.py`, dependency manifests, Dockerfiles, Compose files, `.env.example` | full |
+| 3 | A path with `auth`, `secur`, `rbac`, `permission`, `authority`, `privileg`, `crypt`, `secret`, `credential`, `password`, `token`, `session`, `sandbox`, `opencode`, `preflight`, `retention` or `audit` | full |
+| 4 | `docs/**` or a `*.md` file in the repository root | no worker |
+| 5 | `edge_collector/**` | `edge-collector`, `edge-interop`, `backend-suite` |
+| 6 | `backend/**` | `backend-suite`, `browser-e2e` |
+| 7 | `frontend/**` | `frontend-suite`, `browser-e2e` |
+| 8 | Any other path | full |
 
-| # | Path pattern | Level | Component(s) | Rationale |
-|---|--------------|-------|--------------|-----------|
-| 1 | `.github/workflows/` | Full | — | Changing CI itself must re-validate everything |
-| 2 | `.github/scripts/ci_policy.py` | Full | — | The classifier itself; changing it re-validates all |
-| 3 | `.github/scripts/ci_router.py` | Full | — | The classifier itself; changing it re-validates all |
-| 4 | `backend/migrations/` | Full | — | Schema changes run full PostgreSQL integration |
-| 5 | `backend/app/auth/` | Full | — | Authentication surface |
-| 6 | `backend/app/security/` | Full | — | Security surface |
-| 7 | `docker-compose.yml` | Full | — | Infrastructure |
-| 8 | `docker-compose.production.yml` | Full | — | Infrastructure |
-| 9 | `docker-compose.override.yml` | Full | — | Infrastructure |
-| 10 | `backend/Dockerfile` | Full | — | Infrastructure |
-| 11 | `frontend/Dockerfile` | Full | — | Infrastructure |
-| 12 | `scripts/deploy-docker-compose.sh` | Full | — | Deployment tooling |
-| 13 | `tests/deployment/` | Full | — | Deployment tooling regressions |
-| 14 | `backend/pyproject.toml` | Full | — | Shared (backend) dependency |
-| 15 | `frontend/package.json` | Full | — | Shared (frontend) dependency |
-| 16 | `frontend/package-lock.json` | Full | — | Shared (frontend) dependency |
-| 17 | `backend/app/models/` | Component | database-contracts | Shared DB contracts |
-| 18 | `backend/app/core/` | Component | database-contracts | Shared DB contracts |
-| 19 | `backend/app/infrastructure/` | Component | database-contracts | Shared DB contracts |
-| 20 | `backend/` | Component | backend | Backend component |
-| 21 | `backend/tests/` | Component | backend | Backend tests |
-| 22 | `frontend/` | Component | frontend | Frontend component |
-| 23 | `edge_collector/` | Component | edge-collector | Edge Collector component |
-| 24 | `.github/opencode/` | Component | opencode | OpenCode agent infra |
-| 25 | `.github/scripts/opencode_*` | Component | opencode | OpenCode agent infra |
-| 26 | `README.md` | Fast | — | Documentation only |
-| 27 | `docs/` | Fast | — | Documentation only |
-| 28 | `*.md` | Fast | — | Documentation only |
-| — | *(anything else)* | Full | — | Unknown path: fail-closed escalation |
+One full path makes the full route for the PR. Otherwise the route is the union of
+the workers of each path. A full route runs all six workers.
 
-## 2. Level precedence
+## Workers
 
-`Full > Component > Fast`. A change set's overall level is the maximum severity of its
-changed files:
+| Worker | Original job | Content |
+|---|---|---|
+| `backend-suite` | `backend` | PostgreSQL 16 and Redis 7, least-privilege roles, Alembic single head, ruff, mypy, migrations and round trip, retention hostile tests, extraction apply, real OCR, clamd tests, full pytest |
+| `frontend-suite` | `frontend` | npm audit, Vitest, typecheck, ESLint, build |
+| `backend-runtime-matrix` | same | The backend suite and the Edge suite on Python 3.12, 3.13 and 3.14 |
+| `edge-collector` | same | Edge Collector ruff and pytest |
+| `edge-interop` | same | SNMPv3 interoperability harness and results artifact |
+| `browser-e2e` | same | Isolated PostgreSQL and Redis, backend, Celery, Vite, Playwright |
 
-* Any Full-risk path → **Full CI** (matrix, Postgres/Redis, Docker Compose, Playwright E2E,
-  deployment tooling, security).
-* Else any Component-risk path → **Component CI** for the touched components.
-* Else (Fast only, or no changes) → **Fast CI** (lint, security baseline, migration
-  integrity).
+## Required checks
 
-## 3. Required checks (always preserved)
+| Check | Waits for | Fails when |
+|---|---|---|
+| `backend` | `route`, `ci-policy` and all six workers | a control job did not succeed, the route is invalid or for another SHA, a selected worker did not succeed, or a worker that is not selected failed or was cancelled |
+| `frontend` | `route`, `ci-policy`, `frontend-suite`, `browser-e2e` | the same rules for its scope |
 
-| Check | Always runs? | Depth |
-|-------|--------------|-------|
-| `backend` | Yes (`if: always()`) | Fast for low-risk; Full for high-risk |
-| `frontend` | Yes (no dependencies) | Full (already ~2 min) |
+## Examples
 
-`backend` and `frontend` are the preserved required status checks. They are never skipped,
-never cancelled as a side effect of Fast CI, and never reported green unless they
-actually completed successfully.
-
-## 4. Which CI level runs, by change
-
-| Change type | Example paths | CI levels run |
-|-------------|---------------|---------------|
-| README / docs only | `README.md`, `docs/ci/ROLLBACK.md` | Fast CI + `backend` (fast) + `frontend` |
-| Frontend source only | `frontend/src/App.tsx` | Fast CI + Component CI (frontend) + `backend` (fast) + `frontend` |
-| Backend API only | `backend/app/routes/catalog.py` | Fast CI + Component CI (backend) + `backend` (fast) + `frontend` |
-| OpenCode catalog only | `.github/opencode/runtime/package.json` | Fast CI + Component CI (opencode) + `backend` (fast) + `frontend` |
-| Edge Collector only | `edge_collector/snmp.py` | Fast CI + Component CI (edge-collector) + `backend` (fast) + `frontend` |
-| DB shared contract only | `backend/app/models/asset.py` | Fast CI + Component CI (database-contracts) + `backend` (fast) + `frontend` |
-| Migration | `backend/migrations/versions/0055_x.py` | Fast CI + **Full CI** |
-| Authentication | `backend/app/auth/login.py` | Fast CI + **Full CI** |
-| Security | `backend/app/security/rbac.py` | Fast CI + **Full CI** |
-| Shared dependency | `frontend/package-lock.json` | Fast CI + **Full CI** |
-| Workflow config | `.github/workflows/ci.yml` | Fast CI + **Full CI** |
-| Infrastructure | `docker-compose.yml` | Fast CI + **Full CI** |
-| Unknown path | `config/example.yaml` | Fast CI + **Full CI** (escalated) |
-| Detection failure | *(router error)* | Fast CI + **Full CI** (escalated) |
-
-When Full CI runs, component jobs are suppressed (Full CI is comprehensive), avoiding
-redundant validation.
-
-## 5. Validation summary per level
-
-**Fast CI (every PR):** router classification, ruff lint, Alembic single-head migration
-integrity, confidential preflight-report guard.
-
-**Component CI (affected components):**
-* backend — backend fast/full validation per risk
-* frontend — frontend unit tests, typecheck, eslint, build
-* edge-collector — Edge Collector lint + tests + SNMPv3 interop
-* database-contracts — Alembic single-head + Compose settings validation
-* opencode — CI policy/router compile + policy shape confirmation
-
-**Full CI (high-risk):** Python 3.12/3.13/3.14 matrix (install + backend suite + Edge
-Collector tests per version), Postgres/Redis integration, Alembic migrations + round trip,
-CAP_NET_RAW, retention hostile validation, extraction apply, Compose settings,
-`docker compose config`, frontend tests/typecheck, Playwright E2E, deployment tooling
-regressions (`check_workflows.py` + `tests/deployment` unit tests), real OCR + real scanner
-(clamd) coverage.
-
-## 6. Safeguards
-
-* Unknown paths → Full CI (never Fast CI).
-* Change-detection failure → Full CI (detection-failed output).
-* No false-green: component/Full CI require `needs.fast-ci.result == 'success'`; a failed
-  Fast CI does not mask into green.
-* Stale Full CI approvals prevented by `concurrency.cancel-in-progress` per branch.
-* All `uses:` actions pinned to full commit SHAs (supply-chain integrity).
+| Change | Workers |
+|---|---|
+| `README.md`, `docs/**` | none |
+| `frontend/src/App.tsx` | `frontend-suite`, `browser-e2e` |
+| `backend/app/application/alarm_service.py` | `backend-suite`, `browser-e2e` |
+| `edge_collector/edge_collector/snmp.py` | `edge-collector`, `edge-interop`, `backend-suite` |
+| `backend/app/domain/auth/models.py`, `backend/app/core/security.py` | all (full) |
+| `.github/scripts/opencode_sandbox.py`, `.github/workflows/ci.yml` | all (full) |
+| Rename `backend/app/domain/auth/x.py` to `docs/x.py` | all (full): the old path counts |
+| `Makefile` or any other unknown path | all (full) |
+| Push to `main`, `workflow_dispatch`, failed detection | all (full) |

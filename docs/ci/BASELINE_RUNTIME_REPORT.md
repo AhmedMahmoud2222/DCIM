@@ -66,19 +66,11 @@ Slowest steps within the `backend` job:
 The regression-tests step alone (~39 min) is the single largest contributor to the
 required `backend` check.
 
-## 5. A second, fast run for contrast
+## 5. Baseline conclusion
 
-Run `39756946440` (same branch, re-run) completed in **9 s** — it was a trivial/
-cancelled re-run and is not representative of a full validation; it illustrates how
-concurrency cancellation short-circuits stale runs, which the new `concurrency`
-setting preserves.
+A full CI run on `main` before the routing change takes about 48 minutes and about
+189 runner-minutes. The Python matrix and the `backend` regression suite cause most of
+this time, and they run on every PR.
 
-## 6. Baseline conclusion
-
-A typical full CI run today costs **~48 minutes**, almost entirely due to the Python
-compatibility matrix and the full `backend` regression suite executing on every PR.
-Risk-based routing (Fast CI for every PR, Component CI for affected components,
-Full CI only for high-risk changes) removes the matrix and E2E/deployment-tooling suite
-from low-risk PRs and gives the required `backend` check a fast path for low-risk changes,
-targeting a 50–70% reduction in average PR CI turnaround (subject to measurement after
-deployment to GitHub Actions).
+This report gives the baseline only. It does not give a saving. Compare a routed run
+against this baseline only after that run completes on GitHub Actions.
