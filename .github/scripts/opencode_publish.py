@@ -57,9 +57,12 @@ PROTECTED_PREFIXES = (
     '.github/workflows/', '.github/opencode/', '.github/codeowners', '.github/dependabot.yml',
     '.opencode/', 'docs/security/opencode_agent_authority.md', 'opencode.json', 'opencode.jsonc',
 )
+# .github/scripts/ci_ and tests/ci/ hold the CI route, the required-check gates and
+# their tests (docs/ci/CI_ARCHITECTURE_ADR.md): an agent PR must not choose its own CI scope.
 PROTECTED_BASENAME_PREFIXES = ('.github/scripts/opencode_', 'tests/deployment/test_opencode_',
                                'tests/deployment/mutation_check', 'tests/deployment/fixtures/',
-                               'tests/deployment/opencode_validation/')
+                               'tests/deployment/opencode_validation/', '.github/scripts/ci_',
+                               'tests/ci/')
 PROTECTED_NAMES = ('codeowners', 'agents.md')
 
 
