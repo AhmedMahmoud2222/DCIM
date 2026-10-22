@@ -1,4 +1,4 @@
-# OpenCode synthetic model-health diagnostic (diagnostic workflow v1.1).
+# OpenCode synthetic model-health diagnostic (diagnostic workflow v1.2).
 #
 # Narrowly scoped, manually dispatched diagnostic. It is independent of the
 # model registry's production-eligibility gate: it never sets
@@ -37,7 +37,6 @@ jobs:
       - name: Run synthetic model health diagnostic
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        continue-on-error: true
         run: |
           set -euo pipefail
           python3 .github/scripts/model_health_diagnostic.py "${RUNNER_TEMP}/diagnostic.json"

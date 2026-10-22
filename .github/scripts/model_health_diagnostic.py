@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic model-health diagnostic (diagnostic v1.1).
+"""Synthetic model-health diagnostic (diagnostic v1.2).
 
 Reads the live OpenCode model catalog and performs minimal non-sensitive
 synthetic inference on two allowlisted free models. Records sanitized status
@@ -58,17 +58,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _build_opener() -> urllib.request.OpenerDirector:
-    """Build an opener that rejects redirects and verifies TLS by default."""
-    opener = urllib.request.build_opener()
-    # Remove the default HTTPRedirectHandler so credentials are never
-    # copied to a redirect target. Then install a handler that rejects
-    # every redirect before any request is made.
-    opener.handlers = [
-        h for h in opener.handlers
-        if not isinstance(h, urllib.request.HTTPRedirectHandler)
-    ]
-    opener.add_handler(_NoRedirect())
-    return opener
+    """Build an opener that rejects redirects and verifies TLS by default.
+
+    ``urllib.request.build_opener(_NoRedirect())`` installs the no-redirect
+    handler in place of the default ``HTTPRedirectHandler`` at construction
+    time, so every 301/302/303/307/308 is rejected before the Authorization
+    header can be copied to a redirect target.
+    """
+    return urllib.request.build_opener(_NoRedirect())
 
 
 _OPENER = _build_opener()
@@ -221,7 +218,14 @@ def probe_model(key: str, model: str) -> dict:
         # Sanitized evidence only: a short hash of the response id, never content.
         response_id = response.get('id') or ''
         record['response_id_hash'] = hashlib.sha256(response_id.encode()).hexdigest()[:12]
-    except Exception as error:  # noqa: BLE001 — classify any failure path
+    except ValueError as error:
+        # ValueError from json.loads (malformed JSON) or _validate_healthy_response
+        # (missing/empty fields, model mismatch). Both are invalid responses.
+        latency_ms = int((time.monotonic() - start) * 1000)
+        record['status'] = 'unhealthy'
+        record['error_class'] = 'invalid_response'
+        record['latency_ms'] = latency_ms
+    except Exception as error:  # noqa: BLE001 — classify any other failure path
         latency_ms = int((time.monotonic() - start) * 1000)
         record['status'] = 'unhealthy'
         record['error_class'] = classify_error(error)
@@ -258,7 +262,7 @@ def main(argv: list[str]) -> int:
     overall = 'healthy' if (all_in_catalog and all_healthy) else 'unhealthy'
 
     report = {
-        'diagnostic_version': '1.1',
+        'diagnostic_version': '1.2',
         'catalog_endpoint': CATALOG_ENDPOINT,
         'catalog_model_count': len(catalog_ids),
         'models_tested': len(results),

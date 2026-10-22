@@ -1,14 +1,21 @@
-"""OpenCode model health diagnostic tests (diagnostic tests v1.1).
+"""OpenCode model health diagnostic tests (diagnostic tests v1.2).
 
 Tests the narrow allowlist, error classification, catalog parsing, redirect
 blocking, response validation, and exit-code behavior.
 
 The diagnostic cannot become an arbitrary-model or arbitrary-prompt channel.
+Includes end-to-end stub-server tests that fail on mutation/removal of
+structural response validation and nonzero exit.
 """
 import importlib.util
 import inspect
+import json
+import socketserver
+import threading
 import unittest
 import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from unittest.mock import patch
 
@@ -82,25 +89,255 @@ class TrustedHostTests(unittest.TestCase):
             )
 
 
-class RedirectBlockingTests(unittest.TestCase):
-    def test_redirect_is_rejected_before_request(self):
-        # The opener's redirect handler rejects any redirect, so a 307/302
-        # never causes urllib to follow and resend the Authorization header.
-        opener = diagnostic._OPENER
-        handler_names = [type(h).__name__ for h in opener.handlers]
-        self.assertNotIn('HTTPRedirectHandler', handler_names)
-        self.assertIn('_NoRedirect', handler_names)
+# ---------------------------------------------------------------------------
+# Stub-server infrastructure for two-server redirect tests
+# ---------------------------------------------------------------------------
 
-    def test_redirect_handler_raises_on_redirect(self):
-        # Calling redirect_request on our handler must raise, never return a
-        # new Request that would follow the redirect.
-        handler = diagnostic._NoRedirect()
-        with self.assertRaises(urllib.error.HTTPError):
-            handler.redirect_request(
-                None, None, 307, 'Temporary Redirect',
-                {'Location': 'https://evil.example.com/'}, None,
-            )
+_RECEIVED_HEADERS: list[dict[str, str]] = []
+_RECEIVED_BODIES: list[bytes] = []
 
+
+class DestinationHandler(BaseHTTPRequestHandler):
+    """Records every request it receives, then returns 200 with a valid body."""
+
+    def _record(self):
+        _RECEIVED_HEADERS.append(dict(self.headers))
+        length = int(self.headers.get('Content-Length') or 0)
+        _RECEIVED_BODIES.append(self.rfile.read(length) if length else b'')
+
+    def do_GET(self):
+        self._record()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"id":"x","model":"m","choices":[{"message":{"content":"OK"}}]}')
+
+    def do_POST(self):
+        self._record()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"id":"x","model":"m","choices":[{"message":{"content":"OK"}}]}')
+
+    def log_message(self, format, *args):  # noqa: ARG002
+        pass  # suppress stderr noise
+
+
+class RedirectHandler(BaseHTTPRequestHandler):
+    """Returns a configured redirect status with Location to the destination."""
+
+    def _redirect(self, code: int, dest_url: str):
+        self.send_response(code)
+        self.send_header('Location', dest_url)
+        self.end_headers()
+
+    def do_GET(self):
+        self._redirect(self.server.redirect_code, self.server.dest_url)
+
+    def do_POST(self):
+        self._redirect(self.server.redirect_code, self.server.dest_url)
+
+    def log_message(self, format, *args):  # noqa: ARG002
+        pass
+
+
+def find_free_port() -> int:
+    with socketserver.TCPServer(('127.0.0.1', 0), BaseHTTPRequestHandler) as s:
+        return s.server_address[1]
+
+
+class TwoServerRedirectFixture:
+    """Starts a redirect server and a destination server on localhost."""
+
+    def __init__(self, redirect_code: int):
+        self.redirect_port = find_free_port()
+        self.dest_port = find_free_port()
+        self.redirect_code = redirect_code
+        self.dest_url = f'http://127.0.0.1:{self.dest_port}/'
+        self.redirect_url = f'http://127.0.0.1:{self.redirect_port}/'
+        self._dest_server = socketserver.TCPServer(
+            ('127.0.0.1', self.dest_port), DestinationHandler
+        )
+        self._redirect_server = socketserver.TCPServer(
+            ('127.0.0.1', self.redirect_port), RedirectHandler
+        )
+        self._redirect_server.redirect_code = redirect_code
+        self._redirect_server.dest_url = self.dest_url
+        self._threads: list[threading.Thread] = []
+        for server in (self._dest_server, self._redirect_server):
+            t = threading.Thread(target=server.serve_forever, daemon=True)
+            t.start()
+            self._threads.append(t)
+
+    def shutdown(self):
+        self._dest_server.shutdown()
+        self._redirect_server.shutdown()
+        self._dest_server.server_close()
+        self._redirect_server.server_close()
+
+
+class RedirectCredentialLeakTests(unittest.TestCase):
+    """End-to-end two-server tests: Authorization must never reach the
+    redirect destination, and every redirect must be rejected fail-closed."""
+
+    REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+    def setUp(self):
+        _RECEIVED_HEADERS.clear()
+        _RECEIVED_BODIES.clear()
+
+    def _assert_no_auth_at_destination(self):
+        """Destination server must never have received an Authorization header."""
+        for headers in _RECEIVED_HEADERS:
+            self.assertNotIn('Authorization', headers,
+                             f'destination received Authorization: {headers}')
+
+    def test_get_redirect_never_leaks_authorization(self):
+        for code in self.REDIRECT_CODES:
+            with self.subTest(code=code):
+                fixture = TwoServerRedirectFixture(code)
+                try:
+                    opener = diagnostic._build_opener()
+                    req = urllib.request.Request(
+                        fixture.redirect_url,
+                        headers={'Authorization': 'Bearer TEST_KEY_12345',
+                                 'User-Agent': 'dcim-model-health-diagnostic'},
+                    )
+                    try:
+                        opener.open(req, timeout=5)
+                    except (urllib.error.HTTPError, ConnectionAbortedError, OSError):
+                        pass  # redirect rejected — connection may be aborted on Windows
+                    else:
+                        self.fail(f'redirect {code} was not rejected')
+                    self._assert_no_auth_at_destination()
+                finally:
+                    fixture.shutdown()
+
+    def test_post_redirect_never_leaks_authorization(self):
+        for code in self.REDIRECT_CODES:
+            with self.subTest(code=code):
+                fixture = TwoServerRedirectFixture(code)
+                try:
+                    opener = diagnostic._build_opener()
+                    body = json.dumps({'model': 'opencode/glm-5.3-flash-free',
+                                       'messages': [{'role': 'user', 'content': 'OK'}],
+                                       'max_tokens': 5}).encode()
+                    req = urllib.request.Request(
+                        fixture.redirect_url,
+                        data=body,
+                        headers={'Authorization': 'Bearer TEST_KEY_12345',
+                                 'Content-Type': 'application/json',
+                                 'User-Agent': 'dcim-model-health-diagnostic'},
+                        method='POST',
+                    )
+                    try:
+                        opener.open(req, timeout=5)
+                    except (urllib.error.HTTPError, ConnectionAbortedError, OSError):
+                        pass  # redirect rejected — connection may be aborted on Windows
+                    else:
+                        self.fail(f'redirect {code} was not rejected')
+                    self._assert_no_auth_at_destination()
+                finally:
+                    fixture.shutdown()
+
+    def test_redirect_is_fail_closed_for_all_statuses(self):
+        """Every redirect status must raise, never silently follow."""
+        for code in self.REDIRECT_CODES:
+            with self.subTest(code=code):
+                fixture = TwoServerRedirectFixture(code)
+                try:
+                    opener = diagnostic._build_opener()
+                    req = urllib.request.Request(
+                        fixture.redirect_url,
+                        headers={'Authorization': 'Bearer TEST_KEY_12345',
+                                 'User-Agent': 'dcim-model-health-diagnostic'},
+                    )
+                    with self.assertRaises(urllib.error.HTTPError) as ctx:
+                        opener.open(req, timeout=5)
+                    # The raised error should carry the redirect code.
+                    self.assertEqual(ctx.exception.code, code)
+                finally:
+                    fixture.shutdown()
+
+
+class ResponseValidationTests(unittest.TestCase):
+    """Stub-server tests: malformed HTTP 200s must never show healthy."""
+
+    def _stub_post_response(self, response_body: bytes, response_status: int = 200):
+        """Patch http_post_json to return a stub response directly.
+
+        Bypasses network and trusted-host checks entirely; the stub validates
+        that structural response validation works on the parsed JSON body.
+        """
+        def stub(url, key, model, prompt):
+            return json.loads(response_body.decode('utf-8'))
+
+        return patch.object(diagnostic, 'http_post_json', side_effect=stub)
+
+    def test_valid_200_is_healthy(self):
+        valid = (b'{"id":"chatcmpl_123","model":"opencode/glm-5.3-flash-free",'
+                 b'"choices":[{"message":{"content":"OK"}}]}')
+        with self._stub_post_response(valid):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'healthy')
+        self.assertIsNone(record['error_class'])
+
+    def test_empty_json_200_is_unhealthy(self):
+        with self._stub_post_response(b'{}'):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+    def test_missing_choices_200_is_unhealthy(self):
+        body = b'{"id":"x","model":"opencode/glm-5.3-flash-free"}'
+        with self._stub_post_response(body):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+    def test_empty_choices_200_is_unhealthy(self):
+        body = (b'{"id":"x","model":"opencode/glm-5.3-flash-free","choices":[]}')
+        with self._stub_post_response(body):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+    def test_missing_content_200_is_unhealthy(self):
+        body = (b'{"id":"x","model":"opencode/glm-5.3-flash-free",'
+                b'"choices":[{"message":{}}]}')
+        with self._stub_post_response(body):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+    def test_empty_content_200_is_unhealthy(self):
+        body = (b'{"id":"x","model":"opencode/glm-5.3-flash-free",'
+                b'"choices":[{"message":{"content":""}}]}')
+        with self._stub_post_response(body):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+    def test_model_mismatch_200_is_unhealthy(self):
+        body = (b'{"id":"x","model":"opencode/deepseek-v4.1-flash-free",'
+                b'"choices":[{"message":{"content":"OK"}}]}')
+        with self._stub_post_response(body):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+    def test_missing_id_200_is_unhealthy(self):
+        body = (b'{"model":"opencode/glm-5.3-flash-free",'
+                b'"choices":[{"message":{"content":"OK"}}]}')
+        with self._stub_post_response(body):
+            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        self.assertEqual(record['status'], 'unhealthy')
+        self.assertEqual(record['error_class'], 'invalid_response')
+
+
+# ---------------------------------------------------------------------------
+# Existing unit tests (kept and extended)
+# ---------------------------------------------------------------------------
 
 class ErrorClassificationTests(unittest.TestCase):
     def test_http_401_maps_to_auth_error(self):
@@ -134,67 +371,16 @@ class ErrorClassificationTests(unittest.TestCase):
 
 class CatalogParsingTests(unittest.TestCase):
     def test_extract_ids_normalizes_model_ids(self):
-        payload = {'data': [{'id': 'glm-5.3-flash-free'}, {'id': 'opencode/deepseek-v4.1-flash-free'}]}
+        payload = {'data': [{'id': 'glm-5.3-flash-free'},
+                            {'id': 'opencode/deepseek-v4.1-flash-free'}]}
         ids = diagnostic.extract_ids(payload)
-        self.assertEqual(ids, {'opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free'})
+        self.assertEqual(ids, {'opencode/glm-5.3-flash-free',
+                               'opencode/deepseek-v4.1-flash-free'})
 
     def test_extract_ids_ignores_non_string_entries(self):
         payload = {'data': [{'id': 123}, {'id': 'glm-5.3-flash-free'}, None]}
         ids = diagnostic.extract_ids(payload)
         self.assertEqual(ids, {'opencode/glm-5.3-flash-free'})
-
-
-class ResponseValidationTests(unittest.TestCase):
-    def test_valid_response_passes_validation(self):
-        valid = {
-            'id': 'chatcmpl_123',
-            'model': 'opencode/glm-5.3-flash-free',
-            'choices': [{'message': {'content': 'OK'}}],
-        }
-        diagnostic._validate_healthy_response(valid, 'opencode/glm-5.3-flash-free')
-
-    def test_missing_id_is_unhealthy(self):
-        with self.assertRaises(ValueError):
-            diagnostic._validate_healthy_response(
-                {'model': 'opencode/glm-5.3-flash-free',
-                 'choices': [{'message': {'content': 'OK'}}]},
-                'opencode/glm-5.3-flash-free',
-            )
-
-    def test_empty_choices_is_unhealthy(self):
-        with self.assertRaises(ValueError):
-            diagnostic._validate_healthy_response(
-                {'id': 'x', 'model': 'opencode/glm-5.3-flash-free', 'choices': []},
-                'opencode/glm-5.3-flash-free',
-            )
-
-    def test_missing_content_is_unhealthy(self):
-        with self.assertRaises(ValueError):
-            diagnostic._validate_healthy_response(
-                {'id': 'x', 'model': 'opencode/glm-5.3-flash-free',
-                 'choices': [{'message': {}}]},
-                'opencode/glm-5.3-flash-free',
-            )
-
-    def test_empty_content_is_unhealthy(self):
-        with self.assertRaises(ValueError):
-            diagnostic._validate_healthy_response(
-                {'id': 'x', 'model': 'opencode/glm-5.3-flash-free',
-                 'choices': [{'message': {'content': ''}}]},
-                'opencode/glm-5.3-flash-free',
-            )
-
-    def test_model_mismatch_is_unhealthy(self):
-        with self.assertRaises(ValueError):
-            diagnostic._validate_healthy_response(
-                {'id': 'x', 'model': 'opencode/deepseek-v4.1-flash-free',
-                 'choices': [{'message': {'content': 'OK'}}]},
-                'opencode/glm-5.3-flash-free',
-            )
-
-    def test_response_not_dict_is_unhealthy(self):
-        with self.assertRaises(ValueError):
-            diagnostic._validate_healthy_response('not a dict', 'opencode/glm-5.3-flash-free')
 
 
 class ProbeStructureTests(unittest.TestCase):
