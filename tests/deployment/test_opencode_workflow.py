@@ -356,3 +356,42 @@ class WorkflowPolicyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReportMessageTests(unittest.TestCase):
+    """Runs the real `report` job script with a stub `gh` and checks the message for each outcome."""
+
+    @classmethod
+    def setUpClass(cls):
+        wf = yaml.safe_load((ROOT / '.github/workflows/opencode.yml').read_text())
+        cls.script = next(s['run'] for s in wf['jobs']['report']['steps'] if s.get('name') == 'Comment')
+
+    def message(self, **env):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = Path(tmp, 'body')
+            stub = Path(tmp, 'gh')
+            stub.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = "--body" ] && printf "%s" "$2" > "$GH_BODY"; shift; done\n')
+            stub.chmod(0o755)
+            base = {'PATH': f'{tmp}:/usr/bin:/bin', 'GH_BODY': str(body), 'NUMBER': '5', 'MODE': 'implement',
+                    'GITHUB_REPOSITORY': REPO, 'RUN_URL': 'https://run', 'GENERATION': '', 'GENERATION_REASON': '',
+                    'HAS_CHANGES': '', 'PUBLISH_RESULT': '', 'PUBLISHED_BRANCH': '', 'REVIEW_BLOCKED': '',
+                    'BLOCK_REASON': '', 'REVIEW_PUBLISH_RESULT': ''}
+            import subprocess
+            done = subprocess.run(['bash', '-c', self.script], env={**base, **env}, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return body.read_text()
+
+    def test_no_changes_is_reported_only_when_collection_said_so(self):
+        self.assertIn('produced no file changes', self.message(GENERATION='success', HAS_CHANGES='false', PUBLISH_RESULT='skipped'))
+
+    def test_a_failed_collection_or_upload_is_not_reported_as_no_changes(self):
+        for has_changes in ('', 'true'):                 # collection failed before deciding, or upload failed after it
+            text = self.message(GENERATION='success', HAS_CHANGES=has_changes, PUBLISH_RESULT='skipped')
+            self.assertNotIn('no file changes', text, has_changes)
+            self.assertIn('collecting or uploading the change failed before publication', text)
+            self.assertIn('Nothing was published', text)
+
+    def test_other_outcomes_keep_their_messages(self):
+        self.assertIn('publication stopped', self.message(GENERATION='success', HAS_CHANGES='true', PUBLISH_RESULT='failure'))
+        self.assertIn('generation did not complete (timeout)', self.message(GENERATION='failed', GENERATION_REASON='timeout'))
+        self.assertIn('stopped before generation', self.message())

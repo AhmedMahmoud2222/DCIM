@@ -494,8 +494,10 @@ jobs:
             fi
           elif [[ "${PUBLISH_RESULT}" == "failure" ]]; then
             msg="OpenCode generated a change but publication stopped. Nothing was merged. If a branch was created it is named in the run log (possible partial publication: ${PUBLISHED_BRANCH:-none reported})."
-          elif [[ "${GENERATION}" == "success" ]]; then
+          elif [[ "${GENERATION}" == "success" && "${HAS_CHANGES}" == "false" ]]; then
             msg="OpenCode finished and produced no file changes."
+          elif [[ "${GENERATION}" == "success" ]]; then
+            msg="OpenCode generation succeeded, but collecting or uploading the change failed before publication (has_changes: ${HAS_CHANGES:-unknown}). Nothing was published."
           elif [[ -n "${GENERATION_REASON}" ]]; then
             msg="OpenCode stopped without publishing: generation did not complete (${GENERATION_REASON//[^a-z0-9_:-]/})."
           else
