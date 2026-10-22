@@ -116,6 +116,26 @@ def load_registry(registry: dict) -> dict:
     return registry
 
 
+def valid_review_source(value: str) -> bool:
+    """Accept a public, canonical HTTPS URL with a DNS hostname."""
+    if value != value.strip() or any(character.isspace() or ord(character) < 32 for character in value):
+        return False
+    try:
+        source = urllib.parse.urlsplit(value)
+        hostname = source.hostname
+        source.port  # Force validation of a malformed or out-of-range port.
+    except ValueError:
+        return False
+    if source.scheme != 'https' or source.username is not None or source.password is not None:
+        return False
+    if hostname is None or len(hostname) > 253 or hostname.startswith('.') or hostname.endswith('.'):
+        return False
+    labels = hostname.split('.')
+    return len(labels) > 1 and all(
+        re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+        for label in labels)
+
+
 def blockers(meta: dict) -> list[str]:
     """Static (owner-controlled) requirements a model must meet before repository code may reach it."""
     found = []
@@ -123,15 +143,12 @@ def blockers(meta: dict) -> list[str]:
     valid_review = False
     if isinstance(review, dict) and set(review) == {'reviewed_by', 'date', 'source'} and all(
             isinstance(review.get(key), str) and review[key].strip() for key in review):
-        source = urllib.parse.urlsplit(review['source'])
         try:
             datetime.date.fromisoformat(review['date'])
             valid_date = re.fullmatch(r'\d{4}-\d{2}-\d{2}', review['date']) is not None
         except ValueError:
             valid_date = False
-        valid_source = (source.scheme == 'https' and source.hostname is not None
-                        and source.username is None and source.password is None)
-        valid_review = valid_date and valid_source
+        valid_review = valid_date and valid_review_source(review['source'])
     if meta.get('terms_verified') is not True or not (
             valid_review):
         found.append('terms not verified with recorded evidence')

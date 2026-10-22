@@ -123,6 +123,17 @@ class RegistryTests(unittest.TestCase):
             self.assertNotEqual(self.route_backend(broken)['model'], model, name)
         self.assertNotEqual(self.route_backend(base, available=ALL - {model})['model'], model)
 
+    def test_malformed_review_sources_are_rejected_without_parser_errors(self):
+        model = 'opencode/mimo-v2.6-flash-free'
+        for source in ('javascript:bad', 'https:// example.com', 'https://.',
+                       'https://example.com:bad', 'https://[', 'https://user@example.com',
+                       'https://example.com./terms', 'https://example..com/terms'):
+            registry = enable(REGISTRY, *FOUR)
+            registry['models'][model]['terms_review']['source'] = source
+            self.assertIn('terms not verified with recorded evidence',
+                          router.blockers(registry['models'][model]), source)
+            self.assertNotEqual(self.route_backend(registry)['model'], model, source)
+
     def route_backend(self, registry, available=ALL):
         return router.route('new api endpoint', registry, set(available))
 
