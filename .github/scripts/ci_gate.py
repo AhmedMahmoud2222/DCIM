@@ -14,7 +14,11 @@ when all of these are true:
 A worker that the base policy does not know (a new job) is always required.
 Results `failure`, `cancelled`, a missing result and any unknown value fail.
 
-Environment: NEEDS_JSON (toJSON(needs)), EXPECTED_HEAD_SHA.
+Independent of the route, the gate computes the PR diff itself. A route below
+full fails when the diff changes a trust path (TRUST_PREFIXES) or when the gate
+cannot compute the diff. A PR that changes the CI controls always needs full.
+
+Environment: NEEDS_JSON (toJSON(needs)), EXPECTED_HEAD_SHA, CI_BASE_SHA.
 Usage: ci_gate.py backend|frontend
 """
 
@@ -23,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 
 LEVELS = ("fast", "component", "full")
@@ -39,6 +44,8 @@ GATES = {
     "frontend": CONTROL_JOBS + ("frontend-suite", "browser-e2e"),
 }
 SHA = re.compile(r"[0-9a-f]{40}")
+# The CI controls: the workflows, the route, policy and gate scripts, and their tests.
+TRUST_PREFIXES = (".github/", "tests/ci/")
 
 
 def evaluate(gate: str, needs: object, expected_head: str) -> list[str]:
@@ -112,6 +119,30 @@ def evaluate(gate: str, needs: object, expected_head: str) -> list[str]:
     return errors
 
 
+def pr_paths(base: str, head: str) -> list[str] | None:
+    """The paths of merge-base(base, head)..head, or None when git cannot tell."""
+    merge_base = subprocess.run(["git", "merge-base", base, head], capture_output=True, text=True, check=False)
+    if merge_base.returncode != 0 or not SHA.fullmatch(merge_base.stdout.strip()):
+        return None
+    diff = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", merge_base.stdout.strip(), head],
+                          capture_output=True, text=True, check=False)
+    if diff.returncode != 0:
+        return None
+    return [path for path in diff.stdout.split("\0") if path]
+
+
+def scope_errors(level: str, paths: list[str] | None) -> list[str]:
+    """Reject a route below full for a PR that changes the CI controls."""
+    if level == "full":
+        return []
+    if paths is None:
+        return [f"route: level {level} but the gate cannot compute the PR diff"]
+    trusted = sorted(path for path in paths if path.lower().startswith(TRUST_PREFIXES))
+    if trusted:
+        return [f"route: level {level} but the PR changes CI control files: {', '.join(trusted[:5])}"]
+    return []
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: ci_gate.py backend|frontend", file=sys.stderr)
@@ -120,7 +151,12 @@ def main(argv: list[str]) -> int:
         needs = json.loads(os.environ.get("NEEDS_JSON", ""))
     except ValueError:
         needs = None
-    errors = evaluate(argv[1], needs, os.environ.get("EXPECTED_HEAD_SHA", ""))
+    head = os.environ.get("EXPECTED_HEAD_SHA", "")
+    errors = evaluate(argv[1], needs, head)
+    if not errors:
+        level = json.loads(needs["route"]["outputs"]["route"])["level"]
+        paths = None if level == "full" else pr_paths(os.environ.get("CI_BASE_SHA", ""), head)
+        errors = scope_errors(level, paths)
     for job, entry in sorted(needs.items()) if isinstance(needs, dict) else ():
         print(f"{job}: {entry.get('result') if isinstance(entry, dict) else entry!r}")
     if errors:

@@ -209,6 +209,9 @@ class ManifestValidationTests(unittest.TestCase):
                      'tests/deployment/fixtures/opencode_1_19_3/success_text.jsonl', '.github/opencode/runtime/package-lock.json',
                      '.opencode/commands/x.md', 'opencode.json',
                      'sub/AGENTS.md', '.GitHub/Workflows/x.yml', '.claude/settings.json', 'sub/opencode.jsonc',
+                     '.github/scripts/ci_gate.py', '.github/scripts/ci_policy.py',
+                     '.github/scripts/ci_router.py', '.GitHub/Scripts/CI_Gate.py', 'tests/ci/ci_support.py',
+                     'tests/ci/test_ci_mutations.py',
                      '.env', 'backend/.env.production', 'keys/server.pem', 'id_rsa'):
             with self.assertRaises(publish.PublishError, msg=path):
                 self.check([(path, 'modify', b'x')])

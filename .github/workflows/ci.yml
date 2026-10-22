@@ -710,11 +710,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The gate diffs the PR itself (ci_gate.scope_errors).
+          fetch-depth: 0
           persist-credentials: false
       - name: Fail-closed gate over every worker
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 .github/scripts/ci_gate.py backend
 
   frontend:
@@ -729,9 +732,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The gate diffs the PR itself (ci_gate.scope_errors).
+          fetch-depth: 0
           persist-credentials: false
       - name: Fail-closed gate over the frontend workers
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 .github/scripts/ci_gate.py frontend

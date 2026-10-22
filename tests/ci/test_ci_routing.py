@@ -18,6 +18,7 @@ from ci_support import (
     policy_mismatches,
     route_needs,
     router_mismatches,
+    scope_mismatches,
 )
 
 policy = load_module("ci_policy", SCRIPTS / "ci_policy.py")
@@ -67,6 +68,10 @@ class GateTests(unittest.TestCase):
         env = dict(os.environ, NEEDS_JSON=json.dumps(needs), EXPECTED_HEAD_SHA=head)
         return subprocess.run([sys.executable, str(SCRIPTS / "ci_gate.py"), name], env=env,
                               capture_output=True, text=True, check=False)
+
+    def test_gate_diffs_the_pr_itself(self):
+        # Review P1-07: a PR that changes the CI controls can never pass with fast or component.
+        self.assertEqual(scope_mismatches(gate), [])
 
     def test_gate_command_exit_codes(self):
         self.assertEqual(self.run_gate("backend", route_needs("full", set(WORKERS))).returncode, 0)

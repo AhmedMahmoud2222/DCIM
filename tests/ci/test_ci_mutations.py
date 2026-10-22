@@ -22,6 +22,7 @@ from ci_support import (
     policy_mismatches,
     route_step_mismatches,
     router_mismatches,
+    scope_mismatches,
     workflow_errors,
 )
 
@@ -53,6 +54,15 @@ ROUTER_MUTANTS = (
     ('if event != "pull_request":', 'if event not in ("pull_request", "push", "workflow_dispatch"):'),
     ('SHA = re.compile(r"[0-9a-f]{40}")', 'SHA = re.compile(r"[0-9a-fA-F]{4,40}")'),
     ('values[f"run-{job}"] = "true" if route["jobs"][job] else "false"', 'values[f"run-{job}"] = "true"'),
+)
+
+SCOPE_MUTANTS = (
+    ('TRUST_PREFIXES = (".github/", "tests/ci/")', 'TRUST_PREFIXES = (".github/workflows/", "tests/ci/")'),
+    ('TRUST_PREFIXES = (".github/", "tests/ci/")', 'TRUST_PREFIXES = (".github/",)'),
+    ("if path.lower().startswith(TRUST_PREFIXES)", "if path.startswith(TRUST_PREFIXES)"),
+    ('if level == "full":\n        return []', 'if level != "fast":\n        return []'),
+    ("errors = scope_errors(level, paths)", "errors = []"),
+    ('"git", "diff", "--no-renames",', '"git", "diff",'),
 )
 
 GATE_MUTANTS = (
@@ -130,6 +140,9 @@ WORKFLOW_MUTANTS = {
     "bootstrap writes fast": _set_route_script('echo "level=full"', 'echo "level=fast"'),
     "bootstrap for push uses the router": _set_route_script(
         'if [ "$CI_EVENT_NAME" = pull_request ] \\\n', 'if true \\\n'),
+    "gate base SHA dropped": lambda doc: _step(doc, "backend", "ci_gate.py")["env"].pop("CI_BASE_SHA"),
+    "gate shallow checkout": lambda doc: next(
+        s for s in _job(doc, "frontend")["steps"] if "checkout" in str(s.get("uses")))["with"].pop("fetch-depth"),
     # Gate wiring.
     "gate if success()": lambda doc: _job(doc, "backend").__setitem__("if", "success()"),
     "gate if false && always()": lambda doc: _job(doc, "frontend").__setitem__("if", "false && always()"),
@@ -202,6 +215,13 @@ class MutationTests(unittest.TestCase):
                 path = Path(directory) / "ci_gate.py"
                 path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
                 self.assertNotEqual(gate_mismatches(load_module("ci_gate", path)), [], "mutant survived")
+
+    def test_scope_mutants_are_killed(self):
+        for old, new in SCOPE_MUTANTS:
+            with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "ci_gate.py"
+                path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
+                self.assertNotEqual(scope_mismatches(load_module("ci_gate", path)), [], "mutant survived")
 
     def test_workflow_mutants_are_killed(self):
         original = load_workflow()

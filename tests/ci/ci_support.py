@@ -469,10 +469,14 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
             errors.append(f"gate {gate} does not run ci_gate.py {gate} exactly once")
         else:
             env = gate_steps[0].get("env", {})
-            if env.get("NEEDS_JSON") != "${{ toJSON(needs) }}" or env.get("EXPECTED_HEAD_SHA") != EXPECTED_HEAD_EXPR:
+            if env.get("NEEDS_JSON") != "${{ toJSON(needs) }}" or env.get("EXPECTED_HEAD_SHA") != EXPECTED_HEAD_EXPR \
+                    or env.get("CI_BASE_SHA") != "${{ github.event.pull_request.base.sha }}":
                 errors.append(f"gate {gate} gate step env is {env}")
         if any("if" in step for step in steps):
             errors.append(f"gate {gate} has a conditional step")
+        checkout = next((step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")), {})
+        if checkout.get("with", {}).get("fetch-depth") != 0:
+            errors.append(f"gate {gate} checkout has no full history for its own PR diff")
     for job_id, job in jobs.items():
         if job_id in gates:
             continue
@@ -597,4 +601,49 @@ def route_step_mismatches(doc: dict, gate_module) -> list[str]:
                                   f"{gate_module.evaluate('backend', needs, head)}")
             if skipped_passes != (level == "fast"):
                 mismatches.append(f"{name}: gate with skipped workers passed={skipped_passes}")
+    return mismatches
+
+
+def scope_mismatches(gate_module) -> list[str]:
+    """Run the gate command in a real git repository: the gate diffs the PR itself."""
+    mismatches = []
+    with tempfile.TemporaryDirectory() as directory:
+        repo = Path(directory)
+        git(repo, "init", "-q")
+        base = commit(repo, "base", write=["README.md", ".github/scripts/ci_gate.py", "tests/ci/x.py"])
+        heads = {}
+        for name, change in (
+            ("docs", {"write": ["docs/a.md"]}),
+            ("frontend", {"write": ["frontend/src/App.tsx"]}),
+            ("gate edit", {"write": ["docs/a.md", ".github/scripts/ci_gate.py"]}),
+            ("workflow add", {"write": [".github/workflows/x.yml"]}),
+            ("ci test edit", {"write": ["tests/ci/x.py"]}),
+            ("gate rename", {"rename": [(".github/scripts/ci_gate.py", "docs/gate.py")]}),
+            ("gate delete", {"delete": [".github/scripts/ci_gate.py"]}),
+            ("uppercase", {"write": [".GitHub/workflows/x.yml"]}),
+        ):
+            git(repo, "checkout", "-q", "-B", name.replace(" ", "-"), base)
+            heads[name] = commit(repo, name, **change)
+        cases = (
+            # (name, head, level, selected, base, expected_pass)
+            ("fast docs", "docs", "fast", set(), base, True),
+            ("component frontend", "frontend", "component", {"frontend-suite", "browser-e2e"}, base, True),
+            ("fast with gate edit", "gate edit", "fast", set(), base, False),
+            ("component with workflow add", "workflow add", "component", {"frontend-suite"}, base, False),
+            ("fast with ci test edit", "ci test edit", "fast", set(), base, False),
+            ("fast with gate rename", "gate rename", "fast", set(), base, False),
+            ("fast with gate delete", "gate delete", "fast", set(), base, False),
+            ("fast with uppercase .GitHub", "uppercase", "fast", set(), base, False),
+            ("full with gate edit", "gate edit", "full", set(WORKERS), base, True),
+            ("fast with missing base", "docs", "fast", set(), "b" * 40, False),
+            ("fast with empty base", "docs", "fast", set(), "", False),
+        )
+        for name, branch, level, selected, case_base, expected in cases:
+            head = heads[branch]
+            needs = route_needs(level, selected, head=head)
+            env = dict(os.environ, NEEDS_JSON=json.dumps(needs), EXPECTED_HEAD_SHA=head, CI_BASE_SHA=case_base)
+            result = subprocess.run([sys.executable, str(gate_module.__file__), "backend"], cwd=repo, env=env,
+                                    capture_output=True, text=True, check=False)
+            if (result.returncode == 0) != expected:
+                mismatches.append(f"{name}: exit {result.returncode}: {result.stdout.strip()[-200:]}")
     return mismatches

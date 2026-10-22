@@ -51,26 +51,62 @@ names on each release commit of `main`: `backend`, `frontend`,
 
 ## Enforcement and residual risk
 
-- `ci-policy` runs `tests/ci` on each event: the policy scenarios, real git histories
-  (multi-commit, rename, delete, moved base, bad SHAs), the gate truth table, the
-  workflow structure rules, a bash run of the real route step against a hostile PR
-  router, and the mutation tests. These tests are regression tests. They come from the
-  PR head, so they are not a trust boundary.
-- **Open (P1-07): the code in this workflow is not an independent boundary.** For a
-  `pull_request` event, GitHub runs `ci.yml` from the PR merge commit, and the gates
-  run `ci_gate.py` from the checkout. A PR that edits `.github/workflows/ci.yml` or
-  `.github/scripts/ci_gate.py` can change the required checks of its own run. No code
-  in a `pull_request` workflow can prevent this. A `pull_request_target` workflow that
-  runs PR code is not an acceptable fix.
-- Two controls can close the gap. Both need a ruleset change by the repository owner,
-  and this PR does not make it:
-  1. A ruleset "require workflows to pass" rule with a workflow from `main`. GitHub runs
-     that workflow from the ruleset ref, not from the PR, so the PR cannot edit it. The
-     workflow can recompute the route with the policy of `main` and fail when the PR
-     changes `.github/` without a full route.
-  2. A `CODEOWNERS` entry for `/.github/` and "require review from code owners" in the
-     ruleset. This needs a code owner who is not the PR author, because GitHub does
-     not accept the author's own approval.
+A PR can change its own `ci.yml`, router, policy, gate and tests. A check that runs
+code from the same PR is therefore not a boundary on its own. The design uses three
+layers, and only the third is independent of the PR author.
+
+1. **No PR routing code on the route path.** The route step runs the router and policy
+   of the base commit. When the base has no policy, and for every event except
+   `pull_request`, the step writes the full route itself. No Python file of the
+   checkout runs on that path. A changed `ci_policy.py` or `ci_router.py` in the PR
+   cannot select its own route.
+2. **The gates check the route against their own diff.** Each gate checks out full
+   history and computes `merge-base..head` itself (`ci_gate.scope_errors`). The gate
+   rejects a fast or component route when the PR changes `.github/` or `tests/ci/`,
+   when the diff fails, or when the route is not from a clean `pull_request`
+   detection. A PR that changes the CI controls therefore needs every worker to
+   succeed. This layer protects against a wrong route from a trusted router. It does
+   not protect against a PR that changes `ci_gate.py` or `ci.yml`, because GitHub runs
+   that PR's copy of them.
+3. **Actor controls outside the PR.**
+   - The OpenCode agent cannot change the CI controls. `opencode_publish.py` refuses
+     `.github/workflows/`, `.github/scripts/ci_`, `.github/scripts/opencode_` and
+     `tests/ci/`, and the GitHub App has no `workflows` permission.
+   - A person with write access can still change `ci.yml` or `ci_gate.py` in a PR and
+     make the required checks pass. No `pull_request` workflow can prevent this, and
+     a `pull_request_target` workflow that runs PR code is not acceptable.
+
+### Proposed owner configuration (not applied)
+
+The repository owner must decide and apply one of these. This PR does not change a
+ruleset or a protection.
+
+- **Option A: code-owner review for the CI controls.** Add `.github/CODEOWNERS`:
+
+  ```
+  /.github/            @<second-reviewer>
+  /tests/ci/           @<second-reviewer>
+  /docs/ci/            @<second-reviewer>
+  ```
+
+  In ruleset #23651422 ("Default Policy") set the pull request rule to
+  `require_code_owner_review: true`, `dismiss_stale_reviews_on_push: true`,
+  `require_last_push_approval: true` and `required_approving_review_count: 1`. Keep
+  the required status checks `backend` and `frontend` and the strict policy. GitHub
+  does not accept the approval of the PR author, so the code owner must be a second
+  account that does not author CI PRs. With only one account, this option blocks
+  every CI PR until a second reviewer exists.
+- **Option B: a required workflow from `main`.** If the repository moves to an
+  organization plan with ruleset workflow rules, add "Require workflows to pass before
+  merging" with a workflow file on `refs/heads/main`. GitHub runs that file from
+  `main`, so a PR cannot change it. The workflow must not run PR code. It reads the PR
+  diff as data and fails when the PR changes `.github/` or `tests/ci/` without the
+  owner's approval of the exact head SHA.
+
+Until one option is in place, the residual risk is: a person with write access can
+change the CI controls and the required checks in the same PR. The owner's review of
+each PR that changes `.github/` or `tests/ci/` is the control for that case.
+
 - A change to the policy interface (a new worker or output) needs two steps: the base
   policy does not know the new output, so the gate treats the new worker as required.
 
