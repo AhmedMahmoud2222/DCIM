@@ -605,17 +605,16 @@ class GuardBehaviorTests(unittest.TestCase):
         cls.guard_script = workflow['jobs']['smoke']['steps'][0]['run']
 
     def run_guard(self, event, ref):
+        # The guard body is piped via stdin: CI runners mount TMPDIR noexec,
+        # so a chmod+exec of a temp file fails with "Permission denied".
+        # Piping executes the exact same script text with the same env.
         shell = self.shell
         env = {k: v for k, v in os.environ.items() if k.startswith(('System',
                 'PATH', 'PATHEXT', 'HOME'))}
         env.update({'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref})
-        with tempfile.TemporaryDirectory() as tmp:
-            script = os.path.join(tmp, 'guard.sh')
-            with open(script, 'w', encoding='utf-8', newline='\n') as handle:
-                handle.write(self.guard_script.replace('\r\n', '\n'))
-            os.chmod(script, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            return subprocess.run([shell, script], env=env,
-                                  capture_output=True, text=True, timeout=60)
+        return subprocess.run(
+            [shell], input=self.guard_script.replace('\r\n', '\n'),
+            env=env, capture_output=True, text=True, timeout=60)
 
     def test_valid_main_dispatch_is_accepted(self):
         result = self.run_guard('workflow_dispatch', 'refs/heads/main')
