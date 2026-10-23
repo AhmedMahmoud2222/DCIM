@@ -22,6 +22,16 @@ ALL = set(EXPECTED)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
         'opencode/minimax-m3.1-flash-free')
+SHIPPED_OWNER_APPROVED = {'opencode/mimo-v2.6-flash-free'}
+# One task per routing category, used to prove the shipped registry blocks every route.
+SHIPPED_TASKS = {
+    'small_fix': 'fix a typo in the README',
+    'general': 'make the dashboard smarter',
+    'backend': 'add an API endpoint with an alembic migration',
+    'frontend': 'adjust the React component css',
+    'analysis_large': 'audit the architecture across modules',
+    'triage': 'explain what does this do',
+}
 
 
 def enable(registry, *model_ids):
@@ -32,7 +42,8 @@ def enable(registry, *model_ids):
     return registry
 
 
-# Test-only registry: the shipped one has every model disabled until the owner reviews terms.
+# Test-only registry with four fully eligible models. The shipped registry stays fail-closed
+# whenever an owner-reviewed model has no supported healthy status.
 ENABLED = enable(REGISTRY, *FOUR)
 
 
@@ -62,15 +73,46 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(router.RoutingError):
             router.load_registry(registry)
 
-    def test_shipped_registry_enables_no_model_until_owner_review(self):
+    def test_shipped_registry_keeps_owner_approved_unhealthy_models_disabled(self):
+        # Pinned shipped state: MiMo has owner terms evidence and repository-code approval, but
+        # no shipped model may route while operational health is unproven. Marking MiMo healthy
+        # requires recorded health evidence (health is a manual owner flag with no automated
+        # probe; see OPENCODE_AGENT_AUTHORITY.md, "Model eligibility") and an edit to this test
+        # in the same PR.
         for model_id, meta in REGISTRY['models'].items():
-            self.assertIs(meta['terms_verified'], False, model_id)
-            self.assertIs(meta['repo_code_approved'], False, model_id)
-            self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
-            self.assertTrue(router.blockers(meta), model_id)
-        for task in ('fix a typo', 'new api endpoint', 'update the react component'):
+            if model_id in SHIPPED_OWNER_APPROVED:
+                self.assertIs(meta['terms_verified'], True, model_id)
+                self.assertIs(meta['repo_code_approved'], True, model_id)
+                review = meta['terms_review']
+                self.assertEqual(set(review), {'reviewed_by', 'date', 'source'}, model_id)
+                self.assertTrue(all(isinstance(value, str) and value.strip()
+                                    for value in review.values()), model_id)
+                self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
+                self.assertEqual(router.blockers(meta), ['not marked operationally healthy'], model_id)
+            else:
+                self.assertIs(meta['terms_verified'], False, model_id)
+                self.assertIsNone(meta['terms_review'], model_id)
+                self.assertIs(meta['repo_code_approved'], False, model_id)
+                self.assertTrue(router.blockers(meta), model_id)
+        self.assertEqual(
+            [model_id for model_id, meta in REGISTRY['models'].items() if not router.blockers(meta)],
+            [], 'the shipped registry must stay fail-closed')
+        self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
+        for category, task in SHIPPED_TASKS.items():
+            self.assertEqual(router.classify(task)[0], category, task)
+            self.assertTrue(all(router.blockers(REGISTRY['models'][model])
+                                for model in REGISTRY['routes'][category]), category)
             with self.assertRaises(router.RoutingError, msg=task):
                 router.route(task, REGISTRY, ALL)
+
+    def test_registry_presence_never_authorizes_a_model(self):
+        registry = copy.deepcopy(REGISTRY)
+        model = 'opencode/nemotron-3-ultra-free'
+        registry['models'][model] = {'label': 'Nemotron 3 Ultra Free'}
+        router.load_registry(registry)
+        self.assertTrue(router.blockers(registry['models'][model]))
+        with self.assertRaises(router.RoutingError):
+            router.route('audit the architecture across modules', registry, {model})
 
     def test_every_requirement_is_individually_mandatory(self):
         base = enable(REGISTRY, *FOUR)
@@ -80,6 +122,12 @@ class RegistryTests(unittest.TestCase):
             'terms_verified': lambda m: m.update(terms_verified=False),
             'terms_review_missing': lambda m: m.update(terms_review=None),
             'terms_review_incomplete': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '', 'source': 'x'}),
+            'terms_review_wrong_schema': lambda m: m.update(terms_review={'reviewer': 'owner', 'date': '2026-10-21',
+                                                                         'source': 'https://opencode.ai/docs/zen'}),
+            'terms_review_bad_date': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '2026-99-99',
+                                                                      'source': 'https://opencode.ai/docs/zen'}),
+            'terms_review_bad_source': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '2026-10-21',
+                                                                        'source': 'javascript:bad'}),
             'repo_code_approved': lambda m: m.update(repo_code_approved=False),
             'operational_status': lambda m: m.update(operational_status='degraded'),
         }
@@ -88,6 +136,21 @@ class RegistryTests(unittest.TestCase):
             breaker(broken['models'][model])
             self.assertNotEqual(self.route_backend(broken)['model'], model, name)
         self.assertNotEqual(self.route_backend(base, available=ALL - {model})['model'], model)
+
+    def test_malformed_review_sources_are_rejected_without_parser_errors(self):
+        model = 'opencode/mimo-v2.6-flash-free'
+        for source in ('javascript:bad', 'https:// example.com', 'https://.',
+                       'https://example.com:bad', 'https://[', 'https://user@example.com',
+                       'https://example.com./terms', 'https://example..com/terms',
+                       'https://127.0.0.1/terms', 'https://10.0.0.1/terms',
+                       'https://169.254.169.254/latest/meta-data',
+                       'https://127.000.000.001/terms', 'https://0177.0.0.1/terms',
+                       'https://0x7f.0.0.1/terms'):
+            registry = enable(REGISTRY, *FOUR)
+            registry['models'][model]['terms_review']['source'] = source
+            self.assertIn('terms not verified with recorded evidence',
+                          router.blockers(registry['models'][model]), source)
+            self.assertNotEqual(self.route_backend(registry)['model'], model, source)
 
     def route_backend(self, registry, available=ALL):
         return router.route('new api endpoint', registry, set(available))

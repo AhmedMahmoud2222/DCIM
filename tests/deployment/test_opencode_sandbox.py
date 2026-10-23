@@ -210,7 +210,8 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         enabled = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
         for m in enabled['models'].values():
             m.update(terms_verified=True, repo_code_approved=True, operational_status='healthy',
-                     terms_review={'reviewed_by': 'o', 'date': 'd', 'source': 's'})
+                     terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
+                                   'source': 'https://opencode.ai/docs/zen'})
         for task in (f'use {FAKE_TOKEN}', 'summarize customer data', 'fix credentials handling'):
             with self.assertRaises(router.RoutingError):
                 router.route(task, enabled, set(enabled['models']))
@@ -386,8 +387,12 @@ class GuardTests(unittest.TestCase):
 
 ENABLED_REGISTRY = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
 for _model in ('opencode/glm-5.3-flash-free', 'opencode/mimo-v2.6-flash-free', 'opencode/deepseek-v4.1-flash-free'):
-    ENABLED_REGISTRY['models'][_model].update(terms_verified=True, terms_review={'reviewed_by': 'o', 'date': 'd', 'source': 's'},
-                                              repo_code_approved=True, operational_status='healthy')
+    ENABLED_REGISTRY['models'][_model].update(
+        terms_verified=True,
+        terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
+                      'source': 'https://opencode.ai/docs/zen'},
+        repo_code_approved=True,
+        operational_status='healthy')
 BOUND = 'glm-5.3-flash-free'
 CHAT = '/inference/openai/v1/chat/completions'
 

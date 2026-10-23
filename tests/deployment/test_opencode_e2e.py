@@ -55,8 +55,12 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
         cls.upstream = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Stub)
         threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
         registry = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
-        registry['models'][MODEL].update(terms_verified=True, terms_review={'reviewed_by': 't', 'date': 'd', 'source': 's'},
-                                         repo_code_approved=True, operational_status='healthy')
+        registry['models'][MODEL].update(
+            terms_verified=True,
+            terms_review={'reviewed_by': 't', 'date': '2026-10-21',
+                          'source': 'https://opencode.ai/docs/zen'},
+            repo_code_approved=True,
+            operational_status='healthy')
         cls.registry = registry
 
     @classmethod

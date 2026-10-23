@@ -1,0 +1,49 @@
+# OpenCode synthetic model-health diagnostic (diagnostic workflow v1.2).
+#
+# Narrowly scoped, manually dispatched diagnostic. It is independent of the
+# model registry's production-eligibility gate: it never sets
+# terms_verified, repo_code_approved, or operational_status, never writes
+# code, and never creates Draft PRs.
+#
+# Trigger: workflow_dispatch only — requires explicit manual approval through
+# the GitHub environment protection (opencode-agent). No issue_comment
+# payload, no untrusted input.
+#
+# Permissions: contents: read only. No GitHub App publish key, no pull-request
+# or issues write, no deployment access. The job runs under environment
+# opencode-agent so OPENCODE_API_KEY is available; the key is never printed
+# and never appears in artifacts or logs.
+name: Model Health Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  diagnostic:
+    name: Synthetic model health diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: opencode-agent
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout scripts from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run synthetic model health diagnostic
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/model_health_diagnostic.py "${RUNNER_TEMP}/diagnostic.json"
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        with:
+          name: model-health-diagnostic
+          path: ${{ runner.temp }}/diagnostic.json
+          retention-days: 1
