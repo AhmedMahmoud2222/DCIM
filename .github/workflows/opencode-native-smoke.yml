@@ -57,14 +57,18 @@ jobs:
     permissions:
       contents: read
     steps:
-      # Fail closed before any secret can be injected. Pure shell on runner
-      # runtime environment variables: no untrusted payload reaches the shell.
+      # Fail closed before any secret can be injected, checking only documented
+      # default runner environment variables (GITHUB_EVENT_NAME, GITHUB_REF).
+      # The opencode-agent environment itself is bound by the job-level
+      # `environment:` key above, verified statically in the test suite;
+      # GITHUB_ENVIRONMENT is not a documented default variable and must not
+      # be depended on here. Pure shell on runtime variables: no untrusted
+      # payload reaches the shell.
       - name: Enforce trusted main dispatch (no secrets at this point)
         run: |
           set -euo pipefail
           test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
           test "${GITHUB_REF}" = "refs/heads/main"
-          test "${GITHUB_ENVIRONMENT}" = "opencode-agent"
 
       # Sparse checkout: only the pinned runtime and the runner script are
       # fetched from the workflow commit. No repository source is exposed to

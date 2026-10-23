@@ -23,6 +23,7 @@ import importlib.util
 import inspect
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -146,21 +147,38 @@ class ChildEnvironmentTests(unittest.TestCase):
                        'XDG_CACHE_HOME', 'XDG_STATE_HOME'):
                 self.assertTrue(value.startswith('/tmp/agent-home'), key)
 
-    def test_config_content_denies_all_risky_tools(self):
+    def test_config_content_denies_every_tool_of_the_pinned_runtime(self):
         env = smoke.build_child_env('/tmp/agent-home', 'k')
         config = json.loads(env['OPENCODE_CONFIG_CONTENT'])
         self.assertEqual(config['enabled_providers'], ['opencode'])
         self.assertFalse(config['autoupdate'])
         self.assertEqual(config['share'], 'disabled')
-        for tool in ('bash', 'edit', 'webfetch'):
-            self.assertEqual(config['permission'][tool], 'deny')
+        # Validated permission kinds of opencode-ai 1.19.3 (binary evidence):
+        # file/access tools plus the delegation kinds. Nothing may be 'allow'.
+        for tool in ('edit', 'read', 'bash', 'webfetch',
+                     'external_directory', 'task', 'todowrite'):
+            self.assertEqual(config['permission'][tool], 'deny', tool)
+        self.assertNotIn('allow', json.dumps(config['permission']))
+
+    def test_no_other_model_is_selectable_for_any_request(self):
+        # C1: the primary model, the CLI --model flag and the auxiliary/
+        # title-generation model must all be the single pinned MODEL.
+        env = smoke.build_child_env('/tmp/agent-home', 'k')
+        config = json.loads(env['OPENCODE_CONFIG_CONTENT'])
+        self.assertEqual(config['model'], MODEL)
+        self.assertEqual(config['small_model'], MODEL)
+        self.assertEqual(config['enabled_providers'], ['opencode'])
+        command = smoke.build_command('/opt/opencode/bin/opencode', '/work')
+        self.assertEqual(command[command.index('--model') + 1], MODEL)
 
     def test_config_content_never_contains_credential_or_endpoints(self):
         env = smoke.build_child_env('/tmp/agent-home', 'secret-key')
         self.assertNotIn('apiKey', env['OPENCODE_CONFIG_CONTENT'])
         self.assertNotIn('baseURL', env['OPENCODE_CONFIG_CONTENT'])
+        # No provider options block (no baseURL/apiKey overrides): the JSON key
+        # "provider" itself must not appear — "enabled_providers" is distinct.
+        self.assertNotIn('"provider"', env['OPENCODE_CONFIG_CONTENT'])
         self.assertNotIn('secret-key', env['OPENCODE_CONFIG_CONTENT'])
-        self.assertNotIn('http', env['OPENCODE_CONFIG_CONTENT'])
 
     def test_empty_agent_home_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -266,20 +284,51 @@ class TranscriptEdgeCaseTests(unittest.TestCase):
                 '"part":{"type":"step-finish","reason":"stop"}}')
         self.assertEqual(smoke.evaluate([line], 3, False)[1], 'nonzero_exit:3')
 
+    def test_malicious_read_tool_use_is_rejected(self):
+        # Defense layer after config denial: even a synthetic transcript that
+        # contains a completed filesystem-read tool call cannot count as ok.
+        line = ('{"type":"tool_use","timestamp":1,"sessionID":"ses_ea5c01",'
+                '"part":{"type":"tool","tool":"read","callID":"c1",'
+                '"state":{"status":"completed"}}}')
+        self.assertEqual(smoke.evaluate([line], 0, False),
+                         ('failed', 'unexpected_tool_use', None, None))
+
     def test_reason_escaper_drops_everything_outside_the_vocabulary(self):
         self.assertEqual(smoke._esc_reason('Length cap'), 'length-cap')
         self.assertEqual(smoke._esc_reason('stop; exit\nbad'), 'stop-exit-bad')
         self.assertEqual(smoke._esc_reason(''), '')
 
 
-class VersionParsingTests(unittest.TestCase):
-    def test_parses_real_version_banner(self):
-        self.assertEqual(smoke.parse_version('opencode v1.19.3'), '1.19.3')
+# Captured from the real lockfile-pinned runtime: `opencode --version` on the
+# registry-published windows-x64 tarball of opencode-ai 1.19.3 prints exactly
+# this (bare semver, no banner, no leading 'v'). The linux-x64 build matches:
+# the workflow install step asserts bare equality against '1.19.3' and passed
+# on the CI runner.
+REAL_PINNED_VERSION_OUTPUT = '1.19.3\n'
 
-    def test_ignores_unrelated_numbers(self):
+
+class VersionParsingTests(unittest.TestCase):
+    def test_accepts_real_pinned_binary_output(self):
+        self.assertEqual(smoke.parse_version(REAL_PINNED_VERSION_OUTPUT),
+                         '1.19.3')
+
+    def test_accepts_bare_prefixed_and_banner_formats(self):
+        self.assertEqual(smoke.parse_version('opencode v1.19.3'), '1.19.3')
+        self.assertEqual(smoke.parse_version('v1.19.3'), '1.19.3')
+        self.assertEqual(smoke.parse_version('opencode 1.19.3'), '1.19.3')
+        self.assertEqual(smoke.parse_version('  1.19.3  \n'), '1.19.3')
+
+    def test_ignores_blank_lines_around_the_version(self):
+        self.assertEqual(smoke.parse_version('\n1.19.3\n\n'), '1.19.3')
+
+    def test_rejects_unmatchable_or_ambiguous_output(self):
         self.assertIsNone(smoke.parse_version('nothing here'))
-        self.assertIsNone(smoke.parse_version('v1.19'))
-        self.assertIsNone(smoke.parse_version('1.19.3 without prefix'))
+        self.assertIsNone(smoke.parse_version('v1.19'))            # 2 parts
+        self.assertIsNone(smoke.parse_version('1.19.3 extra text'))
+        self.assertIsNone(smoke.parse_version('build-1.19.3'))
+        self.assertIsNone(smoke.parse_version('1.19.3\n1.19.9'))   # conflicting
+        self.assertIsNone(smoke.parse_version(''))                 # empty
+        self.assertIsNone(smoke.parse_version('1.19.3.0'))         # 4 parts
 
     def test_expected_version_matches_every_repo_pin(self):
         package = json.loads(
@@ -381,6 +430,24 @@ class SummaryLineTests(unittest.TestCase):
 # Workflow YAML policy tests
 # ---------------------------------------------------------------------------
 
+def _find_posix_shell_available() -> str | None:
+    """Find a POSIX shell that shares the parent process environment.
+
+    Deterministic candidates only: the CI runner's /bin/bash (or /bin/sh), or
+    Git-for-Windows bash which shares the Windows env. Windows' WSL bash.exe
+    is deliberately not used: it does not inherit arbitrary parent env vars,
+    so GITHUB_* variables would silently vanish.
+    """
+    candidates = ('/bin/bash', '/bin/sh',
+                  r'C:\Program Files\Git\bin\bash.exe',
+                  r'C:\Program Files\Git\usr\bin\bash.exe')
+    for candidate in candidates:
+        if os.path.isfile(candidate) and (os.name == 'posix' or 'git' in
+                                          candidate.lower()):
+            return candidate
+    return None
+
+
 class WorkflowPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -422,15 +489,21 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(guard.get('name'),
                          'Enforce trusted main dispatch (no secrets at this point)')
         run = guard.get('run', '')
-        for required in ('workflow_dispatch', 'refs/heads/main',
-                         'opencode-agent'):
+        # Only documented default runner variables, no invented context keys.
+        for required in ('workflow_dispatch', 'refs/heads/main'):
             self.assertIn(required, run)
+        self.assertNotIn('GITHUB_ENVIRONMENT', run)
         self.assertFalse(guard.get('uses'))
         # The guard runs before every step that could receive a secret.
         secret_steps = [s for s in self.job['steps']
                         if 'secrets.' in json.dumps(s)]
         self.assertEqual(len(secret_steps), 1)
         self.assertGreater(self.job['steps'].index(secret_steps[0]), 0)
+
+    def test_opencode_agent_environment_is_still_bound(self):
+        # B1: the environment binding is enforced by the job-level key, not by
+        # an undocumented runner variable inside the guard script.
+        self.assertEqual(self.job['environment'], 'opencode-agent')
 
     def test_secret_is_exposed_to_exactly_one_run_step(self):
         expected = {'OPENCODE_API_KEY': '${{ secrets.OPENCODE_API_KEY }}'}
@@ -516,6 +589,47 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('set -euo pipefail', runner['run'])
 
 
+@unittest.skipUnless(_find_posix_shell_available() is not None,
+                     'needs a POSIX shell that shares the parent env '
+                     '(e.g. /bin/bash on the Linux CI runner); Windows WSL '
+                     'bash does not inherit the parent environment')
+class GuardBehaviorTests(unittest.TestCase):
+    """Execute the actual guard script body from the workflow YAML under both
+    valid-main and rejected conditions — behavior, not just text."""
+
+    shell = _find_posix_shell_available()
+
+    @classmethod
+    def setUpClass(cls):
+        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding='utf-8'))
+        cls.guard_script = workflow['jobs']['smoke']['steps'][0]['run']
+
+    def run_guard(self, event, ref):
+        shell = self.shell
+        env = {k: v for k, v in os.environ.items() if k.startswith(('System',
+                'PATH', 'PATHEXT', 'HOME'))}
+        env.update({'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref})
+        with tempfile.TemporaryDirectory() as tmp:
+            script = os.path.join(tmp, 'guard.sh')
+            with open(script, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(self.guard_script.replace('\r\n', '\n'))
+            os.chmod(script, stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            return subprocess.run([shell, script], env=env,
+                                  capture_output=True, text=True, timeout=60)
+
+    def test_valid_main_dispatch_is_accepted(self):
+        result = self.run_guard('workflow_dispatch', 'refs/heads/main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_non_main_ref_is_rejected(self):
+        result = self.run_guard('workflow_dispatch', 'refs/heads/feature-x')
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_wrong_event_is_rejected(self):
+        result = self.run_guard('issue_comment', 'refs/heads/main')
+        self.assertNotEqual(result.returncode, 0)
+
+
 # ---------------------------------------------------------------------------
 # main() end to end with a scripted stub binary (POSIX only; no network)
 # ---------------------------------------------------------------------------
@@ -534,9 +648,12 @@ class MainEndToEndTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = self._tmp.name
 
-    def stub_binary(self, media: str, exit_code: int) -> Path:
+    def stub_binary(self, media: str, exit_code: int, banner: str = '1.19.3'
+                    ) -> Path:
         stub_dir = Path(self.tmp) / 'stubdir'
         stub_dir.mkdir(exist_ok=True)
+        # The --version output uses the REAL pinned-binary format: bare semver
+        # (see VersionParsingTests / REAL_PINNED_VERSION_OUTPUT evidence).
         # The transcript is emitted byte-for-byte from a sibling file; a
         # heredoc would append a trailing blank line and inflate event_count.
         (stub_dir / 'media.jsonl').write_text(media, encoding='utf-8')
@@ -544,7 +661,7 @@ class MainEndToEndTests(unittest.TestCase):
         stub.write_text(
             '#!/bin/sh\n'
             'if [ "$1" = "--version" ]; then\n'
-            '  echo "opencode v1.19.3"\n'
+            f'  echo "{banner}"\n'
             '  exit 0\n'
             'fi\n'
             'cat "$(dirname "$0")/media.jsonl"\n'
@@ -555,7 +672,8 @@ class MainEndToEndTests(unittest.TestCase):
         return stub
 
     def run_smoke(self, stub: Path, *, key: str | None = KEY,
-                  binary: str | None = None, timeout_min: str = '10'):
+                  binary: str | None = None, timeout_min: str = '10',
+                  cwd: str | None = None):
         environment = dict(os.environ)
         environment.pop('OPENCODE_API_KEY', None)  # never use a real key
         if key is not None:
@@ -564,11 +682,14 @@ class MainEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work_root:
             agent_home = os.path.join(work_root, 'home')
             workdir = os.path.join(work_root, 'work')
+            invocation_binary = binary or stub
             completed = subprocess.run(
                 [sys.executable,
                  str(ROOT / '.github/scripts/opencode_native_smoke.py'),
-                 result, str(binary or stub), agent_home, workdir, timeout_min],
-                env=environment, capture_output=True, text=True, timeout=300)
+                 result, str(invocation_binary), agent_home, workdir,
+                 timeout_min],
+                env=environment, capture_output=True, text=True, timeout=300,
+                cwd=cwd)
         record = None
         if os.path.exists(result):
             with open(result, encoding='utf-8') as handle:
@@ -591,6 +712,32 @@ class MainEndToEndTests(unittest.TestCase):
         self.assertEqual(record['opencode_version'], '1.19.3')
         self.assertGreater(record['elapsed_ms'], 0)
         self.assertEqual(record['event_count'], meta['original_line_count'])
+
+    def test_prefixed_version_banner_is_tolerated(self):
+        # Older alt builds print 'opencode v<semver>'; the matcher must accept
+        # it while the workflow keeps asserting the real bare format.
+        stub = self.stub_binary(
+            (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8'), 0,
+            banner='opencode v1.19.3')
+        completed, record = self.run_smoke(stub)
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(record['status'], 'ok')
+        self.assertEqual(record['opencode_version'], '1.19.3')
+
+    def test_relative_binary_path_with_different_cwd(self):
+        # B4 regression: the script must canonicalize the pinned binary to an
+        # absolute path before changing cwd to the smoke workdir — a relative
+        # binary path containing '/' would otherwise resolve from the wrong
+        # directory (POSIX ENOENT).
+        media = (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8')
+        stub = self.stub_binary(media, 0)
+        relative_binary = os.path.relpath(stub, start=self.tmp)
+        self.assertIn(os.sep, relative_binary)  # relative path with a slash
+        completed, record = self.run_smoke(stub, binary=relative_binary,
+                                           cwd=self.tmp)
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(record['status'], 'ok')
+        self.assertEqual(record['opencode_version'], '1.19.3')
 
     def test_gateway_401_fails_with_classified_artifact(self):
         media = (FIXTURES / 'fail_unauthorized_401.jsonl').read_text(

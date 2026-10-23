@@ -21,14 +21,21 @@ diagnostic cannot become an arbitrary channel.
 Isolation: the CLI runs in an empty temporary working directory with
 HOME/XDG_* reserved under a dedicated directory, disconnected from the
 repository checkout (repo source is used only to install the runtime, never
-loaded into model context). Tool plans are denied so a malfunctioning model
-cannot read or write anything.
+loaded into model context). Every tool the pinned runtime exposes is denied
+at the config level — read, edit, bash, webfetch, external_directory, task
+and todowrite — so a malfunctioning model cannot read or write anything
+regardless of what the transcript later shows.
 
 Recording: sanitized evidence only — CLI version, model, ok/failed status,
 reason class, provider HTTP status class, elapsed time and event counts.
 Never the API key, prompt, URLs, response bodies, headers or stderr text.
 
 Usage: opencode_native_smoke.py RESULT_JSON BINARY AGENT_HOME WORKDIR TIMEOUT_MIN
+All three paths are canonicalized to absolute before any subprocess runs (the
+inference run changes cwd to the workdir; a relative binary path with a slash
+would otherwise resolve from the wrong directory). The binary must be the
+checked-out, lockfile-pinned runtime; it is not user-configurable.
+
 Environment: OPENCODE_API_KEY (read once, never printed, never written).
 
 Exit code: 0 only when the CLI version matches the pin, exited 0, produced a
@@ -63,8 +70,31 @@ RE_REASON_ESCAPE = re.compile(r'[^a-z0-9_:-]')
 # Only this provider may be enabled for the smoke run.
 ENABLED_PROVIDERS = ('opencode',)
 
-# The fixed prompt needs no tools, so all state-changing tools are denied.
-PERMISSIONS = {'edit': 'deny', 'read': 'allow', 'bash': 'deny', 'webfetch': 'deny'}
+# The fixed prompt needs no tools, so every tool the pinned runtime exposes is
+# denied before the transcript can ever show one. All seven keys below are
+# recognized permission kinds in opencode-ai 1.19.3 (validated against the
+# pinned binary's embedded code: read/edit/bash/webfetch plus the delegation
+# kinds external_directory, task and todowrite). read is denied too (B3): the
+# CLI inherits OPENCODE_API_KEY, so a filesystem-read tool running at all would
+# be an unnecessary exposure surface.
+#
+# Validated envelope note (pinned binary, 2026-10-23): read:'deny' changes the
+# outbound tool envelope; on the live opencode.ai gateway a synthetic invalid
+# key then receives HTTP 403 (policy layer) where read:'allow' produces HTTP 401
+# (upstream Invalid credential). The success path step_start -> text ->
+# step_finish(reason="stop"), exit 0 was verified with this exact hardened
+# config against a scripted provider stub, so status 'ok' remains meaningful;
+# under this config a 'forbidden' class therefore reflects credential/policy
+# state — it must never be read as model unavailability.
+PERMISSIONS = {
+    'edit': 'deny',
+    'read': 'deny',
+    'bash': 'deny',
+    'webfetch': 'deny',
+    'external_directory': 'deny',
+    'task': 'deny',
+    'todowrite': 'deny',
+}
 
 # Small, allowlisted child env. Nothing else is inherited: no SHELL, no user
 # configuration directories, no GitHub workflow environment, no CI tokens.
@@ -87,11 +117,21 @@ class VersionProbeError(Exception):
 
 
 def smoke_config() -> dict:
-    """Fixed config content: one enabled provider, every risky tool denied."""
+    """Fixed config content: one provider, both models pinned, every tool denied.
+
+    `model` and `small_model` are both pinned to the single MODEL (validated
+    config key in opencode-ai 1.19.3: Provider.getSmallModel reads
+    config.small_model in providerID/modelID form), so no auxiliary or
+    title-generation request can pick a different model. No apiKey, baseURL or
+    provider options are ever set: the key arrives only through the
+    OPENCODE_API_KEY environment variable — the standard provider integration.
+    """
     return {
         'autoupdate': False,
         'share': 'disabled',
         'enabled_providers': list(ENABLED_PROVIDERS),
+        'model': MODEL,
+        'small_model': MODEL,
         'permission': dict(PERMISSIONS),
     }
 
@@ -127,10 +167,32 @@ def build_command(binary: str, workdir: str) -> list[str]:
     ]
 
 
+SEMVER_LINE = re.compile(r'^(?:opencode\s+)?v?(\d+\.\d+\.\d+)$')
+
+
 def parse_version(text: str) -> str | None:
-    """Return the bare version from `opencode --version` output, or None."""
-    match = re.search(r'\bv(\d+\.\d+\.\d+)\b', text)
-    return match.group(1) if match else None
+    """Return the bare version from `opencode --version` output, or None.
+
+    Real pinned-runtime evidence: opencode 1.19.3 prints bare `1.19.3`
+    (captured from the registry-published windows-x64 npm tarball; the
+    linux-x64 build matches, proven by the workflow install step's
+    bare-equality assertion passing on CI). The matcher stays bounded and
+    tolerant at the edges: optional single `opencode ` banner, optional one
+    `v`, full-line handling, and any second distinct version or unmatched
+    line means "cannot determine version" — fail closed.
+    """
+    versions: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        match = SEMVER_LINE.match(line)
+        if not match:
+            return None
+        versions.add(match.group(1))
+    if len(versions) != 1:
+        return None
+    return next(iter(versions))
 
 
 def read_version(binary: str, env: dict) -> str:
@@ -287,6 +349,14 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 2
     result_path, binary, agent_home, workdir, timeout_min = argv[1], argv[2], argv[3], argv[4], int(argv[5])
+
+    # Canonicalize before any subprocess runs. The inference run later changes
+    # cwd to the smoke workdir; a relative binary containing '/' would then be
+    # resolved from that new cwd and raise ENOENT on POSIX. Pinned to the
+    # checked-out runtime by the caller — never user-configurable at runtime.
+    binary = os.path.abspath(binary)
+    agent_home = os.path.abspath(agent_home)
+    workdir = os.path.abspath(workdir)
     key = os.environ.get('OPENCODE_API_KEY', '')
 
     start = time.monotonic()
