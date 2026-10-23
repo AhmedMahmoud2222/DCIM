@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Synthetic model-health diagnostic (diagnostic v1.2).
+"""Synthetic model-health diagnostic (diagnostic v1.3).
 
 Reads the live OpenCode model catalog and performs minimal non-sensitive
 synthetic inference on two allowlisted free models. Records sanitized status
 evidence (model ID, status, error class, latency) — never keys, tokens,
 headers, or private prompts.
 
-Allowlist: opencode/glm-5.3-flash-free, opencode/deepseek-v4.1-flash-free.
+Allowlist: glm-5.3-flash-free, deepseek-v4.1-flash-free (bare provider IDs,
+as returned by the live catalog and used in direct API request bodies).
 Hard-coded synthetic prompt. No arbitrary model or prompt channel.
 
 This diagnostic is independent of the model registry's production-eligibility
@@ -29,16 +30,22 @@ import time
 import urllib.error
 import urllib.request
 
-# Narrow allowlist: only these two model IDs may be probed.
+# Narrow allowlist: only these two bare provider model IDs may be probed.
+# These are the IDs returned by the live catalog and expected in the
+# inference request body.  The opencode/<id> form is only the CLI
+# model-selector prefix and is never sent to the API.
 ALLOWED_MODELS = frozenset({
-    'opencode/glm-5.3-flash-free',
-    'opencode/deepseek-v4.1-flash-free',
+    'glm-5.3-flash-free',
+    'deepseek-v4.1-flash-free',
 })
 
 # Hard-coded non-sensitive synthetic prompt. Never accepts untrusted input.
 SYNTHETIC_PROMPT = 'Respond with exactly the single word: OK'
 
-CATALOG_ENDPOINT = 'https://opencode.ai/inference/openai/v1/models'
+# Official OpenCode catalog endpoint per
+# https://opencode.ai/v2/docs/console/models/ and
+# https://dev.opencode.ai/v2/docs/console/api/inference
+CATALOG_ENDPOINT = 'https://opencode.ai/inference/v1/models'
 INFERENCE_ENDPOINT = 'https://opencode.ai/inference/openai/v1/chat/completions'
 REQUEST_TIMEOUT = 30  # seconds
 MAX_TOKENS = 5
@@ -146,7 +153,13 @@ def classify_error(error: Exception) -> str:
 
 
 def normalize_id(value: str) -> str:
-    return value if value.startswith('opencode/') else f'opencode/{value}'
+    """Return the bare provider model ID unchanged.
+
+    The live catalog returns bare IDs (e.g. glm-5.3-flash-free).  The
+    opencode/<id> prefix is only the CLI model-selector form and is never
+    part of the catalog or direct API payload.
+    """
+    return value
 
 
 def extract_ids(payload: object) -> set[str]:
@@ -262,7 +275,7 @@ def main(argv: list[str]) -> int:
     overall = 'healthy' if (all_in_catalog and all_healthy) else 'unhealthy'
 
     report = {
-        'diagnostic_version': '1.2',
+        'diagnostic_version': '1.3',
         'catalog_endpoint': CATALOG_ENDPOINT,
         'catalog_model_count': len(catalog_ids),
         'models_tested': len(results),

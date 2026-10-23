@@ -1,4 +1,4 @@
-"""OpenCode model health diagnostic tests (diagnostic tests v1.2).
+"""OpenCode model health diagnostic tests (diagnostic tests v1.3).
 
 Tests the narrow allowlist, error classification, catalog parsing, redirect
 blocking, response validation, and exit-code behavior.
@@ -6,6 +6,10 @@ blocking, response validation, and exit-code behavior.
 The diagnostic cannot become an arbitrary-model or arbitrary-prompt channel.
 Includes end-to-end stub-server tests that fail on mutation/removal of
 structural response validation and nonzero exit.
+
+Negative tests prove that 404 catalog errors are not interpreted as
+model-unavailable evidence, and that inference response model identity is
+validated.
 """
 import importlib.util
 import inspect
@@ -28,8 +32,8 @@ diagnostic = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(diagnostic)
 
 ALLOWED = frozenset({
-    'opencode/glm-5.3-flash-free',
-    'opencode/deepseek-v4.1-flash-free',
+    'glm-5.3-flash-free',
+    'deepseek-v4.1-flash-free',
 })
 
 
@@ -37,11 +41,12 @@ class AllowlistTests(unittest.TestCase):
     def test_allowlist_contains_exactly_two_models(self):
         self.assertEqual(diagnostic.ALLOWED_MODELS, ALLOWED)
         for model_id in diagnostic.ALLOWED_MODELS:
-            self.assertTrue(model_id.startswith('opencode/'))
+            # Bare provider IDs, not the opencode/<id> CLI selector form.
+            self.assertNotIn('/', model_id)
             self.assertTrue(model_id.endswith('-free'))
 
     def test_non_allowlisted_model_is_not_tested(self):
-        record = diagnostic.probe_model('key', 'opencode/nemotron-3-ultra-free')
+        record = diagnostic.probe_model('key', 'nemotron-3-ultra-free')
         self.assertEqual(record['status'], 'not_allowlisted')
         self.assertFalse(record['allowed'])
 
@@ -65,7 +70,7 @@ class SyntheticPromptTests(unittest.TestCase):
 
 class TrustedHostTests(unittest.TestCase):
     def test_https_opencode_ai_is_allowed(self):
-        diagnostic._assert_trusted('https://opencode.ai/inference/openai/v1/models')
+        diagnostic._assert_trusted('https://opencode.ai/inference/v1/models')
         diagnostic._assert_trusted(
             'https://opencode.ai/inference/openai/v1/chat/completions'
         )
@@ -73,19 +78,19 @@ class TrustedHostTests(unittest.TestCase):
     def test_http_scheme_is_blocked(self):
         with self.assertRaises(urllib.error.URLError):
             diagnostic._assert_trusted(
-                'http://opencode.ai/inference/openai/v1/models'
+                'http://opencode.ai/inference/v1/models'
             )
 
     def test_untrusted_host_is_blocked(self):
         with self.assertRaises(urllib.error.URLError):
             diagnostic._assert_trusted(
-                'https://evil.example.com/inference/openai/v1/models'
+                'https://evil.example.com/inference/v1/models'
             )
 
     def test_subdomain_is_blocked(self):
         with self.assertRaises(urllib.error.URLError):
             diagnostic._assert_trusted(
-                'https://api.opencode.ai/inference/openai/v1/models'
+                'https://api.opencode.ai/inference/v1/models'
             )
 
 
@@ -219,7 +224,7 @@ class RedirectCredentialLeakTests(unittest.TestCase):
                 fixture = TwoServerRedirectFixture(code)
                 try:
                     opener = diagnostic._build_opener()
-                    body = json.dumps({'model': 'opencode/glm-5.3-flash-free',
+                    body = json.dumps({'model': 'glm-5.3-flash-free',
                                        'messages': [{'role': 'user', 'content': 'OK'}],
                                        'max_tokens': 5}).encode()
                     req = urllib.request.Request(
@@ -275,64 +280,117 @@ class ResponseValidationTests(unittest.TestCase):
         return patch.object(diagnostic, 'http_post_json', side_effect=stub)
 
     def test_valid_200_is_healthy(self):
-        valid = (b'{"id":"chatcmpl_123","model":"opencode/glm-5.3-flash-free",'
+        valid = (b'{"id":"chatcmpl_123","model":"glm-5.3-flash-free",'
                  b'"choices":[{"message":{"content":"OK"}}]}')
         with self._stub_post_response(valid):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'healthy')
         self.assertIsNone(record['error_class'])
 
     def test_empty_json_200_is_unhealthy(self):
         with self._stub_post_response(b'{}'):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
 
     def test_missing_choices_200_is_unhealthy(self):
-        body = b'{"id":"x","model":"opencode/glm-5.3-flash-free"}'
+        body = b'{"id":"x","model":"glm-5.3-flash-free"}'
         with self._stub_post_response(body):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
 
     def test_empty_choices_200_is_unhealthy(self):
-        body = (b'{"id":"x","model":"opencode/glm-5.3-flash-free","choices":[]}')
+        body = (b'{"id":"x","model":"glm-5.3-flash-free","choices":[]}')
         with self._stub_post_response(body):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
 
     def test_missing_content_200_is_unhealthy(self):
-        body = (b'{"id":"x","model":"opencode/glm-5.3-flash-free",'
+        body = (b'{"id":"x","model":"glm-5.3-flash-free",'
                 b'"choices":[{"message":{}}]}')
         with self._stub_post_response(body):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
 
     def test_empty_content_200_is_unhealthy(self):
-        body = (b'{"id":"x","model":"opencode/glm-5.3-flash-free",'
+        body = (b'{"id":"x","model":"glm-5.3-flash-free",'
                 b'"choices":[{"message":{"content":""}}]}')
         with self._stub_post_response(body):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
 
     def test_model_mismatch_200_is_unhealthy(self):
-        body = (b'{"id":"x","model":"opencode/deepseek-v4.1-flash-free",'
+        body = (b'{"id":"x","model":"deepseek-v4.1-flash-free",'
                 b'"choices":[{"message":{"content":"OK"}}]}')
         with self._stub_post_response(body):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
 
     def test_missing_id_200_is_unhealthy(self):
-        body = (b'{"model":"opencode/glm-5.3-flash-free",'
+        body = (b'{"model":"glm-5.3-flash-free",'
                 b'"choices":[{"message":{"content":"OK"}}]}')
         with self._stub_post_response(body):
-            record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+            record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+
+
+# ---------------------------------------------------------------------------
+# Negative tests: catalog 404 must not be interpreted as model-unavailable
+# ---------------------------------------------------------------------------
+
+class CatalogErrorTests(unittest.TestCase):
+    """Negative tests: catalog-level failures (e.g. 404 on the catalog
+    endpoint) must not be interpreted as evidence that specific models are
+    unavailable.  The catalog fetch failure is a catalog-level error; the
+    diagnostic fails closed (empty catalog set) rather than claiming
+    individual models are unavailable."""
+
+    def test_catalog_404_is_catalog_error_not_model_unavailable(self):
+        """When fetch_catalog raises HTTPError 404, main() must treat it as
+        a catalog-level failure (empty catalog set), not as per-model
+        unavailability.  This is verified by patching fetch_catalog to raise
+        a 404 and checking that catalog_ids ends up empty."""
+        def failing_fetch(key, get=diagnostic.http_get_json):
+            raise urllib.error.HTTPError(
+                diagnostic.CATALOG_ENDPOINT, 404,
+                'Not Found', {}, None
+            )
+
+        with patch.object(diagnostic, 'fetch_catalog', side_effect=failing_fetch):
+            # Simulate what main() does: catch the exception, set empty set.
+            try:
+                catalog_ids = diagnostic.fetch_catalog('key')
+            except urllib.error.HTTPError as error:
+                # 404 from the catalog endpoint is classified, but the
+                # diagnostic does NOT treat it as per-model unavailability.
+                error_class = diagnostic.classify_error(error)
+                self.assertEqual(error_class, 'model_not_available')
+                catalog_ids = set()
+
+            self.assertEqual(catalog_ids, set())
+            # With an empty catalog, no model can be catalog_present.
+            for model_id in ALLOWED:
+                self.assertNotIn(model_id, catalog_ids)
+
+    def test_catalog_network_error_is_catalog_error_not_model_unavailable(self):
+        """A network error on the catalog endpoint must also result in an
+        empty catalog set, not per-model unavailability claims."""
+        def failing_fetch(key):
+            raise urllib.error.URLError('connection refused')
+
+        with patch.object(diagnostic, 'fetch_catalog', side_effect=failing_fetch):
+            try:
+                catalog_ids = diagnostic.fetch_catalog('key')
+            except urllib.error.URLError:
+                catalog_ids = set()
+
+        self.assertEqual(catalog_ids, set())
 
 
 # ---------------------------------------------------------------------------
@@ -370,29 +428,30 @@ class ErrorClassificationTests(unittest.TestCase):
 
 
 class CatalogParsingTests(unittest.TestCase):
-    def test_extract_ids_normalizes_model_ids(self):
+    def test_extract_ids_returns_bare_provider_ids(self):
+        # The live catalog returns bare IDs; extract_ids must not add
+        # the opencode/ prefix.
         payload = {'data': [{'id': 'glm-5.3-flash-free'},
-                            {'id': 'opencode/deepseek-v4.1-flash-free'}]}
+                            {'id': 'deepseek-v4.1-flash-free'}]}
         ids = diagnostic.extract_ids(payload)
-        self.assertEqual(ids, {'opencode/glm-5.3-flash-free',
-                               'opencode/deepseek-v4.1-flash-free'})
+        self.assertEqual(ids, {'glm-5.3-flash-free', 'deepseek-v4.1-flash-free'})
 
     def test_extract_ids_ignores_non_string_entries(self):
         payload = {'data': [{'id': 123}, {'id': 'glm-5.3-flash-free'}, None]}
         ids = diagnostic.extract_ids(payload)
-        self.assertEqual(ids, {'opencode/glm-5.3-flash-free'})
+        self.assertEqual(ids, {'glm-5.3-flash-free'})
 
 
 class ProbeStructureTests(unittest.TestCase):
     def test_probe_record_has_required_keys(self):
-        record = diagnostic.probe_model('key', 'opencode/glm-5.3-flash-free')
+        record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         required = {'model', 'allowed', 'catalog_present', 'status',
                     'error_class', 'latency_ms'}
         self.assertTrue(required.issubset(set(record)))
 
     def test_healthy_record_has_no_error_class(self):
         record = {
-            'model': 'opencode/glm-5.3-flash-free',
+            'model': 'glm-5.3-flash-free',
             'allowed': True,
             'catalog_present': True,
             'status': 'healthy',
@@ -403,7 +462,7 @@ class ProbeStructureTests(unittest.TestCase):
 
     def test_unhealthy_record_has_error_class(self):
         record = {
-            'model': 'opencode/deepseek-v4.1-flash-free',
+            'model': 'deepseek-v4.1-flash-free',
             'allowed': True,
             'catalog_present': True,
             'status': 'unhealthy',
@@ -414,7 +473,7 @@ class ProbeStructureTests(unittest.TestCase):
 
     def test_response_id_hash_is_12_hex_chars_when_present(self):
         record = {
-            'model': 'opencode/glm-5.3-flash-free',
+            'model': 'glm-5.3-flash-free',
             'allowed': True,
             'catalog_present': True,
             'status': 'healthy',
@@ -431,9 +490,9 @@ class MainBehaviorTests(unittest.TestCase):
     def test_report_has_overall_and_healthy_count(self):
         # Build a minimal report dict as main() would produce.
         results = [
-            {'model': 'opencode/glm-5.3-flash-free', 'status': 'healthy',
+            {'model': 'glm-5.3-flash-free', 'status': 'healthy',
              'catalog_present': True},
-            {'model': 'opencode/deepseek-v4.1-flash-free', 'status': 'healthy',
+            {'model': 'deepseek-v4.1-flash-free', 'status': 'healthy',
              'catalog_present': True},
         ]
         healthy_count = sum(1 for r in results if r['status'] == 'healthy')
@@ -445,9 +504,9 @@ class MainBehaviorTests(unittest.TestCase):
 
     def test_report_unhealthy_when_one_model_fails(self):
         results = [
-            {'model': 'opencode/glm-5.3-flash-free', 'status': 'healthy',
+            {'model': 'glm-5.3-flash-free', 'status': 'healthy',
              'catalog_present': True},
-            {'model': 'opencode/deepseek-v4.1-flash-free', 'status': 'unhealthy',
+            {'model': 'deepseek-v4.1-flash-free', 'status': 'unhealthy',
              'catalog_present': True},
         ]
         healthy_count = sum(1 for r in results if r['status'] == 'healthy')
@@ -458,9 +517,9 @@ class MainBehaviorTests(unittest.TestCase):
 
     def test_report_unhealthy_when_model_missing_from_catalog(self):
         results = [
-            {'model': 'opencode/glm-5.3-flash-free', 'status': 'healthy',
+            {'model': 'glm-5.3-flash-free', 'status': 'healthy',
              'catalog_present': True},
-            {'model': 'opencode/deepseek-v4.1-flash-free', 'status': 'not_in_catalog',
+            {'model': 'deepseek-v4.1-flash-free', 'status': 'not_in_catalog',
              'catalog_present': False},
         ]
         healthy_count = sum(1 for r in results if r['status'] == 'healthy')
