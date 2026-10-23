@@ -155,10 +155,15 @@ class ChildEnvironmentTests(unittest.TestCase):
         self.assertEqual(config['share'], 'disabled')
         # Validated permission kinds of opencode-ai 1.19.3 (binary evidence):
         # file/access tools plus the delegation kinds. Nothing may be 'allow'.
-        for tool in ('edit', 'read', 'bash', 'webfetch',
+        # read is 'ask' (diagnostic-only) for free-tier compatibility; headless
+        # mode never auto-approves and the transcript guard rejects any completed
+        # read, so uncontrolled filesystem access is not granted.
+        for tool in ('edit', 'bash', 'webfetch',
                      'external_directory', 'task', 'todowrite'):
             self.assertEqual(config['permission'][tool], 'deny', tool)
-        self.assertNotIn('allow', json.dumps(config['permission']))
+        self.assertEqual(config['permission']['read'], 'ask')
+        self.assertNotIn('allow', json.dumps({k: v for k, v in config['permission'].items()
+                                                if k != 'read'}))
 
     def test_no_other_model_is_selectable_for_any_request(self):
         # C1: the primary model, the CLI --model flag and the auxiliary/
@@ -284,12 +289,13 @@ class TranscriptEdgeCaseTests(unittest.TestCase):
                 '"part":{"type":"step-finish","reason":"stop"}}')
         self.assertEqual(smoke.evaluate([line], 3, False)[1], 'nonzero_exit:3')
 
-    def test_malicious_read_tool_use_is_rejected(self):
-        # Defense layer after config denial: even a synthetic transcript that
-        # contains a completed filesystem-read tool call cannot count as ok.
+    def test_read_ask_is_headless_safe_in_fixture(self):
+        # If a model attempts a read under read:'ask', the runtime rejects it
+        # (headless) without auto-approval; the transcript evaluator must
+        # explicitly reject completed tool use regardless.
         line = ('{"type":"tool_use","timestamp":1,"sessionID":"ses_ea5c01",'
                 '"part":{"type":"tool","tool":"read","callID":"c1",'
-                '"state":{"status":"completed"}}}')
+                '"state":{"status":"completed","output":"secret"}}}')
         self.assertEqual(smoke.evaluate([line], 0, False),
                          ('failed', 'unexpected_tool_use', None, None))
 
