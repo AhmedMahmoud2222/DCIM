@@ -89,6 +89,11 @@ FK_INDEXES = [
     ("user_group_permission", "permission_id"),
 ]
 
+# Session-scoped lock: unlike a transaction lock, this survives Alembic's autocommit blocks.
+# A concurrent 0057 runner fails fast instead of planning the same missing indexes.
+_MIGRATION_LOCK_CLASS = 1940057
+_MIGRATION_LOCK_ID = 1
+
 # One row per (table, column): the resolved target plus whatever relation already carries the index name in that schema.
 _INSPECT = sa.text(
     """
@@ -169,6 +174,26 @@ def _inspect(bind, table: str, column: str, name: str):
     return bind.execute(_INSPECT, {"table": table, "column": column, "name": name}).one()
 
 
+def _acquire_migration_lock(bind) -> None:
+    acquired = bind.scalar(
+        sa.text("SELECT pg_try_advisory_lock(:lock_class, :lock_id)"),
+        {"lock_class": _MIGRATION_LOCK_CLASS, "lock_id": _MIGRATION_LOCK_ID},
+    )
+    if not acquired:
+        raise RuntimeError(
+            "0057: another migration invocation is active; wait for it to finish, then re-run."
+        )
+
+
+def _release_migration_lock(bind) -> None:
+    released = bind.scalar(
+        sa.text("SELECT pg_advisory_unlock(:lock_class, :lock_id)"),
+        {"lock_class": _MIGRATION_LOCK_CLASS, "lock_id": _MIGRATION_LOCK_ID},
+    )
+    if not released:
+        raise RuntimeError("0057: migration advisory lock was not held by this session.")
+
+
 def _plan_one(bind, schema: str, table: str, column: str) -> str:
     name = _name(table, column)
     row = _inspect(bind, table, column, name)
@@ -205,40 +230,49 @@ def _plan_one(bind, schema: str, table: str, column: str) -> str:
 def upgrade() -> None:
     _require_online()
     bind = op.get_bind()
-    preparer = bind.dialect.identifier_preparer
-    schema = bind.scalar(sa.text("SELECT current_schema()"))
-    # Plan everything before the first build: a collision on any index aborts with nothing built.
-    plan = [(_Target(schema, t, c, _name(t, c)), _plan_one(bind, schema, t, c)) for t, c in FK_INDEXES]
-    # Commit first: CREATE/DROP INDEX CONCURRENTLY cannot run inside the migration transaction.
-    with op.get_context().autocommit_block():
-        for target, action in plan:
-            q_schema, q_table, q_name = target.qualified(preparer)
-            if action == REUSE:
-                log.info("0057: reusing valid index %s.%s", target.schema, target.name)
-                continue
-            if action == REBUILD:
-                log.warning("0057: rebuilding interrupted index artifact %s.%s", target.schema, target.name)
-                op.execute(f"DROP INDEX CONCURRENTLY {q_schema}.{q_name}")
-            op.execute(
-                f"CREATE INDEX CONCURRENTLY {q_name} ON {q_schema}.{q_table} ({preparer.quote(target.column)})"
-            )
+    _acquire_migration_lock(bind)
+    try:
+        preparer = bind.dialect.identifier_preparer
+        schema = bind.scalar(sa.text("SELECT current_schema()"))
+        # Plan everything before the first build: a collision on any index aborts with nothing built.
+        plan = [(_Target(schema, t, c, _name(t, c)), _plan_one(bind, schema, t, c)) for t, c in FK_INDEXES]
+        # Commit first: CREATE/DROP INDEX CONCURRENTLY cannot run inside the migration transaction.
+        # The session advisory lock remains held across those commits and serializes all 0057 runners.
+        with op.get_context().autocommit_block():
+            for target, action in plan:
+                q_schema, q_table, q_name = target.qualified(preparer)
+                if action == REUSE:
+                    log.info("0057: reusing valid index %s.%s", target.schema, target.name)
+                    continue
+                if action == REBUILD:
+                    log.warning("0057: rebuilding interrupted index artifact %s.%s", target.schema, target.name)
+                    op.execute(f"DROP INDEX CONCURRENTLY {q_schema}.{q_name}")
+                op.execute(
+                    f"CREATE INDEX CONCURRENTLY {q_name} ON {q_schema}.{q_table} ({preparer.quote(target.column)})"
+                )
+    finally:
+        _release_migration_lock(bind)
 
 
 def downgrade() -> None:
     _require_online()
     bind = op.get_bind()
-    preparer = bind.dialect.identifier_preparer
-    schema = bind.scalar(sa.text("SELECT current_schema()"))
-    drops = []
-    for table, column in reversed(FK_INDEXES):
-        name = _name(table, column)
-        row = _inspect(bind, table, column, name)
-        if row.rel_oid is None:
-            continue
-        if _matches_definition(row):
-            drops.append(preparer.quote_schema(schema) + "." + preparer.quote(name))
-        else:
-            log.warning("0057 downgrade: leaving %s.%s in place; it is not the index this migration created", schema, name)
-    with op.get_context().autocommit_block():
-        for qualified in drops:
-            op.execute(f"DROP INDEX CONCURRENTLY {qualified}")
+    _acquire_migration_lock(bind)
+    try:
+        preparer = bind.dialect.identifier_preparer
+        schema = bind.scalar(sa.text("SELECT current_schema()"))
+        drops = []
+        for table, column in reversed(FK_INDEXES):
+            name = _name(table, column)
+            row = _inspect(bind, table, column, name)
+            if row.rel_oid is None:
+                continue
+            if _matches_definition(row):
+                drops.append(preparer.quote_schema(schema) + "." + preparer.quote(name))
+            else:
+                log.warning("0057 downgrade: leaving %s.%s in place; it is not the index this migration created", schema, name)
+        with op.get_context().autocommit_block():
+            for qualified in drops:
+                op.execute(f"DROP INDEX CONCURRENTLY {qualified}")
+    finally:
+        _release_migration_lock(bind)

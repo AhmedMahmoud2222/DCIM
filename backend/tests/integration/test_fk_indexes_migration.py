@@ -64,11 +64,11 @@ def q(db: str, sql: str, *args):
     return _run(_admin(db, sql, *args))
 
 
-def alembic(db: str, *args: str) -> subprocess.CompletedProcess:
+def alembic(db: str, *args: str, env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "alembic", *args],
         cwd=BACKEND_DIR,
-        env={**os.environ, "DATABASE_URL": _url_for_db(APP_DATABASE_URL, db)},
+        env={**os.environ, "DATABASE_URL": _url_for_db(APP_DATABASE_URL, db), **(env_overrides or {})},
         capture_output=True,
         text=True,
         timeout=900,
@@ -177,6 +177,22 @@ def assert_all_ours_valid(db: str) -> dict:
         assert (r["tbl"], r["col"], r["method"], r["natts"]) == (table, column, "btree", 1), r["def"]
         assert r["valid"] and r["ready"] and not r["uniq"] and r["nopred"], r["def"]
     return rows
+
+
+def test_fk_index_migration_and_orm_metadata_are_exactly_in_parity():
+    import importlib
+
+    from app.db.base import Base
+
+    importlib.import_module("app.db.models")
+
+    assert len(FK_INDEXES) == 22
+    for (table_name, column_name), index_name in zip(FK_INDEXES, NAMES, strict=True):
+        table = Base.metadata.tables[table_name]
+        index = next((item for item in table.indexes if item.name == index_name), None)
+        assert index is not None, f"{index_name} missing from ORM metadata"
+        assert [column.name for column in index.columns] == [column_name]
+        assert not index.unique
 
 
 # --- happy paths -------------------------------------------------------------------------------------------------
@@ -309,7 +325,8 @@ def _start_blocked_concurrent_build(db: str):
 
     async def main():
         dsn = _dsn(_url_for_db(ADMIN_DATABASE_URL, db))
-        a, b = await asyncpg.connect(dsn), await asyncpg.connect(dsn)
+        a, b = await asyncpg.connect(dsn), await asyncpg.connect(dsn, command_timeout=50)
+        build = None
         try:
             tx = a.transaction()
             await tx.start()
@@ -322,25 +339,38 @@ def _start_blocked_concurrent_build(db: str):
                 if n:
                     break
                 await asyncio.sleep(0.1)
+            else:
+                raise AssertionError("concurrent build did not enter pg_stat_progress_create_index")
             ready.set()
-            while not release.is_set():
-                await asyncio.sleep(0.05)
+            try:
+                await asyncio.wait_for(asyncio.to_thread(release.wait), timeout=45)
+            except TimeoutError as exc:
+                raise AssertionError("test did not release the blocked build within 45 seconds") from exc
             await tx.rollback()
             await build
         except BaseException as exc:  # surfaced through the returned callable
             errors.append(exc)
             ready.set()
         finally:
+            if not release.is_set():
+                release.set()
+            if build is not None and not build.done():
+                build.cancel()
+                await asyncio.gather(build, return_exceptions=True)
             await a.close()
             await b.close()
 
     thread = threading.Thread(target=lambda: asyncio.run(main()), daemon=True)
     thread.start()
-    assert ready.wait(30), "concurrent build never appeared in pg_stat_progress_create_index"
+    if not ready.wait(30):
+        release.set()
+        thread.join(60)
+        raise AssertionError("concurrent build never appeared in pg_stat_progress_create_index")
 
     def stop():
         release.set()
         thread.join(60)
+        assert not thread.is_alive(), "blocked build worker did not stop within 60 seconds"
         assert not errors, errors
 
     return stop
@@ -351,13 +381,42 @@ def test_invalid_index_of_an_active_concurrent_build_is_not_dropped_or_rebuilt(d
     try:
         row = index_rows(db, [FIRST_NAME])[FIRST_NAME]
         assert row["valid"] is False, "precondition: the in-flight build exposes an invalid index"
-        r = alembic(db, "upgrade", "head")
+        r = alembic(
+            db,
+            "upgrade",
+            "head",
+            env_overrides={"PGOPTIONS": "-c lock_timeout=3s -c statement_timeout=8s"},
+        )
         assert r.returncode != 0 and "possibly active" in r.stderr + r.stdout
         assert version(db) == PREVIOUS
         assert index_rows(db, [FIRST_NAME])[FIRST_NAME]["oid"] == row["oid"]
     finally:
         stop()
     assert index_rows(db, [FIRST_NAME])[FIRST_NAME]["valid"] is True, "the other session's build completes untouched"
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_migration_invocation_fails_fast_under_session_lock(db):
+    """A second 0057 invocation cannot plan/build while the first owns the session lock."""
+    conn = await asyncpg.connect(_dsn(_url_for_db(ADMIN_DATABASE_URL, db)))
+    try:
+        assert await conn.fetchval("SELECT pg_try_advisory_lock(1940057, 1)")
+        r = alembic(
+            db,
+            "upgrade",
+            "head",
+            env_overrides={"PGOPTIONS": "-c lock_timeout=3s -c statement_timeout=8s"},
+        )
+        assert r.returncode != 0 and "another migration invocation is active" in r.stderr + r.stdout
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == PREVIOUS
+        assert await conn.fetchval("SELECT to_regclass($1)", FIRST_NAME) is None
+    finally:
+        try:
+            assert await conn.fetchval("SELECT pg_advisory_unlock(1940057, 1)")
+        finally:
+            await conn.close()
+    alembic_ok(db, "upgrade", "head")
+    assert (await _admin(db, "SELECT version_num FROM alembic_version"))[0]["version_num"] == HEAD
 
 
 def test_matching_valid_index_is_reused_not_rebuilt(db):
@@ -421,6 +480,20 @@ def test_downgrade_drops_only_our_indexes_and_leaves_unrelated_same_name_object(
     assert version(db) == PREVIOUS
     assert set(index_rows(db)) == {victim}
     assert index_rows(db)[victim]["oid"] == foreign_oid
+
+
+def test_downgrade_leaves_constraint_owned_same_name_index_without_partial_failure(db):
+    alembic_ok(db, "upgrade", "head")
+    victim = FIRST_NAME
+    q(db, f"DROP INDEX {victim}")
+    q(db, f"ALTER TABLE {FIRST_TABLE} ADD CONSTRAINT {victim} EXCLUDE USING btree ({FIRST_COLUMN} WITH =)")
+    constrained_oid = index_rows(db, [victim])[victim]["oid"]
+
+    alembic_ok(db, "downgrade", "-1")
+
+    assert version(db) == PREVIOUS
+    assert set(index_rows(db)) == {victim}
+    assert index_rows(db, [victim])[victim]["oid"] == constrained_oid
 
 
 def test_offline_sql_generation_is_rejected_with_a_clear_message(db):
