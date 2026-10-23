@@ -108,7 +108,7 @@
 
 /* Inside the dark sidebar and drawer the ring uses its own token, so a future light theme
    can keep a dark ring on content and a light ring on the sidebar. */
-aside :where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:not([class*="layout3d-"]) {
+:where(aside, [data-sidebar]) :where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:not([class*="layout3d-"]) {
   outline-color: var(--color-focus-on-sidebar);
 }
 
