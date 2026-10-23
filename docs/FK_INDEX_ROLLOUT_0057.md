@@ -7,7 +7,7 @@ Migration: `backend/migrations/versions/0057_fk_indexes.py` (22 single-column bt
 | Item | Status |
 | --- | --- |
 | Fresh and populated upgrade, downgrade/upgrade, `alembic check`, single head | Automated (`tests/integration/test_fk_indexes_migration.py`, `tests/unit/test_alembic_single_head.py`) |
-| Collision / interrupted-run handling | Automated (same module) |
+| Collision / interrupted-run handling, plan-to-action races, downgrade atomicity, advisory-lock lifetime | Automated (same module; deterministic lock barriers, bounded, mutation-checked against the previous revision) |
 | **Build time, ingest latency, CPU/I/O, WAL, disk headroom and index size on representative `telemetry_reading` data under concurrent ingestion** | **OUTSTANDING.** Not run. The local and CI databases hold no representative telemetry volume. Do not assume the build is cheap on a large table. |
 
 Before running on a production-sized database, measure on a restored copy or staging with realistic `telemetry_reading`
@@ -21,6 +21,16 @@ holding older snapshots or conflicting locks (a long-running transaction delays 
 conflicts with schema changes, VACUUM and other index builds on that table), scans the table twice, and adds CPU, I/O
 and WAL load. A failed or cancelled build leaves an INVALID index behind. See the PostgreSQL 16 documentation:
 <https://www.postgresql.org/docs/16/sql-createindex.html>.
+
+## How the migration protects itself
+
+* **Nothing acts on a stale plan.** Pre-existing same-name objects are validated, then: an index that should simply be
+  reused is re-proven at the very end (all 22 re-inspected under `SHARE UPDATE EXCLUSIVE` on the target tables, held until
+  `alembic_version` is written and committed); an interrupted artifact is dropped only under `ACCESS EXCLUSIVE` after its
+  OID is re-checked. A replacement made by another session aborts the run and is left untouched.
+* **One runner at a time.** A session advisory lock is taken by the migration and released by `env.py` after the version
+  update commits. A second concurrent `alembic upgrade` fails fast with "another migration invocation is active".
+* **Downgrade is all-or-nothing** (see step 6): it needs a brief `ACCESS EXCLUSIVE` window on the affected tables.
 
 ## Operator runbook
 
@@ -36,9 +46,15 @@ and WAL load. A failed or cancelled build leaves an INVALID index behind. See th
 5. **Cancel/retry.** To stop, `SELECT pg_cancel_backend(<pid>)`. The migration aborts, `alembic_version` stays at 0056, and
    indexes already finished stay in place. Re-run `alembic upgrade head`: valid indexes are reused, an INVALID artifact of
    this migration is dropped and rebuilt, and an unrelated object that already uses one of the index names aborts the run
-   with an explicit message (it is never dropped for you).
-6. **Rollback.** `alembic downgrade -1` drops only indexes that match this migration's definition; a same-name object that
-   is not ours is left untouched and logged.
+   with an explicit message (it is never dropped for you). A "possibly active build" refusal means another session holds a
+   `SHARE UPDATE EXCLUSIVE`-or-stronger lock on the table (e.g. a running `CREATE INDEX CONCURRENTLY`, VACUUM or another
+   migration): wait for it, then re-run.
+6. **Rollback.** `alembic downgrade -1` is atomic: it locks every affected table in `ACCESS EXCLUSIVE` mode (reads and writes
+   on them wait from lock acquisition until commit; the work itself is metadata-only), then removes all matching indexes with
+   a single `DROP INDEX a, b, ...` in the same transaction as the version change. It fails as a whole (lock wait bounded by
+   `lock_timeout`, 5s if none is set) and leaves 0057 stamped with all 22 indexes intact; retry in a quieter window. Only
+   indexes that match this migration's definition are dropped; a same-name object that is not ours is left in place and logged.
+   Unlike the upgrade this is deliberately not `CONCURRENTLY`: concurrent drops commit one by one and cannot be made atomic.
 7. **Verify.** All 22 indexes valid and ready, no INVALID leftovers, then `alembic check`:
    `SELECT c.relname, i.indisvalid, i.indisready FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
    WHERE c.relname = ANY(ARRAY[<the 22 ix_<table>_<column> names in FK_INDEXES>]) AND NOT (i.indisvalid AND i.indisready);`

@@ -28,17 +28,47 @@ Existing objects are never trusted by name. Before any DDL, every target is reso
     migration with a clear error. Nothing unrelated is ever dropped, and the plan is computed for all indexes before the
     first build, so a collision aborts with nothing built.
 
-Locking and transactions. CREATE/DROP INDEX CONCURRENTLY cannot run inside a transaction, so the builds run in
+Why a plan is never trusted. A catalog read is stale the instant it is made, and the advisory lock below only orders
+0057 runners against each other, not against arbitrary DDL. So nothing acts on a stale plan:
+
+  * REUSE does no DDL, therefore it is proven at the end. Immediately before `upgrade()` returns, every table is locked in
+    SHARE UPDATE EXCLUSIVE mode and ALL 22 indexes are re-inspected (right table, definition, valid, ready). That lock
+    blocks DROP/CREATE INDEX (plain or CONCURRENTLY) on those tables, and it is held until Alembic has written
+    `alembic_version` and committed (the lock is transaction-scoped and `upgrade()` returns inside that transaction). So a
+    replacement made at any earlier point is detected and aborts the run before the stamp, and no replacement can slip in
+    between the check and the stamp.
+  * An interrupted artifact is dropped only under an ACCESS EXCLUSIVE lock on its table, with the object re-inspected and
+    its OID compared with the planned one AFTER the lock is held, using a plain (transactional) DROP INDEX. A replacement
+    that appeared after planning therefore survives and aborts the run. CONCURRENTLY is deliberately not used here: it
+    cannot run in the transaction that carries the lock, and an interrupted artifact is cheap to drop. The lock wait is
+    bounded by `lock_timeout` (5s if the session has none), so a busy table fails the run safely instead of queueing.
+  * CREATE INDEX CONCURRENTLY has no IF NOT EXISTS: if the name appeared in the meantime it errors and nothing is stamped.
+
+Locking and transactions. CREATE INDEX CONCURRENTLY cannot run inside a transaction, so the builds run in
 `autocommit_block()` (as in migrations 0025 / 0048). That block COMMITS the migration transaction first, which also commits
 anything an earlier revision applied in the same `alembic upgrade` run. A concurrent build does not block normal
 INSERT/UPDATE/DELETE on the table, but it is not free: it waits for transactions that hold older snapshots or conflicting
 locks (so a long-running transaction delays it), takes a SHARE UPDATE EXCLUSIVE lock that conflicts with schema changes,
-VACUUM and other index builds on the same table, scans the table twice, and adds CPU, I/O and WAL load while it runs.
+VACUUM and other index builds on the same table, scans the table twice, and adds CPU, I/O and WAL load while it runs. The
+final verification holds SHARE UPDATE EXCLUSIVE on the 21 target tables only until the version update commits (DML is not
+blocked; DDL, VACUUM and ANALYZE on them wait). If other revisions run in the same `alembic upgrade`, those locks are held
+until that whole run commits.
+
+Serialization. A session-level advisory lock (migrations/migration_lock.py) is acquired here and RELEASED BY env.py after
+`context.run_migrations()` commits. Alembic writes `alembic_version` after this function returns, so releasing inside the
+migration would let a second runner still see 0056 and repeat the work. A second concurrent runner fails fast.
 
 Failure and retry. `alembic_version` is only advanced after `upgrade()` returns, so an interrupted or failed run leaves the
 database at 0056 with whichever indexes were already built (each committed on its own). Re-running re-plans: valid
-indexes are reused, an INVALID artifact of ours is rebuilt, and an unrelated collision still aborts. Downgrade drops only
-indexes matching the definition above and leaves any same-name object that is not ours untouched.
+indexes are reused, an INVALID artifact of ours is rebuilt, and an unrelated collision still aborts.
+
+Downgrade is all-or-nothing. It takes ACCESS EXCLUSIVE on every table that carries one of the indexes, re-inspects under
+those locks, and removes all of them with ONE plain `DROP INDEX a, b, c, ...` statement in the migration's own transaction:
+the drops and the version downgrade commit together or not at all, so a failure (permission, `lock_timeout`, cancellation,
+lost connection) leaves 0057 stamped with all 22 indexes present. The trade-off, accepted for a rollback path, is that the
+tables are unavailable to reads and writes from lock acquisition to commit (a metadata-only operation; the wait is bounded
+by `lock_timeout`, 5s if the session has none), instead of the non-blocking but non-atomic DROP INDEX CONCURRENTLY. Only
+indexes matching the definition above are dropped; any same-name object that is not ours is left untouched.
 
 Offline mode (`alembic ... --sql`) is not supported: the plan needs the live catalog, so it raises a clear error. Run the
 upgrade online.
@@ -89,11 +119,6 @@ FK_INDEXES = [
     ("user_group_permission", "permission_id"),
 ]
 
-# Session-scoped lock: unlike a transaction lock, this survives Alembic's autocommit blocks.
-# A concurrent 0057 runner fails fast instead of planning the same missing indexes.
-_MIGRATION_LOCK_CLASS = 1940057
-_MIGRATION_LOCK_ID = 1
-
 # One row per (table, column): the resolved target plus whatever relation already carries the index name in that schema.
 _INSPECT = sa.text(
     """
@@ -126,20 +151,27 @@ _INSPECT = sa.text(
 
 CREATE, REUSE, REBUILD = "create", "reuse", "rebuild"
 
+# Applied only when the session has no lock_timeout of its own (an operator-set value is always respected).
+_DROP_LOCK_TIMEOUT = "5s"
+_VERIFY_LOCK_TIMEOUT = "60s"
+
 
 @dataclass(frozen=True)
 class _Target:
-    schema: str
     table: str
     column: str
-    name: str
 
-    def qualified(self, preparer) -> tuple[str, str, str]:
-        return preparer.quote_schema(self.schema), preparer.quote(self.table), preparer.quote(self.name)
+    @property
+    def name(self) -> str:
+        return f"ix_{self.table}_{self.column}"
 
 
-def _name(table: str, column: str) -> str:
-    return f"ix_{table}_{column}"
+def _acquire_migration_lock(bind) -> None:
+    # Imported lazily: tools that merely load the revision files (scripts/check_alembic_single_head.py) do not have
+    # backend/ on sys.path, whereas env.py (which actually runs migrations) always does.
+    from migrations.migration_lock import acquire_migration_lock
+
+    acquire_migration_lock(bind)  # held until env.py releases it after the version update has committed
 
 
 def _require_online() -> None:
@@ -170,33 +202,27 @@ def _matches_definition(row) -> bool:
     )
 
 
-def _inspect(bind, table: str, column: str, name: str):
-    return bind.execute(_INSPECT, {"table": table, "column": column, "name": name}).one()
+def _inspect(bind, target: _Target):
+    return bind.execute(_INSPECT, {"table": target.table, "column": target.column, "name": target.name}).one()
 
 
-def _acquire_migration_lock(bind) -> None:
-    acquired = bind.scalar(
-        sa.text("SELECT pg_try_advisory_lock(:lock_class, :lock_id)"),
-        {"lock_class": _MIGRATION_LOCK_CLASS, "lock_id": _MIGRATION_LOCK_ID},
-    )
-    if not acquired:
-        raise RuntimeError(
-            "0057: another migration invocation is active; wait for it to finish, then re-run."
-        )
+def _bound_lock_wait(bind, fallback: str) -> None:
+    """Bound lock waits in the current transaction unless the operator already configured lock_timeout."""
+    if bind.scalar(sa.text("SELECT current_setting('lock_timeout')")) in ("0", "0ms"):
+        bind.execute(sa.text(f"SET LOCAL lock_timeout = '{fallback}'"))
 
 
-def _release_migration_lock(bind) -> None:
-    released = bind.scalar(
-        sa.text("SELECT pg_advisory_unlock(:lock_class, :lock_id)"),
-        {"lock_class": _MIGRATION_LOCK_CLASS, "lock_id": _MIGRATION_LOCK_ID},
-    )
-    if not released:
-        raise RuntimeError("0057: migration advisory lock was not held by this session.")
+def _lock_tables(bind, schema: str, tables: list[str], mode: str) -> None:
+    """Lock distinct tables in sorted order (one statement, so the order is deterministic and deadlock-resistant)."""
+    preparer = bind.dialect.identifier_preparer
+    names = ", ".join(f"{preparer.quote_schema(schema)}.{preparer.quote(t)}" for t in sorted(set(tables)))
+    bind.execute(sa.text(f"LOCK TABLE {names} IN {mode} MODE"))
 
 
-def _plan_one(bind, schema: str, table: str, column: str) -> str:
-    name = _name(table, column)
-    row = _inspect(bind, table, column, name)
+def _plan_one(bind, schema: str, target: _Target) -> tuple[str, int | None]:
+    """Return (action, oid of the existing relation if any). Raises on anything that is not ours."""
+    name, table, column = target.name, target.table, target.column
+    row = _inspect(bind, target)
     where = f"{schema}.{table}({column})"
     if row.table_oid is None:
         raise RuntimeError(f"0057: target table {schema}.{table} does not exist; refusing to continue.")
@@ -208,17 +234,17 @@ def _plan_one(bind, schema: str, table: str, column: str) -> str:
     if row.col_attnum is None:
         raise RuntimeError(f"0057: column {column} does not exist on {schema}.{table}; refusing to continue.")
     if row.rel_oid is None:
-        return CREATE
+        return CREATE, None
     if _matches_definition(row):
         if row.is_valid and row.is_ready:
-            return REUSE
+            return REUSE, row.rel_oid
         if row.table_busy:
             raise RuntimeError(
                 f"0057: {schema}.{name} is invalid and another session holds a SHARE UPDATE EXCLUSIVE or stronger "
                 f"lock on {schema}.{table}: a CREATE INDEX CONCURRENTLY on {where} may still be running. Refusing to drop "
                 "and rebuild a possibly active build; wait for it to finish (or cancel it), then re-run."
             )
-        return REBUILD
+        return REBUILD, row.rel_oid
     found = row.indexdef or f"a non-index relation (relkind={row.rel_kind!r})"
     raise RuntimeError(
         f"0057: {schema}.{name} already exists but is not the expected index on {where} "
@@ -227,52 +253,98 @@ def _plan_one(bind, schema: str, table: str, column: str) -> str:
     )
 
 
+def _drop_interrupted_artifacts(bind, schema: str, rebuilds: list[tuple[_Target, int | None]]) -> None:
+    """Drop planned INVALID artifacts, but only the very objects that were planned, and only while locked out."""
+    preparer = bind.dialect.identifier_preparer
+    _bound_lock_wait(bind, _DROP_LOCK_TIMEOUT)
+    _lock_tables(bind, schema, [t.table for t, _ in rebuilds], "ACCESS EXCLUSIVE")
+    for target, planned_oid in rebuilds:
+        try:
+            action, oid = _plan_one(bind, schema, target)  # re-inspect now that no one can change it under us
+        except RuntimeError as exc:  # replaced by something that is not ours
+            raise RuntimeError(
+                f"0057: {schema}.{target.name} changed while the migration was running (planned an interrupted "
+                f"artifact with oid {planned_oid}); refusing to drop it. Re-run. Cause: {exc}"
+            ) from exc
+        if (action, oid) != (REBUILD, planned_oid):
+            raise RuntimeError(
+                f"0057: {schema}.{target.name} changed while the migration was running (planned an interrupted "
+                f"artifact with oid {planned_oid}, found action={action!r} oid={oid}); refusing to drop it. Re-run."
+            )
+        bind.execute(sa.text(f"DROP INDEX {preparer.quote_schema(schema)}.{preparer.quote(target.name)}"))
+
+
+def _verify_all_and_pin(bind, schema: str, targets: list[_Target]) -> None:
+    """Prove all 22 indexes are ours and usable, and keep DDL out until Alembic has stamped and committed.
+
+    Runs in the transaction that Alembic commits together with the `alembic_version` update; SHARE UPDATE EXCLUSIVE
+    is released only at that commit.
+    """
+    _bound_lock_wait(bind, _VERIFY_LOCK_TIMEOUT)
+    _lock_tables(bind, schema, [t.table for t in targets], "SHARE UPDATE EXCLUSIVE")
+    for target in targets:
+        row = _inspect(bind, target)
+        if not (_matches_definition(row) and row.is_valid and row.is_ready):
+            found = row.indexdef or "nothing"
+            raise RuntimeError(
+                f"0057: {schema}.{target.name} is not the expected valid index at the end of the migration "
+                f"(found: {found}). Refusing to stamp 0057; fix or drop it deliberately, then re-run."
+            )
+
+
 def upgrade() -> None:
     _require_online()
     bind = op.get_bind()
     _acquire_migration_lock(bind)
-    try:
-        preparer = bind.dialect.identifier_preparer
-        schema = bind.scalar(sa.text("SELECT current_schema()"))
-        # Plan everything before the first build: a collision on any index aborts with nothing built.
-        plan = [(_Target(schema, t, c, _name(t, c)), _plan_one(bind, schema, t, c)) for t, c in FK_INDEXES]
-        # Commit first: CREATE/DROP INDEX CONCURRENTLY cannot run inside the migration transaction.
-        # The session advisory lock remains held across those commits and serializes all 0057 runners.
+    preparer = bind.dialect.identifier_preparer
+    schema = bind.scalar(sa.text("SELECT current_schema()"))
+    targets = [_Target(t, c) for t, c in FK_INDEXES]
+    # Plan everything before the first build: a collision on any index aborts with nothing built.
+    plan = [(target, *_plan_one(bind, schema, target)) for target in targets]
+    rebuilds = [(target, oid) for target, action, oid in plan if action == REBUILD]
+    if rebuilds:
+        _drop_interrupted_artifacts(bind, schema, rebuilds)
+    to_build = [target for target, action, _ in plan if action != REUSE]
+    for target, action, _ in plan:
+        if action == REUSE:
+            log.info("0057: reusing valid index %s.%s", schema, target.name)
+        elif action == REBUILD:
+            log.warning("0057: rebuilding interrupted index artifact %s.%s", schema, target.name)
+    if to_build:
+        # Commit first: CREATE INDEX CONCURRENTLY cannot run inside the migration transaction. The session advisory
+        # lock stays held across that commit.
         with op.get_context().autocommit_block():
-            for target, action in plan:
-                q_schema, q_table, q_name = target.qualified(preparer)
-                if action == REUSE:
-                    log.info("0057: reusing valid index %s.%s", target.schema, target.name)
-                    continue
-                if action == REBUILD:
-                    log.warning("0057: rebuilding interrupted index artifact %s.%s", target.schema, target.name)
-                    op.execute(f"DROP INDEX CONCURRENTLY {q_schema}.{q_name}")
+            for target in to_build:
                 op.execute(
-                    f"CREATE INDEX CONCURRENTLY {q_name} ON {q_schema}.{q_table} ({preparer.quote(target.column)})"
+                    f"CREATE INDEX CONCURRENTLY {preparer.quote(target.name)} "
+                    f"ON {preparer.quote_schema(schema)}.{preparer.quote(target.table)} ({preparer.quote(target.column)})"
                 )
-    finally:
-        _release_migration_lock(bind)
+    _verify_all_and_pin(bind, schema, targets)
 
 
 def downgrade() -> None:
     _require_online()
     bind = op.get_bind()
     _acquire_migration_lock(bind)
-    try:
-        preparer = bind.dialect.identifier_preparer
-        schema = bind.scalar(sa.text("SELECT current_schema()"))
-        drops = []
-        for table, column in reversed(FK_INDEXES):
-            name = _name(table, column)
-            row = _inspect(bind, table, column, name)
-            if row.rel_oid is None:
-                continue
-            if _matches_definition(row):
-                drops.append(preparer.quote_schema(schema) + "." + preparer.quote(name))
-            else:
-                log.warning("0057 downgrade: leaving %s.%s in place; it is not the index this migration created", schema, name)
-        with op.get_context().autocommit_block():
-            for qualified in drops:
-                op.execute(f"DROP INDEX CONCURRENTLY {qualified}")
-    finally:
-        _release_migration_lock(bind)
+    preparer = bind.dialect.identifier_preparer
+    schema = bind.scalar(sa.text("SELECT current_schema()"))
+    targets = [_Target(t, c) for t, c in reversed(FK_INDEXES)]
+    present_tables = [t.table for t in targets if _inspect(bind, t).table_oid is not None]
+    if not present_tables:
+        return
+    # Everything below is ONE transaction (Alembic's), so the drops and the version downgrade commit together or not at all.
+    _bound_lock_wait(bind, _DROP_LOCK_TIMEOUT)
+    _lock_tables(bind, schema, present_tables, "ACCESS EXCLUSIVE")
+    drops = []
+    for target in targets:
+        row = _inspect(bind, target)  # under the locks above: cannot change before the drop
+        if row.rel_oid is None:
+            continue
+        if _matches_definition(row):
+            drops.append(f"{preparer.quote_schema(schema)}.{preparer.quote(target.name)}")
+        else:
+            log.warning(
+                "0057 downgrade: leaving %s.%s in place; it is not the index this migration created", schema, target.name
+            )
+    if drops:
+        bind.execute(sa.text("DROP INDEX " + ", ".join(drops)))

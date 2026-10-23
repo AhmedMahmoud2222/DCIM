@@ -11,6 +11,7 @@ non-owned same-name objects alone; offline SQL generation is rejected with a cle
 """
 
 import asyncio
+import contextlib
 import importlib.util
 import os
 import subprocess
@@ -153,20 +154,24 @@ def version(db: str) -> str:
     return q(db, "SELECT version_num FROM alembic_version")[0]["version_num"]
 
 
-def index_rows(db: str, names=NAMES, schema: str = "public"):
-    rows = q(
-        db,
-        "SELECT c.relname AS name, c.oid::int AS oid, t.relname AS tbl, a.attname AS col, am.amname AS method, "
-        "i.indisvalid AS valid, i.indisready AS ready, i.indisunique AS uniq, i.indpred IS NULL AS nopred, "
-        "i.indnatts AS natts, pg_get_indexdef(c.oid) AS def "
-        "FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid "
-        "JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_am am ON am.oid = c.relam "
-        "LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = i.indkey[0] "
-        "WHERE n.nspname = $2 AND c.relname = ANY($1)",
-        list(names),
-        schema,
-    )
+_INDEX_ROWS_SQL = (
+    "SELECT c.relname AS name, c.oid::int AS oid, t.relname AS tbl, a.attname AS col, am.amname AS method, "
+    "i.indisvalid AS valid, i.indisready AS ready, i.indisunique AS uniq, i.indpred IS NULL AS nopred, "
+    "i.indnatts AS natts, pg_get_indexdef(c.oid) AS def "
+    "FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid "
+    "JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_am am ON am.oid = c.relam "
+    "LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = i.indkey[0] "
+    "WHERE n.nspname = $2 AND c.relname = ANY($1)"
+)
+
+
+async def aindex_rows(db: str, names=NAMES, schema: str = "public"):
+    rows = await _admin(db, _INDEX_ROWS_SQL, list(names), schema)
     return {r["name"]: r for r in rows}
+
+
+def index_rows(db: str, names=NAMES, schema: str = "public"):
+    return _run(aindex_rows(db, names, schema))
 
 
 def assert_all_ours_valid(db: str) -> dict:
@@ -500,3 +505,358 @@ def test_offline_sql_generation_is_rejected_with_a_clear_message(db):
     r = alembic(db, "upgrade", f"{PREVIOUS}:{HEAD}", "--sql")
     assert r.returncode != 0
     assert "offline" in (r.stderr + r.stdout).lower()
+
+
+# --- deterministic multi-session scenarios (Codex re-review: TOCTOU, downgrade atomicity, lock lifetime) -----------------
+#
+# Every barrier below is a real PostgreSQL lock, never a sleep: the test waits (bounded) until the alembic backend is
+# observably blocked at the exact step under test, performs the competing action from another session, then releases it.
+# If the migration reaches the end without blocking, or never finishes, the test fails by ASSERTION with the output of the
+# alembic process (processes are always killed on exit), so a regression cannot show up as a hang.
+
+BARRIER_KEY = 777057
+LATE_TABLE = "generator"  # built late in FK_INDEXES order, so earlier indexes already exist when a build is held up here
+STEP_TIMEOUT = 90
+
+
+async def _connect(db: str, **kwargs) -> asyncpg.Connection:
+    return await asyncpg.connect(_dsn(_url_for_db(ADMIN_DATABASE_URL, db)), command_timeout=60, **kwargs)
+
+
+async def _spawn_alembic(db: str, *args: str, env_overrides: dict[str, str] | None = None):
+    return await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "alembic",
+        *args,
+        cwd=BACKEND_DIR,
+        env={**os.environ, "DATABASE_URL": _url_for_db(APP_DATABASE_URL, db), **(env_overrides or {})},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+async def _finish(proc, timeout: float = STEP_TIMEOUT) -> tuple[int, str]:
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+    except TimeoutError:
+        proc.kill()
+        out, err = await proc.communicate()
+        raise AssertionError(
+            f"alembic did not finish within {timeout}s:\n{out.decode()}\n{err.decode()}"
+        ) from None
+    return proc.returncode, out.decode() + err.decode()
+
+
+async def _wait_until(condition, proc, what: str, timeout: float = STEP_TIMEOUT) -> None:
+    """Poll `condition()` until true. Fails by assertion if alembic exits first or the deadline passes."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        if await condition():
+            return
+        if proc.returncode is not None:
+            out, err = await proc.communicate()
+            raise AssertionError(
+                f"alembic exited (rc={proc.returncode}) before reaching: {what}\n{out.decode()}\n{err.decode()}"
+            )
+        if loop.time() > deadline:
+            raise AssertionError(f"timed out after {timeout}s waiting for: {what}")
+        await asyncio.sleep(0.1)
+
+
+async def _reap(*procs) -> None:
+    for proc in procs:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            await proc.communicate()
+
+
+def _waiting_on_lock(db: str, query_like: str):
+    async def check() -> bool:
+        n = await _admin(
+            db,
+            "SELECT count(*) AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock' "
+            "AND query ILIKE $2",
+            db,
+            query_like,
+        )
+        return n[0]["n"] > 0
+
+    return check
+
+
+def _stamp_barrier_waiting(db: str):
+    async def check() -> bool:
+        n = await _admin(
+            db,
+            "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted "
+            "AND classid = 0 AND objid = $1 AND objsubid = 1",
+            BARRIER_KEY,
+        )
+        return n[0]["n"] > 0
+
+    return check
+
+
+_STAMP_TRIGGER_SQL = f"""
+CREATE FUNCTION stamp_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_advisory_lock({BARRIER_KEY});   -- blocks until the test releases it
+    PERFORM pg_advisory_unlock({BARRIER_KEY});
+    RETURN NEW;
+END $$;
+CREATE TRIGGER stamp_barrier BEFORE UPDATE ON alembic_version FOR EACH ROW EXECUTE FUNCTION stamp_barrier();
+"""
+
+
+@contextlib.asynccontextmanager
+async def paused_at_version_stamp(db: str):
+    """Run `alembic upgrade head` and hold it exactly at the `alembic_version` update (after upgrade() returned).
+
+    Yields (proc, release). `release()` lets the update proceed. The barrier is a BEFORE UPDATE trigger that waits on an
+    advisory lock the test holds, so the pause is exact and independent of timing.
+    """
+    await _admin(db, _STAMP_TRIGGER_SQL)
+    gate = await _connect(db)
+    proc = None
+    try:
+        await gate.fetchval("SELECT pg_advisory_lock($1)", BARRIER_KEY)
+        proc = await _spawn_alembic(db, "upgrade", "head")
+        await _wait_until(_stamp_barrier_waiting(db), proc, "the alembic_version update (stamp barrier)")
+
+        async def release() -> None:
+            await gate.fetchval("SELECT pg_advisory_unlock($1)", BARRIER_KEY)
+
+        yield proc, release
+    finally:
+        await _reap(proc)
+        await gate.close()
+
+
+# -- P1: TOCTOU -------------------------------------------------------------------------------------------------------
+
+
+def test_replacing_a_reused_index_mid_run_is_caught_before_the_stamp(db):
+    """Plan says REUSE (no DDL), then another session swaps the index for a wrong one. 0057 must not be stamped."""
+
+    async def scenario():
+        await _admin(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
+        blocker = await _connect(db)
+        proc = None
+        try:
+            tx = blocker.transaction()
+            await tx.start()
+            await blocker.execute(f"LOCK TABLE {LATE_TABLE} IN SHARE UPDATE EXCLUSIVE MODE")
+            proc = await _spawn_alembic(db, "upgrade", "head")
+            # alembic is now parked inside the build phase: the plan is old, the reused index is not locked.
+            await _wait_until(
+                _waiting_on_lock(db, f"CREATE INDEX CONCURRENTLY%{LATE_TABLE}%"), proc, f"build of {LATE_TABLE} to block"
+            )
+            await _admin(db, f"DROP INDEX {FIRST_NAME}")
+            await _admin(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} (id)")
+            await tx.rollback()
+            return await _finish(proc)
+        finally:
+            await _reap(proc)
+            await blocker.close()
+
+    rc, out = _run(scenario())
+    assert rc != 0, f"0057 was stamped although the reused index was replaced by a wrong one:\n{out}"
+    assert "Refusing to stamp" in out and FIRST_NAME in out
+    assert version(db) == PREVIOUS
+    replacement = index_rows(db, [FIRST_NAME])[FIRST_NAME]
+    assert "(id)" in replacement["def"], "the replacement must be left exactly as the other session created it"
+
+
+def test_replacing_an_interrupted_artifact_before_the_drop_never_drops_the_replacement(db):
+    """Plan says REBUILD, then another session replaces the artifact. The drop must act on the planned object only."""
+
+    async def scenario():
+        await _admin(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
+        await _admin(
+            db,
+            "UPDATE pg_index SET indisvalid = false WHERE indexrelid = ('public.' || $1)::regclass",
+            FIRST_NAME,
+        )
+        holder = await _connect(db)
+        proc = None
+        try:
+            tx = holder.transaction()
+            await tx.start()
+            await holder.execute(f"SELECT 1 FROM {FIRST_TABLE} LIMIT 1")  # ACCESS SHARE: does not look like a build
+            proc = await _spawn_alembic(db, "upgrade", "head")
+            # alembic planned REBUILD and is queued for ACCESS EXCLUSIVE behind our read lock: the plan is now stale.
+            await _wait_until(
+                _waiting_on_lock(db, "LOCK TABLE%ACCESS EXCLUSIVE%"), proc, "the ACCESS EXCLUSIVE lock request to queue"
+            )
+            await holder.execute(f"DROP INDEX {FIRST_NAME}")
+            await holder.execute(f"CREATE INDEX {FIRST_NAME} ON alarm (id)")
+            await tx.commit()
+            return await _finish(proc)
+        finally:
+            await _reap(proc)
+            await holder.close()
+
+    rc, out = _run(scenario())
+    assert rc != 0 and "changed while the migration was running" in out, out
+    assert version(db) == PREVIOUS
+    rows = index_rows(db)
+    assert set(rows) == {FIRST_NAME}, "nothing may be built once the plan is found stale"
+    survivor = rows[FIRST_NAME]
+    assert (survivor["tbl"], survivor["valid"]) == ("alarm", True), "the unrelated replacement must survive untouched"
+
+
+def test_index_cannot_be_replaced_between_final_verification_and_the_stamp(db):
+    """With alembic parked at the version update, the verified indexes are pinned: DDL on those tables must wait."""
+
+    async def scenario():
+        async with paused_at_version_stamp(db) as (proc, release):
+            other = await _connect(db)
+            try:
+                await other.execute("SET lock_timeout = '1500ms'")
+                try:
+                    await other.execute(f"DROP INDEX {FIRST_NAME}")
+                except asyncpg.exceptions.LockNotAvailableError:
+                    swapped = False
+                else:
+                    swapped = True
+                pinned = await _admin(
+                    db,
+                    "SELECT count(DISTINCT c.relname) AS n FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+                    "WHERE l.locktype = 'relation' AND l.mode = 'ShareUpdateExclusiveLock' AND l.granted "
+                    "AND c.relname = ANY($1) AND l.pid <> pg_backend_pid()",
+                    sorted({t for t, _ in FK_INDEXES}),
+                )
+            finally:
+                await other.close()
+            await release()
+            rc, out = await _finish(proc)
+            return swapped, pinned[0]["n"], rc, out
+
+    swapped, pinned_tables, rc, out = _run(scenario())
+    assert not swapped, "an index was dropped between the final verification and the version stamp"
+    assert pinned_tables == len({t for t, _ in FK_INDEXES}), "every target table must be pinned until the stamp commits"
+    assert rc == 0, out
+    assert version(db) == HEAD
+    assert_all_ours_valid(db)
+
+
+# -- P2: advisory lock lifetime ---------------------------------------------------------------------------------------
+
+
+def test_second_runner_fails_fast_while_the_first_is_parked_at_the_version_stamp(db):
+    """The lock must outlive upgrade(): the first runner has returned from 0057 but has not yet stamped it."""
+
+    async def scenario():
+        async with paused_at_version_stamp(db) as (proc, release):
+            second = await _spawn_alembic(db, "upgrade", "head")
+            try:
+                second_rc, second_out = await _finish(second, timeout=60)
+            finally:
+                await _reap(second)
+            await release()
+            rc, out = await _finish(proc)
+            return second_rc, second_out, rc, out
+
+    second_rc, second_out, rc, out = _run(scenario())
+    assert second_rc != 0 and "another migration invocation is active" in second_out, second_out
+    assert rc == 0, out
+    assert version(db) == HEAD
+    assert_all_ours_valid(db)
+    alembic_ok(db, "check")
+
+
+def test_failed_run_releases_the_advisory_lock_and_the_next_run_succeeds(db):
+    q(db, WRONG_DEFINITIONS["wrong_column"])
+    r = alembic(db, "upgrade", "head")
+    assert r.returncode != 0 and "Refusing" in r.stderr + r.stdout
+
+    async def lock_is_free():
+        conn = await _connect(db)
+        try:
+            return await conn.fetchval("SELECT pg_try_advisory_lock(1940057, 1)")
+        finally:
+            await conn.close()
+
+    assert _run(lock_is_free()), "a failed run must not leave the migration advisory lock held"
+    q(db, f"DROP INDEX {FIRST_NAME}")
+    alembic_ok(db, "upgrade", "head")
+    assert version(db) == HEAD
+
+
+async def test_release_migration_locks_releases_every_stacked_acquisition(db):
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from migrations.migration_lock import acquire_migration_lock, release_migration_locks
+
+    engine = create_async_engine(_url_for_db(APP_DATABASE_URL, db))
+    other = await _connect(db)
+    try:
+        async with engine.connect() as conn:
+            await conn.run_sync(lambda c: (acquire_migration_lock(c), acquire_migration_lock(c)))
+            assert not await other.fetchval("SELECT pg_try_advisory_lock(1940057, 1)"), "held while acquired"
+            await conn.run_sync(release_migration_locks)
+            assert await other.fetchval("SELECT pg_try_advisory_lock(1940057, 1)"), "both acquisitions released"
+    finally:
+        await other.close()
+        await engine.dispose()
+
+
+# -- P2: downgrade atomicity ------------------------------------------------------------------------------------------
+
+DOWNGRADE_FAILURE_TABLES = {
+    "dropped_first": FK_INDEXES[-1][0],
+    "dropped_in_the_middle": FK_INDEXES[len(FK_INDEXES) // 2][0],
+    "dropped_last": FK_INDEXES[0][0],
+}
+
+
+@pytest.mark.parametrize("position", sorted(DOWNGRADE_FAILURE_TABLES))
+def test_failed_downgrade_leaves_version_and_all_22_indexes_unchanged(db, position):
+    """Inject a failure at a chosen position of the drop sequence (table owned by someone else)."""
+    alembic_ok(db, "upgrade", "head")
+    before = assert_all_ours_valid(db)
+    failing_table = DOWNGRADE_FAILURE_TABLES[position]
+    q(db, f"ALTER TABLE {failing_table} OWNER TO postgres")
+
+    r = alembic(db, "downgrade", "-1")
+
+    assert r.returncode != 0, "the downgrade was expected to fail"
+    assert version(db) == HEAD, "a failed downgrade must leave 0057 stamped"
+    after = index_rows(db)
+    assert sorted(after) == sorted(NAMES), f"indexes were removed by a failed downgrade: {sorted(set(NAMES) - set(after))}"
+    assert {n: after[n]["oid"] for n in NAMES} == {n: before[n]["oid"] for n in NAMES}, "indexes must be untouched"
+
+    q(db, f"ALTER TABLE {failing_table} OWNER TO dcim_app")
+    alembic_ok(db, "downgrade", "-1")
+    assert version(db) == PREVIOUS and index_rows(db) == {}
+
+
+def test_downgrade_that_cannot_get_its_locks_changes_nothing(db):
+    """A reader holding a lock on a late table makes the lock wait time out; nothing may be dropped or re-stamped."""
+    alembic_ok(db, "upgrade", "head")
+    before = assert_all_ours_valid(db)
+
+    async def scenario():
+        holder = await _connect(db)
+        proc = None
+        try:
+            tx = holder.transaction()
+            await tx.start()
+            await holder.execute(f"SELECT 1 FROM {LATE_TABLE} LIMIT 1")
+            proc = await _spawn_alembic(db, "downgrade", "-1")
+            result = await _finish(proc)  # bounded: the migration applies its own 5s lock_timeout
+            await tx.rollback()
+            return result
+        finally:
+            await _reap(proc)
+            await holder.close()
+
+    rc, out = _run(scenario())
+    assert rc != 0 and "lock timeout" in out.lower(), out
+    assert version(db) == HEAD
+    after = index_rows(db)
+    assert {n: after[n]["oid"] for n in NAMES} == {n: before[n]["oid"] for n in NAMES}
+    alembic_ok(db, "downgrade", "-1")
+    assert version(db) == PREVIOUS and index_rows(db) == {}
