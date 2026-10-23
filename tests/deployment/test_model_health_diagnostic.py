@@ -1,4 +1,4 @@
-"""OpenCode model health diagnostic tests (diagnostic tests v1.3).
+"""OpenCode model health diagnostic tests (diagnostic tests v1.4).
 
 Tests the narrow allowlist, error classification, catalog parsing, redirect
 blocking, response validation, and exit-code behavior.
@@ -7,14 +7,22 @@ The diagnostic cannot become an arbitrary-model or arbitrary-prompt channel.
 Includes end-to-end stub-server tests that fail on mutation/removal of
 structural response validation and nonzero exit.
 
-Negative tests prove that 404 catalog errors are not interpreted as
+Negative tests prove that catalog 404 errors are not interpreted as
 model-unavailable evidence, and that inference response model identity is
 validated.
+
+Main-level tests invoke main() with a temporary output path, mocked catalog
+and inference endpoints, and assert actual exit code and JSON evidence for:
+catalog 404 + successful inference, catalog 404 + failed inference, valid
+catalog with one model absent, both healthy, partial healthy, invalid model
+response, missing API key.
 """
 import importlib.util
 import inspect
 import json
+import os
 import socketserver
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -35,6 +43,11 @@ ALLOWED = frozenset({
     'glm-5.3-flash-free',
     'deepseek-v4.1-flash-free',
 })
+
+VALID_RESPONSE = (b'{"id":"chatcmpl_123","model":"glm-5.3-flash-free",'
+                  b'"choices":[{"message":{"content":"OK"}}]}')
+VALID_RESPONSE_DEEPSEEK = (b'{"id":"chatcmpl_456","model":"deepseek-v4.1-flash-free",'
+                           b'"choices":[{"message":{"content":"OK"}}]}')
 
 
 class AllowlistTests(unittest.TestCase):
@@ -265,6 +278,10 @@ class RedirectCredentialLeakTests(unittest.TestCase):
                     fixture.shutdown()
 
 
+# ---------------------------------------------------------------------------
+# Response validation tests (stub http_post_json)
+# ---------------------------------------------------------------------------
+
 class ResponseValidationTests(unittest.TestCase):
     """Stub-server tests: malformed HTTP 200s must never show healthy."""
 
@@ -280,18 +297,18 @@ class ResponseValidationTests(unittest.TestCase):
         return patch.object(diagnostic, 'http_post_json', side_effect=stub)
 
     def test_valid_200_is_healthy(self):
-        valid = (b'{"id":"chatcmpl_123","model":"glm-5.3-flash-free",'
-                 b'"choices":[{"message":{"content":"OK"}}]}')
-        with self._stub_post_response(valid):
+        with self._stub_post_response(VALID_RESPONSE):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'healthy')
         self.assertIsNone(record['error_class'])
+        self.assertTrue(record['response_model_matches'])
 
     def test_empty_json_200_is_unhealthy(self):
         with self._stub_post_response(b'{}'):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
     def test_missing_choices_200_is_unhealthy(self):
         body = b'{"id":"x","model":"glm-5.3-flash-free"}'
@@ -299,6 +316,7 @@ class ResponseValidationTests(unittest.TestCase):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
     def test_empty_choices_200_is_unhealthy(self):
         body = (b'{"id":"x","model":"glm-5.3-flash-free","choices":[]}')
@@ -306,6 +324,7 @@ class ResponseValidationTests(unittest.TestCase):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
     def test_missing_content_200_is_unhealthy(self):
         body = (b'{"id":"x","model":"glm-5.3-flash-free",'
@@ -314,6 +333,7 @@ class ResponseValidationTests(unittest.TestCase):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
     def test_empty_content_200_is_unhealthy(self):
         body = (b'{"id":"x","model":"glm-5.3-flash-free",'
@@ -322,6 +342,7 @@ class ResponseValidationTests(unittest.TestCase):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
     def test_model_mismatch_200_is_unhealthy(self):
         body = (b'{"id":"x","model":"deepseek-v4.1-flash-free",'
@@ -330,6 +351,7 @@ class ResponseValidationTests(unittest.TestCase):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
     def test_missing_id_200_is_unhealthy(self):
         body = (b'{"model":"glm-5.3-flash-free",'
@@ -338,59 +360,177 @@ class ResponseValidationTests(unittest.TestCase):
             record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         self.assertEqual(record['status'], 'unhealthy')
         self.assertEqual(record['error_class'], 'invalid_response')
+        self.assertFalse(record['response_model_matches'])
 
 
 # ---------------------------------------------------------------------------
-# Negative tests: catalog 404 must not be interpreted as model-unavailable
+# Main-level tests: invoke main() with mocked endpoints
 # ---------------------------------------------------------------------------
 
-class CatalogErrorTests(unittest.TestCase):
-    """Negative tests: catalog-level failures (e.g. 404 on the catalog
-    endpoint) must not be interpreted as evidence that specific models are
-    unavailable.  The catalog fetch failure is a catalog-level error; the
-    diagnostic fails closed (empty catalog set) rather than claiming
-    individual models are unavailable."""
+class MainLevelTests(unittest.TestCase):
+    """Invoke main() with mocked catalog and inference, assert exit code
+    and JSON evidence."""
 
-    def test_catalog_404_is_catalog_error_not_model_unavailable(self):
-        """When fetch_catalog raises HTTPError 404, main() must treat it as
-        a catalog-level failure (empty catalog set), not as per-model
-        unavailability.  This is verified by patching fetch_catalog to raise
-        a 404 and checking that catalog_ids ends up empty."""
-        def failing_fetch(key, get=diagnostic.http_get_json):
-            raise urllib.error.HTTPError(
-                diagnostic.CATALOG_ENDPOINT, 404,
-                'Not Found', {}, None
-            )
+    def _run_main(self, catalog_return, post_side_effect, key='test-key'):
+        """Run main() with mocked fetch_catalog and http_post_json, return
+        (exit_code, report_dict).
 
-        with patch.object(diagnostic, 'fetch_catalog', side_effect=failing_fetch):
-            # Simulate what main() does: catch the exception, set empty set.
+        catalog_return: either a dict {'ids': set, 'status': ..., 'error_class': ...}
+                          or an Exception class/instance to raise from fetch_catalog.
+        """
+        out_path = os.path.join(tempfile.gettempdir(), f'diag_test_{id(self)}.json')
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+
+        # Build the fetch_catalog mock return value.
+        if isinstance(catalog_return, BaseException):
+            def catalog_raises(key):
+                raise catalog_return
+            catalog_mock = patch.object(diagnostic, 'fetch_catalog', side_effect=catalog_raises)
+        else:
+            def catalog_returns(key):
+                return dict(catalog_return)
+            catalog_mock = patch.object(diagnostic, 'fetch_catalog', side_effect=catalog_returns)
+
+        post_mock = patch.object(diagnostic, 'http_post_json', side_effect=post_side_effect)
+
+        with catalog_mock, post_mock:
+            old_env = os.environ.get('OPENCODE_API_KEY')
+            os.environ['OPENCODE_API_KEY'] = key
             try:
-                catalog_ids = diagnostic.fetch_catalog('key')
-            except urllib.error.HTTPError as error:
-                # 404 from the catalog endpoint is classified, but the
-                # diagnostic does NOT treat it as per-model unavailability.
-                error_class = diagnostic.classify_error(error)
-                self.assertEqual(error_class, 'model_not_available')
-                catalog_ids = set()
+                exit_code = diagnostic.main(['diagnostic', out_path])
+            finally:
+                if old_env is None:
+                    os.environ.pop('OPENCODE_API_KEY', None)
+                else:
+                    os.environ['OPENCODE_API_KEY'] = old_env
 
-            self.assertEqual(catalog_ids, set())
-            # With an empty catalog, no model can be catalog_present.
-            for model_id in ALLOWED:
-                self.assertNotIn(model_id, catalog_ids)
+        with open(out_path, encoding='utf-8') as handle:
+            report = json.load(handle)
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        return exit_code, report
 
-    def test_catalog_network_error_is_catalog_error_not_model_unavailable(self):
-        """A network error on the catalog endpoint must also result in an
-        empty catalog set, not per-model unavailability claims."""
-        def failing_fetch(key):
-            raise urllib.error.URLError('connection refused')
+    def _catalog_ok_dict(self, key):
+        return {'ids': {'glm-5.3-flash-free', 'deepseek-v4.1-flash-free'},
+                'status': 'ok', 'error_class': None}
 
-        with patch.object(diagnostic, 'fetch_catalog', side_effect=failing_fetch):
-            try:
-                catalog_ids = diagnostic.fetch_catalog('key')
-            except urllib.error.URLError:
-                catalog_ids = set()
+    def _catalog_ok_glm_only_dict(self, key):
+        return {'ids': {'glm-5.3-flash-free'},
+                'status': 'ok', 'error_class': None}
 
-        self.assertEqual(catalog_ids, set())
+    def _catalog_404_dict(self, key):
+        return {'ids': set(), 'status': 'error', 'error_class': 'catalog_http_404'}
+
+    def _post_healthy(self, url, key, model, prompt):
+        if model == 'glm-5.3-flash-free':
+            return json.loads(VALID_RESPONSE.decode('utf-8'))
+        return json.loads(VALID_RESPONSE_DEEPSEEK.decode('utf-8'))
+
+    def _post_invalid_model(self, url, key, model, prompt):
+        # Response echoes a different model than requested.
+        return {'id': 'x', 'model': 'other-model',
+                'choices': [{'message': {'content': 'OK'}}]}
+
+    def _post_failed(self, url, key, model, prompt):
+        raise urllib.error.HTTPError(url, 500, 'Internal Error', {}, None)
+
+    def test_catalog_404_plus_successful_inference(self):
+        """Catalog 404: exit 1, catalog_status=error, catalog_error_class=catalog_http_404,
+        inference results preserved (not overwritten as not_in_catalog)."""
+        exit_code, report = self._run_main(self._catalog_404_dict('key'), self._post_healthy)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report['catalog_status'], 'error')
+        self.assertEqual(report['catalog_error_class'], 'catalog_http_404')
+        self.assertEqual(report['overall'], 'unhealthy')
+        # Inference results are preserved, not overwritten as not_in_catalog.
+        for result in report['results']:
+            self.assertEqual(result['status'], 'healthy')
+            self.assertFalse(result['catalog_present'])
+
+    def test_catalog_404_plus_failed_inference(self):
+        """Catalog 404 + inference failure: exit 1, both unhealthy."""
+        exit_code, report = self._run_main(self._catalog_404_dict('key'), self._post_failed)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report['catalog_status'], 'error')
+        self.assertEqual(report['catalog_error_class'], 'catalog_http_404')
+        self.assertEqual(report['overall'], 'unhealthy')
+        for result in report['results']:
+            self.assertEqual(result['status'], 'unhealthy')
+
+    def test_valid_catalog_one_model_absent(self):
+        """Valid catalog with only one model present: exit 1, catalog_status=ok,
+        absent model has catalog_present=False."""
+        exit_code, report = self._run_main(
+            self._catalog_ok_glm_only_dict('key'), self._post_healthy)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report['catalog_status'], 'ok')
+        self.assertIsNone(report['catalog_error_class'])
+        self.assertEqual(report['overall'], 'unhealthy')
+        glm = next(r for r in report['results'] if r['model'] == 'glm-5.3-flash-free')
+        ds = next(r for r in report['results'] if r['model'] == 'deepseek-v4.1-flash-free')
+        self.assertTrue(glm['catalog_present'])
+        self.assertFalse(ds['catalog_present'])
+
+    def test_both_healthy(self):
+        """Both models healthy and in catalog: exit 0, catalog_status=ok."""
+        exit_code, report = self._run_main(self._catalog_ok_dict('key'), self._post_healthy)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(report['catalog_status'], 'ok')
+        self.assertEqual(report['overall'], 'healthy')
+        self.assertEqual(report['healthy_count'], 2)
+
+    def test_partial_healthy(self):
+        """One model healthy, one unhealthy: exit 1."""
+        def post_mixed(url, key, model, prompt):
+            if model == 'glm-5.3-flash-free':
+                return json.loads(VALID_RESPONSE.decode('utf-8'))
+            raise urllib.error.HTTPError(url, 500, 'Error', {}, None)
+
+        exit_code, report = self._run_main(self._catalog_ok_dict('key'), post_mixed)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report['catalog_status'], 'ok')
+        self.assertEqual(report['overall'], 'unhealthy')
+        self.assertEqual(report['healthy_count'], 1)
+
+    def test_invalid_model_response(self):
+        """Response echoes different model: exit 1, response_model_matches=false."""
+        exit_code, report = self._run_main(self._catalog_ok_dict('key'), self._post_invalid_model)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report['catalog_status'], 'ok')
+        self.assertEqual(report['overall'], 'unhealthy')
+        for result in report['results']:
+            self.assertEqual(result['status'], 'unhealthy')
+            self.assertFalse(result['response_model_matches'])
+
+    def test_missing_api_key(self):
+        """Missing API key: exit 1, artifact still written, catalog_status=error."""
+        out_path = os.path.join(tempfile.gettempdir(), f'diag_missing_key_{id(self)}.json')
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        old_env = os.environ.pop('OPENCODE_API_KEY', None)
+        try:
+            exit_code = diagnostic.main(['diagnostic', out_path])
+        finally:
+            if old_env is not None:
+                os.environ['OPENCODE_API_KEY'] = old_env
+        with open(out_path, encoding='utf-8') as handle:
+            report = json.load(handle)
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(report['catalog_status'], 'error')
+        self.assertEqual(report['catalog_error_class'], 'missing_api_key')
+        self.assertEqual(report['overall'], 'unhealthy')
+        self.assertEqual(report['models_tested'], 0)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +567,27 @@ class ErrorClassificationTests(unittest.TestCase):
         self.assertEqual(diagnostic.classify_error(ValueError('x')), 'unknown_error')
 
 
+class CatalogClassificationTests(unittest.TestCase):
+    """Catalog-level errors are classified distinctly from per-model errors."""
+
+    def test_catalog_http_404_is_catalog_http_404_not_model_not_available(self):
+        error = urllib.error.HTTPError(
+            diagnostic.CATALOG_ENDPOINT, 404, 'Not Found', {}, None)
+        self.assertEqual(diagnostic.classify_catalog_error(error),
+                         'catalog_http_404')
+
+    def test_catalog_http_500_is_catalog_unavailable(self):
+        error = urllib.error.HTTPError(
+            diagnostic.CATALOG_ENDPOINT, 500, 'Error', {}, None)
+        self.assertEqual(diagnostic.classify_catalog_error(error),
+                         'catalog_unavailable')
+
+    def test_catalog_network_error_is_catalog_unavailable(self):
+        error = urllib.error.URLError('connection refused')
+        self.assertEqual(diagnostic.classify_catalog_error(error),
+                         'catalog_unavailable')
+
+
 class CatalogParsingTests(unittest.TestCase):
     def test_extract_ids_returns_bare_provider_ids(self):
         # The live catalog returns bare IDs; extract_ids must not add
@@ -446,7 +607,7 @@ class ProbeStructureTests(unittest.TestCase):
     def test_probe_record_has_required_keys(self):
         record = diagnostic.probe_model('key', 'glm-5.3-flash-free')
         required = {'model', 'allowed', 'catalog_present', 'status',
-                    'error_class', 'latency_ms'}
+                    'error_class', 'latency_ms', 'response_model_matches'}
         self.assertTrue(required.issubset(set(record)))
 
     def test_healthy_record_has_no_error_class(self):
@@ -457,8 +618,10 @@ class ProbeStructureTests(unittest.TestCase):
             'status': 'healthy',
             'error_class': None,
             'latency_ms': 120,
+            'response_model_matches': True,
         }
         self.assertIsNone(record['error_class'])
+        self.assertTrue(record['response_model_matches'])
 
     def test_unhealthy_record_has_error_class(self):
         record = {
@@ -468,8 +631,10 @@ class ProbeStructureTests(unittest.TestCase):
             'status': 'unhealthy',
             'error_class': 'rate_limit',
             'latency_ms': 500,
+            'response_model_matches': False,
         }
         self.assertIsNotNone(record['error_class'])
+        self.assertFalse(record['response_model_matches'])
 
     def test_response_id_hash_is_12_hex_chars_when_present(self):
         record = {
@@ -479,53 +644,12 @@ class ProbeStructureTests(unittest.TestCase):
             'status': 'healthy',
             'error_class': None,
             'latency_ms': 120,
+            'response_model_matches': True,
             'response_id_hash': 'a' * 12,
         }
         # The hash is exactly 12 hex chars — never the raw response id.
         self.assertEqual(len(record['response_id_hash']), 12)
         self.assertTrue(all(c in '0123456789abcdef' for c in record['response_id_hash']))
-
-
-class MainBehaviorTests(unittest.TestCase):
-    def test_report_has_overall_and_healthy_count(self):
-        # Build a minimal report dict as main() would produce.
-        results = [
-            {'model': 'glm-5.3-flash-free', 'status': 'healthy',
-             'catalog_present': True},
-            {'model': 'deepseek-v4.1-flash-free', 'status': 'healthy',
-             'catalog_present': True},
-        ]
-        healthy_count = sum(1 for r in results if r['status'] == 'healthy')
-        all_in_catalog = all(r['catalog_present'] for r in results)
-        all_healthy = healthy_count == len(results)
-        overall = 'healthy' if (all_in_catalog and all_healthy) else 'unhealthy'
-        self.assertEqual(overall, 'healthy')
-        self.assertEqual(healthy_count, 2)
-
-    def test_report_unhealthy_when_one_model_fails(self):
-        results = [
-            {'model': 'glm-5.3-flash-free', 'status': 'healthy',
-             'catalog_present': True},
-            {'model': 'deepseek-v4.1-flash-free', 'status': 'unhealthy',
-             'catalog_present': True},
-        ]
-        healthy_count = sum(1 for r in results if r['status'] == 'healthy')
-        all_healthy = healthy_count == len(results)
-        overall = 'healthy' if (all(r['catalog_present'] for r in results) and all_healthy) else 'unhealthy'
-        self.assertEqual(overall, 'unhealthy')
-        self.assertEqual(healthy_count, 1)
-
-    def test_report_unhealthy_when_model_missing_from_catalog(self):
-        results = [
-            {'model': 'glm-5.3-flash-free', 'status': 'healthy',
-             'catalog_present': True},
-            {'model': 'deepseek-v4.1-flash-free', 'status': 'not_in_catalog',
-             'catalog_present': False},
-        ]
-        healthy_count = sum(1 for r in results if r['status'] == 'healthy')
-        all_in_catalog = all(r['catalog_present'] for r in results)
-        overall = 'healthy' if (all_in_catalog and healthy_count == len(results)) else 'unhealthy'
-        self.assertEqual(overall, 'unhealthy')
 
 
 # --- Helpers ---

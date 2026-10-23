@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic model-health diagnostic (diagnostic v1.3).
+"""Synthetic model-health diagnostic (diagnostic v1.4).
 
 Reads the live OpenCode model catalog and performs minimal non-sensitive
 synthetic inference on two allowlisted free models. Records sanitized status
@@ -17,8 +17,13 @@ operational_status, never writes code, and never creates Draft PRs.
 Usage: model_health_diagnostic.py OUT_JSON
 Environment: OPENCODE_API_KEY (read from environment, never printed).
 
-Exit code: 0 only when the catalog is fetchable, both allowlisted models are
-present in the catalog, and both are healthy. Otherwise exit 1.
+Exit code: 0 only when the catalog fetches successfully (catalog_status=ok),
+both allowlisted models are present in the catalog, and both are healthy.
+Otherwise exit 1.
+
+Catalog errors are distinguished from per-model unavailability: a failed
+catalog request sets catalog_status=error with catalog_error_class, and does
+NOT overwrite inference results as not_in_catalog or assert model absence.
 """
 from __future__ import annotations
 
@@ -42,9 +47,12 @@ ALLOWED_MODELS = frozenset({
 # Hard-coded non-sensitive synthetic prompt. Never accepts untrusted input.
 SYNTHETIC_PROMPT = 'Respond with exactly the single word: OK'
 
-# Official OpenCode catalog endpoint per
+# Official OpenCode endpoints per
 # https://opencode.ai/v2/docs/console/models/ and
-# https://dev.opencode.ai/v2/docs/console/api/inference
+# https://dev.opencode.ai/v2/docs/console/api/inference:
+#   GET catalog:      https://opencode.ai/inference/v1/models
+#   POST chat:        https://opencode.ai/inference/openai/v1/chat/completions
+# This path difference is expected, not a defect.
 CATALOG_ENDPOINT = 'https://opencode.ai/inference/v1/models'
 INFERENCE_ENDPOINT = 'https://opencode.ai/inference/openai/v1/chat/completions'
 REQUEST_TIMEOUT = 30  # seconds
@@ -130,7 +138,7 @@ def http_post_json(url: str, key: str, model: str, prompt: str) -> dict:
 
 
 def classify_error(error: Exception) -> str:
-    """Map an exception to a sanitized error class. Never includes the prompt or key."""
+    """Map an inference exception to a sanitized error class. Never includes the prompt or key."""
     if isinstance(error, urllib.error.HTTPError):
         if error.code == 401:
             return 'auth_error'
@@ -150,6 +158,26 @@ def classify_error(error: Exception) -> str:
     if isinstance(error, OSError):
         return 'connection_error'
     return 'unknown_error'
+
+
+def classify_catalog_error(error: Exception) -> str:
+    """Map a catalog-level exception to a sanitized error class.
+
+    Distinct from classify_error: a catalog HTTP 404 is catalog_http_404,
+    never model_not_available (which is reserved for per-model inference
+    404s).  All other catalog failures are catalog_unavailable.
+    """
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code == 404:
+            return 'catalog_http_404'
+        return 'catalog_unavailable'
+    if isinstance(error, urllib.error.URLError):
+        return 'catalog_unavailable'
+    if isinstance(error, TimeoutError):
+        return 'catalog_unavailable'
+    if isinstance(error, OSError):
+        return 'catalog_unavailable'
+    return 'catalog_unavailable'
 
 
 def normalize_id(value: str) -> str:
@@ -173,10 +201,20 @@ def extract_ids(payload: object) -> set[str]:
     return ids
 
 
-def fetch_catalog(key: str, get=http_get_json) -> set[str]:
-    """Return the set of model IDs from the live catalog."""
-    payload = get(CATALOG_ENDPOINT, key)
-    return extract_ids(payload)
+def fetch_catalog(key: str, get=http_get_json) -> dict:
+    """Fetch the live catalog.
+
+    Returns {'ids': set[str], 'status': 'ok'|'error', 'error_class': str|None}.
+    A failed catalog request is reported at the catalog level; it is never
+    interpreted as per-model unavailability.
+    """
+    try:
+        payload = get(CATALOG_ENDPOINT, key)
+        ids = extract_ids(payload)
+        return {'ids': ids, 'status': 'ok', 'error_class': None}
+    except Exception as error:
+        return {'ids': set(), 'status': 'error',
+                'error_class': classify_catalog_error(error)}
 
 
 def _validate_healthy_response(response: dict, model: str) -> None:
@@ -216,6 +254,7 @@ def probe_model(key: str, model: str) -> dict:
         'status': 'not_tested',
         'error_class': None,
         'latency_ms': None,
+        'response_model_matches': None,
     }
     if model not in ALLOWED_MODELS:
         record['status'] = 'not_allowlisted'
@@ -228,6 +267,7 @@ def probe_model(key: str, model: str) -> dict:
         latency_ms = int((time.monotonic() - start) * 1000)
         record['status'] = 'healthy'
         record['latency_ms'] = latency_ms
+        record['response_model_matches'] = True
         # Sanitized evidence only: a short hash of the response id, never content.
         response_id = response.get('id') or ''
         record['response_id_hash'] = hashlib.sha256(response_id.encode()).hexdigest()[:12]
@@ -238,11 +278,13 @@ def probe_model(key: str, model: str) -> dict:
         record['status'] = 'unhealthy'
         record['error_class'] = 'invalid_response'
         record['latency_ms'] = latency_ms
+        record['response_model_matches'] = False
     except Exception as error:  # noqa: BLE001 — classify any other failure path
         latency_ms = int((time.monotonic() - start) * 1000)
         record['status'] = 'unhealthy'
         record['error_class'] = classify_error(error)
         record['latency_ms'] = latency_ms
+        record['response_model_matches'] = False
     return record
 
 
@@ -252,31 +294,53 @@ def main(argv: list[str]) -> int:
         return 2
     key = os.environ.get('OPENCODE_API_KEY', '')
     if not key:
-        print('::error::OPENCODE_API_KEY is not configured', file=sys.stderr)
+        # Emit a sanitized artifact on missing-key failure so the failure
+        # mode is recorded even without a live run.
+        report = {
+            'diagnostic_version': '1.4',
+            'catalog_endpoint': CATALOG_ENDPOINT,
+            'inference_endpoint': INFERENCE_ENDPOINT,
+            'catalog_status': 'error',
+            'catalog_error_class': 'missing_api_key',
+            'catalog_model_count': 0,
+            'models_tested': 0,
+            'healthy_count': 0,
+            'overall': 'unhealthy',
+            'results': [],
+        }
+        with open(argv[1], 'w', encoding='utf-8') as handle:
+            json.dump(report, handle, indent=2)
+        print('diagnostic: missing API key, overall=unhealthy')
         return 1
-    try:
-        catalog_ids = fetch_catalog(key)
-    except Exception as error:  # noqa: BLE001 — catalog fetch failure is a diagnostic result
-        print(f'::error::catalog fetch failed: {classify_error(error)}', file=sys.stderr)
-        catalog_ids = set()
+
+    catalog = fetch_catalog(key)
+    catalog_ids = catalog['ids']
+    catalog_status = catalog['status']
+    catalog_error_class = catalog['error_class']
 
     results = []
     for model in sorted(ALLOWED_MODELS):
         record = probe_model(key, model)
-        record['catalog_present'] = model in catalog_ids
-        # If the model is not in the catalog, override to not_tested even if probe ran.
-        if not record['catalog_present'] and record['status'] == 'healthy':
-            record['status'] = 'not_in_catalog'
+        # Only set catalog_present when the catalog succeeded.  When the
+        # catalog failed, we do not assert model absence and we do not
+        # overwrite inference results as not_in_catalog.
+        if catalog_status == 'ok':
+            record['catalog_present'] = model in catalog_ids
         results.append(record)
 
     healthy_count = sum(1 for r in results if r['status'] == 'healthy')
-    all_in_catalog = all(r['catalog_present'] for r in results)
     all_healthy = healthy_count == len(results)
-    overall = 'healthy' if (all_in_catalog and all_healthy) else 'unhealthy'
+    all_in_catalog = all(r['catalog_present'] for r in results)
+    # Overall is unhealthy when the catalog failed, any model is absent from
+    # the catalog, or any model is unhealthy.
+    overall = 'healthy' if (catalog_status == 'ok' and all_in_catalog and all_healthy) else 'unhealthy'
 
     report = {
-        'diagnostic_version': '1.3',
+        'diagnostic_version': '1.4',
         'catalog_endpoint': CATALOG_ENDPOINT,
+        'inference_endpoint': INFERENCE_ENDPOINT,
+        'catalog_status': catalog_status,
+        'catalog_error_class': catalog_error_class,
         'catalog_model_count': len(catalog_ids),
         'models_tested': len(results),
         'healthy_count': healthy_count,
@@ -285,8 +349,8 @@ def main(argv: list[str]) -> int:
     }
     with open(argv[1], 'w', encoding='utf-8') as handle:
         json.dump(report, handle, indent=2)
-    print(f'diagnostic: {healthy_count}/{len(results)} model(s) healthy, '
-          f'overall={overall}')
+    print(f'diagnostic: catalog={catalog_status} '
+          f'{healthy_count}/{len(results)} model(s) healthy, overall={overall}')
     return 0 if overall == 'healthy' else 1
 
 
