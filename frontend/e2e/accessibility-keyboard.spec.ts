@@ -19,8 +19,8 @@ test("login labels and skip link work with a keyboard", async ({ page }) => {
   await expect(page.locator("#main-content")).toBeFocused();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
 
-  // Measure the rendered admin section label against its opaque sidebar background.
-  const adminLabel = page.getByText("Admin", { exact: true });
+  // Measure the rendered Administration group label against its opaque sidebar background.
+  const adminLabel = page.getByRole("button", { name: "Administration", exact: true });
   await expect(adminLabel).toBeVisible();
   const contrast = await adminLabel.evaluate((element) => {
     // Tailwind 4 colors compute as oklch(), not rgb(), so resolve any CSS color to sRGB through a canvas pixel.
@@ -193,4 +193,27 @@ test.describe("mobile navigation", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     expect(await duration()).toBeLessThan(0.001);
   });
+});
+
+test("navigation groups are keyboard disclosure buttons that keep the current page's group open", async ({ page }) => {
+  await signIn(page);
+  const nav = page.getByRole("navigation", { name: "Primary" });
+  for (const group of ["Monitoring", "Infrastructure", "Network", "Data Sources", "Administration"]) {
+    await expect(nav.getByRole("button", { name: group, exact: true })).toHaveAttribute("aria-expanded", "true");
+  }
+
+  const monitoring = nav.getByRole("button", { name: "Monitoring", exact: true });
+  await monitoring.focus();
+  await page.keyboard.press("Enter");
+  await expect(monitoring).toHaveAttribute("aria-expanded", "false");
+  await expect(nav.getByRole("link", { name: "Events", exact: true })).toHaveCount(0);
+
+  // Arriving on a page inside the collapsed group (a client-side navigation, so the shell keeps its
+  // state) opens it again and marks the page.
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/events");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(monitoring).toHaveAttribute("aria-expanded", "true");
+  await expect(nav.getByRole("link", { name: "Events", exact: true })).toHaveAttribute("aria-current", "page");
 });

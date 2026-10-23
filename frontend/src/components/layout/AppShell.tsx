@@ -1,37 +1,11 @@
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
-import { useHasPermission, useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 import { useAuthStore } from "@/lib/authStore";
 
-const NAV_ITEMS = [
-  { to: "/", label: "Dashboard" },
-  { to: "/infrastructure", label: "Infrastructure" },
-  { to: "/locations", label: "Locations", permission: "location:read" },
-  { to: "/managed-assets", label: "Managed Assets" },
-  { to: "/racks", label: "Racks" },
-  { to: "/equipment", label: "Equipment" },
-  { to: "/floor-plans", label: "Floor Plans" },
-  { to: "/floor-plans/3d-layout", label: "3D Layout" },
-  { to: "/power", label: "Power Topology" },
-  { to: "/events", label: "Events" },
-  { to: "/alarm-rules", label: "Alarm Rules", permission: "alarm:read" },
-  { to: "/collectors", label: "Collectors" },
-  { to: "/integrations", label: "Integrations" },
-  { to: "/discovery", label: "Discovery" },
-  { to: "/discovery/neighbors", label: "Neighbors", permission: "discovery:read" },
-  { to: "/network/profiles", label: "Device Profiles", permission: "network_profile:read" },
-  { to: "/cables", label: "Cables", permission: "cable:read" },
-  { to: "/topology/pass-throughs", label: "Pass-throughs", permission: "cable:read" },
-  { to: "/topology/trace", label: "Trace", permission: "cable:read" },
-] as ReadonlyArray<{ to: string; label: string; permission?: string }>;
-
-const ADMIN_NAV_ITEMS = [{ to: "/admin/catalog", label: "Asset Catalog" }];
-const ACCESS_NAV_ITEMS = [
-  { to: "/admin/users", label: "Users", permission: "user:read" },
-  { to: "/admin/groups", label: "Groups", permission: "group:read" },
-];
+import { activeNavLink, DASHBOARD_ITEM, isNavItemVisible, NavItem, visibleNavGroups } from "./navModel";
 
 /** Tailwind's `sm` breakpoint (40rem). Below it the sidebar becomes a modal drawer. The same
  * value drives the `sm:` classes below, so layout and behaviour switch at the same width. */
@@ -60,7 +34,7 @@ function useIsDesktop(): boolean {
 // a precise pointer, where the compact sidebar is the intended look.
 const TOUCH_TARGET = "min-h-11 sm:pointer-fine:min-h-0";
 
-function navLinkClass({ isActive }: { isActive: boolean }): string {
+function navLinkClass(isActive: boolean): string {
   return `flex items-center rounded-r-sm border-l-[3px] px-3 py-2 text-sm ${TOUCH_TARGET} ${
     isActive
       ? "border-link bg-side-selected font-semibold text-white"
@@ -71,14 +45,39 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 export function AppShell() {
   const { user, logout } = useAuth();
   const isCatalogAdministrator = useIsCatalogAdministrator();
-  const canReadUsers = useHasPermission("user:read");
-  const canReadGroups = useHasPermission("group:read");
   const permissions = useAuthStore((s) => s.user?.permission_codes);
-  const navItems = NAV_ITEMS.filter((item) => !item.permission || permissions?.includes(item.permission));
   const navigate = useNavigate();
   const location = useLocation();
-  const accessItems = ACCESS_NAV_ITEMS.filter((i) => (i.permission === "user:read" ? canReadUsers : canReadGroups));
-  const showAdminHeading = isCatalogAdministrator || accessItems.length > 0;
+
+  const viewer = { permissions, isCatalogAdministrator };
+  const groups = visibleNavGroups(viewer);
+  const showDashboard = isNavItemVisible(DASHBOARD_ITEM, viewer);
+  const activeLink = activeNavLink(location.pathname, [DASHBOARD_ITEM, ...groups.flatMap((group) => group.items)]);
+  const activeGroupId = groups.find((group) => activeLink && group.items.includes(activeLink))?.id;
+
+  // Every group starts open, so no link is hidden until the user collapses a group. Arriving at
+  // a page always reopens the group that holds it.
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set(groups.map((group) => group.id)));
+  useEffect(() => {
+    if (!activeGroupId) return;
+    setOpenGroups((previous) => (previous.has(activeGroupId) ? previous : new Set(previous).add(activeGroupId)));
+  }, [activeGroupId]);
+  function toggleGroup(id: string) {
+    setOpenGroups((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  function renderLink(item: NavItem) {
+    const active = item === activeLink;
+    return (
+      <Link key={item.to} to={item.to} aria-current={active ? "page" : undefined} onClick={() => setOpen(false)} className={navLinkClass(active)}>
+        {item.label}
+      </Link>
+    );
+  }
 
   const isDesktop = useIsDesktop();
   const [open, setOpen] = useState(false);
@@ -120,8 +119,11 @@ export function AppShell() {
     }
     if (event.key !== "Tab") return;
     const sidebar = sidebarRef.current;
-    const focusable = sidebar?.querySelectorAll<HTMLElement>("a[href], button:not([disabled])");
-    if (!sidebar || !focusable || focusable.length === 0) return;
+    // Links inside a collapsed group sit under `hidden`, so they are not tab stops.
+    const focusable = sidebar
+      ? Array.from(sidebar.querySelectorAll<HTMLElement>("a[href], button:not([disabled])")).filter((element) => !element.closest("[hidden]"))
+      : [];
+    if (!sidebar || focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const active = document.activeElement;
@@ -181,19 +183,30 @@ export function AppShell() {
           )}
         </div>
         <nav aria-label="Primary" className="space-y-1">
-          {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === "/"} onClick={() => setOpen(false)} className={navLinkClass}>
-              {item.label}
-            </NavLink>
-          ))}
-          {showAdminHeading && (
-            <div className="mb-1 mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-side-fg-muted">Admin</div>
-          )}
-          {[...(isCatalogAdministrator ? ADMIN_NAV_ITEMS : []), ...accessItems].map((item) => (
-            <NavLink key={item.to} to={item.to} onClick={() => setOpen(false)} className={navLinkClass}>
-              {item.label}
-            </NavLink>
-          ))}
+          {showDashboard && renderLink(DASHBOARD_ITEM)}
+          {groups.map((group) => {
+            const expanded = openGroups.has(group.id);
+            const listId = `nav-group-${group.id}`;
+            return (
+              <div key={group.id} className="pt-2">
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  aria-controls={listId}
+                  onClick={() => toggleGroup(group.id)}
+                  className={`flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-side-fg-muted hover:text-white ${TOUCH_TARGET}`}
+                >
+                  {group.label}
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className={`h-4 w-4 shrink-0 ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 6l6 6-6 6" />
+                  </svg>
+                </button>
+                <div id={listId} hidden={!expanded} className="space-y-1">
+                  {group.items.map(renderLink)}
+                </div>
+              </div>
+            );
+          })}
         </nav>
     </>
   );
