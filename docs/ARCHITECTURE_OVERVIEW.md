@@ -1,6 +1,6 @@
 # Architecture overview — implemented source
 
-**Current code snapshot:** PR #29 at `c2d60b34f0ccc546c809a1d3ff15c11befb79a26` (documentation work branches from this commit). This is a map of the present code, not a substitute for the detailed historical architecture specification or proof of production deployment.
+**Source baseline:** `main` at `4a9980bd22dc058850d3106dd329cb208076d37a` (2026-10-23). This is a map of the code at that commit, not a substitute for the detailed historical architecture specification or proof of production deployment. **Later commits can change any statement here; re-verify against the source and tests before relying on it** (see [Architecture document provenance](#architecture-document-provenance)).
 
 ## System structure
 
@@ -14,7 +14,7 @@ React / TypeScript web UI
                       | /api/v1 (FastAPI; authenticated / RBAC)
                       v
 Python modular-monolith application services
-  ├── Identity, global RBAC, audit + transactional outbox
+  ├── Identity, RBAC (global roles + permission-local site/rack scopes), audit + transactional outbox
   ├── Physical locations, placement, racks/equipment, power topology
   ├── Versioned catalog lifecycle and legacy-model bridge
   ├── Equipment instantiation: snapshot templates into deployed ports/inlets
@@ -48,12 +48,29 @@ Central collectors/drivers and separately packaged Edge Collector
 
 ## Security and operational constraints
 
-Authorization is enforced in FastAPI dependencies/services, not merely by hiding frontend controls. Catalog authoring is Administrator-gated; the backend checks relevant read/manage/publish/retire permissions. The API's global authorization model and future site-scoped RBAC decision are documented historically in `ARCHITECTURE_REVIEW.md` §32a. Do not present site-scoped authorization as implemented without an implementation change and tests.
+Authorization is enforced in FastAPI dependencies/services, not merely by hiding frontend controls. Catalog authoring is Administrator-gated: it requires the relevant `catalog:*` permission **and** Administrator role membership (`require_catalog_administrator` in `backend/app/application/rbac.py`).
+
+### Authorization model at the baseline SHA
+
+Site/rack-scoped access is implemented, in `backend/app/application/access_control.py`. It was delivered by SEC-ARCH-01 ([#57](https://github.com/AhmedMahmoud2222/DCIM/issues/57), [PR #134](https://github.com/AhmedMahmoud2222/DCIM/pull/134), merged 2026-10-15) and SEC-ARCH-02 ([#163](https://github.com/AhmedMahmoud2222/DCIM/issues/163), [PR #170](https://github.com/AhmedMahmoud2222/DCIM/pull/170), merged 2026-10-19). The behavior is specified in [USER_GROUP_MANAGEMENT.md](USER_GROUP_MANAGEMENT.md); this section only summarizes it.
+
+- **Sources of access.** `RoleAssignment` rows (`scope_type` is `global`, `site` or `organization`) and user groups. A group carries `allow`/`deny` permission grants and site grants (`rack_scope` `all` or `selected`, with explicit racks for `selected`).
+- **Permission-local scopes.** Each permission code has its own effective scope. Scopes are united only between sources granting the **same** permission, and each group allow is bound to that group's own site/rack grants. `scope_for(code)` is authoritative for resource decisions; the aggregate `scope` is used only for directory visibility and scoped-role eligibility.
+- **Global roles.** A global role makes only its own permissions global. It does not widen unrelated group grants, and it does not activate an unrelated unfiltered permission for a scoped user.
+- **Explicit deny.** A user-wide group `deny` removes the permission even when a global role grants it. Codes match exactly; `manage` does not imply `read`.
+- **Scoped role assignments** are honoured only when the holder's whole reachable site scope lies inside the assignment's scope; otherwise they contribute neither permissions nor role name. Organization-scoped roles never satisfy role-name checks such as Administrator.
+- **Site-aware permissions (exactly ten, pinned by `SCOPE_AWARE_PERMISSIONS`):** `organization:read`, `location:read`, `rack:read`, `rack:manage`, `rack:place`, `equipment:read`, `cable:read`, `cable:manage`, `cooling:read`, `cooling:manage`. `user:*` and `group:*` administration is also usable by restricted administrators, with directory masking and containment checks.
+- **Fail closed.** Any other permission code held by a restricted (non-global) user is reported inactive and the route returns 403. Out-of-scope resource IDs on site-aware routes return 404. Adding a code to `SCOPE_AWARE_PERMISSIONS` requires router-level filtering first; `backend/tests/api/test_sec_arch_01_deny_all_routers.py` pins the exact set so a change is deliberate.
+- **Rack and equipment reach follows current placement**, not a stored site column: a rack moved to another site does not keep a stale grant.
+
+**What this section does not claim.** It does not claim that every endpoint is site-scoped (most data families are deliberately unreachable for restricted users), that endpoint coverage has been exhaustively audited, or that cross-site behavior has been independently penetration-tested. There is no tenant entity. A route-by-route coverage audit with database-backed hostile tests is a proposed, not yet authorized, follow-up tracked in [#195](https://github.com/AhmedMahmoud2222/DCIM/issues/195) (P2).
 
 External device transport follows its configured target allowlists. SNMP v2c communities and test fixtures do not imply SNMPv3 or unrestricted production access. Backups, credentials, TLS/ingress, secret-manager selection, data retention and network segmentation require environment-specific deployment decisions.
 
 ## Architecture document provenance
 
-`ARCHITECTURE_REVIEW.md` §§1–50 contain dated design decisions and historical Phase 0 text. §4d documents Phase 10A, and §51 describes merged Phase 10B/10C source at the pre-PR-29 baseline. Read this document and [PROJECT_STATUS.md](PROJECT_STATUS.md) for today's source implementation. Follow `PHASE10_INTEGRATION_REPORT.md` for the conditional upsert, structural BER fix and expanded CI. Those changes belong to the PR #29 branch until merged into `main`.
+`ARCHITECTURE_REVIEW.md` §§1–50 contain dated design decisions and historical Phase 0 text, including the original global-only RBAC decision (§32a), which the SEC-ARCH-01/02 work above has since superseded in source. §4d documents Phase 10A, and §51 describes merged Phase 10B/10C source at the pre-PR-29 baseline. The post-audit remediation (conditional telemetry upsert, structural SNMP BER validation, expanded CI) was merged to `main` through [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) on 2026-09-26; `PHASE10_INTEGRATION_REPORT.md` remains its historical record.
+
+This overview was re-baselined on 2026-10-23 against `main` `4a9980bd22dc058850d3106dd329cb208076d37a`. It is a dated source map and must be re-verified after later code changes. Older phase reports are historical and are intentionally unchanged. Read this document and [PROJECT_STATUS.md](PROJECT_STATUS.md) for the status at that baseline.
 
 No line in this overview certifies production readiness, exhaustive security penetration testing or autonomous remediation.
