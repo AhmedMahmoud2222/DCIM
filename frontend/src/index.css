@@ -1,5 +1,30 @@
 @import "tailwindcss";
 
+/* Control Room semantic tokens (UI/UX checkpoint 1 of 7). Only tokens that checkpoint 1
+   uses are defined, and only NEW names: the slate, red, green and other palette scales are
+   deliberately not redefined, so every page that has not been migrated looks exactly as it
+   did. `static` makes Tailwind emit every variable on :root, so plain CSS and a future
+   [data-theme] override can read or replace them. Contrast of each pair is checked by
+   src/theme/palette.test.ts. */
+@theme static {
+  --color-surface-page: #0b1220;
+  --color-surface-sidebar: #0a0f1a;
+  --color-surface-panel: #111a2b;
+  --color-line-subtle: #2a3a57;
+  --color-line-control: #667a9e;
+  --color-fg-primary: #e8eef8;
+  --color-fg-secondary: #b4c0d4;
+  --color-action-primary: #2563eb;
+  --color-action-primary-fg: #ffffff;
+  --color-link: #6cb6ff;
+  --color-focus: #6cb6ff;
+  --color-focus-on-sidebar: #6cb6ff;
+  --color-side-fg: #b4c0d4;
+  --color-side-fg-muted: #8e9db5;
+  --color-side-selected: #17233a;
+  --color-side-edge: #8e9db5;
+}
+
 /* Tailwind 4 changed the default border color to currentcolor. Keep the v3 default so
    existing borders without an explicit color render as before. */
 @layer base {
@@ -68,4 +93,34 @@
   .layout3d-pan-pad button:nth-child(3) { grid-column: 3; }
   .layout3d-pan-pad button:nth-child(4) { grid-column: 2; grid-row: 2; }
   .layout3d-provenance { position: absolute; left: 14px; top: 12px; max-width: 360px; color: #94a3b8; font-size: 11px; text-align: left; pointer-events: none; }
+}
+
+/* Shared keyboard focus indicator. Deliberately OUTSIDE every @layer: unlayered rules beat
+   layered ones, so this also wins over Tailwind utilities such as `focus:outline-hidden`
+   that many inputs use today (a rule inside @layer base would lose to them and leave those
+   inputs with no ring). :where() keeps the specificity at zero. Exclusions: tabindex="-1"
+   (programmatic focus targets such as <main>, no ring wanted) and the 3D layout controls,
+   which define their own focus styles in the components layer above. */
+:where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:not([class*="layout3d-"]) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Inside the dark sidebar and drawer the ring uses its own token, so a future light theme
+   can keep a dark ring on content and a light ring on the sidebar. */
+aside :where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:not([class*="layout3d-"]) {
+  outline-color: var(--color-focus-on-sidebar);
+}
+
+/* Reduced motion: remove transitions and animation for people who ask for it. The
+   duration is near zero rather than 0 so transitionend and animationend still fire. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
