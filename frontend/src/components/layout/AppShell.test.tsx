@@ -192,7 +192,6 @@ describe("AppShell grouped navigation", () => {
       "Racks",
       "Equipment",
       "Managed Assets",
-      "Power Topology",
       "Device Profiles",
       "Discovery",
       "Collectors",
@@ -204,7 +203,7 @@ describe("AppShell grouped navigation", () => {
 
   it("matches the gates for an Operator, a power analyst and a user with no extra permissions", () => {
     const operator = renderWithProviders(<AppShell />, { user: viewerWith("alarm:read", "cable:read", "location:read") });
-    expect(linkLabels()).toHaveLength(17);
+    expect(linkLabels()).toHaveLength(16);
     expect(linkLabels()).not.toContain("Power & Forecast");
     expect(linkLabels()).toContain("Path Trace");
     expect(linkLabels()).toContain("Location Hierarchy");
@@ -216,17 +215,20 @@ describe("AppShell grouped navigation", () => {
     analyst.unmount();
 
     renderWithProviders(<AppShell />, { user: viewerWith() });
-    expect(linkLabels()).toHaveLength(12);
+    expect(linkLabels()).toHaveLength(11);
     expect(groupButtons()).toEqual(["Monitoring", "Infrastructure", "Data Sources"]);
   });
 
-  it("shows Power & Forecast only with power:read", () => {
+  it("shows both power links only with power:read", () => {
+    // power:manage alone does not show them: the backend needs power:read for both pages.
     const without = renderWithProviders(<AppShell />, { user: viewerWith("power:manage") });
     expect(screen.queryByRole("link", { name: "Power & Forecast" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Power Topology" })).not.toBeInTheDocument();
     without.unmount();
 
     renderWithProviders(<AppShell />, { user: viewerWith("power:read") });
     expect(screen.getByRole("link", { name: "Power & Forecast" })).toHaveAttribute("href", "/power/analytics");
+    expect(screen.getByRole("link", { name: "Power Topology" })).toHaveAttribute("href", "/power");
   });
 
   it("shows the Asset Catalog link only to catalog administrators", () => {

@@ -41,7 +41,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
       { to: "/racks", label: "Racks" },
       { to: "/equipment", label: "Equipment" },
       { to: "/managed-assets", label: "Managed Assets" },
-      { to: "/power", label: "Power Topology" },
+      { to: "/power", label: "Power Topology", permission: "power:read" },
     ],
   },
   {
