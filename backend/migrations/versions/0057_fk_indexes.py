@@ -17,9 +17,13 @@ Existing objects are never trusted by name. Before any DDL, every target is reso
 
   * the target table must exist as an ordinary (non-partitioned) table with the column;
   * if a relation with the index name already exists it must be an index on THAT table, btree, single non-expression key
-    column = the FK column, default opclass / collation / sort order, non-unique, no predicate. Only then is it ours;
+    column = the FK column, default opclass / collation / sort order, non-unique, no predicate, not owned by a constraint
+    (PRIMARY KEY / UNIQUE / EXCLUDE). Only then is it ours;
   * a matching index that is valid and ready is reused; a matching index that is invalid or not ready is an interrupted
-    CREATE INDEX CONCURRENTLY artifact and is dropped and rebuilt;
+    CREATE INDEX CONCURRENTLY artifact and is dropped and rebuilt, unless another session holds a SHARE UPDATE
+    EXCLUSIVE (or stronger) lock on the table, which is how a running CREATE INDEX CONCURRENTLY shows up in `pg_locks`
+    (readable by any role, unlike the progress views). The migration then aborts rather than race that build; this also
+    trips on a concurrent VACUUM or migration, and a re-run once the table is quiet resolves it;
   * ANY other collision (different table, key, method, predicate, uniqueness, or a non-index relation) aborts the
     migration with a clear error. Nothing unrelated is ever dropped, and the plan is computed for all indexes before the
     first build, so a collision aborts with nothing built.
@@ -94,7 +98,12 @@ _INSPECT = sa.text(
            am.amname AS method,
            i.indnatts AS natts, i.indnkeyatts AS nkeyatts, i.indkey[0] AS key_attnum,
            (i.indexprs IS NOT NULL) AS has_exprs, (i.indpred IS NOT NULL) AS has_pred,
-           i.indisunique AS is_unique,
+           i.indisunique AS is_unique, i.indisexclusion AS is_exclusion,
+           EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = x.oid) AS constraint_owned,
+           EXISTS (SELECT 1 FROM pg_locks l
+                    WHERE l.locktype = 'relation' AND l.relation = t.oid AND l.granted AND l.pid <> pg_backend_pid()
+                      AND l.mode IN ('ShareUpdateExclusiveLock', 'ShareLock', 'ShareRowExclusiveLock',
+                                     'ExclusiveLock', 'AccessExclusiveLock')) AS table_busy,
            i.indoption[0] AS key_option,
            (i.indclass[0] = (SELECT oc.oid FROM pg_opclass oc
                               WHERE oc.opcmethod = x.relam AND oc.opcdefault AND oc.opcintype = a.atttypid)) AS default_opclass,
@@ -148,6 +157,8 @@ def _matches_definition(row) -> bool:
         and not row.has_exprs
         and not row.has_pred
         and not row.is_unique
+        and not row.is_exclusion
+        and not row.constraint_owned
         and row.key_option == 0
         and row.default_opclass
         and row.default_collation
@@ -174,7 +185,15 @@ def _plan_one(bind, schema: str, table: str, column: str) -> str:
     if row.rel_oid is None:
         return CREATE
     if _matches_definition(row):
-        return REUSE if (row.is_valid and row.is_ready) else REBUILD
+        if row.is_valid and row.is_ready:
+            return REUSE
+        if row.table_busy:
+            raise RuntimeError(
+                f"0057: {schema}.{name} is invalid and another session holds a SHARE UPDATE EXCLUSIVE or stronger "
+                f"lock on {schema}.{table}: a CREATE INDEX CONCURRENTLY on {where} may still be running. Refusing to drop "
+                "and rebuild a possibly active build; wait for it to finish (or cancel it), then re-run."
+            )
+        return REBUILD
     found = row.indexdef or f"a non-index relation (relkind={row.rel_kind!r})"
     raise RuntimeError(
         f"0057: {schema}.{name} already exists but is not the expected index on {where} "

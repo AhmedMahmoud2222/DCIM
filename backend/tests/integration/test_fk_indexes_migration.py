@@ -224,6 +224,9 @@ WRONG_DEFINITIONS = {
     "descending": f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN} DESC)",
     "expression": f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ((({FIRST_COLUMN})::text))",
     "other_table": f"CREATE INDEX {FIRST_NAME} ON alarm (id)",
+    "exclusion_constraint": (
+        f"ALTER TABLE {FIRST_TABLE} ADD CONSTRAINT {FIRST_NAME} EXCLUDE USING btree ({FIRST_COLUMN} WITH =)"
+    ),
 }
 
 
@@ -291,6 +294,70 @@ def test_matching_invalid_artifact_is_dropped_and_rebuilt(db, ready):
     rows = assert_all_ours_valid(db)
     assert rows[FIRST_NAME]["oid"] != old_oid, "the interrupted artifact must have been rebuilt, not reused"
     assert version(db) == HEAD
+
+
+def _start_blocked_concurrent_build(db: str):
+    """Run CREATE INDEX CONCURRENTLY for FIRST_NAME in another session, stalled behind an open transaction.
+
+    Session A holds a transaction with an xid, so session B's build waits for it after creating the (invalid) index and
+    shows up in pg_stat_progress_create_index. Returns a callable that releases A and waits for B to finish.
+    """
+    import threading
+
+    ready, release = threading.Event(), threading.Event()
+    errors: list[BaseException] = []
+
+    async def main():
+        dsn = _dsn(_url_for_db(ADMIN_DATABASE_URL, db))
+        a, b = await asyncpg.connect(dsn), await asyncpg.connect(dsn)
+        try:
+            tx = a.transaction()
+            await tx.start()
+            await a.execute("SELECT txid_current()")
+            build = asyncio.ensure_future(
+                b.execute(f"CREATE INDEX CONCURRENTLY {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
+            )
+            for _ in range(100):
+                n = await a.fetchval("SELECT count(*) FROM pg_stat_progress_create_index")
+                if n:
+                    break
+                await asyncio.sleep(0.1)
+            ready.set()
+            while not release.is_set():
+                await asyncio.sleep(0.05)
+            await tx.rollback()
+            await build
+        except BaseException as exc:  # surfaced through the returned callable
+            errors.append(exc)
+            ready.set()
+        finally:
+            await a.close()
+            await b.close()
+
+    thread = threading.Thread(target=lambda: asyncio.run(main()), daemon=True)
+    thread.start()
+    assert ready.wait(30), "concurrent build never appeared in pg_stat_progress_create_index"
+
+    def stop():
+        release.set()
+        thread.join(60)
+        assert not errors, errors
+
+    return stop
+
+
+def test_invalid_index_of_an_active_concurrent_build_is_not_dropped_or_rebuilt(db):
+    stop = _start_blocked_concurrent_build(db)
+    try:
+        row = index_rows(db, [FIRST_NAME])[FIRST_NAME]
+        assert row["valid"] is False, "precondition: the in-flight build exposes an invalid index"
+        r = alembic(db, "upgrade", "head")
+        assert r.returncode != 0 and "possibly active" in r.stderr + r.stdout
+        assert version(db) == PREVIOUS
+        assert index_rows(db, [FIRST_NAME])[FIRST_NAME]["oid"] == row["oid"]
+    finally:
+        stop()
+    assert index_rows(db, [FIRST_NAME])[FIRST_NAME]["valid"] is True, "the other session's build completes untouched"
 
 
 def test_matching_valid_index_is_reused_not_rebuilt(db):
