@@ -1,4 +1,4 @@
-"""OpenCode native CLI smoke tests (smoke tests v1.0).
+"""OpenCode native CLI smoke tests (smoke tests v1.1).
 
 Validates the native smoke diagnostic end to end against the real 1.19.3
 event fixtures (tests/deployment/fixtures/opencode_1_19_3), the workflow's
@@ -433,6 +433,79 @@ class SummaryLineTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Credential-free compatibility preflight
+# ---------------------------------------------------------------------------
+
+class PreflightTests(unittest.TestCase):
+    """A synthetic key must reach auth (401) — not be policy-rejected (403).
+
+    This is the regression guard for the free-tier `read: deny` incompatibility
+    that made the merged diagnostic a false negative: the envelope was rejected
+    before auth, so a valid-key run could never succeed.
+    """
+
+    def test_preflight_never_reads_the_environment_api_key(self):
+        key = smoke.resolve_key('preflight', {'OPENCODE_API_KEY': 'real-key'})
+        self.assertEqual(key, smoke.SYNTHETIC_KEY)
+        self.assertNotIn('real-key', key)
+
+    def test_live_mode_reads_only_the_documented_variable(self):
+        self.assertEqual(
+            smoke.resolve_key('live', {'OPENCODE_API_KEY': 'k'}), 'k')
+        self.assertEqual(smoke.resolve_key('live', {}), '')
+        self.assertEqual(
+            smoke.resolve_key('live', {'OPENCODE_KEY': 'other'}), '')
+
+    def test_auth_rejection_means_the_envelope_is_compatible(self):
+        self.assertEqual(
+            smoke.probe_verdict('failed', 'provider_error', 'auth_error', 401),
+            ('ok', 'credential_rejected_as_expected'))
+
+    def test_policy_rejection_means_the_envelope_is_incompatible(self):
+        self.assertEqual(
+            smoke.probe_verdict('failed', 'provider_error', 'forbidden', 403),
+            ('failed', 'config_envelope_rejected'))
+
+    def test_any_other_probe_outcome_fails_closed(self):
+        for outcome in (('ok', '', None, None),
+                        ('failed', 'provider_error', 'server_error', 500),
+                        ('failed', 'timeout', None, None),
+                        ('failed', 'no_events', None, None),
+                        ('failed', 'missing_api_key', None, None),
+                        ('failed', 'provider_error', None, None)):
+            self.assertEqual(smoke.probe_verdict(*outcome),
+                             ('failed', 'unexpected_probe_outcome'), outcome)
+
+    def test_preflight_record_carries_the_mode_and_no_credential(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            record = smoke._write_result(
+                os.path.join(tmp, 'preflight.json'), mode='preflight',
+                opencode_version='1.19.3', status='ok', reason='',
+                error_class='auth_error', error_status_code=401,
+                exit_code=1, timed_out=False, event_count=1, stderr_lines=0,
+                elapsed_ms=42)
+        self.assertEqual(record['mode'], 'preflight')
+        self.assertEqual(set(record), smoke.RESULT_KEYS)
+        self.assertNotIn('synthetic-compatibility-probe-not-a-credential',
+                         json.dumps(record))
+
+    def test_default_record_mode_is_live(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            record = smoke._write_result(
+                os.path.join(tmp, 'result.json'), opencode_version='1.19.3',
+                status='ok', reason='', error_class=None,
+                error_status_code=None, exit_code=0, timed_out=False,
+                event_count=3, stderr_lines=0, elapsed_ms=1)
+        self.assertEqual(record['mode'], 'live')
+
+    def test_cli_runs_with_stdin_closed(self):
+        # Headless `read: ask` can only be trusted if stdin is not a TTY and
+        # cannot block: the child must always be started with DEVNULL.
+        source = inspect.getsource(smoke.main)
+        self.assertIn('stdin=subprocess.DEVNULL', source)
+
+
+# ---------------------------------------------------------------------------
 # Workflow YAML policy tests
 # ---------------------------------------------------------------------------
 
@@ -545,9 +618,54 @@ class WorkflowPolicyTests(unittest.TestCase):
         upload = uploads[0]
         self.assertEqual(upload['if'], 'always()')
         self.assertEqual(upload['with']['retention-days'], 1)
-        self.assertEqual(upload['with']['path'],
-                         '${{ runner.temp }}/smoke-result.json')
+        paths = {line.strip() for line in
+                 upload['with']['path'].splitlines() if line.strip()}
+        self.assertEqual(paths, {'${{ runner.temp }}/smoke-preflight.json',
+                                 '${{ runner.temp }}/smoke-result.json'})
         self.assertEqual(upload['with']['name'], 'opencode-native-smoke')
+
+    # -- credential-free preflight (B: free-tier envelope regression) --------
+
+    def preflight_step(self):
+        matches = [s for s in self.job['steps']
+                   if s.get('name') == 'Synthetic compatibility preflight '
+                                      '(no credential)']
+        self.assertEqual(len(matches), 1)
+        return matches[0]
+
+    def test_credential_free_preflight_precedes_the_secret_step(self):
+        steps = self.job['steps']
+        preflight = self.preflight_step()
+        holders = [s for s in steps if 'secrets.' in json.dumps(s)]
+        self.assertEqual(len(holders), 1)
+        self.assertLess(steps.index(preflight), steps.index(holders[0]))
+        # The preflight step must not receive or interpolate any secret.
+        self.assertNotIn('secrets.', json.dumps(preflight))
+        self.assertFalse(preflight.get('env'))
+        self.assertNotIn('${{ ', preflight['run'])
+        self.assertIn('--preflight', preflight['run'])
+        self.assertIn('set -euo pipefail', preflight['run'])
+
+    def test_preflight_uses_isolated_paths_and_the_pinned_binary(self):
+        run = self.preflight_step()['run']
+        for path in ('${RUNNER_TEMP}/smoke-preflight.json',
+                     '${RUNNER_TEMP}/preflight-home',
+                     '${RUNNER_TEMP}/preflight-work'):
+            self.assertIn(path, run)
+        self.assertIn('.github/opencode/runtime/node_modules/'
+                      'opencode-linux-x64/bin/opencode', run)
+        self.assertIn('opencode_native_smoke.py --preflight', run)
+
+    def test_preflight_never_reads_the_api_key_in_the_runner_script(self):
+        # Static guarantee: the preflight branch resolves the fixed synthetic
+        # placeholder, and the child env for the preflight run cannot carry a
+        # real key even if one leaked into the step environment.
+        source = (ROOT / '.github/scripts/opencode_native_smoke.py').read_text(
+            encoding='utf-8')
+        self.assertIn("SYNTHETIC_KEY = 'synthetic-compatibility-probe-"
+                      "not-a-credential'", source)
+        key = smoke.resolve_key('preflight', {'OPENCODE_API_KEY': 'real-key'})
+        self.assertEqual(key, smoke.SYNTHETIC_KEY)
 
     def test_workflow_uses_only_the_standard_provider_integration(self):
         for banned in ('opencode_proxy.py', 'opencode_catalog.py',
@@ -678,23 +796,26 @@ class MainEndToEndTests(unittest.TestCase):
 
     def run_smoke(self, stub: Path, *, key: str | None = KEY,
                   binary: str | None = None, timeout_min: str = '10',
-                  cwd: str | None = None):
+                  cwd: str | None = None, preflight: bool = False):
         environment = dict(os.environ)
         environment.pop('OPENCODE_API_KEY', None)  # never use a real key
         if key is not None:
             environment['OPENCODE_API_KEY'] = key
-        result = os.path.join(self.tmp, 'result.json')
+        result = os.path.join(self.tmp, 'preflight.json' if preflight
+                              else 'result.json')
         with tempfile.TemporaryDirectory() as work_root:
             agent_home = os.path.join(work_root, 'home')
             workdir = os.path.join(work_root, 'work')
             invocation_binary = binary or stub
+            command = [sys.executable,
+                       str(ROOT / '.github/scripts/opencode_native_smoke.py')]
+            if preflight:
+                command.append('--preflight')
+            command.extend([result, str(invocation_binary), agent_home,
+                            workdir, timeout_min])
             completed = subprocess.run(
-                [sys.executable,
-                 str(ROOT / '.github/scripts/opencode_native_smoke.py'),
-                 result, str(invocation_binary), agent_home, workdir,
-                 timeout_min],
-                env=environment, capture_output=True, text=True, timeout=300,
-                cwd=cwd)
+                command, env=environment, capture_output=True, text=True,
+                timeout=300, cwd=cwd)
         record = None
         if os.path.exists(result):
             with open(result, encoding='utf-8') as handle:
@@ -791,6 +912,59 @@ class MainEndToEndTests(unittest.TestCase):
         self.assertIsNone(record['opencode_version'])
         self.assertEqual(record['event_count'], 0)
         self.assert_log_hygiene(completed)
+
+    # -- credential-free preflight end to end --------------------------------
+
+    def test_preflight_passes_when_auth_is_reached(self):
+        media = (FIXTURES / 'fail_unauthorized_401.jsonl').read_text(
+            encoding='utf-8')
+        stub = self.stub_binary(media, fixture_meta('fail_unauthorized_401')
+                                ['exit_code'])
+        completed, record = self.run_smoke(stub, preflight=True)
+        self.assert_log_hygiene(completed)
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(record['mode'], 'preflight')
+        self.assertEqual(record['status'], 'ok')
+        self.assertEqual(record['reason'], 'credential_rejected_as_expected')
+        self.assertEqual(record['error_class'], 'auth_error')
+        self.assertEqual(record['error_status_code'], 401)
+        self.assertEqual(record['opencode_version'], '1.19.3')
+
+    def test_preflight_runs_without_any_key_in_the_environment(self):
+        # The step must be genuinely credential-free: no OPENCODE_API_KEY is
+        # needed for the synthetic compatibility result.
+        media = (FIXTURES / 'fail_unauthorized_401.jsonl').read_text(
+            encoding='utf-8')
+        stub = self.stub_binary(media, fixture_meta('fail_unauthorized_401')
+                                ['exit_code'])
+        completed, record = self.run_smoke(stub, key=None, preflight=True)
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(record['status'], 'ok')
+        self.assertEqual(record['mode'], 'preflight')
+
+    def test_preflight_fails_on_policy_rejection_before_auth(self):
+        media = ('{"type":"error","error":{"name":"APIError","data":'
+                 '{"message":"Upstream request failed: denied","statusCode":403,'
+                 '"responseBody":"denied"}}}')
+        stub = self.stub_binary(media, 1)
+        completed, record = self.run_smoke(stub, preflight=True)
+        self.assert_log_hygiene(completed)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(record['mode'], 'preflight')
+        self.assertEqual(record['status'], 'failed')
+        self.assertEqual(record['reason'], 'config_envelope_rejected')
+        self.assertEqual(record['error_class'], 'forbidden')
+        self.assertEqual(record['error_status_code'], 403)
+
+    def test_preflight_fails_closed_if_the_synthetic_key_was_accepted(self):
+        # A synthetic non-credential key can never authenticate. If a run
+        # looks successful the probe is meaningless and must not pass.
+        stub = self.stub_binary(
+            (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8'),
+            fixture_meta('success_text')['exit_code'])
+        completed, record = self.run_smoke(stub, preflight=True)
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(record['reason'], 'unexpected_probe_outcome')
 
 
 if __name__ == '__main__':

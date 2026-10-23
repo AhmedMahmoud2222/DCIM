@@ -1,4 +1,4 @@
-# OpenCode native CLI connectivity smoke (workflow v1.0) — diagnostic only.
+# OpenCode native CLI connectivity smoke (workflow v1.1) — diagnostic only.
 #
 # Why: the direct synthetic diagnostic (model_health_diagnostic.py, a custom
 # Python HTTP client) reports HTTP 403 for the allowlisted free models on GitHub
@@ -31,6 +31,13 @@
 # to the protected smoke step through the opencode-agent environment secret
 # and is never printed, logged or uploaded; the evidence artifact records
 # status classes and elapsed time only.
+#
+# Credential-free preflight: the step before the secret-bearing step sends the
+# identical fixed request envelope with a synthetic non-credential key. It
+# passes only when the gateway reaches authentication (HTTP 401) instead of
+# rejecting the envelope at the policy layer (HTTP 403). Free tier rejects the
+# `read: deny` envelope this way, which made an earlier diagnostic a false
+# negative; the preflight fails closed before OPENCODE_API_KEY is mapped.
 name: OpenCode Native CLI Smoke
 
 on:
@@ -91,6 +98,21 @@ jobs:
           test -f "${BIN}"
           test "$("${BIN}" --version)" = "${OPENCODE_VERSION}"
 
+      # Credential-free compatibility preflight. No secret is mapped into this
+      # step; the runner script ignores OPENCODE_API_KEY in this mode and uses
+      # a fixed synthetic placeholder. It passes only when the request envelope
+      # reaches authentication (HTTP 401) — a 403 means the gateway rejected
+      # the envelope at the policy layer (the free-tier read-deny regression).
+      - name: Synthetic compatibility preflight (no credential)
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/opencode_native_smoke.py --preflight \
+            "${RUNNER_TEMP}/smoke-preflight.json" \
+            ".github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode" \
+            "${RUNNER_TEMP}/preflight-home" \
+            "${RUNNER_TEMP}/preflight-work" \
+            2
+
       # The OPENCODE_API_KEY secret exists only inside this step. The runner
       # script re-verifies the version itself, runs the native CLI in the
       # isolated workdir/home, and exits nonzero on any failure.
@@ -104,14 +126,17 @@ jobs:
             ".github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode" \
             "${RUNNER_TEMP}/smoke-home" \
             "${RUNNER_TEMP}/smoke-work" \
-            10
+            5
 
       # Preserved regardless of the run outcome so a failure always leaves
-      # sanitized evidence (CLI version, model, status, elapsed, error class).
+      # sanitized evidence (CLI version, model, mode, status, elapsed, error
+      # class) for both the credential-free preflight and the live run.
       - name: Upload sanitized smoke evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
         with:
           name: opencode-native-smoke
-          path: ${{ runner.temp }}/smoke-result.json
+          path: |
+            ${{ runner.temp }}/smoke-preflight.json
+            ${{ runner.temp }}/smoke-result.json
           retention-days: 1
