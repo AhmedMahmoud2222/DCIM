@@ -535,14 +535,19 @@ class MainEndToEndTests(unittest.TestCase):
         self.tmp = self._tmp.name
 
     def stub_binary(self, media: str, exit_code: int) -> Path:
-        stub = Path(self.tmp) / 'stub-opencode'
+        stub_dir = Path(self.tmp) / 'stubdir'
+        stub_dir.mkdir(exist_ok=True)
+        # The transcript is emitted byte-for-byte from a sibling file; a
+        # heredoc would append a trailing blank line and inflate event_count.
+        (stub_dir / 'media.jsonl').write_text(media, encoding='utf-8')
+        stub = stub_dir / 'opencode'
         stub.write_text(
             '#!/bin/sh\n'
             'if [ "$1" = "--version" ]; then\n'
             '  echo "opencode v1.19.3"\n'
             '  exit 0\n'
             'fi\n'
-            f'cat <<"__FIXTURE_END__"\n{media}\n__FIXTURE_END__\n'
+            'cat "$(dirname "$0")/media.jsonl"\n'
             f'exit {exit_code}\n',
             encoding='utf-8')
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
