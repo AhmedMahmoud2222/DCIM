@@ -611,19 +611,18 @@ CREATE TRIGGER stamp_barrier BEFORE UPDATE ON alembic_version FOR EACH ROW EXECU
 
 
 @contextlib.asynccontextmanager
-async def paused_at_version_stamp(db: str):
-    """Run `alembic upgrade head` and hold it exactly at the `alembic_version` update (after upgrade() returned).
+async def paused_at_barrier(db: str, setup_sql: str, *alembic_args: str):
+    """Run alembic and hold it exactly where `setup_sql`'s trigger blocks on the test-held advisory lock.
 
-    Yields (proc, release). `release()` lets the update proceed. The barrier is a BEFORE UPDATE trigger that waits on an
-    advisory lock the test holds, so the pause is exact and independent of timing.
+    Yields (proc, release). `release()` lets the blocked statement proceed. The pause is exact and timing-independent.
     """
-    await _admin(db, _STAMP_TRIGGER_SQL)
+    await _admin(db, setup_sql)
     gate = await _connect(db)
     proc = None
     try:
         await gate.fetchval("SELECT pg_advisory_lock($1)", BARRIER_KEY)
-        proc = await _spawn_alembic(db, "upgrade", "head")
-        await _wait_until(_stamp_barrier_waiting(db), proc, "the alembic_version update (stamp barrier)")
+        proc = await _spawn_alembic(db, *alembic_args)
+        await _wait_until(_stamp_barrier_waiting(db), proc, "the barrier trigger")
 
         async def release() -> None:
             await gate.fetchval("SELECT pg_advisory_unlock($1)", BARRIER_KEY)
@@ -632,6 +631,54 @@ async def paused_at_version_stamp(db: str):
     finally:
         await _reap(proc)
         await gate.close()
+
+
+def paused_at_version_stamp(db: str):
+    """`alembic upgrade head`, held at the `alembic_version` update (after upgrade() returned)."""
+    return paused_at_barrier(db, _STAMP_TRIGGER_SQL, "upgrade", "head")
+
+
+_DROP_INDEX_BARRIER_SQL = f"""
+CREATE FUNCTION drop_index_barrier() RETURNS event_trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_advisory_lock({BARRIER_KEY});
+    PERFORM pg_advisory_unlock({BARRIER_KEY});
+END $$;
+CREATE EVENT TRIGGER drop_index_barrier ON ddl_command_start WHEN TAG IN ('DROP INDEX')
+    EXECUTE FUNCTION drop_index_barrier();
+"""
+
+
+def paused_before_drop_index(db: str):
+    """`alembic downgrade -1`, held after its inspection and just before the DROP INDEX statement starts."""
+    return paused_at_barrier(db, _DROP_INDEX_BARRIER_SQL, "downgrade", "-1")
+
+
+SPARE_NAME = "ix_spare_wrong"
+DISPLACED_NAME = "ix_spare_displaced"
+
+
+async def _try_rename_swap(db: str, victim: str) -> bool:
+    """Swap a pre-created wrong index into `victim`'s name via two renames. True if the swap went through.
+
+    ALTER INDEX ... RENAME needs only a SHARE UPDATE EXCLUSIVE lock on the index itself, not on its table, so table-level
+    locks alone do not stop it. A short lock_timeout turns "blocked" into a clean, bounded LockNotAvailableError.
+    """
+    other = await _connect(db)
+    try:
+        await other.execute("SET lock_timeout = '1500ms'")
+        tx = other.transaction()
+        await tx.start()
+        try:
+            await other.execute(f"ALTER INDEX {victim} RENAME TO {DISPLACED_NAME}")
+            await other.execute(f"ALTER INDEX {SPARE_NAME} RENAME TO {victim}")
+            await tx.commit()
+            return True
+        except asyncpg.exceptions.LockNotAvailableError:
+            await tx.rollback()
+            return False
+    finally:
+        await other.close()
 
 
 # -- P1: TOCTOU -------------------------------------------------------------------------------------------------------
@@ -858,5 +905,107 @@ def test_downgrade_that_cannot_get_its_locks_changes_nothing(db):
     assert version(db) == HEAD
     after = index_rows(db)
     assert {n: after[n]["oid"] for n in NAMES} == {n: before[n]["oid"] for n in NAMES}
+    alembic_ok(db, "downgrade", "-1")
+    assert version(db) == PREVIOUS and index_rows(db) == {}
+
+
+# -- P1 (Codex re-review of bfacdf8): index rename races ---------------------------------------------------------------
+
+
+def test_rename_swap_between_final_verification_and_the_stamp_is_blocked(db):
+    """Table locks do not stop ALTER INDEX RENAME. The verified INDEX objects themselves must be pinned until the stamp."""
+    q(db, f"CREATE INDEX {SPARE_NAME} ON {FIRST_TABLE} (id)")  # a wrong-definition index waiting in the wings
+
+    async def scenario():
+        async with paused_at_version_stamp(db) as (proc, release):
+            swapped = await _try_rename_swap(db, FIRST_NAME)
+            await release()
+            rc, out = await _finish(proc)
+            return swapped, rc, out
+
+    swapped, rc, out = _run(scenario())
+    assert not swapped, "a wrong index was renamed into the verified name after verification and before the stamp"
+    assert rc == 0, out
+    assert version(db) == HEAD
+    assert_all_ours_valid(db)
+    assert index_rows(db, [SPARE_NAME])[SPARE_NAME]["col"] == "id", "the spare index must be untouched"
+
+
+def test_rename_swap_between_downgrade_inspection_and_drop_is_blocked(db):
+    """The downgrade must not drop an unrelated index that was renamed into one of our names after inspection."""
+    alembic_ok(db, "upgrade", "head")
+    q(db, f"CREATE INDEX {SPARE_NAME} ON {FIRST_TABLE} (id)")
+
+    async def scenario():
+        async with paused_before_drop_index(db) as (proc, release):
+            swapped = await _try_rename_swap(db, FIRST_NAME)
+            await release()
+            rc, out = await _finish(proc)
+            return swapped, rc, out
+
+    swapped, rc, out = _run(scenario())
+    assert not swapped, "a wrong index was renamed into one of our names between inspection and DROP INDEX"
+    assert rc == 0, out
+    assert version(db) == PREVIOUS
+    leftovers = index_rows(db, NAMES + [SPARE_NAME, DISPLACED_NAME])
+    assert set(leftovers) == {SPARE_NAME}, f"only the unrelated spare index may remain, found {sorted(leftovers)}"
+    assert leftovers[SPARE_NAME]["col"] == "id"
+
+
+def test_pinning_indexes_cannot_deadlock_into_a_half_applied_state(db):
+    """A session holding the last index and asking for the first (opposite order) must resolve, not hang or corrupt."""
+    alembic_ok(db, "upgrade", "head")
+    q(db, "UPDATE alembic_version SET version_num = $1", PREVIOUS)  # all 22 exist and are valid; only the stamp is missing
+    first, last = sorted(NAMES)[0], sorted(NAMES)[-1]
+
+    async def scenario():
+        holder = await _connect(db)
+        proc = None
+        try:
+            tx = holder.transaction()
+            await tx.start()
+            await holder.execute(f"COMMENT ON INDEX {last} IS NULL")  # SHARE UPDATE EXCLUSIVE on the last index
+            proc = await _spawn_alembic(db, "upgrade", "head")
+            await _wait_until(
+                _waiting_on_lock(db, "COMMENT ON INDEX%"), proc, "the migration to queue behind the held index"
+            )
+            try:
+                await holder.execute(f"COMMENT ON INDEX {first} IS NULL")  # opposite order -> a genuine lock cycle
+            except asyncpg.exceptions.DeadlockDetectedError:
+                pass
+            await tx.rollback()
+            return await _finish(proc)
+        finally:
+            await _reap(proc)
+            await holder.close()
+
+    rc, out = _run(scenario())  # bounded: PostgreSQL's deadlock detector breaks the cycle within ~1s
+    after = index_rows(db)
+    assert sorted(after) == sorted(NAMES), "a deadlock must never lose an index"
+    assert version(db) == (HEAD if rc == 0 else PREVIOUS), f"stamp must match the outcome (rc={rc}): {out}"
+    if rc != 0:
+        assert "deadlock" in out.lower() or "lock timeout" in out.lower(), out
+        alembic_ok(db, "upgrade", "head")  # a retry completes
+    assert version(db) == HEAD
+    assert_all_ours_valid(db)
+
+
+def test_pinning_leaves_index_comments_exactly_as_they_were(db):
+    """The index pin is a lock-only COMMENT: an existing comment (even a tricky one) survives, others stay uncommented."""
+    tricky = "keep me: it's ':named' and $1 and 100% 'quoted'"
+    q(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
+    q(db, f"COMMENT ON INDEX {FIRST_NAME} IS '{tricky.replace(chr(39), chr(39) * 2)}'")
+    alembic_ok(db, "upgrade", "head")
+    comments = {
+        r["name"]: r["comment"]
+        for r in q(
+            db,
+            "SELECT c.relname AS name, obj_description(c.oid, 'pg_class') AS comment FROM pg_class c "
+            "WHERE c.relname = ANY($1)",
+            NAMES,
+        )
+    }
+    assert comments[FIRST_NAME] == tricky
+    assert all(v is None for n, v in comments.items() if n != FIRST_NAME)
     alembic_ok(db, "downgrade", "-1")
     assert version(db) == PREVIOUS and index_rows(db) == {}

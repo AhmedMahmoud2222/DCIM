@@ -27,7 +27,10 @@ and WAL load. A failed or cancelled build leaves an INVALID index behind. See th
 * **Nothing acts on a stale plan.** Pre-existing same-name objects are validated, then: an index that should simply be
   reused is re-proven at the very end (all 22 re-inspected under `SHARE UPDATE EXCLUSIVE` on the target tables, held until
   `alembic_version` is written and committed); an interrupted artifact is dropped only under `ACCESS EXCLUSIVE` after its
-  OID is re-checked. A replacement made by another session aborts the run and is left untouched.
+  OID is re-checked. The index objects themselves are also pinned (a no-op `COMMENT ON INDEX`, SHARE UPDATE EXCLUSIVE), because
+  `ALTER INDEX ... RENAME` takes no table lock and could otherwise swap a wrong index into a verified name. A replacement made
+  by another session aborts the run and is left untouched; a lock cycle with another session is broken by PostgreSQL's
+  deadlock detector and fails the run safely (retry).
 * **One runner at a time.** A session advisory lock is taken by the migration and released by `env.py` after the version
   update commits. A second concurrent `alembic upgrade` fails fast with "another migration invocation is active".
 * **Downgrade is all-or-nothing** (see step 6): it needs a brief `ACCESS EXCLUSIVE` window on the affected tables.

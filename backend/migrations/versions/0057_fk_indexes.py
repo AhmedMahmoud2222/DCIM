@@ -32,11 +32,18 @@ Why a plan is never trusted. A catalog read is stale the instant it is made, and
 0057 runners against each other, not against arbitrary DDL. So nothing acts on a stale plan:
 
   * REUSE does no DDL, therefore it is proven at the end. Immediately before `upgrade()` returns, every table is locked in
-    SHARE UPDATE EXCLUSIVE mode and ALL 22 indexes are re-inspected (right table, definition, valid, ready). That lock
-    blocks DROP/CREATE INDEX (plain or CONCURRENTLY) on those tables, and it is held until Alembic has written
-    `alembic_version` and committed (the lock is transaction-scoped and `upgrade()` returns inside that transaction). So a
-    replacement made at any earlier point is detected and aborts the run before the stamp, and no replacement can slip in
-    between the check and the stamp.
+    SHARE UPDATE EXCLUSIVE mode, every index OBJECT is pinned (see below) and ALL 22 indexes are re-inspected (right table,
+    definition, valid, ready). The table lock blocks DROP/CREATE INDEX (plain or CONCURRENTLY); the index pin blocks
+    `ALTER INDEX ... RENAME`. Both are held until Alembic has written `alembic_version` and committed (they are
+    transaction-scoped and `upgrade()` returns inside that transaction). So a replacement made at any earlier point is
+    detected and aborts the run before the stamp, and no replacement can slip in between the check and the stamp.
+  * Pinning indexes. A table lock does NOT protect an index's name: RENAME needs only SHARE UPDATE EXCLUSIVE on the index
+    itself and no lock on its table, so another owner could rename the verified index away and a wrong one into its name
+    after the check. LOCK TABLE cannot target an index, so the index is pinned with a no-op `COMMENT ON INDEX` (it re-applies
+    the current comment, normally none), which takes that lock. Each index is inspected, pinned, inspected again, and the
+    OIDs compared: the name resolves to an OID when the lock is taken and cannot change afterwards. Pins are taken in sorted
+    name order; PostgreSQL's deadlock detector (or `lock_timeout`) aborts a lock cycle with another session, which fails the
+    run safely (nothing stamped, nothing dropped).
   * An interrupted artifact is dropped only under an ACCESS EXCLUSIVE lock on its table, with the object re-inspected and
     its OID compared with the planned one AFTER the lock is held, using a plain (transactional) DROP INDEX. A replacement
     that appeared after planning therefore survives and aborts the run. CONCURRENTLY is deliberately not used here: it
@@ -62,8 +69,9 @@ Failure and retry. `alembic_version` is only advanced after `upgrade()` returns,
 database at 0056 with whichever indexes were already built (each committed on its own). Re-running re-plans: valid
 indexes are reused, an INVALID artifact of ours is rebuilt, and an unrelated collision still aborts.
 
-Downgrade is all-or-nothing. It takes ACCESS EXCLUSIVE on every table that carries one of the indexes, re-inspects under
-those locks, and removes all of them with ONE plain `DROP INDEX a, b, c, ...` statement in the migration's own transaction:
+Downgrade is all-or-nothing. It takes ACCESS EXCLUSIVE on every table that carries one of the indexes, pins each index
+object and re-inspects under those locks (so a rename swap cannot redirect the name-based DROP), and removes all of them
+with ONE plain `DROP INDEX a, b, c, ...` statement in the migration's own transaction:
 the drops and the version downgrade commit together or not at all, so a failure (permission, `lock_timeout`, cancellation,
 lost connection) leaves 0057 stamped with all 22 indexes present. The trade-off, accepted for a rollback path, is that the
 tables are unavailable to reads and writes from lock acquisition to commit (a metadata-only operation; the wait is bounded
@@ -219,6 +227,52 @@ def _lock_tables(bind, schema: str, tables: list[str], mode: str) -> None:
     bind.execute(sa.text(f"LOCK TABLE {names} IN {mode} MODE"))
 
 
+def _pin_index(bind, schema: str, target: _Target, oid: int) -> None:
+    """Lock the index OBJECT itself (not just its table) until the end of the transaction.
+
+    `ALTER INDEX ... RENAME` needs only SHARE UPDATE EXCLUSIVE on the index and takes no lock on its table, so table locks
+    cannot stop a rename swap (a wrong index renamed into our name). LOCK TABLE cannot target an index, so the lock is taken
+    with a no-op COMMENT ON INDEX, which acquires SHARE UPDATE EXCLUSIVE on the index. It re-applies the index's current
+    comment (usually none), so nothing observable changes. Callers must re-inspect AFTER pinning and compare the OID: the
+    name is resolved to an OID when the lock is taken, and no rename can change it from then on.
+    """
+    preparer = bind.dialect.identifier_preparer
+    qualified = f"{preparer.quote_schema(schema)}.{preparer.quote(target.name)}"
+    statement = bind.scalar(
+        sa.text(
+            "SELECT format('COMMENT ON INDEX %s IS %L', CAST(:qualified AS text), "
+            "obj_description(CAST(:oid AS oid), 'pg_class'))"
+        ),
+        {"qualified": qualified, "oid": oid},
+    )
+    try:
+        bind.exec_driver_sql(statement)  # not bind.execute(text(...)): a comment may contain ':name' lookalikes
+    except sa.exc.DBAPIError as exc:
+        raise RuntimeError(
+            f"0057: cannot pin {schema}.{target.name} (it may have been renamed away or is not owned by this role): "
+            f"{exc.orig}. Refusing to continue."
+        ) from exc
+
+
+def _pinned_inspect(bind, schema: str, target: _Target, planned_oid: int | None = None):
+    """Inspect, pin the inspected index object, inspect again, and require it is the very same object.
+
+    Returns the second inspection (taken while the index is pinned). `planned_oid` additionally pins identity to an
+    earlier plan.
+    """
+    first = _inspect(bind, target)
+    if first.rel_oid is None or (planned_oid is not None and first.rel_oid != planned_oid):
+        return first
+    _pin_index(bind, schema, target, first.rel_oid)
+    second = _inspect(bind, target)
+    if second.rel_oid != first.rel_oid:
+        raise RuntimeError(
+            f"0057: {schema}.{target.name} was replaced while it was being pinned (oid {first.rel_oid} -> "
+            f"{second.rel_oid}); refusing to continue. Re-run."
+        )
+    return second
+
+
 def _plan_one(bind, schema: str, target: _Target) -> tuple[str, int | None]:
     """Return (action, oid of the existing relation if any). Raises on anything that is not ours."""
     name, table, column = target.name, target.table, target.column
@@ -258,9 +312,15 @@ def _drop_interrupted_artifacts(bind, schema: str, rebuilds: list[tuple[_Target,
     preparer = bind.dialect.identifier_preparer
     _bound_lock_wait(bind, _DROP_LOCK_TIMEOUT)
     _lock_tables(bind, schema, [t.table for t, _ in rebuilds], "ACCESS EXCLUSIVE")
-    for target, planned_oid in rebuilds:
+    for target, planned_oid in sorted(rebuilds, key=lambda item: item[0].name):
+        pinned = _pinned_inspect(bind, schema, target, planned_oid)  # pin the OBJECT: a rename could still swap it
+        if pinned.rel_oid != planned_oid:
+            raise RuntimeError(
+                f"0057: {schema}.{target.name} changed while the migration was running (planned an interrupted "
+                f"artifact with oid {planned_oid}, found oid {pinned.rel_oid}); refusing to drop it. Re-run."
+            )
         try:
-            action, oid = _plan_one(bind, schema, target)  # re-inspect now that no one can change it under us
+            action, oid = _plan_one(bind, schema, target)  # re-evaluate now that table and index are both locked
         except RuntimeError as exc:  # replaced by something that is not ours
             raise RuntimeError(
                 f"0057: {schema}.{target.name} changed while the migration was running (planned an interrupted "
@@ -277,13 +337,14 @@ def _drop_interrupted_artifacts(bind, schema: str, rebuilds: list[tuple[_Target,
 def _verify_all_and_pin(bind, schema: str, targets: list[_Target]) -> None:
     """Prove all 22 indexes are ours and usable, and keep DDL out until Alembic has stamped and committed.
 
-    Runs in the transaction that Alembic commits together with the `alembic_version` update; SHARE UPDATE EXCLUSIVE
-    is released only at that commit.
+    Runs in the transaction that Alembic commits together with the `alembic_version` update. Both the tables
+    (SHARE UPDATE EXCLUSIVE, which stops DROP/CREATE INDEX) and the index objects themselves (pinned, which stops
+    `ALTER INDEX ... RENAME` swaps that need no table lock) stay locked until that commit.
     """
     _bound_lock_wait(bind, _VERIFY_LOCK_TIMEOUT)
     _lock_tables(bind, schema, [t.table for t in targets], "SHARE UPDATE EXCLUSIVE")
-    for target in targets:
-        row = _inspect(bind, target)
+    for target in sorted(targets, key=lambda t: t.name):  # one fixed order for every runner
+        row = _pinned_inspect(bind, schema, target)
         if not (_matches_definition(row) and row.is_valid and row.is_ready):
             found = row.indexdef or "nothing"
             raise RuntimeError(
@@ -336,8 +397,8 @@ def downgrade() -> None:
     _bound_lock_wait(bind, _DROP_LOCK_TIMEOUT)
     _lock_tables(bind, schema, present_tables, "ACCESS EXCLUSIVE")
     drops = []
-    for target in targets:
-        row = _inspect(bind, target)  # under the locks above: cannot change before the drop
+    for target in sorted(targets, key=lambda t: t.name):
+        row = _pinned_inspect(bind, schema, target)  # table AND index locked: neither can change before the drop
         if row.rel_oid is None:
             continue
         if _matches_definition(row):
