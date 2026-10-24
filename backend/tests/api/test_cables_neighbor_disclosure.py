@@ -104,7 +104,7 @@ async def test_neighbor_state_is_not_observable_for_hidden_ports(client, world, 
     nid = await neighbor(world, local, remote, state=state, status=status)
     if already_cabled:
         cable = await create_cable(client, world["admin"], local, remote, label="LIVE-B", status="installed")
-        await world["db"].execute(text("UPDATE cable SET source_neighbor_id = :n WHERE id = :c"), {"n": nid, "c": cable["id"]})
+        await world["db"].execute(text("UPDATE cable SET source = 'discovery_confirmed', source_neighbor_id = :n WHERE id = :c"), {"n": nid, "c": cable["id"]})
         await world["db"].commit()
     hidden = await post(client, world, nid)
     missing = await post(client, world, str(uuid.uuid4()))
