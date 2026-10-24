@@ -11,15 +11,7 @@ import {
   listEquipment,
 } from "@/features/equipment/api";
 import { listRacks } from "@/features/racks/api";
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
-};
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function EquipmentPage() {
   const queryClient = useQueryClient();
@@ -158,9 +150,7 @@ export function EquipmentPage() {
                 </td>
                 <td className="py-2 font-mono text-slate-300">{eq.asset_tag}</td>
                 <td className="py-2">
-                  <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[eq.lifecycle_status] ?? "bg-slate-700"}`}>
-                    {eq.lifecycle_status}
-                  </span>
+                  <LifecycleStatus value={eq.lifecycle_status} />
                 </td>
                 <td className="py-2 text-slate-400">
                   {eq.placement ? (

@@ -10,17 +10,8 @@ import {
   registerCollector,
   triggerPollNow,
 } from "@/features/integrations/api";
+import { CollectorConnectivity } from "@/features/status/StatusBadges";
 import { ApiError } from "@/lib/apiClient";
-
-const HEALTH_COLORS: Record<string, string> = {
-  healthy: "bg-green-900 text-green-200",
-  stale: "bg-amber-900 text-amber-200",
-  offline: "bg-red-900 text-red-200",
-};
-
-function HealthBadge({ health }: { health: string }) {
-  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${HEALTH_COLORS[health] ?? "bg-slate-700"}`}>{health}</span>;
-}
 
 function fmtSeconds(s: number | null): string {
   if (s === null) return "never";
@@ -166,7 +157,7 @@ export function CollectorsPage() {
                 <span className="truncate">
                   {c.name} <span className="text-slate-500">({c.collector_type})</span>
                 </span>
-                <HealthBadge health={c.health} />
+                <CollectorConnectivity health={c.health} />
               </button>
             ))}
             {collectorsQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">No collectors registered yet.</p>}
@@ -187,7 +178,7 @@ export function CollectorsPage() {
                   <div>
                     <h2 className="text-sm font-semibold text-slate-200">{selected.name}</h2>
                     <div className="mt-1 flex gap-2">
-                      <HealthBadge health={selected.health} />
+                      <CollectorConnectivity health={selected.health} />
                       <span className="rounded-sm bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">{selected.status}</span>
                     </div>
                   </div>

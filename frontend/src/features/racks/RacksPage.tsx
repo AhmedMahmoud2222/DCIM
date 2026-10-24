@@ -5,15 +5,7 @@ import { Link } from "react-router-dom";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
-};
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function RacksPage() {
   const queryClient = useQueryClient();
@@ -210,9 +202,7 @@ export function RacksPage() {
                 </td>
                 <td className="py-2 font-mono text-slate-300">{rack.asset_tag}</td>
                 <td className="py-2">
-                  <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
-                    {rack.lifecycle_status}
-                  </span>
+                  <LifecycleStatus value={rack.lifecycle_status} />
                 </td>
                 <td className="py-2 text-slate-400">
                   {rack.placement
