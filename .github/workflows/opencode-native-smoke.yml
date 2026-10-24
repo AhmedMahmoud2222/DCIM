@@ -1,0 +1,117 @@
+# OpenCode native CLI connectivity smoke (workflow v1.0) — diagnostic only.
+#
+# Why: the direct synthetic diagnostic (model_health_diagnostic.py, a custom
+# Python HTTP client) reports HTTP 403 for the allowlisted free models on GitHub
+# runners, while the official OpenCode client succeeded elsewhere. This
+# workflow removes the two most likely divergence sources and obtains an
+# independent data point through OpenCode's own runtime:
+#
+#   - native `opencode run` from the repo-pinned runtime (opencode-ai 1.19.3,
+#     lockfile-verified), never a custom Python HTTP client;
+#   - standard provider integration: OPENCODE_API_KEY is the only credential
+#     channel; no DCIM localhost model proxy, no catalog client and no
+#     gateway header work of any kind.
+#
+# Scope:
+#   - workflow_dispatch only, no inputs: the tested model and the synthetic
+#     prompt are fixed in .github/scripts/opencode_native_smoke.py and cannot
+#     be changed at dispatch time.
+#   - trusted main is enforced twice: the job condition below and a fail-closed
+#     runtime assertion in the first step, before any secret can be mapped.
+#     Operator prerequisite outside this file: the protected opencode-agent
+#     environment must keep its deployment branch restriction to main.
+#   - isolated runtime: empty temporary workdir and dedicated HOME/XDG trees
+#     under RUNNER_TEMP; the repository checkout is used only to install the
+#     runtime and run the runner script, and is never loaded into model
+#     context (the CLI is pointed at the empty workdir and runs with its
+#     tools denied).
+#
+# Permissions: contents: read only. No GitHub App, no publish token, no
+# issues/pull-requests/deployment write grants. The API key is provided only
+# to the protected smoke step through the opencode-agent environment secret
+# and is never printed, logged or uploaded; the evidence artifact records
+# status classes and elapsed time only.
+name: OpenCode Native CLI Smoke
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  OPENCODE_VERSION: '1.19.3'
+
+jobs:
+  smoke:
+    name: Native CLI smoke test (opencode/glm-5.3-flash-free)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: opencode-agent
+    # workflow_dispatch can target any ref, and GitHub then runs THAT ref's
+    # workflow copy; if this guard fails, the job never starts and the key is
+    # never exposed. Non-main refs are refused.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: opencode-native-smoke
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      # Fail closed before any secret can be injected, checking only documented
+      # default runner environment variables (GITHUB_EVENT_NAME, GITHUB_REF).
+      # The opencode-agent environment itself is bound by the job-level
+      # `environment:` key above, verified statically in the test suite;
+      # GITHUB_ENVIRONMENT is not a documented default variable and must not
+      # be depended on here. Pure shell on runtime variables: no untrusted
+      # payload reaches the shell.
+      - name: Enforce trusted main dispatch (no secrets at this point)
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          test "${GITHUB_REF}" = "refs/heads/main"
+
+      # Sparse checkout: only the pinned runtime and the runner script are
+      # fetched from the workflow commit. No repository source is exposed to
+      # the model context later; this checkout is never the CLI's workdir.
+      - name: Checkout pinned runtime from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/scripts
+            .github/opencode/runtime
+          persist-credentials: false
+
+      - name: Install pinned OpenCode (lockfile integrity)
+        run: |
+          set -euo pipefail
+          # npm verifies every tarball against the committed lockfile's sha512 integrity values.
+          (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          BIN=.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode
+          test -f "${BIN}"
+          test "$("${BIN}" --version)" = "${OPENCODE_VERSION}"
+
+      # The OPENCODE_API_KEY secret exists only inside this step. The runner
+      # script re-verifies the version itself, runs the native CLI in the
+      # isolated workdir/home, and exits nonzero on any failure.
+      - name: Run native CLI smoke test (opencode/glm-5.3-flash-free)
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/opencode_native_smoke.py \
+            "${RUNNER_TEMP}/smoke-result.json" \
+            ".github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode" \
+            "${RUNNER_TEMP}/smoke-home" \
+            "${RUNNER_TEMP}/smoke-work" \
+            10
+
+      # Preserved regardless of the run outcome so a failure always leaves
+      # sanitized evidence (CLI version, model, status, elapsed, error class).
+      - name: Upload sanitized smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        with:
+          name: opencode-native-smoke
+          path: ${{ runner.temp }}/smoke-result.json
+          retention-days: 1

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models import *  # noqa: F401,F403 — registers every model on Base.metadata
+from migrations.migration_lock import release_migration_locks
 from migrations.schema_drift import (
     attached_partitions as _attached_partitions_for,
 )
@@ -93,22 +94,28 @@ def do_run_migrations(connection: Connection) -> None:
             connection.dialect.default_schema_name,
         ),
     )
-    with context.begin_transaction():
-        context.run_migrations()
+    try:
+        with context.begin_transaction():
+            context.run_migrations()
 
-    # Post-migration schema drift check: runs after context.run_migrations() so legitimate
-    # migration upgrades can restore schema objects, while fail-closed drift verification
-    # still rejects missing/modified/unexpected constraints or indexes for alembic check.
-    existing_parents = _existing_parent_tables(connection)
-    updated_attached_partitions = _attached_partitions(connection)
-    local_drift = _local_partition_drift(
-        connection, updated_attached_partitions
-    ) + _missing_or_modified_parent_metadata_constraints(connection, existing_parents)
-    if local_drift:
-        raise RuntimeError(
-            "Unexpected local indexes/constraints on attached audit partitions: "
-            + ", ".join(local_drift)
-        )
+        # Post-migration schema drift check: runs after context.run_migrations() so legitimate
+        # migration upgrades can restore schema objects, while fail-closed drift verification
+        # still rejects missing/modified/unexpected constraints or indexes for alembic check.
+        existing_parents = _existing_parent_tables(connection)
+        updated_attached_partitions = _attached_partitions(connection)
+        local_drift = _local_partition_drift(
+            connection, updated_attached_partitions
+        ) + _missing_or_modified_parent_metadata_constraints(connection, existing_parents)
+        if local_drift:
+            raise RuntimeError(
+                "Unexpected local indexes/constraints on attached audit partitions: "
+                + ", ".join(local_drift)
+            )
+    finally:
+        # A migration that serializes runners (0057) only acquires its session advisory lock: Alembic writes
+        # `alembic_version` after the migration function returns, so the lock must outlive that update and its
+        # commit. Release it here, once the run (committed or rolled back) is over.
+        release_migration_locks(connection)
 
 
 async def run_migrations_online() -> None:

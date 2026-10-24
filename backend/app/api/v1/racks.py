@@ -492,6 +492,20 @@ async def get_rack_elevation(
     )
     rows = (await db.execute(stmt)).all()
 
+    # PDU placements share `equipment_placement` (equipment_id -> managed_asset.id), so a
+    # rack-mounted PDU appears in the same elevation as equipment, keyed by its asset id.
+    pdu_stmt = (
+        select(EquipmentPlacement, ManagedAsset)
+        .join(ManagedAsset, ManagedAsset.id == EquipmentPlacement.equipment_id)
+        .where(
+            EquipmentPlacement.rack_id == rack_id,
+            EquipmentPlacement.placement_type == "rack_mounted",
+            EquipmentPlacement.effective_to.is_(None),
+            ManagedAsset.asset_type == "pdu",
+        )
+    )
+    pdu_rows = (await db.execute(pdu_stmt)).all()
+
     slots = []
     for placement, asset, equipment in rows:
         u_range = placement.u_range
@@ -512,6 +526,22 @@ async def get_rack_elevation(
                 side=placement.side,
                 mounting_method=placement.mounting_method,
                 catalog_model_revision_id=equipment.catalog_model_revision_id,
+            )
+        )
+    for placement, asset in pdu_rows:
+        u_range = placement.u_range
+        assert u_range is not None and u_range.lower is not None and u_range.upper is not None
+        assert placement.side is not None
+        slots.append(
+            ElevationSlotOut(
+                equipment_id=asset.id,
+                asset_tag=asset.asset_tag,
+                hostname=None,
+                u_start=u_range.lower,
+                u_end=u_range.upper,
+                side=placement.side,
+                mounting_method=placement.mounting_method,
+                catalog_model_revision_id=None,
             )
         )
     slots.sort(key=lambda s: s.u_start)

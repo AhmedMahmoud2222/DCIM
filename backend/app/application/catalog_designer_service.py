@@ -61,6 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.application.concurrency import check_version_match
+from app.application.pdu_catalog.validators import validate_pdu_revision
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.catalog.designer_models import (
     SIDES,
@@ -71,6 +72,7 @@ from app.domain.catalog.designer_models import (
     Manufacturer,
     MonitoringMetricTemplate,
     NetworkPortTemplate,
+    PDUOutletTemplate,
     PowerSupplyTemplate,
 )
 from app.domain.catalog.document_models import CatalogRevisionDocument
@@ -105,11 +107,15 @@ def validate_revision_for_publish(
     psus: list[PowerSupplyTemplate],
     metrics: list[MonitoringMetricTemplate],
     graphics: list[CatalogGraphic] | None = None,
+    pdu_outlets: list[PDUOutletTemplate] | None = None,
 ) -> ValidationSummary:
     """Spec §5.2's rule list, representative-not-exhaustive per the spec's own wording.
     Every numeric/enum column here is nullable at the DB level by design (§4.2) so a draft
     can be saved incrementally — required-ness for *this* category is enforced only here,
-    at publish (and pre-publish `/validate`) time, never as a DB constraint."""
+    at publish (and pre-publish `/validate`) time, never as a DB constraint. For
+    `category='pdu'` (Issue #150 M3) the M1 pure validator `validate_pdu_revision` is
+    re-run server-side over the stored electrical fields and outlet templates, so a PDU
+    draft that bypassed the `/pdu` PATCH path can never publish unvalidated data."""
     errors: list[ValidationIssue] = []
     warnings: list[ValidationIssue] = []
 
@@ -135,6 +141,49 @@ def validate_revision_for_publish(
                 "rack_unit_height",
                 "Rack unit height is required when rack_mounted is a supported placement type.",
             )
+
+    if category == "pdu":
+        # Issue #150 M3: a PDU publishes on its own electrical merits — input
+        # parameters, phase and mounting are the typed fields the owner scope requires
+        # (rack/equipment physical dimensions deliberately do NOT apply), plus at least
+        # one outlet template: a PDU model that could never be power-connected is not a
+        # publishable catalog entry.
+        require(revision.pdu_input_voltage_v, "pdu_input_voltage_v", "Input voltage is required for pdu models.")
+        require(revision.pdu_input_current_a, "pdu_input_current_a", "Input current is required for pdu models.")
+        require(revision.pdu_phase, "pdu_phase", "Phase is required for pdu models.")
+        require(revision.mounting_orientation, "mounting_orientation", "Mounting orientation is required for pdu models.")
+        outlet_rows = pdu_outlets or []
+        if not outlet_rows:
+            errors.append(
+                ValidationIssue(
+                    field="outlets",
+                    code="required_for_category",
+                    message="At least one outlet template is required for pdu models.",
+                )
+            )
+        pdu_summary = validate_pdu_revision(
+            {
+                "pdu_input_voltage_v": revision.pdu_input_voltage_v,
+                "pdu_input_current_a": revision.pdu_input_current_a,
+                "pdu_phase": revision.pdu_phase,
+                "mounting_orientation": revision.mounting_orientation,
+            },
+            [
+                {
+                    "stable_key": o.stable_key,
+                    "outlet_number": o.outlet_number,
+                    "outlet_type": o.outlet_type,
+                    "outlet_count": o.outlet_count,
+                    "phase": o.phase,
+                    "rated_voltage_v": o.rated_voltage_v,
+                    "rated_current_a": o.rated_current_a,
+                    "side": o.side,
+                }
+                for o in outlet_rows
+            ],
+        )
+        errors.extend(ValidationIssue(field=i.field, code=i.code, message=i.message) for i in pdu_summary.errors)
+        warnings.extend(ValidationIssue(field=i.field, code=i.code, message=i.message) for i in pdu_summary.warnings)
 
     for index, metric in enumerate(metrics):
         if metric.protocol == "snmp" and not metric.oid:
@@ -234,7 +283,13 @@ async def lock_draft_revision_for_edit(
     `.version` by one and returns the locked, still-open-transaction revision; the caller
     performs its own specific mutation (revision scalar fields, or a child row's add/
     edit/delete) and flushes once — both changes land in the same statement batch."""
-    revision = await db.get(CatalogModelRevision, revision_id, with_for_update=True)
+    # `populate_existing=True` is mandatory: `update_pdu_draft` pre-loads this revision
+    # via `_require_pdu_revision`, so without it SQLAlchemy returns the stale
+    # identity-map copy instead of refreshing the row we just locked (lost update).
+    # Same primitive as `lock_versioned_row` in concurrency.py.
+    revision = await db.get(
+        CatalogModelRevision, revision_id, with_for_update=True, populate_existing=True
+    )
     if revision is None:
         raise NotFoundError(f"CatalogModelRevision {revision_id} not found.")
     if revision.lifecycle_status != "draft":
@@ -335,6 +390,19 @@ async def _find_or_create_equipment_model(db: AsyncSession, *, manufacturer_name
 # --------------------------------------------------------------------------- Publish
 
 
+async def load_pdu_outlets(db: AsyncSession, *, revision_id: uuid.UUID) -> list[PDUOutletTemplate]:
+    """Outlet templates of a PDU revision, shared by `publish_revision` and the
+    pre-publish `/revisions/{id}/validate` route so both run the exact same M1
+    validation over identical data (Issue #150 M3)."""
+    return list(
+        (
+            await db.execute(
+                select(PDUOutletTemplate).where(PDUOutletTemplate.catalog_model_revision_id == revision_id)
+            )
+        ).scalars()
+    )
+
+
 async def publish_revision(
     db: AsyncSession, *, revision_id: uuid.UUID, user_id: uuid.UUID
 ) -> CatalogModelRevision:
@@ -344,16 +412,22 @@ async def publish_revision(
        parent-row-locking discipline PR-1's child-write trigger uses, so a concurrent
        publish of this same revision blocks here rather than racing past this check.
     2. Validate (raises ValidationFailed, caught by the router, on any error — nothing
-       has been written yet, so the caller's rollback is a no-op cleanup).
-    3. category='rack'|'equipment' only (defensive re-check; the API layer already
+       has been written yet, so the caller's rollback is a no-op cleanup). For
+       `category='pdu'` this includes the M1 `validate_pdu_revision` rules re-run over
+       the stored outlet templates (Issue #150 M3).
+    3. category='rack'|'equipment'|'pdu' only (defensive re-check; the API layer already
        refuses any other category at model-creation time, §4.1).
-    4. Find-or-create the legacy `RackModel`/`EquipmentModel` row.
+    4. Find-or-create the legacy `RackModel`/`EquipmentModel` row — rack/equipment only:
+       a PDU has no legacy bridge by design (§4.1 / Issue #150 architecture decision),
+       its publication is entirely designer-side and its runtime identity is created at
+       instantiation time from the PDU managed-asset subtype, never from a legacy row.
     5. INSERT the new legacy `RackModelRevision`/`EquipmentModelRevision` row, physical
-       columns unit-converted.
-    6. Set the reverse bridge (`bridged_from_catalog_revision_id`) on that new legacy row.
-    7. Set the forward bridge, `lifecycle_status='published'`, and publication metadata on
-       `revision` in one flush — the single UPDATE PR-1's
-       `fn_guard_catalog_model_revision_lifecycle()` accepts for `draft -> published`.
+       columns unit-converted (rack/equipment only).
+    6. Set the reverse bridge (`bridged_from_catalog_revision_id`) on that new legacy row
+       (rack/equipment only).
+    7. Set `lifecycle_status='published'`, and publication metadata on `revision` in one
+       flush — the single UPDATE PR-1's `fn_guard_catalog_model_revision_lifecycle()`
+       accepts for `draft -> published`.
 
     Raises NotFoundError/ConflictError/ValidationFailed; never commits — the caller
     (the route handler) commits after also writing audit/outbox, and rolls back the
@@ -403,40 +477,45 @@ async def publish_revision(
         ).scalars()
     )
 
-    summary = validate_revision_for_publish(revision, model.category, ports, psus, metrics, graphics)
+    pdu_outlets: list[PDUOutletTemplate] = []
+    if model.category == "pdu":
+        pdu_outlets = await load_pdu_outlets(db, revision_id=revision_id)
+
+    summary = validate_revision_for_publish(revision, model.category, ports, psus, metrics, graphics, pdu_outlets=pdu_outlets)
     if not summary.valid:
         raise ValidationFailed(summary)
 
-    if model.category not in ("rack", "equipment"):
-        raise ConflictError(detail=f"category {model.category!r} has no legacy bridge in this phase.")
+    if model.category not in ("rack", "equipment", "pdu"):
+        raise ConflictError(detail=f"category {model.category!r} is not supported by the publish workflow in this phase.")
 
-    rack_unit_height, width_mm, depth_mm, weight_kg = _convert_physical(revision)
-    legacy_revision: RackModelRevision | EquipmentModelRevision
-    if model.category == "rack":
-        rack_model_id = await _find_or_create_rack_model(
-            db, manufacturer_name=manufacturer.name, model_name=model.model_name
-        )
-        assert rack_unit_height is not None and width_mm is not None and depth_mm is not None
-        legacy_revision = RackModelRevision(
-            rack_model_id=rack_model_id, height_u=rack_unit_height, width_mm=width_mm, depth_mm=depth_mm,
-            weight_capacity_kg=weight_kg,
-        )
-        db.add(legacy_revision)
-        await db.flush()
-        legacy_revision.bridged_from_catalog_revision_id = revision.id
-        revision.legacy_rack_model_revision_id = legacy_revision.id
-    else:
-        equipment_model_id = await _find_or_create_equipment_model(
-            db, manufacturer_name=manufacturer.name, model_name=model.model_name
-        )
-        legacy_revision = EquipmentModelRevision(
-            equipment_model_id=equipment_model_id, height_u=rack_unit_height, width_mm=width_mm, depth_mm=depth_mm,
-            weight_kg=weight_kg,
-        )
-        db.add(legacy_revision)
-        await db.flush()
-        legacy_revision.bridged_from_catalog_revision_id = revision.id
-        revision.legacy_equipment_model_revision_id = legacy_revision.id
+    if model.category in ("rack", "equipment"):
+        rack_unit_height, width_mm, depth_mm, weight_kg = _convert_physical(revision)
+        legacy_revision: RackModelRevision | EquipmentModelRevision
+        if model.category == "rack":
+            rack_model_id = await _find_or_create_rack_model(
+                db, manufacturer_name=manufacturer.name, model_name=model.model_name
+            )
+            assert rack_unit_height is not None and width_mm is not None and depth_mm is not None
+            legacy_revision = RackModelRevision(
+                rack_model_id=rack_model_id, height_u=rack_unit_height, width_mm=width_mm, depth_mm=depth_mm,
+                weight_capacity_kg=weight_kg,
+            )
+            db.add(legacy_revision)
+            await db.flush()
+            legacy_revision.bridged_from_catalog_revision_id = revision.id
+            revision.legacy_rack_model_revision_id = legacy_revision.id
+        else:
+            equipment_model_id = await _find_or_create_equipment_model(
+                db, manufacturer_name=manufacturer.name, model_name=model.model_name
+            )
+            legacy_revision = EquipmentModelRevision(
+                equipment_model_id=equipment_model_id, height_u=rack_unit_height, width_mm=width_mm, depth_mm=depth_mm,
+                weight_kg=weight_kg,
+            )
+            db.add(legacy_revision)
+            await db.flush()
+            legacy_revision.bridged_from_catalog_revision_id = revision.id
+            revision.legacy_equipment_model_revision_id = legacy_revision.id
 
     revision.lifecycle_status = "published"
     revision.published_at = datetime.now(UTC)
@@ -560,9 +639,12 @@ async def upload_catalog_graphic(
 
 
 async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, user_id: uuid.UUID) -> CatalogModelRevision:
-    """Deep-copies every scalar field and every child row (ports/PSUs/monitoring keep
-    their exact `stable_key`) from a published/retired revision into a brand-new draft,
-    per spec §5.5.
+    """Deep-copies every scalar field and every child row (ports/PSUs/monitoring/outlets
+    keep their exact `stable_key`) from a published/retired revision into a brand-new
+    draft, per spec §5.5. The PDU electrical columns and `pdu_outlet_template` rows are
+    part of "every scalar field / every child row" for `category='pdu'` models (Issue
+    #150 M3) — without them a clone of a published PDU would silently lose its input
+    spec and outlet map and could never be republished.
 
     Graphics/markers are deliberately NOT cloned here: PR-3 implements no upload endpoint
     (that is PR-5), so no revision can have a `catalog_graphic` row yet — every clone
@@ -599,6 +681,13 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
         max_power_w=source.max_power_w,
         heat_dissipation_btu_hr=source.heat_dissipation_btu_hr,
         power_redundancy_mode=source.power_redundancy_mode,
+        pdu_input_voltage_v=source.pdu_input_voltage_v,
+        pdu_input_current_a=source.pdu_input_current_a,
+        pdu_phase=source.pdu_phase,
+        pdu_rated_capacity_kw=source.pdu_rated_capacity_kw,
+        pdu_plug_type=source.pdu_plug_type,
+        pdu_monitoring_protocol=source.pdu_monitoring_protocol,
+        pdu_monitoring_endpoint=source.pdu_monitoring_endpoint,
         cloned_from_revision_id=source.id,
         created_by_user_id=user_id,
     )
@@ -652,6 +741,18 @@ async def clone_revision(db: AsyncSession, *, source_revision_id: uuid.UUID, use
                 offset=metric.offset, default_collection_interval_seconds=metric.default_collection_interval_seconds,
                 default_warning_threshold=metric.default_warning_threshold,
                 default_critical_threshold=metric.default_critical_threshold, sort_order=metric.sort_order,
+            )
+        )
+
+    outlet_templates = await load_pdu_outlets(db, revision_id=source.id)
+    for outlet in outlet_templates:
+        db.add(
+            PDUOutletTemplate(
+                catalog_model_revision_id=clone.id, stable_key=outlet.stable_key,
+                outlet_number=outlet.outlet_number, label=outlet.label, outlet_type=outlet.outlet_type,
+                outlet_count=outlet.outlet_count, phase=outlet.phase,
+                rated_voltage_v=outlet.rated_voltage_v, rated_current_a=outlet.rated_current_a,
+                position=outlet.position, side=outlet.side, sort_order=outlet.sort_order,
             )
         )
 
