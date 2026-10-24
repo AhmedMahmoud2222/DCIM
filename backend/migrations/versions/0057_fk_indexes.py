@@ -39,8 +39,11 @@ Why a plan is never trusted. A catalog read is stale the instant it is made, and
     detected and aborts the run before the stamp, and no replacement can slip in between the check and the stamp.
   * Pinning indexes. A table lock does NOT protect an index's name: RENAME needs only SHARE UPDATE EXCLUSIVE on the index
     itself and no lock on its table, so another owner could rename the verified index away and a wrong one into its name
-    after the check. LOCK TABLE cannot target an index, so the index is pinned with a no-op `COMMENT ON INDEX` (it re-applies
-    the current comment, normally none), which takes that lock. Each index is inspected, pinned, inspected again, and the
+    after the check. LOCK TABLE cannot target an index, so the index is pinned by renaming it to a scratch name and straight back
+    in the migration transaction (SHARE UPDATE EXCLUSIVE on the index, held to commit; net catalog change nil). A no-op
+    `COMMENT ON INDEX` is NOT used: it would re-apply a comment read before the lock was held and could overwrite one a
+    concurrent session committed in between.
+    The rename pair writes only the name. Each index is inspected, pinned, inspected again, and the
     OIDs compared: the name resolves to an OID when the lock is taken and cannot change afterwards. Pins are taken in sorted
     name order; PostgreSQL's deadlock detector (or `lock_timeout`) aborts a lock cycle with another session, which fails the
     run safely (nothing stamped, nothing dropped).
@@ -232,21 +235,20 @@ def _pin_index(bind, schema: str, target: _Target, oid: int) -> None:
 
     `ALTER INDEX ... RENAME` needs only SHARE UPDATE EXCLUSIVE on the index and takes no lock on its table, so table locks
     cannot stop a rename swap (a wrong index renamed into our name). LOCK TABLE cannot target an index, so the lock is taken
-    with a no-op COMMENT ON INDEX, which acquires SHARE UPDATE EXCLUSIVE on the index. It re-applies the index's current
-    comment (usually none), so nothing observable changes. Callers must re-inspect AFTER pinning and compare the OID: the
+    by renaming the index to a transaction-local scratch name and straight back. Both renames take SHARE UPDATE EXCLUSIVE on
+    the index, which is then held to the end of the transaction, and the net catalog change is nil. Unlike a no-op
+    COMMENT ON INDEX this never writes a value read before the lock was held, so it cannot overwrite a comment that a
+    concurrent session committed meanwhile (COMMENT would wait for the lock and then store its stale copy). The only data
+    written is the name, which this function pins anyway. Callers must re-inspect AFTER pinning and compare the OID: the
     name is resolved to an OID when the lock is taken, and no rename can change it from then on.
     """
     preparer = bind.dialect.identifier_preparer
-    qualified = f"{preparer.quote_schema(schema)}.{preparer.quote(target.name)}"
-    statement = bind.scalar(
-        sa.text(
-            "SELECT format('COMMENT ON INDEX %s IS %L', CAST(:qualified AS text), "
-            "obj_description(CAST(:oid AS oid), 'pg_class'))"
-        ),
-        {"qualified": qualified, "oid": oid},
-    )
+    schema_sql = preparer.quote_schema(schema)
+    qualified = f"{schema_sql}.{preparer.quote(target.name)}"
+    scratch = preparer.quote(f"pin0057_{oid}")
     try:
-        bind.exec_driver_sql(statement)  # not bind.execute(text(...)): a comment may contain ':name' lookalikes
+        bind.exec_driver_sql(f"ALTER INDEX {qualified} RENAME TO {scratch}")
+        bind.exec_driver_sql(f"ALTER INDEX {schema_sql}.{scratch} RENAME TO {preparer.quote(target.name)}")
     except sa.exc.DBAPIError as exc:
         raise RuntimeError(
             f"0057: cannot pin {schema}.{target.name} (it may have been renamed away or is not owned by this role): "

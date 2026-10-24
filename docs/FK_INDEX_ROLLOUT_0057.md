@@ -27,7 +27,7 @@ and WAL load. A failed or cancelled build leaves an INVALID index behind. See th
 * **Nothing acts on a stale plan.** Pre-existing same-name objects are validated, then: an index that should simply be
   reused is re-proven at the very end (all 22 re-inspected under `SHARE UPDATE EXCLUSIVE` on the target tables, held until
   `alembic_version` is written and committed); an interrupted artifact is dropped only under `ACCESS EXCLUSIVE` after its
-  OID is re-checked. The index objects themselves are also pinned (a no-op `COMMENT ON INDEX`, SHARE UPDATE EXCLUSIVE), because
+  OID is re-checked. The index objects themselves are also pinned (a rename to a scratch name and straight back, SHARE UPDATE EXCLUSIVE on the index; never a COMMENT, which could overwrite a concurrent comment change), because
   `ALTER INDEX ... RENAME` takes no table lock and could otherwise swap a wrong index into a verified name. A replacement made
   by another session aborts the run and is left untouched; a lock cycle with another session is broken by PostgreSQL's
   deadlock detector and fails the run safely (retry).

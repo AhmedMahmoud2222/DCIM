@@ -967,7 +967,7 @@ def test_pinning_indexes_cannot_deadlock_into_a_half_applied_state(db):
             await holder.execute(f"COMMENT ON INDEX {last} IS NULL")  # SHARE UPDATE EXCLUSIVE on the last index
             proc = await _spawn_alembic(db, "upgrade", "head")
             await _wait_until(
-                _waiting_on_lock(db, "COMMENT ON INDEX%"), proc, "the migration to queue behind the held index"
+                _waiting_on_lock(db, "%INDEX %"), proc, "the migration to queue behind the held index"
             )
             try:
                 await holder.execute(f"COMMENT ON INDEX {first} IS NULL")  # opposite order -> a genuine lock cycle
@@ -991,7 +991,7 @@ def test_pinning_indexes_cannot_deadlock_into_a_half_applied_state(db):
 
 
 def test_pinning_leaves_index_comments_exactly_as_they_were(db):
-    """The index pin is a lock-only COMMENT: an existing comment (even a tricky one) survives, others stay uncommented."""
+    """Pinning never touches comments: an existing one (even a tricky one) survives, others stay uncommented."""
     tricky = "keep me: it's ':named' and $1 and 100% 'quoted'"
     q(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
     q(db, f"COMMENT ON INDEX {FIRST_NAME} IS '{tricky.replace(chr(39), chr(39) * 2)}'")
@@ -1009,3 +1009,36 @@ def test_pinning_leaves_index_comments_exactly_as_they_were(db):
     assert all(v is None for n, v in comments.items() if n != FIRST_NAME)
     alembic_ok(db, "downgrade", "-1")
     assert version(db) == PREVIOUS and index_rows(db) == {}
+
+
+def test_concurrent_comment_change_is_not_overwritten_by_pinning(db):
+    """Codex P1 on 624a525: a pin that re-applied a comment read BEFORE it held the lock stored a stale value.
+
+    Session B holds an uncommitted `COMMENT ... IS 'new'` on a verified index; the migration reaches that index and must
+    wait for B. After B commits, the migration continues and must leave B's comment in place.
+    """
+    alembic_ok(db, "upgrade", "head")
+    q(db, "UPDATE alembic_version SET version_num = $1", PREVIOUS)  # all 22 exist; only the stamp is missing
+    q(db, f"COMMENT ON INDEX {FIRST_NAME} IS 'old'")
+
+    async def scenario():
+        writer = await _connect(db)
+        proc = None
+        try:
+            tx = writer.transaction()
+            await tx.start()
+            await writer.execute(f"COMMENT ON INDEX {FIRST_NAME} IS 'new'")  # SHARE UPDATE EXCLUSIVE, uncommitted
+            proc = await _spawn_alembic(db, "upgrade", "head")
+            await _wait_until(_waiting_on_lock(db, "%INDEX %"), proc, "the migration to queue behind the comment writer")
+            await tx.commit()  # the migration has already looked at the index; now B's comment becomes visible
+            return await _finish(proc)
+        finally:
+            await _reap(proc)
+            await writer.close()
+
+    rc, out = _run(scenario())
+    assert rc == 0, out
+    assert version(db) == HEAD
+    comment = q(db, "SELECT obj_description(to_regclass($1), 'pg_class') AS c", FIRST_NAME)[0]["c"]
+    assert comment == "new", f"the migration overwrote a concurrently committed comment with a stale one: {comment!r}"
+    assert_all_ours_valid(db)
