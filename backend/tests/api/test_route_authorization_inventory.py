@@ -10,10 +10,12 @@ tests/api/test_route_authorization_guard_mutations.py for proof that the guard f
 from pathlib import Path
 
 import pytest
+from fastapi import Depends, FastAPI
 
+from app.application.rbac import require_permission
 from app.main import app
 from tests.api.route_authz_baseline import BASELINE, MANUAL, PUBLIC
-from tests.api.route_authz_guard import check, classify
+from tests.api.route_authz_guard import check, classify, find_duplicates
 
 BACKEND = Path(__file__).resolve().parents[2]
 RESULTS = check(app)
@@ -75,3 +77,36 @@ def test_baseline_and_allowlists_are_internally_consistent():
     assert {op for op, (kind, _c) in BASELINE.items() if kind == "public"} == set(PUBLIC)
     assert {op for op, (kind, _c) in BASELINE.items() if kind == "manual"} == set(MANUAL)
     assert len(live) == len(BASELINE)
+
+
+def test_no_operation_is_registered_twice():
+    assert_clean("duplicate_operations", "FastAPI serves only the first of two routes with the same method and path; remove the duplicate:")
+
+
+def mini_app(*registrations) -> FastAPI:
+    mini = FastAPI()
+    for path, method, guarded in registrations:
+        if guarded:
+            mini.add_api_route(path, lambda ctx=Depends(require_permission("rack:read")): {}, methods=[method])
+        else:
+            mini.add_api_route(path, lambda: {}, methods=[method])
+    return mini
+
+
+@pytest.mark.parametrize(
+    "registrations",
+    [
+        [("/x", "GET", False), ("/x", "GET", True)],  # unguarded first, protected second
+        [("/x", "GET", True), ("/x", "GET", False)],  # protected first, unguarded second
+        [("/x", "GET", True), ("/x", "GET", True)],  # identical permission codes
+        [("/x/{a}", "GET", True), ("/x/{b}", "GET", False)],  # same shape, renamed path parameter
+    ],
+    ids=["open-first", "open-last", "identical-codes", "renamed-parameter"],
+)
+def test_duplicate_registrations_are_found_regardless_of_order_or_codes(registrations):
+    assert find_duplicates(mini_app(*registrations))
+
+
+def test_distinct_operations_are_not_duplicates():
+    legitimate = mini_app(("/x", "GET", True), ("/x", "POST", True), ("/x/{a}", "GET", True), ("/x/compare", "GET", True))
+    assert find_duplicates(legitimate) == []

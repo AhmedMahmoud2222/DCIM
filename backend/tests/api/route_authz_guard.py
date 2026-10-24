@@ -15,6 +15,8 @@ FastAPI-internals dependency (deliberate, isolated here, fail-closed):
 
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from collections.abc import Iterator
 from typing import Any
 
@@ -30,6 +32,7 @@ DOCS_PATHS = {"/api/v1/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"
 PERMISSION_FACTORIES = ("require_permission.", "require_catalog_administrator.")
 
 Classified = dict[tuple[str, str], tuple[str, tuple[str, ...]]]
+PATH_PARAMETER = re.compile(r"\{[^}]*\}")
 
 
 def _is_operation(route: Any) -> bool:
@@ -75,8 +78,15 @@ def fastapi_contract_problems(app: Any) -> list[str]:
     return problems
 
 
-def classify(app: Any) -> Classified:
-    result: Classified = {}
+def operation_shape(path: str) -> str:
+    """The path as the router matches it: `/x/{a}` and `/x/{b}` are the same operation."""
+    return PATH_PARAMETER.sub("{}", path)
+
+
+def operations(app: Any) -> list[tuple[tuple[str, str], tuple[str, tuple[str, ...]]]]:
+    """One entry per registered (method, path), in registration order, WITHOUT collapsing duplicates.
+    FastAPI/Starlette serve the FIRST route that matches a method and path, so a second registration is never harmless."""
+    result = []
     for route in walk(app.routes):
         if not _is_operation(route) or route.dependant is None:
             continue
@@ -93,9 +103,38 @@ def classify(app: Any) -> Classified:
         else:
             kind = "public"
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
-            result[(method, route.path)] = (kind, codes)
+            result.append(((method, route.path), (kind, codes)))
     return result
 
+
+def find_duplicates(app: Any) -> list[str]:
+    """Operations registered more than once (same method and path shape), whatever order or permission codes they carry."""
+    groups: dict[tuple[str, str], list[tuple[tuple[str, str], tuple[str, tuple[str, ...]]]]] = defaultdict(list)
+    for op, guard in operations(app):
+        groups[(op[0], operation_shape(op[1]))].append((op, guard))
+    return [
+        f"{method} {shape} is registered {len(entries)} times (first match wins): "
+        + "; ".join(f"{op[1]} -> {kind}{list(codes)}" for op, (kind, codes) in entries)
+        for (method, shape), entries in sorted(groups.items())
+        if len(entries) > 1
+    ]
+
+
+def classify(app: Any) -> Classified:
+    """method+path -> (kind, codes). A duplicated operation is never reported as whichever registration happened to come
+    last: every member of a duplicate group is marked kind `duplicate`, so it can neither match the baseline nor hide."""
+    entries = operations(app)
+    shape_count: dict[tuple[str, str], int] = defaultdict(int)
+    for op, _guard in entries:
+        shape_count[(op[0], operation_shape(op[1]))] += 1
+    result: Classified = {}
+    for op, (kind, codes) in entries:
+        if shape_count[(op[0], operation_shape(op[1]))] > 1:
+            previous = result.get(op, ("duplicate", ()))[1]
+            result[op] = ("duplicate", (*previous, f"{kind}:{','.join(codes)}"))
+        else:
+            result[op] = (kind, codes)
+    return result
 
 def check(app: Any) -> dict[str, list[str]]:
     """Run every guard check; each maps to a list of violations (empty = passed)."""
@@ -125,12 +164,13 @@ def check(app: Any) -> dict[str, list[str]]:
         ],
         "codes_are_recognised": [
             f"{op} uses unseeded permission code {code}"
-            for op, (_k, codes) in sorted(live.items()) for code in codes if code not in known_codes
+            for op, (kind, codes) in sorted(live.items()) if kind != "duplicate" for code in codes if code not in known_codes
         ],
         "write_with_read_permission": [
             f"{op} changes state but is guarded only by {codes}"
-            for op, (_k, codes) in sorted(live.items())
-            if op[0] != "GET" and codes and all(c.split(":")[1] in READ_ACTIONS for c in codes) and op not in READ_ONLY_POSTS
+            for op, (kind, codes) in sorted(live.items())
+            if kind != "duplicate" and op[0] != "GET" and codes and all(c.split(":")[1] in READ_ACTIONS for c in codes) and op not in READ_ONLY_POSTS
         ],
+        "duplicate_operations": find_duplicates(app),
         "unserved_surface": [*(f"unclassifiable route/mount {p}" for p in stray), *(f"hidden from OpenAPI {p}" for p in hidden)],
     }

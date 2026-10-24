@@ -2,7 +2,9 @@
 
 Each mutation is applied in a throwaway Python process, so the application used by the rest of the suite is never touched,
 and the guard's checks then run against it. The control run proves the harness is not vacuous: unmutated, every check is clean.
-The eight mutations are the ones from the P2 audit: M1-M5 add a hostile route, M6-M8 weaken the guard of an existing route.
+M1-M8 are the eight mutations from the P2 audit (M1-M5 add a hostile route, M6-M8 weaken the guard of an existing route). M9-M12 are the
+duplicate-registration bypasses found in review: FastAPI serves the FIRST route matching a method and path, so a second registration
+of an operation must be rejected whichever one comes first and whatever permission codes it carries.
 """
 
 import json
@@ -18,6 +20,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 SCRIPT = r"""
 import json, sys
 from fastapi import Depends
+from fastapi.routing import APIRoute
 from app.api.deps import get_current_user
 from app.application.rbac import require_permission
 from app.main import app
@@ -50,6 +53,14 @@ elif name == "M7_integration_create_downgraded":
     swap("POST", "/api/v1/integrations", "integration:read")
 elif name == "M8_pdu_create_downgraded":
     swap("POST", "/api/v1/power/pdus", "power:read")
+elif name == "M9_open_route_registered_before_the_protected_one":
+    app.router.routes.insert(0, APIRoute("/api/v1/racks", lambda: {"leak": True}, methods=["GET"]))
+elif name == "M10_open_route_registered_after_the_protected_one":
+    app.router.routes.append(APIRoute("/api/v1/racks", lambda: {"leak": True}, methods=["GET"]))
+elif name == "M11_duplicate_with_identical_permission_codes":
+    app.router.routes.insert(0, APIRoute("/api/v1/racks", lambda ctx=Depends(require_permission("rack:read")): {}, methods=["GET"]))
+elif name == "M12_duplicate_with_a_renamed_path_parameter":
+    app.router.routes.insert(0, APIRoute("/api/v1/racks/{rack_identifier}", lambda: {"leak": True}, methods=["GET"]))
 elif name != "CONTROL":
     raise SystemExit("unknown mutation " + name)
 print(json.dumps({k: len(v) for k, v in check(app).items()}))
@@ -65,6 +76,10 @@ MUTATIONS = {
     "M6_cable_delete_downgraded": {"write_with_read_permission"},
     "M7_integration_create_downgraded": {"write_with_read_permission"},
     "M8_pdu_create_downgraded": {"write_with_read_permission"},
+    "M9_open_route_registered_before_the_protected_one": {"duplicate_operations"},
+    "M10_open_route_registered_after_the_protected_one": {"duplicate_operations"},
+    "M11_duplicate_with_identical_permission_codes": {"duplicate_operations"},
+    "M12_duplicate_with_a_renamed_path_parameter": {"duplicate_operations"},
 }
 
 
