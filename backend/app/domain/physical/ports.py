@@ -24,7 +24,7 @@ together instead of requiring a manual follow-up call."""
 
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -126,3 +126,9 @@ class PortConnection(Base, UUIDPkMixin, TimestampMixin):
     target_power_node_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("power_node.id", ondelete="RESTRICT"))
     cable_id: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_port_connection_target_port_id", PortConnection.target_port_id)
+Index("ix_port_connection_target_power_node_id", PortConnection.target_power_node_id)
