@@ -38,3 +38,6 @@ dump.rdb
 
 # Uploaded media — runtime/test upload storage, never source
 backend/media/
+
+# Agent tooling state (oh-my-claudecode), never source - at any depth
+.omc/
