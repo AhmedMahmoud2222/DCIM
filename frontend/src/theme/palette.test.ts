@@ -54,8 +54,20 @@ const PAIRS: ReadonlyArray<[label: string, foreground: string, background: strin
   ["small control edge on sidebar", token("side-edge"), token("surface-sidebar"), NON_TEXT],
 ];
 
+const TONES = ["neutral", "info", "ok", "caution", "serious", "danger", "attention", "unknown"] as const;
+
+const TONE_PAIRS: ReadonlyArray<[label: string, foreground: string, background: string, minimum: number]> = TONES.flatMap((tone) => [
+  [`${tone} tone text on its background`, token(`tone-${tone}-fg`), token(`tone-${tone}-bg`), TEXT] as [string, string, string, number],
+  // The chip border and icon use the foreground color; they must stand out from the panel behind the chip.
+  [`${tone} tone border and icon on panel`, token(`tone-${tone}-fg`), token("surface-panel"), NON_TEXT] as [string, string, string, number],
+]);
+
 describe("Control Room palette (index.css)", () => {
   it.each(PAIRS)("%s meets its WCAG AA contrast", (_label, foreground, background, minimum) => {
+    expect(contrast(foreground, background)).toBeGreaterThanOrEqual(minimum);
+  });
+
+  it.each(TONE_PAIRS)("%s meets its WCAG AA contrast", (_label, foreground, background, minimum) => {
     expect(contrast(foreground, background)).toBeGreaterThanOrEqual(minimum);
   });
 

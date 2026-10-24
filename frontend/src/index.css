@@ -23,6 +23,28 @@
   --color-side-fg-muted: #8e9db5;
   --color-side-selected: #17233a;
   --color-side-edge: #8e9db5;
+
+  /* Status tones (UI/UX checkpoint 3 of 7). A tone is a background and the foreground used for the
+     text, the icon and the chip border. Hue carries urgency; the shape of the icon carries which
+     dimension a chip belongs to, and the text always says the value, so no meaning rests on color
+     alone. `attention` is deliberately not on the urgency scale: it marks an alarm that is open
+     without saying how severe it is. Pairs are checked by src/theme/palette.test.ts. */
+  --color-tone-neutral-bg: #2b3850;
+  --color-tone-neutral-fg: #e2e9f5;
+  --color-tone-info-bg: #1e3a8a;
+  --color-tone-info-fg: #dbeafe;
+  --color-tone-ok-bg: #14532d;
+  --color-tone-ok-fg: #dcfce7;
+  --color-tone-caution-bg: #78350f;
+  --color-tone-caution-fg: #fef3c7;
+  --color-tone-serious-bg: #7c2d12;
+  --color-tone-serious-fg: #ffedd5;
+  --color-tone-danger-bg: #7f1d1d;
+  --color-tone-danger-fg: #fee2e2;
+  --color-tone-attention-bg: #4c1d95;
+  --color-tone-attention-fg: #ede9fe;
+  --color-tone-unknown-bg: #1b2436;
+  --color-tone-unknown-fg: #b4c0d4;
 }
 
 /* Tailwind 4 changed the default border color to currentcolor. Keep the v3 default so
