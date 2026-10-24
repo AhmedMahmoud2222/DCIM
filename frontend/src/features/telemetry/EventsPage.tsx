@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
+import { AlarmWorkflowStatus } from "@/features/status/StatusBadges";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
 
 type ViewMode = "active" | "history" | OpsView;
@@ -13,12 +14,6 @@ const OPS_TABS: { id: OpsView; label: string }[] = [
   { id: "integrations", label: "Integrations" },
 ];
 type StatusFilter = "ALL" | Alarm["status"];
-
-const STATUS_COLORS: Record<Alarm["status"], string> = {
-  ACTIVE: "bg-red-900 text-red-100",
-  ACKNOWLEDGED: "bg-yellow-800 text-yellow-100",
-  CLEARED: "bg-green-800 text-green-100",
-};
 
 function csvCell(value: string | number | null | undefined) {
   const text = value == null ? "" : String(value);
@@ -276,7 +271,7 @@ export function EventsPage() {
                       className={`cursor-pointer border-t border-slate-800 ${selected?.id === alarm.id ? "bg-slate-800/70" : "hover:bg-slate-800/40"}`}
                     >
                       <td className="px-3 py-2">
-                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[alarm.status]}`}>{alarm.status}</span>
+                        <AlarmWorkflowStatus status={alarm.status} size="sm" />
                       </td>
                       <td className="max-w-[280px] truncate px-3 py-2 font-medium text-slate-200">
                         {alarm.subject_key}
@@ -314,7 +309,7 @@ export function EventsPage() {
             <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Event detail</p>
               <div className="mt-3 flex items-center gap-2">
-                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
+                <AlarmWorkflowStatus status={selected.status} size="sm" />
                 <span className="text-sm text-slate-400">last value {selected.presentation_value}{selected.presentation_unit === "%" ? "%" : ` ${selected.presentation_unit ?? ""}`}</span>
               </div>
               <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.subject_key}</h2>

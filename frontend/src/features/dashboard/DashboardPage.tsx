@@ -3,13 +3,8 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
 import { getDashboardExceptions, getDashboardSummary } from "@/features/power/api";
+import { AlarmWorkflowStatus, ExceptionSeverity } from "@/features/status/StatusBadges";
 import { getOpenAlarms } from "@/features/telemetry/api";
-
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "bg-red-900 text-red-100",
-  warning: "bg-yellow-800 text-yellow-100",
-  info: "bg-slate-700 text-slate-200",
-};
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
@@ -98,7 +93,7 @@ export function DashboardPage() {
       <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         {activeAlarmsQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
         {activeAlarmsQuery.data?.length === 0 && <p className="text-sm text-slate-500">No active alarms.</p>}
-        <div className="space-y-2">{activeAlarmsQuery.data?.slice(0, 8).map((alarm) => <div key={alarm.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-3 py-2 text-sm"><div><span className="mr-2 rounded-sm bg-red-900 px-1.5 py-0.5 text-[10px] text-red-100">ACTIVE</span><span>{alarm.subject_key} · {alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</span><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></div>{alarm.managed_asset_id && <Link className="text-xs text-blue-400 hover:underline" to={`/equipment/${alarm.managed_asset_id}`}>Equipment →</Link>}</div>)}</div>
+        <div className="space-y-2">{activeAlarmsQuery.data?.slice(0, 8).map((alarm) => <div key={alarm.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-3 py-2 text-sm"><div><span className="mr-2"><AlarmWorkflowStatus status={alarm.status} size="sm" /></span><span>{alarm.subject_key} · {alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</span><p className="mt-1 text-xs text-slate-500">Occurred {new Date(alarm.opened_at).toLocaleString()}</p></div>{alarm.managed_asset_id && <Link className="text-xs text-blue-400 hover:underline" to={`/equipment/${alarm.managed_asset_id}`}>Equipment →</Link>}</div>)}</div>
       </div>
 
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Infrastructure Exceptions</h2>
@@ -109,9 +104,8 @@ export function DashboardPage() {
           {exceptionsQuery.data?.map((exc, i) => (
             <div key={i} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-3 py-2 text-sm">
               <div>
-                <span className={`mr-2 rounded-sm px-1.5 py-0.5 text-[10px] ${SEVERITY_COLORS[exc.severity] ?? "bg-slate-700"}`}>
-                  {exc.code}
-                </span>
+                <span className="mr-2"><ExceptionSeverity severity={exc.severity} size="sm" /></span>
+                <span className="mr-2 rounded-sm bg-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-200">{exc.code}</span>
                 <span className="text-slate-300">{exc.message}</span>
               </div>
               <Link to="/power" className="text-xs text-blue-400 hover:underline">
