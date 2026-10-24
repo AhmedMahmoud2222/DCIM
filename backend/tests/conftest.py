@@ -2,6 +2,7 @@ import os
 import tempfile
 import uuid
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -196,3 +197,24 @@ async def auth_headers(client, make_user):
         return {"Authorization": f"Bearer {token}"}
 
     return _headers
+
+
+@pytest.fixture
+def jwt_clock(monkeypatch):
+    """Frozen, movable wall clock for token issuance/validation (see tests/jwt_clock.py)."""
+    from tests.jwt_clock import ControlledClock
+
+    return ControlledClock().install(monkeypatch)
+
+
+@pytest_asyncio.fixture
+async def token_session(client, make_user):
+    """Factory for sessions that re-login only when their token has really expired."""
+    from tests.jwt_clock import TokenSession
+
+    async def _make(role_name: str = "Administrator", clock=None) -> TokenSession:
+        email = f"user-{uuid.uuid4().hex[:8]}@example.com"
+        await make_user(email, "correct horse battery staple", role_name)
+        return TokenSession(client, email, "correct horse battery staple", clock)
+
+    return _make
