@@ -363,3 +363,11 @@ class ProtectionDevice(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="in_service")
     state_changed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     version: Mapped[int] = mapped_column(nullable=False, default=1)
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_power_node_owning_asset_id", PowerNode.owning_asset_id)
+Index("ix_ups_room_id", UPS.room_id)
+Index("ix_power_panel_room_id", PowerPanel.room_id)
+Index("ix_generator_site_id", Generator.site_id)
