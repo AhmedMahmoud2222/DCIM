@@ -6,6 +6,7 @@ import {
   DashboardSummary,
   EquipmentPowerSummary,
   Page,
+  PDUInstantiatedAsset,
   PowerConnection,
   PowerNode,
   TopologyNode,
@@ -57,6 +58,24 @@ export const createEquipmentFeed = (equipmentAssetId: string, label: string) =>
   apiFetch<PowerNode>("/power/equipment-feeds", {
     method: "POST",
     body: JSON.stringify({ equipment_asset_id: equipmentAssetId, label }),
+  });
+
+/** Input of `POST /power/pdus/instantiate` (Issue #150 M4). Electrical values and the
+ * outlet set are never part of the request — the backend derives them from the
+ * published revision. */
+export interface PDUInstantiateInput {
+  asset_tag: string;
+  name: string;
+  catalog_model_revision_id: string;
+  ip_address?: string | null;
+  protocol?: "snmp" | "rest" | "none";
+}
+
+export const instantiatePdu = (body: PDUInstantiateInput, idempotencyKey?: string) =>
+  apiFetch<PDUInstantiatedAsset>("/power/pdus/instantiate", {
+    method: "POST",
+    body: JSON.stringify(body),
+    idempotencyKey,
   });
 
 export interface CreateConnectionInput {

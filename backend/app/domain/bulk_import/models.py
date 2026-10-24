@@ -122,3 +122,10 @@ class BulkImportRow(Base, UUIDPkMixin, TimestampMixin):
     # (so there is nothing to compare staleness against — commit falls back to an
     # unconditional live-version claim for that row, same as before this column existed).
     expected_version: Mapped[int | None] = mapped_column(Integer)
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_bulk_import_row_target_managed_asset_id", BulkImportRow.target_managed_asset_id)
+Index("ix_bulk_import_row_target_catalog_model_id", BulkImportRow.target_catalog_model_id)
+Index("ix_bulk_import_row_target_catalog_revision_id", BulkImportRow.target_catalog_revision_id)

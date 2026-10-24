@@ -8,8 +8,109 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR cancels the older run. Each push to main has its own
+# group, so a main run is never cancelled: verify_release_sha.py needs every job of
+# the release commit to finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
-  backend:
+  # Risk-based routing (docs/ci/CI_ARCHITECTURE_ADR.md). The `route` job selects the
+  # worker jobs below. The required checks `backend` and `frontend` are the fail-closed
+  # gate jobs at the end of this file: they wait for every worker and fail on any
+  # selected worker that did not succeed. The worker jobs are the original CI jobs,
+  # unchanged except for their `needs`/`if` lines and the renamed ids
+  # backend -> backend-suite and frontend -> frontend-suite.
+  route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      level: ${{ steps.route.outputs.level }}
+      head-sha: ${{ steps.route.outputs.head-sha }}
+      route: ${{ steps.route.outputs.route }}
+      run-backend-suite: ${{ steps.route.outputs.run-backend-suite }}
+      run-frontend-suite: ${{ steps.route.outputs.run-frontend-suite }}
+      run-backend-runtime-matrix: ${{ steps.route.outputs.run-backend-runtime-matrix }}
+      run-edge-collector: ${{ steps.route.outputs.run-edge-collector }}
+      run-edge-interop: ${{ steps.route.outputs.run-edge-interop }}
+      run-browser-e2e: ${{ steps.route.outputs.run-browser-e2e }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refuse SEC-ARCH-02 preflight reports in the checkout (issue #175)
+        # Same guard as backend-suite. It runs here too because backend-suite does not
+        # run for every route.
+        run: |
+          tracked="$(git ls-files | grep -E '(^|/)sec-arch-02-preflight.*\.json$' || true)"
+          stray="$(find . -name 'sec-arch-02-preflight*.json' -not -path './.git/*' -print)"
+          if [ -n "$tracked" ]; then
+            echo "Confidential preflight report is tracked by git: $tracked" >&2
+            exit 1
+          fi
+          if [ -n "$stray" ]; then
+            echo "Confidential preflight report present in the checkout: $stray" >&2
+            exit 1
+          fi
+      - name: Route from the policy of the PR base commit
+        id: route
+        # The router and policy come from the base commit, not from the PR head, so a PR
+        # cannot change the route of its own run. When the base has no policy (the PR that
+        # adds it), and for every event except pull_request, this step writes the full
+        # route itself: no Python file of the checkout runs on that path.
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          trusted="$RUNNER_TEMP/trusted-ci-policy"
+          mkdir -p "$trusted"
+          if [ "$CI_EVENT_NAME" = pull_request ] \
+            && git show "$CI_BASE_SHA:.github/scripts/ci_policy.py" > "$trusted/ci_policy.py" \
+            && git show "$CI_BASE_SHA:.github/scripts/ci_router.py" > "$trusted/ci_router.py"; then
+            echo "Routing policy source: base commit $CI_BASE_SHA"
+            python3 "$trusted/ci_router.py"
+            exit 0
+          fi
+          event="$CI_EVENT_NAME"
+          if [ "$event" = pull_request ]; then
+            event=pull_request-without-base-policy
+          fi
+          echo "Routing policy source: none (event $event selects full)"
+          jobs=""
+          for job in backend-suite frontend-suite backend-runtime-matrix edge-collector edge-interop browser-e2e; do
+            jobs="$jobs${jobs:+, }\"$job\": true"
+            echo "run-$job=true" >> "$GITHUB_OUTPUT"
+          done
+          {
+            echo "level=full"
+            echo "head-sha=$CI_HEAD_SHA"
+            printf 'route={"degraded": false, "event": "%s", "head": "%s", "jobs": {%s}, "level": "full", "policy_version": 0, "reasons": ["no trusted policy for event %s"]}\n' \
+              "$event" "$CI_HEAD_SHA" "$jobs" "$event"
+          } >> "$GITHUB_OUTPUT"
+
+  # The routing, gate and mutation tests for the files above. Always required.
+  ci-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+        with:
+          python-version: "3.12"
+      - name: Install the pinned YAML parser
+        run: python3 -m pip install PyYAML==6.0.2
+      - name: Run the CI routing, gate and mutation tests
+        run: python3 -m unittest discover -s tests/ci -v
+
+  backend-suite:
+    needs: route
+    if: needs.route.outputs.level == 'full' || needs.route.outputs.run-backend-suite == 'true'
     runs-on: ubuntu-latest
     services:
       # NOTE (Finding C1 / PHASE1_CORRECTION_REPORT.md): the bootstrap superuser here is
@@ -57,6 +158,22 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Refuse SEC-ARCH-02 preflight reports in the checkout (issue #175)
+        # The preflight report is confidential access-control data. `.gitignore` keeps it
+        # out of normal commits; this guard also fails a force-added/tracked copy, so a
+        # report can never sit in a CI checkout and ride along in any uploaded artifact.
+        working-directory: ${{ github.workspace }}
+        run: |
+          tracked="$(git ls-files | grep -E '(^|/)sec-arch-02-preflight.*\.json$' || true)"
+          stray="$(find . -name 'sec-arch-02-preflight*.json' -not -path './.git/*' -print)"
+          if [ -n "$tracked" ]; then
+            echo "Confidential preflight report is tracked by git: $tracked" >&2
+            exit 1
+          fi
+          if [ -n "$stray" ]; then
+            echo "Confidential preflight report present in the checkout: $stray" >&2
+            exit 1
+          fi
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.11"
@@ -134,7 +251,9 @@ jobs:
       - name: Run regression tests
         run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
 
-  frontend:
+  frontend-suite:
+    needs: route
+    if: needs.route.outputs.level == 'full' || needs.route.outputs.run-frontend-suite == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,6 +280,8 @@ jobs:
   # constants on PYTHONPATH for a contract test — so its own suite needs a job of its own.
   # It is pure standard library plus httpx and cryptography (SNMPv3 AES), which is why this job is this short.
   edge-collector:
+    needs: route
+    if: needs.route.outputs.level == 'full' || needs.route.outputs.run-edge-collector == 'true'
     runs-on: ubuntu-latest
     env:
       # edge_collector/tests/ has no __init__.py, so pytest's rootdir insertion puts that
@@ -189,6 +310,8 @@ jobs:
   # hardware or external network; it fails if any algorithm combination, failure mode or wire-secrecy
   # check behaves differently from what edge_collector/interop/README.md states.
   edge-interop:
+    needs: route
+    if: needs.route.outputs.level == 'full' || needs.route.outputs.run-edge-interop == 'true'
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
@@ -216,6 +339,8 @@ jobs:
   # what it is there to prove. Host ports (5433/6380) and the database name (dcim_e2e)
   # differ from the backend job's so the isolation is real rather than incidental.
   browser-e2e:
+    needs: route
+    if: needs.route.outputs.level == 'full' || needs.route.outputs.run-browser-e2e == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -450,6 +575,8 @@ jobs:
   # 3.14 as shipped: against the final 3.14.x actions/setup-python installs, every step of
   # this job passes, migrations, full suite and Edge Collector suite included.
   backend-runtime-matrix:
+    needs: route
+    if: needs.route.outputs.level == 'full' || needs.route.outputs.run-backend-runtime-matrix == 'true'
     name: backend suite (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.experimental }}
@@ -562,3 +689,55 @@ jobs:
       - name: Run Edge Collector tests on this runtime
         working-directory: ${{ github.workspace }}
         run: pytest -q edge_collector/tests
+
+  # The required checks. Both run with always(): a skipped required check counts as
+  # passed, so a gate must never skip. Each gate fails unless every job in its `needs`
+  # list has the result that the route requires (.github/scripts/ci_gate.py). The
+  # `needs` lists must equal ci_gate.GATES; tests/ci/test_ci_workflow.py checks this.
+  backend:
+    needs:
+      - route
+      - ci-policy
+      - backend-suite
+      - frontend-suite
+      - backend-runtime-matrix
+      - edge-collector
+      - edge-interop
+      - browser-e2e
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate diffs the PR itself (ci_gate.scope_errors).
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fail-closed gate over every worker
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 .github/scripts/ci_gate.py backend
+
+  frontend:
+    needs:
+      - route
+      - ci-policy
+      - frontend-suite
+      - browser-e2e
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate diffs the PR itself (ci_gate.scope_errors).
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fail-closed gate over the frontend workers
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 .github/scripts/ci_gate.py frontend

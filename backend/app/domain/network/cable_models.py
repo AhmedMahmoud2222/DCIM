@@ -121,3 +121,9 @@ class CableEndpoint(Base, UUIDPkMixin):
     is_live: Mapped[bool] = mapped_column(Boolean, nullable=False)
     end_label: Mapped[str] = mapped_column(String(1), nullable=False)
     equipment_port_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("equipment_port.id", ondelete="RESTRICT"), nullable=False)
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_cable_port_connection_id", Cable.port_connection_id)
+Index("ix_cable_source_neighbor_id", Cable.source_neighbor_id)

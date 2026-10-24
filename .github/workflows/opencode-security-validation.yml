@@ -1,0 +1,223 @@
+name: OpenCode security validation
+# Mutation validation of the production OpenCode controls (validation v1.0). Design, verdicts and evidence
+# rules: docs/security/OPENCODE_AGENT_AUTHORITY.md, section "Validation". Every mutant runs in its own fresh
+# GitHub-hosted VM; nothing here cleans up after mutated code, the VM teardown does.
+#
+# Start: the repository owner applies the `security-validation` label to the pull request (pre-merge), or
+# dispatches the workflow after it exists on the default branch. Re-run: remove and re-apply the label.
+# A run validates exactly the head commit recorded at label time; any later push makes it stale.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: opencode-security-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  VALIDATION_PR: ${{ github.event.pull_request.number }}
+  VALIDATION_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  VALIDATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  OPENCODE_DISPOSABLE_HOST: '1'
+  OPENCODE_SUITE_QUIET: '1'
+
+jobs:
+  authorize:
+    name: Authorize and list mutants
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'security-validation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      mutants: ${{ steps.list.outputs.mutants }}
+    steps:
+      - name: Only the repository owner may start a run, on a GitHub-hosted runner
+        env:
+          SENDER: ${{ github.event.sender.login }}
+          OWNER: ${{ github.repository_owner }}
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_KIND}" != "github-hosted" ]; then
+            echo "::error::security validation runs only on GitHub-hosted runners (got ${RUNNER_KIND})"; exit 1
+          fi
+          if [ "${SENDER}" != "${OWNER}" ]; then
+            echo "::error::only the repository owner may start a security validation run (sender: ${SENDER})"; exit 1
+          fi
+          echo "validating ${VALIDATION_HEAD_SHA} for PR ${VALIDATION_PR:-none}, requested by ${SENDER}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.VALIDATION_HEAD_SHA }}
+          persist-credentials: false
+      - id: list
+        run: |
+          set -euo pipefail
+          echo "mutants=$(python3 tests/deployment/opencode_validation/mutants.py list)" >> "${GITHUB_OUTPUT}"
+
+  control:
+    name: Control run (unmutated)
+    needs: authorize
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.VALIDATION_HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
+        with:
+          python-version: '3.12'
+      - name: Prepare the disposable runner
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          test "${RUNNER_KIND}" = "github-hosted"
+          sudo -n true
+          sudo apt-get update -qq
+          sudo apt-get install -y acl
+          python3 -m pip install PyYAML==6.0.2
+          (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
+      - name: Run the unmutated suite
+        run: |
+          set -uo pipefail
+          v=tests/deployment/opencode_validation
+          timeout --kill-after=60 2400 python3 "$v/suite.py" run --out control-result.json > control-suite.log 2>&1
+          echo "suite exit status $?"
+          python3 "$v/mutants.py" control --result control-result.json --out control-verdict.json
+      - name: Keep the control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: control
+          path: |
+            control-result.json
+            control-verdict.json
+            control-suite.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  mutant:
+    name: Mutant ${{ matrix.id }}
+    needs: [authorize, control]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        id: ${{ fromJSON(needs.authorize.outputs.mutants) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.VALIDATION_HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
+        with:
+          python-version: '3.12'
+      - name: Prepare the disposable runner
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          test "${RUNNER_KIND}" = "github-hosted"
+          sudo -n true
+          sudo apt-get update -qq
+          sudo apt-get install -y acl
+          python3 -m pip install PyYAML==6.0.2
+          (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: control
+          path: control
+      - name: Apply the mutant, run the suite and judge it
+        env:
+          MUTANT_ID: ${{ matrix.id }}
+        run: |
+          set -uo pipefail
+          v=tests/deployment/opencode_validation
+          judge=(python3 "$v/mutants.py" judge "${MUTANT_ID}" --control control/control-result.json
+                 --applied applied.json --out "verdict-${MUTANT_ID}.json")
+          if python3 "$v/mutants.py" apply "${MUTANT_ID}" --out applied.json; then
+            timeout --kill-after=60 2400 python3 "$v/suite.py" run --out result.json > suite.log 2>&1
+            status=$?
+            echo "suite exit status ${status}"
+            if [ "${status}" = 124 ] || [ "${status}" = 137 ]; then
+              "${judge[@]}" --timed-out
+            else
+              "${judge[@]}" --result result.json
+            fi
+          else
+            "${judge[@]}" --apply-failed
+          fi
+      - name: Keep the verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: result-${{ matrix.id }}
+          path: verdict-${{ matrix.id }}.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Keep the suite log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: log-${{ matrix.id }}
+          path: suite.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  aggregate:
+    name: Aggregate verdicts
+    needs: [authorize, control, mutant]
+    if: always() && needs.authorize.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.VALIDATION_HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: control
+          path: control
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: result-*
+          path: results
+          merge-multiple: true
+      - name: Check every verdict against the inventory and this run's identity
+        run: |
+          set -uo pipefail
+          mkdir -p results
+          python3 tests/deployment/opencode_validation/mutants.py aggregate --control control/control-verdict.json \
+            --dir results --out summary.json | tee aggregate.txt
+          status=${PIPESTATUS[0]}
+          { echo '```'; cat aggregate.txt; echo '```'; } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+      - name: Keep the summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: opencode-validation-${{ env.VALIDATION_HEAD_SHA }}
+          path: |
+            summary.json
+            aggregate.txt
+          if-no-files-found: warn
+          retention-days: 90

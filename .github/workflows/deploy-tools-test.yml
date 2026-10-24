@@ -5,6 +5,9 @@ on:
     branches: [main, 'claude/**', 'codex/**']
     paths:
       - '.github/scripts/verify_release_sha.py'
+      - '.github/scripts/opencode_*.py'
+      - '.github/scripts/model_health_diagnostic.py'
+      - '.github/opencode/**'
       - '.github/workflows/**'
       - '.github/dependabot.yml'
       - 'scripts/deploy-docker-compose.sh'
@@ -26,6 +29,9 @@ on:
   pull_request:
     paths:
       - '.github/scripts/verify_release_sha.py'
+      - '.github/scripts/opencode_*.py'
+      - '.github/scripts/model_health_diagnostic.py'
+      - '.github/opencode/**'
       - '.github/workflows/**'
       - '.github/dependabot.yml'
       - 'scripts/deploy-docker-compose.sh'
@@ -45,15 +51,20 @@ on:
       - 'frontend/package-lock.json'
       - 'tests/deployment/**'
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   deployment-tooling:
     name: Deployment tooling regressions
-    runs-on: ubuntu-latest
+    # A GitHub-hosted VM, discarded after the job: the privileged OpenCode tests create an account, root-owned
+    # trees and mounts here and never clean them up (docs/security/OPENCODE_AGENT_AUTHORITY.md, Validation).
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6
         with:
           python-version: '3.12'
@@ -67,10 +78,23 @@ jobs:
           shellcheck scripts/deploy-docker-compose.sh
           python3 -m pip install PyYAML==6.0.2
           python3 tests/deployment/check_workflows.py
-      - name: Run mocked API, lock and rollback tests
+      - name: Prepare the disposable runner and the pinned OpenCode binary
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s tests/deployment -p 'test_*.py' -v
+          test "${RUNNER_KIND}" = "github-hosted"
+          sudo -n true
+          sudo apt-get install -y acl
+          (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
+      - name: Run the deployment tests, privileged OpenCode tests included (any skip fails)
+        env:
+          OPENCODE_DISPOSABLE_HOST: '1'
+        run: |
+          set -euo pipefail
+          python3 tests/deployment/opencode_validation/suite.py run --pattern 'test_*.py' --out deployment-tests.json
+          python3 tests/deployment/opencode_validation/suite.py check-ci deployment-tests.json
       - name: Verify read-only artifact upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
@@ -94,6 +118,8 @@ jobs:
     name: Disposable combined-stack startup and rollback
     runs-on: ubuntu-latest
     timeout-minutes: 50
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

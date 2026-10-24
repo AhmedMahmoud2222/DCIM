@@ -1,0 +1,116 @@
+"""PostgreSQL parity: reading_provenance_status() vs reading_provenance_expression()."""
+
+import uuid
+from datetime import UTC, datetime
+
+import pytest
+from sqlalchemy import String, Uuid, literal, select
+from sqlalchemy.sql import visitors
+
+from app.api.v1.telemetry import reading_provenance_expression, reading_provenance_status
+from app.domain.integration.models import Collector, Integration
+from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
+
+# Independent hard-coded expected classification for all 20 combinations.
+# (registry_version, revision_present, contract_evidence) -> expected status
+EXPECTED = {
+    (None, False, None): "unverified_legacy",
+    (None, False, "pinned"): "unverified_legacy",
+    (None, False, "inferred_single_revision"): "unverified_legacy",
+    (None, False, "operator_resolved"): "unverified_legacy",
+    (None, False, "unrecognized"): "unverified_legacy",
+    ("1", False, None): "unverified_registry",
+    ("1", False, "pinned"): "unverified_registry",
+    ("1", False, "inferred_single_revision"): "unverified_registry",
+    ("1", False, "operator_resolved"): "unverified_registry",
+    ("1", False, "unrecognized"): "unverified_registry",
+    (None, True, None): "unverified_legacy",
+    (None, True, "pinned"): "pinned",
+    (None, True, "inferred_single_revision"): "inferred",
+    (None, True, "operator_resolved"): "operator_resolved",
+    (None, True, "unrecognized"): "unverified_legacy",
+    ("1", True, "pinned"): "pinned",
+    ("1", True, "inferred_single_revision"): "inferred",
+    ("1", True, "operator_resolved"): "operator_resolved",
+    ("1", True, None): "unverified_registry",
+    ("1", True, "unrecognized"): "unverified_registry",
+}
+
+
+@pytest.mark.asyncio
+async def test_provenance_python_sql_parity_postgres(db_session):
+    now = datetime(2030, 7, 8, 12, tzinfo=UTC)
+    collector = Collector(
+        id=uuid.uuid4(), name="G7", collector_type="central", status="active", secret_ciphertext="test", secret_rotated_at=now
+    )
+    integration = Integration(
+        id=uuid.uuid4(), name="G7", integration_type="snmp", target_host="192.0.2.7", config={}, poll_interval_seconds=300
+    )
+    db_session.add_all([collector, integration])
+    await db_session.flush()
+    mapping = IntegrationMetricMapping(
+        id=uuid.uuid4(),
+        integration_id=integration.id,
+        source_identifier="temp",
+        canonical_metric="temperature_c",
+        unit="degC",
+        scale=1,
+        registry_version="1",
+    )
+    db_session.add(mapping)
+    await db_session.flush()
+    revision = mapping.current_revision_id
+
+    assert len(EXPECTED) == 20
+
+    seen = set()
+    for (registry_version, has_revision, evidence), expected in EXPECTED.items():
+        mapping_revision_id = revision if has_revision else None
+        # Transient row keeps the original inputs for the Python classifier.
+        row = TelemetryReading(
+            id=uuid.uuid4(),
+            collector_id=collector.id,
+            integration_id=integration.id,
+            mapping_id=mapping.id,
+            external_identifier="sensor",
+            series_key="g7",
+            dedup_key=uuid.uuid4().hex,
+            metric="temperature_c",
+            unit="degC",
+            value=1,
+            raw_value=1,
+            raw_unit="degC",
+            raw_value_text="1",
+            source_scale=1,
+            registry_version=registry_version,
+            mapping_revision_id=mapping_revision_id,
+            contract_evidence=evidence,
+            occurred_at=now,
+            received_at=now,
+            attributes={},
+        )
+        py_val = reading_provenance_status(row)
+        assert py_val == expected, (row.id, py_val, expected)
+        seen.add((registry_version, has_revision, evidence))
+        # Evaluate the actual production SQL CASE expression over literal inputs so
+        # NULL registry semantics are preserved without persisting ORM-defaulted rows.
+        subs: list[str] = []
+        values = {
+            "registry_version": registry_version,
+            "mapping_revision_id": str(mapping_revision_id) if mapping_revision_id else None,
+            "contract_evidence": evidence,
+        }
+        expr = visitors.replacement_traverse(
+            reading_provenance_expression(),
+            {},
+            lambda node, _values=values, _subs=subs: (
+                _subs.append(node.name) or literal(_values[node.name], String if node.name != "mapping_revision_id" else Uuid)
+                if getattr(node, "table", None) is TelemetryReading.__table__ and getattr(node, "name", None) in _values
+                else None
+            ),
+        )
+        # Fail closed if any of the three production columns were not substituted.
+        assert set(subs) == set(values), subs
+        sql_val = (await db_session.execute(select(expr))).scalar_one()
+        assert sql_val == expected, (sql_val, expected)
+    assert seen == set(EXPECTED.keys())
