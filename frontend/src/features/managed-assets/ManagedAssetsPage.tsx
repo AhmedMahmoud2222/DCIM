@@ -2,15 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/apiClient";
 import { ManagedAsset, Page } from "@/types";
-
-const STATUS_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
-};
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function ManagedAssetsPage() {
   const { data, isLoading, error } = useQuery({
@@ -46,9 +38,7 @@ export function ManagedAssetsPage() {
                 <td className="py-2 font-mono">{asset.asset_tag}</td>
                 <td className="py-2">{asset.asset_type}</td>
                 <td className="py-2">
-                  <span className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[asset.lifecycle_status] ?? "bg-slate-700"}`}>
-                    {asset.lifecycle_status}
-                  </span>
+                  <LifecycleStatus value={asset.lifecycle_status} />
                 </td>
                 <td className="py-2 text-slate-400">{asset.serial_number ?? "—"}</td>
               </tr>

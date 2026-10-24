@@ -18,21 +18,13 @@ import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { provenanceLabel } from "@/features/telemetry/provenanceHelpers";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
   dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
   single_feed: { text: "Single feed (no redundancy)", color: "bg-slate-700 text-slate-300" },
   degraded: { text: "Redundancy degraded", color: "bg-yellow-800 text-yellow-100" },
   no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-400" },
-};
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
 };
 
 export function EquipmentDetailPage() {
@@ -155,9 +147,7 @@ export function EquipmentDetailPage() {
           <h1 className="text-lg font-semibold">{equipment.hostname ?? equipment.asset_tag}</h1>
           <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
         </div>
-        <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[equipment.lifecycle_status] ?? "bg-slate-700"}`}>
-          {equipment.lifecycle_status}
-        </span>
+        <LifecycleStatus value={equipment.lifecycle_status} />
       </div>
 
       <div className="grid grid-cols-2 gap-6">
