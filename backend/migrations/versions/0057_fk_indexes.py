@@ -260,10 +260,14 @@ def _pinned_inspect(bind, schema: str, target: _Target, planned_oid: int | None 
     """Inspect, pin the inspected index object, inspect again, and require it is the very same object.
 
     Returns the second inspection (taken while the index is pinned). `planned_oid` additionally pins identity to an
-    earlier plan.
+    earlier plan. An object that is not the expected index is returned unpinned and untouched.
     """
     first = _inspect(bind, target)
     if first.rel_oid is None or (planned_oid is not None and first.rel_oid != planned_oid):
+        return first
+    if not _matches_definition(first):
+        # Not ours: never touch it. Pinning would rename it (impossible for a non-index, and it needs ownership, which an
+        # unrelated object may not give us), turning "leave it alone" into a failed run. Callers reject or skip it.
         return first
     _pin_index(bind, schema, target, first.rel_oid)
     second = _inspect(bind, target)

@@ -501,6 +501,43 @@ def test_downgrade_leaves_constraint_owned_same_name_index_without_partial_failu
     assert index_rows(db, [victim])[victim]["oid"] == constrained_oid
 
 
+def test_downgrade_leaves_non_index_same_name_object_without_failing(db):
+    """Codex P2 on 624a525: pinning a same-name TABLE ("is not an index") must not abort the rollback."""
+    alembic_ok(db, "upgrade", "head")
+    victim = FIRST_NAME
+    q(db, f"DROP INDEX {victim}")
+    q(db, f"CREATE TABLE {victim} (id integer)")
+
+    alembic_ok(db, "downgrade", "-1")
+
+    assert version(db) == PREVIOUS
+    assert index_rows(db) == {}, "every one of our other indexes must still be removed"
+    assert q(db, "SELECT relkind::text AS k FROM pg_class WHERE relname = $1", victim)[0]["k"] == "r"
+
+
+def test_downgrade_leaves_unrelated_index_owned_by_another_role_without_failing(db):
+    """Codex P2 on 624a525: an unrelated same-name index we do not own must not introduce an ownership failure."""
+    role = f"other_owner_{uuid.uuid4().hex[:8]}"
+    alembic_ok(db, "upgrade", "head")
+    victim = FIRST_NAME
+    q(db, f"CREATE ROLE {role}")
+    try:
+        q(db, f"DROP INDEX {victim}")
+        q(db, "CREATE TABLE foreign_owned_t (id integer)")
+        q(db, f"ALTER TABLE foreign_owned_t OWNER TO {role}")
+        q(db, f"CREATE INDEX {victim} ON foreign_owned_t (id)")
+        foreign_oid = index_rows(db, [victim])[victim]["oid"]
+
+        alembic_ok(db, "downgrade", "-1")
+
+        assert version(db) == PREVIOUS
+        assert set(index_rows(db)) == {victim}
+        assert index_rows(db, [victim])[victim]["oid"] == foreign_oid
+    finally:
+        q(db, "DROP TABLE IF EXISTS foreign_owned_t")
+        q(db, f"DROP ROLE IF EXISTS {role}")
+
+
 def test_offline_sql_generation_is_rejected_with_a_clear_message(db):
     r = alembic(db, "upgrade", f"{PREVIOUS}:{HEAD}", "--sql")
     assert r.returncode != 0
@@ -1007,6 +1044,7 @@ def test_pinning_leaves_index_comments_exactly_as_they_were(db):
     }
     assert comments[FIRST_NAME] == tricky
     assert all(v is None for n, v in comments.items() if n != FIRST_NAME)
+    assert q(db, "SELECT relname FROM pg_class WHERE relname LIKE 'pin0057%'") == [], "no scratch pin name may remain"
     alembic_ok(db, "downgrade", "-1")
     assert version(db) == PREVIOUS and index_rows(db) == {}
 
