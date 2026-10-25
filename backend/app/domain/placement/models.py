@@ -132,3 +132,8 @@ class EquipmentPlacement(Base, UUIDPkMixin):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     effective_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     effective_to: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_rack_placement_room_id", RackPlacement.room_id)

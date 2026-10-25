@@ -112,8 +112,8 @@ test.describe("Issue #101: profile, discovery, reconciliation, cable and trace",
     await expect(page).toHaveURL("/");
 
     // 1. Profile: create from a reviewed template, then ask the matcher about a Cisco sysObjectID.
-    await page.getByRole("link", { name: "Device Profiles" }).click();
-    await expect(page.getByRole("heading", { name: "Device Profiles" })).toBeVisible();
+    await page.getByRole("link", { name: "Network Profiles" }).click();
+    await expect(page.getByRole("heading", { name: "Network Profiles" })).toBeVisible();
     if ((await page.getByText("Cisco", { exact: true }).count()) === 0) {
       await page.getByLabel("Profile template").selectOption({ label: "Cisco IOS/NX-OS style device (CDP + LLDP)" });
       await page.getByRole("button", { name: "Create profiles" }).click();
