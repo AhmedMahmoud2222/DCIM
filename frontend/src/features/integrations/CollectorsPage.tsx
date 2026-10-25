@@ -10,6 +10,7 @@ import {
   registerCollector,
   triggerPollNow,
 } from "@/features/integrations/api";
+import { QueryStatus } from "@/components/data/QueryStatus";
 import { CollectorConnectivity } from "@/features/status/StatusBadges";
 import { ApiError } from "@/lib/apiClient";
 
@@ -144,6 +145,8 @@ export function CollectorsPage() {
               </button>
             </div>
           )}
+
+          <QueryStatus query={collectorsQuery} what="collectors" permission="collector:read" columns={1} />
 
           <div className="max-h-[420px] space-y-1 overflow-y-auto">
             {collectorsQuery.data?.map((c) => (

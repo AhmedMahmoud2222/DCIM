@@ -1,3 +1,6 @@
+import { DataTable, EmptyRow, TD, TH, TR } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 
@@ -43,11 +46,10 @@ export function IntegrationsPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Integrations</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        An Integration describes a device or device group a collector polls (protocol, target, credentials). Credentials
-        are write-only — never returned by this API once stored.
-      </p>
+      <PageHeader
+        title="Integrations"
+        description="An Integration describes a device or device group a collector polls (protocol, target, credentials). Credentials are write-only — never returned by this API once stored."
+      />
 
       <div className="mb-4">
         <button
@@ -111,35 +113,37 @@ export function IntegrationsPage() {
         </form>
       )}
 
-      <div className="overflow-x-auto rounded-sm border border-slate-800 bg-slate-900">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-slate-800 text-slate-400">
-            <tr>
-              <th className="p-2">Name</th>
-              <th className="p-2">Type</th>
-              <th className="p-2">Target</th>
-              <th className="p-2">Enabled</th>
-              <th className="p-2">Last poll</th>
-              <th className="p-2">Last success</th>
-              <th className="p-2">Failures</th>
-              <th className="p-2">Credential</th>
-              <th className="p-2"></th>
+      <QueryStatus query={integrationsQuery} what="integrations" permission="integration:read" columns={9} />
+
+      {integrationsQuery.data && (
+        <DataTable label="Integrations" dense minWidthClass="min-w-[64rem]">
+          <thead>
+            <tr className="border-b border-line-subtle bg-surface-panel">
+              <th scope="col" className={TH}>Name</th>
+              <th scope="col" className={TH}>Type</th>
+              <th scope="col" className={TH}>Target</th>
+              <th scope="col" className={TH}>Enabled</th>
+              <th scope="col" className={TH}>Last poll</th>
+              <th scope="col" className={TH}>Last success</th>
+              <th scope="col" className={TH}>Failures</th>
+              <th scope="col" className={TH}>Credential</th>
+              <th scope="col" className={TH}></th>
             </tr>
           </thead>
           <tbody>
             {integrationsQuery.data?.map((i) => (
-              <tr key={i.id} className="border-b border-slate-800/50">
-                <td className="p-2">{i.name}</td>
-                <td className="p-2">{i.integration_type}</td>
-                <td className="p-2">{i.target_host}</td>
-                <td className="p-2">
+              <tr key={i.id} className={TR}>
+                <td className={TD}>{i.name}</td>
+                <td className={TD}>{i.integration_type}</td>
+                <td className={TD}>{i.target_host}</td>
+                <td className={TD}>
                   <span className={i.enabled ? "text-green-400" : "text-slate-500"}>{i.enabled ? "enabled" : "disabled"}</span>
                 </td>
-                <td className="p-2">{fmtDate(i.last_poll_at)}</td>
-                <td className="p-2">{fmtDate(i.last_success_at)}</td>
-                <td className="p-2">{i.consecutive_failures}</td>
-                <td className="p-2">{i.has_credential ? "set" : "—"}</td>
-                <td className="p-2">
+                <td className={TD}>{fmtDate(i.last_poll_at)}</td>
+                <td className={TD}>{fmtDate(i.last_success_at)}</td>
+                <td className={TD}>{i.consecutive_failures}</td>
+                <td className={TD}>{i.has_credential ? "set" : "—"}</td>
+                <td className={TD}>
                   <button
                     onClick={() => toggleMutation.mutate({ id: i.id, enabled: i.enabled, version: i.version })}
                     className="rounded-sm bg-slate-800 px-2 py-0.5 text-[10px] text-slate-200 hover:bg-slate-700"
@@ -150,15 +154,11 @@ export function IntegrationsPage() {
               </tr>
             ))}
             {integrationsQuery.data?.length === 0 && (
-              <tr>
-                <td colSpan={9} className="p-4 text-center italic text-slate-500">
-                  No integrations configured yet.
-                </td>
-              </tr>
+              <EmptyRow columns={9}>No integrations configured yet.</EmptyRow>
             )}
           </tbody>
-        </table>
-      </div>
+                </DataTable>
+      )}
     </div>
   );
 }
