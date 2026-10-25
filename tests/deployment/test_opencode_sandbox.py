@@ -593,9 +593,11 @@ class ProxyStartupPolicyTests(unittest.TestCase):
                 self.bind(model)
 
     def test_disabled_unapproved_unverified_or_unhealthy_models_cannot_be_bound(self):
-        shipped = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
+        self.assertEqual(self.bind('opencode/glm-5.3-flash-free'), 'glm-5.3-flash-free')
+        ineligible = copy.deepcopy(ENABLED_REGISTRY)
+        ineligible['models']['opencode/glm-5.3-flash-free']['operational_status'] = 'degraded'
         with self.assertRaises(proxy.PolicyError) as raised:
-            self.bind('opencode/glm-5.3-flash-free', shipped)          # everything ships disabled
+            self.bind('opencode/glm-5.3-flash-free', ineligible)
         self.assertEqual(raised.exception.code, 'model_disabled_or_unhealthy')
         for field, value in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False),
                              ('operational_status', 'degraded'), ('operational_status', 'unknown')):
@@ -625,7 +627,9 @@ class ProxyStartupPolicyTests(unittest.TestCase):
     def test_cli_refuses_to_start_and_never_prints_the_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp, 'registry.json')
-            registry.write_text(json.dumps(json.loads((ROOT / '.github/opencode/model-registry.json').read_text())))
+            ineligible = copy.deepcopy(ENABLED_REGISTRY)
+            ineligible['models']['opencode/glm-5.3-flash-free']['terms_verified'] = False
+            registry.write_text(json.dumps(ineligible))
             old = dict(os.environ)
             try:
                 os.environ['OPENCODE_API_KEY'] = 'SUPER-SECRET-KEY'
