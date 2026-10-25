@@ -37,8 +37,8 @@ const TOUCH_TARGET = "min-h-11 sm:pointer-fine:min-h-0";
 function navLinkClass(isActive: boolean): string {
   return `flex items-center rounded-r-sm border-l-[3px] px-3 py-2 text-sm ${TOUCH_TARGET} ${
     isActive
-      ? "border-link bg-side-selected font-semibold text-white"
-      : "border-transparent text-side-fg hover:bg-white/5 hover:text-white"
+      ? "border-link bg-side-selected font-semibold text-side-selected-fg"
+      : "border-transparent text-side-fg hover:bg-surface-hover hover:text-side-selected-fg"
   }`;
 }
 
@@ -53,6 +53,11 @@ export function AppShell() {
   const groups = visibleNavGroups(viewer);
   const showDashboard = isNavItemVisible(DASHBOARD_ITEM, viewer);
   const activeLink = activeNavLink(location.pathname, [DASHBOARD_ITEM, ...groups.flatMap((group) => group.items)]);
+  // Each page names itself in the tab and to a screen reader: "Events · DCIM Platform".
+  const pageTitle = activeLink ? `${activeLink.label} · DCIM Platform` : "DCIM Platform";
+  useEffect(() => {
+    document.title = pageTitle;
+  }, [pageTitle]);
   const activeGroupId = groups.find((group) => activeLink && group.items.includes(activeLink))?.id;
 
   // Every group starts open, so no link is hidden until the user collapses a group. Arriving at
@@ -161,7 +166,7 @@ export function AppShell() {
     inert: !isDesktop && !drawerOpen ? ("" as const) : undefined,
     role: drawerOpen ? ("dialog" as const) : undefined,
     "aria-modal": drawerOpen ? (true as const) : undefined,
-    "aria-label": drawerOpen ? "Main menu" : undefined,
+    "aria-label": drawerOpen ? "Main menu" : "Application sidebar",
   };
 
   const sidebarContent = (
@@ -174,7 +179,7 @@ export function AppShell() {
               type="button"
               aria-label="Close menu"
               onClick={() => closeMenu(true)}
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-side-edge text-white hover:bg-white/5"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-side-edge text-side-selected-fg hover:bg-surface-hover"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
                 <path d="M6 6l12 12M18 6 6 18" />
@@ -194,7 +199,7 @@ export function AppShell() {
                   aria-expanded={expanded}
                   aria-controls={listId}
                   onClick={() => toggleGroup(group.id)}
-                  className={`flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-side-fg-muted hover:text-white ${TOUCH_TARGET}`}
+                  className={`flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-side-fg-muted hover:text-side-selected-fg ${TOUCH_TARGET}`}
                 >
                   {group.label}
                   <svg aria-hidden="true" viewBox="0 0 24 24" className={`h-4 w-4 shrink-0 ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -239,7 +244,7 @@ export function AppShell() {
                 aria-expanded={drawerOpen}
                 aria-controls="app-sidebar"
                 onClick={() => setOpen(true)}
-                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-line-control text-fg-primary hover:bg-white/5"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-line-control text-fg-primary hover:bg-surface-hover"
               >
                 <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                   <path d="M4 6h16M4 12h16M4 18h16" />

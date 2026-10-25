@@ -439,3 +439,39 @@ describe("AppShell mobile navigation drawer", () => {
     expect(document.body.style.overflow).toBe("");
   });
 });
+
+describe("AppShell page title and landmarks", () => {
+  it.each([
+    ["/", "Dashboard · DCIM Platform"],
+    ["/events", "Events · DCIM Platform"],
+    ["/sites/abc", "Sites & Rooms · DCIM Platform"],
+    ["/floor-plans/3d-layout", "3D Layout · DCIM Platform"],
+    ["/topology/trace", "Path Trace · DCIM Platform"],
+  ])("names the page for %s in the document title", (route, title) => {
+    renderWithProviders(<AppShell />, { user: ALL_LINKS_USER, route });
+
+    expect(document.title).toBe(title);
+  });
+
+  it("falls back to the product name on a route that no link owns", () => {
+    renderWithProviders(<AppShell />, { user: ALL_LINKS_USER, route: "/no-such-page" });
+
+    expect(document.title).toBe("DCIM Platform");
+  });
+
+  it("gives the sidebar landmark a name, so it stays distinguishable from a page's own aside", () => {
+    renderWithProviders(<AppShell />, { user: ALL_LINKS_USER, route: "/events" });
+
+    const sidebar = document.getElementById("app-sidebar") as HTMLElement;
+    expect(sidebar).toHaveAttribute("aria-label", "Application sidebar");
+    expect(sidebar.tagName.toLowerCase()).toBe("aside");
+  });
+
+  it("has exactly one main landmark and one banner", () => {
+    renderWithProviders(<AppShell />, { user: ALL_LINKS_USER });
+
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getAllByRole("banner")).toHaveLength(1);
+    expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+  });
+});

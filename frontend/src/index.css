@@ -33,6 +33,12 @@
   --color-side-fg-muted: #8e9db5;
   --color-side-selected: #17233a;
   --color-side-edge: #8e9db5;
+  --color-side-selected-fg: #ffffff;
+
+  /* Row and inset surfaces for rows that sit on a panel or the page, and the hover state of a row or a
+     sidebar link. Named surfaces instead of white overlays, which would vanish on a light theme. */
+  --color-surface-hover: #1b2842;
+  --color-surface-inset: #172238;
 
   /* Status tones (UI/UX checkpoint 3 of 7). A tone is a background and the foreground used for the
      text, the icon and the chip border. Hue carries urgency; the shape of the icon carries which
