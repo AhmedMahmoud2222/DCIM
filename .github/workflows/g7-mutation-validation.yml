@@ -46,11 +46,11 @@ jobs:
       REDIS_URL: redis://localhost:6379/1
     steps:
       - name: Checkout mutation runner (workflow branch)
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: runner
       - name: Checkout exact G7 baseline
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.sha || 'd2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675' }}
           path: baseline
@@ -59,7 +59,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/baseline"
           git rev-parse HEAD | tee "$GITHUB_WORKSPACE/tested_sha.txt"
           git log -1 --format='%H %G? %s' | tee "$GITHUB_WORKSPACE/tested_commit.txt"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: '3.12'
       - name: Install deps
@@ -117,7 +117,7 @@ jobs:
           cp mutation_results.txt pg_version.txt evidence/ 2>/dev/null || true
           cp g7_mutation_runner.py evidence/ 2>/dev/null || true
           ls -la evidence/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         if: always()
         with:
           name: g7-mutation-evidence

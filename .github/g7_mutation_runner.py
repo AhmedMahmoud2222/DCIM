@@ -58,9 +58,33 @@ SETUP_ERROR_MARKERS = (
 )
 
 
+PYTEST_TIMEOUT_SECONDS = 300
+FAILED_LINE = re.compile(r"^FAILED " + re.escape(TEST) + r"::", re.MULTILINE)
+
+
 def run(cmd: list[str], cwd: pathlib.Path) -> tuple[int, str]:
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True, timeout=PYTEST_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired as exc:
+        return 124, f"TIMEOUT after {exc.timeout}s"
     return proc.returncode, proc.stdout + proc.stderr
+
+
+def is_assertion_failure(code: int, output: str) -> bool:
+    """True only when pytest ran the parity test and it failed an assertion.
+
+    Requires exit 1 (tests failed, not interrupted/internal/usage error), no
+    INTERNALERROR, no setup/infrastructure marker, a FAILED line naming the
+    parity test, and an AssertionError in the output.
+    """
+    if code != 1 or "INTERNALERROR" in output:
+        return False
+    lowered = output.lower()
+    if any(marker.lower() in lowered for marker in SETUP_ERROR_MARKERS):
+        return False
+    return bool(FAILED_LINE.search(output)) and "AssertionError" in output
 
 
 def main() -> int:
@@ -94,7 +118,7 @@ def main() -> int:
     TARGET.write_text(mutated)
     try:
         code, output = run(
-            [sys.executable, "-m", "pytest", TEST, "-q", "-p", "no:cacheprovider"],
+            [sys.executable, "-m", "pytest", TEST, "-q", "-rf", "-p", "no:cacheprovider"],
             BACKEND,
         )
     finally:
@@ -110,9 +134,11 @@ def main() -> int:
         print(f"RESULT {key.upper()}=SURVIVED (parity oracle still passed)")
         return 1
 
-    lowered = output.lower()
-    if any(marker.lower() in lowered for marker in SETUP_ERROR_MARKERS):
-        print(f"RESULT {key.upper()}=INCONCLUSIVE (setup/infrastructure error, not assertion)")
+    if not is_assertion_failure(code, output):
+        print(
+            f"RESULT {key.upper()}=INCONCLUSIVE "
+            f"(exit={code}; no assertion failure of the parity test)"
+        )
         return 5
 
     print(f"RESULT {key.upper()}=DETECTED (classification assertion failure, exit={code})")
