@@ -53,16 +53,24 @@ asks to read it. Every request body is recorded.
 | --- | --- | --- | --- | --- |
 | `read: allow` (control) | `tool_use(read,completed)` then text | **yes** | ~4.8 s | 0 |
 | `read: ask`, stdin `/dev/null` | `tool_use(read,error)`, `step_finish(reason=tool-calls)` | no | ~4.1 s | 0 |
-| `read: ask`, stdin open pipe | `tool_use(read,error)`, `step_finish(reason=tool-calls)` | no | ~4.1 s | 0 |
-| `read: deny` | tool is not offered at all | no | ~3.9 s | 0 |
+| `read: ask`, stdin open pipe | measured correctly below: the run **blocks**; see §3.1 row 5 | no | n/a | killed |
+
+Earlier revisions of this document recorded the open-pipe row as finishing in
+~4.1 s. That measurement was an artifact of the harness: `subprocess.run()`
+without input closes the pipe immediately, so the child observed EOF, not an
+idle stream. Re-measured with a write end held open for the child's entire
+lifetime (the corrected committed test), the runtime blocks before any model
+interaction and is terminated by the hard timeout.
 
 Conclusions for the diagnostic:
 
 - `ask` is **not** silently auto-approved in headless mode: the read tool call
   ends in `error`, and the canary content never appears in a follow-up request.
-- It does **not** hang. Both a closed stdin and an open-but-idle pipe finish in
-  seconds. The runner additionally passes `stdin=subprocess.DEVNULL` and bounds
-  the run with a timeout.
+- A headless run on a **closed** stdin finishes in seconds. On an **open,
+  idle** stdin the runtime blocks before any provider interaction; the
+  runner's hard timeout is what bounds such a run, and
+  `stdin=subprocess.DEVNULL` makes the blocking case unreachable for the
+  diagnostic itself.
 - The CLI exits `0` even when the permission layer rejects the tool, so a
   transcript-level guard is mandatory. The runner's `evaluate()` rejects **any**
   `tool_use` event as `unexpected_tool_use`, regardless of tool or status, and a
@@ -90,7 +98,7 @@ cannot drift from the diagnostic:
 | 2 | an in-workdir canary never reaches the provider under `ask` | pass |
 | 3 | an out-of-workdir canary never reaches the provider under `ask` | pass |
 | 4 | `/proc/self/environ` never reaches the provider, in a child process whose environment holds only synthetic values | pass |
-| 5 | `read: 'ask'` does not hang with an idle stdin pipe | pass |
+| 5 | with an **open, idle** stdin the runtime executes no read, contacts the provider **zero** times, and leaks nothing; the hard timeout terminates the blocked run (`SIGKILL` to the process group) and the child is fully reaped | pass |
 | 6 | `external_directory: 'deny'` blocks the out-of-workdir canary and `/proc/self/environ` **even when `read: 'allow'`** | pass |
 | 7 | control: `read: 'allow'` **does** read the in-workdir canary, so the leak detector is not vacuous | pass |
 | 8 | the shipped classifier, fed the **real** transcript, returns `('failed', 'unexpected_tool_use')` even though the CLI exits `0` | pass |
@@ -118,9 +126,12 @@ skip is not a pass: on CI this test either runs and passes or the job fails.
 ### 3.2 Residual limits of the evidence
 
 - The probe covers the *observed default* headless code path of 1.19.3 (no
-  TTY, `stdin` closed or idle). A future runtime release could change the
-  approval semantics; the version pin plus the committed test are what make
-  that change visible instead of silent.
+  TTY, `stdin` closed). With an open, idle stdin the runtime blocks before any
+  model interaction — it cannot approve anything, execute anything or reach
+  the provider, and the diagnostic's hard timeout is what bounds and reaps
+  such a run. A future runtime release could change these semantics; the
+  version pin plus the committed test are what make that change visible
+  instead of silent.
 - The probe cannot prove the absence of an undiscovered code path. It
   establishes that on the pinned binary, with the shipped configuration, a read
   is refused and no file content reaches the provider — which is the property
