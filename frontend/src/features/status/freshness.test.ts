@@ -62,6 +62,50 @@ describe("deriveFreshness boundaries (interval 60 s: Fresh up to 75 s, Late up t
   });
 });
 
+describe("deriveFreshness boundaries with fractional intervals (floating-point safe)", () => {
+  const at = (ageMs: number, expectedIntervalSeconds: number) =>
+    deriveFreshness({ sourceType: "equipment_live_metric", measuredAt: 0, expectedIntervalSeconds, now: ageMs }).state;
+
+  it("the case Codex reproduced: 4.004 s is Fresh at exactly 5005 ms and Late at exactly 8008 ms", () => {
+    expect(at(5005, 4.004)).toBe("fresh");
+    expect(at(5006, 4.004)).toBe("late");
+    expect(at(8008, 4.004)).toBe("late");
+    expect(at(8009, 4.004)).toBe("stale");
+  });
+
+  it.each([0.004, 0.008, 0.012, 0.1, 0.2, 0.3, 1.1, 2.2, 3.3, 4.004, 7.7, 12.012, 59.996, 60.004, 300.004])(
+    "interval %f s: exactly 1.25x is Fresh, 1 ms over is Late, exactly 2x is Late, 1 ms over is Stale",
+    (interval) => {
+      // Only intervals whose boundaries fall on whole milliseconds can be hit exactly.
+      const lateMs = 1.25 * Math.round(interval * 1000);
+      const staleMs = 2 * Math.round(interval * 1000);
+      if (Number.isInteger(lateMs)) {
+        expect(at(lateMs, interval)).toBe("fresh");
+        expect(at(lateMs + 1, interval)).toBe("late");
+      }
+      expect(at(staleMs, interval)).toBe("late");
+      expect(at(staleMs + 1, interval)).toBe("stale");
+    },
+  );
+
+  it("holds for every multiple of 4 ms from 4 ms to 8 s, where both boundaries are whole milliseconds", () => {
+    for (let k = 1; k <= 2000; k += 1) {
+      const interval = k * 0.004; // inexact in binary on purpose
+      expect(at(k * 5, interval), `fresh at 1.25x for k=${k}`).toBe("fresh");
+      expect(at(k * 5 + 1, interval), `late just over 1.25x for k=${k}`).toBe("late");
+      expect(at(k * 8, interval), `late at 2x for k=${k}`).toBe("late");
+      expect(at(k * 8 + 1, interval), `stale just over 2x for k=${k}`).toBe("stale");
+    }
+  });
+
+  it("the tolerance does not swallow a real overrun: one millisecond past a boundary is never absorbed", () => {
+    expect(at(75_001, 60)).toBe("late");
+    expect(at(120_001, 60)).toBe("stale");
+    expect(at(1_250_000_001, 1_000_000)).toBe("late"); // large interval, 1 ms over 1.25x
+    expect(at(2_000_000_001, 1_000_000)).toBe("stale");
+  });
+});
+
 describe("deriveFreshness never shows missing data as Fresh or zero", () => {
   it.each([
     ["null", null],

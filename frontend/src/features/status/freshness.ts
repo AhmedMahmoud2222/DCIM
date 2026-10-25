@@ -70,6 +70,17 @@ function toMillis(value: string | number | Date): number {
   return value.trim() === "" ? Number.NaN : Date.parse(value);
 }
 
+/** Binary floating point cannot hold most fractional products exactly (4.004 * 1000 * 1.25 is
+ * 5004.999999999999, not 5005), which would push a measurement that is exactly on a boundary into the
+ * next state. The boundaries are inclusive, so allow a relative slack of one part in 10^12: far above
+ * floating-point rounding (about 10^-16) and far below one millisecond for any interval up to years,
+ * so a genuine overrun of 1 ms is never absorbed. */
+const BOUNDARY_RELATIVE_TOLERANCE = 1e-12;
+
+function withinLimit(ageMs: number, limitMs: number): boolean {
+  return ageMs <= limitMs * (1 + BOUNDARY_RELATIVE_TOLERANCE);
+}
+
 /** Classifies one measurement. A future timestamp (clock skew or bad data) is Unknown rather than a
  * negative age, so it can never read as Fresh. */
 export function deriveFreshness(
@@ -96,8 +107,8 @@ export function deriveFreshness(
   const ageMs = nowMs - measuredMs;
   const ageSeconds = Math.floor(ageMs / 1000);
   const intervalMs = interval * 1000;
-  if (ageMs <= config.lateAfter * intervalMs) return { state: "fresh", ageSeconds, reason: null };
-  if (ageMs <= config.staleAfter * intervalMs) return { state: "late", ageSeconds, reason: null };
+  if (withinLimit(ageMs, config.lateAfter * intervalMs)) return { state: "fresh", ageSeconds, reason: null };
+  if (withinLimit(ageMs, config.staleAfter * intervalMs)) return { state: "late", ageSeconds, reason: null };
   return { state: "stale", ageSeconds, reason: null };
 }
 
