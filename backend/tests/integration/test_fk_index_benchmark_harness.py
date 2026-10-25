@@ -13,11 +13,15 @@ the harness itself is sound at a few thousand rows:
 
 from __future__ import annotations
 
+import contextlib
+import threading
 import time
 import uuid
+from datetime import timedelta
 
 import psycopg
 import pytest
+from sqlalchemy.engine.url import make_url
 
 from scripts.fk_index_benchmark import __main__ as bench_main
 from scripts.fk_index_benchmark import data, report, scenarios
@@ -189,15 +193,127 @@ def test_create_db_refuses_names_outside_the_fkbench_namespace(urls):
         create_db(urls, f"production_{uuid.uuid4().hex[:6]}", owner=RUN)
 
 
-def test_signal_backend_refuses_sessions_on_other_databases(urls):
-    other = psycopg.connect(urls.conninfo("postgres"), autocommit=True)  # a session on the `postgres` database
+@contextlib.contextmanager
+def _signal_fixture(urls: Urls):
+    """Databases A, B (owned by this run), C (fkbench_ but tagged for another run), D (fkbench_ but untagged), plus a bystander
+    session on each and on `postgres`. Yields (names, bystanders); every database is dropped afterwards."""
+    suffix = uuid.uuid4().hex[:6]
+    a, b = f"fkbench_ci_sig_a_{suffix}", f"fkbench_ci_sig_b_{suffix}"
+    c, d = f"fkbench_ci_sig_c_{suffix}", f"fkbench_ci_sig_d_{suffix}"
+    create_db(urls, a, owner=RUN)
+    create_db(urls, b, owner=RUN)
+    with connect(urls, "postgres") as conn:
+        conn.execute(f'CREATE DATABASE "{c}"')
+        conn.execute(f"COMMENT ON DATABASE \"{c}\" IS '{OWNER_TAG}another-run'")
+        conn.execute(f'CREATE DATABASE "{d}"')
+    sessions: dict[str, psycopg.Connection] = {}
     try:
-        pid = other.info.backend_pid
-        with pytest.raises(UnsafeTarget, match="not connected to a fkbench_"):
-            signal_backend(urls, pid, "terminate")
-        assert not other.closed and other.execute("SELECT 1").fetchone() == (1,), "the unrelated session must be untouched"
+        for label, db in (("a", a), ("b", b), ("c", c), ("d", d), ("postgres", "postgres")):
+            sessions[label] = psycopg.connect(urls.conninfo(db), autocommit=True)
+        yield {"a": a, "b": b, "c": c, "d": d}, sessions
     finally:
-        other.close()
+        for conn in sessions.values():
+            conn.close()
+        with connect(urls, "postgres") as conn:
+            for name in (a, b, c, d):
+                conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+def _identity(conn: psycopg.Connection):
+    return conn.info.backend_pid, conn.execute("SELECT backend_start FROM pg_stat_activity WHERE pid = pg_backend_pid()").fetchone()[0]
+
+
+def _alive(conn: psycopg.Connection) -> bool:
+    try:
+        return not conn.closed and conn.execute("SELECT 1").fetchone() == (1,)
+    except psycopg.Error:
+        return False
+
+
+def _admin_user(urls: Urls) -> str:
+    return make_url(urls.admin).username
+
+
+def test_signal_backend_cancels_and_terminates_only_the_exactly_authorized_session(urls):
+    with _signal_fixture(urls) as (names, sessions):
+        victim_cancel = psycopg.connect(urls.conninfo(names["a"]), autocommit=True)
+        victim_term = psycopg.connect(urls.conninfo(names["a"]), autocommit=True)
+        try:
+            outcome: dict = {}
+
+            def long_query():
+                try:
+                    victim_cancel.execute("SELECT pg_sleep(60)")
+                    outcome["result"] = "finished"
+                except psycopg.errors.QueryCanceled:
+                    outcome["result"] = "cancelled"
+
+            pid, start = _identity(victim_cancel)
+            worker = threading.Thread(target=long_query)
+            worker.start()
+            deadline = time.time() + 30
+            while time.time() < deadline:  # wait until the sleep is observably running, then cancel it
+                with connect(urls, "postgres") as conn:
+                    if conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s AND query LIKE 'SELECT pg_sleep%%' AND state = 'active'", (pid,)).fetchone():
+                        break
+                time.sleep(0.05)
+            signal_backend(urls, pid=pid, backend_start=start, database=names["a"], owner=RUN, kind="cancel", username=_admin_user(urls), query_prefix="SELECT pg_sleep")
+            worker.join(timeout=30)
+            assert outcome.get("result") == "cancelled" and _alive(victim_cancel), "cancel must stop the statement but keep the session"
+
+            tpid, tstart = _identity(victim_term)
+            signal_backend(urls, pid=tpid, backend_start=tstart, database=names["a"], owner=RUN, kind="terminate", username=_admin_user(urls))
+            deadline = time.time() + 30
+            while time.time() < deadline and _alive(victim_term):
+                time.sleep(0.05)
+            assert not _alive(victim_term), "terminate must end the authorized session"
+            assert all(_alive(c) for c in sessions.values()), "no bystander session may be affected by an authorized signal"
+        finally:
+            victim_cancel.close()
+            victim_term.close()
+
+
+def test_signal_backend_refuses_anything_but_the_exact_expected_session_and_signals_nothing(urls):
+    with _signal_fixture(urls) as (names, sessions):
+        user = _admin_user(urls)
+        a_pid, a_start = _identity(sessions["a"])
+        stale = psycopg.connect(urls.conninfo(names["a"]), autocommit=True)
+        stale_pid, stale_start = _identity(stale)
+        stale.close()
+        deadline = time.time() + 30
+        while time.time() < deadline:  # wait for the server to forget the closed session
+            with connect(urls, "postgres") as conn:
+                if conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s", (stale_pid,)).fetchone() is None:
+                    break
+            time.sleep(0.05)
+        good = {"owner": RUN, "username": user}
+        cases = {
+            "session on postgres, caller names postgres": dict(sessions_key="postgres", pid_of="postgres", database="postgres", **good),
+            "session on postgres, caller claims database A": dict(sessions_key="postgres", pid_of="postgres", database=names["a"], **good),
+            "session on another fkbench_ database (B), caller expects A": dict(sessions_key="b", pid_of="b", database=names["a"], **good),
+            "session on a foreign-tagged fkbench_ database (C)": dict(sessions_key="c", pid_of="c", database=names["c"], **good),
+            "session on an untagged fkbench_ database (D)": dict(sessions_key="d", pid_of="d", database=names["d"], **good),
+            "correct session, incorrect owner tag": dict(sessions_key="a", pid_of="a", database=names["a"], owner="some-other-run", username=user),
+            "correct session, changed identity (wrong backend_start)": dict(sessions_key="a", pid_of="a", database=names["a"], backend_start=a_start - timedelta(seconds=5), **good),
+            "correct session, unexpected role": dict(sessions_key="a", pid_of="a", database=names["a"], owner=RUN, username="nobody"),
+            "correct session, unexpected statement": dict(sessions_key="a", pid_of="a", database=names["a"], query_prefix="CREATE INDEX", **good),
+            "stale pid (session already closed)": dict(sessions_key=None, pid=stale_pid, backend_start=stale_start, database=names["a"], **good),
+            "nonexistent pid": dict(sessions_key=None, pid=2_000_000_000, backend_start=a_start, database=names["a"], **good),
+            "database outside the fkbench_ namespace": dict(sessions_key="postgres", pid_of="postgres", database="postgres", **good),
+        }
+        for label, case in cases.items():
+            case = dict(case)
+            case.pop("sessions_key")
+            owner_of = case.pop("pid_of", None)
+            if owner_of is not None:
+                pid, start = _identity(sessions[owner_of])
+                case.setdefault("pid", pid)
+                case.setdefault("backend_start", start)
+            for kind in ("cancel", "terminate"):
+                with pytest.raises(UnsafeTarget, match="refusing to signal"):
+                    signal_backend(urls, kind=kind, **case)
+            assert all(_alive(c) for c in sessions.values()), f"{label}: a refusal must not signal any session"
+        assert _identity(sessions["a"]) == (a_pid, a_start)
 
 
 def test_template_with_a_foreign_owner_tag_is_never_reused_or_dropped(urls):
@@ -441,18 +557,18 @@ def test_provisional_thresholds_flag_breaches_without_accepting_anything():
     assert scenarios.evaluate_thresholds({"s1_s5": {**results["s1_s5"], "upgrade_under_ingest": {**run, "ingest_during": base, "wall_seconds": 1.0, "resources_delta": {"wal_bytes": 0}}}}, scenarios.Thresholds()) == []
 
 
-def _wait_for_build_phase(urls: Urls, db: str, run: AlembicRun, prefix: str) -> int:
-    """Block (bounded) until the first large build is observably in a phase starting with `prefix`; return its backend pid."""
+def _wait_for_build_phase(urls: Urls, db: str, run: AlembicRun, prefix: str):
+    """Block (bounded) until the first large build is observably in a phase starting with `prefix`; return (pid, backend_start)."""
     deadline = time.time() + STEP_TIMEOUT
     with connect(urls, db) as conn:
         while time.time() < deadline:
             row = conn.execute(
-                "SELECT p.pid FROM pg_stat_progress_create_index p JOIN pg_class c ON c.oid = p.index_relid "
-                "WHERE c.relname = %s AND p.phase LIKE %s",
+                "SELECT p.pid, a.backend_start FROM pg_stat_progress_create_index p JOIN pg_class c ON c.oid = p.index_relid "
+                "JOIN pg_stat_activity a ON a.pid = p.pid WHERE c.relname = %s AND p.phase LIKE %s",
                 (FIRST_INDEX, prefix + "%"),
             ).fetchone()
             if row:
-                return row[0]
+                return row[0], row[1]
             assert run.poll() is None, f"alembic exited early:\n{run.output()}"
             time.sleep(0.1)
     raise AssertionError(f"build never reached phase {prefix!r}\n{run.output()}")
@@ -469,8 +585,11 @@ def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(ur
     )
     run = AlembicRun(urls, clone, "upgrade", "head")
     try:
-        pid = _wait_for_build_phase(urls, clone, run, "waiting for writers")
-        signal_backend(urls, pid, interrupt)
+        pid, backend_start = _wait_for_build_phase(urls, clone, run, "waiting for writers")
+        signal_backend(
+            urls, pid=pid, backend_start=backend_start, database=clone, owner=RUN, kind=interrupt,
+            username=make_url(urls.app).username, query_prefix="CREATE INDEX",
+        )
         rc = run.wait(STEP_TIMEOUT)
     finally:
         if run.poll() is None:

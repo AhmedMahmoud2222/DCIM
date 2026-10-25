@@ -13,6 +13,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+from sqlalchemy.engine.url import make_url
+
 from . import data
 from .harness import (
     HEAD,
@@ -330,8 +332,9 @@ def _wait_for(predicate, run: AlembicRun, what: str, timeout: float) -> None:
 def _progress(cfg: Config, db: str) -> list[tuple]:
     with connect(cfg.urls, db) as conn:
         return conn.execute(
-            "SELECT p.pid, c.relname, p.phase, p.blocks_total, p.blocks_done, p.lockers_total, p.lockers_done "
-            "FROM pg_stat_progress_create_index p LEFT JOIN pg_class c ON c.oid = p.index_relid"
+            "SELECT p.pid, c.relname, p.phase, p.blocks_total, p.blocks_done, p.lockers_total, p.lockers_done, a.backend_start "
+            "FROM pg_stat_progress_create_index p LEFT JOIN pg_class c ON c.oid = p.index_relid "
+            "LEFT JOIN pg_stat_activity a ON a.pid = p.pid"
         ).fetchall()
 
 
@@ -413,10 +416,15 @@ def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "terminate", "
                     return bool(rows) and rows[0][3] > 0 and rows[0][4] >= rows[0][3] * 0.25
 
                 _wait_for(_building, run, "the first large build to pass 25% of its table scan", cfg.step_timeout)
-                pid = next(r[0] for r in _progress(cfg, db) if r[1] == FIRST_INDEX)
+                build = next(r for r in _progress(cfg, db) if r[1] == FIRST_INDEX)
+                pid, backend_start = build[0], build[7]
                 interrupted_at = time.time()
                 if variant in ("cancel", "terminate"):
-                    signal_backend(cfg.urls, pid, variant)  # refuses any backend that is not on a fkbench_* database
+                    # Exact identity: this clone, this run's owner tag, this pid AND its backend_start, the application role, a CREATE INDEX
+                    signal_backend(
+                        cfg.urls, pid=pid, backend_start=backend_start, database=db, owner=cfg.run_id, kind=variant,
+                        username=make_url(cfg.urls.app).username, query_prefix="CREATE INDEX",
+                    )
                 else:
                     run.proc.kill()  # the client dies without telling the server
                 if variant == "kill_client":
