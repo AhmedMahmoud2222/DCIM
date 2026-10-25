@@ -217,3 +217,36 @@ test("navigation groups are keyboard disclosure buttons that keep the current pa
   await expect(monitoring).toHaveAttribute("aria-expanded", "true");
   await expect(nav.getByRole("link", { name: "Events", exact: true })).toHaveAttribute("aria-current", "page");
 });
+
+test("dashboard sections come in priority order, settle out of loading, and fit desktop and phone widths", async ({ page }) => {
+  await signIn(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Operations overview" })).toBeVisible();
+
+  const ids = ["alarms", "exceptions", "collectors", "inventory"];
+  await expect(page.locator("[data-section]")).toHaveCount(4);
+  expect(await page.locator("[data-section]").evaluateAll((els) => els.map((el) => el.getAttribute("data-section")))).toEqual(ids);
+
+  // Every section ends in a deliberate state. An unfinished load or a failed request is not acceptable here,
+  // and "restricted" means the signed-in user lacks that permission, not that the data is zero.
+  for (const id of ids) {
+    await expect(page.locator(`[data-section="${id}"]`)).toHaveAttribute("data-state", /^(ready|empty|restricted)$/, { timeout: 15_000 });
+  }
+
+  const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+
+  // Desktop: alarms and exceptions share a row, alarms first and wider.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const alarms = (await page.locator('[data-section="alarms"]').boundingBox())!;
+  const exceptions = (await page.locator('[data-section="exceptions"]').boundingBox())!;
+  expect(alarms.x).toBeLessThan(exceptions.x);
+  expect(Math.abs(alarms.y - exceptions.y)).toBeLessThan(2);
+  expect(alarms.width).toBeGreaterThan(exceptions.width);
+  expect(await noSideways()).toBe(true);
+
+  // Phone: one column in the same order, and the page itself never scrolls sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const phoneAlarms = (await page.locator('[data-section="alarms"]').boundingBox())!;
+  const phoneExceptions = (await page.locator('[data-section="exceptions"]').boundingBox())!;
+  expect(phoneExceptions.y).toBeGreaterThanOrEqual(phoneAlarms.y + phoneAlarms.height - 1);
+  expect(await noSideways()).toBe(true);
+});
