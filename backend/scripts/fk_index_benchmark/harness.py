@@ -14,7 +14,6 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 import psycopg
@@ -48,8 +47,18 @@ class Urls:
         url = make_url(self.admin if admin else self.app).set(database=db, drivername="postgresql")
         return url.render_as_string(hide_password=False)
 
-    def sa_url(self, db: str) -> str:
-        return make_url(self.app).set(database=db).render_as_string(hide_password=False)
+    def sa_url(self, db: str, *, host: str | None = None, port: int | None = None) -> str:
+        url = make_url(self.app).set(database=db)
+        if host is not None:
+            url = url.set(host=host)
+        if port is not None:
+            url = url.set(port=port)
+        return url.render_as_string(hide_password=False)
+
+    @property
+    def server_address(self) -> tuple[str, int]:
+        url = make_url(self.app)
+        return url.host or "localhost", url.port or 5432
 
 
 def connect(urls: Urls, db: str, *, autocommit: bool = True, app_role: bool = False) -> psycopg.Connection:
@@ -85,47 +94,6 @@ def drop_db(urls: Urls, name: str, *, owner: str) -> None:
         conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
-def signal_backend(
-    urls: Urls,
-    *,
-    pid: int,
-    backend_start: datetime,
-    database: str,
-    owner: str,
-    kind: str,
-    username: str | None = None,
-    query_prefix: str | None = None,
-) -> None:
-    """Cancel or terminate ONE specific backend, but only if it is provably the intended benchmark session.
-
-    The caller supplies the identity it expects: the exact database name (taken from its own bookkeeping, not read back from
-    the server), the owner tag of this run, the pid AND the `backend_start` it observed for that pid, and optionally the role
-    and a statement prefix. Verification and signalling are ONE statement over one `pg_stat_activity` snapshot, so there is no
-    separate check-then-act gap in this client; and because `backend_start` is pinned, a pid that was recycled for a different
-    session cannot match. Anything missing, stale or different (including metadata this role is not allowed to see, which reads
-    as NULL) refuses the signal and signals nothing.
-    """
-    if kind not in ("cancel", "terminate"):
-        raise ValueError(kind)
-    if not database.startswith(OWN_PREFIX):
-        raise UnsafeTarget(f"refusing to signal pid {pid}: {database!r} is not a {OWN_PREFIX}* database.")
-    function = {"cancel": "pg_cancel_backend", "terminate": "pg_terminate_backend"}[kind]
-    with connect(urls, "postgres") as conn:
-        rows = conn.execute(
-            f"SELECT {function}(a.pid) FROM pg_stat_activity a JOIN pg_database d ON d.datname = a.datname "
-            "WHERE a.pid = %(pid)s AND a.backend_start = %(start)s AND a.datname = %(db)s AND d.datname = %(db)s "
-            "AND shobj_description(d.oid, 'pg_database') = %(tag)s "
-            "AND (%(user)s::text IS NULL OR a.usename = %(user)s::text) "
-            "AND (%(prefix)s::text IS NULL OR a.query ILIKE %(prefix)s::text || '%%')",
-            {"pid": pid, "start": backend_start, "db": database, "tag": f"{OWNER_TAG}{owner}", "user": username, "prefix": query_prefix},
-        ).fetchall()
-    if len(rows) != 1 or rows[0][0] is not True:
-        raise UnsafeTarget(
-            f"refusing to signal pid {pid}: it is not (or no longer) the expected session on database {database!r} owned by this run "
-            "(stale or recycled pid, different database, owner tag, role or statement, or metadata not visible). Nothing was signalled."
-        )
-
-
 def db_exists(urls: Urls, name: str) -> bool:
     with connect(urls, "postgres") as conn:
         return conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone() is not None
@@ -134,14 +102,14 @@ def db_exists(urls: Urls, name: str) -> bool:
 class AlembicRun:
     """One `alembic <args>` subprocess against `db`, started non-blocking so scenarios can act while it runs."""
 
-    def __init__(self, urls: Urls, db: str, *args: str):
+    def __init__(self, urls: Urls, db: str, *args: str, via: tuple[str, int] | None = None):
         self._log = tempfile.NamedTemporaryFile("w+", suffix=".alembic.log", delete=False)  # noqa: SIM115
         self.args = args
         self.started = time.time()
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "alembic", *args],
             cwd=BACKEND_DIR,
-            env={**os.environ, "DATABASE_URL": urls.sa_url(db)},
+            env={**os.environ, "DATABASE_URL": urls.sa_url(db, host=via[0], port=via[1]) if via else urls.sa_url(db)},
             stdout=self._log,
             stderr=subprocess.STDOUT,
             text=True,
@@ -265,7 +233,7 @@ def integrity(urls: Urls, db: str, previous_oids: dict[str, int] | None = None) 
         "present": len(verdict["oids"]),
         "valid_and_ready": len(INDEX_NAMES) - len(bad),  # exactly the indexes with NO defect of any kind
         "defects": verdict["defects"],
-        "invalid_named": sorted(d["index"] for d in verdict["defects"] if d["kind"] in ("invalid", "not_ready", "not_live")),
+        "invalid_named": sorted({d["index"] for d in verdict["defects"] if d["kind"] in ("invalid", "not_ready", "not_live")}),
         "missing": sorted(d["index"] for d in verdict["defects"] if d["kind"] == "missing"),
         "invalid_anywhere": invalid_any,
         "advisory_locks_held": advisory,

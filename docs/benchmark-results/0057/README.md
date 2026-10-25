@@ -20,3 +20,14 @@ that more repeats, a quieter machine and a longer settle are needed before any i
 
 Invariants held in every run, including all 22 indexes matching their complete expected definition after upgrade, downgrade
 atomicity and re-upgrade.
+
+## What these older reports do not contain
+
+* The 2026-10-25 `fk`/`service` report was generated before per-repeat retention existed. Only the last repeat (repeat 2) has full
+  baseline/during/after detail; for repeat 1 only the metric values listed under "Repeat runs" were kept. **Repeat 1's
+  post-upgrade (after-migration) latency percentiles were never recorded and have not been reconstructed.** Without them the
+  question "did latency stay high after the migration in both repeats" cannot be answered from this report.
+* All three reports predate the measurement-scope labels. Their WAL, I/O and temp figures are PostgreSQL instance-wide or
+  database-scoped counters (not migration-only values) and should be read that way; the first two also predate host metrics.
+* The cancellation scenario in the 1M and 10M `raw` reports used the since-removed PID-only `pg_cancel_backend` /
+  `pg_terminate_backend` calls. That mechanism is no longer used by the framework (see the benchmark document).

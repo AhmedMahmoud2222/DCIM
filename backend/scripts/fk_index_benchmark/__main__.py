@@ -88,14 +88,69 @@ def _dig(obj, path):
     return obj
 
 
-def aggregate(name: str, runs: list[dict]) -> dict:
-    """Last run's detail, plus per-metric min/median/max across repeats and invariants that must hold in EVERY run."""
+def _na(reason: str) -> dict:
+    return {"available": False, "reason": reason}
+
+
+def _val(run: dict, path: tuple):
+    """A recorded value, or an explicit marker that it is unavailable. Never a reconstruction or a default."""
+    try:
+        value = _dig(run, path)
+    except (KeyError, TypeError, IndexError):
+        return _na("not present in this run's data")
+    return _na("no successful operations in this window") if value is None else value
+
+
+def _window(run: dict, path: tuple) -> dict:
+    return {
+        "p50_ms": _val(run, (*path, "write", "p50_ms")),
+        "p95_ms": _val(run, (*path, "write", "p95_ms")),
+        "p99_ms": _val(run, (*path, "write", "p99_ms")),
+        "writes_completed": _val(run, (*path, "write", "completed")),
+        "writes_failed": _val(run, (*path, "write", "failed")),
+        "write_rows_per_second": _val(run, (*path, "write", "rows_per_second")),
+    }
+
+
+def repeat_detail(name: str, run: dict, index: int, breaches: list[dict]) -> dict:
+    """Everything worth keeping about ONE repeat, so a later repeat cannot overwrite an earlier one."""
+    detail: dict = {"run": index, "invariants": dict(run.get("invariants", {})), "threshold_breaches": breaches}
+    if name == "s1_s5":
+        detail["windows"] = {
+            "baseline": _window(run, ("baseline_ingest",)),
+            "during_upgrade": _window(run, ("upgrade_under_ingest", "ingest_during")),
+            "after_upgrade": _window(run, ("upgrade_under_ingest", "ingest_after")),
+        }
+        detail["migration_seconds"] = {
+            "upgrade": _val(run, ("upgrade_under_ingest", "wall_seconds")),
+            "downgrade": _val(run, ("downgrade_under_ingest", "wall_seconds")),
+            "reupgrade": _val(run, ("reupgrade_under_ingest", "wall_seconds")),
+        }
+    elif name == "s2":
+        detail["migration_seconds"] = {"upgrade": _val(run, ("upgrade_idle", "wall_seconds"))}
+        detail["wal_bytes_postgres_instance_wide"] = _val(run, ("upgrade_idle", "resources_delta", "wal_bytes"))
+    elif name == "s3":
+        detail["windows"] = {"while_build_waited": _window(run, ("ingest_while_build_waited",))}
+        detail["seconds_from_release_to_finish"] = _val(run, ("seconds_from_release_to_finish",))
+    elif name == "s4":
+        detail["variants"] = {
+            v: {"seconds_from_interrupt_to_recovered": _val(run, (v, "seconds_from_interrupt_to_recovered"))}
+            for v in run
+            if isinstance(run[v], dict) and "exit_code_of_interrupted_run" in run[v]
+        }
+    return detail
+
+
+def aggregate(name: str, runs: list[dict], run_breaches: list[list[dict]] | None = None) -> dict:
+    """Last run's detail, EVERY repeat's own figures (`repeat_details`), min/median/max summaries, and invariants that hold in every run."""
+    run_breaches = run_breaches or [[] for _ in runs]
     merged = dict(runs[-1])
     merged["invariants"] = {k: all(r["invariants"][k] for r in runs) for k in runs[-1]["invariants"]}
     merged["repeats"] = len(runs)
+    merged["repeat_details"] = [repeat_detail(name, r, i + 1, run_breaches[i]) for i, r in enumerate(runs)]
     metrics = {}
     for label, path in KEY_METRICS.get(name, {}).items():
-        values = [v for v in (_dig(r, path) for r in runs) if v is not None]
+        values = [v for v in (_val(r, path) for r in runs) if not isinstance(v, dict)]
         if values:
             metrics[label] = {"values": values, "min": min(values), "median": statistics.median(values), "max": max(values)}
     merged["repeat_metrics"] = metrics
@@ -172,14 +227,17 @@ def main(argv: list[str] | None = None) -> int:
         breaches: list[dict] = []
         for name in args.scenarios:
             runs = []
+            per_run_breaches: list[list[dict]] = []
             for i in range(args.repeats):
                 say(f"=== scenario {name} (run {i + 1}/{args.repeats}) ===")
                 started = time.time()
                 run = SCENARIOS[name](cfg)
                 run["scenario_wall_seconds"] = round(time.time() - started, 1)
                 runs.append(run)
-                breaches += [{**b, "run": i + 1} for b in evaluate_thresholds({name: run}, cfg.thresholds)]
-            results[name] = aggregate(name, runs)
+                this_run = [{**b, "run": i + 1} for b in evaluate_thresholds({name: run}, cfg.thresholds)]
+                per_run_breaches.append(this_run)
+                breaches += this_run
+            results[name] = aggregate(name, runs, per_run_breaches)
     except UnsafeTarget as exc:
         print(f"[bench] {exc}", file=sys.stderr)
         return 2

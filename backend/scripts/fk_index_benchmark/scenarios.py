@@ -13,9 +13,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy.engine.url import make_url
-
 from . import data
+from .cancel import NoBackendKey, PgProxy
 from .harness import (
     HEAD,
     INDEX_NAMES,
@@ -28,10 +27,9 @@ from .harness import (
     drop_db,
     index_sizes,
     integrity,
-    signal_backend,
 )
 from .resources import StatementTimer
-from .sampler import Sampler, delta, snapshot
+from .sampler import ATTRIBUTION_NOTE, METRIC_SCOPES, Sampler, delta, snapshot
 from .workload import Workload
 
 FIRST_INDEX = "ix_telemetry_reading_mapping_id"
@@ -216,6 +214,8 @@ def _run_view(r: MigrationRun) -> dict:
         "exit_code": r.rc,
         "wall_seconds": r.seconds,
         "resources_delta": r.resources,
+        "resource_scopes": {k: METRIC_SCOPES[k] for k in r.resources},
+        "attribution_note": ATTRIBUTION_NOTE,
         "peak_database_bytes": r.peak_db_bytes,
         "lock_modes_seen_on_target_tables": r.locks,
         "builds": _build_summary(r),
@@ -301,7 +301,7 @@ def s1_upgrade_under_ingest_and_s5_downgrade(cfg: Config) -> dict:
 
 
 def s2_idle_upgrade(cfg: Config) -> dict:
-    """S2/S6: the same upgrade with no concurrent load, so WAL, temp and size figures are attributable to the build alone."""
+    """S2/S6: the same upgrade with no concurrent ingest, so the load is as small as this harness can make it. WAL and I/O are still instance-wide counters (see sampler.ATTRIBUTION_NOTE); they are upper bounds on the migration's cost, not migration-only values."""
     started = time.time()
     with Clone(cfg, "s2") as db:
         up = run_upgrade(cfg, db)
@@ -400,15 +400,28 @@ def s3_old_snapshot_blocker(cfg: Config) -> dict:
     }
 
 
-def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "terminate", "kill_client")) -> dict:
-    """Interrupt the large-table build three ways, then prove a plain re-run recovers."""
-    out: dict = {}
+TERMINATE_UNAVAILABLE = (
+    "not run: PostgreSQL offers no authenticated way to terminate a backend. pg_terminate_backend(pid) is PID-only and "
+    "pg_signal_backend() cannot close its own lookup-to-kill window (see cancel.py), so this scenario is disabled rather than run "
+    "with a weaker guarantee. The kill_client variant still exercises an abruptly lost client, using a process this run owns."
+)
+
+
+def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "kill_client")) -> dict:
+    """Interrupt the large-table build, then prove a plain re-run recovers.
+
+    cancel: a protocol CancelRequest carrying the migration connection's own BackendKeyData (the connection is relayed through
+    PgProxy so its key is known). kill_client: SIGKILL of the alembic child process this run started. There is no PID-only
+    signalling anywhere, and no terminate variant (TERMINATE_UNAVAILABLE).
+    """
+    out: dict = {"terminate": {"status": "not_run", "reason": TERMINATE_UNAVAILABLE}}
     invariants: dict = {}
     started = time.time()
     migration_seconds = 0.0
     for variant in variants:
         with Clone(cfg, f"s4{variant[:3]}") as db:
-            run = AlembicRun(cfg.urls, db, "upgrade", "head")
+            proxy = PgProxy(*cfg.urls.server_address) if variant == "cancel" else None
+            run = AlembicRun(cfg.urls, db, "upgrade", "head", via=(proxy.host, proxy.port) if proxy else None)
             try:
 
                 def _building() -> bool:
@@ -416,17 +429,18 @@ def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "terminate", "
                     return bool(rows) and rows[0][3] > 0 and rows[0][4] >= rows[0][3] * 0.25
 
                 _wait_for(_building, run, "the first large build to pass 25% of its table scan", cfg.step_timeout)
-                build = next(r for r in _progress(cfg, db) if r[1] == FIRST_INDEX)
-                pid, backend_start = build[0], build[7]
+                build_pid = next(r[0] for r in _progress(cfg, db) if r[1] == FIRST_INDEX)
                 interrupted_at = time.time()
-                if variant in ("cancel", "terminate"):
-                    # Exact identity: this clone, this run's owner tag, this pid AND its backend_start, the application role, a CREATE INDEX
-                    signal_backend(
-                        cfg.urls, pid=pid, backend_start=backend_start, database=db, owner=cfg.run_id, kind=variant,
-                        username=make_url(cfg.urls.app).username, query_prefix="CREATE INDEX",
-                    )
+                if variant == "cancel":
+                    try:
+                        key = proxy.only_key(timeout=10)
+                    except NoBackendKey as exc:
+                        raise RuntimeError(f"cannot cancel safely, scenario aborted: {exc}") from exc
+                    if key.pid != build_pid:  # the proxied connection must be the one running the build
+                        raise RuntimeError(f"proxied connection (pid {key.pid}) is not the building backend (pid {build_pid}); not cancelling")
+                    proxy.cancel(key)
                 else:
-                    run.proc.kill()  # the client dies without telling the server
+                    run.proc.kill()  # the client dies without telling the server (a process this run started)
                 if variant == "kill_client":
                     run.proc.wait()
                     run.ended = run.ended or time.time()
@@ -441,6 +455,8 @@ def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "terminate", "
                 if run.poll() is None:
                     run.proc.kill()
                 run.cleanup()
+                if proxy is not None:
+                    proxy.close()
             with connect(cfg.urls, db) as conn:
                 leftover_locks = conn.execute(
                     "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = ANY(%s) AND l.pid <> pg_backend_pid()",
@@ -451,6 +467,7 @@ def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "terminate", "
             migration_seconds += rerun.seconds
             final = integrity(cfg.urls, db)
         out[variant] = {
+            "mechanism": "protocol CancelRequest with the migration connection's own BackendKeyData" if variant == "cancel" else "SIGKILL of the alembic child process started by this run",
             "exit_code_of_interrupted_run": interrupted_rc,
             "state_after_interrupt": {k: v for k, v in after_interrupt.items() if k != "oids"},
             "locks_left_on_target_tables": leftover_locks,

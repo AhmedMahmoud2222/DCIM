@@ -121,6 +121,7 @@ class ResourceProbe:
                 "lock_waits": True,
                 "disk_io_throughput": False,  # not exposed reliably from the client; PostgreSQL's own pg_stat_io deltas are reported instead
             },
+            "metric_scope": "host_vm for cpu, memory, swap, pressure and disk; this database for lock_waits",
             "scope_note": "figures come from /proc of the benchmark client's kernel; in the Docker Desktop/WSL2 setup that is the VM shared with PostgreSQL",
             "cpu_percent_vm": None if not self.cpu else {"mean": round(sum(self.cpu) / len(self.cpu), 1), "max": round(max(self.cpu), 1)},
             "memory_available_mib": span(self.mem_available, 1024 * 1024),

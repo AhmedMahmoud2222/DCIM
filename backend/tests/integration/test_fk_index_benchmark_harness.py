@@ -13,11 +13,15 @@ the harness itself is sound at a few thousand rows:
 
 from __future__ import annotations
 
-import contextlib
+import ast
+import json
+import pathlib
+import re
+import socket
+import struct
 import threading
 import time
 import uuid
-from datetime import timedelta
 
 import psycopg
 import pytest
@@ -25,6 +29,9 @@ from sqlalchemy.engine.url import make_url
 
 from scripts.fk_index_benchmark import __main__ as bench_main
 from scripts.fk_index_benchmark import data, report, scenarios
+from scripts.fk_index_benchmark import harness as harness_module
+from scripts.fk_index_benchmark import sampler as sampler_module
+from scripts.fk_index_benchmark.cancel import BackendKey, NoBackendKey, PgProxy, send_cancel_request
 from scripts.fk_index_benchmark.harness import (
     FK_INDEXES,
     HEAD,
@@ -36,7 +43,6 @@ from scripts.fk_index_benchmark.harness import (
     create_db,
     drop_db,
     integrity,
-    signal_backend,
     verify_indexes,
 )
 from scripts.fk_index_benchmark.safety import MARKER_PREFIX, OWNER_TAG, Authorization, UnsafeTarget, verify_target
@@ -193,36 +199,6 @@ def test_create_db_refuses_names_outside_the_fkbench_namespace(urls):
         create_db(urls, f"production_{uuid.uuid4().hex[:6]}", owner=RUN)
 
 
-@contextlib.contextmanager
-def _signal_fixture(urls: Urls):
-    """Databases A, B (owned by this run), C (fkbench_ but tagged for another run), D (fkbench_ but untagged), plus a bystander
-    session on each and on `postgres`. Yields (names, bystanders); every database is dropped afterwards."""
-    suffix = uuid.uuid4().hex[:6]
-    a, b = f"fkbench_ci_sig_a_{suffix}", f"fkbench_ci_sig_b_{suffix}"
-    c, d = f"fkbench_ci_sig_c_{suffix}", f"fkbench_ci_sig_d_{suffix}"
-    create_db(urls, a, owner=RUN)
-    create_db(urls, b, owner=RUN)
-    with connect(urls, "postgres") as conn:
-        conn.execute(f'CREATE DATABASE "{c}"')
-        conn.execute(f"COMMENT ON DATABASE \"{c}\" IS '{OWNER_TAG}another-run'")
-        conn.execute(f'CREATE DATABASE "{d}"')
-    sessions: dict[str, psycopg.Connection] = {}
-    try:
-        for label, db in (("a", a), ("b", b), ("c", c), ("d", d), ("postgres", "postgres")):
-            sessions[label] = psycopg.connect(urls.conninfo(db), autocommit=True)
-        yield {"a": a, "b": b, "c": c, "d": d}, sessions
-    finally:
-        for conn in sessions.values():
-            conn.close()
-        with connect(urls, "postgres") as conn:
-            for name in (a, b, c, d):
-                conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-
-
-def _identity(conn: psycopg.Connection):
-    return conn.info.backend_pid, conn.execute("SELECT backend_start FROM pg_stat_activity WHERE pid = pg_backend_pid()").fetchone()[0]
-
-
 def _alive(conn: psycopg.Connection) -> bool:
     try:
         return not conn.closed and conn.execute("SELECT 1").fetchone() == (1,)
@@ -230,90 +206,154 @@ def _alive(conn: psycopg.Connection) -> bool:
         return False
 
 
-def _admin_user(urls: Urls) -> str:
-    return make_url(urls.admin).username
-
-
-def test_signal_backend_cancels_and_terminates_only_the_exactly_authorized_session(urls):
-    with _signal_fixture(urls) as (names, sessions):
-        victim_cancel = psycopg.connect(urls.conninfo(names["a"]), autocommit=True)
-        victim_term = psycopg.connect(urls.conninfo(names["a"]), autocommit=True)
-        try:
-            outcome: dict = {}
-
-            def long_query():
-                try:
-                    victim_cancel.execute("SELECT pg_sleep(60)")
-                    outcome["result"] = "finished"
-                except psycopg.errors.QueryCanceled:
-                    outcome["result"] = "cancelled"
-
-            pid, start = _identity(victim_cancel)
-            worker = threading.Thread(target=long_query)
-            worker.start()
-            deadline = time.time() + 30
-            while time.time() < deadline:  # wait until the sleep is observably running, then cancel it
-                with connect(urls, "postgres") as conn:
-                    if conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s AND query LIKE 'SELECT pg_sleep%%' AND state = 'active'", (pid,)).fetchone():
-                        break
-                time.sleep(0.05)
-            signal_backend(urls, pid=pid, backend_start=start, database=names["a"], owner=RUN, kind="cancel", username=_admin_user(urls), query_prefix="SELECT pg_sleep")
-            worker.join(timeout=30)
-            assert outcome.get("result") == "cancelled" and _alive(victim_cancel), "cancel must stop the statement but keep the session"
-
-            tpid, tstart = _identity(victim_term)
-            signal_backend(urls, pid=tpid, backend_start=tstart, database=names["a"], owner=RUN, kind="terminate", username=_admin_user(urls))
-            deadline = time.time() + 30
-            while time.time() < deadline and _alive(victim_term):
-                time.sleep(0.05)
-            assert not _alive(victim_term), "terminate must end the authorized session"
-            assert all(_alive(c) for c in sessions.values()), "no bystander session may be affected by an authorized signal"
-        finally:
-            victim_cancel.close()
-            victim_term.close()
-
-
-def test_signal_backend_refuses_anything_but_the_exact_expected_session_and_signals_nothing(urls):
-    with _signal_fixture(urls) as (names, sessions):
-        user = _admin_user(urls)
-        a_pid, a_start = _identity(sessions["a"])
-        stale = psycopg.connect(urls.conninfo(names["a"]), autocommit=True)
-        stale_pid, stale_start = _identity(stale)
-        stale.close()
-        deadline = time.time() + 30
-        while time.time() < deadline:  # wait for the server to forget the closed session
-            with connect(urls, "postgres") as conn:
-                if conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s", (stale_pid,)).fetchone() is None:
-                    break
+def _wait_sleeping(urls: Urls, pid: int) -> None:
+    """Block (bounded) until `pid` is observably inside pg_sleep."""
+    deadline = time.time() + 30
+    with connect(urls, "postgres") as conn:
+        while time.time() < deadline:
+            if conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s AND state = 'active' AND query LIKE 'SELECT pg_sleep%%'", (pid,)).fetchone():
+                return
             time.sleep(0.05)
-        good = {"owner": RUN, "username": user}
-        cases = {
-            "session on postgres, caller names postgres": dict(sessions_key="postgres", pid_of="postgres", database="postgres", **good),
-            "session on postgres, caller claims database A": dict(sessions_key="postgres", pid_of="postgres", database=names["a"], **good),
-            "session on another fkbench_ database (B), caller expects A": dict(sessions_key="b", pid_of="b", database=names["a"], **good),
-            "session on a foreign-tagged fkbench_ database (C)": dict(sessions_key="c", pid_of="c", database=names["c"], **good),
-            "session on an untagged fkbench_ database (D)": dict(sessions_key="d", pid_of="d", database=names["d"], **good),
-            "correct session, incorrect owner tag": dict(sessions_key="a", pid_of="a", database=names["a"], owner="some-other-run", username=user),
-            "correct session, changed identity (wrong backend_start)": dict(sessions_key="a", pid_of="a", database=names["a"], backend_start=a_start - timedelta(seconds=5), **good),
-            "correct session, unexpected role": dict(sessions_key="a", pid_of="a", database=names["a"], owner=RUN, username="nobody"),
-            "correct session, unexpected statement": dict(sessions_key="a", pid_of="a", database=names["a"], query_prefix="CREATE INDEX", **good),
-            "stale pid (session already closed)": dict(sessions_key=None, pid=stale_pid, backend_start=stale_start, database=names["a"], **good),
-            "nonexistent pid": dict(sessions_key=None, pid=2_000_000_000, backend_start=a_start, database=names["a"], **good),
-            "database outside the fkbench_ namespace": dict(sessions_key="postgres", pid_of="postgres", database="postgres", **good),
-        }
-        for label, case in cases.items():
-            case = dict(case)
-            case.pop("sessions_key")
-            owner_of = case.pop("pid_of", None)
-            if owner_of is not None:
-                pid, start = _identity(sessions[owner_of])
-                case.setdefault("pid", pid)
-                case.setdefault("backend_start", start)
-            for kind in ("cancel", "terminate"):
-                with pytest.raises(UnsafeTarget, match="refusing to signal"):
-                    signal_backend(urls, kind=kind, **case)
-            assert all(_alive(c) for c in sessions.values()), f"{label}: a refusal must not signal any session"
-        assert _identity(sessions["a"]) == (a_pid, a_start)
+    raise AssertionError("session never started sleeping")
+
+
+def _sleeper(conn: psycopg.Connection, outcome: dict) -> threading.Thread:
+    def run():
+        try:
+            conn.execute("SELECT pg_sleep(60)")
+            outcome["result"] = "finished"
+        except psycopg.errors.QueryCanceled:
+            outcome["result"] = "cancelled"
+        except psycopg.Error as exc:
+            outcome["result"] = f"error: {type(exc).__name__}"
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_no_pid_only_signalling_exists_anywhere_in_the_benchmark():
+    """pg_cancel_backend / pg_terminate_backend / pg_signal_backend are PID-only and cannot be made race-free (see cancel.py).
+    No executable string may call them (including f-strings that assemble the name), and no function may exist to wrap them.
+    Explanatory prose and docstrings may mention them."""
+    package = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "fk_index_benchmark"
+    names = re.compile(r"pg_(?:cancel|terminate|signal)_backend")
+    sql_use = re.compile(r"^\s*SELECT\s+pg_(?:cancel|terminate|signal)_backend|pg_(?:cancel|terminate|signal)_backend\s*\(\s*(?:%|\w+\.pid|\d)")
+    offenders = []
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if names.fullmatch(node.value) or sql_use.search(node.value) or node.value.rstrip().endswith("SELECT pg_") or node.value.startswith("_backend("):
+                    offenders.append(f"{path.name}:{node.lineno}: {node.value[:60]!r}")
+            if isinstance(node, ast.JoinedStr) and re.search(r"pg_\{[^}]*\}_backend|\{[^}]*\}\(a\.pid\)", ast.unparse(node)):
+                offenders.append(f"{path.name}:{node.lineno}: f-string builds a backend-signalling call")
+            if isinstance(node, ast.FunctionDef) and node.name in ("signal_backend", "kill_pid", "terminate_backend", "cancel_backend"):
+                offenders.append(f"{path.name}:{node.lineno}: function {node.name}")
+    assert offenders == [], offenders
+    assert not hasattr(harness_module, "signal_backend"), "the PID-only signalling function must not exist"
+
+
+def test_the_pid_only_guard_would_catch_the_previous_implementation():
+    """Mutation check of the guard itself: the previous implementation's constructs must be flagged by the same patterns."""
+    previous = """
+def signal_backend(urls, pid, kind):
+    function = {"cancel": "pg_cancel_backend", "terminate": "pg_terminate_backend"}[kind]
+    conn.execute(f"SELECT {function}(a.pid) FROM pg_stat_activity a")
+    conn.execute(f"SELECT pg_{kind}_backend(%s)", (pid,))
+"""
+    tree = ast.parse(previous)
+    names = re.compile(r"pg_(?:cancel|terminate|signal)_backend")
+    hits = [n for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and names.fullmatch(n.value)]
+    joined = [n for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) and re.search(r"pg_\{[^}]*\}_backend|\{[^}]*\}\(a\.pid\)", ast.unparse(n))]
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "signal_backend"]
+    assert len(hits) == 2 and len(joined) == 2 and len(funcs) == 1
+
+
+def test_proxy_reads_the_backend_key_and_a_key_authenticated_cancel_stops_only_that_session(urls):
+    with PgProxy(*urls.server_address) as proxy:
+        target = psycopg.connect(host=proxy.host, port=proxy.port, dbname="postgres", user=make_url(urls.admin).username, password=make_url(urls.admin).password, autocommit=True)  # via the relay
+        bystander = psycopg.connect(urls.conninfo("postgres"), autocommit=True)  # direct, never seen by the relay
+        try:
+            key = proxy.only_key(timeout=10)
+            assert key.pid == target.info.backend_pid, "the key must belong to the proxied connection"
+            assert key.pid != bystander.info.backend_pid
+            t_out, b_out = {}, {}
+            t_thread, b_thread = _sleeper(target, t_out), _sleeper(bystander, b_out)
+            _wait_sleeping(urls, target.info.backend_pid)
+            _wait_sleeping(urls, bystander.info.backend_pid)
+            proxy.cancel(key)
+            t_thread.join(timeout=30)
+            assert t_out.get("result") == "cancelled" and _alive(target), "the key-authenticated cancel must stop the proxied statement"
+            time.sleep(0.5)
+            assert "result" not in b_out, "the unrelated session must not be affected by another connection's cancel"
+            bystander.cancel_safe()  # clean up through psycopg's own authenticated cancel of its own connection
+            b_thread.join(timeout=30)
+        finally:
+            target.close()
+            bystander.close()
+
+
+def test_a_pid_without_the_right_key_cannot_target_an_unrelated_session(urls):
+    with PgProxy(*urls.server_address) as proxy:
+        proxied = psycopg.connect(host=proxy.host, port=proxy.port, dbname="postgres", user=make_url(urls.admin).username, password=make_url(urls.admin).password, autocommit=True)
+        victim = psycopg.connect(urls.conninfo("postgres"), autocommit=True)
+        try:
+            real = proxy.only_key(timeout=10)
+            victim_pid = victim.info.backend_pid
+            out: dict = {}
+            thread = _sleeper(victim, out)
+            _wait_sleeping(urls, victim_pid)
+            host, port = urls.server_address
+            # Deliberately target the victim's PID with every wrong secret we can think of, including another session's real key.
+            for guess in (0, 1, real.secret, real.secret + 1, -1):
+                send_cancel_request(host, port, BackendKey(victim_pid, guess))
+            time.sleep(1.0)
+            assert "result" not in out and _alive(proxied), "a CancelRequest with the wrong key must be ignored by PostgreSQL"
+            with connect(urls, "postgres") as conn:
+                assert conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s AND state = 'active'", (victim_pid,)).fetchone()
+            victim.cancel_safe()
+            thread.join(timeout=30)
+            assert out.get("result") == "cancelled", "the victim's own authenticated cancel still works"
+        finally:
+            proxied.close()
+            victim.close()
+
+
+def test_proxy_refuses_to_pick_among_connections_and_flags_tls():
+    # TLS: a server that answers the SSLRequest with 'S' makes the stream opaque, so no key can be read and cancel is refused.
+    fake = socket.socket()
+    fake.bind(("127.0.0.1", 0))
+    fake.listen(1)
+
+    def serve():
+        conn, _ = fake.accept()
+        conn.recv(8)
+        conn.sendall(b"S")
+        time.sleep(0.5)
+        conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    with PgProxy("127.0.0.1", fake.getsockname()[1]) as proxy:
+        with socket.create_connection((proxy.host, proxy.port)) as client:
+            client.sendall(struct.pack("!ii", 8, 80877103))
+            assert client.recv(1) == b"S"
+        with pytest.raises(NoBackendKey, match="TLS"):
+            proxy.only_key(timeout=5)
+    fake.close()
+
+
+def test_proxy_refuses_to_guess_when_several_connections_are_proxied(urls):
+    with PgProxy(*urls.server_address) as proxy:
+        creds = dict(dbname="postgres", user=make_url(urls.admin).username, password=make_url(urls.admin).password, autocommit=True)
+        a = psycopg.connect(host=proxy.host, port=proxy.port, **creds)
+        b = psycopg.connect(host=proxy.host, port=proxy.port, **creds)
+        try:
+            with pytest.raises(NoBackendKey, match="refusing to pick"):
+                proxy.only_key(timeout=5)
+        finally:
+            a.close()
+            b.close()
 
 
 def test_template_with_a_foreign_owner_tag_is_never_reused_or_dropped(urls):
@@ -545,6 +585,14 @@ def test_instrumented_upgrade_reports_invariants_and_renders(urls, template):
     }
     markdown = report.render_markdown(full)
     assert "NOT YET VALIDATED" in markdown and "S2/S6" in markdown and "Metric availability" in markdown
+    # WAL and I/O are instance-wide and say so; nothing claims they are the migration's alone
+    assert result["upgrade_idle"]["resource_scopes"]["wal_bytes"] == "postgres_instance"
+    assert "other_databases_xacts" in result["upgrade_idle"]["resources_delta"]
+    wal_line = next(line for line in markdown.splitlines() if line.startswith("- WAL written during the run"))
+    assert "[PostgreSQL instance-wide]" in wal_line
+    assert "[PostgreSQL instance-wide]" in next(line for line in markdown.splitlines() if line.startswith("- I/O during the run"))
+    assert "- Attribution:" in markdown and "NOT attributable to the migration alone" in markdown
+    assert "attributable to the build alone" not in markdown and "migration-only values" not in wal_line
 
 
 def test_provisional_thresholds_flag_breaches_without_accepting_anything():
@@ -557,24 +605,24 @@ def test_provisional_thresholds_flag_breaches_without_accepting_anything():
     assert scenarios.evaluate_thresholds({"s1_s5": {**results["s1_s5"], "upgrade_under_ingest": {**run, "ingest_during": base, "wall_seconds": 1.0, "resources_delta": {"wal_bytes": 0}}}}, scenarios.Thresholds()) == []
 
 
-def _wait_for_build_phase(urls: Urls, db: str, run: AlembicRun, prefix: str):
-    """Block (bounded) until the first large build is observably in a phase starting with `prefix`; return (pid, backend_start)."""
+def _wait_for_build_phase(urls: Urls, db: str, run: AlembicRun, prefix: str) -> int:
+    """Block (bounded) until the first large build is observably in a phase starting with `prefix`; return its backend pid."""
     deadline = time.time() + STEP_TIMEOUT
     with connect(urls, db) as conn:
         while time.time() < deadline:
             row = conn.execute(
-                "SELECT p.pid, a.backend_start FROM pg_stat_progress_create_index p JOIN pg_class c ON c.oid = p.index_relid "
-                "JOIN pg_stat_activity a ON a.pid = p.pid WHERE c.relname = %s AND p.phase LIKE %s",
+                "SELECT p.pid FROM pg_stat_progress_create_index p JOIN pg_class c ON c.oid = p.index_relid "
+                "WHERE c.relname = %s AND p.phase LIKE %s",
                 (FIRST_INDEX, prefix + "%"),
             ).fetchone()
             if row:
-                return row[0], row[1]
+                return row[0]
             assert run.poll() is None, f"alembic exited early:\n{run.output()}"
             time.sleep(0.1)
     raise AssertionError(f"build never reached phase {prefix!r}\n{run.output()}")
 
 
-@pytest.mark.parametrize("interrupt", ["cancel", "terminate"])
+@pytest.mark.parametrize("interrupt", ["cancel", "kill_client"])
 def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(urls, clone, interrupt):
     """Barrier: an open transaction that wrote to telemetry_reading, so CREATE INDEX CONCURRENTLY waits for writers."""
     blocker = connect(urls, clone, autocommit=False)
@@ -583,22 +631,34 @@ def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(ur
         "INSERT INTO telemetry_reading (collector_id, integration_id, mapping_id, external_identifier, series_key, dedup_key, "
         "metric, unit, value, occurred_at, received_at) SELECT md5('c')::uuid, md5('i')::uuid, md5('m1')::uuid, 'x', 's', 'blocker', 'm', 'u', 1, now(), now()"
     )
-    run = AlembicRun(urls, clone, "upgrade", "head")
+    proxy = PgProxy(*urls.server_address) if interrupt == "cancel" else None
+    run = AlembicRun(urls, clone, "upgrade", "head", via=(proxy.host, proxy.port) if proxy else None)
     try:
-        pid, backend_start = _wait_for_build_phase(urls, clone, run, "waiting for writers")
-        signal_backend(
-            urls, pid=pid, backend_start=backend_start, database=clone, owner=RUN, kind=interrupt,
-            username=make_url(urls.app).username, query_prefix="CREATE INDEX",
-        )
-        rc = run.wait(STEP_TIMEOUT)
+        pid = _wait_for_build_phase(urls, clone, run, "waiting for writers")
+        if proxy:
+            key = proxy.only_key(timeout=10)
+            assert key.pid == pid, "the proxied connection must be the one running the build"
+            proxy.cancel(key)
+            rc = run.wait(STEP_TIMEOUT)
+        else:
+            run.proc.kill()  # a process this test started: no PID lookup involved
+            rc = run.proc.wait()
+            blocker.rollback()  # let the orphaned server-side build finish or fail, then wait for it to go away
+            deadline = time.time() + STEP_TIMEOUT
+            with connect(urls, clone) as conn:
+                while time.time() < deadline and conn.execute("SELECT count(*) FROM pg_stat_progress_create_index").fetchone()[0]:
+                    time.sleep(0.2)
     finally:
         if run.poll() is None:
             run.proc.kill()
         run.cleanup()
+        if proxy:
+            proxy.close()
     assert rc != 0, "an interrupted build must fail the migration"
     state = integrity(urls, clone)
     assert state["version"] == PREVIOUS, "alembic_version must not advance when the run was interrupted"
-    assert FIRST_INDEX in state["invalid_named"], "an interrupted concurrent build leaves an INVALID index"
+    if interrupt == "cancel":
+        assert FIRST_INDEX in state["invalid_named"], "an interrupted concurrent build leaves an INVALID index"
     assert state["advisory_locks_held"] == 0, "the migration advisory lock must be released with the connection"
 
     blocker.rollback()
@@ -607,3 +667,94 @@ def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(ur
     final = integrity(urls, clone)
     assert final["version"] == HEAD and final["valid_and_ready"] == 22 and final["defects"] == []
     assert final["invalid_anywhere"] == 0
+
+
+def test_terminate_scenario_is_explicitly_disabled_not_silently_weakened():
+    assert "terminate" not in scenarios.s4_cancellation_and_recovery.__defaults__[0]
+    assert "no authenticated way to terminate" in scenarios.TERMINATE_UNAVAILABLE
+    markdown = report.render_markdown(
+        {
+            "dataset": {"rows": 1, "lineage_rows": 1, "mappings": 1, "mode": "raw", "profile": {}},
+            "environment": {"postgres_version": "t", "runner_platform": "t", "runner_cpu_count": 1, "runner_mem_total_bytes": None, "postgres_settings": {}},
+            "workload": "none",
+            "scenarios": {"s4": {"terminate": {"status": "not_run", "reason": scenarios.TERMINATE_UNAVAILABLE}, "invariants": {}}},
+            "threshold_breaches": [],
+            "limitations": list(report.limitations("raw", "raw")),
+        }
+    )
+    assert "terminate: NOT RUN" in markdown and "PID-only" in markdown
+
+
+# -- measurement attribution (WAL / I/O scopes) -------------------------------------------------------------------------------------
+
+
+def test_every_measured_metric_declares_a_scope_and_wal_and_io_are_instance_wide(urls, clone):
+    with connect(urls, clone) as conn:
+        snap = sampler_module.snapshot(conn)
+    assert set(snap) == set(sampler_module.SNAPSHOT_KEYS)
+    for key in snap:
+        assert sampler_module.METRIC_SCOPES[key] in sampler_module.SCOPE_LABELS, key
+    for key in ("wal_bytes", "io_read_bytes", "io_write_bytes", "other_databases_xacts"):
+        assert sampler_module.METRIC_SCOPES[key] == "postgres_instance", key
+    for key in ("temp_bytes", "db_bytes"):
+        assert sampler_module.METRIC_SCOPES[key] == "database", key
+    assert all(sampler_module.METRIC_SCOPES[k] == "host_vm" for k in ("cpu_percent_vm", "memory_available_mib", "disk_free_gib"))
+    assert "NOT attributable to the migration alone" in sampler_module.ATTRIBUTION_NOTE
+
+
+# -- per-repeat retention ------------------------------------------------------------------------------------------------------------
+
+
+def _window(p50, p95, p99, ok=100, failed=0, rate=200.0):
+    return {"write": {"p50_ms": p50, "p95_ms": p95, "p99_ms": p99, "completed": ok, "failed": failed, "rows_per_second": rate}, "read": {}}
+
+
+def _s1_run(base, during, after, up=5.0, down=3.0, re_up=6.0):
+    return {
+        "baseline_ingest": base,
+        "upgrade_under_ingest": {"wall_seconds": up, "ingest_during": during, "ingest_after": after},
+        "downgrade_under_ingest": {"wall_seconds": down},
+        "reupgrade_under_ingest": {"wall_seconds": re_up},
+        "invariants": {"upgrade_exit_zero": True},
+    }
+
+
+def test_aggregate_keeps_every_repeat_and_never_reconstructs_missing_values():
+    run1 = _s1_run(_window(80, 100, 140), _window(70, 85, 93), _window(None, None, None, ok=0))  # no successful post-upgrade writes recorded
+    run2 = _s1_run(_window(79, 107, 156), _window(1214, 1934, 1958, rate=201.9), _window(723, 1900, 1929), up=8.9)
+    breach = {"scenario": "s1_s5", "metric": "ingest_p99_ratio_during_vs_baseline", "value": 12.5, "limit": 3.0, "run": 2}
+    merged = bench_main.aggregate("s1_s5", [run1, run2], [[], [breach]])
+    r1, r2 = merged["repeat_details"]
+    assert (r1["run"], r2["run"]) == (1, 2)
+    assert r1["windows"]["baseline"]["p99_ms"] == 140 and r2["windows"]["baseline"]["p99_ms"] == 156
+    assert r1["windows"]["during_upgrade"]["p99_ms"] == 93 and r2["windows"]["during_upgrade"]["p99_ms"] == 1958
+    assert r1["windows"]["after_upgrade"]["p99_ms"] == {"available": False, "reason": "no successful operations in this window"}
+    assert r2["windows"]["after_upgrade"]["p99_ms"] == 1929, "run 2's value must not leak into run 1 (nor the reverse)"
+    assert (r1["migration_seconds"]["upgrade"], r2["migration_seconds"]["upgrade"]) == (5.0, 8.9)
+    assert r1["threshold_breaches"] == [] and r2["threshold_breaches"] == [breach]
+    summary = merged["repeat_metrics"]["upgrade_wall_s"]
+    assert (summary["min"], summary["median"], summary["max"], summary["values"]) == (5.0, 6.95, 8.9, [5.0, 8.9])
+    # a metric that exists in only one repeat is summarised from the repeats that have it, and never invented for the other
+    sparse = bench_main.aggregate("s1_s5", [run1, {**run2, "downgrade_under_ingest": {}}])
+    assert sparse["repeat_details"][1]["migration_seconds"]["downgrade"] == {"available": False, "reason": "not present in this run's data"}
+    assert sparse["repeat_metrics"]["downgrade_wall_s"]["values"] == [3.0]
+
+
+def test_markdown_shows_each_repeat_and_marks_unavailable_data_explicitly():
+    run1 = _s1_run(_window(80, 100, 140), _window(70, 85, 93), _window(None, None, None, ok=0))
+    run2 = _s1_run(_window(79, 107, 156), _window(1214, 1934, 1958), _window(723, 1900, 1929), up=8.9)
+    result = bench_main.aggregate("s1_s5", [run1, run2], [[], []])
+    text = "\n".join(report._repeat_tables("s1_s5", result))
+    assert "| 1 | 5.0 |" in text and "| 2 | 8.9 |" in text
+    assert "93.0" in text or "93" in text
+    assert "n/a (no successful operations in this window)" in text, "unavailable figures are labelled, not blanked or filled"
+
+
+def test_a_historical_report_without_per_repeat_detail_is_rendered_truthfully():
+    path = pathlib.Path(__file__).resolve().parents[3] / "docs" / "benchmark-results" / "0057" / "fk_index_benchmark_1000000_20261025T090918Z.json"
+    historical = json.loads(path.read_text())
+    assert "repeat_details" not in historical["scenarios"]["s1_s5"], "this fixture must be the pre-retention report"
+    markdown = report.render_markdown(historical)
+    assert "Per-repeat detail was NOT recorded" in markdown and "not reconstructed" in markdown
+    assert "[scope not recorded]" in markdown or "PostgreSQL instance-wide" in markdown
+    assert "| run |" not in markdown, "no per-repeat table may be fabricated for a report that never recorded one"

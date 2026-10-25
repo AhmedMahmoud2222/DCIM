@@ -29,13 +29,43 @@ SNAPSHOT_SQL = (
     "(SELECT temp_bytes FROM pg_stat_database WHERE datname = current_database())::bigint AS temp_bytes, "
     "pg_database_size(current_database())::bigint AS db_bytes, "
     "(SELECT coalesce(sum(reads * op_bytes), 0)::bigint FROM pg_stat_io) AS io_read_bytes, "
-    "(SELECT coalesce(sum(writes * op_bytes), 0)::bigint FROM pg_stat_io) AS io_write_bytes"
+    "(SELECT coalesce(sum(writes * op_bytes), 0)::bigint FROM pg_stat_io) AS io_write_bytes, "
+    "(SELECT coalesce(sum(xact_commit + xact_rollback), 0)::bigint FROM pg_stat_database "
+    " WHERE datname IS NOT NULL AND datname <> current_database()) AS other_databases_xacts"
+)
+SNAPSHOT_KEYS = ("wal_bytes", "temp_bytes", "db_bytes", "io_read_bytes", "io_write_bytes", "other_databases_xacts")
+
+# What each figure actually measures. Nothing here is "the migration's own" WAL or I/O: PostgreSQL does not attribute those
+# per session or per statement, so the instance-wide figures also include every other writer in the instance.
+METRIC_SCOPES = {
+    "wal_bytes": "postgres_instance",  # pg_current_wal_lsn() delta: all WAL of every database, autovacuum, checkpointer, other sessions
+    "io_read_bytes": "postgres_instance",  # pg_stat_io is cluster-wide
+    "io_write_bytes": "postgres_instance",
+    "other_databases_xacts": "postgres_instance",  # activity in OTHER databases during the run: evidence of how quiet the instance was
+    "temp_bytes": "database",  # pg_stat_database for this database (every session in it, not only the migration)
+    "db_bytes": "database",  # pg_database_size: growth of this database from any writer in it
+    "cpu_percent_vm": "host_vm",
+    "memory_available_mib": "host_vm",
+    "swap_used_mib": "host_vm",
+    "pressure_some_avg10_max": "host_vm",
+    "disk_free_gib": "host_vm",
+}
+SCOPE_LABELS = {
+    "postgres_instance": "PostgreSQL instance-wide",
+    "database": "this database only",
+    "host_vm": "host/VM-wide",
+}
+ATTRIBUTION_NOTE = (
+    "WAL and I/O are PostgreSQL instance-wide counters and are NOT attributable to the migration alone: they include autovacuum, "
+    "checkpoints, other databases and any concurrent ingest. other_databases_xacts shows how much activity other databases had. "
+    "temp_bytes and database growth are database-scoped but include every writer in this database. Treat them as upper bounds "
+    "on the migration's own cost, not as measurements of it."
 )
 
 
 def snapshot(conn: psycopg.Connection) -> dict:
     row = conn.execute(SNAPSHOT_SQL).fetchone()
-    return dict(zip(("wal_bytes", "temp_bytes", "db_bytes", "io_read_bytes", "io_write_bytes"), row, strict=True))
+    return dict(zip(SNAPSHOT_KEYS, row, strict=True))
 
 
 def delta(before: dict, after: dict) -> dict:

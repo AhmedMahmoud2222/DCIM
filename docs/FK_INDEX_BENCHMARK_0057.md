@@ -26,8 +26,8 @@ database name is not evidence, so none of the checks is a name check. The run pr
 
 Ownership: every database the tool creates carries a database comment naming the run (templates: the dataset). The tool only
 drops a database whose name starts with `fkbench_` **and** whose tag matches the caller, never reuses or drops a template it did
-not build for exactly this dataset, and only cancels or terminates a backend connected to a `fkbench_*` database. A refused
-run creates and drops nothing. The negative tests in `test_fk_index_benchmark_harness.py` exercise each refusal.
+not build for exactly this dataset. It never signals a backend by PID (see "Cancellation design"). A refused run creates and
+drops nothing. The negative tests in `test_fk_index_benchmark_harness.py` exercise each refusal.
 
 Privileges: the tool runs as a non-superuser `CREATEDB` role (`fkbench_admin`) provisioned by `provision_cluster.sql` with only
 `pg_monitor`, `pg_signal_backend`, `pg_checkpoint`, membership of the application role (to load and vacuum its tables), `SET` on
@@ -83,15 +83,37 @@ profile is uniform.
 | ID | What | Measured |
 | --- | --- | --- |
 | S1 | `alembic upgrade head` under paced concurrent ingest, with a settled no-migration baseline window first | Wall time, exact per-index build time, ingest p50/p95/p99/max, completed and failed operations and rows/s before, during and after, read-probe latency, lock modes, WAL, temp, growth, peak size, host observations |
-| S2 / S6 | The same upgrade with no concurrent load | WAL, temp bytes, growth, peak size, final index and table sizes attributable to the build alone |
+| S2 / S6 | The same upgrade with no concurrent ingest (the smallest load this harness can apply) | WAL, temp bytes, growth, peak size, final index and table sizes, with their measurement scope (WAL and I/O are PostgreSQL instance-wide counters, not migration-only values) |
 | S3 | An old-snapshot transaction held open during the upgrade | The build waits (`waiting for old snapshots`); ingest keeps working; the upgrade completes after release |
-| S4 | The first large build interrupted by `pg_cancel_backend`, `pg_terminate_backend`, and a killed client, each after 25% of its table scan | Exit code, `alembic_version` unchanged, INVALID artifact left, no locks left, then a plain re-run: time to recover, all 22 correct |
+| S4 | The first large build interrupted after 25% of its table scan by (a) a protocol CancelRequest carrying the migration connection's own key and (b) killing the alembic client process this run started. **No terminate variant** (see below) | Exit code, `alembic_version` unchanged, INVALID artifact left, no locks left, then a plain re-run: time to recover, all 22 correct |
 | S5 | `alembic downgrade -1` then re-upgrade, both under ingest | Wall time and ingest latency during the `ACCESS EXCLUSIVE` window; atomicity |
 | S7 | Delete of an unreferenced `integration_metric_mapping`, rolled back, `EXPLAIN (ANALYZE)` before and after | The referential-check time the new indexes exist to remove |
 | S8 | After S1/S5 | All 22 indexes correct, no INVALID index anywhere, `alembic check` clean, advisory lock released |
 
 Ingest is open-loop: each operation's latency is measured from when it was scheduled, so a stall cannot hide itself by delaying
 the next request. A short settle period is discarded before the baseline window.
+
+## Cancellation design (why there is no PID-only signalling)
+
+`pg_cancel_backend(pid)` and `pg_terminate_backend(pid)` are PID-only. In PostgreSQL 16 `pg_signal_backend()`
+(`src/backend/storage/ipc/signalfuncs.c`) looks the backend up by PID, checks permissions, and then calls `kill(-pid, sig)`; its
+own comment says the process may end and the PID be recycled before the `kill()` and that "there's no way to acquire a lock on an
+arbitrary process to prevent that". Checks made in SQL beforehand (database, owner tag, `backend_start`, a role, one wrapping
+statement) happen before that lookup and cannot close the window, so the benchmark does not use these functions at all, and a
+test fails if any executable string or function in the package reintroduces them.
+
+Cancellation instead uses the protocol's own mechanism: a backend gives its client a secret `BackendKeyData` (pid + cancel key),
+and the postmaster acts on a CancelRequest only when **both** match a backend it is running (`processCancelRequest` in
+`postmaster.c`). The Alembic session is a subprocess whose connection the harness does not own, so that one connection is relayed
+through `PgProxy` (`cancel.py`), a transparent TCP relay that reads the `BackendKeyData` as it passes. The harness refuses to
+cancel unless exactly one connection was proxied, the key's pid is the backend running the build, and the stream was not TLS.
+
+Residual risks: only cancel exists, because PostgreSQL has no authenticated terminate, so the terminate scenario is **disabled and
+reported as NOT RUN** rather than run with a weaker guarantee (the killed-client variant still covers an abruptly lost client).
+The key is 32 bits, which guards against recycled PIDs and accidents, not against an attacker on the server's network path; the
+benchmark cluster is scratch. A TLS server makes the key unreadable and cancellation unavailable. The relay is used only in the
+cancellation scenario, never in timed measurements. Cancel interrupts the connection's current statement, as `pg_cancel_backend`
+does.
 
 ## Acceptance check for the 22 indexes
 
@@ -115,13 +137,23 @@ available. Caveats: in Docker Desktop/WSL2 `/proc` is the VM shared with Postgre
 root filesystem is a sparse virtual disk that can greatly overstate free space on the host drive; disk I/O throughput is not
 measured directly. **A migration that completes does not establish available production headroom.**
 
+**What each figure measures.** The report labels every resource figure with its scope. WAL (LSN delta) and `pg_stat_io` are
+**PostgreSQL instance-wide** counters: they include autovacuum, checkpoints, every other database and any concurrent ingest, and
+PostgreSQL does not attribute them per session. They are therefore upper bounds on the migration's cost, never migration-only
+values, even in the idle scenario. `temp_bytes` and database growth are **database-scoped** but include every writer in that
+database. CPU, memory, swap, pressure and disk are **host/VM-wide**. `other_databases_xacts` records transactions in other
+databases during the run so a reader can see how quiet the instance was.
+
 ## Reading the results
 
 * **Invariants** are yes/no and fail the run: all 22 correct, no INVALID leftovers, version stamped only on success, downgrade
   atomic, interruption leaves 0056 and a recoverable INVALID artifact and releases its locks, a plain re-run recovers,
   `alembic check` clean, no failed ingest writes, indexes not replaced during the ingest tail.
 * **Measurements** are reported with the environment fingerprint and are not judged. `--repeats N` runs each scenario N times and
-  reports min/median/max; invariants must hold in every run.
+  reports min/median/max; invariants must hold in every run. The summary never replaces the data: `repeat_details` in the JSON
+  and the per-repeat tables in the Markdown keep each repeat's baseline/during/after p50/p95/p99, completed and failed writes,
+  throughput, migration durations and threshold breaches. A value a repeat did not record is shown as unavailable with a reason, never
+  filled in from another repeat.
 * **Provisional threshold breaches** (`--max-write-failures`, `--max-ingest-p99-ratio`, `--max-ingest-p99-ms`,
   `--max-migration-seconds`, `--max-wal-mib`, `--min-free-disk-gib`) are listed in the report. The defaults are placeholders for
   your own objectives; a breach is a flag to investigate, and no breach is not an acceptance.
@@ -133,7 +165,9 @@ measured directly. **A migration that completes does not establish available pro
 Historical development-machine evidence, kept as published: `docs/benchmark-results/0057/` holds the first 1,000,000 and
 10,000,000-row runs (`raw` dataset, `raw` ingest, one run each, sampled build times, no host metrics, run as a superuser on an
 unmarked cluster before the safety controls existed). All invariants held in both. Newer runs are listed in
-`docs/benchmark-results/0057/README.md`. None of them changes the classification: **NOT YET VALIDATED**.
+`docs/benchmark-results/0057/README.md`. The 2026-10-25 `fk`/`service` report predates per-repeat retention, so it records only the last repeat's detail plus the metric
+values; for repeat 1 the post-upgrade latency percentiles were not recorded and are not reconstructed. None of them changes the
+classification: **NOT YET VALIDATED**.
 
 ## CI
 
