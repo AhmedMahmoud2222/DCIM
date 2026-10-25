@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
 import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { APP_TITLE } from "@/lib/appTitle";
 import { useAuthStore } from "@/lib/authStore";
 
 import { activeNavLink, DASHBOARD_ITEM, isNavItemVisible, NavItem, visibleNavGroups } from "./navModel";
@@ -54,9 +55,14 @@ export function AppShell() {
   const showDashboard = isNavItemVisible(DASHBOARD_ITEM, viewer);
   const activeLink = activeNavLink(location.pathname, [DASHBOARD_ITEM, ...groups.flatMap((group) => group.items)]);
   // Each page names itself in the tab and to a screen reader: "Events · DCIM Platform".
-  const pageTitle = activeLink ? `${activeLink.label} · DCIM Platform` : "DCIM Platform";
+  const pageTitle = activeLink ? `${activeLink.label} · ${APP_TITLE}` : APP_TITLE;
   useEffect(() => {
     document.title = pageTitle;
+    // The title belongs to the signed-in shell. When the shell goes away (sign-out, a redirect to /login)
+    // or the page changes, hand the title back so a public route never keeps a protected page's name.
+    return () => {
+      document.title = APP_TITLE;
+    };
   }, [pageTitle]);
   const activeGroupId = groups.find((group) => activeLink && group.items.includes(activeLink))?.id;
 
