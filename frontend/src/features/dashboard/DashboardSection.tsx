@@ -9,6 +9,8 @@ interface QueryLike<T> {
   isLoading: boolean;
   error: unknown;
   data: T | undefined;
+  /** React Query's fetch status; "paused" means the request is waiting for the network. */
+  fetchStatus?: string;
   refetch: () => unknown;
 }
 
@@ -28,6 +30,9 @@ interface DashboardSectionProps<T> {
   isEmpty?: (data: T) => boolean;
   /** Small summary next to the heading, shown only when the section has data. */
   aside?: (data: T) => ReactNode;
+  /** Shown under the records, or under the empty message, but never while loading, restricted or in
+   * error. Use it for information that stays true when the main list is empty. */
+  footer?: ReactNode;
   className?: string;
   children: (data: T) => ReactNode;
 }
@@ -37,7 +42,9 @@ const defaultIsEmpty = (data: unknown) => data == null || (Array.isArray(data) &
 /** One independently loaded part of the dashboard. It is always in exactly one of five states, and
  * only `ready` shows records:
  *
- * - loading: the request is in flight, or the profile has not loaded so access is not yet known;
+ * - loading: the request is in flight or paused for the network, or the profile has not loaded so
+ *   access is not yet known. A query with no data and no error is never empty: empty needs a
+ *   successful response;
  * - restricted: the user is known not to hold the permission (no request is made), or the backend
  *   answered 403. Never rendered as zero records, a healthy state or a failure;
  * - error: any other failure; says so and offers a retry, and never as an empty list;
@@ -53,6 +60,7 @@ export function DashboardSection<T>({
   emptyText,
   isEmpty = defaultIsEmpty,
   aside,
+  footer,
   className = "",
   children,
 }: DashboardSectionProps<T>) {
@@ -60,7 +68,8 @@ export function DashboardSection<T>({
   if (access === "denied") state = "restricted";
   else if (access === "unknown" || query.isLoading) state = "loading";
   else if (query.error) state = query.error instanceof ApiError && query.error.status === 403 ? "restricted" : "error";
-  else if (query.data === undefined || isEmpty(query.data)) state = "empty";
+  else if (query.data === undefined) state = "loading";
+  else if (isEmpty(query.data)) state = "empty";
   else state = "ready";
 
   const data = state === "ready" ? (query.data as T) : undefined;
@@ -81,7 +90,7 @@ export function DashboardSection<T>({
 
       {state === "loading" && (
         <p role="status" aria-busy="true" className="text-sm text-fg-secondary">
-          Loading {what}…
+          {query.fetchStatus === "paused" ? `Waiting for the network to load ${what}…` : `Loading ${what}…`}
         </p>
       )}
       {state === "restricted" && <AccessRestricted what={what} permission={permission} headingLevel={3} />}
@@ -94,6 +103,7 @@ export function DashboardSection<T>({
         </p>
       )}
       {data !== undefined && children(data)}
+      {(state === "ready" || state === "empty") && footer}
     </section>
   );
 }
