@@ -1,57 +1,55 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { DataTable, EmptyRow, RowCount, TD, TH, TR } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 import { apiFetch } from "@/lib/apiClient";
 import { ManagedAsset, Page } from "@/types";
-import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function ManagedAssetsPage() {
-  const { data, isLoading, error } = useQuery({
+  const query = useQuery({
     queryKey: ["managed-assets"],
     queryFn: () => apiFetch<Page<ManagedAsset>>("/managed-assets"),
   });
+  const data = query.data;
 
   return (
     <div>
-      <h1 className="mb-4 text-lg font-semibold">Managed Assets</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        Bare identity/lifecycle anchors only — Phase 1 does not yet attach a Rack, Equipment, or PDU subtype to these
-        records (that is Phase 2/3/7). Creation and lifecycle transitions are available through the API; this view
-        demonstrates read access only.
-      </p>
+      <PageHeader
+        title="Managed Assets"
+        description="Bare identity/lifecycle anchors only — Phase 1 does not yet attach a Rack, Equipment, or PDU subtype to these records (that is Phase 2/3/7). Creation and lifecycle transitions are available through the API; this view demonstrates read access only."
+      />
 
-      {isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-      {error && <p className="text-sm text-red-400">{(error as Error).message}</p>}
+      <QueryStatus query={query} what="managed assets" permission="managed_asset:read" />
 
       {data && (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-slate-800 text-left text-slate-400">
-              <th className="pb-2">Asset Tag</th>
-              <th className="pb-2">Type</th>
-              <th className="pb-2">Status</th>
-              <th className="pb-2">Serial</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((asset) => (
-              <tr key={asset.id} className="border-b border-slate-900">
-                <td className="py-2 font-mono">{asset.asset_tag}</td>
-                <td className="py-2">{asset.asset_type}</td>
-                <td className="py-2">
-                  <LifecycleStatus value={asset.lifecycle_status} />
-                </td>
-                <td className="py-2 text-slate-400">{asset.serial_number ?? "—"}</td>
+        <>
+          <RowCount shown={data.items.length} total={data.total} noun="managed assets" />
+          <DataTable label="Managed assets" minWidthClass="min-w-[32rem]">
+            <thead>
+              <tr className="border-b border-line-subtle bg-surface-panel">
+                <th scope="col" className={TH}>Asset Tag</th>
+                <th scope="col" className={TH}>Type</th>
+                <th scope="col" className={TH}>Status</th>
+                <th scope="col" className={TH}>Serial</th>
               </tr>
-            ))}
-            {data.items.length === 0 && (
-              <tr>
-                <td colSpan={4} className="py-6 text-center text-slate-500">
-                  No managed assets yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.items.map((asset) => (
+                <tr key={asset.id} className={TR}>
+                  <td className={`${TD} font-mono`}>{asset.asset_tag}</td>
+                  <td className={TD}>{asset.asset_type}</td>
+                  <td className={TD}>
+                    <LifecycleStatus value={asset.lifecycle_status} />
+                  </td>
+                  <td className={`${TD} text-fg-secondary`}>{asset.serial_number ?? "—"}</td>
+                </tr>
+              ))}
+              {data.items.length === 0 && <EmptyRow columns={4}>No managed assets yet.</EmptyRow>}
+            </tbody>
+          </DataTable>
+        </>
       )}
     </div>
   );

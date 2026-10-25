@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { DataTable, EmptyRow, RowCount, TD, TH, TR } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
@@ -58,25 +61,27 @@ export function RacksPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Racks</h1>
-        <div className="flex gap-2">
-          {canImport && (
+      <PageHeader
+        title="Racks"
+        actions={
+          <>
+            {canImport && (
+              <button
+                onClick={() => setShowBulkImport(true)}
+                className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+              >
+                Bulk Import
+              </button>
+            )}
             <button
-              onClick={() => setShowBulkImport(true)}
-              className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
+              onClick={() => setShowForm((v) => !v)}
+              className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
             >
-              Bulk Import
+              {showForm ? "Cancel" : "New Rack"}
             </button>
-          )}
-          <button
-            onClick={() => setShowForm((v) => !v)}
-            className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-          >
-            {showForm ? "Cancel" : "New Rack"}
-          </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {showBulkImport && (
         <BulkImportPanel
@@ -178,53 +183,49 @@ export function RacksPage() {
         </form>
       )}
 
-      {racksQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-      {racksQuery.error && <p className="text-sm text-red-400">{(racksQuery.error as Error).message}</p>}
+      <QueryStatus query={racksQuery} what="racks" permission="rack:read" columns={5} />
 
       {racksQuery.data && (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-slate-800 text-left text-slate-400">
-              <th className="pb-2">Name</th>
-              <th className="pb-2">Asset Tag</th>
-              <th className="pb-2">Status</th>
-              <th className="pb-2">Room</th>
-              <th className="pb-2">Position</th>
-            </tr>
-          </thead>
-          <tbody>
-            {racksQuery.data.items.map((rack) => (
-              <tr key={rack.id} className="border-b border-slate-900 hover:bg-slate-900/50">
-                <td className="py-2">
-                  <Link to={`/racks/${rack.id}`} className="font-medium text-blue-400 hover:underline">
-                    {rack.name}
-                  </Link>
-                </td>
-                <td className="py-2 font-mono text-slate-300">{rack.asset_tag}</td>
-                <td className="py-2">
-                  <LifecycleStatus value={rack.lifecycle_status} />
-                </td>
-                <td className="py-2 text-slate-400">
-                  {rack.placement
-                    ? roomsQuery.data?.items.find((r) => r.id === rack.placement!.room_id)?.name ?? rack.placement.room_id
-                    : <span className="italic text-slate-600">unplaced</span>}
-                </td>
-                <td className="py-2 text-slate-500">
-                  {rack.placement?.x_mm != null && rack.placement?.y_mm != null
-                    ? `(${rack.placement.x_mm}, ${rack.placement.y_mm}) mm`
-                    : "—"}
-                </td>
+        <>
+          <RowCount shown={racksQuery.data.items.length} total={racksQuery.data.total} noun="racks" />
+          <DataTable label="Racks" minWidthClass="min-w-[44rem]">
+            <thead>
+              <tr className="border-b border-line-subtle bg-surface-panel">
+                <th scope="col" className={TH}>Name</th>
+                <th scope="col" className={TH}>Asset Tag</th>
+                <th scope="col" className={TH}>Status</th>
+                <th scope="col" className={TH}>Room</th>
+                <th scope="col" className={TH}>Position</th>
               </tr>
-            ))}
-            {racksQuery.data.items.length === 0 && (
-              <tr>
-                <td colSpan={5} className="py-6 text-center text-slate-500">
-                  No racks yet. Create one to get started.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {racksQuery.data.items.map((rack) => (
+                <tr key={rack.id} className={TR}>
+                  <td className={TD}>
+                    <Link to={`/racks/${rack.id}`} className="font-medium text-link hover:underline">
+                      {rack.name}
+                    </Link>
+                  </td>
+                  <td className={`${TD} font-mono text-fg-secondary`}>{rack.asset_tag}</td>
+                  <td className={TD}>
+                    <LifecycleStatus value={rack.lifecycle_status} />
+                  </td>
+                  <td className={`${TD} text-fg-secondary`}>
+                    {rack.placement
+                      ? roomsQuery.data?.items.find((r) => r.id === rack.placement!.room_id)?.name ?? rack.placement.room_id
+                      : <span className="italic">unplaced</span>}
+                  </td>
+                  <td className={`${TD} whitespace-nowrap tabular-nums text-fg-secondary`}>
+                    {rack.placement?.x_mm != null && rack.placement?.y_mm != null
+                      ? `(${rack.placement.x_mm}, ${rack.placement.y_mm}) mm`
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+              {racksQuery.data.items.length === 0 && <EmptyRow columns={5}>No racks yet. Create one to get started.</EmptyRow>}
+            </tbody>
+          </DataTable>
+        </>
       )}
     </div>
   );
