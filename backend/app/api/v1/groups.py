@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import _current_rack_sites, is_scope_independent, load_group_scopes, visible_rack_ids_in_site
+from app.application.access_control import (
+    _current_rack_sites,
+    is_scope_independent,
+    load_effective_access,
+    load_group_scopes,
+    visible_rack_ids_in_site,
+)
 from app.application.audit_service import write_audit_log
 from app.application.rbac import AuthContext, require_permission
 from app.application.user_admin_service import (
@@ -99,10 +105,29 @@ class PermissionCatalogItem(BaseModel):
     unrestricted (global-role) users until that endpoint becomes site-aware."""
 
 
+async def _directory_visible(db: AsyncSession, ctx: AuthContext, user_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """The users among `user_ids` that the caller may see in the user directory (GET /users): the caller themselves, plus the
+    users whose whole scope lies inside the caller's `user:read` scope. A caller without `user:read` has no directory, so only
+    sees themselves. Group membership must never reveal, in ids or in counts, a user this predicate hides (issue #195 F3)."""
+    if not user_ids:
+        return set()
+    if "user:read" not in ctx.permission_codes:
+        return user_ids & {ctx.user.id}
+    scope = ctx.scope_for("user:read")
+    if scope.unrestricted:
+        return set(user_ids)
+    others = list(user_ids - {ctx.user.id})
+    accesses = await load_effective_access(db, others)
+    return {u for u in user_ids if u == ctx.user.id or scope.contains(accesses[u].scope)}
+
+
 async def _detail(db: AsyncSession, group: UserGroup, ctx: AuthContext | None = None) -> GroupDetailOut:
     from app.domain.location.models import Site
 
     members = list((await db.execute(select(UserGroupMember.user_id).where(UserGroupMember.group_id == group.id))).scalars())
+    if ctx is not None:  # ctx is None only for the unmasked audit snapshot taken before a delete
+        visible = await _directory_visible(db, ctx, set(members))
+        members = [m for m in members if m in visible]
     perm_rows = (
         await db.execute(
             select(Permission.resource, Permission.action, UserGroupPermission.effect)
@@ -196,6 +221,16 @@ async def list_groups(
     members = dict((await db.execute(
         select(UserGroupMember.group_id, func.count()).where(UserGroupMember.group_id.in_(ids)).group_by(UserGroupMember.group_id)
     )).all()) if ids else {}
+    if ids and not ctx.scope_for("user:read").unrestricted:
+        # The same directory predicate as GET /groups/{id}: the count must agree with the masked member list.
+        pairs = (
+            await db.execute(select(UserGroupMember.group_id, UserGroupMember.user_id).where(UserGroupMember.group_id.in_(ids)))
+        ).all()
+        readable = await _directory_visible(db, ctx, {uid for _gid, uid in pairs})
+        members = {}
+        for gid, uid in pairs:
+            if uid in readable:
+                members[gid] = members.get(gid, 0) + 1
     sites = dict((await db.execute(
         select(UserGroupSiteAccess.group_id, func.count()).where(UserGroupSiteAccess.group_id.in_(ids))
         .group_by(UserGroupSiteAccess.group_id)
