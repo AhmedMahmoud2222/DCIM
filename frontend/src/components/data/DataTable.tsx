@@ -8,15 +8,14 @@ import { ApiError } from "@/lib/apiClient";
  *
  * - Header cells are small caps in the secondary text color; body cells use the page text color.
  * - Numeric columns are right-aligned with tabular figures (`TD_NUMBER`), text columns left-aligned.
- * - The first column can stay pinned while the rest scrolls sideways on a narrow screen (`*_STICKY`),
- *   so no column is ever hidden, only scrolled.
+ * - On a narrow screen the table scrolls sideways inside its focusable region, so no column is ever
+ *   hidden. Columns are deliberately not pinned: a pinned first column took over half of a phone screen
+ *   and covered the neighbouring column's text.
  * - Rows highlight on hover and while they contain keyboard focus. */
 export const TH = "px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-fg-secondary";
 export const TH_NUMBER = "px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-fg-secondary";
 export const TD = "px-3 py-2 align-middle";
 export const TD_NUMBER = "px-3 py-2 text-right align-middle tabular-nums";
-export const TH_STICKY = `${TH} sticky left-0 z-10 bg-surface-panel`;
-export const TD_STICKY = `${TD} sticky left-0 z-10 bg-surface-page`;
 export const TR = "border-b border-line-subtle last:border-b-0 hover:bg-white/5 focus-within:bg-white/5";
 
 interface DataTableProps {

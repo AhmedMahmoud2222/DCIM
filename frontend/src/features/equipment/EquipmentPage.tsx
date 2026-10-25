@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { DataTable, EmptyRow, RowCount, TableError, TableLoading, TD, TD_STICKY, TH, TH_STICKY, TR } from "@/components/data/DataTable";
+import { DataTable, EmptyRow, RowCount, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
@@ -52,9 +52,9 @@ export function EquipmentPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">Equipment</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link
             to="/equipment/instantiate"
             className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
@@ -139,7 +139,7 @@ export function EquipmentPage() {
           <DataTable label="Equipment">
             <thead>
               <tr className="border-b border-line-subtle bg-surface-panel">
-                <th scope="col" className={TH_STICKY}>Hostname</th>
+                <th scope="col" className={TH}>Hostname</th>
                 <th scope="col" className={TH}>Asset Tag</th>
                 <th scope="col" className={TH}>Status</th>
                 <th scope="col" className={TH}>Placement</th>
@@ -148,7 +148,7 @@ export function EquipmentPage() {
             <tbody>
               {equipmentQuery.data.items.map((eq) => (
                 <tr key={eq.id} className={TR}>
-                  <td className={TD_STICKY}>
+                  <td className={TD}>
                     <Link to={`/equipment/${eq.id}`} className="font-medium text-link hover:underline">
                       {eq.hostname ?? eq.asset_tag}
                     </Link>

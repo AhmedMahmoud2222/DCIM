@@ -93,13 +93,15 @@ describe("Equipment table", () => {
     expect(unplaced.parentElement).toHaveClass("text-fg-secondary");
   });
 
-  it("pins the hostname column so it stays visible while the rest scrolls sideways", async () => {
+  it("does not pin any column: on a narrow screen every column is reached by scrolling, none is covered", async () => {
     vi.mocked(equipmentApi.listEquipment).mockResolvedValue(page([asset({})]));
     renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
 
-    const cell = (await screen.findByRole("link", { name: "core-sw-01" })).closest("td")!;
-    expect(cell).toHaveClass("sticky", "left-0");
-    expect(screen.getByRole("columnheader", { name: "Hostname" })).toHaveClass("sticky", "left-0");
+    const table = await screen.findByRole("table", { name: "Equipment" });
+    for (const cell of [...within(table).getAllByRole("columnheader"), ...within(table).getAllByRole("cell")]) {
+      expect(cell.className).not.toMatch(/\bsticky\b/);
+    }
+    expect(screen.getByRole("region", { name: "Equipment table" }).className).toContain("overflow-x-auto");
   });
 
   it("states how many rows exist, and says so when the list is cut short", async () => {
