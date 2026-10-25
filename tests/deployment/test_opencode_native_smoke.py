@@ -28,7 +28,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import yaml
@@ -195,10 +197,17 @@ class ChildEnvironmentTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class FixtureEvaluationTests(unittest.TestCase):
-    def test_success_text_fixture_is_ok(self):
+    def test_success_ok_fixture_is_ok(self):
+        meta = fixture_meta('success_ok')
+        assert_outcome(self, fixture_lines('success_ok'), meta['exit_code'],
+                       meta['timed_out'], 'ok', '')
+
+    def test_wrong_answer_on_a_clean_stop_is_output_mismatch(self):
+        # A real 1.19.3 stream that stops cleanly but answers something other
+        # than the mandated OK must never be counted as a successful probe.
         meta = fixture_meta('success_text')
         assert_outcome(self, fixture_lines('success_text'), meta['exit_code'],
-                       meta['timed_out'], 'ok', '')
+                       meta['timed_out'], 'failed', 'output_mismatch')
 
     def test_unauthorized_401_reports_auth_error(self):
         meta = fixture_meta('fail_unauthorized_401')
@@ -361,7 +370,9 @@ class ArtifactSanitizationTests(unittest.TestCase):
             os.path.join(self.tmp, 'result.json'),
             opencode_version='1.19.3', status='failed', reason='provider_error',
             error_class='forbidden', error_status_code=403, exit_code=1,
-            timed_out=False, event_count=1, stderr_lines=1, elapsed_ms=123,
+            timed_out=False, event_count=1, stderr_lines=1, setup_ms=None,
+            auth_ms=None, inference_ms=None, total_ms=123, execution_count=1,
+            output_tokens=None,
         )
 
     def test_record_field_list_is_exactly_the_closed_set(self):
@@ -389,7 +400,8 @@ class ArtifactSanitizationTests(unittest.TestCase):
             opencode_version='1.19.3', status=status, reason=reason,
             error_class=error_class, error_status_code=error_status_code,
             exit_code=1, timed_out=False, event_count=1, stderr_lines=0,
-            elapsed_ms=7)
+            setup_ms=None, auth_ms=None, inference_ms=None, total_ms=7,
+            execution_count=1, output_tokens=None)
         text = json.dumps(record)
         self.assertEqual((record['error_class'], record['error_status_code']),
                          ('forbidden', 403))
@@ -423,11 +435,11 @@ class SummaryLineTests(unittest.TestCase):
         record = {
             'model': MODEL, 'status': 'failed', 'reason': 'provider_error',
             'error_class': 'forbidden', 'error_status_code': 403,
-            'elapsed_ms': 1000,
+            'total_ms': 1000,
         }
         line = smoke._summary(record)
         self.assertIn('forbidden', line)
-        self.assertIn('elapsed_ms=1000', line)
+        self.assertIn('total_ms=1000', line)
         for sensitive in ('scripted', 'message', 'http://', 'Bearer'):
             self.assertNotIn(sensitive, line)
 
@@ -483,7 +495,8 @@ class PreflightTests(unittest.TestCase):
                 opencode_version='1.19.3', status='ok', reason='',
                 error_class='auth_error', error_status_code=401,
                 exit_code=1, timed_out=False, event_count=1, stderr_lines=0,
-                elapsed_ms=42)
+                setup_ms=None, auth_ms=None, inference_ms=None, total_ms=42,
+                execution_count=1, output_tokens=None)
         self.assertEqual(record['mode'], 'preflight')
         self.assertEqual(set(record), smoke.RESULT_KEYS)
         self.assertNotIn('synthetic-compatibility-probe-not-a-credential',
@@ -495,13 +508,15 @@ class PreflightTests(unittest.TestCase):
                 os.path.join(tmp, 'result.json'), opencode_version='1.19.3',
                 status='ok', reason='', error_class=None,
                 error_status_code=None, exit_code=0, timed_out=False,
-                event_count=3, stderr_lines=0, elapsed_ms=1)
+                event_count=3, stderr_lines=0, setup_ms=None, auth_ms=None,
+                inference_ms=None, total_ms=1, execution_count=1,
+                output_tokens=None)
         self.assertEqual(record['mode'], 'live')
 
     def test_cli_runs_with_stdin_closed(self):
         # Headless `read: ask` can only be trusted if stdin is not a TTY and
         # cannot block: the child must always be started with DEVNULL.
-        source = inspect.getsource(smoke.main)
+        source = inspect.getsource(smoke._run_cli)
         self.assertIn('stdin=subprocess.DEVNULL', source)
 
 
@@ -770,6 +785,13 @@ class MainEndToEndTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = self._tmp.name
+        self._account = os.path.join(self.tmp, 'account-home')
+        os.makedirs(self._account)
+        patcher = unittest.mock.patch.dict(
+            os.environ, {'OPENCODE_SMOKE_ACCOUNT_HOME': self._account})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(_restore_tree, self.tmp)
 
     def stub_binary(self, media: str, exit_code: int, banner: str = '1.19.3'
                     ) -> Path:
@@ -827,8 +849,8 @@ class MainEndToEndTests(unittest.TestCase):
             self.assertNotIn(banned, completed.stdout + completed.stderr)
 
     def test_success_fixture_completes_with_zero_exit(self):
-        media = (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8')
-        meta = fixture_meta('success_text')
+        media = (FIXTURES / 'success_ok.jsonl').read_text(encoding='utf-8')
+        meta = fixture_meta('success_ok')
         stub = self.stub_binary(media, meta['exit_code'])
         completed, record = self.run_smoke(stub)
         self.assert_log_hygiene(completed)
@@ -836,14 +858,17 @@ class MainEndToEndTests(unittest.TestCase):
         self.assertEqual(record['status'], 'ok')
         self.assertEqual(record['model'], MODEL)
         self.assertEqual(record['opencode_version'], '1.19.3')
-        self.assertGreater(record['elapsed_ms'], 0)
+        self.assertGreater(record['total_ms'], 0)
+        self.assertEqual(record['execution_count'], 1)
+        # The stub reports zero tokens; the field must still be recorded.
+        self.assertIsInstance(record['output_tokens'], int)
         self.assertEqual(record['event_count'], meta['original_line_count'])
 
     def test_prefixed_version_banner_is_tolerated(self):
         # Older alt builds print 'opencode v<semver>'; the matcher must accept
         # it while the workflow keeps asserting the real bare format.
         stub = self.stub_binary(
-            (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8'), 0,
+            (FIXTURES / 'success_ok.jsonl').read_text(encoding='utf-8'), 0,
             banner='opencode v1.19.3')
         completed, record = self.run_smoke(stub)
         self.assertEqual(completed.returncode, 0, completed.stdout)
@@ -855,7 +880,7 @@ class MainEndToEndTests(unittest.TestCase):
         # absolute path before changing cwd to the smoke workdir — a relative
         # binary path containing '/' would otherwise resolve from the wrong
         # directory (POSIX ENOENT).
-        media = (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8')
+        media = (FIXTURES / 'success_ok.jsonl').read_text(encoding='utf-8')
         stub = self.stub_binary(media, 0)
         relative_binary = os.path.relpath(stub, start=self.tmp)
         self.assertIn(os.sep, relative_binary)  # relative path with a slash
@@ -905,7 +930,7 @@ class MainEndToEndTests(unittest.TestCase):
 
     def test_missing_key_fails_before_any_execution(self):
         stub = self.stub_binary(
-            (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8'), 0)
+            (FIXTURES / 'success_ok.jsonl').read_text(encoding='utf-8'), 0)
         completed, record = self.run_smoke(stub, key=None)
         self.assertEqual(completed.returncode, 1)
         self.assertEqual(record['reason'], 'missing_api_key')
@@ -960,11 +985,128 @@ class MainEndToEndTests(unittest.TestCase):
         # A synthetic non-credential key can never authenticate. If a run
         # looks successful the probe is meaningless and must not pass.
         stub = self.stub_binary(
-            (FIXTURES / 'success_text.jsonl').read_text(encoding='utf-8'),
-            fixture_meta('success_text')['exit_code'])
+            (FIXTURES / 'success_ok.jsonl').read_text(encoding='utf-8'),
+            fixture_meta('success_ok')['exit_code'])
         completed, record = self.run_smoke(stub, preflight=True)
         self.assertEqual(completed.returncode, 1)
         self.assertEqual(record['reason'], 'unexpected_probe_outcome')
+
+
+def _restore_tree(path: str) -> None:
+    """Give owner write bits back so sealed test trees can be removed."""
+    for current, _dirs, files in os.walk(path):
+        os.chmod(current, 0o755)
+        for name in files:
+            os.chmod(os.path.join(current, name), 0o644)
+
+
+class RuntimeHardeningTests(unittest.TestCase):
+    def test_runner_has_no_assert_statements(self):
+        # `python -O` strips assert; security checks must raise explicitly.
+        import ast
+        tree = ast.parse((ROOT / '.github/scripts/opencode_native_smoke.py')
+                         .read_text(encoding='utf-8'))
+        self.assertEqual([node.lineno for node in ast.walk(tree)
+                          if isinstance(node, ast.Assert)], [])
+
+    def test_child_env_forbids_package_installation(self):
+        env = smoke.build_child_env('/tmp/agent-home', 'k')
+        self.assertEqual(env['npm_config_offline'], 'true')
+        self.assertIn('npm_config_offline', smoke.CHILD_ENV_KEYS)
+
+
+@unittest.skipIf(os.name == 'nt', 'POSIX process groups and permission seal')
+class PosixRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        # Runs after the temp-dir cleanup above is registered: restore owner
+        # write bits first so sealed trees can be removed.
+        self.addCleanup(_restore_tree, self._tmp.name)
+        self.tmp = self._tmp.name
+        self._account = os.path.join(self.tmp, 'account')
+        os.makedirs(self._account)
+        patcher = unittest.mock.patch.dict(
+            os.environ, {'OPENCODE_SMOKE_ACCOUNT_HOME': self._account})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.agent = os.path.join(self.tmp, 'agent')
+        os.makedirs(self.agent)
+        self.binary = os.path.join(self.tmp, 'opencode')
+        with open(self.binary, 'w', encoding='utf-8') as handle:
+            handle.write('#!/bin/sh\necho 1.19.3\n')
+        os.chmod(self.binary, 0o755)
+        self.manifest = os.path.join(self.tmp, 'result.json.runtime.json')
+
+    def _alive(self, pid):
+        try:
+            with open(f'/proc/{pid}/stat', encoding='utf-8') as handle:
+                state = handle.read().rsplit(')', 1)[1].split()[0]
+        except FileNotFoundError:
+            return False
+        return state != 'Z'
+
+    def test_timeout_kills_the_whole_process_group(self):
+        pidfile = os.path.join(self.tmp, 'grandchild.pid')
+        script = os.path.join(self.tmp, 'hang.sh')
+        with open(script, 'w', encoding='utf-8') as handle:
+            handle.write('#!/bin/sh\nsleep 300 &\necho $! > %s\nsleep 300\n'
+                         % pidfile)
+        os.chmod(script, 0o755)
+        started = time.monotonic()
+        _stdout, _stderr, code, timed_out = smoke._run_cli(
+            [script], {'PATH': os.environ.get('PATH', '/usr/bin:/bin')},
+            self.tmp, 2)
+        self.assertTrue(timed_out)
+        self.assertIsNone(code)
+        self.assertLess(time.monotonic() - started, 30)
+        with open(pidfile, encoding='utf-8') as handle:
+            grandchild = int(handle.read().strip())
+        deadline = time.monotonic() + 5
+        while self._alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(self._alive(grandchild),
+                         'a descendant survived the group kill')
+
+    def test_prepare_then_validate_round_trip(self):
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        smoke.validate_runtime(self.agent, self.manifest, self.binary)
+
+    def test_sealed_roots_refuse_writes_by_the_run_identity(self):
+        if os.geteuid() == 0:
+            self.skipTest('root bypasses owner write bits')
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        with self.assertRaises(PermissionError):
+            open(os.path.join(self.agent, smoke.RUNTIME_DIR, 'planted.json'),
+                 'w', encoding='utf-8')
+        with self.assertRaises(PermissionError):
+            open(os.path.join(self._account, '.opencode', 'planted.json'),
+                 'w', encoding='utf-8')
+
+    def test_planted_agent_config_blocks_the_seal(self):
+        config_root = os.path.join(self.agent, smoke.RUNTIME_DIR)
+        os.makedirs(config_root)
+        with open(os.path.join(config_root, 'planted.json'), 'w',
+                  encoding='utf-8') as handle:
+            handle.write('{}')
+        with self.assertRaises(ValueError) as caught:
+            smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        self.assertEqual(str(caught.exception), 'runtime_config_not_empty')
+
+    def test_unsealed_root_is_rejected_by_validation(self):
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        os.chmod(os.path.join(self.agent, smoke.RUNTIME_DIR), 0o755)
+        with self.assertRaises(ValueError) as caught:
+            smoke.validate_runtime(self.agent, self.manifest, self.binary)
+        self.assertEqual(str(caught.exception), 'runtime_not_sealed')
+
+    def test_tampered_binary_is_rejected_by_validation(self):
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        with open(self.binary, 'a', encoding='utf-8') as handle:
+            handle.write('# tampered\n')
+        with self.assertRaises(ValueError) as caught:
+            smoke.validate_runtime(self.agent, self.manifest, self.binary)
+        self.assertEqual(str(caught.exception), 'runtime_integrity_mismatch')
 
 
 if __name__ == '__main__':
