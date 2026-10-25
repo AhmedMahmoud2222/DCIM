@@ -9,6 +9,8 @@ import {
   listAlarmRules,
   resolveAlarmRuleUnit,
 } from "@/features/telemetry/alarmRulesApi";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { ApiError } from "@/lib/apiClient";
 
@@ -208,13 +210,10 @@ export function AlarmRulesPage() {
 
   return (
     <div>
-      <div className="mb-4">
-        <h1 className="mb-1 text-lg font-semibold">Alarm Rules</h1>
-        <p className="text-sm text-slate-500">
-          Rules needing attention are legacy rules stored without an explicit threshold unit. Their evaluation is blocked until
-          a unit is resolved or the rule is disabled; nothing is auto-inferred or replayed.
-        </p>
-      </div>
+      <PageHeader
+        title="Alarm Rules"
+        description="Rules needing attention are legacy rules stored without an explicit threshold unit. Their evaluation is blocked until a unit is resolved or the rule is disabled; nothing is auto-inferred or replayed."
+      />
 
       <div className="mb-4 flex items-center gap-3 rounded-sm border border-slate-800 bg-slate-900 p-3">
         <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -229,16 +228,11 @@ export function AlarmRulesPage() {
           />
           Needs attention only
         </label>
-        {rulesQuery.isLoading && <span className="text-sm text-slate-500">Loading rules…</span>}
       </div>
 
-      {rulesQuery.isError && (
-        <div className="rounded-sm border border-red-900 bg-red-950/40 p-4 text-sm text-red-300" role="alert">
-          Unable to retrieve alarm rules. Your permissions may not allow this view.
-        </div>
-      )}
+      <QueryStatus query={rulesQuery} what="alarm rules" permission="alarm:read" columns={4} />
 
-      {!rulesQuery.isLoading && !rulesQuery.isError && rules.length === 0 && (
+      {rulesQuery.data !== undefined && !rulesQuery.isError && rules.length === 0 && (
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
           {attentionOnly ? "No alarm rules currently need attention." : "No alarm rules found."}
         </div>
@@ -247,14 +241,14 @@ export function AlarmRulesPage() {
       {rules.length > 0 && (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-slate-500">
+            <div role="region" aria-label="Alarm rules table" tabIndex={0} className="overflow-x-auto">
+              <table aria-label="Alarm rules" className="w-full text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-fg-secondary">
                   <tr>
-                    <th className="px-3 py-2">Rule</th>
-                    <th className="px-3 py-2">Metric</th>
-                    <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2">Blocked since</th>
+                    <th scope="col" className="px-3 py-2">Rule</th>
+                    <th scope="col" className="px-3 py-2">Metric</th>
+                    <th scope="col" className="px-3 py-2">Status</th>
+                    <th scope="col" className="px-3 py-2">Blocked since</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -265,6 +259,15 @@ export function AlarmRulesPage() {
                         setSelectedId(rule.id);
                         setAction(null);
                       }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedId(rule.id);
+                          setAction(null);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-current={selected?.id === rule.id ? "true" : undefined}
                       className={`cursor-pointer border-t border-slate-800 ${selected?.id === rule.id ? "bg-slate-800/70" : "hover:bg-slate-800/40"}`}
                     >
                       <td className="max-w-[260px] px-3 py-2 font-medium text-slate-200">

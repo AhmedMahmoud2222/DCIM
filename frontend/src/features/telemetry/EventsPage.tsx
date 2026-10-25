@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
 import { AlarmWorkflowStatus } from "@/features/status/StatusBadges";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
@@ -88,6 +90,19 @@ export function EventsPage() {
   const selected = visibleAlarms.find((alarm) => alarm.id === selectedId) ?? visibleAlarms[0] ?? null;
   const loading = view === "active" ? activeQuery.isLoading || acknowledgedQuery.isLoading : historyQuery.isLoading;
   const error = view === "active" ? activeQuery.error || acknowledgedQuery.error : historyQuery.error;
+  // A list exists only once every request behind the view has answered. A paused or disabled request
+  // leaves its data undefined, which must not be read as "no events".
+  const ready = view === "active" ? activeQuery.data !== undefined && acknowledgedQuery.data !== undefined : historyQuery.data !== undefined;
+  const requestState = {
+    isLoading: loading,
+    error,
+    data: ready ? requestedAlarms : undefined,
+    fetchStatus:
+      view === "active"
+        ? activeQuery.fetchStatus === "paused" || acknowledgedQuery.fetchStatus === "paused" ? "paused" : "idle"
+        : historyQuery.fetchStatus,
+    refetch: () => (view === "active" ? Promise.all([activeQuery.refetch(), acknowledgedQuery.refetch()]) : historyQuery.refetch()),
+  };
 
   function changePreset(value: string) {
     setPreset(value);
@@ -101,23 +116,20 @@ export function EventsPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="mb-1 text-lg font-semibold">Events</h1>
-          <p className="text-sm text-slate-500">
-            Current alarm conditions and retained lifecycle history. Data is bounded by the existing alarm APIs; no event state
-            is created in the browser.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
-          disabled={visibleAlarms.length === 0 || isOps}
-          className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-        >
-          Export current results CSV
-        </button>
-      </div>
+      <PageHeader
+        title="Events"
+        description="Current alarm conditions and retained lifecycle history. Data is bounded by the existing alarm APIs; no event state is created in the browser."
+        actions={
+          <button
+            type="button"
+            onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
+            disabled={visibleAlarms.length === 0 || isOps}
+            className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          >
+            Export current results CSV
+          </button>
+        }
+      />
 
       <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -237,11 +249,12 @@ export function EventsPage() {
       </div>
 
       {isOps && <OperationsViews view={view as OpsView} />}
-      {!isOps && loading && <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Loading requested events…</div>}
-      {!isOps && error && (
-        <div className="mt-4 rounded-sm border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">Unable to retrieve the requested event records.</div>
+      {!isOps && (
+        <div className="mt-4">
+          <QueryStatus query={requestState} what="events" permission="alarm:read" columns={5} />
+        </div>
       )}
-      {!isOps && !loading && !error && visibleAlarms.length === 0 && (
+      {!isOps && ready && !loading && !error && visibleAlarms.length === 0 && (
         <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
           {view === "active"
             ? "No active or acknowledged alarm condition is currently reported."
@@ -249,18 +262,18 @@ export function EventsPage() {
         </div>
       )}
 
-      {!isOps && !loading && !error && visibleAlarms.length > 0 && (
+      {!isOps && ready && !loading && !error && visibleAlarms.length > 0 && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-slate-500">
+            <div role="region" aria-label="Events table" tabIndex={0} className="overflow-x-auto">
+              <table aria-label="Events" className="w-full text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-fg-secondary">
                   <tr>
-                    <th className="px-3 py-2">State</th>
-                    <th className="px-3 py-2">Subject</th>
-                    <th className="px-3 py-2">Latest value</th>
-                    <th className="px-3 py-2">First occurrence</th>
-                    <th className="px-3 py-2">Acknowledgement</th>
+                    <th scope="col" className="px-3 py-2">State</th>
+                    <th scope="col" className="px-3 py-2">Subject</th>
+                    <th scope="col" className="px-3 py-2">Latest value</th>
+                    <th scope="col" className="px-3 py-2">First occurrence</th>
+                    <th scope="col" className="px-3 py-2">Acknowledgement</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -268,6 +281,14 @@ export function EventsPage() {
                     <tr
                       key={alarm.id}
                       onClick={() => setSelectedId(alarm.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedId(alarm.id);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-current={selected?.id === alarm.id ? "true" : undefined}
                       className={`cursor-pointer border-t border-slate-800 ${selected?.id === alarm.id ? "bg-slate-800/70" : "hover:bg-slate-800/40"}`}
                     >
                       <td className="px-3 py-2">
