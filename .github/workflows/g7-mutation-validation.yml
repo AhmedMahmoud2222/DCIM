@@ -82,7 +82,9 @@ jobs:
           python -m alembic heads
           python -m alembic upgrade head
       - name: Baseline parity (must pass)
+        shell: bash
         run: |
+          set -eo pipefail
           cd "$GITHUB_WORKSPACE/baseline/backend"
           pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q 2>&1 | tee "$GITHUB_WORKSPACE/baseline.log"
       - name: M1-M4 mutation experiments
@@ -101,7 +103,9 @@ jobs:
           echo "overall=$overall" | tee -a "$GITHUB_WORKSPACE/mutation_results.txt"
           exit $overall
       - name: Final baseline restore verification
+        shell: bash
         run: |
+          set -eo pipefail
           cd "$GITHUB_WORKSPACE/baseline"
           git diff --stat
           if [ -n "$(git status --porcelain)" ]; then echo "WORKTREE NOT CLEAN"; git status --porcelain; exit 1; fi
