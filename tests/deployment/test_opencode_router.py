@@ -22,8 +22,9 @@ ALL = set(EXPECTED)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
         'opencode/minimax-m3.1-flash-free')
-SHIPPED_OWNER_APPROVED = {'opencode/mimo-v2.6-flash-free'}
-# One task per routing category, used to prove the shipped registry blocks every route.
+SHIPPED_OWNER_APPROVED_UNHEALTHY = {'opencode/mimo-v2.6-flash-free'}
+SHIPPED_OWNER_ENABLED = {'opencode/glm-5.3-flash-free'}
+# One task per routing category, used to prove shipped eligibility and fail-closed routing.
 SHIPPED_TASKS = {
     'small_fix': 'fix a typo in the README',
     'general': 'make the dashboard smarter',
@@ -74,13 +75,10 @@ class RegistryTests(unittest.TestCase):
             router.load_registry(registry)
 
     def test_shipped_registry_keeps_owner_approved_unhealthy_models_disabled(self):
-        # Pinned shipped state: MiMo has owner terms evidence and repository-code approval, but
-        # no shipped model may route while operational health is unproven. Marking MiMo healthy
-        # requires recorded health evidence (health is a manual owner flag with no automated
-        # probe; see OPENCODE_AGENT_AUTHORITY.md, "Model eligibility") and an edit to this test
-        # in the same PR.
+        # The owner-approved GLM record is eligible in the shipped registry. MiMo has terms
+        # evidence and repository-code approval but remains blocked until health is recorded.
         for model_id, meta in REGISTRY['models'].items():
-            if model_id in SHIPPED_OWNER_APPROVED:
+            if model_id in SHIPPED_OWNER_APPROVED_UNHEALTHY:
                 self.assertIs(meta['terms_verified'], True, model_id)
                 self.assertIs(meta['repo_code_approved'], True, model_id)
                 review = meta['terms_review']
@@ -89,6 +87,11 @@ class RegistryTests(unittest.TestCase):
                                     for value in review.values()), model_id)
                 self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
                 self.assertEqual(router.blockers(meta), ['not marked operationally healthy'], model_id)
+            elif model_id in SHIPPED_OWNER_ENABLED:
+                self.assertIs(meta['terms_verified'], True, model_id)
+                self.assertIs(meta['repo_code_approved'], True, model_id)
+                self.assertEqual(meta['operational_status'], 'healthy', model_id)
+                self.assertEqual(router.blockers(meta), [], model_id)
             else:
                 self.assertIs(meta['terms_verified'], False, model_id)
                 self.assertIsNone(meta['terms_review'], model_id)
@@ -96,14 +99,18 @@ class RegistryTests(unittest.TestCase):
                 self.assertTrue(router.blockers(meta), model_id)
         self.assertEqual(
             [model_id for model_id, meta in REGISTRY['models'].items() if not router.blockers(meta)],
-            [], 'the shipped registry must stay fail-closed')
+            sorted(SHIPPED_OWNER_ENABLED), 'only the owner-enabled GLM model is eligible')
         self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
         for category, task in SHIPPED_TASKS.items():
             self.assertEqual(router.classify(task)[0], category, task)
-            self.assertTrue(all(router.blockers(REGISTRY['models'][model])
-                                for model in REGISTRY['routes'][category]), category)
-            with self.assertRaises(router.RoutingError, msg=task):
-                router.route(task, REGISTRY, ALL)
+            eligible = [model for model in REGISTRY['routes'][category]
+                        if not router.blockers(REGISTRY['models'][model])]
+            if eligible:
+                self.assertEqual(eligible, ['opencode/glm-5.3-flash-free'], category)
+                self.assertEqual(router.route(task, REGISTRY, ALL)['model'], eligible[0], task)
+            else:
+                with self.assertRaises(router.RoutingError, msg=task):
+                    router.route(task, REGISTRY, ALL)
 
     def test_registry_presence_never_authorizes_a_model(self):
         registry = copy.deepcopy(REGISTRY)
@@ -263,8 +270,11 @@ class RoutingTests(unittest.TestCase):
                 reg_path = Path(tmp, 'registry.json')
                 reg_path.write_text(json.dumps(ENABLED))
                 reg = str(reg_path)
-                shipped = str(ROOT / '.github/opencode/model-registry.json')
-                self.assertEqual(router.main(['--registry', shipped, '--available', str(avail)]), 1)
+                ineligible = copy.deepcopy(REGISTRY)
+                ineligible['models']['opencode/glm-5.3-flash-free']['terms_verified'] = False
+                ineligible_path = Path(tmp, 'ineligible-registry.json')
+                ineligible_path.write_text(json.dumps(ineligible))
+                self.assertEqual(router.main(['--registry', str(ineligible_path), '--available', str(avail)]), 1)
                 self.assertEqual(router.main(['--registry', reg, '--available', str(avail)]), 0)
                 self.assertIn('model=opencode/glm-5.3-flash-free', out.read_text())
                 avail.write_text('[]')
