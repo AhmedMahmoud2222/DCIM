@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     catalog_graphics_storage_root: str = "media/catalog/graphics"
     catalog_graphics_max_upload_bytes: int = 10 * 1024 * 1024
 
+    # G9a DRAFT prototype only. Default publication stays legacy-compatible.
+    # Applies to newly published equipment only: rack weight currently bridges to
+    # load capacity, whose semantics/rounding require a separate owner decision.
+    catalog_decimal_publication_projection: bool = False
+
     # DCIM01 PDF datasheet import (docs/plans/DCIM01_PDF_DATASHEET_IMPORT_PLAN_v2.md).
     # Every limit is configurable; the defaults are the approved values.
     catalog_documents_storage_root: str = "media/catalog/documents"
