@@ -11,6 +11,7 @@ import {
   MonitoringMetricTemplate,
   NetworkPortTemplate,
   Page,
+  PDUDraft,
   PowerSupplyTemplate,
   ValidationSummary,
 } from "@/types";
@@ -130,6 +131,46 @@ export const updateRetireOverride = (id: string, body: RetireOverrideInput) =>
 
 export const compareRevisions = (leftId: string, rightId: string) =>
   apiFetch<CatalogCompare>(`/catalog/revisions/compare?left=${leftId}&right=${rightId}`);
+
+// ------------------------------------------------------------------------ PDU draft (Issue #150)
+
+/** Client mirror of `PDUOutletIn` (backend/app/api/v1/pdu_catalog.py). */
+export interface PDUOutletInput {
+  stable_key: string;
+  outlet_number: number;
+  label?: string | null;
+  outlet_type?: string;
+  outlet_count?: number;
+  phase?: string;
+  rated_voltage_v?: number | null;
+  rated_current_a?: number | null;
+  position?: string | null;
+  side?: string;
+  sort_order?: number;
+}
+
+/** Client mirror of `PDUDraftUpdateIn`. PATCH is partial: only fields the caller sends
+ * are applied, so omitted scalars (rated capacity, plug type, monitoring attributes) keep
+ * their persisted values, and an omitted `outlets` list preserves the existing templates.
+ * The panel always sends the complete edited outlet table, which replaces it wholesale. */
+export interface PDUDraftUpdateInput {
+  pdu_input_voltage_v?: number | null;
+  pdu_input_current_a?: number | null;
+  pdu_phase?: string | null;
+  mounting_orientation?: string | null;
+  pdu_rated_capacity_kw?: number | null;
+  pdu_plug_type?: string | null;
+  pdu_monitoring_protocol?: string | null;
+  pdu_monitoring_endpoint?: string | null;
+  outlets?: PDUOutletInput[];
+}
+
+/** 404s for non-PDU revisions and 409s once the revision is published — the panel only
+ * calls this while `category === "pdu" && lifecycle_status === "draft"`. */
+export const getPduDraft = (revisionId: string) => apiFetch<PDUDraft>(`/catalog/revisions/${revisionId}/pdu`);
+
+export const updatePduDraft = (revisionId: string, body: PDUDraftUpdateInput, ifMatch: number) =>
+  apiFetch<PDUDraft>(`/catalog/revisions/${revisionId}/pdu`, { method: "PATCH", body: JSON.stringify(body), ifMatch });
 
 // -------------------------------------------------------------------- Network ports
 

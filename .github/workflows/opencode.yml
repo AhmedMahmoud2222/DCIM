@@ -1,0 +1,506 @@
+# OpenCode implementation and independent review agents (workflow v6.0).
+# Design, permissions, setup and recovery: docs/security/OPENCODE_AGENT_AUTHORITY.md
+#
+# Trigger scope: issue_comment only. GitHub runs issue_comment workflows from the
+# default branch. pull_request_review_comment runs the workflow file from the PR merge
+# ref, so a PR author could edit this file and trigger it; that event is not supported.
+#
+# Flow: gate (no secrets)
+#   -> opencode (sandboxed generation only: read-only token, no GitHub write rights)
+#   -> publish (fresh runner, dedicated GitHub App token, GitHub-signed commit, Draft PR)
+#   -> report (trusted status comment when nothing was published)
+# Review: `/oc review [focus]` on a PR runs a different approved model in a new read-only
+# session (job `review`); a trusted job posts a COMMENT-only review tied to the exact commit.
+name: OpenCode
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+env:
+  OPENCODE_VERSION: '1.19.3'
+
+jobs:
+  gate:
+    name: Authorize command
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+      task: ${{ steps.gate.outputs.task }}
+      kind: ${{ steps.gate.outputs.kind }}
+      number: ${{ steps.gate.outputs.number }}
+      authorized_sha: ${{ steps.gate.outputs.authorized_sha }}
+      head_ref: ${{ steps.gate.outputs.head_ref }}
+      base_sha: ${{ steps.gate.outputs.base_sha }}
+      mode: ${{ steps.gate.outputs.mode }}
+    steps:
+      # github.sha is the default-branch commit this workflow file came from, so the
+      # scripts below always match the workflow. If a merge ever lands the workflow
+      # without them, the gate step fails and the agent never starts.
+      - name: Checkout scripts from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Fetch PR metadata for PR conversation comments
+        if: github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: gh api "repos/${GITHUB_REPOSITORY}/pulls/${ISSUE_NUMBER}" > "${RUNNER_TEMP}/pr.json"
+      - name: Authorize
+        id: gate
+        env:
+          ALLOWED_ACTOR_IDS: ${{ vars.OPENCODE_ALLOWED_ACTOR_IDS }}
+          PR_JSON_PATH: ${{ runner.temp }}/pr.json
+        run: |
+          test -f .github/scripts/opencode_gate.py || { echo "::error::gate script missing on this commit; refusing to run"; exit 1; }
+          python3 .github/scripts/opencode_gate.py
+
+  opencode:
+    name: Generate in sandbox (no publish rights)
+    needs: gate
+    if: needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'implement'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: opencode-agent
+    # Only authorized work reaches this group, so unauthorized comments cannot displace it.
+    concurrency:
+      group: opencode-agent-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    outputs:
+      generation: ${{ steps.agent.outputs.generation }}
+      generation_reason: ${{ steps.agent.outputs.generation_reason }}
+      session_id: ${{ steps.agent.outputs.session_id }}
+      has_changes: ${{ steps.collect.outputs.has_changes }}
+      model: ${{ steps.route.outputs.model }}
+      category: ${{ steps.route.outputs.category }}
+      reason: ${{ steps.route.outputs.reason }}
+    steps:
+      - name: Checkout trusted scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Checkout the authorized baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.authorized_sha }}
+          path: target
+          persist-credentials: false
+      - name: Read live model catalog
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
+      - name: Select model
+        id: route
+        env:
+          TASK: ${{ needs.gate.outputs.task }}
+        run: python3 trusted/.github/scripts/opencode_router.py --registry trusted/.github/opencode/model-registry.json --available "${RUNNER_TEMP}/available.json"
+      - name: Build sanitized sandbox copy
+        env:
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          python3 trusted/.github/scripts/opencode_sandbox.py prepare target "${RUNNER_TEMP}/stage" "${RUNNER_TEMP}/state" "${AUTHORIZED_SHA}" trusted/.github/opencode/secret-scan-allowlist.txt
+      - name: Install pinned OpenCode (lockfile integrity)
+        run: |
+          set -euo pipefail
+          # npm verifies every tarball against the committed lockfile's sha512 integrity values.
+          (cd trusted/.github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode /opt/opencode/bin/opencode
+          test "$(/opt/opencode/bin/opencode --version)" = "${OPENCODE_VERSION}"
+      - name: Create isolated agent user and verify its filesystem view
+        run: |
+          set -euo pipefail
+          sudo useradd --system --home-dir /srv/ocagent-home --shell /usr/sbin/nologin ocagent
+          sudo install -d -o ocagent -g ocagent -m 700 /srv/ocagent-home
+          # Parent is root-controlled: the agent can write inside `work` but cannot rename,
+          # replace, delete or symlink `work` itself.
+          sudo install -d -o root -g root -m 755 /srv/ocimpl
+          sudo install -d -o ocagent -g ocagent -m 755 /srv/ocimpl/work
+          sudo cp -a "${RUNNER_TEMP}/stage/." /srv/ocimpl/work/
+          sudo chown -R ocagent:ocagent /srv/ocimpl/work
+          # The agent user cannot enter the runner home (checkout, tokens, runner files).
+          sudo chmod 700 "${HOME}"
+          sudo install -m 755 trusted/.github/scripts/opencode_fsisolate.py /opt/opencode/fsisolate.py
+          sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work "$(id -u ocagent)"
+          sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe-parent /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
+      - name: Run agent (loopback-only, model-bound proxy)
+        id: agent
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          MODEL: ${{ steps.route.outputs.model }}
+          TASK: ${{ needs.gate.outputs.task }}
+          OPENCODE_PROXY_LOG: ${{ runner.temp }}/proxy-rejections.log
+        run: |
+          set -euo pipefail
+          for tool in iptables ip6tables; do
+            sudo "${tool}" -A OUTPUT -m owner --uid-owner ocagent -o lo -j ACCEPT
+            sudo "${tool}" -A OUTPUT -m owner --uid-owner ocagent -j REJECT
+          done
+          if sudo -n -u ocagent curl -sS --max-time 5 -o /dev/null https://api.github.com 2>/dev/null; then
+            echo "::error::agent user still has network egress; refusing to run"; exit 1
+          fi
+          # The proxy runs as the runner user, holds the only copy of the key, and is bound to the
+          # router's model: it refuses to start for an ineligible model and rejects every other model.
+          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json &
+          proxy_pid=$!
+          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then echo "::warning::proxy rejected $(wc -l < "${OPENCODE_PROXY_LOG}") request(s)"; fi' EXIT
+          for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
+          port="$(cat "${RUNNER_TEMP}/proxy.port")"
+          unset OPENCODE_API_KEY
+          python3 trusted/.github/scripts/opencode_sandbox.py config "${MODEL}" "${port}" > "${RUNNER_TEMP}/agent-config.json"
+          sudo install -D -m 644 "${RUNNER_TEMP}/agent-config.json" /etc/opencode/opencode.json
+          python3 trusted/.github/scripts/opencode_guard.py "${RUNNER_TEMP}/generation.json" "${MODEL}" "${RUNNER_TEMP}/agent-config.json" /srv/ocagent-home /srv/ocimpl/work 25
+      - name: Collect changes as data
+        id: collect
+        if: steps.agent.outputs.generation == 'success'
+        run: |
+          set -euo pipefail
+          OPENCODE_REQUIRE_ROOT_CHAIN=1 python3 trusted/.github/scripts/opencode_collect.py /srv/ocimpl/work "${RUNNER_TEMP}/state" "${RUNNER_TEMP}/changes"
+          if [[ "$(jq '.changes | length' "${RUNNER_TEMP}/changes/manifest.json")" -gt 0 ]]; then
+            echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Upload changes
+        if: steps.collect.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        with:
+          name: opencode-changes
+          path: ${{ runner.temp }}/changes
+          if-no-files-found: error
+          retention-days: 1
+
+  review:
+    name: Independent review (read-only sandbox)
+    needs: gate
+    if: needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: opencode-agent
+    concurrency:
+      group: opencode-agent-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      review_blocked: ${{ steps.pick.outputs.review_blocked || steps.inputs.outputs.review_blocked }}
+      block_reason: ${{ steps.pick.outputs.block_reason || steps.inputs.outputs.block_reason }}
+      model: ${{ steps.pick.outputs.model }}
+      generation: ${{ steps.agent.outputs.generation }}
+      generation_reason: ${{ steps.agent.outputs.generation_reason }}
+      session_id: ${{ steps.agent.outputs.session_id }}
+    steps:
+      - name: Checkout trusted scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Checkout the authorized commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.authorized_sha }}
+          path: target
+          persist-credentials: false
+      - name: Gather diff and implementer records from the immutable revisions
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_NUMBER: ${{ needs.gate.outputs.number }}
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+          EXPECT_BOT_LOGIN: ${{ vars.OPENCODE_APP_SLUG }}[bot]
+        run: python3 trusted/.github/scripts/opencode_review.py prepare "${RUNNER_TEMP}/review"
+      - name: Read live model catalog
+        if: steps.inputs.outputs.review_blocked == 'false'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
+      - name: Select independent reviewer
+        id: pick
+        if: steps.inputs.outputs.review_blocked == 'false'
+        env:
+          TASK: ${{ needs.gate.outputs.task }}
+        run: python3 trusted/.github/scripts/opencode_review.py select trusted/.github/opencode/model-registry.json trusted/.github/opencode/reviewer-capability-matrix.json "${RUNNER_TEMP}/available.json" "${RUNNER_TEMP}/review/implementers.json"
+      - name: Build sanitized read-only sandbox copy
+        if: steps.pick.outputs.review_blocked == 'false'
+        env:
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          python3 trusted/.github/scripts/opencode_sandbox.py prepare target "${RUNNER_TEMP}/stage" "${RUNNER_TEMP}/state" "${AUTHORIZED_SHA}" trusted/.github/opencode/secret-scan-allowlist.txt
+          install -D -m 644 "${RUNNER_TEMP}/review/diff.patch" "${RUNNER_TEMP}/stage/REVIEW/diff.patch"
+      - name: Install pinned OpenCode (lockfile integrity)
+        if: steps.pick.outputs.review_blocked == 'false'
+        run: |
+          set -euo pipefail
+          # npm verifies every tarball against the committed lockfile's sha512 integrity values.
+          (cd trusted/.github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode /opt/opencode/bin/opencode
+          test "$(/opt/opencode/bin/opencode --version)" = "${OPENCODE_VERSION}"
+      - name: Create isolated agent user and root-controlled read-only source
+        id: layout
+        if: steps.pick.outputs.review_blocked == 'false'
+        run: |
+          set -euo pipefail
+          sudo useradd --system --home-dir /srv/ocagent-home --shell /usr/sbin/nologin ocagent
+          sudo install -d -o ocagent -g ocagent -m 700 /srv/ocagent-home
+          sudo install -m 755 trusted/.github/scripts/opencode_fsisolate.py /opt/opencode/fsisolate.py
+          # /srv/ocreview and /srv/ocreview/src are root-owned: nothing on the path can be renamed,
+          # replaced, deleted or symlinked by the reviewer user. A read-only bind mount is added when available.
+          sudo python3 -I /opt/opencode/fsisolate.py build "${RUNNER_TEMP}/stage" /srv/ocreview
+          sudo python3 -I /opt/opencode/fsisolate.py mount /srv/ocreview
+          sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocreview/src
+          echo "tree_digest=$(sudo python3 -I /opt/opencode/fsisolate.py digest /srv/ocreview/src)" >> "${GITHUB_OUTPUT}"
+          sudo chmod 700 "${HOME}"
+          # Effective permissions are tested as the reviewer UID, not inferred from mode bits.
+          sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocreview/src --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
+      - name: Run reviewer (loopback-only, read-only, model-bound proxy)
+        id: agent
+        if: steps.pick.outputs.review_blocked == 'false'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          MODEL: ${{ steps.pick.outputs.model }}
+          TASK: ${{ needs.gate.outputs.task }}
+          GUARD_MODE: review
+          GUARD_TEXT_OUT: ${{ runner.temp }}/review/review-text.txt
+          OPENCODE_PROXY_LOG: ${{ runner.temp }}/proxy-rejections.log
+        run: |
+          set -euo pipefail
+          for tool in iptables ip6tables; do
+            sudo "${tool}" -A OUTPUT -m owner --uid-owner ocagent -o lo -j ACCEPT
+            sudo "${tool}" -A OUTPUT -m owner --uid-owner ocagent -j REJECT
+          done
+          if sudo -n -u ocagent curl -sS --max-time 5 -o /dev/null https://api.github.com 2>/dev/null; then
+            echo "::error::agent user still has network egress; refusing to run"; exit 1
+          fi
+          # The reviewer's proxy is bound to the reviewer model and refuses every model that implemented here.
+          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json "${RUNNER_TEMP}/review/implementers.json" &
+          proxy_pid=$!
+          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then echo "::warning::proxy rejected $(wc -l < "${OPENCODE_PROXY_LOG}") request(s)"; fi' EXIT
+          for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
+          port="$(cat "${RUNNER_TEMP}/proxy.port")"
+          unset OPENCODE_API_KEY
+          python3 trusted/.github/scripts/opencode_sandbox.py config "${MODEL}" "${port}" review > "${RUNNER_TEMP}/agent-config.json"
+          sudo install -D -m 644 "${RUNNER_TEMP}/agent-config.json" /etc/opencode/opencode.json
+          python3 trusted/.github/scripts/opencode_guard.py "${RUNNER_TEMP}/generation.json" "${MODEL}" "${RUNNER_TEMP}/agent-config.json" /srv/ocagent-home /srv/ocreview/src 25
+      - name: Verify separation, unchanged source and effective permissions
+        if: steps.agent.outputs.generation == 'success'
+        env:
+          REVIEWER_MODEL: ${{ steps.pick.outputs.model }}
+          REVIEWER_SESSION: ${{ steps.agent.outputs.session_id }}
+          EXPECTED_DIGEST: ${{ steps.layout.outputs.tree_digest }}
+        run: |
+          set -euo pipefail
+          python3 trusted/.github/scripts/opencode_review.py check trusted/.github/opencode/model-registry.json "${RUNNER_TEMP}/review/implementers.json"
+          # Same checks again after the run: chain ownership, byte-identical tree, and the reviewer UID still cannot write.
+          sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocreview/src
+          test "$(sudo python3 -I /opt/opencode/fsisolate.py digest /srv/ocreview/src)" = "${EXPECTED_DIGEST}"
+          sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocreview/src --writable /srv/ocagent-home
+          OPENCODE_REQUIRE_ROOT_CHAIN=1 python3 trusted/.github/scripts/opencode_collect.py /srv/ocreview/src "${RUNNER_TEMP}/state" "${RUNNER_TEMP}/changes"
+          python3 trusted/.github/scripts/opencode_review.py verify-readonly "${RUNNER_TEMP}/changes/manifest.json" "${RUNNER_TEMP}/review/diff.patch"
+          install -D -m 644 "${RUNNER_TEMP}/review/review-text.txt" "${RUNNER_TEMP}/review-out/review-text.txt"
+      - name: Upload review output
+        if: steps.agent.outputs.generation == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        with:
+          name: opencode-review
+          path: ${{ runner.temp }}/review-out
+          if-no-files-found: error
+          retention-days: 1
+
+  review_publish:
+    name: Post review comment (COMMENT only)
+    needs: [gate, review]
+    if: needs.review.result == 'success' && needs.review.outputs.generation == 'success' && needs.review.outputs.review_blocked != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: opencode-publish
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout publisher scripts and registry from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/scripts
+            .github/opencode
+          persist-credentials: false
+      - name: Download review output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: opencode-review
+          path: ${{ runner.temp }}/review-out
+      - name: Mint review-only App token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+      - name: Post independent review
+        env:
+          GH_PUBLISH_TOKEN: ${{ steps.app.outputs.token }}
+          TARGET_NUMBER: ${{ needs.gate.outputs.number }}
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+          EXPECT_BOT_LOGIN: ${{ vars.OPENCODE_APP_SLUG }}[bot]
+          REVIEWER_MODEL: ${{ needs.review.outputs.model }}
+          REVIEWER_SESSION: ${{ needs.review.outputs.session_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out"
+
+  publish:
+    name: Publish signed commit and Draft PR
+    needs: [gate, opencode]
+    if: needs.opencode.result == 'success' && needs.opencode.outputs.generation == 'success' && needs.opencode.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: opencode-publish
+    concurrency:
+      group: opencode-publish-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+      branch: ${{ steps.publish.outputs.branch }}
+    steps:
+      - name: Checkout publisher scripts from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Download changes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: opencode-changes
+          path: ${{ runner.temp }}/changes
+      - name: Mint short-lived App token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Publish
+        id: publish
+        env:
+          GH_PUBLISH_TOKEN: ${{ steps.app.outputs.token }}
+          ARTIFACT_DIR: ${{ runner.temp }}/changes
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_KIND: ${{ needs.gate.outputs.kind }}
+          TARGET_NUMBER: ${{ needs.gate.outputs.number }}
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+          PR_HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+          GENERATION_STATUS: ${{ needs.opencode.outputs.generation }}
+          SESSION_ID: ${{ needs.opencode.outputs.session_id }}
+          GIT_REPO_DIR: ${{ github.workspace }}
+          EVIDENCE_PATH: ${{ runner.temp }}/publication-evidence.json
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          ACTOR_LOGIN: ${{ github.event.comment.user.login }}
+          EXPECT_BOT_LOGIN: ${{ vars.OPENCODE_APP_SLUG }}[bot]
+          TASK: ${{ needs.gate.outputs.task }}
+          MODEL: ${{ needs.opencode.outputs.model }}
+          CATEGORY: ${{ needs.opencode.outputs.category }}
+          ROUTE_REASON: ${{ needs.opencode.outputs.reason }}
+        run: python3 .github/scripts/opencode_publish.py
+      - name: Preserve publication evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        with:
+          name: opencode-publication-evidence
+          path: ${{ runner.temp }}/publication-evidence.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Independently re-verify the published commit
+        if: steps.publish.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ steps.publish.outputs.commit }}
+          EXPECT_BOT_LOGIN: ${{ vars.OPENCODE_APP_SLUG }}[bot]
+        run: python3 .github/scripts/opencode_verify_signatures.py --commit "${GITHUB_REPOSITORY}" "${COMMIT_SHA}" "${EXPECT_BOT_LOGIN}"
+
+  report:
+    name: Report outcome
+    needs: [gate, opencode, publish, review, review_publish]
+    if: >-
+      always() && needs.gate.outputs.authorized == 'true' && (
+      (needs.gate.outputs.mode == 'implement' &&
+       (needs.opencode.result != 'success' || needs.opencode.outputs.has_changes != 'true' || needs.publish.result == 'failure')) ||
+      (needs.gate.outputs.mode == 'review' &&
+       (needs.review.result != 'success' || needs.review.outputs.review_blocked == 'true' || needs.review_publish.result != 'success')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: opencode-publish
+    permissions: {}
+    steps:
+      - name: Mint comment-only App token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+      - name: Comment
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NUMBER: ${{ needs.gate.outputs.number }}
+          MODE: ${{ needs.gate.outputs.mode }}
+          GENERATION: ${{ needs.opencode.outputs.generation || needs.review.outputs.generation }}
+          GENERATION_REASON: ${{ needs.opencode.outputs.generation_reason || needs.review.outputs.generation_reason }}
+          HAS_CHANGES: ${{ needs.opencode.outputs.has_changes }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          PUBLISHED_BRANCH: ${{ needs.publish.outputs.branch }}
+          REVIEW_BLOCKED: ${{ needs.review.outputs.review_blocked }}
+          BLOCK_REASON: ${{ needs.review.outputs.block_reason }}
+          REVIEW_PUBLISH_RESULT: ${{ needs.review_publish.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "${MODE}" == "review" ]]; then
+            if [[ "${REVIEW_BLOCKED}" == "true" ]]; then
+              msg="REVIEW_BLOCKED: no independent review was produced (${BLOCK_REASON//[^A-Za-z0-9 .,:;()\/_-]/}). External acceptance by Codex or Jules is still required."
+            elif [[ "${GENERATION}" != "success" ]]; then
+              msg="OpenCode review did not complete (${GENERATION_REASON//[^a-z0-9_:-]/}). No review was posted."
+            else
+              msg="OpenCode review output could not be published (invalid or stale). No review was posted."
+            fi
+          elif [[ "${PUBLISH_RESULT}" == "failure" ]]; then
+            msg="OpenCode generated a change but publication stopped. Nothing was merged. If a branch was created it is named in the run log (possible partial publication: ${PUBLISHED_BRANCH:-none reported})."
+          elif [[ "${GENERATION}" == "success" && "${HAS_CHANGES}" == "false" ]]; then
+            msg="OpenCode finished and produced no file changes."
+          elif [[ "${GENERATION}" == "success" ]]; then
+            msg="OpenCode generation succeeded, but collecting or uploading the change failed before publication (has_changes: ${HAS_CHANGES:-unknown}). Nothing was published."
+          elif [[ -n "${GENERATION_REASON}" ]]; then
+            msg="OpenCode stopped without publishing: generation did not complete (${GENERATION_REASON//[^a-z0-9_:-]/})."
+          else
+            msg="OpenCode stopped before generation (routing, catalog, sandbox or data-policy check). Nothing was published."
+          fi
+          gh issue comment "${NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${msg} Run: ${RUN_URL}"

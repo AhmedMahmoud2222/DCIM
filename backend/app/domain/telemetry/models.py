@@ -397,3 +397,10 @@ def _seed_first_revision(_mapper, connection, mapping: IntegrationMetricMapping)
         update(mapping_table).where(mapping_table.c.id == mapping.id).values(current_revision_id=values["id"])
     )
     set_committed_value(mapping, "current_revision_id", values["id"])
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_telemetry_reading_mapping_id", TelemetryReading.mapping_id)
+Index("ix_telemetry_reading_mapping_revision_id", TelemetryReading.mapping_revision_id)
+Index("ix_daily_telemetry_aggregate_lineage_mapping_revision_id", DailyTelemetryAggregateLineage.mapping_revision_id)

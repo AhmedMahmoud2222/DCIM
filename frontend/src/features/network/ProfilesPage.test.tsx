@@ -30,6 +30,15 @@ describe("ProfilesPage", () => {
     expect(screen.getByText(/model prefix C93/)).toBeInTheDocument();
   });
 
+  it("names the page Network Profiles and points general equipment to the Asset Catalog", async () => {
+    renderWithProviders(<ProfilesPage />, { user: userWith("network_profile:read") });
+    expect(screen.getByRole("heading", { name: "Network Profiles" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Device Profiles" })).toBeNull();
+    expect(screen.getByText(/LLDP\/CDP table layouts/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Asset Catalog" })).toHaveAttribute("href", "/admin/catalog");
+    await screen.findByText("Cisco");
+  });
+
   it("hides every mutation control without network_profile:manage", async () => {
     renderWithProviders(<ProfilesPage />, { user: userWith("network_profile:read") });
     await screen.findByText("Cisco");
