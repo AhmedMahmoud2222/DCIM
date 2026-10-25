@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { FormEvent, useState } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
@@ -209,11 +211,7 @@ export function UsersPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Users</h1>
-      <p className="mb-4 max-w-2xl text-sm text-slate-400">
-        Create and manage users and assign them to groups. Group membership decides which sites and racks a user can see.
-        All rules are enforced by the server.
-      </p>
+      <PageHeader title="Users" description="Create and manage users and assign them to groups. Group membership decides which sites and racks a user can see. All rules are enforced by the server." />
       {message && (
         <p role={message.kind === "error" ? "alert" : "status"} className={`mb-3 text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}>
           {message.text}
@@ -259,8 +257,7 @@ export function UsersPage() {
               </button>
             </form>
           )}
-          {usersQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-          {usersQuery.isError && <p role="alert" className="text-sm text-red-400">{errorText(usersQuery.error)}</p>}
+          <QueryStatus query={usersQuery} what="users" permission="user:read" columns={1} />
           <ul className="space-y-1" aria-label="Users">
             {usersQuery.data?.items.map((u) => (
               <li key={u.id}>

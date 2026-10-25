@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { FormEvent, useEffect, useState } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
@@ -153,11 +155,7 @@ export function GroupsPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Groups</h1>
-      <p className="mb-4 max-w-2xl text-sm text-slate-400">
-        A group carries permissions and site/rack access. A user gets the union of all their groups, and an explicit deny
-        in any group overrides an allow. A new group grants nothing.
-      </p>
+      <PageHeader title="Groups" description="A group carries permissions and site/rack access. A user gets the union of all their groups, and an explicit deny in any group overrides an allow. A new group grants nothing." />
       {message && (
         <p role={message.kind === "error" ? "alert" : "status"} className={`mb-3 text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}>
           {message.text}
@@ -172,7 +170,7 @@ export function GroupsPage() {
               <button type="submit" className="rounded-sm bg-blue-600 px-2 py-1 text-xs text-white">Add</button>
             </form>
           )}
-          {groupsQuery.isError && <p role="alert" className="text-sm text-red-400">{errorText(groupsQuery.error)}</p>}
+          <QueryStatus query={groupsQuery} what="groups" permission="group:read" columns={1} />
           <ul className="space-y-1" aria-label="Groups">
             {groupsQuery.data?.items.map((g) => (
               <li key={g.id}>
