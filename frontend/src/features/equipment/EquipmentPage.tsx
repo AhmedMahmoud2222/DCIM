@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { DataTable, EmptyRow, RowCount, TableError, TableLoading, TD, TD_STICKY, TH, TH_STICKY, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
@@ -127,56 +128,58 @@ export function EquipmentPage() {
         </form>
       )}
 
-      {equipmentQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-      {equipmentQuery.error && <p className="text-sm text-red-400">{(equipmentQuery.error as Error).message}</p>}
+      {equipmentQuery.isLoading && <TableLoading label="equipment" columns={4} />}
+      {equipmentQuery.error && (
+        <TableError error={equipmentQuery.error} what="the equipment list" permission="equipment:read" onRetry={() => equipmentQuery.refetch()} />
+      )}
 
       {equipmentQuery.data && (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-slate-800 text-left text-slate-400">
-              <th className="pb-2">Hostname</th>
-              <th className="pb-2">Asset Tag</th>
-              <th className="pb-2">Status</th>
-              <th className="pb-2">Placement</th>
-            </tr>
-          </thead>
-          <tbody>
-            {equipmentQuery.data.items.map((eq) => (
-              <tr key={eq.id} className="border-b border-slate-900 hover:bg-slate-900/50">
-                <td className="py-2">
-                  <Link to={`/equipment/${eq.id}`} className="font-medium text-blue-400 hover:underline">
-                    {eq.hostname ?? eq.asset_tag}
-                  </Link>
-                </td>
-                <td className="py-2 font-mono text-slate-300">{eq.asset_tag}</td>
-                <td className="py-2">
-                  <LifecycleStatus value={eq.lifecycle_status} />
-                </td>
-                <td className="py-2 text-slate-400">
-                  {eq.placement ? (
-                    eq.placement.placement_type === "rack_mounted" ? (
-                      <>
-                        {racksQuery.data?.items.find((r) => r.id === eq.placement!.rack_id)?.name ?? eq.placement.rack_id} — U
-                        {eq.placement.u_start}-{eq.placement.u_end} ({eq.placement.side})
-                      </>
+        <>
+          <RowCount shown={equipmentQuery.data.items.length} total={equipmentQuery.data.total} noun="equipment" />
+          <DataTable label="Equipment">
+            <thead>
+              <tr className="border-b border-line-subtle bg-surface-panel">
+                <th scope="col" className={TH_STICKY}>Hostname</th>
+                <th scope="col" className={TH}>Asset Tag</th>
+                <th scope="col" className={TH}>Status</th>
+                <th scope="col" className={TH}>Placement</th>
+              </tr>
+            </thead>
+            <tbody>
+              {equipmentQuery.data.items.map((eq) => (
+                <tr key={eq.id} className={TR}>
+                  <td className={TD_STICKY}>
+                    <Link to={`/equipment/${eq.id}`} className="font-medium text-link hover:underline">
+                      {eq.hostname ?? eq.asset_tag}
+                    </Link>
+                  </td>
+                  <td className={`${TD} font-mono text-fg-secondary`}>{eq.asset_tag}</td>
+                  <td className={TD}>
+                    <LifecycleStatus value={eq.lifecycle_status} />
+                  </td>
+                  <td className={`${TD} text-fg-secondary`}>
+                    {eq.placement ? (
+                      eq.placement.placement_type === "rack_mounted" ? (
+                        <>
+                          {racksQuery.data?.items.find((r) => r.id === eq.placement!.rack_id)?.name ?? eq.placement.rack_id} —{" "}
+                          <span className="whitespace-nowrap tabular-nums text-fg-primary">
+                            U{eq.placement.u_start}-{eq.placement.u_end}
+                          </span>{" "}
+                          ({eq.placement.side})
+                        </>
+                      ) : (
+                        eq.placement.placement_type
+                      )
                     ) : (
-                      eq.placement.placement_type
-                    )
-                  ) : (
-                    <span className="italic text-slate-600">unplaced</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {equipmentQuery.data.items.length === 0 && (
-              <tr>
-                <td colSpan={4} className="py-6 text-center text-slate-500">
-                  No equipment yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                      <span className="italic">unplaced</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {equipmentQuery.data.items.length === 0 && <EmptyRow columns={4}>No equipment yet.</EmptyRow>}
+            </tbody>
+          </DataTable>
+        </>
       )}
     </div>
   );
