@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native OpenCode CLI connectivity smoke test (smoke v1.0).
+"""Native OpenCode CLI connectivity smoke test (smoke v1.1).
 
 Diagnostic experiment, not production activation. It complements the direct
 synthetic diagnostic (model_health_diagnostic.py): that script builds direct
@@ -22,25 +22,41 @@ Isolation: the CLI runs in an empty temporary working directory with
 HOME/XDG_* reserved under a dedicated directory, disconnected from the
 repository checkout (repo source is used only to install the runtime, never
 loaded into model context). Every tool the pinned runtime exposes is denied
-at the config level — read, edit, bash, webfetch, external_directory, task
-and todowrite — so a malfunctioning model cannot read or write anything
-regardless of what the transcript later shows.
+at the config level except `read`, which is set to `ask` (headless-safe) to
+maintain free-tier compatibility with the live opencode.ai gateway: `read:
+ask` is not auto-approved in headless mode (validated against the real pinned
+CLI, exits 0 with `tool_use(read,error)` and no file-content leakage) and
+does not change the request envelope to trigger a pre-auth 403. The
+transcript-level guard rejects any tool-use event (completed or error), and
+all other tools remain denied. The workflow maps `OPENCODE_API_KEY` only in
+the secret-bearing step, after a credential-free compatibility preflight has
+passed the same envelope with a synthetic key.
 
 Recording: sanitized evidence only — CLI version, model, ok/failed status,
 reason class, provider HTTP status class, elapsed time and event counts.
 Never the API key, prompt, URLs, response bodies, headers or stderr text.
 
-Usage: opencode_native_smoke.py RESULT_JSON BINARY AGENT_HOME WORKDIR TIMEOUT_MIN
+Usage: opencode_native_smoke.py [--preflight] RESULT_JSON BINARY AGENT_HOME WORKDIR TIMEOUT_MIN
 All three paths are canonicalized to absolute before any subprocess runs (the
 inference run changes cwd to the workdir; a relative binary path with a slash
 would otherwise resolve from the wrong directory). The binary must be the
 checked-out, lockfile-pinned runtime; it is not user-configurable.
 
-Environment: OPENCODE_API_KEY (read once, never printed, never written).
+Preflight mode (--preflight): credential-free synthetic compatibility probe.
+It sends the exact same fixed request envelope with a non-credential synthetic
+key and passes only when the gateway reaches authentication (HTTP 401) instead
+of rejecting the envelope at the policy layer (HTTP 403). It never reads
+OPENCODE_API_KEY. This is the regression guard for the free-tier envelope
+incompatibility that made the merged diagnostic a false negative, and it must
+pass before the workflow maps the real secret.
 
-Exit code: 0 only when the CLI version matches the pin, exited 0, produced a
-coherent pure-text life cycle ending in step_finish(reason="stop"), and the
-run was marked ok. Any other outcome writes a sanitized record and exits 1.
+Environment: OPENCODE_API_KEY (live mode only; read once, never printed, never
+written; ignored entirely in preflight mode).
+
+Exit code: 0 only when the CLI version matches the pin and the run met its
+mode's objective (live: coherent pure-text life cycle ending in
+step_finish(reason="stop"); preflight: auth reached with 401). Any other
+outcome writes a sanitized record and exits 1.
 """
 from __future__ import annotations
 
@@ -51,7 +67,7 @@ import subprocess
 import sys
 import time
 
-SMOKE_VERSION = '1.0'
+SMOKE_VERSION = '1.1'
 
 # One fixed model, in the CLI selector (provider/model) form. The selector is
 # consumed by the CLI; the bare provider ID is never sent anywhere by us.
@@ -59,6 +75,11 @@ MODEL = 'opencode/glm-5.3-flash-free'
 
 # The exact fixed synthetic prompt from the diagnostic mandate.
 PROMPT = 'Respond with exactly OK'
+
+# Preflight mode uses this fixed non-credential placeholder. It is not a secret,
+# cannot authenticate, and proves only that the request envelope is accepted
+# (auth layer reached) rather than policy-rejected before auth.
+SYNTHETIC_KEY = 'synthetic-compatibility-probe-not-a-credential'
 
 # Pinned runtime version; must match .github/opencode/runtime/package.json.
 EXPECTED_OPENCODE_VERSION = '1.19.3'
@@ -71,24 +92,29 @@ RE_REASON_ESCAPE = re.compile(r'[^a-z0-9_:-]')
 ENABLED_PROVIDERS = ('opencode',)
 
 # The fixed prompt needs no tools, so every tool the pinned runtime exposes is
-# denied before the transcript can ever show one. All seven keys below are
-# recognized permission kinds in opencode-ai 1.19.3 (validated against the
-# pinned binary's embedded code: read/edit/bash/webfetch plus the delegation
-# kinds external_directory, task and todowrite). read is denied too (B3): the
-# CLI inherits OPENCODE_API_KEY, so a filesystem-read tool running at all would
-# be an unnecessary exposure surface.
+# denied before the transcript can ever show one — except `read`, which is
+# `ask` (see the compatibility note below). All seven keys are recognized
+# permission kinds in opencode-ai 1.19.3 (validated against the pinned binary's
+# embedded code: read/edit/bash/webfetch plus the delegation kinds
+# external_directory, task and todowrite).
 #
-# Validated envelope note (pinned binary, 2026-10-23): read:'deny' changes the
-# outbound tool envelope; on the live opencode.ai gateway a synthetic invalid
-# key then receives HTTP 403 (policy layer) where read:'allow' produces HTTP 401
-# (upstream Invalid credential). The success path step_start -> text ->
-# step_finish(reason="stop"), exit 0 was verified with this exact hardened
-# config against a scripted provider stub, so status 'ok' remains meaningful;
-# under this config a 'forbidden' class therefore reflects credential/policy
-# state — it must never be read as model unavailability.
+# IMPORTANT (diagnostic compatibility, 2026-10-23): on OpenCode 1.19.3 the
+# free-tier gateway treats `read: 'deny'` as changing the outbound tool envelope
+# and returns HTTP 403 (policy rejection) before auth; the run fails with
+# `provider_error`/`forbidden` even though the network/key path is valid.
+# Headless validation with the real pinned binary + scripted stub (no TTY)
+# shows `read: 'ask'` does NOT auto-approve filesystem reads and does NOT hang:
+# it produces `tool_use(read,error)` and stops (`step_finish(reason=tool-calls)`)
+# without leaking file contents, and exits 0. On the live gateway with a
+# synthetic key, `read: 'ask'` yields HTTP 401 (auth envelope reached), same as
+# `read: 'allow'`. The runner's transcript-level `unexpected_tool_use` check
+# and `evaluate()` still reject every tool-use event, completed or error;
+# `read` remains not 'allow'. This is a diagnostic-only change: it reconciles
+# the native-CLI smoke with free-tier compatibility without granting
+# uncontrolled filesystem access or expanding the credential surface.
 PERMISSIONS = {
     'edit': 'deny',
-    'read': 'deny',
+    'read': 'ask',
     'bash': 'deny',
     'webfetch': 'deny',
     'external_directory': 'deny',
@@ -106,7 +132,7 @@ CHILD_ENV_KEYS = frozenset({
 })
 
 RESULT_KEYS = frozenset({
-    'smoke_version', 'opencode_expected_version', 'opencode_version',
+    'smoke_version', 'mode', 'opencode_expected_version', 'opencode_version',
     'model', 'status', 'reason', 'error_class', 'error_status_code',
     'exit_code', 'timed_out', 'event_count', 'stderr_lines', 'elapsed_ms',
 })
@@ -299,7 +325,38 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool
     return 'ok', '', error_class, error_status_code
 
 
-def _write_result(path: str, *, opencode_version: str | None, status: str, reason: str,
+def resolve_key(mode: str, environ: dict) -> str:
+    """Return the credential for this mode.
+
+    Preflight never reads OPENCODE_API_KEY: it always uses the fixed synthetic
+    placeholder, so a real secret cannot be exposed by the credential-free
+    compatibility step even if the workflow environment leaked it.
+    """
+    if mode == 'preflight':
+        return SYNTHETIC_KEY
+    return environ.get('OPENCODE_API_KEY', '')
+
+
+def probe_verdict(status: str, reason: str, error_class: str | None,
+                  error_status_code: int | None) -> tuple[str, str]:
+    """Map one synthetic-key run to the preflight objective.
+
+    Compatible: the gateway answered 401 — the request envelope (config, tools,
+    fixed model/prompt) reached authentication and only the fake credential was
+    rejected. Anything else fails closed: 403 means the envelope was rejected
+    at the policy layer (the exact free-tier regression this guards against),
+    and any other outcome is unexpected for a synthetic key.
+    """
+    if (status == 'failed' and reason == 'provider_error'
+            and error_class == 'auth_error' and error_status_code == 401):
+        return 'ok', 'credential_rejected_as_expected'
+    if status == 'failed' and error_class == 'forbidden':
+        return 'failed', 'config_envelope_rejected'
+    return 'failed', 'unexpected_probe_outcome'
+
+
+def _write_result(path: str, *, mode: str = 'live', opencode_version: str | None,
+                  status: str, reason: str,
                   error_class: str | None, error_status_code: int | None,
                   exit_code: int | None, timed_out: bool, event_count: int,
                   stderr_lines: int, elapsed_ms: int | None) -> dict:
@@ -312,6 +369,7 @@ def _write_result(path: str, *, opencode_version: str | None, status: str, reaso
     """
     record = {
         'smoke_version': SMOKE_VERSION,
+        'mode': mode,
         'opencode_expected_version': EXPECTED_OPENCODE_VERSION,
         'opencode_version': opencode_version,
         'model': MODEL,
@@ -334,7 +392,7 @@ def _write_result(path: str, *, opencode_version: str | None, status: str, reaso
 def _summary(record: dict) -> str:
     """One sanitized status line for the run log (also artifact-consistent)."""
     return (' '.join([
-        f'native smoke: model={record["model"]}',
+        f"native smoke: mode={record.get('mode', 'live')} model={record['model']}",
         'status ok' if record['status'] == 'ok' else 'status failed',
         f"reason={record['reason'] or '-'}",
         f"error_class={record['error_class'] or '-'}",
@@ -344,11 +402,21 @@ def _summary(record: dict) -> str:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 6:
-        print('usage: opencode_native_smoke.py RESULT_JSON BINARY AGENT_HOME WORKDIR TIMEOUT_MIN',
-              file=sys.stderr)
+    args = list(argv[1:])
+    preflight = bool(args) and args[0] == '--preflight'
+    if preflight:
+        args = args[1:]
+    if len(args) != 5:
+        print('usage: opencode_native_smoke.py [--preflight] RESULT_JSON BINARY '
+              'AGENT_HOME WORKDIR TIMEOUT_MIN', file=sys.stderr)
         return 2
-    result_path, binary, agent_home, workdir, timeout_min = argv[1], argv[2], argv[3], argv[4], int(argv[5])
+    mode = 'preflight' if preflight else 'live'
+    result_path, binary, agent_home, workdir = args[0], args[1], args[2], args[3]
+    try:
+        timeout_min = int(args[4])
+    except ValueError:
+        print('timeout must be an integer number of minutes', file=sys.stderr)
+        return 2
 
     # Canonicalize before any subprocess runs. The inference run later changes
     # cwd to the smoke workdir; a relative binary containing '/' would then be
@@ -357,16 +425,17 @@ def main(argv: list[str]) -> int:
     binary = os.path.abspath(binary)
     agent_home = os.path.abspath(agent_home)
     workdir = os.path.abspath(workdir)
-    key = os.environ.get('OPENCODE_API_KEY', '')
+    key = resolve_key(mode, os.environ)
 
     start = time.monotonic()
 
     if not key:
-        _write_result(result_path, opencode_version=None, status='failed',
-                      reason='missing_api_key', error_class=None,
-                      error_status_code=None, exit_code=None, timed_out=False,
-                      event_count=0, stderr_lines=0, elapsed_ms=None)
-        print('native smoke: status failed reason=missing_api_key')
+        _write_result(result_path, mode=mode, opencode_version=None,
+                      status='failed', reason='missing_api_key',
+                      error_class=None, error_status_code=None, exit_code=None,
+                      timed_out=False, event_count=0, stderr_lines=0,
+                      elapsed_ms=None)
+        print(f'native smoke: mode={mode} status failed reason=missing_api_key')
         return 1
 
     # No credential below this line until the inference env is built: the
@@ -381,19 +450,20 @@ def main(argv: list[str]) -> int:
         version = read_version(binary, home_env)
     except (VersionProbeError, OSError, ValueError) as error:
         reason = _esc_reason(error) or 'opencode_version_unverified'
-        _write_result(result_path, opencode_version=None, status='failed',
-                      reason=reason, error_class=None, error_status_code=None,
-                      exit_code=None, timed_out=False, event_count=0,
-                      stderr_lines=0, elapsed_ms=None)
-        print(f'native smoke: status failed reason={reason}')
+        _write_result(result_path, mode=mode, opencode_version=None,
+                      status='failed', reason=reason, error_class=None,
+                      error_status_code=None, exit_code=None, timed_out=False,
+                      event_count=0, stderr_lines=0, elapsed_ms=None)
+        print(f'native smoke: mode={mode} status failed reason={reason}')
         return 1
 
     if version != EXPECTED_OPENCODE_VERSION:
-        _write_result(result_path, opencode_version=version, status='failed',
-                      reason='opencode_version_mismatch', error_class=None,
-                      error_status_code=None, exit_code=None, timed_out=False,
-                      event_count=0, stderr_lines=0, elapsed_ms=None)
-        print('native smoke: status failed reason=opencode_version_mismatch')
+        _write_result(result_path, mode=mode, opencode_version=version,
+                      status='failed', reason='opencode_version_mismatch',
+                      error_class=None, error_status_code=None, exit_code=None,
+                      timed_out=False, event_count=0, stderr_lines=0,
+                      elapsed_ms=None)
+        print(f'native smoke: mode={mode} status failed reason=opencode_version_mismatch')
         return 1
 
     env = build_child_env(agent_home, key)
@@ -404,7 +474,7 @@ def main(argv: list[str]) -> int:
     exit_code: int | None = None
     try:
         completed = subprocess.run(command, capture_output=True, text=True,
-                                   env=env, cwd=workdir,
+                                   env=env, cwd=workdir, stdin=subprocess.DEVNULL,
                                    timeout=timeout_min * 60 + 90)
         lines = completed.stdout.splitlines()
         exit_code = completed.returncode
@@ -415,17 +485,23 @@ def main(argv: list[str]) -> int:
         timed_out = True
     except OSError:
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        _write_result(result_path, opencode_version=version, status='failed',
-                      reason='cli_launch_error', error_class=None,
-                      error_status_code=None, exit_code=None, timed_out=False,
-                      event_count=0, stderr_lines=0, elapsed_ms=elapsed_ms)
-        print('native smoke: status failed reason=cli_launch_error')
+        _write_result(result_path, mode=mode, opencode_version=version,
+                      status='failed', reason='cli_launch_error',
+                      error_class=None, error_status_code=None, exit_code=None,
+                      timed_out=False, event_count=0, stderr_lines=0,
+                      elapsed_ms=elapsed_ms)
+        print(f'native smoke: mode={mode} status failed reason=cli_launch_error')
         return 1
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
     status, reason, error_class, error_status_code = evaluate(
         lines, exit_code, timed_out)
-    record = _write_result(result_path, opencode_version=version,
+    if mode == 'preflight':
+        # The objective is envelope compatibility, not inference: a synthetic
+        # key must reach auth (401) rather than be policy-rejected (403).
+        status, reason = probe_verdict(status, reason, error_class,
+                                       error_status_code)
+    record = _write_result(result_path, mode=mode, opencode_version=version,
                            status=status, reason=reason, error_class=error_class,
                            error_status_code=error_status_code,
                            exit_code=exit_code, timed_out=timed_out,
