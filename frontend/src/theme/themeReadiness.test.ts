@@ -94,6 +94,11 @@ describe("narrow-screen layout guards", () => {
     expect((page.match(/<div className="min-w-0">/g) ?? []).length).toBe(2);
   });
 
+  it("lets the sidebar group labels wrap, so a long label at large text does not spill out of the sidebar", () => {
+    const shell = read("components/layout/AppShell.tsx");
+    expect(shell).toContain('<span className="min-w-0 [overflow-wrap:anywhere]">{group.label}</span>');
+  });
+
   it("underlines the links the Dashboard places inside running text, so they do not rely on colour", () => {
     const page = read("features/dashboard/DashboardPage.tsx");
     expect((page.match(/className="text-link underline underline-offset-2"/g) ?? []).length).toBe(3);

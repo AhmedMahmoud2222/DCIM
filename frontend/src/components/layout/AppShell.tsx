@@ -207,7 +207,7 @@ export function AppShell() {
                   onClick={() => toggleGroup(group.id)}
                   className={`flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-side-fg-muted hover:text-side-selected-fg ${TOUCH_TARGET}`}
                 >
-                  {group.label}
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{group.label}</span>
                   <svg aria-hidden="true" viewBox="0 0 24 24" className={`h-4 w-4 shrink-0 ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M9 6l6 6-6 6" />
                   </svg>
