@@ -51,7 +51,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
       { to: "/cables", label: "Cables", permission: "cable:read" },
       { to: "/topology/trace", label: "Path Trace", permission: "cable:read" },
       { to: "/topology/pass-throughs", label: "Pass-throughs", permission: "cable:read" },
-      { to: "/network/profiles", label: "Device Profiles", permission: "network_profile:read" },
+      { to: "/network/profiles", label: "Network Profiles", permission: "network_profile:read" },
     ],
   },
   {

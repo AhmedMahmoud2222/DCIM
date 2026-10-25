@@ -62,7 +62,7 @@ const EXPECTED_GROUPS: ReadonlyArray<[group: string, links: ReadonlyArray<[label
       ["Cables", "/cables"],
       ["Path Trace", "/topology/trace"],
       ["Pass-throughs", "/topology/pass-throughs"],
-      ["Device Profiles", "/network/profiles"],
+      ["Network Profiles", "/network/profiles"],
     ],
   ],
   [
@@ -139,13 +139,29 @@ afterEach(() => {
   document.body.style.overflow = "";
 });
 
+const NO_NETWORK_USER: CurrentUser = {
+  id: "user-no-net",
+  email: "viewer@example.com",
+  full_name: "Plain Viewer",
+  role_names: ["Viewer"],
+  permission_codes: ["catalog:read"],
+};
+
 describe("AppShell navigation terminology", () => {
-  it("renders Device Profiles in primary navigation for network_profile:read users", async () => {
+  it("renders Network Profiles in primary navigation for network_profile:read users", async () => {
     renderWithProviders(<AppShell />, { user: NETWORK_READER_USER });
 
-    const navLink = screen.getByRole("link", { name: "Device Profiles" });
+    const navLink = screen.getByRole("link", { name: "Network Profiles" });
     expect(navLink).toBeInTheDocument();
     expect(navLink).toHaveAttribute("href", "/network/profiles");
+    expect(screen.queryByRole("link", { name: "Device Profiles" })).toBeNull();
+  });
+
+  it("hides profile navigation from users without network_profile:read", async () => {
+    renderWithProviders(<AppShell />, { user: NO_NETWORK_USER });
+
+    expect(screen.queryByRole("link", { name: "Network Profiles" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Device Profiles" })).toBeNull();
   });
 });
 
@@ -192,7 +208,7 @@ describe("AppShell grouped navigation", () => {
       "Racks",
       "Equipment",
       "Managed Assets",
-      "Device Profiles",
+      "Network Profiles",
       "Discovery",
       "Collectors",
       "Integrations",
