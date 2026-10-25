@@ -25,6 +25,14 @@ const freshness = (ageMs: number | null, interval: number | null = 60) =>
     now: NOW,
   });
 
+/** An Unknown reading must not read as Fresh and must not show an age (including a zero one). */
+function expectNoFreshOrAge(element: HTMLElement) {
+  const text = element.textContent ?? "";
+  expect(text).not.toMatch(/\bFresh\b/);
+  expect(text).not.toMatch(/\bago\b/);
+  expect(text).not.toMatch(/\b0 s\b/);
+}
+
 /** Every chip must have a visible text value and an icon that is hidden from assistive technology. */
 function expectTextAndIcon(container: HTMLElement, text: string) {
   expect(container).toHaveTextContent(text);
@@ -179,7 +187,24 @@ describe("measurement freshness", () => {
     const chip = screen.getByTestId("measurement-freshness");
     expect(within(chip).getByText("Unknown")).toBeInTheDocument();
     expect(chip).toHaveTextContent("no measurement time");
-    expect(chip).not.toHaveTextContent(/bFreshb|bagob|b0 sb/);
+    expectNoFreshOrAge(chip);
+  });
+
+  it("the Unknown guard really rejects forbidden text (the assertion is not vacuous)", () => {
+    for (const forbidden of [
+      "Unknown no measurement time Fresh measured 0 s ago",
+      "Unknown no measurement time Fresh",
+      "Unknown no measurement time measured 5 min ago",
+      "Unknown no measurement time 0 s",
+    ]) {
+      const { unmount } = render(<span data-testid="probe">{forbidden}</span>);
+      expect(() => expectNoFreshOrAge(screen.getByTestId("probe")), forbidden).toThrow();
+      unmount();
+    }
+    // ...and accepts the real Unknown text, including the word "freshness" in the screen-reader prefix.
+    const { unmount } = render(<MeasurementFreshness result={freshness(null)} />);
+    expect(() => expectNoFreshOrAge(screen.getByTestId("measurement-freshness"))).not.toThrow();
+    unmount();
   });
 
   it("says Unknown for a missing interval and for a future time, never Fresh", () => {
@@ -187,7 +212,7 @@ describe("measurement freshness", () => {
     expect(screen.getByTestId("measurement-freshness")).toHaveTextContent("no expected poll interval");
     rerender(<MeasurementFreshness result={freshness(-5_000)} />);
     expect(screen.getByTestId("measurement-freshness")).toHaveTextContent("in the future");
-    expect(screen.getByTestId("measurement-freshness")).not.toHaveTextContent(/bFreshb/);
+    expectNoFreshOrAge(screen.getByTestId("measurement-freshness"));
   });
 
   it("uses a different icon for each state", () => {
