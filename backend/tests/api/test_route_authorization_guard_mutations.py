@@ -4,7 +4,9 @@ Each mutation is applied in a throwaway Python process, so the application used 
 and the guard's checks then run against it. The control run proves the harness is not vacuous: unmutated, every check is clean.
 M1-M8 are the eight mutations from the P2 audit (M1-M5 add a hostile route, M6-M8 weaken the guard of an existing route). M9-M12 are the
 duplicate-registration bypasses found in review: FastAPI serves the FIRST route matching a method and path, so a second registration
-of an operation must be rejected whichever one comes first and whatever permission codes it carries.
+of an operation must be rejected whichever one comes first and whatever permission codes it carries. M13-M17 close the surfaces the
+OpenAPI document cannot show: mounts and websockets (including at documentation paths), a rogue route at a documentation path, and
+explicit HEAD/OPTIONS handlers. M13-M15 add no operation, so the operation baseline cannot see them; only `unserved_surface` can.
 """
 
 import json
@@ -21,6 +23,9 @@ SCRIPT = r"""
 import json, sys
 from fastapi import Depends
 from fastapi.routing import APIRoute
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route, WebSocketRoute
 from app.api.deps import get_current_user
 from app.application.rbac import require_permission
 from app.main import app
@@ -61,6 +66,21 @@ elif name == "M11_duplicate_with_identical_permission_codes":
     app.router.routes.insert(0, APIRoute("/api/v1/racks", lambda ctx=Depends(require_permission("rack:read")): {}, methods=["GET"]))
 elif name == "M12_duplicate_with_a_renamed_path_parameter":
     app.router.routes.insert(0, APIRoute("/api/v1/racks/{rack_identifier}", lambda: {"leak": True}, methods=["GET"]))
+elif name in ("M13_rogue_mount_at_a_docs_path", "M14_rogue_route_at_a_docs_path", "M15_websocket_at_a_docs_path"):
+    async def secret(request):
+        return JSONResponse({"leak": True})
+    async def socket(websocket):
+        await websocket.close()
+    if name.startswith("M13"):
+        app.router.routes.insert(0, Mount("/docs", app=Starlette(routes=[Route("/secret", secret)])))
+    elif name.startswith("M14"):
+        app.router.routes.insert(0, Route("/docs", secret))
+    else:
+        app.router.routes.insert(0, WebSocketRoute("/redoc", socket))
+elif name == "M16_unauthenticated_options_handler":
+    app.add_api_route("/api/v1/rogue/options", lambda: {"leak": True}, methods=["OPTIONS"])
+elif name == "M17_unauthenticated_head_handler":
+    app.add_api_route("/api/v1/rogue/head", lambda: {"leak": True}, methods=["HEAD"])
 elif name != "CONTROL":
     raise SystemExit("unknown mutation " + name)
 print(json.dumps({k: len(v) for k, v in check(app).items()}))
@@ -80,7 +100,14 @@ MUTATIONS = {
     "M10_open_route_registered_after_the_protected_one": {"duplicate_operations"},
     "M11_duplicate_with_identical_permission_codes": {"duplicate_operations"},
     "M12_duplicate_with_a_renamed_path_parameter": {"duplicate_operations"},
+    "M13_rogue_mount_at_a_docs_path": {"unserved_surface"},
+    "M14_rogue_route_at_a_docs_path": {"unserved_surface"},
+    "M15_websocket_at_a_docs_path": {"unserved_surface"},
+    "M16_unauthenticated_options_handler": {"public_routes"},
+    "M17_unauthenticated_head_handler": {"public_routes"},
 }
+# mutations that add no operation, so the operation baseline is expected to stay unchanged
+BASELINE_BLIND = {"M13_rogue_mount_at_a_docs_path", "M14_rogue_route_at_a_docs_path", "M15_websocket_at_a_docs_path"}
 
 
 def run(name: str) -> dict[str, int]:
@@ -98,6 +125,17 @@ def test_control_run_without_a_mutation_is_clean():
 @pytest.mark.parametrize("name", sorted(MUTATIONS))
 def test_the_guard_detects_the_mutation(name):
     result = run(name)
-    assert result["baseline_drift"] > 0, f"{name}: the baseline comparison must always notice a changed authorization surface"
+    if name not in BASELINE_BLIND:
+        assert result["baseline_drift"] > 0, f"{name}: the baseline comparison must always notice a changed authorization surface"
     missing = {c for c in MUTATIONS[name] if result[c] == 0}
     assert not missing, f"{name}: the dedicated checks {sorted(missing)} did not fire ({result})"
+
+
+def test_built_in_documentation_handlers_are_accepted_and_nothing_else_is_exempt():
+    """Positive control: the four FastAPI documentation handlers pass every check, so the M13-M15 detections are not blanket rejections."""
+    from app.main import app
+    from tests.api.route_authz_guard import DOCS_PATHS, check, is_builtin_docs, walk
+
+    docs = {r.path for r in walk(app.routes) if is_builtin_docs(r)}
+    assert docs == DOCS_PATHS
+    assert check(app)["unserved_surface"] == []

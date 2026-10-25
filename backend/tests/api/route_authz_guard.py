@@ -22,11 +22,13 @@ from typing import Any
 
 import fastapi
 from fastapi.routing import APIRoute
+from starlette.routing import Route
 
 from app.application.rbac import DEFAULT_ROLE_PERMISSIONS
 from tests.api.route_authz_baseline import BASELINE, MANUAL, PUBLIC, READ_ONLY_POSTS
 
-HTTP = ("GET", "POST", "PUT", "PATCH", "DELETE")
+# HEAD and OPTIONS are inventoried like any method: APIRoute never adds them implicitly, so an explicit handler is a real operation.
+HTTP = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 READ_ACTIONS = {"read", "view", "download", "read_draft", "document_download"}
 DOCS_PATHS = {"/api/v1/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 PERMISSION_FACTORIES = ("require_permission.", "require_catalog_administrator.")
@@ -37,6 +39,18 @@ PATH_PARAMETER = re.compile(r"\{[^}]*\}")
 
 def _is_operation(route: Any) -> bool:
     return hasattr(route, "dependant") and hasattr(route, "methods") and hasattr(route, "include_in_schema")
+
+
+def is_builtin_docs(route: Any) -> bool:
+    """Only the handlers FastAPI itself registers for the documentation paths: a plain Starlette `Route` (never a `Mount` or
+    websocket) whose endpoint is defined in `FastAPI.setup`. Anything else at a documentation path is an unclassified surface."""
+    endpoint = getattr(route, "endpoint", None)
+    return (
+        type(route) is Route
+        and getattr(route, "path", None) in DOCS_PATHS
+        and getattr(endpoint, "__module__", None) == "fastapi.applications"
+        and getattr(endpoint, "__qualname__", "").startswith("FastAPI.setup.")
+    )
 
 
 def walk(routes: Any) -> Iterator[Any]:
@@ -102,7 +116,7 @@ def operations(app: Any) -> list[tuple[tuple[str, str], tuple[str, tuple[str, ..
             kind = "manual"
         else:
             kind = "public"
-        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+        for method in sorted(route.methods):
             result.append(((method, route.path), (kind, codes)))
     return result
 
@@ -142,7 +156,7 @@ def check(app: Any) -> dict[str, list[str]]:
     listed = {(m.upper(), p) for p, item in app.openapi()["paths"].items() for m in item if m.upper() in HTTP}
     known_codes = set(DEFAULT_ROLE_PERMISSIONS["Administrator"])
     operations = [r for r in walk(app.routes) if _is_operation(r)]
-    stray = [getattr(r, "path", repr(r)) for r in walk(app.routes) if not _is_operation(r) and getattr(r, "path", None) not in DOCS_PATHS]
+    stray = [getattr(r, "path", repr(r)) for r in walk(app.routes) if not _is_operation(r) and not is_builtin_docs(r)]
     hidden = [r.path for r in operations if not r.include_in_schema]
     public = {op for op, (kind, _c) in live.items() if kind == "public"}
     manual = {op for op, (kind, _c) in live.items() if kind == "manual"}
