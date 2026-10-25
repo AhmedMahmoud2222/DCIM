@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { onlineManager } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { listCollectors } from "@/features/integrations/api";
@@ -427,6 +428,164 @@ describe("Authorization", () => {
     const ids = Array.from(document.querySelectorAll("[data-state=restricted] section h3")).map((h) => h.id);
     expect(ids).toHaveLength(4);
     expect(new Set(ids).size).toBe(4);
+  });
+});
+
+describe("A paused initial request (offline, no cached data) is never an empty result", () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  it("reads as loading in every section, says it is waiting for the network, and shows no empty or healthy message", async () => {
+    onlineManager.setOnline(false);
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(document.querySelectorAll("[data-state=loading]")).toHaveLength(4));
+    for (const id of ["alarms", "exceptions", "collectors", "inventory"]) {
+      expect(stateOf(id)).toBe("loading");
+      expect(within(section(id)).getByRole("status")).toHaveTextContent("Waiting for the network to load");
+      expect(screen.queryByTestId(`${id}-empty`)).not.toBeInTheDocument();
+    }
+    expect(document.body).not.toHaveTextContent(/No active alarms|No capacity or topology|No collectors|Every registered collector/);
+    expect(getOpenAlarms).not.toHaveBeenCalled();
+  });
+
+  it("fills in from the real response once the network returns", async () => {
+    mockAll({ active: [alarm("a", "x", "2026-01-01T00:00:00Z")] });
+    onlineManager.setOnline(false);
+    renderWithProviders(<DashboardPage />, { user: ALL });
+    await waitFor(() => expect(stateOf("alarms")).toBe("loading"));
+
+    onlineManager.setOnline(true);
+    await waitFor(() => expect(stateOf("alarms")).toBe("ready"));
+    await waitFor(() => expect(stateOf("exceptions")).toBe("empty"));
+  });
+});
+
+describe("Acknowledged alarms stay visible when the ACTIVE list is empty", () => {
+  const ackAlarms = [alarm("b", "y", "2026-01-01T00:00:00Z", { status: "ACKNOWLEDGED" }), alarm("c", "z", "2026-01-02T00:00:00Z", { status: "ACKNOWLEDGED" })];
+
+  it("shows 'No active alarms.' together with the acknowledged count and the Events link", async () => {
+    mockAll({ active: [], acknowledged: ackAlarms });
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(stateOf("alarms")).toBe("empty"));
+    expect(screen.getByTestId("alarms-empty")).toHaveTextContent("No active alarms.");
+    const footer = within(section("alarms")).getByTestId("alarms-footer");
+    await waitFor(() => expect(footer).toHaveTextContent("2 acknowledged, awaiting clearance."));
+    expect(within(footer).getByRole("link", { name: "Open Events →" })).toHaveAttribute("href", "/events");
+  });
+
+  it("says the acknowledged count is loading, and that it could not be loaded, instead of showing zero", async () => {
+    vi.mocked(getOpenAlarms).mockImplementation((async (status?: string) => (status === "ACTIVE" ? [] : never())) as typeof getOpenAlarms);
+    const { unmount } = renderWithProviders(<DashboardPage />, { user: ALL });
+    await waitFor(() => expect(stateOf("alarms")).toBe("empty"));
+    expect(within(section("alarms")).getByTestId("alarms-footer")).toHaveTextContent("Acknowledged alarms: loading…");
+    unmount();
+
+    vi.mocked(getOpenAlarms).mockImplementation((async (status?: string) => {
+      if (status === "ACTIVE") return [];
+      throw new Error("boom");
+    }) as typeof getOpenAlarms);
+    renderWithProviders(<DashboardPage />, { user: ALL });
+    await waitFor(() => expect(within(section("alarms")).getByTestId("alarms-footer")).toHaveTextContent("The acknowledged count could not be loaded."));
+    expect(within(section("alarms")).getByTestId("alarms-footer")).not.toHaveTextContent(/\b0 acknowledged/);
+  });
+
+  it("reports a genuinely empty acknowledged list as 0, because that response was successful", async () => {
+    mockAll({ active: [], acknowledged: [] });
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(within(section("alarms")).getByTestId("alarms-footer")).toHaveTextContent("0 acknowledged, awaiting clearance."));
+  });
+
+  it("keeps the footer out of restricted and error states, and requests nothing for a user without alarm:read", async () => {
+    renderWithProviders(<DashboardPage />, { user: userWith("dashboard:read", "collector:read") });
+
+    await waitFor(() => expect(stateOf("alarms")).toBe("restricted"));
+    expect(within(section("alarms")).queryByTestId("alarms-footer")).not.toBeInTheDocument();
+    expect(within(section("alarms")).queryByRole("link", { name: "Open Events →" })).not.toBeInTheDocument();
+    expect(getOpenAlarms).not.toHaveBeenCalled();
+  });
+
+  it("does not show the footer when the ACTIVE request itself failed", async () => {
+    vi.mocked(getOpenAlarms).mockRejectedValue(new Error("boom"));
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(stateOf("alarms")).toBe("error"));
+    expect(within(section("alarms")).queryByTestId("alarms-footer")).not.toBeInTheDocument();
+  });
+});
+
+describe("Exceptions beyond eight stay reachable", () => {
+  const many = (critical: number, warning: number) => [
+    ...Array.from({ length: warning }, (_, i) => exception(`WARN_${i}`, "warning")),
+    ...Array.from({ length: critical }, (_, i) => exception(`CRIT_${i}`, "critical")),
+  ];
+  const codes = () => within(section("exceptions")).getAllByRole("listitem").map((li) => li.querySelector("span.font-mono")?.textContent);
+
+  it("lists everything at eight or fewer, with no control", async () => {
+    vi.mocked(getDashboardExceptions).mockResolvedValue(many(3, 5));
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(stateOf("exceptions")).toBe("ready"));
+    expect(codes()).toHaveLength(8);
+    expect(within(section("exceptions")).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("exceptions-truncation")).not.toBeInTheDocument();
+  });
+
+  it("with eleven Critical records, shows eight, says three Critical are not shown, and reveals all on request", async () => {
+    vi.mocked(getDashboardExceptions).mockResolvedValue(many(11, 2));
+    const user = userEvent.setup();
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(stateOf("exceptions")).toBe("ready"));
+    expect(codes()).toEqual(Array.from({ length: 8 }, (_, i) => `CRIT_${i}`));
+    expect(screen.getByTestId("exceptions-truncation")).toHaveTextContent("Showing 8 of 13, most severe first. 3 more Critical are not shown.");
+
+    const button = within(section("exceptions")).getByRole("button", { name: "Show all 13" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveAttribute("aria-controls", within(section("exceptions")).getByRole("list").id);
+
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(button).toHaveTextContent("Show fewer");
+    const all = codes();
+    expect(all).toHaveLength(13);
+    // Still ordered critical first, then warning; the previously hidden Critical records are now listed.
+    expect(all.slice(0, 11)).toEqual(Array.from({ length: 11 }, (_, i) => `CRIT_${i}`));
+    expect(all.slice(11)).toEqual(["WARN_0", "WARN_1"]);
+    expect(screen.getByTestId("exceptions-truncation")).toHaveTextContent("Showing all 13, most severe first.");
+  });
+
+  it("collapses again with Show fewer, and both directions work from the keyboard", async () => {
+    vi.mocked(getDashboardExceptions).mockResolvedValue(many(10, 0));
+    const user = userEvent.setup();
+    renderWithProviders(<DashboardPage />, { user: ALL });
+    await waitFor(() => expect(stateOf("exceptions")).toBe("ready"));
+
+    const button = within(section("exceptions")).getByRole("button", { name: "Show all 10" });
+    button.focus();
+    await user.keyboard("{Enter}");
+    expect(codes()).toHaveLength(10);
+    expect(button).toHaveFocus();
+    await user.keyboard(" ");
+    expect(codes()).toHaveLength(8);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveTextContent("Show all 10");
+  });
+
+  it("offers nothing to a user without dashboard:read, and nothing after a 403", async () => {
+    renderWithProviders(<DashboardPage />, { user: userWith("alarm:read") });
+    await waitFor(() => expect(stateOf("exceptions")).toBe("restricted"));
+    expect(within(section("exceptions")).queryByRole("button")).not.toBeInTheDocument();
+    expect(getDashboardExceptions).not.toHaveBeenCalled();
+  });
+
+  it("shows the one-line singular when exactly one Critical record is beyond the limit", async () => {
+    vi.mocked(getDashboardExceptions).mockResolvedValue(many(9, 0));
+    renderWithProviders(<DashboardPage />, { user: ALL });
+
+    await waitFor(() => expect(stateOf("exceptions")).toBe("ready"));
+    expect(screen.getByTestId("exceptions-truncation")).toHaveTextContent("1 more Critical is not shown.");
   });
 });
 

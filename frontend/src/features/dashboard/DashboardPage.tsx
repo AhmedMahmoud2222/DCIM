@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ReactNode } from "react";
+import { ReactNode, useId, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
@@ -20,6 +20,7 @@ import { getDashboardExceptions, getDashboardSummary } from "@/features/power/ap
 import { formatAge } from "@/features/status/freshness";
 import { AlarmWorkflowStatus, CollectorConnectivity, ExceptionSeverity } from "@/features/status/StatusBadges";
 import { getOpenAlarms } from "@/features/telemetry/api";
+import type { DashboardExceptionItem } from "@/types";
 
 /** How many alarms and exceptions are listed in full; the rest are reached through their own pages. */
 const LIST_LIMIT = 8;
@@ -39,6 +40,55 @@ function Count({ children }: { children: ReactNode }) {
 }
 
 const rowClass = "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-sm bg-white/5 px-3 py-2 text-sm";
+
+/** The authorized exception list, most severe first. It starts compact; every record stays reachable
+ * through Show all, because the dashboard is the only place these exceptions are listed. */
+function ExceptionList({ items }: { items: ReadonlyArray<DashboardExceptionItem> }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const sorted = sortExceptionsBySeverity(items);
+  const hidden = sorted.length - LIST_LIMIT;
+  const shown = expanded || hidden <= 0 ? sorted : sorted.slice(0, LIST_LIMIT);
+  const hiddenCritical = expanded ? 0 : sorted.slice(LIST_LIMIT).filter((item) => item.severity === "critical").length;
+  return (
+    <>
+      <ul id={listId} className="space-y-2">
+        {shown.map((exc, i) => (
+          <li key={`${exc.code}-${exc.object_id}-${i}`} className={rowClass}>
+            <div className="min-w-0">
+              <span className="mr-2">
+                <ExceptionSeverity severity={exc.severity} size="sm" />
+              </span>
+              <span className="mr-2 rounded-sm bg-tone-neutral-bg px-1.5 py-0.5 font-mono text-[10px] text-tone-neutral-fg">{exc.code}</span>
+              <span className="text-fg-secondary">{exc.message}</span>
+            </div>
+            <Link to="/power" className="text-xs text-link hover:underline">
+              Inspect →
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {hidden > 0 && (
+        <div className="mt-3 text-xs text-fg-secondary">
+          <p data-testid="exceptions-truncation" aria-live="polite">
+            {expanded
+              ? `Showing all ${sorted.length}, most severe first.`
+              : `Showing ${LIST_LIMIT} of ${sorted.length}, most severe first.${hiddenCritical > 0 ? ` ${hiddenCritical} more Critical ${hiddenCritical === 1 ? "is" : "are"} not shown.` : ""}`}
+          </p>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={listId}
+            onClick={() => setExpanded((value) => !value)}
+            className="mt-1 rounded-sm border border-line-control px-2 py-1 font-medium text-link hover:bg-white/5"
+          >
+            {expanded ? "Show fewer" : `Show all ${sorted.length}`}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -98,6 +148,20 @@ export function DashboardPage() {
           query={activeAlarmsQuery}
           emptyText="No active alarms."
           className="lg:col-span-2"
+          footer={
+            <p className="mt-3 text-xs text-fg-secondary" data-testid="alarms-footer">
+              {ack.isLoading || (ack.data === undefined && !ack.error) ? "Acknowledged alarms: loading… " : null}
+              {!ack.isLoading && ack.error ? "The acknowledged count could not be loaded. " : null}
+              {!ack.isLoading && !ack.error && ack.data ? (
+                <>
+                  <Count>{countLabel(ack.data.length, ALARM_LIST_LIMIT)}</Count> acknowledged, awaiting clearance.{" "}
+                </>
+              ) : null}
+              <Link className="text-link hover:underline" to="/events">
+                Open Events →
+              </Link>
+            </p>
+          }
           aside={(alarms) => (
             <>
               <AlarmWorkflowStatus status="ACTIVE" size="sm" />
@@ -130,19 +194,11 @@ export function DashboardPage() {
                     </li>
                   ))}
                 </ul>
-                <p className="mt-3 text-xs text-fg-secondary">
-                  {sorted.length > LIST_LIMIT ? `Showing the newest ${LIST_LIMIT} of ${countLabel(sorted.length, ALARM_LIST_LIMIT)}. ` : ""}
-                  {ack.isLoading && "Acknowledged alarms: loading… "}
-                  {!ack.isLoading && ack.error ? "The acknowledged count could not be loaded. " : null}
-                  {!ack.isLoading && !ack.error && ack.data ? (
-                    <>
-                      <Count>{countLabel(ack.data.length, ALARM_LIST_LIMIT)}</Count> acknowledged, awaiting clearance.{" "}
-                    </>
-                  ) : null}
-                  <Link className="text-link hover:underline" to="/events">
-                    Open Events →
-                  </Link>
-                </p>
+                {sorted.length > LIST_LIMIT && (
+                  <p className="mt-3 text-xs text-fg-secondary">
+                    Showing the newest {LIST_LIMIT} of {countLabel(sorted.length, ALARM_LIST_LIMIT)}.
+                  </p>
+                )}
               </>
             );
           }}
@@ -185,34 +241,7 @@ export function DashboardPage() {
             );
           }}
         >
-          {(items) => {
-            const sorted = sortExceptionsBySeverity(items);
-            return (
-              <>
-                <ul className="space-y-2">
-                  {sorted.slice(0, LIST_LIMIT).map((exc, i) => (
-                    <li key={`${exc.code}-${exc.object_id}-${i}`} className={rowClass}>
-                      <div className="min-w-0">
-                        <span className="mr-2">
-                          <ExceptionSeverity severity={exc.severity} size="sm" />
-                        </span>
-                        <span className="mr-2 rounded-sm bg-tone-neutral-bg px-1.5 py-0.5 font-mono text-[10px] text-tone-neutral-fg">{exc.code}</span>
-                        <span className="text-fg-secondary">{exc.message}</span>
-                      </div>
-                      <Link to="/power" className="text-xs text-link hover:underline">
-                        Inspect →
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-                {sorted.length > LIST_LIMIT && (
-                  <p className="mt-3 text-xs text-fg-secondary">
-                    Showing the first {LIST_LIMIT} of {sorted.length} by severity.
-                  </p>
-                )}
-              </>
-            );
-          }}
+          {(items) => <ExceptionList items={items} />}
         </DashboardSection>
       </div>
 
