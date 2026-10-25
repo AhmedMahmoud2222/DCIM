@@ -79,14 +79,17 @@ export function TableError({
   what,
   permission,
   onRetry,
+  headingLevel = 2,
 }: {
   error: unknown;
   what: string;
   permission?: string;
   onRetry?: () => void;
+  /** Level of the Access restricted heading; 2 under a page h1, 3 inside a section that has its own h2. */
+  headingLevel?: 2 | 3;
 }) {
   if (error instanceof ApiError && error.status === 403) {
-    return <AccessRestricted what={what} permission={permission} headingLevel={2} />;
+    return <AccessRestricted what={what} permission={permission} headingLevel={headingLevel} />;
   }
   const message = error instanceof Error ? error.message : "The request failed.";
   return (

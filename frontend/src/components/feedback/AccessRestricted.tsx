@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, useId } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
 
@@ -12,13 +12,14 @@ export function AccessRestricted({
 }: {
   what: string;
   permission?: string;
-  /** 1 when this replaces a whole page; 2 when it sits inside a page that already has its own h1. */
-  headingLevel?: 1 | 2;
+  /** 1 when this replaces a whole page; 2 or 3 when it sits inside a page or a section that already has its own headings. */
+  headingLevel?: 1 | 2 | 3;
 }) {
-  const Heading = headingLevel === 1 ? "h1" : "h2";
+  const Heading = headingLevel === 1 ? "h1" : headingLevel === 2 ? "h2" : "h3";
+  const titleId = useId();
   return (
-    <section aria-labelledby="access-restricted-title" className="max-w-xl rounded-sm border border-line-subtle bg-surface-panel p-4">
-      <Heading id="access-restricted-title" className="text-lg font-semibold text-fg-primary">
+    <section aria-labelledby={titleId} className="max-w-xl rounded-sm border border-line-subtle bg-surface-panel p-4">
+      <Heading id={titleId} className="text-lg font-semibold text-fg-primary">
         Access restricted
       </Heading>
       <p className="mt-2 text-sm text-fg-secondary">
