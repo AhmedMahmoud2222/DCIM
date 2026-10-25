@@ -425,9 +425,13 @@ describe("Authorization", () => {
     renderWithProviders(<DashboardPage />, { user: userWith() });
 
     await waitFor(() => expect(stateOf("alarms")).toBe("restricted"));
-    const ids = Array.from(document.querySelectorAll("[data-state=restricted] section h3")).map((h) => h.id);
+    const ids = Array.from(document.querySelectorAll("[data-state=restricted] h3")).map((h) => h.id);
     expect(ids).toHaveLength(4);
     expect(new Set(ids).size).toBe(4);
+    // Four identically named "Access restricted" regions would be four duplicate landmarks for a screen
+    // reader; inside a section the panel is a plain block, and only the four sections are regions.
+    expect(document.querySelectorAll("[data-state=restricted] section")).toHaveLength(0);
+    expect(screen.getAllByRole("region").map((r) => r.getAttribute("data-section"))).toEqual(["alarms", "exceptions", "collectors", "inventory"]);
   });
 });
 

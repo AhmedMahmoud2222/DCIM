@@ -17,8 +17,11 @@ export function AccessRestricted({
 }) {
   const Heading = headingLevel === 1 ? "h1" : headingLevel === 2 ? "h2" : "h3";
   const titleId = useId();
+  // Page-level: a labelled region. Inside a page or a section it is a plain block, so several of them
+  // on one page do not become identically named landmarks.
+  const Container = headingLevel === 1 ? "section" : "div";
   return (
-    <section aria-labelledby={titleId} className="max-w-xl rounded-sm border border-line-subtle bg-surface-panel p-4">
+    <Container aria-labelledby={headingLevel === 1 ? titleId : undefined} className="max-w-xl rounded-sm border border-line-subtle bg-surface-panel p-4">
       <Heading id={titleId} className="text-lg font-semibold text-fg-primary">
         Access restricted
       </Heading>
@@ -26,12 +29,12 @@ export function AccessRestricted({
         Your account cannot view {what}.
         {permission ? (
           <>
-            {" "}It needs the <code className="rounded-sm bg-black/30 px-1">{permission}</code> permission.
+            {" "}It needs the <code className="rounded-sm bg-surface-page px-1">{permission}</code> permission.
           </>
         ) : null}{" "}
         Ask an administrator if you need access.
       </p>
-    </section>
+    </Container>
   );
 }
 

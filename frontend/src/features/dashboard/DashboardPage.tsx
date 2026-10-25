@@ -39,7 +39,7 @@ function Count({ children }: { children: ReactNode }) {
   return <span className="font-semibold tabular-nums text-fg-primary">{children}</span>;
 }
 
-const rowClass = "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-sm bg-white/5 px-3 py-2 text-sm";
+const rowClass = "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-sm bg-surface-inset px-3 py-2 text-sm";
 
 /** The authorized exception list, most severe first. It starts compact; every record stays reachable
  * through Show all, because the dashboard is the only place these exceptions are listed. */
@@ -55,7 +55,7 @@ function ExceptionList({ items }: { items: ReadonlyArray<DashboardExceptionItem>
       <ul id={listId} className="space-y-2">
         {shown.map((exc, i) => (
           <li key={`${exc.code}-${exc.object_id}-${i}`} className={rowClass}>
-            <div className="min-w-0">
+            <div className="min-w-0 [overflow-wrap:anywhere]">
               <span className="mr-2">
                 <ExceptionSeverity severity={exc.severity} size="sm" />
               </span>
@@ -80,7 +80,7 @@ function ExceptionList({ items }: { items: ReadonlyArray<DashboardExceptionItem>
             aria-expanded={expanded}
             aria-controls={listId}
             onClick={() => setExpanded((value) => !value)}
-            className="mt-1 rounded-sm border border-line-control px-2 py-1 font-medium text-link hover:bg-white/5"
+            className="mt-1 rounded-sm border border-line-control px-2 py-1 font-medium text-link hover:bg-surface-hover"
           >
             {expanded ? "Show fewer" : `Show all ${sorted.length}`}
           </button>
@@ -157,7 +157,7 @@ export function DashboardPage() {
                   <Count>{countLabel(ack.data.length, ALARM_LIST_LIMIT)}</Count> acknowledged, awaiting clearance.{" "}
                 </>
               ) : null}
-              <Link className="text-link hover:underline" to="/events">
+              <Link className="text-link underline underline-offset-2" to="/events">
                 Open Events →
               </Link>
             </p>
@@ -176,7 +176,7 @@ export function DashboardPage() {
                 <ul className="space-y-2">
                   {sorted.slice(0, LIST_LIMIT).map((alarm) => (
                     <li key={alarm.id} className={rowClass}>
-                      <div className="min-w-0">
+                      <div className="min-w-0 [overflow-wrap:anywhere]">
                         <span className="mr-2">
                           <AlarmWorkflowStatus status={alarm.status} size="sm" />
                         </span>
@@ -295,10 +295,10 @@ export function DashboardPage() {
               )}
               <p className="mt-3 text-xs text-fg-secondary">
                 Connectivity comes from collector heartbeats. It does not say how fresh any measurement is.{" "}
-                <Link className="text-link hover:underline" to="/collectors">
+                <Link className="text-link underline underline-offset-2" to="/collectors">
                   Open Collectors →
                 </Link>{" "}
-                <Link className="text-link hover:underline" to="/integrations">
+                <Link className="text-link underline underline-offset-2" to="/integrations">
                   Open Integrations →
                 </Link>
               </p>

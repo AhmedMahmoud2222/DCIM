@@ -16,7 +16,7 @@ export const TH = "px-3 py-2 text-left text-[11px] font-semibold uppercase track
 export const TH_NUMBER = "px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-fg-secondary";
 export const TD = "px-3 py-2 align-middle";
 export const TD_NUMBER = "px-3 py-2 text-right align-middle tabular-nums";
-export const TR = "border-b border-line-subtle last:border-b-0 hover:bg-white/5 focus-within:bg-white/5";
+export const TR = "border-b border-line-subtle last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover";
 
 interface DataTableProps {
   /** Accessible name of the table and of its scrolling region, e.g. "Equipment". */
@@ -38,7 +38,7 @@ export function DataTable({ label, minWidthClass = "min-w-[40rem]", dense = fals
       role="region"
       aria-label={`${label} table`}
       tabIndex={0}
-      className={`min-w-0 overflow-x-auto rounded-sm border border-line-subtle bg-surface-page ${className}`}
+      className={`relative min-w-0 overflow-x-auto rounded-sm border border-line-subtle bg-surface-page ${className}`}
     >
       <table aria-label={label} className={`w-full border-collapse ${dense ? "text-xs" : "text-sm"} text-fg-primary ${minWidthClass}`}>
         {children}
@@ -104,7 +104,7 @@ export function TableError({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-2 rounded-sm border border-tone-danger-fg px-2 py-1 text-xs font-medium hover:bg-white/10"
+          className="mt-2 rounded-sm border border-tone-danger-fg px-2 py-1 text-xs font-medium hover:bg-surface-hover"
         >
           Try again
         </button>
