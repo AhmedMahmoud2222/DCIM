@@ -94,7 +94,7 @@ export function RacksPage() {
 
       {showForm && (
         <form onSubmit={handleSubmit} className="mb-6 grid max-w-3xl grid-cols-2 gap-3 rounded-sm border border-slate-800 bg-slate-900 p-4">
-          <div className="col-span-2 text-xs uppercase tracking-wide text-slate-500">Rack identity</div>
+          <div className="col-span-2 text-xs uppercase tracking-wide text-fg-secondary">Rack identity</div>
           <input
             value={assetTag}
             onChange={(e) => setAssetTag(e.target.value)}
@@ -120,7 +120,7 @@ export function RacksPage() {
             ))}
           </select>
 
-          <div className="col-span-2 mt-2 text-xs uppercase tracking-wide text-slate-500">
+          <div className="col-span-2 mt-2 text-xs uppercase tracking-wide text-fg-secondary">
             Rack model (a new catalog model + revision is created together — see the Rack Model catalog via the API for
             reusing an existing one)
           </div>

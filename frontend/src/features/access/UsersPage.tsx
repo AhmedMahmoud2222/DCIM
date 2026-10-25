@@ -34,7 +34,7 @@ function GroupChecklist({
   return (
     <fieldset className="space-y-1" disabled={disabled}>
       <legend className="mb-1 text-xs text-slate-400">Groups</legend>
-      {groups.length === 0 && <p className="text-xs text-slate-500">No groups defined yet.</p>}
+      {groups.length === 0 && <p className="text-xs text-fg-secondary">No groups defined yet.</p>}
       {groups.map((g) => (
         <label key={g.id} className="flex items-center gap-2 text-sm">
           <input
@@ -65,7 +65,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
       {access.role_names.length > 0 && <p className="text-slate-400">Roles: {access.role_names.join(", ")}</p>}
       <div>
         <h3 className="mb-1 font-semibold text-slate-300">Effective permissions ({codes.length})</h3>
-        {codes.length === 0 && <p className="text-slate-500">None. Access is denied by default.</p>}
+        {codes.length === 0 && <p className="text-fg-secondary">None. Access is denied by default.</p>}
         <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
           {codes.map((code) => (
             <li key={code} className="rounded-sm bg-slate-800 px-2 py-1">
@@ -107,7 +107,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
       {!access.unrestricted && (
         <div>
           <h3 className="mb-1 font-semibold text-slate-300">Sites ({access.sites.length})</h3>
-          {access.sites.length === 0 && <p className="text-slate-500">No site access.</p>}
+          {access.sites.length === 0 && <p className="text-fg-secondary">No site access.</p>}
           <ul className="space-y-1">
             {access.sites.map((s) => (
               <li key={s.site_id} className="rounded-sm bg-slate-800 px-2 py-1">

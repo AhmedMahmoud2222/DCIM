@@ -46,8 +46,8 @@ export function DiscoveryPage() {
         description="Devices a collector observes but does not yet correspond to authoritative inventory. Discovery never creates or modifies inventory itself — a human decides whether a discovered device matches an existing asset (Phase 8 §7)."
       />
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="min-w-0">
           <h2 className="mb-2 text-sm font-semibold text-slate-300">Pending Reconciliation</h2>
           <QueryStatus query={diffsQuery} what="pending reconciliations" permission="discovery:read" columns={2} />
           <div className="space-y-2">
@@ -97,11 +97,11 @@ export function DiscoveryPage() {
                 </div>
               );
             })}
-            {diffsQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">Nothing pending reconciliation.</p>}
+            {diffsQuery.data?.length === 0 && <p className="text-xs italic text-fg-secondary">Nothing pending reconciliation.</p>}
           </div>
         </div>
 
-        <div>
+        <div className="min-w-0">
           <h2 className="mb-2 text-sm font-semibold text-slate-300">All Discovered Devices</h2>
           <QueryStatus query={devicesQuery} what="discovered devices" permission="discovery:read" columns={3} />
 

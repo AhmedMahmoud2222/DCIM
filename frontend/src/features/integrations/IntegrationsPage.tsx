@@ -127,7 +127,9 @@ export function IntegrationsPage() {
               <th scope="col" className={TH}>Last success</th>
               <th scope="col" className={TH}>Failures</th>
               <th scope="col" className={TH}>Credential</th>
-              <th scope="col" className={TH}></th>
+              <th scope="col" className={TH}>
+                  <span className="sr-only">Actions</span>
+                </th>
             </tr>
           </thead>
           <tbody>
@@ -137,7 +139,7 @@ export function IntegrationsPage() {
                 <td className={TD}>{i.integration_type}</td>
                 <td className={TD}>{i.target_host}</td>
                 <td className={TD}>
-                  <span className={i.enabled ? "text-green-400" : "text-slate-500"}>{i.enabled ? "enabled" : "disabled"}</span>
+                  <span className={i.enabled ? "text-green-400" : "text-fg-secondary"}>{i.enabled ? "enabled" : "disabled"}</span>
                 </td>
                 <td className={TD}>{fmtDate(i.last_poll_at)}</td>
                 <td className={TD}>{fmtDate(i.last_success_at)}</td>

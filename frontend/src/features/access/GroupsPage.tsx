@@ -39,7 +39,7 @@ function RackPicker({ siteId, selected, onChange, disabled }: {
   const racksQuery = useQuery({ queryKey: ["site-racks", siteId], queryFn: () => listSiteRacks(siteId) });
   if (racksQuery.isLoading) return <p className="text-xs text-slate-400">Loading racks…</p>;
   const racks = racksQuery.data?.items ?? [];
-  if (racks.length === 0) return <p className="text-xs text-slate-500">No racks are placed in this site.</p>;
+  if (racks.length === 0) return <p className="text-xs text-fg-secondary">No racks are placed in this site.</p>;
   return (
     <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2" aria-label="Racks in site">
       {racks.map((r) => (
@@ -51,7 +51,7 @@ function RackPicker({ siteId, selected, onChange, disabled }: {
               checked={selected.includes(r.id)}
               onChange={(e) => onChange(e.target.checked ? [...selected, r.id] : selected.filter((id) => id !== r.id))}
             />
-            {r.name} <span className="text-xs text-slate-500">{r.asset_tag}</span>
+            {r.name} <span className="text-xs text-fg-secondary">{r.asset_tag}</span>
           </label>
         </li>
       ))}
@@ -231,7 +231,7 @@ export function GroupsPage() {
                         <label className="flex items-center gap-2 text-sm">
                           <input type="checkbox" disabled={!canManage} checked={members.includes(u.id)}
                             onChange={(e) => setMembers(e.target.checked ? [...members, u.id] : members.filter((id) => id !== u.id))} />
-                          {u.email} <span className="text-xs text-slate-500">{u.full_name}</span>
+                          {u.email} <span className="text-xs text-fg-secondary">{u.full_name}</span>
                         </label>
                       </li>
                     ))}

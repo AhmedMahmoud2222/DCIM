@@ -35,7 +35,7 @@ describe("Integrations list", () => {
     expect(await screen.findByText("core-snmp")).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     const headers = within(screen.getByRole("table", { name: "Integrations" })).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).toEqual(["Name", "Type", "Target", "Enabled", "Last poll", "Last success", "Failures", "Credential", ""]);
+    expect(headers).toEqual(["Name", "Type", "Target", "Enabled", "Last poll", "Last success", "Failures", "Credential", "Actions"]);
     expect(screen.queryByTestId("measurement-freshness")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/Fresh\b|Late\b|ago\b/);
     expect(screen.getByRole("region", { name: "Integrations table" })).toHaveAttribute("tabindex", "0");

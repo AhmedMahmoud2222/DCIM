@@ -133,7 +133,7 @@ export function EventsPage() {
 
       <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div role="tablist" aria-label="Events view" className="flex gap-2">
+          <div role="tablist" aria-label="Events view" className="flex flex-wrap gap-2">
             <button
               type="button"
               role="tab"
@@ -208,7 +208,7 @@ export function EventsPage() {
             )}
             <input
               aria-label="Search events"
-              className="min-w-[220px] rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500"
+              className="min-w-[220px] rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 placeholder:text-fg-secondary"
               placeholder="Search subject or identifier"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -255,7 +255,7 @@ export function EventsPage() {
         </div>
       )}
       {!isOps && ready && !loading && !error && visibleAlarms.length === 0 && (
-        <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
+        <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-fg-secondary">
           {view === "active"
             ? "No active or acknowledged alarm condition is currently reported."
             : "No events in this range. Try a different time range or state filter."}
@@ -265,7 +265,7 @@ export function EventsPage() {
       {!isOps && ready && !loading && !error && visibleAlarms.length > 0 && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
-            <div role="region" aria-label="Events table" tabIndex={0} className="overflow-x-auto">
+            <div role="region" aria-label="Events table" tabIndex={0} className="relative overflow-x-auto">
               <table aria-label="Events" className="w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-fg-secondary">
                   <tr>
@@ -296,7 +296,7 @@ export function EventsPage() {
                       </td>
                       <td className="max-w-[280px] truncate px-3 py-2 font-medium text-slate-200">
                         {alarm.subject_key}
-                        <p className="mt-0.5 font-mono text-[11px] text-slate-500">{alarm.id.slice(0, 8)}…</p>
+                        <p className="mt-0.5 font-mono text-[11px] text-fg-secondary">{alarm.id.slice(0, 8)}…</p>
                       </td>
                       <td className="px-3 py-2">{alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{new Date(alarm.opened_at).toLocaleString()}</td>
@@ -310,7 +310,7 @@ export function EventsPage() {
             </div>
             {view === "history" && (
               <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-sm">
-                <span className="text-slate-500">Showing one bounded history page of up to 50 records.</span>
+                <span className="text-fg-secondary">Showing one bounded history page of up to 50 records.</span>
                 {historyQuery.data?.next_cursor && (
                   <button
                     type="button"
@@ -328,7 +328,7 @@ export function EventsPage() {
           </div>
           {selected && (
             <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Event detail</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">Event detail</p>
               <div className="mt-3 flex items-center gap-2">
                 <AlarmWorkflowStatus status={selected.status} size="sm" />
                 <span className="text-sm text-slate-400">last value {selected.presentation_value}{selected.presentation_unit === "%" ? "%" : ` ${selected.presentation_unit ?? ""}`}</span>
@@ -336,23 +336,23 @@ export function EventsPage() {
               <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.subject_key}</h2>
               <dl className="mt-4 space-y-2 text-sm">
                 <div>
-                  <dt className="text-slate-500">First occurrence</dt>
+                  <dt className="text-fg-secondary">First occurrence</dt>
                   <dd>{new Date(selected.opened_at).toLocaleString()}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Latest recorded state</dt>
+                  <dt className="text-fg-secondary">Latest recorded state</dt>
                   <dd>{selected.cleared_at ? `Cleared ${new Date(selected.cleared_at).toLocaleString()}` : "Not cleared"}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Acknowledgement</dt>
+                  <dt className="text-fg-secondary">Acknowledgement</dt>
                   <dd>{selected.acknowledged_at ? new Date(selected.acknowledged_at).toLocaleString() : "Unacknowledged"}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Integration identifier</dt>
+                  <dt className="text-fg-secondary">Integration identifier</dt>
                   <dd className="break-all font-mono text-xs">{selected.integration_id}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Rule identifier</dt>
+                  <dt className="text-fg-secondary">Rule identifier</dt>
                   <dd className="break-all font-mono text-xs">{selected.rule_id}</dd>
                 </div>
               </dl>

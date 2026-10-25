@@ -202,7 +202,7 @@ export function AlarmRulesPage() {
 
   if (!canRead) {
     return (
-      <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
+      <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-fg-secondary">
         You do not have permission to view alarm rules.
       </div>
     );
@@ -233,7 +233,7 @@ export function AlarmRulesPage() {
       <QueryStatus query={rulesQuery} what="alarm rules" permission="alarm:read" columns={4} />
 
       {rulesQuery.data !== undefined && !rulesQuery.isError && rules.length === 0 && (
-        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-fg-secondary">
           {attentionOnly ? "No alarm rules currently need attention." : "No alarm rules found."}
         </div>
       )}
@@ -241,7 +241,7 @@ export function AlarmRulesPage() {
       {rules.length > 0 && (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
-            <div role="region" aria-label="Alarm rules table" tabIndex={0} className="overflow-x-auto">
+            <div role="region" aria-label="Alarm rules table" tabIndex={0} className="relative overflow-x-auto">
               <table aria-label="Alarm rules" className="w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-fg-secondary">
                   <tr>
@@ -272,11 +272,11 @@ export function AlarmRulesPage() {
                     >
                       <td className="max-w-[260px] px-3 py-2 font-medium text-slate-200">
                         {rule.name}
-                        <p className="mt-0.5 font-mono text-[11px] text-slate-500">{rule.id.slice(0, 8)}…</p>
+                        <p className="mt-0.5 font-mono text-[11px] text-fg-secondary">{rule.id.slice(0, 8)}…</p>
                       </td>
                       <td className="px-3 py-2">
                         {rule.metric}
-                        <span className="text-slate-500"> · {rule.rule_type}</span>
+                        <span className="text-fg-secondary"> · {rule.rule_type}</span>
                       </td>
                       <td className="px-3 py-2">
                         <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${UNIT_STATUS_BADGE[rule.unit_status]}`}>
@@ -295,7 +295,7 @@ export function AlarmRulesPage() {
 
           {selected && (
             <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4" aria-label="Rule detail">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Rule detail</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">Rule detail</p>
               <div className="mt-3 flex items-center gap-2">
                 <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${UNIT_STATUS_BADGE[selected.unit_status]}`}>
                   {UNIT_STATUS_LABEL[selected.unit_status]}
@@ -307,24 +307,24 @@ export function AlarmRulesPage() {
               <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.name}</h2>
               <dl className="mt-4 space-y-2 text-sm">
                 <div>
-                  <dt className="text-slate-500">Metric</dt>
+                  <dt className="text-fg-secondary">Metric</dt>
                   <dd>{selected.metric}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Stored unit</dt>
+                  <dt className="text-fg-secondary">Stored unit</dt>
                   <dd>{selected.unit ?? "none (evaluation blocked)"}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Registry version</dt>
+                  <dt className="text-fg-secondary">Registry version</dt>
                   <dd className="font-mono text-xs">{selected.registry_version ?? "legacy (unversioned)"}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Integration</dt>
+                  <dt className="text-fg-secondary">Integration</dt>
                   <dd className="break-all font-mono text-xs">{selected.integration_id}</dd>
                 </div>
                 {selected.unit_resolution_reason && (
                   <div>
-                    <dt className="text-slate-500">Resolution note</dt>
+                    <dt className="text-fg-secondary">Resolution note</dt>
                     <dd>{selected.unit_resolution_reason}</dd>
                   </div>
                 )}
@@ -349,7 +349,7 @@ export function AlarmRulesPage() {
                 </div>
               )}
               {canManage && !selected.needs_attention && (
-                <p className="mt-4 text-sm text-slate-500">This rule has a resolved unit and is evaluating normally.</p>
+                <p className="mt-4 text-sm text-fg-secondary">This rule has a resolved unit and is evaluating normally.</p>
               )}
               {canManage && action === "resolve" && (
                 <ResolveForm rule={selected} onResolved={handleSettled} onCancel={() => setAction(null)} />

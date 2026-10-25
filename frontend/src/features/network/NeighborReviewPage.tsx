@@ -184,7 +184,7 @@ export function NeighborReviewPage() {
         )}
 
         <aside aria-label="Neighbor detail" className="rounded-sm border border-slate-800 bg-slate-900 p-3 text-xs">
-          {!selected && <p className="italic text-slate-500">Select a neighbor to review its evidence.</p>}
+          {!selected && <p className="italic text-fg-secondary">Select a neighbor to review its evidence.</p>}
           {selected && (
             <div className="space-y-3">
               <div>
@@ -195,15 +195,15 @@ export function NeighborReviewPage() {
                 )}
               </div>
               <dl className="grid grid-cols-2 gap-1 text-slate-300">
-                <dt className="text-slate-500">Remote chassis</dt><dd className="break-all font-mono">{selected.remote_chassis_ident}</dd>
-                <dt className="text-slate-500">Remote port</dt><dd className="break-all font-mono">{selected.remote_port_ident}</dd>
-                <dt className="text-slate-500">Mgmt address</dt><dd className="font-mono">{selected.remote_management_address ?? "—"}</dd>
-                <dt className="text-slate-500">Platform</dt><dd>{selected.remote_platform ?? "—"}</dd>
-                <dt className="text-slate-500">Capabilities</dt><dd>{selected.capabilities.join(", ") || "—"}</dd>
-                <dt className="text-slate-500">Native VLAN</dt><dd>{selected.native_vlan ?? "—"}</dd>
-                <dt className="text-slate-500">First seen</dt><dd>{selected.first_seen_at}</dd>
-                <dt className="text-slate-500">Last seen</dt><dd>{selected.last_seen_at}</dd>
-                <dt className="text-slate-500">Source</dt><dd>{selected.protocol.toUpperCase()} via collector {selected.source_collector_id ?? "—"}</dd>
+                <dt className="text-fg-secondary">Remote chassis</dt><dd className="break-all font-mono">{selected.remote_chassis_ident}</dd>
+                <dt className="text-fg-secondary">Remote port</dt><dd className="break-all font-mono">{selected.remote_port_ident}</dd>
+                <dt className="text-fg-secondary">Mgmt address</dt><dd className="font-mono">{selected.remote_management_address ?? "—"}</dd>
+                <dt className="text-fg-secondary">Platform</dt><dd>{selected.remote_platform ?? "—"}</dd>
+                <dt className="text-fg-secondary">Capabilities</dt><dd>{selected.capabilities.join(", ") || "—"}</dd>
+                <dt className="text-fg-secondary">Native VLAN</dt><dd>{selected.native_vlan ?? "—"}</dd>
+                <dt className="text-fg-secondary">First seen</dt><dd>{selected.first_seen_at}</dd>
+                <dt className="text-fg-secondary">Last seen</dt><dd>{selected.last_seen_at}</dd>
+                <dt className="text-fg-secondary">Source</dt><dd>{selected.protocol.toUpperCase()} via collector {selected.source_collector_id ?? "—"}</dd>
               </dl>
               {explanation(selected).length > 0 && (
                 <div>
