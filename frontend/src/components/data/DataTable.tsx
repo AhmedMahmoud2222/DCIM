@@ -23,12 +23,14 @@ interface DataTableProps {
   label: string;
   /** Narrowest width before the region scrolls sideways instead of squeezing columns. */
   minWidthClass?: string;
+  /** Smaller text for tables with many columns. */
+  dense?: boolean;
   children: ReactNode;
 }
 
 /** A table inside a keyboard-focusable scroll region. The region is focusable so a keyboard user can
  * scroll it; it takes the shared focus ring from index.css. */
-export function DataTable({ label, minWidthClass = "min-w-[40rem]", children }: DataTableProps) {
+export function DataTable({ label, minWidthClass = "min-w-[40rem]", dense = false, children }: DataTableProps) {
   return (
     <div
       role="region"
@@ -36,7 +38,7 @@ export function DataTable({ label, minWidthClass = "min-w-[40rem]", children }: 
       tabIndex={0}
       className="overflow-x-auto rounded-sm border border-line-subtle bg-surface-page"
     >
-      <table aria-label={label} className={`w-full border-collapse text-sm text-fg-primary ${minWidthClass}`}>
+      <table aria-label={label} className={`w-full border-collapse ${dense ? "text-xs" : "text-sm"} text-fg-primary ${minWidthClass}`}>
         {children}
       </table>
     </div>
