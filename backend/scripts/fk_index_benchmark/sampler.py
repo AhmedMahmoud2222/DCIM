@@ -13,6 +13,8 @@ from collections import defaultdict
 
 import psycopg
 
+from .resources import ResourceProbe
+
 PROGRESS_SQL = (
     "SELECT p.pid, c.relname, p.phase, p.blocks_total, p.blocks_done, p.tuples_total, p.tuples_done, "
     "p.lockers_total, p.lockers_done FROM pg_stat_progress_create_index p "
@@ -50,10 +52,12 @@ class Sampler(threading.Thread):
         ] = []  # (epoch, pid, index, phase, blocks_total, blocks_done, tuples_total, tuples_done, lockers_total, lockers_done)
         self.locks: dict[str, set] = defaultdict(set)  # table -> {(mode, granted)} seen held or awaited by OTHER backends
         self.peak_db_bytes = 0
+        self.probe = ResourceProbe()
 
     def run(self) -> None:
         conn = psycopg.connect(self.dsn, autocommit=True)
         last_slow = 0.0
+        last_res = 0.0
         try:
             while not self.stop_event.is_set():
                 now = time.time()
@@ -65,9 +69,15 @@ class Sampler(threading.Thread):
                         self.locks[table].add((mode, bool(granted)))
                     size = conn.execute("SELECT pg_database_size(current_database())").fetchone()[0]
                     self.peak_db_bytes = max(self.peak_db_bytes, size)
+                if now - last_res >= 0.5:
+                    last_res = now
+                    self.probe.sample(conn)
                 self.stop_event.wait(self.interval)
         finally:
             conn.close()
+
+    def resources(self) -> dict:
+        return self.probe.summary()
 
     def stop(self) -> None:
         self.stop_event.set()
