@@ -214,7 +214,8 @@ def main(argv: list[str]) -> int:
     lines: list[str] = []
     timed_out = False
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=int(timeout_min) * 60 + 90)
+        completed = subprocess.run(command, cwd=workdir, capture_output=True, text=True,
+                                   timeout=int(timeout_min) * 60 + 90)
         lines, exit_code = completed.stdout.splitlines(), completed.returncode
         timed_out = exit_code in (124, 137)
         if completed.stderr.strip():
