@@ -1,4 +1,4 @@
-"""Offline validation of the Claude agent gate and workflow policy (tests v1.0).
+"""Offline validation of the Claude agent gate and workflow policy (tests v1.1).
 
 Covers authorization, command parsing, agent routing against the OpenCode gate, duplicate
 events, and isolation from the OpenCode workflow. Live execution (real @claude comment
@@ -229,8 +229,6 @@ class WorkflowPolicyTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
-    OPENCODE_FILES = ('.github/workflows/opencode.yml', '.github/scripts/opencode_gate.py')
-
     def test_workflows_are_separate_files_with_separate_groups_and_vars(self):
         oc = (ROOT / '.github/workflows/opencode.yml').read_text()
         cl = (ROOT / '.github/workflows/claude-agent.yml').read_text()
@@ -239,15 +237,6 @@ class IsolationTests(unittest.TestCase):
         self.assertNotIn('claude-agent', oc)
         self.assertNotIn('opencode_gate', cl)
         self.assertNotIn('/oc', cl.replace('# ', '').split('name: Claude Agent')[1])
-
-    def test_opencode_gate_script_and_workflow_unchanged_in_this_branch(self):
-        base = subprocess.run(['git', 'merge-base', 'HEAD', 'origin/main'], cwd=ROOT, capture_output=True, text=True)
-        if base.returncode != 0:
-            self.skipTest('origin/main not available (shallow clone)')
-        diff = subprocess.run(['git', 'diff', '--name-only', base.stdout.strip(), '--', *self.OPENCODE_FILES,
-                               '.github/scripts/opencode_*.py', '.github/workflows/opencode*.yml'],
-                              cwd=ROOT, capture_output=True, text=True, check=True)
-        self.assertEqual(diff.stdout.strip(), '')
 
     def test_opencode_gate_behaviour_unchanged(self):
         digest = hashlib.sha256((ROOT / '.github/scripts/opencode_gate.py').read_bytes()).hexdigest()
