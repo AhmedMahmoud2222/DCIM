@@ -1,0 +1,129 @@
+# Claude agent (workflow v1.0): `@claude <task>` on a pull request conversation.
+# Design, permissions, setup and recovery: docs/security/CLAUDE_AGENT_AUTHORITY.md
+#
+# Independent of .github/workflows/opencode.yml: separate workflow, gate, allowlist
+# variable, concurrency group and secret. `/oc` and `/opencode` are never handled here.
+#
+# Trigger scope: issue_comment only. GitHub runs issue_comment workflows from the default
+# branch, so a PR author cannot edit this file or the gate script to widen access.
+#
+# Flow: gate (no secrets; authorizes and claims the comment)
+#   -> claude (official action; changes only the existing same-repository PR branch)
+name: Claude Agent
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Authorize @claude command
+    # Cheap pre-filter. The gate script remains the authority.
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Serializes events for one comment so a duplicate delivery sees the first claim.
+    concurrency:
+      group: claude-gate-${{ github.event.comment.id }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+      number: ${{ steps.gate.outputs.number }}
+      authorized_sha: ${{ steps.gate.outputs.authorized_sha }}
+      head_ref: ${{ steps.gate.outputs.head_ref }}
+    steps:
+      - name: Checkout scripts from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Fetch PR metadata and existing claims
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${ISSUE_NUMBER}" > "${RUNNER_TEMP}/pr.json"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" | jq -s 'add // []' > "${RUNNER_TEMP}/reactions.json"
+      - name: Authorize
+        id: gate
+        env:
+          ALLOWED_ACTOR_IDS: ${{ vars.CLAUDE_ALLOWED_ACTOR_IDS }}
+          PR_JSON_PATH: ${{ runner.temp }}/pr.json
+          REACTIONS_JSON_PATH: ${{ runner.temp }}/reactions.json
+        run: |
+          test -f .github/scripts/claude_gate.py || { echo "::error::gate script missing on this commit; refusing to run"; exit 1; }
+          python3 .github/scripts/claude_gate.py
+      - name: Claim the comment (duplicate guard)
+        if: steps.gate.outputs.authorized == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
+
+  claude:
+    name: Run Claude on the existing PR
+    needs: gate
+    if: needs.gate.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # One Claude run per PR at a time; queued, never cancelled mid-edit.
+    concurrency:
+      group: claude-agent-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write        # push to the existing PR branch
+      pull-requests: write   # tracking comment on the PR
+      issues: write          # tracking comment API
+      actions: read          # read CI results of the PR
+    steps:
+      - name: Re-verify the target PR is unchanged since authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ needs.gate.outputs.number }}
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+          HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          live=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq '[.state, .head.sha, .head.ref, .head.repo.full_name] | @tsv')
+          expected=$(printf 'open\t%s\t%s\t%s' "${AUTHORIZED_SHA}" "${HEAD_REF}" "${GITHUB_REPOSITORY}")
+          if [ "${live}" != "${expected}" ]; then
+            echo "::error::PR head moved or closed after authorization; refusing to run"
+            exit 1
+          fi
+      - name: Checkout the authorized PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.authorized_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run Claude
+        id: claude
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13  # v1.0.262
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          trigger_phrase: '@claude'
+          use_commit_signing: true
+          allowed_bots: ''
+          claude_args: |
+            --max-turns 40
+            --disallowedTools "Bash(gh:*),Bash(git push:*),Bash(git remote:*),Bash(curl:*),Bash(wget:*),WebFetch,WebSearch"
+            --append-system-prompt "Work only on the pull request this comment belongs to. Commit only to its existing head branch. Never create branches or pull requests, never merge, close, approve or deploy, and never change files under .github/workflows or .github/scripts."
+      - name: Verify Claude stayed on the PR branch
+        if: always() && steps.claude.outputs.branch_name != ''
+        env:
+          BRANCH_NAME: ${{ steps.claude.outputs.branch_name }}
+          HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+        run: |
+          if [ "${BRANCH_NAME}" != "${HEAD_REF}" ]; then
+            echo "::error::Claude used branch '${BRANCH_NAME}' instead of the PR branch '${HEAD_REF}'"
+            exit 1
+          fi
