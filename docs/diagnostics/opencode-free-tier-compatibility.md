@@ -98,7 +98,7 @@ cannot drift from the diagnostic:
 | 2 | an in-workdir canary never reaches the provider under `ask` | pass |
 | 3 | an out-of-workdir canary never reaches the provider under `ask` | pass |
 | 4 | `/proc/self/environ` never reaches the provider, in a child process whose environment holds only synthetic values | pass |
-| 5 | with an **open, idle** stdin the runtime executes no read, contacts the provider **zero** times, and leaks nothing; the hard timeout terminates the blocked run (`SIGKILL` to the process group) and the child is fully reaped | pass |
+| 5 | with an **open, idle** stdin the runtime executes no read, contacts the provider **zero** times, and leaks nothing; the hard timeout terminates the blocked run (the child is killed and fully reaped) | pass |
 | 6 | `external_directory: 'deny'` blocks the out-of-workdir canary and `/proc/self/environ` **even when `read: 'allow'`** | pass |
 | 7 | control: `read: 'allow'` **does** read the in-workdir canary, so the leak detector is not vacuous | pass |
 | 8 | the shipped classifier, fed the **real** transcript, returns `('failed', 'unexpected_tool_use')` even though the CLI exits `0` | pass |

@@ -19,8 +19,8 @@ the exact linux-x64 binary the CI runner installs from the committed lockfile:
      the CLI exits 0;
   7. with an *open but idle* stdin the runtime neither auto-approves a read
      nor contacts the provider (it blocks before any model interaction); the
-     diagnostic's hard timeout terminates the whole process group and reaps
-     every child, so a hung approval can never be satisfied or leak.
+     diagnostic's hard timeout terminates the blocked run and reaps the
+     child, so a hung approval can never be satisfied or leak.
 
 This is P1 pre-dispatch gate evidence for the native smoke diagnostic: it
 drives the genuine runtime permission engine rather than feeding fabricated
@@ -343,8 +343,9 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
                      guarantees termination, exactly the diagnostic's own
                      guard against an uninterruptible permission wait.
 
-        The child runs in its own session so a timeout can kill the whole
-        process group, and every file descriptor is closed on every path.
+        `communicate(timeout=...)` bounds the run, `process.kill()`
+        terminates a blocked child on timeout, and every file descriptor is
+        closed on every path.
         """
         read_fd = write_fd = None
         process = None
@@ -368,18 +369,12 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
                 stdout, _stderr = process.communicate(timeout=TIMEOUT_S)
             except subprocess.TimeoutExpired:
                 timed_out = True
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    process.kill()
+                process.kill()
                 stdout, _stderr = process.communicate()
             exit_code = process.returncode
         finally:
             if process is not None and process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    process.kill()
+                process.kill()
                 process.wait()
             reaped = process is not None and process.poll() is not None
             if read_fd is not None:
@@ -595,8 +590,8 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
     def test_open_idle_stdin_run_is_terminated_by_the_hard_timeout_and_reaped(
             self):
         """The diagnostic's hard timeout is the control that terminates a
-        blocked run: it must fire, the process group must be SIGKILLed and
-        the child fully reaped on this path (fd and process cleanup)."""
+        blocked run: it must fire, the child must be terminally killed and
+        fully reaped on this path (fd and process cleanup)."""
         result = self._cached(('ask', TARGET_INSIDE, 'IDLE_PIPE'),
                               lambda: self._run('ask', TARGET_INSIDE,
                                                 'IDLE_PIPE'))
@@ -604,7 +599,7 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
         self.assertTrue(result['timed_out'],
                         'the runtime did not block on the open idle stdin; '
                         'the hard-timeout control was not exercised')
-        # ...and it was force-terminated by SIGKILL to the process group.
+        # ...and it was force-terminated by SIGKILL from the harness.
         self.assertEqual(result['exit_code'], -signal.SIGKILL)
         # ...and fully reaped: no child outlives the test.
         self.assertTrue(result['reaped'],
