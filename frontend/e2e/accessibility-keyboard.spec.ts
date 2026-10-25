@@ -250,3 +250,43 @@ test("dashboard sections come in priority order, settle out of loading, and fit 
   expect(phoneExceptions.y).toBeGreaterThanOrEqual(phoneAlarms.y + phoneAlarms.height - 1);
   expect(await noSideways()).toBe(true);
 });
+
+test("migrated pages reflow at 320 px (400% zoom) and at 200% text size without sideways page scroll", async ({ page }) => {
+  await signIn(page);
+  const routes = ["/", "/events", "/equipment", "/racks", "/cables", "/integrations", "/discovery"];
+  const noSideways = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  const visit = async (route: string) => {
+    await page.evaluate((target) => {
+      window.history.pushState({}, "", target);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, route);
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+    // Let the page's own requests settle into a deliberate state before measuring.
+    await page.waitForLoadState("networkidle");
+  };
+
+  // 400% browser zoom of a 1280 px window is a 320 CSS px viewport.
+  await page.setViewportSize({ width: 320, height: 640 });
+  for (const route of routes) {
+    await visit(route);
+    expect(await noSideways(), `${route} at 320 px`).toBe(true);
+  }
+
+  // Text-only resize to 200% in a desktop window.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addStyleTag({ content: "html { font-size: 200% !important; }" });
+  for (const route of routes) {
+    await visit(route);
+    expect(await noSideways(), `${route} at 200% text`).toBe(true);
+  }
+});
+
+test("each page names itself in the document title", async ({ page }) => {
+  await signIn(page);
+  await expect(page).toHaveTitle("Dashboard · DCIM Platform");
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/events");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page).toHaveTitle("Events · DCIM Platform");
+});
