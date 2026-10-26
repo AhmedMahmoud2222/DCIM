@@ -63,7 +63,7 @@ PROTECTED_BASENAME_PREFIXES = ('.github/scripts/opencode_', 'tests/deployment/te
                                'tests/deployment/mutation_check', 'tests/deployment/fixtures/',
                                'tests/deployment/opencode_validation/', '.github/scripts/ci_',
                                'tests/ci/')
-PROTECTED_NAMES = ('codeowners', 'agents.md')
+PROTECTED_NAMES = ('codeowners', 'agents.md', 'verify_release_sha.py')
 
 
 class PublishError(Exception):
@@ -84,7 +84,9 @@ class PartialPublication(PublishError):
 
 def is_protected_path(path: str) -> bool:
     lowered = path.lower()
-    if lowered.startswith(PROTECTED_PREFIXES) or lowered.startswith(PROTECTED_BASENAME_PREFIXES):
+    if lowered.startswith(PROTECTED_PREFIXES) or lowered.startswith(PROTECTED_BASENAME_PREFIXES) \
+            or lowered.startswith(('.github/scripts/agent_', '.github/scripts/orchestration_',
+                                   'tests/deployment/test_agent_', 'tests/deployment/test_orchestration_')):
         return True
     if posixpath.basename(lowered) in PROTECTED_NAMES:
         return True
