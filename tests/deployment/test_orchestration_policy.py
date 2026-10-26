@@ -11,6 +11,8 @@ HEAD, BASE = 'a' * 40, 'b' * 40
 
 def facts():
     return dict(head=HEAD, base=BASE, pr=5, implementer='codex', paths=['docs/usage.md'],
+                files=[dict(filename='docs/usage.md', kind='regular', status='modified')],
+                files_complete=True,
                 commits=[dict(sha=HEAD, verification=dict(verified=True, reason='valid'))],
                 commit_range=dict(base=BASE, head=HEAD, complete=True, commits=[HEAD]),
                 ci_passed=True, security_passed=True, regression_passed=True,
@@ -18,7 +20,7 @@ def facts():
                 conflict_free=True, findings_resolved=True, evidence_complete=True,
                 ci_head=HEAD, ci_base=BASE,
                 review=dict(head=HEAD, base=BASE, pr=5, reviewer='claude', authenticated=True,
-                            acceptance_check=True, comment_id=10))
+                            acceptance_check=True, verdict='ACCEPT', comment_id=10))
 
 
 class PolicyTests(unittest.TestCase):
@@ -46,7 +48,7 @@ class PolicyTests(unittest.TestCase):
             self.assertIn('stale independent review', p.merge_blockers(f))
 
     def test_no_self_acceptance_or_text_only_review(self):
-        for changes in (dict(reviewer='codex'), dict(authenticated=False),
+        for changes in (dict(reviewer='codex'), dict(authenticated=False), dict(verdict='REJECT'),
                         dict(acceptance_check=False), dict(comment_id=None), dict(pr=6)):
             f = facts(); f['review'].update(changes)
             self.assertTrue(p.merge_blockers(f))
@@ -70,7 +72,7 @@ class PolicyTests(unittest.TestCase):
                      'edge_collector/power.py', 'docker-compose.yml'):
             self.assertEqual(p.risk([path]), 'high', path)
         self.assertEqual(p.risk(['frontend/src/widget.tsx']), 'medium')
-        f = facts(); f['paths'] = ['backend/app/widget.py']
+        f = facts(); f['files'][0]['filename'] = 'backend/app/widget.py'
         self.assertTrue(p.merge_blockers(f))
 
     def test_fallback_requires_fresh_observed_capability(self):
@@ -103,7 +105,50 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(task['state'], 'CI')
         task['attempts'] = 3
         task = p.transition(task, 'REMEDIATION', '3', 2, changed, 103)
+        self.assertEqual(task['attempts'], 3)
+        task = p.transition(task, 'CI', '4', 3, changed, 104)
         self.assertEqual(task['state'], 'ESCALATED')
+
+    def test_acceptance_and_auto_merge_risk_are_separate(self):
+        f = facts(); f['files'][0]['filename'] = '.github/workflows/ci.yml'
+        self.assertEqual(p.acceptance_blockers(f), [])
+        self.assertTrue(p.merge_blockers(f))
+        task = p.new_task(1, 5, HEAD, BASE, 100)
+        task.update(state='INDEPENDENT_REVIEW', implementer='codex')
+        accepted = p.transition(task, 'ACCEPTED', 'accept', 0, f, 101)
+        self.assertEqual(accepted['state'], 'ACCEPTED')
+        with self.assertRaises(p.PolicyError):
+            p.transition(accepted, 'MERGE_READY', 'merge', 1, f, 102)
+
+    def test_renamed_security_source_and_symlinks_are_high_risk(self):
+        f = facts(); f['files'][0].update(status='renamed', previous_filename='backend/app/auth.py')
+        self.assertEqual(p.change_risk(f), 'high')
+        f = facts(); f['files'][0]['kind'] = 'symlink'
+        self.assertEqual(p.change_risk(f), 'high')
+        f = facts(); f['files_complete'] = False
+        self.assertEqual(p.change_risk(f), 'high')
+
+    def test_changed_head_cannot_skip_assignment_or_regress_after_merge(self):
+        f = facts(); f['head'] = 'c' * 40
+        task = p.new_task(1, 5, HEAD, BASE, 100)
+        with self.assertRaises(p.PolicyError):
+            p.transition(task, 'ASSIGNED', 'assign', 0, f, 101)
+        task['state'] = 'MERGED'
+        with self.assertRaises(p.PolicyError):
+            p.transition(task, 'STAGING', 'deploy', 0, f, 101)
+
+    def test_failed_and_blocked_require_new_authorized_task(self):
+        for state in ('FAILED', 'BLOCKED'):
+            task = p.new_task(1, 5, HEAD, BASE, 100)
+            task['state'] = state
+            with self.assertRaises(p.PolicyError):
+                p.transition(task, 'ASSIGNED', 'retry', 0, facts(), 101)
+
+    def test_non_json_evidence_raises_policy_error(self):
+        task = p.new_task(1, 5, HEAD, BASE, 100)
+        for value in (set(), {'not_json': object()}, {'not_json': float('nan')}):
+            with self.assertRaises(p.PolicyError):
+                p.transition(task, 'ASSIGNED', 'assign', 0, value, 101)
 
     def test_timeout_and_illegal_transition(self):
         task = p.new_task(1, 5, HEAD, BASE, 100)

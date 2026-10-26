@@ -16,14 +16,16 @@ IDENTITY = dict(id=199175422, login='chatgpt-codex-connector[bot]',
                 app_id=1144995, app_slug='chatgpt-codex-connector')
 
 
-def bot(cid=2):
-    return dict(id=cid, body='/oc review security\nDCIM-Head: ' + HEAD,
+def bot(cid=2, root_id=1):
+    return dict(id=cid, body=f'/oc review security\nDCIM-Root: {root_id}\nDCIM-Head: ' + HEAD,
+                created_at='2026-10-26T00:00:01Z', updated_at='2026-10-26T00:00:01Z',
                 user=dict(id=IDENTITY['id'], login=IDENTITY['login'], type='Bot'),
                 performed_via_github_app=dict(id=IDENTITY['app_id'], slug=IDENTITY['app_slug']))
 
 
 def root():
     return dict(id=1, body='/oc implement task', author_association='OWNER',
+                created_at='2026-10-26T00:00:00Z', updated_at='2026-10-26T00:00:00Z',
                 user=dict(id=42, type='User'))
 
 
@@ -74,8 +76,41 @@ class AuthorityTests(unittest.TestCase):
         history = [root()] + [bot(i) for i in range(2, 7)]
         self.assertFalse(self.authorized(history[-1], history))
         self.assertTrue(self.authorized(history[-2], history[:-1]))
-        history += [dict(root(), id=7), bot(8)]
+        history += [dict(root(), id=7), bot(8, root_id=7)]
         self.assertTrue(self.authorized(history[-1], history))
+
+    def test_reactions_do_not_change_authenticated_binding(self):
+        c = bot(); current = copy.deepcopy(c)
+        c['reactions'] = {'total_count': 0}
+        current['reactions'] = {'total_count': 1}
+        self.assertTrue(self.authorized(c, [root(), current]))
+        c['updated_at'] = '2026-10-26T00:00:03Z'
+        current['updated_at'] = c['updated_at']
+        self.assertFalse(self.authorized(c, [root(), current]))
+
+    def test_explicit_opencode_root_and_review_scope(self):
+        c = bot()
+        for body in ('@claude review', '@codex review', 'please /oc implement'):
+            self.assertFalse(self.authorized(c, [dict(root(), body=body), c]))
+        self.assertFalse(self.authorized(c, [dict(root(), id=9), c]))
+        review_root = dict(root(), body='/oc review security')
+        self.assertTrue(self.authorized(c, [review_root, c]))
+        c['body'] = c['body'].replace('/oc review security', '/oc implement')
+        self.assertFalse(self.authorized(c, [review_root, c]))
+
+    def test_captured_claude_rest_metadata_and_synthetic_webhook_projection(self):
+        fixture = json.loads((Path(__file__).parent /
+            'fixtures/agent_comments/claude-api-metadata.json').read_text())
+        current = fixture['metadata']
+        identity = dict(id=current['user']['id'], login=current['user']['login'],
+                        app_id=current['performed_via_github_app']['id'],
+                        app_slug=current['performed_via_github_app']['slug'])
+        self.assertTrue(a.trusted_bot(current, [identity]))
+        event = copy.deepcopy(current)
+        event['reactions'] = {'total_count': 0}
+        self.assertEqual(a.comment_binding(event), a.comment_binding(current))
+        # The actual review comment was edited: it must not authorize a command.
+        self.assertNotEqual(current['created_at'], current['updated_at'])
 
     def test_gate_keeps_command_and_pr_restrictions(self):
         c = bot()

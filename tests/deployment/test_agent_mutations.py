@@ -36,6 +36,8 @@ class AgentMutationTests(unittest.TestCase):
             shutil.copytree(ROOT / '.github/scripts', root / '.github/scripts',
                             ignore=shutil.ignore_patterns('__pycache__'))
             tests = root / 'tests/deployment'; tests.mkdir(parents=True)
+            shutil.copytree(ROOT / 'tests/deployment/fixtures/agent_comments',
+                            tests / 'fixtures/agent_comments')
             for pattern in {'test_agent_authority.py', 'test_orchestration_policy.py'}:
                 shutil.copyfile(ROOT / 'tests/deployment' / pattern, tests / pattern)
             # Establish that the exact disposable test environment passes first.

@@ -21,7 +21,9 @@ NEXT = {
     'MERGED': {'STAGING'}, 'STAGING': {'PRODUCTION', 'ROLLED_BACK'},
     'PRODUCTION': {'VERIFIED', 'ROLLED_BACK'},
 }
-TERMINAL = {'VERIFIED', 'ROLLED_BACK', 'ESCALATED'}
+TERMINAL = {'VERIFIED', 'ROLLED_BACK', 'ESCALATED', 'BLOCKED', 'FAILED'}
+PREMERGE = {'ASSIGNED', 'IMPLEMENTING', 'CI', 'INDEPENDENT_REVIEW', 'REMEDIATION',
+            'ACCEPTED', 'MERGE_READY'}
 MAX_ATTEMPTS = 3
 TIMEOUT_SECONDS = 3600
 AGENTS = ('opencode', 'claude', 'codex', 'copilot')
@@ -71,7 +73,7 @@ def select_agent(observations, failures, capability, now, implementer=None):
     raise PolicyError('ESCALATED: no eligible independently observed agent')
 
 
-def merge_blockers(facts):
+def acceptance_blockers(facts):
     """No acceptance is inferred from text, a passing CI status, or PR author."""
     reasons = []
     head, base = facts.get('head'), facts.get('base')
@@ -106,11 +108,33 @@ def merge_blockers(facts):
         reasons.append('review is not independent')
     if review.get('authenticated') is not True or review.get('acceptance_check') is not True:
         reasons.append('missing authenticated acceptance evidence')
+    if review.get('verdict') != 'ACCEPT':
+        reasons.append('independent reviewer has not accepted')
     if type(review.get('comment_id')) is not int or review['comment_id'] <= 0:
         reasons.append('missing same-PR findings comment')
     if review.get('pr') != facts.get('pr') or type(facts.get('pr')) is not int:
         reasons.append('review targets another PR')
-    level = risk(facts.get('paths'))
+    return reasons
+
+
+def change_risk(facts):
+    files = facts.get('files')
+    if not isinstance(files, list) or not files or facts.get('files_complete') is not True:
+        return 'high'
+    paths = []
+    for file in files:
+        if not isinstance(file, dict) or file.get('kind') != 'regular' \
+                or file.get('status') not in {'added', 'modified', 'removed', 'renamed'}:
+            return 'high'
+        paths.append(file.get('filename'))
+        if file['status'] == 'renamed':
+            paths.append(file.get('previous_filename'))
+    return risk(paths)
+
+
+def merge_blockers(facts):
+    reasons = acceptance_blockers(facts)
+    level = change_risk(facts)
     # Stronger evidence is necessary but not sufficient: initial policy permits
     # automatic merge ONLY for low-risk documentation. No override boolean.
     if level != 'low':
@@ -136,8 +160,13 @@ def transition(task, target, event_id, expected_revision, facts, now):
     if target not in STATES or not isinstance(event_id, str) or not event_id \
             or len(event_id) > 200 or type(now) is not int:
         raise PolicyError('invalid transition')
+    if not isinstance(facts, dict):
+        raise PolicyError('facts must be a JSON object')
     payload = dict(target=target, facts=facts)
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    try:
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    except (ValueError, TypeError):
+        raise PolicyError('facts must contain canonical JSON values') from None
     for event in task['events']:
         if event['id'] == event_id:
             if event['digest'] != digest:
@@ -156,6 +185,8 @@ def transition(task, target, event_id, expected_revision, facts, now):
         if facts.get('pr') != task['pr']:
             raise PolicyError('task cannot switch PR')
         if facts.get('head') != task['head'] or facts.get('base') != task['base']:
+            if task['state'] not in PREMERGE:
+                raise PolicyError('changed commits require a new task before assignment or after merge')
             if not canonical_sha(facts.get('head')) or not canonical_sha(facts.get('base')):
                 raise PolicyError('invalid changed commit binding')
             result.update(head=facts['head'], base=facts['base'])
@@ -171,7 +202,8 @@ def transition(task, target, event_id, expected_revision, facts, now):
             if facts.get('ci_passed') is not True:
                 raise PolicyError('CI must pass before review')
         elif target in {'ACCEPTED', 'MERGE_READY', 'MERGED'}:
-            if facts.get('implementer') != task.get('implementer') or merge_blockers(facts):
+            blockers = acceptance_blockers(facts) if target == 'ACCEPTED' else merge_blockers(facts)
+            if facts.get('implementer') != task.get('implementer') or blockers:
                 raise PolicyError('release evidence rejected')
             if target == 'MERGED' and facts.get('github_merged') is not True:
                 raise PolicyError('GitHub has not confirmed merge')
@@ -182,7 +214,7 @@ def transition(task, target, event_id, expected_revision, facts, now):
         elif target == 'ROLLED_BACK':
             if facts.get('rollback_verified') is not True:
                 raise PolicyError('rollback has not been verified')
-    if target in {'REMEDIATION', 'CI'}:
+    if target == 'CI':
         result['attempts'] += 1
         if result['attempts'] > MAX_ATTEMPTS:
             target = 'ESCALATED'

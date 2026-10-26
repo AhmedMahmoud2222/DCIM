@@ -8,18 +8,33 @@ import re
 import urllib.request
 
 MAX_BOT_REQUESTS = 4
-ROOT_COMMAND = re.compile(r'\A(?:/oc|/opencode|@claude|@codex)\s+\S')
+ROOT_COMMAND = re.compile(r'\A(?:/oc|/opencode)\s+\S')
 BUDGET_REACTIONS = ('rocket', 'hooray', 'heart', '+1')
 
 
 def root_id(comment, comments, owner_ids):
+    match = re.search(r'\nDCIM-Root: ([1-9][0-9]*)\nDCIM-Head: [0-9a-f]{40}\Z',
+                      comment.get('body') or '')
+    if not match:
+        return None
+    requested = int(match.group(1))
     roots = [c['id'] for c in comments if type(c.get('id')) is int and c['id'] < comment['id']
+             and c['id'] == requested
              and (c.get('user') or {}).get('type') == 'User'
              and type((c.get('user') or {}).get('id')) is int
              and c['user']['id'] in owner_ids
              and c.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
-             and ROOT_COMMAND.match(c.get('body') or '')]
+             and ROOT_COMMAND.match(c.get('body') or '')
+             and c.get('created_at') and c.get('created_at') == c.get('updated_at')]
     return max(roots, default=None)
+
+
+def comment_binding(comment):
+    """Stable authenticated fields only; mutable reaction counters are excluded."""
+    user, app = comment.get('user') or {}, comment.get('performed_via_github_app') or {}
+    return (comment.get('id'), comment.get('body'), comment.get('created_at'),
+            comment.get('updated_at'), user.get('id'), user.get('login'), user.get('type'),
+            app.get('id'), app.get('slug'))
 
 
 def identities(raw):
@@ -74,7 +89,9 @@ def authorize(comment, configured, comments, owner_ids, head):
     ids = [c.get('id') for c in comments]
     if any(type(i) is not int for i in ids) or len(set(ids)) != len(ids):
         return False, 'malformed comment history'
-    if not any(c == comment for c in comments):
+    if not comment.get('created_at') or comment.get('updated_at') != comment.get('created_at'):
+        return False, 'edited or undated bot request'
+    if not any(comment_binding(c) == comment_binding(comment) for c in comments):
         return False, 'event no longer matches current comment'
     if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}', head):
         return False, 'invalid HEAD'
@@ -83,6 +100,12 @@ def authorize(comment, configured, comments, owner_ids, head):
     root = root_id(comment, comments, owner_ids)
     if root is None:
         return False, 'no authorized human root command'
+    root_body = next(c['body'] for c in comments if c['id'] == root)
+    # A review-only owner command cannot delegate implementation authority.
+    human_task = re.sub(r'\A(?:/oc|/opencode)\s+', '', root_body)
+    bot_task = re.sub(r'\A(?:/oc|/opencode)\s+', '', comment.get('body') or '')
+    if re.match(r'\Areview(?:\s|\Z)', human_task) and not re.match(r'\Areview(?:\s|\Z)', bot_task):
+        return False, 'review-only root cannot authorize implementation'
     count = sum(1 for c in comments if root < c['id'] <= cid
                 and (c.get('user') or {}).get('type') == 'Bot'
                 and ROOT_COMMAND.match(c.get('body') or ''))

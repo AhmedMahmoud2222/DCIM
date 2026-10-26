@@ -44,10 +44,18 @@ also require:
 1. An owner-managed full identity tuple: numeric user ID, exact login, numeric App
    ID and App slug. All must match GitHub event/API metadata, including
    `performed_via_github_app`; missing attribution fails closed.
-2. A prior authorized human `/oc`, `/opencode`, `@claude` or `@codex` command in
-   the same conversation. Text that claims ownership grants no authority.
-3. A final line `DCIM-Head: <full current HEAD SHA>` and an unchanged event comment
-   present in the current paginated GitHub API history.
+2. A prior authorized human `/oc` or `/opencode` command in the same conversation.
+   A mention aimed at another provider grants no OpenCode authority. The bot must
+   explicitly identify that command in its penultimate line `DCIM-Root: <comment id>`.
+   Review-only roots cannot authorize implementation. Text claiming ownership grants
+   no authority. Trusted bot task text remains potentially prompt-injected: the
+   sandbox, protected publisher and independent acceptance boundaries still apply.
+3. A final line `DCIM-Head: <full current HEAD SHA>` and an unedited command present
+   in current paginated API history. Compare ID, body, creation/update timestamps,
+   user ID/login/type and App ID/slug; ignore reaction counts and incidental metadata.
+   Creation/update timestamps must agree on both sides. Captured Claude REST
+   metadata is tested alongside a synthetic webhook projection; an actual live
+   webhook/REST round-trip remains unverified while this workflow is unmerged.
 4. An atomic GitHub Actions `eyes` reaction on the command. Only HTTP 201 starts
    execution; HTTP 200 (already exists), timeouts and ambiguous responses deny it.
 5. One of four durable reaction slots on the human root (`rocket`, `hooray`,
@@ -76,7 +84,8 @@ this patch does not claim to deduplicate human workflow reruns.
 requested states, observed-capability fallback, exact HEAD/base invalidation,
 same-PR independent review evidence, signed commit-range bindings, required gates,
 idempotent events, revision preconditions, a hash-linked audit history, three
-validation/remediation attempts and a one-hour execution deadline. The hash chain
+CI attempts (remediation state entry itself does not consume another attempt) and
+an absolute one-hour execution deadline. The hash chain
 detects inconsistency; it is **not** a signature or tamper-proof storage system.
 
 **There is no deployed controller consuming this library.** Its facts are a trusted
@@ -87,6 +96,12 @@ commit range to current base/HEAD, authenticate review provider and implementer,
 verify all unresolved findings and dependencies, and atomically persist state by
 revision compare-and-swap before issuing any action. Same-PR review comments are
 required for traceability but cannot constitute acceptance evidence alone.
+Independent acceptance and automatic merge eligibility are separate: a high-risk
+change may be independently accepted without qualifying for automatic merge.
+Risk considers both sides of renames and rejects symlinks/unknown file kinds as
+high risk. The collector must prove complete file metadata, not just supply names.
+`BLOCKED` and `FAILED` are terminal records: recovery requires a new, linked task
+identity and new human authorization; it never silently renews the old task budget.
 Low-risk documentation is the only planned auto-merge class; all other scope
 requires protected owner approval. Deployment transitions always reject pending
 a validated adapter. The library does not merge or trigger any provider.
@@ -107,6 +122,14 @@ govern the human root. A workflow must be on the default branch to receive nativ
 issue-comment events; a Draft PR cannot prove live triggering. Initial foundation
 changes are high risk: do not merge before exact-HEAD independent acceptance,
 security/mutation CI, and owner review of the activation configuration.
+
+Native Claude reviewed the initial signed HEAD on PR #211, comment `6421352765`,
+and returned **NOT ACCEPTED**. Its correctness findings prompted remediation of
+comment comparison, explicit OpenCode root binding, retry counting, changed-HEAD
+state handling, acceptance/risk separation, file-kind/rename risk, terminal recovery
+semantics and non-JSON evidence errors. A new HEAD requires renewed review. Claude
+reported that its current tools cannot publish a formal review or App-bound
+acceptance check. Comment-only review is not a substitute for that missing gate.
 
 Before an autonomous controller may be activated:
 
