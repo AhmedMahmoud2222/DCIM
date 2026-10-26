@@ -90,7 +90,8 @@ class AuthorityTests(unittest.TestCase):
 
     def test_explicit_opencode_root_and_review_scope(self):
         c = bot()
-        for body in ('@claude review', '@codex review', 'please /oc implement'):
+        for body in ('@claude review', '@codex review', 'please /oc implement',
+                     '/oc /another-command', '/oc ' + 'x' * 8001):
             self.assertFalse(self.authorized(c, [dict(root(), body=body), c]))
         self.assertFalse(self.authorized(c, [dict(root(), id=9), c]))
         review_root = dict(root(), body='/oc review security')
@@ -111,6 +112,29 @@ class AuthorityTests(unittest.TestCase):
         self.assertEqual(a.comment_binding(event), a.comment_binding(current))
         # The actual review comment was edited: it must not authorize a command.
         self.assertNotEqual(current['created_at'], current['updated_at'])
+        self.assertFalse(a.authorize(current, [identity], [root(), current], {42}, HEAD)[0])
+        # A fresh command is a separate comment, not an edit of a progress record.
+        fresh = copy.deepcopy(current)
+        fresh.update(body=bot()['body'], updated_at=current['created_at'])
+        self.assertTrue(a.authorize(fresh, [identity], [root(), fresh], {42}, HEAD)[0])
+
+    def test_live_reaction_roundtrip_preserved_comment_timestamps(self):
+        fixture = json.loads((Path(__file__).parent /
+            'fixtures/agent_comments/reaction-roundtrip.json').read_text())
+        before, after = fixture['before'], fixture['after']
+        self.assertEqual(before['id'], after['id'])
+        self.assertEqual(before['created_at'], after['created_at'])
+        self.assertEqual(before['updated_at'], after['updated_at'])
+        self.assertEqual(before['reactions']['total_count'] + 1, after['reactions']['total_count'])
+
+    def test_bom_crlf_normalization_is_shared_with_gate_and_budget(self):
+        history = [root()] + [bot(i) for i in range(2, 7)]
+        for c in history:
+            c['body'] = '\ufeff' + c['body'].replace('\n', '\r\n')
+        self.assertFalse(self.authorized(history[-1], history))
+        self.assertTrue(self.authorized(history[-2], history[:-1]))
+        task, _ = g.extract_task(history[-2]['body'])
+        self.assertTrue(task.startswith('review security'))
 
     def test_gate_keeps_command_and_pr_restrictions(self):
         c = bot()

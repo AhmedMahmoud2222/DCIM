@@ -12,6 +12,11 @@ PR existed. Existing workflows are `ci.yml`, `claude.yml`, `claude-code-review.y
 `opencode-security-validation.yml`, `model-health-diagnostic.yml`, and
 `opencode-native-smoke.yml`. Only `opencode.yml` changes in this foundation.
 
+During review, main advanced to `dc9962237a47f741361ccd914a413ac295dd079f`
+(PR #210). Its proxy/streaming regression files do not overlap the foundation's
+changes. It was fetched and integrated without rewriting the earlier signed
+commits; validation was repeated against that combined tree.
+
 Open PR #207 independently adds a Claude command gate. This change does not copy,
 replace or silently activate that work. PR #210 changes the OpenCode streaming
 proxy; that implementation is also left separate. No preparation patch was applied.
@@ -56,6 +61,13 @@ also require:
    Creation/update timestamps must agree on both sides. Captured Claude REST
    metadata is tested alongside a synthetic webhook projection; an actual live
    webhook/REST round-trip remains unverified while this workflow is unmerged.
+   Providers must create a **new standalone command comment**; editing a progress
+   or tracking comment is intentionally unsupported. The captured edited Claude
+   review comment is a negative fixture, not an eligible command. Capability
+   probes must prove that a provider can create fresh commands before enabling it.
+   A live reaction round-trip on owner comment `6424782080` increased the reaction
+   count from 1 to 2 without changing either timestamp (recorded fixture). This
+   verifies the observed REST behavior, not live bot authorization or a claim race.
 4. An atomic GitHub Actions `eyes` reaction on the command. Only HTTP 201 starts
    execution; HTTP 200 (already exists), timeouts and ambiguous responses deny it.
 5. One of four durable reaction slots on the human root (`rocket`, `hooray`,

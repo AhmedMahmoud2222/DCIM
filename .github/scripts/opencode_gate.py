@@ -27,8 +27,8 @@ TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
 # Command must be the first token of the comment, case-sensitive, followed by
 # whitespace and a non-empty task. Quoted replies, code blocks and mid-text
 # mentions never match.
-COMMAND_RE = re.compile(r'\A(?:/opencode|/oc)\s+(?P<task>\S[\s\S]*)\Z')
-MAX_TASK_CHARS = 8000
+COMMAND_RE = agent_authority.COMMAND_RE
+MAX_TASK_CHARS = agent_authority.MAX_TASK_CHARS
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 
 
@@ -56,17 +56,7 @@ def split_mode(task: str) -> tuple[str, str]:
 
 
 def extract_task(body: str) -> tuple[str | None, str]:
-    match = COMMAND_RE.match((body or '').replace('\r\n', '\n').lstrip('﻿'))
-    if not match:
-        return None, 'comment is not an exact /oc or /opencode command'
-    task = match.group('task').strip()
-    if not task:
-        return None, 'command has no task'
-    if len(task) > MAX_TASK_CHARS:
-        return None, 'task exceeds length limit'
-    if task.startswith('/'):
-        return None, 'task must not start with a slash command'
-    return task, ''
+    return agent_authority.parse_command(body)
 
 
 def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],

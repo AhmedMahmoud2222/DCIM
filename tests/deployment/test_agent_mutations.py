@@ -13,7 +13,7 @@ MUTANTS = (
     ('bot app identity', 'agent_authority.py', "app['id'] == item['app_id']", 'True',
      'test_agent_authority.py'),
     ('current HEAD', 'agent_authority.py',
-     "if not (comment.get('body') or '').endswith('\\nDCIM-Head: ' + head):", 'if False:',
+     "if not normalize_body(comment.get('body')).endswith('\\nDCIM-Head: ' + head):", 'if False:',
      'test_agent_authority.py'),
     ('atomic duplicate claim', 'agent_authority.py', "if post(comment_id, 'eyes') != 201:",
      "if post(comment_id, 'eyes') not in (200, 201):", 'test_agent_authority.py'),

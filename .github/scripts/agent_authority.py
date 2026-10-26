@@ -9,12 +9,32 @@ import urllib.request
 
 MAX_BOT_REQUESTS = 4
 ROOT_COMMAND = re.compile(r'\A(?:/oc|/opencode)\s+\S')
+COMMAND_RE = re.compile(r'\A(?:/opencode|/oc)\s+(?P<task>\S[\s\S]*)\Z')
+MAX_TASK_CHARS = 8000
 BUDGET_REACTIONS = ('rocket', 'hooray', 'heart', '+1')
+
+
+def normalize_body(body):
+    return body.replace('\r\n', '\n').lstrip('\ufeff') if isinstance(body, str) else ''
+
+
+def parse_command(body):
+    match = COMMAND_RE.match(normalize_body(body))
+    if not match:
+        return None, 'comment is not an exact /oc or /opencode command'
+    task = match.group('task').strip()
+    if not task:
+        return None, 'command has no task'
+    if len(task) > MAX_TASK_CHARS:
+        return None, 'task exceeds length limit'
+    if task.startswith('/'):
+        return None, 'task must not start with a slash command'
+    return task, ''
 
 
 def root_id(comment, comments, owner_ids):
     match = re.search(r'\nDCIM-Root: ([1-9][0-9]*)\nDCIM-Head: [0-9a-f]{40}\Z',
-                      comment.get('body') or '')
+                      normalize_body(comment.get('body')))
     if not match:
         return None
     requested = int(match.group(1))
@@ -24,7 +44,7 @@ def root_id(comment, comments, owner_ids):
              and type((c.get('user') or {}).get('id')) is int
              and c['user']['id'] in owner_ids
              and c.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
-             and ROOT_COMMAND.match(c.get('body') or '')
+             and parse_command(c.get('body'))[0] is not None
              and c.get('created_at') and c.get('created_at') == c.get('updated_at')]
     return max(roots, default=None)
 
@@ -95,20 +115,20 @@ def authorize(comment, configured, comments, owner_ids, head):
         return False, 'event no longer matches current comment'
     if not isinstance(head, str) or not re.fullmatch(r'[0-9a-f]{40}', head):
         return False, 'invalid HEAD'
-    if not (comment.get('body') or '').endswith('\nDCIM-Head: ' + head):
+    if not normalize_body(comment.get('body')).endswith('\nDCIM-Head: ' + head):
         return False, 'bot request does not bind current HEAD'
     root = root_id(comment, comments, owner_ids)
     if root is None:
         return False, 'no authorized human root command'
-    root_body = next(c['body'] for c in comments if c['id'] == root)
+    root_body = normalize_body(next(c['body'] for c in comments if c['id'] == root))
     # A review-only owner command cannot delegate implementation authority.
     human_task = re.sub(r'\A(?:/oc|/opencode)\s+', '', root_body)
-    bot_task = re.sub(r'\A(?:/oc|/opencode)\s+', '', comment.get('body') or '')
+    bot_task = re.sub(r'\A(?:/oc|/opencode)\s+', '', normalize_body(comment.get('body')))
     if re.match(r'\Areview(?:\s|\Z)', human_task) and not re.match(r'\Areview(?:\s|\Z)', bot_task):
         return False, 'review-only root cannot authorize implementation'
     count = sum(1 for c in comments if root < c['id'] <= cid
                 and (c.get('user') or {}).get('type') == 'Bot'
-                and ROOT_COMMAND.match(c.get('body') or ''))
+                and ROOT_COMMAND.match(normalize_body(c.get('body'))))
     if count > MAX_BOT_REQUESTS:
         return False, 'bot chain budget exhausted; escalate to owner'
     return True, 'bounded trusted bot request'
