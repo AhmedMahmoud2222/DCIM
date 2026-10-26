@@ -48,6 +48,8 @@ class ControlledClock:
         self.current += delta
 
     def jump_to(self, moment: datetime) -> None:
+        if moment.tzinfo is None:
+            raise ValueError("ControlledClock.jump_to requires a timezone-aware datetime")
         self.current = moment
 
 
