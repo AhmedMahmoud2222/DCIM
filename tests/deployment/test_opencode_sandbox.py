@@ -473,6 +473,67 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertEqual(sent, body())                      # forwarded byte for byte
         self.assertEqual(self.proxy.rejections, [])
 
+    def test_provider_stream_is_forwarded_before_the_provider_finishes(self):
+        first_chunk_sent, finish_stream = threading.Event(), threading.Event()
+
+        class SlowUpstream(http.server.BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.end_headers()
+                first = b'data: first-token\n\n'
+                self.wfile.write(f'{len(first):X}\r\n'.encode() + first + b'\r\n')
+                self.wfile.flush()
+                first_chunk_sent.set()
+                finish_stream.wait(5)
+                final = b'data: [DONE]\n\n'
+                self.wfile.write(f'{len(final):X}\r\n'.encode() + final + b'\r\n0\r\n\r\n')
+                self.wfile.flush()
+
+        upstream = http.server.ThreadingHTTPServer(('127.0.0.1', 0), SlowUpstream)
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+        server, _ = proxy.serve('SYNTHETIC-ONLY',
+                                f'http://127.0.0.1:{upstream.server_address[1]}', BOUND)
+        proxy_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        proxy_thread.start()
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=8)
+        first_byte_received = threading.Event()
+        received = {}
+
+        def read_response():
+            response = conn.getresponse()
+            received['status'] = response.status
+            received['first_byte'] = response.read(1)
+            first_byte_received.set()
+            received['rest'] = response.read()
+
+        reader = threading.Thread(target=read_response, daemon=True)
+        try:
+            conn.request('POST', CHAT, body(), {'Content-Type': 'application/json'})
+            reader.start()
+            self.assertTrue(first_chunk_sent.wait(3), 'provider never sent its first SSE chunk')
+            self.assertTrue(first_byte_received.wait(1),
+                            'proxy held the first provider bytes until the stream completed')
+            self.assertEqual(received['status'], 200)
+            self.assertTrue(received['first_byte'])
+        finally:
+            finish_stream.set()
+            reader.join(8)
+            conn.close()
+            server.shutdown()
+            upstream.shutdown()
+            server.server_close()
+            upstream.server_close()
+        self.assertFalse(reader.is_alive(), 'proxy response reader did not finish after stream close')
+
     def test_model_listing_is_the_only_get(self):
         self.assertEqual(self.raw('GET', '/inference/openai/v1/models')[0], 200)
         self.assertEqual(self.raw('GET', '/zen/v1/models')[0], 200)
