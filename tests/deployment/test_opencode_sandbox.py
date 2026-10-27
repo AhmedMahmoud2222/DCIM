@@ -258,6 +258,11 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'review')['permission']['edit'], 'deny')
         self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'implement')['permission']['edit'], 'allow')
 
+    def test_probe_mode_denies_every_repository_and_execution_tool(self):
+        permission = sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'probe')['permission']
+        for tool in ('read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'webfetch', 'websearch'):
+            self.assertEqual(permission[tool], 'deny', tool)
+
 
 class GuardTests(unittest.TestCase):
     """Command construction and the guard entry point. Lifecycle rules: test_opencode_guard_fixtures."""
@@ -271,15 +276,28 @@ class GuardTests(unittest.TestCase):
         joined = ' '.join(cmd)
         for leaked in ('GITHUB_TOKEN', 'GH_TOKEN', 'OPENCODE_API_KEY=', 'ACTIONS_', 'RUNNER_'):
             self.assertNotIn(leaked, joined)
-        # flags that exist in OpenCode 1.19.3 (packages/core/src/flag/flag.ts)
         for flag in ('OPENCODE_DISABLE_PROJECT_CONFIG=1', 'OPENCODE_PURE=1', 'OPENCODE_DISABLE_MODELS_FETCH=1',
                      'OPENCODE_DISABLE_AUTOUPDATE=1', 'OPENCODE_CONFIG_CONTENT={"a":1}'):
             self.assertIn(flag, cmd)
-        self.assertNotIn('OPENCODE_DISABLE_EXTERNAL_SKILLS=1', cmd)   # not a 1.19.3 flag: it did nothing
+        self.assertNotIn('OPENCODE_DISABLE_EXTERNAL_SKILLS=1', cmd)
         run = cmd[cmd.index('opencode'):]
         self.assertEqual(run[:6], ['opencode', 'run', '--pure', '--format', 'json', '--model'])
         self.assertNotIn('--auto', run)
         self.assertNotIn('--dangerously-skip-permissions', run)
+
+    def test_probe_command_has_fixed_task_and_hard_120_second_timeout(self):
+        cmd = guard.build_command('opencode/glm-5.3-flash-free', '{}', '/srv/ocagent-home',
+                                  '/srv/ocimpl/work', 120, 'untrusted input ignored', 'probe')
+        self.assertIn('--signal=KILL', cmd)
+        self.assertIn('120s', cmd)
+        self.assertIn('Reply exactly PROBE_OK.', cmd[-1])
+        self.assertNotIn('untrusted input ignored', cmd[-1])
+
+    def test_probe_requires_the_fixed_acknowledgement_without_exposing_it(self):
+        matching = json.dumps({'type': 'text', 'part': {'text': 'PROBE_OK'}})
+        altered = json.dumps({'type': 'text', 'part': {'text': 'PROBE_OK and more'}})
+        self.assertTrue(guard.probe_acknowledged([matching]))
+        self.assertFalse(guard.probe_acknowledged([altered]))
 
     def run_main(self, completed=None, raises=None, survivors=0, pgrep_error=None):
         """Run guard.main with the agent run faked. `survivors` is how many pgrep checks still find an agent process."""
@@ -473,6 +491,94 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertEqual(sent, body())                      # forwarded byte for byte
         self.assertEqual(self.proxy.rejections, [])
 
+    def test_accepted_request_emits_sanitized_progress_telemetry(self):
+        if os.path.exists(self.log):
+            os.truncate(self.log, 0)
+        prompt_secret = 'prompt-secret-should-never-be-logged'
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, response = self.raw('POST', CHAT,
+                                        body(messages=[{'role': 'user', 'content': prompt_secret}]),
+                                        {'Content-Type': 'application/json',
+                                         'Authorization': 'Bearer attacker-header-secret'})
+        self.assertEqual(status, 200)
+        self.assertTrue(response)
+        with open(self.log, encoding='utf-8') as handle:
+            log_text = handle.read()
+        logged = log_text + err.getvalue()
+        for forbidden in (prompt_secret, 'attacker-header-secret', 'REAL-KEY', response.decode()):
+            self.assertNotIn(forbidden, logged)
+        events = [json.loads(line) for line in log_text.splitlines()]
+        names = [event['event'] for event in events]
+        for expected in ('accepted', 'upstream_connection', 'http_response', 'first_response_byte', 'completion'):
+            self.assertIn(expected, names)
+        completion = next(event for event in events if event['event'] == 'completion')
+        self.assertEqual(completion['category'], 'completed')
+        self.assertEqual(completion['http_status'], 200)
+        self.assertGreater(completion['streamed_bytes'], 0)
+        self.assertGreaterEqual(completion['time_to_first_byte_ms'], 0)
+
+    def test_provider_stream_is_forwarded_before_the_provider_finishes(self):
+        first_chunk_sent, finish_stream = threading.Event(), threading.Event()
+
+        class SlowUpstream(http.server.BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.end_headers()
+                first = b'data: first-token\n\n'
+                self.wfile.write(f'{len(first):X}\r\n'.encode() + first + b'\r\n')
+                self.wfile.flush()
+                first_chunk_sent.set()
+                finish_stream.wait(5)
+                final = b'data: [DONE]\n\n'
+                self.wfile.write(f'{len(final):X}\r\n'.encode() + final + b'\r\n0\r\n\r\n')
+                self.wfile.flush()
+
+        upstream = http.server.ThreadingHTTPServer(('127.0.0.1', 0), SlowUpstream)
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+        server, _ = proxy.serve('SYNTHETIC-ONLY',
+                                f'http://127.0.0.1:{upstream.server_address[1]}', BOUND)
+        proxy_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        proxy_thread.start()
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_address[1], timeout=8)
+        first_byte_received = threading.Event()
+        received = {}
+
+        def read_response():
+            response = conn.getresponse()
+            received['status'] = response.status
+            received['first_byte'] = response.read(1)
+            first_byte_received.set()
+            received['rest'] = response.read()
+
+        reader = threading.Thread(target=read_response, daemon=True)
+        try:
+            conn.request('POST', CHAT, body(), {'Content-Type': 'application/json'})
+            reader.start()
+            self.assertTrue(first_chunk_sent.wait(3), 'provider never sent its first SSE chunk')
+            self.assertTrue(first_byte_received.wait(1),
+                            'proxy held the first provider bytes until the stream completed')
+            self.assertEqual(received['status'], 200)
+            self.assertTrue(received['first_byte'])
+        finally:
+            finish_stream.set()
+            reader.join(8)
+            conn.close()
+            server.shutdown()
+            upstream.shutdown()
+            server.server_close()
+            upstream.server_close()
+        self.assertFalse(reader.is_alive(), 'proxy response reader did not finish after stream close')
+
     def test_model_listing_is_the_only_get(self):
         self.assertEqual(self.raw('GET', '/inference/openai/v1/models')[0], 200)
         self.assertEqual(self.raw('GET', '/zen/v1/models')[0], 200)
@@ -593,9 +699,11 @@ class ProxyStartupPolicyTests(unittest.TestCase):
                 self.bind(model)
 
     def test_disabled_unapproved_unverified_or_unhealthy_models_cannot_be_bound(self):
-        shipped = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
+        self.assertEqual(self.bind('opencode/glm-5.3-flash-free'), 'glm-5.3-flash-free')
+        ineligible = copy.deepcopy(ENABLED_REGISTRY)
+        ineligible['models']['opencode/glm-5.3-flash-free']['operational_status'] = 'degraded'
         with self.assertRaises(proxy.PolicyError) as raised:
-            self.bind('opencode/glm-5.3-flash-free', shipped)          # everything ships disabled
+            self.bind('opencode/glm-5.3-flash-free', ineligible)
         self.assertEqual(raised.exception.code, 'model_disabled_or_unhealthy')
         for field, value in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False),
                              ('operational_status', 'degraded'), ('operational_status', 'unknown')):
@@ -625,7 +733,9 @@ class ProxyStartupPolicyTests(unittest.TestCase):
     def test_cli_refuses_to_start_and_never_prints_the_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp, 'registry.json')
-            registry.write_text(json.dumps(json.loads((ROOT / '.github/opencode/model-registry.json').read_text())))
+            ineligible = copy.deepcopy(ENABLED_REGISTRY)
+            ineligible['models']['opencode/glm-5.3-flash-free']['terms_verified'] = False
+            registry.write_text(json.dumps(ineligible))
             old = dict(os.environ)
             try:
                 os.environ['OPENCODE_API_KEY'] = 'SUPER-SECRET-KEY'
