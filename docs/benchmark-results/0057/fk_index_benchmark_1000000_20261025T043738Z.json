@@ -1,0 +1,1052 @@
+{
+  "classification": "NOT YET VALIDATED",
+  "classification_reason": "These are measurements of a synthetic table on a single developer machine. They do not describe production hardware, storage, data distribution, concurrent workload or replication. Re-run on a restored copy of production data (or a staging system of equivalent size and hardware) before any production rollout decision.",
+  "dataset": {
+    "rows": 1000000,
+    "lineage_rows": 100000,
+    "mappings": 2000
+  },
+  "environment": {
+    "recorded_at_utc": "2026-10-25T04:34:34Z",
+    "postgres_version": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "postgres_settings": {
+      "checkpoint_timeout": "300s",
+      "effective_io_concurrency": "1",
+      "fsync": "on",
+      "lock_timeout": "0ms",
+      "maintenance_work_mem": "262144kB",
+      "max_parallel_maintenance_workers": "2",
+      "max_wal_size": "4096MB",
+      "random_page_cost": "4",
+      "server_version": "16.15 (Debian 16.15-1.pgdg13+2)",
+      "shared_buffers": "1310728kB",
+      "statement_timeout": "0ms",
+      "synchronous_commit": "on",
+      "track_io_timing": "on",
+      "wal_level": "replica",
+      "work_mem": "4096kB"
+    },
+    "runner_platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "runner_cpu_count": 8,
+    "runner_mem_total_bytes": 8180596736,
+    "runner_cgroup_memory_limit_bytes": null,
+    "host_notes": "Windows 11 laptop, Docker Desktop/WSL2 (8 CPUs, ~8 GiB), PostgreSQL in a named Docker volume; development machine, NOT production-like",
+    "data_directory_storage": "container volume; NOT representative of production storage unless stated in host_notes"
+  },
+  "workload": "2 writers x 10 txn/s x 10 rows = 200 rows/s offered, 1 reader x 10 reads/s",
+  "scenarios": {
+    "s1_s5": {
+      "baseline_ingest": {
+        "write": {
+          "count": 600,
+          "p50_ms": 6.6509246826171875,
+          "p95_ms": 20.3244686126709,
+          "p99_ms": 32.23371505737305,
+          "max_ms": 64.76116180419922,
+          "failed": 0,
+          "ops_per_second": 20.0
+        },
+        "read": {
+          "count": 300,
+          "p50_ms": 1.4505386352539062,
+          "p95_ms": 2.9001235961914062,
+          "p99_ms": 10.902166366577148,
+          "max_ms": 26.808738708496094,
+          "failed": 0,
+          "ops_per_second": 10.0
+        }
+      },
+      "parent_delete_before": {
+        "repeats": [
+          {
+            "execution_ms": 750.691,
+            "referential_check_ms": {
+              "fk_telemetry_reading_mapping_id_integration_metric_mapping": 749.108,
+              "fk_mapping_revision_mapping": 1.156
+            }
+          },
+          {
+            "execution_ms": 96.075,
+            "referential_check_ms": {
+              "fk_telemetry_reading_mapping_id_integration_metric_mapping": 95.848,
+              "fk_mapping_revision_mapping": 0.154
+            }
+          },
+          {
+            "execution_ms": 82.011,
+            "referential_check_ms": {
+              "fk_telemetry_reading_mapping_id_integration_metric_mapping": 81.85,
+              "fk_mapping_revision_mapping": 0.125
+            }
+          }
+        ],
+        "median_execution_ms": 96.075
+      },
+      "upgrade_under_ingest": {
+        "exit_code": 0,
+        "wall_seconds": 5.94,
+        "resources_delta": {
+          "wal_bytes": 16638024,
+          "temp_bytes": 57524224,
+          "db_bytes": 16220160,
+          "io_read_bytes": 31940608,
+          "io_write_bytes": 0
+        },
+        "peak_database_bytes": 545586199,
+        "lock_modes_seen_on_target_tables": {
+          "telemetry_reading": [
+            "AccessShareLock",
+            "RowExclusiveLock",
+            "ShareUpdateExclusiveLock"
+          ],
+          "role_permission": [
+            "ShareUpdateExclusiveLock"
+          ]
+        },
+        "builds": {
+          "observed_indexes": 4,
+          "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+          "large_table_indexes": {
+            "ix_telemetry_reading_mapping_id": {
+              "first_seen": 1792902909.7323134,
+              "last_seen": 1792902910.3608387,
+              "observed_seconds": 0.73,
+              "phase_seconds": {
+                "building index: scanning table": 0.11,
+                "building index: sorting live tuples": 0.21,
+                "building index: loading tuples in tree": 0.1,
+                "index validation: scanning index": 0.1,
+                "index validation: sorting tuples": 0.1
+              },
+              "last_phase": "index validation: scanning table",
+              "blocks_done": 23246,
+              "blocks_total": 25810,
+              "max_lockers_total": 0
+            },
+            "ix_telemetry_reading_mapping_revision_id": {
+              "first_seen": 1792902910.4654477,
+              "last_seen": 1792902911.0932271,
+              "observed_seconds": 0.73,
+              "phase_seconds": {
+                "building index: scanning table": 0.21,
+                "building index: sorting live tuples": 0.21,
+                "building index: loading tuples in tree": 0.1,
+                "index validation: sorting tuples": 0.1
+              },
+              "last_phase": "index validation: scanning table",
+              "blocks_done": 4590,
+              "blocks_total": 25813,
+              "max_lockers_total": 0
+            }
+          }
+        },
+        "output_tail": "",
+        "ingest_during": {
+          "write": {
+            "count": 120,
+            "p50_ms": 6.247997283935547,
+            "p95_ms": 15.73801040649414,
+            "p99_ms": 19.927263259887695,
+            "max_ms": 22.723913192749023,
+            "failed": 0,
+            "ops_per_second": 20.21
+          },
+          "read": {
+            "count": 60,
+            "p50_ms": 1.2922286987304688,
+            "p95_ms": 3.453969955444336,
+            "p99_ms": 10.259151458740234,
+            "max_ms": 10.259151458740234,
+            "failed": 0,
+            "ops_per_second": 10.1
+          }
+        },
+        "ingest_after": {
+          "write": {
+            "count": 600,
+            "p50_ms": 6.2160491943359375,
+            "p95_ms": 17.391204833984375,
+            "p99_ms": 49.20339584350586,
+            "max_ms": 98.09565544128418,
+            "failed": 0,
+            "ops_per_second": 20.0
+          },
+          "read": {
+            "count": 300,
+            "p50_ms": 1.4526844024658203,
+            "p95_ms": 2.7725696563720703,
+            "p99_ms": 14.936447143554688,
+            "max_ms": 32.70459175109863,
+            "failed": 0,
+            "ops_per_second": 10.0
+          }
+        }
+      },
+      "parent_delete_after": {
+        "repeats": [
+          {
+            "execution_ms": 0.769,
+            "referential_check_ms": {
+              "fk_telemetry_reading_mapping_id_integration_metric_mapping": 0.374,
+              "fk_mapping_revision_mapping": 0.275
+            }
+          },
+          {
+            "execution_ms": 0.15,
+            "referential_check_ms": {
+              "fk_telemetry_reading_mapping_id_integration_metric_mapping": 0.083,
+              "fk_mapping_revision_mapping": 0.036
+            }
+          },
+          {
+            "execution_ms": 0.119,
+            "referential_check_ms": {
+              "fk_telemetry_reading_mapping_id_integration_metric_mapping": 0.046,
+              "fk_mapping_revision_mapping": 0.033
+            }
+          }
+        ],
+        "median_execution_ms": 0.15
+      },
+      "sizes_after_upgrade": {
+        "new_indexes_bytes": {
+          "ix_alarm_telemetry_reading_id": 8192,
+          "ix_bulk_import_row_target_catalog_model_id": 8192,
+          "ix_bulk_import_row_target_catalog_revision_id": 8192,
+          "ix_bulk_import_row_target_managed_asset_id": 8192,
+          "ix_cable_port_connection_id": 8192,
+          "ix_cable_source_neighbor_id": 8192,
+          "ix_daily_telemetry_aggregate_lineage_mapping_revision_id": 753664,
+          "ix_equipment_model_revision_id": 8192,
+          "ix_generator_site_id": 8192,
+          "ix_notification_delivery_channel_id": 8192,
+          "ix_notification_delivery_policy_id": 8192,
+          "ix_port_connection_target_port_id": 8192,
+          "ix_port_connection_target_power_node_id": 8192,
+          "ix_power_node_owning_asset_id": 8192,
+          "ix_power_panel_room_id": 8192,
+          "ix_rack_model_revision_id": 8192,
+          "ix_rack_placement_room_id": 8192,
+          "ix_role_permission_permission_id": 16384,
+          "ix_telemetry_reading_mapping_id": 7348224,
+          "ix_telemetry_reading_mapping_revision_id": 7364608,
+          "ix_ups_room_id": 8192,
+          "ix_user_group_permission_permission_id": 8192
+        },
+        "table_bytes": {
+          "telemetry_reading": 212795392,
+          "daily_telemetry_aggregate_lineage": 12075008
+        },
+        "all_indexes_bytes_per_table": {
+          "telemetry_reading": 292937728,
+          "daily_telemetry_aggregate_lineage": 14589952
+        }
+      },
+      "downgrade_under_ingest": {
+        "exit_code": 0,
+        "wall_seconds": 2.42,
+        "resources_delta": {
+          "wal_bytes": 659544,
+          "temp_bytes": 0,
+          "db_bytes": -15400960,
+          "io_read_bytes": 188416,
+          "io_write_bytes": 0
+        },
+        "peak_database_bytes": 548609047,
+        "lock_modes_seen_on_target_tables": {
+          "telemetry_reading": [
+            "RowExclusiveLock"
+          ]
+        },
+        "builds": {
+          "observed_indexes": 0,
+          "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+          "large_table_indexes": {}
+        },
+        "output_tail": "",
+        "ingest_during": {
+          "write": {
+            "count": 48,
+            "p50_ms": 5.029201507568359,
+            "p95_ms": 6.937503814697266,
+            "p99_ms": 7.202625274658203,
+            "max_ms": 7.202625274658203,
+            "failed": 0,
+            "ops_per_second": 19.81
+          },
+          "read": {
+            "count": 24,
+            "p50_ms": 1.1379718780517578,
+            "p95_ms": 1.5251636505126953,
+            "p99_ms": 1.5974044799804688,
+            "max_ms": 1.5974044799804688,
+            "failed": 0,
+            "ops_per_second": 9.9
+          }
+        },
+        "note": "ACCESS EXCLUSIVE is held from lock acquisition to commit; writers queue behind it for that interval"
+      },
+      "reupgrade_under_ingest": {
+        "exit_code": 0,
+        "wall_seconds": 4.38,
+        "resources_delta": {
+          "wal_bytes": 14718872,
+          "temp_bytes": 58015744,
+          "db_bytes": 16105472,
+          "io_read_bytes": 15753216,
+          "io_write_bytes": 0
+        },
+        "peak_database_bytes": 550444055,
+        "lock_modes_seen_on_target_tables": {
+          "telemetry_reading": [
+            "RowExclusiveLock",
+            "ShareUpdateExclusiveLock"
+          ],
+          "notification_delivery": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "power_panel": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "power_node": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "rack": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "ups": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "user_group_permission": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "cable": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "port_connection": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "alarm": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "rack_placement": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "role_permission": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "equipment": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "bulk_import_row": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "generator": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "daily_telemetry_aggregate_lineage": [
+            "ShareUpdateExclusiveLock"
+          ]
+        },
+        "builds": {
+          "observed_indexes": 4,
+          "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+          "large_table_indexes": {
+            "ix_telemetry_reading_mapping_id": {
+              "first_seen": 1792902962.100766,
+              "last_seen": 1792902962.513315,
+              "observed_seconds": 0.51,
+              "phase_seconds": {
+                "building index: scanning table": 0.1,
+                "building index: sorting live tuples": 0.1,
+                "building index: loading tuples in tree": 0.1,
+                "index validation: scanning index": 0.1
+              },
+              "last_phase": "index validation: sorting tuples",
+              "blocks_done": 0,
+              "blocks_total": 0,
+              "max_lockers_total": 0
+            },
+            "ix_telemetry_reading_mapping_revision_id": {
+              "first_seen": 1792902962.6177018,
+              "last_seen": 1792902962.9278865,
+              "observed_seconds": 0.41,
+              "phase_seconds": {
+                "building index: scanning table": 0.1,
+                "building index: sorting live tuples": 0.1,
+                "building index: loading tuples in tree": 0.1
+              },
+              "last_phase": "index validation: sorting tuples",
+              "blocks_done": 0,
+              "blocks_total": 0,
+              "max_lockers_total": 0
+            }
+          }
+        },
+        "output_tail": "",
+        "ingest_during": {
+          "write": {
+            "count": 86,
+            "p50_ms": 5.87153434753418,
+            "p95_ms": 9.338855743408203,
+            "p99_ms": 16.098976135253906,
+            "max_ms": 16.098976135253906,
+            "failed": 0,
+            "ops_per_second": 19.63
+          },
+          "read": {
+            "count": 43,
+            "p50_ms": 1.2421607971191406,
+            "p95_ms": 1.7466545104980469,
+            "p99_ms": 1.9965171813964844,
+            "max_ms": 1.9965171813964844,
+            "failed": 0,
+            "ops_per_second": 9.81
+          }
+        }
+      },
+      "rows_after_run": {
+        "telemetry_reading": 1017760,
+        "ingested_during_run": 17760
+      },
+      "invariants": {
+        "upgrade_exit_zero": true,
+        "all_22_valid_and_ready_after_upgrade": true,
+        "no_invalid_indexes_after_upgrade": true,
+        "downgrade_exit_zero": true,
+        "downgrade_atomic": true,
+        "reupgrade_exit_zero": true,
+        "all_22_valid_and_ready_after_reupgrade": true,
+        "alembic_check_clean": true,
+        "advisory_lock_released": true,
+        "no_failed_writes": true
+      },
+      "scenario_wall_seconds": 92.7
+    },
+    "s2": {
+      "upgrade_idle": {
+        "exit_code": 0,
+        "wall_seconds": 3.88,
+        "resources_delta": {
+          "wal_bytes": 14144176,
+          "temp_bytes": 57188352,
+          "db_bytes": 15572992,
+          "io_read_bytes": 240689152,
+          "io_write_bytes": 0
+        },
+        "peak_database_bytes": 542350359,
+        "lock_modes_seen_on_target_tables": {
+          "telemetry_reading": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "daily_telemetry_aggregate_lineage": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "power_node": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "bulk_import_row": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "rack_placement": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "rack": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "alarm": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "power_panel": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "ups": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "equipment": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "cable": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "port_connection": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "user_group_permission": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "generator": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "notification_delivery": [
+            "ShareUpdateExclusiveLock"
+          ],
+          "role_permission": [
+            "ShareUpdateExclusiveLock"
+          ]
+        },
+        "builds": {
+          "observed_indexes": 4,
+          "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+          "large_table_indexes": {
+            "ix_telemetry_reading_mapping_id": {
+              "first_seen": 1792902969.9164512,
+              "last_seen": 1792902970.329946,
+              "observed_seconds": 0.51,
+              "phase_seconds": {
+                "building index: scanning table": 0.1,
+                "building index: sorting live tuples": 0.1,
+                "building index: loading tuples in tree": 0.1,
+                "index validation: scanning index": 0.1
+              },
+              "last_phase": "index validation: scanning table",
+              "blocks_done": 811,
+              "blocks_total": 25635,
+              "max_lockers_total": 0
+            },
+            "ix_telemetry_reading_mapping_revision_id": {
+              "first_seen": 1792902970.4335341,
+              "last_seen": 1792902970.7419183,
+              "observed_seconds": 0.41,
+              "phase_seconds": {
+                "building index: scanning table": 0.1,
+                "building index: sorting live tuples": 0.1,
+                "building index: loading tuples in tree": 0.1
+              },
+              "last_phase": "index validation: sorting tuples",
+              "blocks_done": 0,
+              "blocks_total": 0,
+              "max_lockers_total": 0
+            },
+            "ix_daily_telemetry_aggregate_lineage_mapping_revision_id": {
+              "first_seen": 1792902970.8447902,
+              "last_seen": 1792902970.8447902,
+              "observed_seconds": 0.1,
+              "phase_seconds": {},
+              "last_phase": "building index: scanning table",
+              "blocks_done": 245,
+              "blocks_total": 1470,
+              "max_lockers_total": 0
+            }
+          }
+        },
+        "output_tail": ""
+      },
+      "sizes": {
+        "new_indexes_bytes": {
+          "ix_alarm_telemetry_reading_id": 8192,
+          "ix_bulk_import_row_target_catalog_model_id": 8192,
+          "ix_bulk_import_row_target_catalog_revision_id": 8192,
+          "ix_bulk_import_row_target_managed_asset_id": 8192,
+          "ix_cable_port_connection_id": 8192,
+          "ix_cable_source_neighbor_id": 8192,
+          "ix_daily_telemetry_aggregate_lineage_mapping_revision_id": 753664,
+          "ix_equipment_model_revision_id": 8192,
+          "ix_generator_site_id": 8192,
+          "ix_notification_delivery_channel_id": 8192,
+          "ix_notification_delivery_policy_id": 8192,
+          "ix_port_connection_target_port_id": 8192,
+          "ix_port_connection_target_power_node_id": 8192,
+          "ix_power_node_owning_asset_id": 8192,
+          "ix_power_panel_room_id": 8192,
+          "ix_rack_model_revision_id": 8192,
+          "ix_rack_placement_room_id": 8192,
+          "ix_role_permission_permission_id": 16384,
+          "ix_telemetry_reading_mapping_id": 7348224,
+          "ix_telemetry_reading_mapping_revision_id": 7274496,
+          "ix_ups_room_id": 8192,
+          "ix_user_group_permission_permission_id": 8192
+        },
+        "table_bytes": {
+          "telemetry_reading": 210092032,
+          "daily_telemetry_aggregate_lineage": 12075008
+        },
+        "all_indexes_bytes_per_table": {
+          "telemetry_reading": 289464320,
+          "daily_telemetry_aggregate_lineage": 14589952
+        }
+      },
+      "invariants": {
+        "upgrade_exit_zero": true,
+        "all_22_valid_and_ready": true
+      },
+      "scenario_wall_seconds": 4.8
+    },
+    "s3": {
+      "phases_seen_on_first_index": [
+        "building index: scanning table",
+        "building index: sorting live tuples",
+        "index validation: sorting tuples",
+        "waiting for old snapshots"
+      ],
+      "held_seconds": 45.0,
+      "migration_still_waiting_at_end_of_hold": true,
+      "ingest_while_build_waited": {
+        "write": {
+          "count": 900,
+          "p50_ms": 5.72657585144043,
+          "p95_ms": 10.384559631347656,
+          "p99_ms": 20.29561996459961,
+          "max_ms": 29.603958129882812,
+          "failed": 0,
+          "ops_per_second": 20.0
+        },
+        "read": {
+          "count": 450,
+          "p50_ms": 1.3811588287353516,
+          "p95_ms": 1.7428398132324219,
+          "p99_ms": 5.261659622192383,
+          "max_ms": 7.8563690185546875,
+          "failed": 0,
+          "ops_per_second": 10.0
+        }
+      },
+      "seconds_from_release_to_finish": 1.3,
+      "exit_code": 0,
+      "output_tail": "",
+      "invariants": {
+        "build_waited_for_old_snapshot": true,
+        "ingest_not_blocked_while_waiting": true,
+        "upgrade_completed_after_release": true
+      },
+      "scenario_wall_seconds": 55.6
+    },
+    "s4": {
+      "cancel": {
+        "exit_code_of_interrupted_run": 1,
+        "state_after_interrupt": {
+          "version": "0056_pdu_vertical_placement",
+          "present": 1,
+          "valid_and_ready": 0,
+          "invalid_named": [
+            "ix_telemetry_reading_mapping_id"
+          ],
+          "missing": [
+            "ix_alarm_telemetry_reading_id",
+            "ix_bulk_import_row_target_catalog_model_id",
+            "ix_bulk_import_row_target_catalog_revision_id",
+            "ix_bulk_import_row_target_managed_asset_id",
+            "ix_cable_port_connection_id",
+            "ix_cable_source_neighbor_id",
+            "ix_daily_telemetry_aggregate_lineage_mapping_revision_id",
+            "ix_equipment_model_revision_id",
+            "ix_generator_site_id",
+            "ix_notification_delivery_channel_id",
+            "ix_notification_delivery_policy_id",
+            "ix_port_connection_target_port_id",
+            "ix_port_connection_target_power_node_id",
+            "ix_power_node_owning_asset_id",
+            "ix_power_panel_room_id",
+            "ix_rack_model_revision_id",
+            "ix_rack_placement_room_id",
+            "ix_role_permission_permission_id",
+            "ix_telemetry_reading_mapping_revision_id",
+            "ix_ups_room_id",
+            "ix_user_group_permission_permission_id"
+          ],
+          "invalid_anywhere": 1,
+          "advisory_locks_held": 0
+        },
+        "locks_left_on_target_tables": 0,
+        "rerun": {
+          "exit_code": 0,
+          "wall_seconds": 5.38,
+          "resources_delta": {
+            "wal_bytes": 13989424,
+            "temp_bytes": 57180160,
+            "db_bytes": 15572992,
+            "io_read_bytes": 28393472,
+            "io_write_bytes": 0
+          },
+          "peak_database_bytes": 542350359,
+          "lock_modes_seen_on_target_tables": {
+            "telemetry_reading": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "daily_telemetry_aggregate_lineage": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "bulk_import_row": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "ups": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "role_permission": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "power_panel": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "equipment": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "notification_delivery": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "alarm": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "generator": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "user_group_permission": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "rack": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "power_node": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "port_connection": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "rack_placement": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "cable": [
+              "ShareUpdateExclusiveLock"
+            ]
+          },
+          "builds": {
+            "observed_indexes": 4,
+            "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+            "large_table_indexes": {
+              "ix_telemetry_reading_mapping_id": {
+                "first_seen": 1792903035.6377404,
+                "last_seen": 1792903036.4706833,
+                "observed_seconds": 0.93,
+                "phase_seconds": {
+                  "building index: scanning table": 0.1,
+                  "building index: sorting live tuples": 0.31,
+                  "building index: loading tuples in tree": 0.21,
+                  "index validation: sorting tuples": 0.21
+                },
+                "last_phase": "index validation: scanning table",
+                "blocks_done": 21819,
+                "blocks_total": 25635,
+                "max_lockers_total": 0
+              },
+              "ix_telemetry_reading_mapping_revision_id": {
+                "first_seen": 1792903036.5745637,
+                "last_seen": 1792903037.092763,
+                "observed_seconds": 0.62,
+                "phase_seconds": {
+                  "building index: scanning table": 0.1,
+                  "building index: sorting live tuples": 0.21,
+                  "building index: loading tuples in tree": 0.1,
+                  "index validation: sorting tuples": 0.1
+                },
+                "last_phase": "index validation: scanning table",
+                "blocks_done": 5093,
+                "blocks_total": 25635,
+                "max_lockers_total": 0
+              },
+              "ix_daily_telemetry_aggregate_lineage_mapping_revision_id": {
+                "first_seen": 1792903037.1965654,
+                "last_seen": 1792903037.1965654,
+                "observed_seconds": 0.1,
+                "phase_seconds": {},
+                "last_phase": "building index: loading tuples in tree",
+                "blocks_done": 0,
+                "blocks_total": 0,
+                "max_lockers_total": 0
+              }
+            }
+          },
+          "output_tail": ""
+        },
+        "state_after_rerun": {
+          "version": "0057_fk_indexes",
+          "present": 22,
+          "valid_and_ready": 22,
+          "invalid_named": [],
+          "missing": [],
+          "invalid_anywhere": 0,
+          "advisory_locks_held": 0
+        },
+        "seconds_from_interrupt_to_recovered": 5.8
+      },
+      "terminate": {
+        "exit_code_of_interrupted_run": 1,
+        "state_after_interrupt": {
+          "version": "0056_pdu_vertical_placement",
+          "present": 1,
+          "valid_and_ready": 0,
+          "invalid_named": [
+            "ix_telemetry_reading_mapping_id"
+          ],
+          "missing": [
+            "ix_alarm_telemetry_reading_id",
+            "ix_bulk_import_row_target_catalog_model_id",
+            "ix_bulk_import_row_target_catalog_revision_id",
+            "ix_bulk_import_row_target_managed_asset_id",
+            "ix_cable_port_connection_id",
+            "ix_cable_source_neighbor_id",
+            "ix_daily_telemetry_aggregate_lineage_mapping_revision_id",
+            "ix_equipment_model_revision_id",
+            "ix_generator_site_id",
+            "ix_notification_delivery_channel_id",
+            "ix_notification_delivery_policy_id",
+            "ix_port_connection_target_port_id",
+            "ix_port_connection_target_power_node_id",
+            "ix_power_node_owning_asset_id",
+            "ix_power_panel_room_id",
+            "ix_rack_model_revision_id",
+            "ix_rack_placement_room_id",
+            "ix_role_permission_permission_id",
+            "ix_telemetry_reading_mapping_revision_id",
+            "ix_ups_room_id",
+            "ix_user_group_permission_permission_id"
+          ],
+          "invalid_anywhere": 1,
+          "advisory_locks_held": 0
+        },
+        "locks_left_on_target_tables": 0,
+        "rerun": {
+          "exit_code": 0,
+          "wall_seconds": 5.63,
+          "resources_delta": {
+            "wal_bytes": 13995184,
+            "temp_bytes": 57180160,
+            "db_bytes": 15572992,
+            "io_read_bytes": 28393472,
+            "io_write_bytes": 0
+          },
+          "peak_database_bytes": 542350359,
+          "lock_modes_seen_on_target_tables": {
+            "telemetry_reading": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "daily_telemetry_aggregate_lineage": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "port_connection": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "bulk_import_row": [
+              "ShareUpdateExclusiveLock"
+            ]
+          },
+          "builds": {
+            "observed_indexes": 5,
+            "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+            "large_table_indexes": {
+              "ix_telemetry_reading_mapping_id": {
+                "first_seen": 1792903045.9123635,
+                "last_seen": 1792903046.640858,
+                "observed_seconds": 0.83,
+                "phase_seconds": {
+                  "building index: scanning table": 0.21,
+                  "building index: sorting live tuples": 0.21,
+                  "building index: loading tuples in tree": 0.21,
+                  "index validation: sorting tuples": 0.1
+                },
+                "last_phase": "index validation: scanning table",
+                "blocks_done": 16447,
+                "blocks_total": 25635,
+                "max_lockers_total": 0
+              },
+              "ix_telemetry_reading_mapping_revision_id": {
+                "first_seen": 1792903046.7451348,
+                "last_seen": 1792903047.1592648,
+                "observed_seconds": 0.51,
+                "phase_seconds": {
+                  "building index: scanning table": 0.1,
+                  "building index: sorting live tuples": 0.1,
+                  "building index: loading tuples in tree": 0.21
+                },
+                "last_phase": "index validation: sorting tuples",
+                "blocks_done": 0,
+                "blocks_total": 0,
+                "max_lockers_total": 0
+              },
+              "ix_daily_telemetry_aggregate_lineage_mapping_revision_id": {
+                "first_seen": 1792903047.2620792,
+                "last_seen": 1792903047.2620792,
+                "observed_seconds": 0.1,
+                "phase_seconds": {},
+                "last_phase": "building index: loading tuples in tree",
+                "blocks_done": 0,
+                "blocks_total": 0,
+                "max_lockers_total": 0
+              }
+            }
+          },
+          "output_tail": ""
+        },
+        "state_after_rerun": {
+          "version": "0057_fk_indexes",
+          "present": 22,
+          "valid_and_ready": 22,
+          "invalid_named": [],
+          "missing": [],
+          "invalid_anywhere": 0,
+          "advisory_locks_held": 0
+        },
+        "seconds_from_interrupt_to_recovered": 6.0
+      },
+      "kill_client": {
+        "exit_code_of_interrupted_run": -9,
+        "state_after_interrupt": {
+          "version": "0056_pdu_vertical_placement",
+          "present": 1,
+          "valid_and_ready": 1,
+          "invalid_named": [],
+          "missing": [
+            "ix_alarm_telemetry_reading_id",
+            "ix_bulk_import_row_target_catalog_model_id",
+            "ix_bulk_import_row_target_catalog_revision_id",
+            "ix_bulk_import_row_target_managed_asset_id",
+            "ix_cable_port_connection_id",
+            "ix_cable_source_neighbor_id",
+            "ix_daily_telemetry_aggregate_lineage_mapping_revision_id",
+            "ix_equipment_model_revision_id",
+            "ix_generator_site_id",
+            "ix_notification_delivery_channel_id",
+            "ix_notification_delivery_policy_id",
+            "ix_port_connection_target_port_id",
+            "ix_port_connection_target_power_node_id",
+            "ix_power_node_owning_asset_id",
+            "ix_power_panel_room_id",
+            "ix_rack_model_revision_id",
+            "ix_rack_placement_room_id",
+            "ix_role_permission_permission_id",
+            "ix_telemetry_reading_mapping_revision_id",
+            "ix_ups_room_id",
+            "ix_user_group_permission_permission_id"
+          ],
+          "invalid_anywhere": 0,
+          "advisory_locks_held": 0
+        },
+        "locks_left_on_target_tables": 0,
+        "rerun": {
+          "exit_code": 0,
+          "wall_seconds": 4.74,
+          "resources_delta": {
+            "wal_bytes": 7564448,
+            "temp_bytes": 29114368,
+            "db_bytes": 8224768,
+            "io_read_bytes": 21045248,
+            "io_write_bytes": 0
+          },
+          "peak_database_bytes": 542350359,
+          "lock_modes_seen_on_target_tables": {
+            "telemetry_reading": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "equipment": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "alarm": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "role_permission": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "power_node": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "bulk_import_row": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "cable": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "port_connection": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "generator": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "rack": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "notification_delivery": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "user_group_permission": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "power_panel": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "ups": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "rack_placement": [
+              "ShareUpdateExclusiveLock"
+            ],
+            "daily_telemetry_aggregate_lineage": [
+              "ShareUpdateExclusiveLock"
+            ]
+          },
+          "builds": {
+            "observed_indexes": 2,
+            "unobserved_note": "indexes built between two 0.1 s samples are not listed; this is a sampling limit, not a zero",
+            "large_table_indexes": {
+              "ix_telemetry_reading_mapping_revision_id": {
+                "first_seen": 1792903056.8428764,
+                "last_seen": 1792903057.4653807,
+                "observed_seconds": 0.72,
+                "phase_seconds": {
+                  "building index: scanning table": 0.1,
+                  "building index: sorting live tuples": 0.21,
+                  "building index: loading tuples in tree": 0.21,
+                  "index validation: sorting tuples": 0.1
+                },
+                "last_phase": "index validation: scanning table",
+                "blocks_done": 19566,
+                "blocks_total": 25635,
+                "max_lockers_total": 0
+              }
+            }
+          },
+          "output_tail": ""
+        },
+        "state_after_rerun": {
+          "version": "0057_fk_indexes",
+          "present": 22,
+          "valid_and_ready": 22,
+          "invalid_named": [],
+          "missing": [],
+          "invalid_anywhere": 0,
+          "advisory_locks_held": 0
+        },
+        "seconds_from_interrupt_to_recovered": 6.3
+      },
+      "invariants": {
+        "cancel__version_not_advanced_by_interrupted_run": true,
+        "cancel__no_locks_left": true,
+        "cancel__advisory_lock_released": true,
+        "cancel__interrupted_run_failed": true,
+        "cancel__invalid_artifact_left_behind": true,
+        "cancel__rerun_recovers_all_22": true,
+        "cancel__no_invalid_left_after_rerun": true,
+        "terminate__version_not_advanced_by_interrupted_run": true,
+        "terminate__no_locks_left": true,
+        "terminate__advisory_lock_released": true,
+        "terminate__interrupted_run_failed": true,
+        "terminate__invalid_artifact_left_behind": true,
+        "terminate__rerun_recovers_all_22": true,
+        "terminate__no_invalid_left_after_rerun": true,
+        "kill_client__version_not_advanced_by_interrupted_run": true,
+        "kill_client__no_locks_left": true,
+        "kill_client__advisory_lock_released": true,
+        "kill_client__rerun_recovers_all_22": true,
+        "kill_client__no_invalid_left_after_rerun": true
+      },
+      "scenario_wall_seconds": 31.5
+    }
+  },
+  "limitations": [
+    "Synthetic data: uniform value and key distributions, one pinned/unpinned ratio, fixed row width; real telemetry skew, bloat and update history are absent.",
+    "Single machine, single PostgreSQL instance, no replicas: replication lag, replica conflicts and WAL shipping are not measured.",
+    "Writers run with referential triggers disabled (session_replication_role=replica); foreign-key lookups on ingest are excluded.",
+    "Per-index times come from 0.1 s progress sampling; builds shorter than that are not listed. Host CPU is not sampled.",
+    "Cache state: clones are file copies, so the OS and shared-buffer caches start cold-ish and differ from a long-running system.",
+    "Only the two large tables are populated; the other 19 FK tables are empty, so their (small) build cost is not measured.",
+    "Offered ingest load is a fixed paced rate, not production's; latency under a different rate or batch shape will differ."
+  ]
+}

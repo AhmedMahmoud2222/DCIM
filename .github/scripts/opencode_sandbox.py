@@ -13,7 +13,7 @@ runner user, never executes repository code, and never prints file contents.
       git dir used later to diff DEST without trusting any .git inside DEST) and
       STATE_DIR/baseline.json.
   config MODEL PORT [MODE]
-      print the managed OpenCode configuration JSON (MODE implement|review).
+      print the managed OpenCode configuration JSON (MODE implement|review|probe).
 """
 from __future__ import annotations
 
@@ -167,7 +167,7 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
 
     Review mode denies every editing tool; the work tree is also made read-only at the OS level.
     """
-    if mode not in ('implement', 'review'):
+    if mode not in ('implement', 'review', 'probe'):
         raise SandboxError('unknown agent mode')
     if not re.fullmatch(r'opencode/[a-z0-9.-]+-free', model):
         raise SandboxError('model is not an approved free OpenCode model identifier')
@@ -183,8 +183,12 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
         'provider': {'opencode': {'options': {
             'baseURL': f'http://127.0.0.1:{int(port)}/inference/openai/v1', 'apiKey': 'sandbox-placeholder'}}},
         'permission': {
-            'read': {'*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow'},
-            'edit': 'deny' if mode == 'review' else 'allow', 'glob': 'allow', 'grep': 'allow', 'list': 'allow', 'bash': 'allow',
+            'read': 'deny' if mode == 'probe' else {'*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow'},
+            'edit': 'deny' if mode in ('review', 'probe') else 'allow',
+            'glob': 'deny' if mode == 'probe' else 'allow',
+            'grep': 'deny' if mode == 'probe' else 'allow',
+            'list': 'deny' if mode == 'probe' else 'allow',
+            'bash': 'deny' if mode == 'probe' else 'allow',
             'task': 'deny', 'webfetch': 'deny', 'websearch': 'deny',
             'external_directory': 'deny', 'doom_loop': 'deny',
         },
