@@ -45,10 +45,13 @@ def parse_allowlist(raw: str) -> set[int]:
 
 
 REVIEW_RE = re.compile(r'\Areview(?:\s+(?P<focus>[\s\S]*))?\Z')
+PROBE_RE = re.compile(r'\Aprobe\Z')
 
 
 def split_mode(task: str) -> tuple[str, str]:
-    """`review [focus]` selects the read-only reviewer; anything else is implementation."""
+    """Select review, the fixed nonpublishing probe, or implementation."""
+    if PROBE_RE.match(task.strip()):
+        return 'probe', ''
     match = REVIEW_RE.match(task)
     if match:
         return 'review', (match.group('focus') or '').strip()
@@ -91,6 +94,12 @@ def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
     task, reason = extract_task(comment.get('body'))
     if task is None:
         return False, reason, ''
+    if re.match(r'\Aprobe\s+', task):
+        return False, 'probe does not accept arguments', ''
+    if PROBE_RE.match(task):
+        owner = (event.get('repository') or {}).get('owner') or {}
+        if comment.get('author_association') != 'OWNER' or user.get('id') != owner.get('id'):
+            return False, 'probe is restricted to the repository owner', ''
 
     # Pull request scope: same-repository, open PRs only. Fork head branches
     # contain attacker-controlled content and must never reach the agent.

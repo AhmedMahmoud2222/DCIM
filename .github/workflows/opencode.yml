@@ -167,7 +167,7 @@ jobs:
           # router's model: it refuses to start for an ineligible model and rejects every other model.
           python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json &
           proxy_pid=$!
-          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then echo "::warning::proxy rejected $(wc -l < "${OPENCODE_PROXY_LOG}") request(s)"; fi' EXIT
+          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then rejected="$(grep -c rejected "${OPENCODE_PROXY_LOG}" || true)"; if [[ "${rejected}" -gt 0 ]]; then echo "::warning::proxy rejected ${rejected} request(s)"; fi; fi' EXIT
           for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
           port="$(cat "${RUNNER_TEMP}/proxy.port")"
           unset OPENCODE_API_KEY
@@ -193,6 +193,86 @@ jobs:
           path: ${{ runner.temp }}/changes
           if-no-files-found: error
           retention-days: 1
+
+  probe:
+    name: Production sandbox connectivity probe (no publication)
+    needs: gate
+    if: needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'probe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: opencode-agent
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Checkout the authorized baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.authorized_sha }}
+          path: target
+          persist-credentials: false
+      - name: Read live model catalog
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
+      - name: Select an approved model for the fixed probe
+        id: route
+        env:
+          TASK: Reply exactly PROBE_OK
+        run: python3 trusted/.github/scripts/opencode_router.py --registry trusted/.github/opencode/model-registry.json --available "${RUNNER_TEMP}/available.json"
+      - name: Build sanitized sandbox copy
+        env:
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+        run: python3 trusted/.github/scripts/opencode_sandbox.py prepare target "${RUNNER_TEMP}/stage" "${RUNNER_TEMP}/state" "${AUTHORIZED_SHA}" trusted/.github/opencode/secret-scan-allowlist.txt
+      - name: Install pinned OpenCode (lockfile integrity)
+        run: |
+          set -euo pipefail
+          (cd trusted/.github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
+          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode /opt/opencode/bin/opencode
+          test "$(/opt/opencode/bin/opencode --version)" = "${OPENCODE_VERSION}"
+      - name: Create isolated read-only probe sandbox
+        run: |
+          set -euo pipefail
+          sudo useradd --system --home-dir /srv/ocagent-home --shell /usr/sbin/nologin ocagent
+          sudo install -d -o ocagent -g ocagent -m 700 /srv/ocagent-home
+          sudo install -d -o root -g root -m 755 /srv/ocimpl
+          sudo install -d -o root -g root -m 755 /srv/ocimpl/work
+          sudo cp -a "${RUNNER_TEMP}/stage/." /srv/ocimpl/work/
+          sudo chown -R root:root /srv/ocimpl/work
+          sudo chmod -R a-w /srv/ocimpl/work
+          sudo chmod 700 "${HOME}"
+          sudo install -m 755 trusted/.github/scripts/opencode_fsisolate.py /opt/opencode/fsisolate.py
+          sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work
+          sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
+      - name: Run 120-second text-only probe through model-bound proxy
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          MODEL: ${{ steps.route.outputs.model }}
+          OPENCODE_PROXY_LOG: ${{ runner.temp }}/proxy-progress.log
+        run: |
+          set -euo pipefail
+          for tool in iptables ip6tables; do
+            sudo "${tool}" -A OUTPUT -m owner --uid-owner ocagent -o lo -j ACCEPT
+            sudo "${tool}" -A OUTPUT -m owner --uid-owner ocagent -j REJECT
+          done
+          if sudo -n -u ocagent curl -sS --max-time 5 -o /dev/null https://api.github.com 2>/dev/null; then
+            echo "::error::agent user still has network egress; refusing probe"; exit 1
+          fi
+          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json &
+          proxy_pid=$!
+          trap 'kill "${proxy_pid}" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
+          port="$(cat "${RUNNER_TEMP}/proxy.port")"
+          unset OPENCODE_API_KEY
+          python3 trusted/.github/scripts/opencode_sandbox.py config "${MODEL}" "${port}" probe > "${RUNNER_TEMP}/agent-config.json"
+          sudo install -D -m 644 "${RUNNER_TEMP}/agent-config.json" /etc/opencode/opencode.json
+          GUARD_MODE=probe python3 trusted/.github/scripts/opencode_guard.py "${RUNNER_TEMP}/probe.json" "${MODEL}" "${RUNNER_TEMP}/agent-config.json" /srv/ocagent-home /srv/ocimpl/work 120
+          cat "${RUNNER_TEMP}/probe.json"
 
   review:
     name: Independent review (read-only sandbox)
@@ -302,7 +382,7 @@ jobs:
           # The reviewer's proxy is bound to the reviewer model and refuses every model that implemented here.
           python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json "${RUNNER_TEMP}/review/implementers.json" &
           proxy_pid=$!
-          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then echo "::warning::proxy rejected $(wc -l < "${OPENCODE_PROXY_LOG}") request(s)"; fi' EXIT
+          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then rejected="$(grep -c rejected "${OPENCODE_PROXY_LOG}" || true)"; if [[ "${rejected}" -gt 0 ]]; then echo "::warning::proxy rejected ${rejected} request(s)"; fi; fi' EXIT
           for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
           port="$(cat "${RUNNER_TEMP}/proxy.port")"
           unset OPENCODE_API_KEY

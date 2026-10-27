@@ -33,6 +33,7 @@ import os
 import re
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import opencode_router as router  # noqa: E402
@@ -134,7 +135,18 @@ class Proxy:
         self.key, self.upstream, self.bound, self.log_path = key, upstream, bound, log_path
         self.rejections: list[dict] = []
         self.forwarded = 0
+        self.accepted = 0
         self._lock = threading.Lock()
+
+    def telemetry(self, event: str, **fields) -> None:
+        """Record only bounded counters/status/timing categories; never request data."""
+        entry = {'event': event, **fields}
+        line = json.dumps(entry, separators=(',', ':'), sort_keys=True)
+        with self._lock:
+            if self.log_path:
+                with open(self.log_path, 'a', encoding='utf-8') as handle:
+                    handle.write(line + '\n')
+        print('proxy telemetry: ' + line, file=sys.stderr, flush=True)
 
     def record_rejection(self, code: str, method: str, path: str) -> None:
         entry = {'rejected': code, 'method': re.sub(r'[^A-Z]', '', method.upper())[:8],
@@ -177,34 +189,63 @@ def make_handler(proxy: Proxy):
             except PolicyError as error:
                 proxy.record_rejection(error.code, self.command, self.path)
                 return self._send(403, f'rejected by sandbox proxy: {error.code}')
+            with proxy._lock:
+                proxy.accepted += 1
+                request_count = proxy.accepted
+            endpoint = 'chat_completions' if self.path in POST_PATHS else 'models'
+            proxy.telemetry('accepted', request_count=request_count, endpoint=endpoint)
             headers = {k: v for k, v in ((n, self.headers.get(n)) for n in FORWARD_HEADERS) if v}
             headers['Authorization'] = f'Bearer {proxy.key}'
             if target_scheme == 'https':
                 conn = http.client.HTTPSConnection(host, int(port or 443), timeout=300)
             else:
                 conn = http.client.HTTPConnection(host, int(port or 80), timeout=300)
+            started = time.monotonic()
+            status = None
+            first_byte_ms = None
+            streamed_bytes = 0
+            connection_result = 'failed'
+            completion = 'upstream_connection_error'
+            response_started = False
             try:
+                conn.connect()
+                connection_result = 'connected'
+                proxy.telemetry('upstream_connection', request_count=request_count, result=connection_result)
                 conn.request(self.command, self.path, body=body, headers=headers)
                 response = conn.getresponse()
+                status = response.status
+                proxy.telemetry('http_response', request_count=request_count, http_status=status)
                 self.send_response(response.status)
                 for name, value in response.getheaders():
                     if name.lower() not in HOP:
                         self.send_header(name, value)
                 self.send_header('Connection', 'close')
                 self.end_headers()
+                response_started = True
                 proxy.forwarded += 1
                 # read() waits for the requested byte count or EOF, buffering the
                 # provider's SSE stream before OpenCode can emit generation events.
                 while chunk := response.read1(8192):
+                    if first_byte_ms is None:
+                        first_byte_ms = round((time.monotonic() - started) * 1000)
+                        proxy.telemetry('first_response_byte', request_count=request_count,
+                                        time_to_first_byte_ms=first_byte_ms)
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                    streamed_bytes += len(chunk)
+                completion = 'completed'
             except (OSError, http.client.HTTPException):
-                try:
-                    self._send(502, 'upstream unavailable')
-                except OSError:
-                    pass
+                completion = 'client_or_upstream_io_error' if connection_result == 'connected' else 'upstream_connection_error'
+                if not response_started:
+                    try:
+                        self._send(502, 'upstream unavailable')
+                    except OSError:
+                        pass
             finally:
                 conn.close()
+                proxy.telemetry('completion', request_count=request_count, upstream_connection=connection_result,
+                                http_status=status, time_to_first_byte_ms=first_byte_ms,
+                                streamed_bytes=streamed_bytes, category=completion)
 
         def _reject_other(self):
             proxy.record_rejection('method_not_allowed', self.command, self.path)

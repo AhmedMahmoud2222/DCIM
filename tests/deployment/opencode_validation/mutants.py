@@ -73,7 +73,7 @@ MUTATIONS = [
     ('P1-2h', 'collector follows a swapped work tree', S + 'opencode_collect.py', "if os.path.islink(worktree) or os.path.realpath(worktree) != os.path.abspath(worktree):", 'if False:'),
     ('P1-2i', 'collector ignores agent-owned ancestors', S + 'opencode_collect.py', "if os.environ.get('OPENCODE_REQUIRE_ROOT_CHAIN') == '1' else []", 'if False else []'),
     ('P1-2j', 'read-only check accepts modifications', S + 'opencode_review.py', "if not (change.get('path') == 'REVIEW/diff.patch'", "if False and not (change.get('path') == 'REVIEW/diff.patch'"),
-    ('P1-2k', 'reviewer config allows edits', S + 'opencode_sandbox.py', "'edit': 'deny' if mode == 'review' else 'allow'", "'edit': 'allow'"),
+    ('P1-2k', 'reviewer config allows edits', S + 'opencode_sandbox.py', "'edit': 'deny' if mode in ('review', 'probe') else 'allow'", "'edit': 'allow'"),
     ('P1-3a', 'sessions may differ', S + 'opencode_guard.py', "if event.get('sessionID') != session:", 'if False:'),
     ('P1-3b', 'unfinished step accepted', S + 'opencode_guard.py', 'if open_step is not None:\n        return fail', 'if False:\n        return fail'),
     ('P1-3c', 'unmatched step_finish accepted', S + 'opencode_guard.py', "if open_step is None or part['messageID'] != open_step[0]:\n                return fail('unmatched_step_finish')", 'if False:\n                return fail(\'unmatched_step_finish\')'),
