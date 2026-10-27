@@ -49,6 +49,10 @@ REVIEW_PREFACE = (
     '"evidence": "reproduction or code evidence", "recommendation": "..."}], '
     '"verification": [{"command": "...", "result": "..."}]}. Never approve the change. Focus:\n'
 )
+PROBE_PREFACE = (
+    'You are running a bounded, nonpublishing connectivity probe. Do not use tools, inspect files, '
+    'modify a repository, review code, or publish anything. Reply exactly PROBE_OK. Task: '
+)
 AGENT_USER = 'ocagent'
 REAP_ATTEMPTS = 10
 REAP_PAUSE = 0.5
@@ -78,6 +82,11 @@ def extract_final_text(lines: list[str]) -> str:
             if isinstance(text, str):
                 texts.append(text)
     return texts[-1] if texts else ''
+
+
+def probe_acknowledged(lines: list[str]) -> bool:
+    """The fixed probe succeeds only when the final assistant text is the expected token."""
+    return extract_final_text(lines).strip() == 'PROBE_OK'
 
 
 EVENT_PART_TYPE = {'step_start': 'step-start', 'step_finish': 'step-finish', 'text': 'text',
@@ -188,6 +197,8 @@ def reap_agent_processes() -> str:
 
 def build_command(model: str, config: str, home: str, workdir: str, timeout_min: int, task: str,
                   mode: str = 'implement') -> list[str]:
+    if mode == 'probe':
+        task = 'Reply exactly PROBE_OK.'
     env = {
         'HOME': home, 'XDG_CONFIG_HOME': f'{home}/.config', 'XDG_DATA_HOME': f'{home}/.local/share',
         'XDG_CACHE_HOME': f'{home}/.cache', 'XDG_STATE_HOME': f'{home}/.local/state',
@@ -196,10 +207,12 @@ def build_command(model: str, config: str, home: str, workdir: str, timeout_min:
         'OPENCODE_PURE': '1', 'OPENCODE_DISABLE_MODELS_FETCH': '1', 'OPENCODE_DISABLE_AUTOUPDATE': '1',
     }
     assignments = [f'{key}={value}' for key, value in env.items()]
-    return ['sudo', '-n', '-u', AGENT_USER, 'timeout', '--kill-after=30s', f'{timeout_min}m',
+    timeout_arg = f'{timeout_min}s' if mode == 'probe' else f'{timeout_min}m'
+    timeout_flags = ['--signal=KILL'] if mode == 'probe' else ['--kill-after=30s']
+    return ['sudo', '-n', '-u', AGENT_USER, 'timeout', *timeout_flags, timeout_arg,
             'env', '-i', *assignments,
             'opencode', 'run', '--pure', '--format', 'json', '--model', model, '--dir', workdir, '--',
-            (REVIEW_PREFACE if mode == 'review' else PREFACE) + task]
+            (REVIEW_PREFACE if mode == 'review' else PROBE_PREFACE if mode == 'probe' else PREFACE) + task]
 
 
 def main(argv: list[str]) -> int:
@@ -210,20 +223,24 @@ def main(argv: list[str]) -> int:
     with open(config_path, encoding='utf-8') as handle:
         config = handle.read().strip()
     mode = os.environ.get('GUARD_MODE', 'implement')
-    command = build_command(model, config, home, workdir, int(timeout_min), os.environ.get('TASK', ''), mode)
+    task = os.environ.get('TASK', '')
+    command = build_command(model, config, home, workdir, int(timeout_min), task, mode)
     lines: list[str] = []
     timed_out = False
     try:
+        wrapper_timeout = int(timeout_min) + 5 if mode == 'probe' else int(timeout_min) * 60 + 90
         completed = subprocess.run(command, cwd=workdir, capture_output=True, text=True,
-                                   timeout=int(timeout_min) * 60 + 90)
+                                   timeout=wrapper_timeout)
         lines, exit_code = completed.stdout.splitlines(), completed.returncode
         timed_out = exit_code in (124, 137)
-        if completed.stderr.strip():
+        if mode != 'probe' and completed.stderr.strip():
             print('agent stderr (first 2000 chars):', completed.stderr[:2000])
     except subprocess.TimeoutExpired:
         exit_code, timed_out = None, True
     survivor = reap_agent_processes()                  # on every path, before anything is reported or collected
     status, reason = evaluate(lines, exit_code, timed_out)
+    if mode == 'probe' and status == 'success' and not probe_acknowledged(lines):
+        status, reason = 'failed', 'probe_acknowledgement_missing'
     if survivor:
         status, reason = 'failed', survivor
     session = extract_session(lines) if status == 'success' else ''
