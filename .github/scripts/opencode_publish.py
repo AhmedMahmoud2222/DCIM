@@ -54,6 +54,7 @@ CHANGE_KEYS = {'delete': {'path', 'op'}, 'add': {'path', 'op', 'size', 'sha256',
 # Authorization and credential controls the agent may never change. The App has no
 # `workflows` permission either; this list also covers non-workflow control files.
 PROTECTED_PREFIXES = (
+    '.github/acceptance/', '.github/agents/',
     '.github/workflows/', '.github/opencode/', '.github/codeowners', '.github/dependabot.yml',
     '.opencode/', 'docs/security/opencode_agent_authority.md', 'opencode.json', 'opencode.jsonc',
 )
@@ -85,7 +86,8 @@ class PartialPublication(PublishError):
 def is_protected_path(path: str) -> bool:
     lowered = path.lower()
     if lowered.startswith(PROTECTED_PREFIXES) or lowered.startswith(PROTECTED_BASENAME_PREFIXES) \
-            or lowered.startswith(('.github/scripts/agent_', '.github/scripts/orchestration_',
+            or lowered.startswith(('.github/scripts/agent_', '.github/scripts/orchestration_', '.github/scripts/acceptance_',
+                                   'tests/deployment/test_acceptance',
                                    'tests/deployment/test_agent_', 'tests/deployment/test_orchestration_')):
         return True
     if posixpath.basename(lowered) in PROTECTED_NAMES:

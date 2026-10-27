@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "repository": "AhmedMahmoud2222/DCIM",
+  "default_branch": "main",
+  "owner": {"id": 285010264, "login": "AhmedMahmoud2222", "type": "User"},
+  "actions_app": {"id": 15368, "slug": "github-actions"},
+  "initial_security_pr": 211,
+  "implementers": {"211": "codex"},
+  "providers": {
+    "codex": {"id": 199175422, "login": "chatgpt-codex-connector[bot]", "app_id": 1144995, "app_slug": "chatgpt-codex-connector"},
+    "claude": {"id": 209825114, "login": "claude[bot]", "app_id": 1236702, "app_slug": "claude"}
+  },
+  "reviewer": "claude",
+  "review_action": "anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13",
+  "owner_environment": "acceptance-owner",
+  "workflows": {
+    "review": {"path": ".github/workflows/acceptance-review.yml", "event": "issue_comment", "jobs": ["prepare", "review", "seal"]},
+    "owner": {"path": ".github/workflows/acceptance-owner.yml", "event": "workflow_dispatch", "jobs": ["attest"]},
+    "gate": {"path": ".github/workflows/acceptance-gate.yml"}
+  },
+  "ci": [
+    {"id": 359845224, "path": ".github/workflows/ci.yml", "jobs": ["backend", "frontend", "backend-suite", "frontend-suite", "backend suite (Python 3.12)", "backend suite (Python 3.13)", "backend suite (Python 3.14)", "browser-e2e", "edge-collector", "edge-interop", "ci-policy"]},
+    {"id": 367510888, "path": ".github/workflows/deployment-validation.yml", "jobs": ["Compose smoke", "Deployment validation gate"]},
+    {"id": 367709708, "path": ".github/workflows/deploy-tools-test.yml", "jobs": ["Deployment tooling regressions"]},
+    {"id": 391916838, "path": ".github/workflows/opencode-security-validation.yml", "jobs": ["Control run (unmutated)", "Aggregate verdicts"]}
+  ]
+}

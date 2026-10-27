@@ -3,6 +3,13 @@
 Status: **partial implementation, not activated, not approved for merge or deployment**.
 Audit date: 2026-10-26. Implementation branch: `security/trusted-agent-cross-trigger`.
 
+P0 continuation: [ACCEPTANCE_GATE.md](ACCEPTANCE_GATE.md) documents the implemented
+trusted collector/native evidence adapter/check issuer, owner attestation, tests
+and bootstrap limits. [AGENT_COLLABORATION.md](AGENT_COLLABORATION.md) documents
+the inactive durable controller and remaining native adapter/proof requirements.
+Deployment and release automation are deferred; no deployment information is
+required for this collaboration phase.
+
 ## Live baseline
 
 The branch and `main` both pointed to `51f2981247bb8cb4a2aa9c830f036da1db6a9411`
@@ -24,8 +31,8 @@ proxy; that implementation is also left separate. No preparation patch was appli
 GitHub ruleset `23651422` (Default Policy) is active on the default branch. It
 requires backend/frontend checks, strict up-to-date checks, resolved review threads,
 linear history, and blocks deletion/non-fast-forward pushes. It requires **zero**
-approving reviews, does **not** require signatures, and contains always-bypass
-entries for the owner and six integrations. These are observed settings, not safe
+approving reviews, does **not** require signatures, and contains six always-bypass
+entries: the owner and five integrations. These are observed settings, not safe
 autonomous merge guarantees. Classic branch-protection reads returned 403. No
 repository settings, bypass actors, credentials or environments were changed.
 
