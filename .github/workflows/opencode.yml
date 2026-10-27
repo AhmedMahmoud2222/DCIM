@@ -232,11 +232,12 @@ jobs:
           sudo install -d -o root -g root -m 755 /srv/ocimpl
           sudo install -d -o root -g root -m 755 /srv/ocimpl/work
           sudo cp -a "${RUNNER_TEMP}/stage/." /srv/ocimpl/work/
+          sudo chown -R root:root /srv/ocimpl/work
           sudo chmod -R a-w /srv/ocimpl/work
           sudo chmod 700 "${HOME}"
           sudo install -m 755 trusted/.github/scripts/opencode_fsisolate.py /opt/opencode/fsisolate.py
-          sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work "$(id -u ocagent)"
-          sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe-parent /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
+          sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work
+          sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
       - name: Run 120-second text-only probe through model-bound proxy
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

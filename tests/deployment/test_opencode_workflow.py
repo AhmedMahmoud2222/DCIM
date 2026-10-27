@@ -321,6 +321,28 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertLess(order.index('Build sanitized sandbox copy'), order.index(run_name))
         self.assertLess(order.index('Create isolated agent user and verify its filesystem view'), order.index(run_name))
 
+    def test_probe_sandbox_restores_root_ownership_and_uses_readonly_validator(self):
+        probe = self.jobs['probe']
+        steps = {step.get('name'): step for step in probe['steps']}
+        setup = steps['Create isolated read-only probe sandbox']['run']
+        copy = setup.index('sudo cp -a "${RUNNER_TEMP}/stage/." /srv/ocimpl/work/')
+        chown = setup.index('sudo chown -R root:root /srv/ocimpl/work')
+        readonly = setup.index('sudo chmod -R a-w /srv/ocimpl/work')
+        chain = setup.index('sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work')
+        validate = setup.index('sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocimpl/work')
+        self.assertLess(copy, chown)
+        self.assertLess(chown, readonly)
+        self.assertLess(readonly, chain)
+        self.assertLess(chain, validate)
+        self.assertNotIn('$(id -u ocagent)', setup)
+        self.assertNotIn('probe-parent', setup)
+        self.assertIn('sudo install -d -o ocagent -g ocagent -m 700 /srv/ocagent-home', setup)
+        run = steps['Run 120-second text-only probe through model-bound proxy']['run']
+        for preserved in ('--uid-owner ocagent -o lo -j ACCEPT', '--uid-owner ocagent -j REJECT',
+                          'opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}"',
+                          'unset OPENCODE_API_KEY', 'GUARD_MODE=probe', '/srv/ocimpl/work 120'):
+            self.assertIn(preserved, run)
+
     def test_opencode_is_installed_from_the_lockfile_not_an_unpinned_script(self):
         for job in ('opencode', 'review'):
             step = next(s for s in self.steps_of(job) if s.get('name', '').startswith('Install pinned OpenCode'))
