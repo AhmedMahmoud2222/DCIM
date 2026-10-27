@@ -39,6 +39,7 @@ jobs:
           --health-timeout=5s
           --health-retries=5
     env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event.inputs.sha }}
       DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
       TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:postgres_test_admin_password@localhost:5432/dcim_test
       JWT_SECRET_KEY: test-only-secret-key-not-for-production-use-32ch
@@ -48,16 +49,22 @@ jobs:
       - name: Checkout mutation runner (workflow branch)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.EXPECTED_SHA }}
           path: runner
       - name: Checkout exact G7 baseline
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.sha || 'd2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675' }}
+          ref: ${{ env.EXPECTED_SHA }}
           path: baseline
-      - name: Record tested SHA
+      - name: Record and assert tested SHA
+        shell: bash
         run: |
+          set -eo pipefail
           cd "$GITHUB_WORKSPACE/baseline"
-          git rev-parse HEAD | tee "$GITHUB_WORKSPACE/tested_sha.txt"
+          actual=$(git rev-parse HEAD)
+          echo "event=$GITHUB_EVENT_NAME expected_sha=$EXPECTED_SHA tested_sha=$actual" | tee "$GITHUB_WORKSPACE/tested_sha.txt"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected SHA is not 40-hex"; exit 1; }
+          [ "$actual" = "$EXPECTED_SHA" ] || { echo "checked-out SHA != expected"; exit 1; }
           git log -1 --format='%H %G? %s' | tee "$GITHUB_WORKSPACE/tested_commit.txt"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
