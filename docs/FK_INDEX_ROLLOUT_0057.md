@@ -8,7 +8,7 @@ Migration: `backend/migrations/versions/0057_fk_indexes.py` (22 single-column bt
 | --- | --- |
 | Fresh and populated upgrade, downgrade/upgrade, `alembic check`, single head | Automated (`tests/integration/test_fk_indexes_migration.py`, `tests/unit/test_alembic_single_head.py`) |
 | Collision / interrupted-run handling, plan-to-action races, downgrade atomicity, advisory-lock lifetime | Automated (same module; deterministic lock barriers, bounded, mutation-checked against the previous revision) |
-| **Build time, ingest latency, CPU/I/O, WAL, disk headroom and index size on representative `telemetry_reading` data under concurrent ingestion** | **OUTSTANDING.** Not run. The local and CI databases hold no representative telemetry volume. Do not assume the build is cheap on a large table. |
+| **Build time, ingest latency, CPU/I/O, WAL, disk headroom and index size on representative `telemetry_reading` data under concurrent ingestion** | **OUTSTANDING.** Not run. The local and CI databases hold no representative telemetry volume. Do not assume the build is cheap on a large table. A benchmark framework now exists (`docs/FK_INDEX_BENCHMARK_0057.md`); its results on a synthetic table do not change this status. |
 
 Before running on a production-sized database, measure on a restored copy or staging with realistic `telemetry_reading`
 volume and live ingestion: wall-clock build time per index, ingest p95/p99 latency during the build, CPU and I/O,
