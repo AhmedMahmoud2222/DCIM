@@ -110,7 +110,7 @@ class PgProxy:
                 continue
             server.settimeout(None)
             client.settimeout(None)
-            state = {"ssl_requested": False}
+            state = {"ssl_requested": False, "startup_error": None, "classified": False}
             with self._lock:
                 self._sockets += [client, server]
             for target, args in ((self._client_to_server, (client, server, state)), (self._server_to_client, (server, client, state))):
@@ -131,20 +131,44 @@ class PgProxy:
                 pass
 
     def _client_to_server(self, client: socket.socket, server: socket.socket, state: dict) -> None:
-        first = True
+        # Stream-based framing for the very first request. PostgreSQL's SSLRequest (and any startup message) may arrive split
+        # across multiple TCP segments, so we MUST NOT classify or forward a partial 8-byte header. Buffer until at least the
+        # 8-byte header is available, classify once, then forward the buffered bytes plus everything that follows untouched.
+        buffer = bytearray()
+        classified = False
+        max_startup_bytes = 1 << 20  # 1 MiB: a startup message larger than this is not a valid PostgreSQL startup
         try:
             while True:
                 data = client.recv(65536)
                 if not data:
+                    if not classified:
+                        state["startup_error"] = "incomplete or aborted startup: connection closed before 8 bytes"
                     break
-                if first:
-                    first = False
-                    if len(data) >= 8:
-                        length, code = struct.unpack("!ii", data[:8])
-                        state["ssl_requested"] = length == 8 and code == SSL_REQUEST_CODE
-                server.sendall(data)
-        except OSError:
-            pass
+                if not classified:
+                    buffer.extend(data)
+                    if len(buffer) < 8:
+                        # Hold the partial header; do not forward yet, otherwise the server could see a truncated request.
+                        continue
+                    try:
+                        length, code = struct.unpack("!ii", bytes(buffer[:8]))
+                    except struct.error as exc:
+                        state["startup_error"] = f"malformed startup header: {exc}"
+                        raise
+                    if length < 8 or length > max_startup_bytes:
+                        state["startup_error"] = f"malformed startup: invalid length {length}"
+                        raise ValueError(state["startup_error"])
+                    state["ssl_requested"] = (length == 8 and code == SSL_REQUEST_CODE)
+                    state["classified"] = True
+                    classified = True
+                    # Forward the entire buffered prefix (header + any trailing bytes) in original order, exactly once.
+                    if buffer:
+                        server.sendall(bytes(buffer))
+                        buffer.clear()
+                else:
+                    server.sendall(data)
+        except (OSError, ValueError, struct.error) as exc:
+            if state.get("startup_error") is None:
+                state["startup_error"] = f"aborted startup: {exc}"
         finally:
             self._shut(client, server)
 
