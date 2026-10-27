@@ -1039,12 +1039,21 @@ class PosixRuntimeTests(unittest.TestCase):
         self.manifest = os.path.join(self.tmp, 'result.json.runtime.json')
 
     def _alive(self, pid):
+        """Return True only if pid is an actively executing process.
+
+        A reaped process (no /proc entry) and a zombie (state 'Z', terminated
+        but awaiting reaping) are both not alive: neither is executing.
+        Any OSError reading /proc/{pid}/stat means the process is gone.
+        """
         try:
             with open(f'/proc/{pid}/stat', encoding='utf-8') as handle:
                 state = handle.read().rsplit(')', 1)[1].split()[0]
-        except FileNotFoundError:
+        except OSError:
             return False
-        return state != 'Z'
+        # Executable states per proc(5): R running, S interruptible sleep,
+        # D uninterruptible sleep, T stopped, t traced/stopped. 'Z' is a
+        # zombie: already terminated, not executing.
+        return state in ('R', 'S', 'D', 't', 'T')
 
     def test_timeout_kills_the_whole_process_group(self):
         pidfile = os.path.join(self.tmp, 'grandchild.pid')
@@ -1062,6 +1071,9 @@ class PosixRuntimeTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 30)
         with open(pidfile, encoding='utf-8') as handle:
             grandchild = int(handle.read().strip())
+        self.assertGreater(grandchild, 0,
+                           'grandchild pid was not written by the script')
+        # Bounded wait for process-state convergence after the group kill.
         deadline = time.monotonic() + 5
         while self._alive(grandchild) and time.monotonic() < deadline:
             time.sleep(0.1)
