@@ -193,7 +193,9 @@ def make_handler(proxy: Proxy):
                 self.send_header('Connection', 'close')
                 self.end_headers()
                 proxy.forwarded += 1
-                while chunk := response.read(8192):
+                # read() waits for the requested byte count or EOF, buffering the
+                # provider's SSE stream before OpenCode can emit generation events.
+                while chunk := response.read1(8192):
                     self.wfile.write(chunk)
                     self.wfile.flush()
             except (OSError, http.client.HTTPException):
