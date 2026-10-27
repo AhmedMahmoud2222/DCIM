@@ -1078,7 +1078,8 @@ class PosixRuntimeTests(unittest.TestCase):
         while self._alive(grandchild) and time.monotonic() < deadline:
             time.sleep(0.1)
         self.assertFalse(self._alive(grandchild),
-                         'a descendant survived the group kill')
+                         'a descendant survived the group kill '
+                         '(grandchild pid %d was not terminated)' % grandchild)
 
     def test_prepare_then_validate_round_trip(self):
         smoke.prepare_runtime(self.agent, self.manifest, self.binary)
