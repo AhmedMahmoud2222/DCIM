@@ -258,6 +258,11 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'review')['permission']['edit'], 'deny')
         self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'implement')['permission']['edit'], 'allow')
 
+    def test_probe_mode_denies_every_repository_and_execution_tool(self):
+        permission = sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'probe')['permission']
+        for tool in ('read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'webfetch', 'websearch'):
+            self.assertEqual(permission[tool], 'deny', tool)
+
 
 class GuardTests(unittest.TestCase):
     """Command construction and the guard entry point. Lifecycle rules: test_opencode_guard_fixtures."""
@@ -271,15 +276,28 @@ class GuardTests(unittest.TestCase):
         joined = ' '.join(cmd)
         for leaked in ('GITHUB_TOKEN', 'GH_TOKEN', 'OPENCODE_API_KEY=', 'ACTIONS_', 'RUNNER_'):
             self.assertNotIn(leaked, joined)
-        # flags that exist in OpenCode 1.19.3 (packages/core/src/flag/flag.ts)
         for flag in ('OPENCODE_DISABLE_PROJECT_CONFIG=1', 'OPENCODE_PURE=1', 'OPENCODE_DISABLE_MODELS_FETCH=1',
                      'OPENCODE_DISABLE_AUTOUPDATE=1', 'OPENCODE_CONFIG_CONTENT={"a":1}'):
             self.assertIn(flag, cmd)
-        self.assertNotIn('OPENCODE_DISABLE_EXTERNAL_SKILLS=1', cmd)   # not a 1.19.3 flag: it did nothing
+        self.assertNotIn('OPENCODE_DISABLE_EXTERNAL_SKILLS=1', cmd)
         run = cmd[cmd.index('opencode'):]
         self.assertEqual(run[:6], ['opencode', 'run', '--pure', '--format', 'json', '--model'])
         self.assertNotIn('--auto', run)
         self.assertNotIn('--dangerously-skip-permissions', run)
+
+    def test_probe_command_has_fixed_task_and_hard_120_second_timeout(self):
+        cmd = guard.build_command('opencode/glm-5.3-flash-free', '{}', '/srv/ocagent-home',
+                                  '/srv/ocimpl/work', 120, 'untrusted input ignored', 'probe')
+        self.assertIn('--signal=KILL', cmd)
+        self.assertIn('120s', cmd)
+        self.assertIn('Reply exactly PROBE_OK.', cmd[-1])
+        self.assertNotIn('untrusted input ignored', cmd[-1])
+
+    def test_probe_requires_the_fixed_acknowledgement_without_exposing_it(self):
+        matching = json.dumps({'type': 'text', 'part': {'text': 'PROBE_OK'}})
+        altered = json.dumps({'type': 'text', 'part': {'text': 'PROBE_OK and more'}})
+        self.assertTrue(guard.probe_acknowledged([matching]))
+        self.assertFalse(guard.probe_acknowledged([altered]))
 
     def run_main(self, completed=None, raises=None, survivors=0, pgrep_error=None):
         """Run guard.main with the agent run faked. `survivors` is how many pgrep checks still find an agent process."""
@@ -472,6 +490,33 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertNotIn('Cookie', headers)
         self.assertEqual(sent, body())                      # forwarded byte for byte
         self.assertEqual(self.proxy.rejections, [])
+
+    def test_accepted_request_emits_sanitized_progress_telemetry(self):
+        if os.path.exists(self.log):
+            os.truncate(self.log, 0)
+        prompt_secret = 'prompt-secret-should-never-be-logged'
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            status, response = self.raw('POST', CHAT,
+                                        body(messages=[{'role': 'user', 'content': prompt_secret}]),
+                                        {'Content-Type': 'application/json',
+                                         'Authorization': 'Bearer attacker-header-secret'})
+        self.assertEqual(status, 200)
+        self.assertTrue(response)
+        with open(self.log, encoding='utf-8') as handle:
+            log_text = handle.read()
+        logged = log_text + err.getvalue()
+        for forbidden in (prompt_secret, 'attacker-header-secret', 'REAL-KEY', response.decode()):
+            self.assertNotIn(forbidden, logged)
+        events = [json.loads(line) for line in log_text.splitlines()]
+        names = [event['event'] for event in events]
+        for expected in ('accepted', 'upstream_connection', 'http_response', 'first_response_byte', 'completion'):
+            self.assertIn(expected, names)
+        completion = next(event for event in events if event['event'] == 'completion')
+        self.assertEqual(completion['category'], 'completed')
+        self.assertEqual(completion['http_status'], 200)
+        self.assertGreater(completion['streamed_bytes'], 0)
+        self.assertGreaterEqual(completion['time_to_first_byte_ms'], 0)
 
     def test_provider_stream_is_forwarded_before_the_provider_finishes(self):
         first_chunk_sent, finish_stream = threading.Event(), threading.Event()
