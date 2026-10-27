@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "enabled": false,
+  "repository": "AhmedMahmoud2222/DCIM",
+  "default_branch": "main",
+  "state_branch": "automation/collaboration-state",
+  "state_path": ".github/agents/state.json",
+  "owner": {"id": 285010264, "login": "AhmedMahmoud2222", "type": "User"},
+  "issuer": null,
+  "max_attempts": 3,
+  "max_deliveries": 4,
+  "timeout_seconds": 3600,
+  "proof_max_age_seconds": 3600,
+  "implementers": {"211": "codex"},
+  "providers": {
+    "opencode": {"enabled": false, "identity": null, "proof": null, "command": "/oc"},
+    "claude": {"enabled": false, "identity": {"id": 209825114, "login": "claude[bot]", "app_id": 1236702, "app_slug": "claude"}, "proof": null, "command": "@claude"},
+    "codex": {"enabled": false, "identity": {"id": 199175422, "login": "chatgpt-codex-connector[bot]", "app_id": 1144995, "app_slug": "chatgpt-codex-connector"}, "proof": null, "command": "@codex"},
+    "copilot": {"enabled": false, "identity": null, "proof": null, "command": null}
+  }
+}

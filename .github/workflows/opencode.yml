@@ -431,6 +431,7 @@ jobs:
           sparse-checkout: |
             .github/scripts
             .github/opencode
+            .github/agents
           persist-credentials: false
       - name: Download review output
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -446,7 +447,9 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
+          permission-contents: read
       - name: Post independent review
+        id: published_review
         env:
           GH_PUBLISH_TOKEN: ${{ steps.app.outputs.token }}
           TARGET_NUMBER: ${{ needs.gate.outputs.number }}
@@ -457,6 +460,22 @@ jobs:
           REVIEWER_SESSION: ${{ needs.review.outputs.session_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out"
+      - name: Seal native collaboration execution result
+        if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          NATIVE_REVIEW_ID: ${{ steps.published_review.outputs.review_id }}
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+        run: python3 .github/scripts/orchestration_opencode_result.py
+      - name: Retain authenticated native execution evidence
+        if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: dcim-agent-result-attempt-${{ github.run_attempt }}
+          path: sealed-collaboration/evidence.json
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: Publish signed commit and Draft PR
