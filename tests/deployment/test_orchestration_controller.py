@@ -120,7 +120,8 @@ class ControllerTests(unittest.TestCase):
         reserved = deepcopy(self.store.value)
         reserved['tasks'][self.task['id']]['deliveries'][0]['status'] = 'RESERVED'
         self.api.comments.append(dict(self.api.comments[-1], id=21))
-        with self.assertRaises(Rejected): self.run_task(reserved)
+        value, _ = self.run_task(reserved)
+        self.assertEqual(value['tasks'][self.task['id']]['state'], 'ESCALATED')
         self.assertEqual(len(self.api.posts), 1)
 
     def test_spoofed_app_cannot_recover(self):
@@ -128,14 +129,28 @@ class ControllerTests(unittest.TestCase):
         reserved = deepcopy(self.store.value)
         reserved['tasks'][self.task['id']]['deliveries'][0]['status'] = 'RESERVED'
         self.api.comments[-1]['performed_via_github_app']['id'] = 999
-        with self.assertRaises(Rejected): self.run_task(reserved)
+        value, _ = self.run_task(reserved)
+        self.assertEqual(value['tasks'][self.task['id']]['state'], 'ESCALATED')
+
+    def test_spoofed_copy_does_not_shadow_authenticated_delivery(self):
+        self.run_task()
+        reserved = deepcopy(self.store.value)
+        reserved['tasks'][self.task['id']]['deliveries'][0]['status'] = 'RESERVED'
+        spoof = deepcopy(self.api.comments[-1])
+        spoof['id'] = 19
+        spoof['performed_via_github_app']['id'] = 999
+        self.api.comments.insert(0, spoof)
+        value, _ = self.run_task(reserved)
+        self.assertEqual(value['tasks'][self.task['id']]['deliveries'][0]['comment_id'], 20)
+        self.assertEqual(len(self.api.posts), 1)
 
     def test_edited_delivery_cannot_recover(self):
         self.run_task()
         reserved = deepcopy(self.store.value)
         reserved['tasks'][self.task['id']]['deliveries'][0]['status'] = 'RESERVED'
         self.api.comments[-1]['updated_at'] = 'later'
-        with self.assertRaises(Rejected): self.run_task(reserved)
+        value, _ = self.run_task(reserved)
+        self.assertEqual(value['tasks'][self.task['id']]['state'], 'ESCALATED')
 
     def test_changed_head_or_base_blocks(self):
         for side in ('head', 'base'):

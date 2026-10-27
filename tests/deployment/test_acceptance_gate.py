@@ -182,6 +182,11 @@ class CollectorTests(unittest.TestCase):
     def test_failed_or_pending_latest_review_never_falls_back(self):
         newer = self.api.make_run(21, 'review'); newer['conclusion'] = 'failure'
         self.rejects('failed/incomplete')
+    def test_unrelated_skipped_comment_run_does_not_supersede_review(self):
+        newer = self.api.make_run(21, 'review'); newer['conclusion'] = 'skipped'
+        selected = g.records(self.api, 'review', 211)
+        self.assertNotIn(21, [run['id'] for run in selected])
+        self.assertEqual(g.evaluate(self.api, 211)['verdict'], 'ACCEPT')
     def test_wrong_head_base_or_pr_review_rejects(self):
         for field, value in [('head', 'c'*40), ('base', 'c'*40), ('pr', 9)]:
             with self.subTest(field=field):

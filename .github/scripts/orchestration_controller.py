@@ -212,13 +212,12 @@ def reconcile(api, store, policy, state, blob, task_id, now):
     if task['deliveries']:
         delivery = task['deliveries'][-1]
         if delivery['status'] == 'RESERVED':
-            matches = [c for c in roots if c.get('body') == delivery['body']]
-            require(len(matches) <= 1, 'duplicate delivery evidence')
-            if not matches:
-                audit(task, 'ESCALATED', 'interrupted/ambiguous delivery; no automatic repost', now)
+            matches = [c for c in roots if c.get('body') == delivery['body']
+                       and provider_identity(c, policy['issuer'])
+                       and c.get('created_at') == c.get('updated_at')]
+            if len(matches) != 1:
+                audit(task, 'ESCALATED', 'missing/ambiguous authenticated delivery; no automatic repost', now)
                 return store.save(state, blob)
-            require(provider_identity(matches[0], policy['issuer'])
-                    and matches[0].get('created_at') == matches[0].get('updated_at'), 'forged/edited delivery')
             delivery.update(status='DELIVERED', comment_id=matches[0]['id'])
             audit(task, 'INDEPENDENT_REVIEW', 'recovered authenticated delivery', now)
             return store.save(state, blob)
