@@ -40,7 +40,7 @@ class ReleaseTests(unittest.TestCase):
         self.fail_page = False
         def mocked(path):
             if path == '/commits/' + SHA:
-                return {'sha': SHA}
+                return {'sha': SHA, 'commit': {'verification': self.verification}}
             if path == '/compare/' + SHA + '...main':
                 return {'status': 'ahead', 'merge_base_commit': {'sha': SHA}}
             if path.startswith('/actions/runs?'):
@@ -55,6 +55,7 @@ class ReleaseTests(unittest.TestCase):
                 run_id = int(path.split('/runs/')[1].split('/')[0])
                 return {'total_count': len(self.jobs[run_id]), 'jobs': self.jobs[run_id]}
             raise AssertionError(path)
+        self.verification = {'verified': True, 'reason': 'valid'}
         self.patcher = patch.object(v, 'api', side_effect=mocked)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
@@ -71,8 +72,18 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(v.VerificationError):
                 v.verify(value)
 
+    def test_signature_must_be_verified_and_valid(self):
+        for evidence in ({}, {'verified': False, 'reason': 'valid'},
+                         {'verified': True, 'reason': 'unknown_key'},
+                         {'verified': 'true', 'reason': 'valid'}):
+            self.verification = evidence
+            self.rejects()
+
     def test_unauthorized_commit(self):
-        with patch.object(v, 'api', side_effect=lambda path: {'sha': SHA} if path.startswith('/commits/') else {'status':'diverged', 'merge_base_commit': {'sha':'b'*40}}):
+        with patch.object(v, 'api', side_effect=lambda path: {
+                'sha': SHA, 'commit': {'verification': {'verified': True, 'reason': 'valid'}}
+                } if path.startswith('/commits/') else {
+                'status': 'diverged', 'merge_base_commit': {'sha': 'b'*40}}):
             self.rejects()
 
     def test_wrong_repository_and_workflow(self):

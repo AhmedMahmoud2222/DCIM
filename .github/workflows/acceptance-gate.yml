@@ -1,0 +1,72 @@
+name: DCIM acceptance gate
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Enrolled PR number (omit to inspect enrolled open PRs)
+        type: number
+        required: false
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_run:
+    workflows: [DCIM trusted review evidence, DCIM owner attestation, CI, Deployment validation, Deployment Tools Test, OpenCode security validation]
+    types: [completed]
+permissions: {}
+concurrency:
+  group: dcim-acceptance-gate
+  cancel-in-progress: false
+jobs:
+  select:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      prs: ${{ steps.select.outputs.prs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_PR: ${{ inputs.pr }}
+        run: |
+          args=()
+          if [[ -n "$REQUESTED_PR" ]]; then args=(--pr "$REQUESTED_PR"); fi
+          python3 .github/scripts/acceptance_gate.py select "${args[@]}"
+  gate:
+    name: acceptance-${{ matrix.pr }}
+    needs: select
+    if: needs.select.outputs.prs != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        pr: ${{ fromJSON(needs.select.outputs.prs) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      checks: write # Dedicated metadata-only issuer; no candidate code or provider secret.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ matrix.pr }}
+        run: python3 .github/scripts/acceptance_gate.py publish --pr "$PR_NUMBER"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: dcim-acceptance-pr-${{ matrix.pr }}-attempt-${{ github.run_attempt }}
+          path: sealed/evidence.json
+          retention-days: 90
+          if-no-files-found: error
