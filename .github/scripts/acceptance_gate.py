@@ -110,12 +110,13 @@ def records(api, kind, number, exclude_run=None):
     spec = api.policy['workflows'][kind]
     wid = api.workflow(spec['path'])
     runs = api.pages(f"/actions/workflows/{wid}/runs?event={spec['event']}&branch={api.policy['default_branch']}", 'workflow_runs')
+    require(len({r['id'] for r in runs}) == len(runs), 'duplicate source runs')
     title = ('DCIM review PR ' if kind == 'review' else 'DCIM owner PR ') + str(number)
     # Unrelated comments still instantiate this workflow with all jobs skipped.
     # They are not review attempts; failed/cancelled/in-progress attempts remain
     # authoritative and must never fall back to an older acceptance.
     selected = [r for r in runs if r.get('display_title') == title and r.get('id') != exclude_run
-                and not (kind == 'review' and r.get('conclusion') == 'skipped')]
+                and not (kind == 'review' and r.get('status') == 'completed' and r.get('conclusion') == 'skipped')]
     require(len({r['id'] for r in selected}) == len(selected), 'duplicate source runs')
     selected.sort(key=lambda r: (r['run_number'], r['id']), reverse=True)
     return selected

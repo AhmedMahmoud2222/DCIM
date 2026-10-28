@@ -1,5 +1,5 @@
 name: DCIM trusted review evidence
-run-name: DCIM review PR ${{ github.event.issue.number }}
+run-name: ${{ github.event.comment.body == '/acceptance-review' && github.event.comment.user.id == 285010264 && github.event.sender.id == 285010264 && format('DCIM review PR {0}', github.event.issue.number) || format('DCIM ignored comment {0}', github.event.comment.id) }}
 on:
   issue_comment:
     types: [created]

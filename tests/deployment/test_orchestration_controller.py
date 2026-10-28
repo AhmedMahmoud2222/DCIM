@@ -34,7 +34,7 @@ class API:
             if self.raise_post:
                 raise Rejected('ambiguous delivery')
             self.posts.append(body)
-            item = dict(id=20, body=body['body'], user={k:v for k,v in self.policy['issuer'].items() if k in ('id', 'login')},
+            item = dict(id=19+len(self.posts), body=body['body'], user={k:v for k,v in self.policy['issuer'].items() if k in ('id', 'login')},
                         performed_via_github_app={'id': self.policy['issuer']['app_id'], 'slug': self.policy['issuer']['app_slug']}, created_at='now', updated_at='now')
             item['user']['type'] = 'Bot'
             self.comments.append(item)
@@ -68,7 +68,7 @@ class ControllerTests(unittest.TestCase):
     def setUp(self):
         self.policy = json.loads((ROOT/c.POLICY).read_text())
         self.policy['issuer'] = dict(id=100, login='native[bot]', app_id=200, app_slug='native')
-        self.policy['providers']['claude']['proof'] = dict(run_id=77, workflow_id=88, workflow_path='wf', jobs=['review'])
+        self.policy['providers']['claude']['proof'] = dict(run_id=77, workflow_id=88, workflow_path='.github/workflows/claude.yml', jobs=['review'])
         self.api = API(self.policy)
         command = dict(id=2, body='/collaborate 1', user=dict(self.policy['owner']), author_association='OWNER', created_at='now', updated_at='now')
         self.task = c.new_task(self.api, self.policy, 211, command, self.api.comments, 100)
@@ -151,6 +151,39 @@ class ControllerTests(unittest.TestCase):
         self.api.comments[-1]['updated_at'] = 'later'
         value, _ = self.run_task(reserved)
         self.assertEqual(value['tasks'][self.task['id']]['state'], 'ESCALATED')
+
+    def test_conflicting_first_root_does_not_stop_independent_second_root(self):
+        for mode in ('missing', 'conflict'):
+            with self.subTest(mode=mode):
+                self.setUp()
+                value, blob = self.run_task()
+                value['tasks'][self.task['id']]['deliveries'][0]['status'] = 'RESERVED'
+                if mode == 'missing': self.api.comments.pop()
+                else: self.api.comments.append(dict(self.api.comments[-1], id=22))
+                root2 = deepcopy(self.api.root_comment);root2['id'] = 3
+                self.api.comments.append(root2)
+                command = dict(id=4, body='/collaborate 3', user=dict(self.policy['owner']),
+                               author_association='OWNER', created_at='now', updated_at='now')
+                second = c.new_task(self.api, self.policy, 211, command, self.api.comments, 100)
+                value['tasks'][second['id']] = second
+                with patch.object(c, 'choose', return_value='claude'):
+                    for task_id in sorted(value['tasks']):
+                        value, blob = c.reconcile(self.api,self.store,self.policy,value,blob,task_id,110)
+                self.assertEqual(value['tasks'][self.task['id']]['state'], 'ESCALATED')
+                self.assertEqual(value['tasks'][second['id']]['state'], 'INDEPENDENT_REVIEW')
+                self.assertEqual(len(self.api.posts), 2)
+
+    def test_main_advance_preserves_execution_but_blocks_stale_acceptance(self):
+        value, _ = self.run_task()
+        self.api.pr['base']['sha'] = 'c'*40
+        result = dict(result='SUCCESS', binding=deepcopy(self.task['binding']), source_sha='b'*40)
+        with patch.object(c, 'authenticated_execution', return_value=result), patch.object(c, 'verify_check') as gate:
+            value, _ = self.run_task(value)
+        task = value['tasks'][self.task['id']]
+        self.assertEqual(task['state'], 'BLOCKED')
+        self.assertEqual(task['deliveries'][-1]['status'], 'COMPLETED')
+        self.assertEqual(task['deliveries'][-1]['execution_evidence']['binding']['base'], 'b'*40)
+        gate.assert_not_called()
 
     def test_changed_head_or_base_blocks(self):
         for side in ('head', 'base'):
@@ -260,7 +293,7 @@ class ControllerTests(unittest.TestCase):
         now = c.timestamp('2026-10-27T00:00:00Z')
         proof = self.policy['providers']['claude']['proof']
         repo = self.policy['repository']
-        run = dict(id=77, workflow_id=88, path='wf', head_sha='b'*40, head_branch='main',
+        run = dict(id=77, workflow_id=88, path='.github/workflows/claude.yml', head_sha='b'*40, head_branch='main',
                    event='issue_comment', status='completed', conclusion='success', updated_at='2026-10-27T00:00:00Z',
                    repository={'full_name':repo}, head_repository={'full_name':repo}, run_attempt=1, check_suite_id=9)
         job = dict(name='review', id=12, check_run_url=self.api.api_root+'/check-runs/13', run_id=77, run_attempt=1,
@@ -273,7 +306,7 @@ class ControllerTests(unittest.TestCase):
                        issue_url=self.api.api_root+'/issues/211',created_at='now',updated_at='now')
         result = dict(provider='claude',mode='review',result='SUCCESS',binding=self.task['binding'],provider_comment_id=44,
                       source_sha='b'*40,run_id=77,attempt=1,policy_digest=digest(self.policy))
-        self.api.request = lambda path, *args, **kwargs: deepcopy(run if path.startswith('/actions/runs/') else comment)
+        self.api.request = lambda path, *args, **kwargs: deepcopy(dict(sha=path.rsplit('/',1)[-1],commit={'verification':{'verified':True,'reason':'valid'}}) if path.startswith('/commits/') else run if path.startswith('/actions/runs/') else comment)
         self.api.pages = lambda path, key=None: deepcopy([job] if key == 'jobs' else [check])
         self.api.trusted_file = lambda *args: None
         self.api.artifact = lambda *args: (deepcopy(result), {})
@@ -285,6 +318,23 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(c.authenticated_execution(self.api, proof, self.policy, 'claude', now), result)
             check['app']['id'] = 999
             with self.assertRaises(Rejected): c.authenticated_execution(self.api, proof, self.policy, 'claude', now)
+
+    def test_native_result_survives_benign_main_advance_with_original_binding(self):
+        proof, run, job, check, comment, result, now = self.native_fixture()
+        original = self.api.request
+        def request(path, *args, **kwargs):
+            if path.startswith('/compare/'):
+                return dict(base_commit={'sha':'b'*40},merge_base_commit={'sha':'b'*40},status='ahead',behind_by=0,total_commits=1,commits=[{'sha':'c'*40}])
+            if path.startswith('/git/trees/'):
+                return dict(truncated=False,tree=[dict(path=proof['workflow_path'],mode='100644',type='blob',sha='d'*40)])
+            return original(path,*args,**kwargs)
+        self.api.request=request
+        self.api.file=lambda *args:json.dumps(self.policy).encode()
+        with patch.dict(c.os.environ,GITHUB_WORKFLOW_SHA='c'*40):
+            self.assertEqual(c.authenticated_execution(self.api,proof,self.policy,'claude',now),result)
+            self.policy['execution_provenance']['revoked_revisions']=['b'*40]
+            with self.assertRaisesRegex(Rejected,'revoked'):
+                c.authenticated_execution(self.api,proof,self.policy,'claude',now)
 
     def test_native_wrong_run_source_and_expired_proof_rejected(self):
         proof, run, job, check, comment, result, now = self.native_fixture()

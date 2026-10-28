@@ -3,7 +3,7 @@ on:
   issue_comment:
     types: [created]
   workflow_run:
-    workflows: [OpenCode, Claude Code, DCIM trusted review evidence]
+    workflows: [OpenCode, Claude Code, DCIM trusted review evidence, DCIM native Claude collaboration]
     types: [completed]
   schedule:
     - cron: '*/10 * * * *'

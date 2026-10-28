@@ -61,12 +61,19 @@ class NativeResultTests(unittest.TestCase):
                 self.command[field]=original
         self.assertEqual(self.posts,0)
     def test_stale_head_base_wrong_review_and_run(self):
-        for obj,key,value in [(self.pr['head'],'sha','d'*40),(self.pr['base'],'sha','d'*40),(self.review,'commit_id','d'*40),(self.review,'state','APPROVED'),(self.review,'body','forged ACCEPT')]:
+        for obj,key,value in [(self.pr['head'],'sha','d'*40),(self.review,'commit_id','d'*40),(self.review,'state','APPROVED'),(self.review,'body','forged ACCEPT')]:
             with self.subTest(key=key):
                 old=obj[key];obj[key]=value
                 with self.assertRaises(Rejected): self.seal()
                 obj[key]=old
         self.assertEqual(self.posts,0)
+    def test_main_advance_preserves_original_native_execution_binding(self):
+        self.pr['base']['sha']='d'*40
+        value=self.seal()
+        self.assertEqual(value['binding']['base'],self.base)
+        self.assertEqual(value['source_sha'],self.base)
+        self.review['body']=self.review['body'].replace('"stale_on_arrival": false','"stale_on_arrival": true')
+        self.assertEqual(self.seal()['binding']['base'],self.base)
     def test_retry_recovers_same_fresh_app_witness(self):
         first=self.seal();self.comments.append(deepcopy(self.witness))
         self.assertEqual(self.seal(),first);self.assertEqual(self.posts,1)

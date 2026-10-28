@@ -187,6 +187,31 @@ class CollectorTests(unittest.TestCase):
         selected = g.records(self.api, 'review', 211)
         self.assertNotIn(21, [run['id'] for run in selected])
         self.assertEqual(g.evaluate(self.api, 211)['verdict'], 'ACCEPT')
+
+    def test_applicable_newer_block_overrides_accept_despite_interleaved_skips(self):
+        newer = self.api.make_run(21, 'review')
+        old = self.api.values[(20, g.record_name('review', 211, 1))]
+        value = copy.deepcopy(old)
+        value['review']['verdict'] = 'BLOCK'
+        value['provider_comment_id'] = 701
+        witness = copy.deepcopy(self.api.witness)
+        witness.update(id=701, body=w.witness_body(self.api.b, 21, 1))
+        self.api.witnesses[701] = witness
+        self.api.add_value(newer, 'review', value)
+        self.api.make_run(22, 'review')['conclusion'] = 'skipped'
+        self.rejects('BLOCK')
+
+    def test_cancelled_and_pending_review_never_fall_back(self):
+        for status, conclusion in [('completed','cancelled'), ('in_progress',None)]:
+            self.api = Fixture()
+            newer = self.api.make_run(21, 'review')
+            newer.update(status=status, conclusion=conclusion)
+            self.rejects('failed/incomplete')
+
+    def test_spoofed_review_title_with_wrong_workflow_source_never_accepts(self):
+        newer = self.api.make_run(21, 'review')
+        newer['path'] = '.github/workflows/forged.yml'
+        self.rejects('workflow')
     def test_wrong_head_base_or_pr_review_rejects(self):
         for field, value in [('head', 'c'*40), ('base', 'c'*40), ('pr', 9)]:
             with self.subTest(field=field):

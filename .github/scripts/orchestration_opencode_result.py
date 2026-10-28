@@ -7,6 +7,7 @@ import re
 from acceptance_api import GitHub
 from acceptance_core import require, decode, binding, provider_identity, digest
 from agent_authority import authorize, comment_binding
+from orchestration_provenance import execution_policy
 
 POLICY = '.github/agents/collaboration-policy.json'
 
@@ -19,7 +20,9 @@ def seal(api, policy, event, review_id, head, base, run_id, attempt, sha):
     number = event['issue']['number']
     pr = api.request('/pulls/' + str(number))
     b = binding(pr, policy)
-    require(b['head'] == head and b['base'] == base == sha, 'stale native execution')
+    current_base = b['base']
+    require(b['head'] == head and base == sha, 'stale native execution')
+    b = dict(b, base=base)  # Preserve execution binding; acceptance uses live base.
     comment = api.request('/issues/comments/' + str(event['comment']['id']))
     require(comment_binding(comment) == comment_binding(event['comment'])
             and comment.get('issue_url') == api.api_root + '/issues/' + str(number), 'command event changed')
@@ -39,7 +42,8 @@ def seal(api, policy, event, review_id, head, base, run_id, attempt, sha):
     require(marker, 'missing native publisher record')
     record = decode(marker[1])
     require(record.get('reviewed_commit') == head and record.get('base_commit') == base
-            and record.get('stale_on_arrival') is False
+            and (record.get('stale_on_arrival') is False
+                 or record.get('stale_on_arrival') is True and current_base != base)
             and record.get('run_url') == f"https://github.com/{policy['repository']}/actions/runs/{run_id}", 'native review provenance mismatch')
     # The immutable artifact authenticates the producer. A fixed fresh witness
     # proves its actual App token, including when PR review REST omits App fields.
@@ -67,10 +71,14 @@ def main():
             and os.environ.get('GITHUB_WORKFLOW_REF') == repo + '/.github/workflows/opencode.yml@refs/heads/main', 'untrusted native runtime')
     api = GitHub(policy, root=root)
     sha = os.environ['GITHUB_WORKFLOW_SHA']
-    require(api.request('/branches/main')['commit']['sha'] == sha, 'native source is stale')
+    current_sha = api.request('/branches/main')['commit']['sha']
+    current_policy = decode(api.file(POLICY, current_sha))
+    require(execution_policy(api, current_policy, sha, current_sha) == policy,
+            'native source or execution authority revoked')
     for path in (POLICY, '.github/workflows/opencode.yml', '.github/scripts/orchestration_opencode_result.py',
                  '.github/scripts/opencode_review.py', '.github/scripts/agent_authority.py',
-                 '.github/scripts/acceptance_api.py', '.github/scripts/acceptance_core.py'):
+                 '.github/scripts/acceptance_api.py', '.github/scripts/acceptance_core.py',
+                 '.github/scripts/orchestration_provenance.py'):
         api.trusted_file(path, sha)
     value = seal(api, policy, decode(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes()),
                  int(os.environ['NATIVE_REVIEW_ID']), os.environ['AUTHORIZED_SHA'], os.environ['BASE_SHA'],

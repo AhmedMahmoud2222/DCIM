@@ -6,7 +6,7 @@ POSTs are recovered by exact nonce/body, never blindly retried. No model receive
 this process's token. Native adapters must emit authenticated result artifacts.
 """
 import base64
-from copy import deepcopy
+from copy import deepcopy, copy
 from datetime import datetime, timezone
 import json
 import os
@@ -18,6 +18,7 @@ from acceptance_api import GitHub
 from acceptance_core import Rejected, require, decode, digest, binding, provider_identity, same_binding, jobs_and_checks
 from acceptance_gate import load_policy, verify_check
 from agent_authority import parse_command, comment_binding
+from orchestration_provenance import execution_policy
 
 POLICY = '.github/agents/collaboration-policy.json'
 WORKFLOW = '.github/workflows/agent-collaboration.yml'
@@ -81,7 +82,8 @@ class Store:
 
 def owner_comment(comment, policy):
     owner = policy['owner']
-    return (comment.get('user') == owner or all(comment.get('user', {}).get(k) == v for k, v in owner.items())) \
+    user = comment.get('user') or {}
+    return isinstance(user, dict) and all(user.get(k) == v for k, v in owner.items()) \
         and comment.get('author_association') == 'OWNER' \
         and comment.get('created_at') and comment.get('created_at') == comment.get('updated_at')
 
@@ -119,7 +121,7 @@ def audit(task, state, reason, now):
 
 def command_body(task, provider, nonce, policy):
     command = policy['providers'][provider]['command']
-    require(command in {'/oc', '@claude', '@codex'}, 'unsupported native command')
+    require(command in {'/oc', '/dcim-claude', '@codex'}, 'unsupported native command')
     require(task['mode'] == 'review', 'implementation adapter has not been proven')
     return (command + ' review the current PR independently; post findings on this same PR. '
             'Do not modify code, create PRs, merge or deploy.\n'
@@ -130,8 +132,10 @@ def command_body(task, provider, nonce, policy):
 def authenticated_execution(api, proof, policy, provider, now, task=None, delivery=None):
     """Only artifacts of pinned trusted-native adapters establish capability/results."""
     require(isinstance(proof, dict) and set(proof) == {'run_id', 'workflow_id', 'workflow_path', 'jobs'}, 'missing native proof')
+    require(re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', proof['workflow_path']), 'invalid native workflow path')
     run = api.request('/actions/runs/' + str(proof['run_id']))
-    sha = os.environ.get('GITHUB_WORKFLOW_SHA')
+    current_sha = os.environ.get('GITHUB_WORKFLOW_SHA')
+    sha = run.get('head_sha')
     require(run.get('id') == proof['run_id'] and run.get('workflow_id') == proof['workflow_id']
             and run.get('path') == proof['workflow_path'] and run.get('head_sha') == sha
             and run.get('head_branch') == policy['default_branch']
@@ -140,13 +144,18 @@ def authenticated_execution(api, proof, policy, provider, now, task=None, delive
             and run.get('repository', {}).get('full_name') == policy['repository']
             and run.get('head_repository', {}).get('full_name') == policy['repository']
             and 0 <= now - timestamp(run['updated_at']) <= policy['proof_max_age_seconds'], 'stale/compromised native execution')
-    api.trusted_file(proof['workflow_path'], sha)
+    historical_policy = execution_policy(api, policy, sha, current_sha)
+    api.trusted_file(proof['workflow_path'], current_sha)
     jobs = api.pages(f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
     checks = api.pages(f"/check-suites/{run['check_suite_id']}/check-runs", 'check_runs')
     jobs_and_checks(run, jobs, checks, proof['jobs'], {'repository': policy['repository'], 'actions_app': {'id': 15368, 'slug': 'github-actions'}})
-    value, _ = api.artifact(run, 'dcim-agent-result-attempt-' + str(run['run_attempt']))
+    # The immutable artifact must match the policy of its ORIGINAL execution.
+    # Current revocations/authority were checked separately above.
+    evidence_api = copy(api)
+    evidence_api.policy = historical_policy
+    value, _ = evidence_api.artifact(run, 'dcim-agent-result-attempt-' + str(run['run_attempt']))
     require(value.get('source_sha') == sha and value.get('run_id') == run['id']
-            and value.get('attempt') == run['run_attempt'] and value.get('policy_digest') == digest(policy),
+            and value.get('attempt') == run['run_attempt'] and value.get('policy_digest') == digest(historical_policy),
             'result execution/policy binding mismatch')
     require(value.get('provider') == provider and value.get('mode') == 'review'
             and value.get('result') in {'SUCCESS', 'FAILED', 'BLOCKED'}, 'invalid provider result contract')
@@ -172,7 +181,7 @@ def authenticated_execution(api, proof, policy, provider, now, task=None, delive
 
 
 def choose(api, policy, task, now):
-    for name in ('claude', 'opencode', 'codex', 'copilot'):
+    for name in ('opencode', 'claude', 'codex', 'copilot'):
         info = policy['providers'][name]
         if not info['enabled'] or not info['identity'] or not info['command'] \
                 or name == task['implementer'] or task['attempts'].get(name, 0) >= policy['max_attempts']:
@@ -192,13 +201,51 @@ def choose(api, policy, task, now):
     return None
 
 
+def execution_result(api, policy, task, now):
+    delivery = task['deliveries'][-1] if task['deliveries'] else None
+    if not delivery or delivery['status'] != 'DELIVERED':
+        return None
+    proof = policy['providers'].get(delivery['provider'], {}).get('proof')
+    if not isinstance(proof, dict):
+        return None  # Revoked/missing enrollment never authorizes a result.
+    runs = api.pages('/actions/workflows/' + str(proof['workflow_id']) + '/runs?event=issue_comment', 'workflow_runs')
+    for run in sorted(runs, key=lambda r: r['id'], reverse=True)[:20]:
+        if run.get('status') != 'completed':
+            continue
+        try:
+            result = authenticated_execution(api, dict(proof, run_id=run['id']), policy,
+                                             delivery['provider'], now, task, delivery)
+        except Rejected:
+            continue
+        return result, run['id']
+    return None
+
+
+def execution_summary(result):
+    # Bound durable state size independently of provider artifact size.
+    fields = ('binding', 'task_id', 'delivery_id', 'source', 'source_sha', 'run_id',
+              'attempt', 'policy_digest', 'provider_comment_id', 'provider_review_id', 'native_review_id')
+    return dict({k: result[k] for k in fields if k in result}, evidence_digest=digest(result))
+
+
 def reconcile(api, store, policy, state, blob, task_id, now):
     state = deepcopy(state)
     task = state['tasks'][task_id]
     if task['state'] in TERMINAL:
         return state, blob
-    current = binding(api.request('/pulls/' + str(task['binding']['pr'])), policy)
+    try:
+        current = binding(api.request('/pulls/' + str(task['binding']['pr'])), policy)
+    except Rejected:
+        audit(task, 'BLOCKED', 'PR unavailable or no longer eligible', now)
+        return store.save(state, blob)
     if current != task['binding']:
+        # A main advance must not erase a valid completed execution. Preserve its
+        # original exact binding, but NEVER accept it for the new HEAD/base.
+        observed = execution_result(api, policy, task, now)
+        if observed:
+            result, run_id = observed
+            task['deliveries'][-1].update(status='COMPLETED', result=result['result'],
+                                         run_id=run_id, execution_evidence=execution_summary(result))
         audit(task, 'BLOCKED', 'HEAD/base changed; new owner-bound task required', now)
         return store.save(state, blob)
     roots = api.pages('/issues/' + str(current['pr']) + '/comments')
@@ -222,19 +269,11 @@ def reconcile(api, store, policy, state, blob, task_id, now):
             audit(task, 'INDEPENDENT_REVIEW', 'recovered authenticated delivery', now)
             return store.save(state, blob)
         if delivery['status'] == 'DELIVERED':
-            # Search real native executions; match their sealed per-delivery artifact.
-            info = policy['providers'][delivery['provider']]
-            proof = info['proof']
-            runs = api.pages('/actions/workflows/' + str(proof['workflow_id']) + '/runs?event=issue_comment', 'workflow_runs')
-            for run in sorted(runs, key=lambda r: r['id'], reverse=True)[:20]:
-                if run.get('status') != 'completed':
-                    continue
-                candidate = dict(proof, run_id=run['id'])
-                try:
-                    result = authenticated_execution(api, candidate, policy, delivery['provider'], now, task, delivery)
-                except Rejected:
-                    continue
-                delivery.update(status='COMPLETED', result=result['result'], run_id=run['id'])
+            observed = execution_result(api, policy, task, now)
+            if observed:
+                result, run_id = observed
+                delivery.update(status='COMPLETED', result=result['result'], run_id=run_id,
+                                execution_evidence=execution_summary(result))
                 if result['result'] == 'SUCCESS':
                     try:
                         # Live collector verifies exact current review, CI, signatures,
@@ -288,8 +327,10 @@ def ingest_pending(api, store, policy, state, blob, now):
         require(re.fullmatch(r'[1-9][0-9]*', number), 'invalid enrolled PR')
         comments = api.pages('/issues/' + number + '/comments')
         for comment in sorted(comments, key=lambda item: item['id']):
-            match = re.fullmatch(r'/collaborate ([1-9][0-9]*)', comment.get('body', ''))
-            if not match or not owner_comment(comment, policy):
+            if not owner_comment(comment, policy) or not isinstance(comment.get('body'), str):
+                continue
+            match = re.fullmatch(r'/collaborate ([1-9][0-9]*)', comment['body'])
+            if not match:
                 continue
             task_id = f'pr-{number}-root-{int(match[1])}'
             if task_id in state['tasks']:
@@ -318,7 +359,7 @@ def main():
     sha = os.environ.get('GITHUB_WORKFLOW_SHA')
     require(api.request('/branches/' + policy['default_branch'])['commit']['sha'] == sha, 'stale controller revision')
     signed(api.request('/commits/' + sha))
-    for path in (POLICY, WORKFLOW, SCRIPT, '.github/scripts/acceptance_api.py', '.github/scripts/acceptance_core.py', '.github/scripts/acceptance_gate.py', '.github/scripts/agent_authority.py', '.github/acceptance/policy.json'):
+    for path in (POLICY, WORKFLOW, SCRIPT, '.github/scripts/orchestration_provenance.py', '.github/scripts/acceptance_api.py', '.github/scripts/acceptance_core.py', '.github/scripts/acceptance_gate.py', '.github/scripts/agent_authority.py', '.github/acceptance/policy.json'):
         api.trusted_file(path, sha)
     require(policy['issuer'] and all(p['identity'] is None or p['identity']['id'] != policy['owner']['id'] for p in policy['providers'].values()), 'issuer/provider configuration incomplete')
     now = int(datetime.now(timezone.utc).timestamp())

@@ -99,19 +99,67 @@ It records `native_review_id` alongside the authenticated `provider_comment_id`;
 it never interprets review prose as acceptance. Ordinary owner reviews are
 unaffected. This adapter has unit coverage but has not run live.
 
-Claude progress comments do not emit the full sealed delivery/result contract.
-They must not be wrapped by copying prose into an artifact. A trusted Claude
-adapter must bind the native command event and execution before sealing.
+The separate inactive `agent-claude.yml` and `orchestration_claude_adapter.py`
+implement native Claude review delivery with fresh `/dcim-claude review` commands.
+The secret-free preflight authenticates the source App, actor, original comment,
+same-PR owner root and exact binding, then consumes the shared atomic root budget.
+Only that pinned issuer login reaches the official action's `allowed_bots` input;
+no wildcard is used. Claude reads prepared inert patches through the exclusive
+Read guard. Its SessionStart hook removes persisted Git credentials and posts a
+fixed witness using the native Claude App token. A separate job verifies source
+jobs/checks, witness timing, structured output and exact task/delivery before
+posting findings and sealing the result. Neither verdict text nor execution
+SUCCESS grants acceptance. Ordinary progress-comment edits remain unsuitable
+for delegation. Both native adapters are implemented but unverified live.
 The controller currently stops at BLOCKED/ESCALATED where such proof is absent.
 Implementation/remediation adapters are intentionally refused by the command
 builder until their authority and publication protections have been proven;
 current native dispatch is review-only. Thus this is an implemented controller
 skeleton with durable execution and tested recovery, **not a completed autonomous
-remediation system**. The pinned official Claude action defaults to rejecting bot
-triggers; its existing workflow does not enable an authenticated bot adapter.
+remediation system**. Existing generic Claude workflows remain unchanged; the
+new authenticated adapter must pass real capability proof before activation.
 Editing a Claude progress comment cannot generate a fresh OpenCode command.
 Codex/Copilot native assignment availability and permissions
 remain to be verified. Copilot has no invented mention-command adapter.
+
+## Execution continuity and revocation
+
+An execution's source SHA and original policy digest are immutable. Advancing
+main does not replace those fields with the controller's new SHA. The continuity
+validator independently verifies the source/current commits and every commit in
+their complete ancestor range (bounded to 250, otherwise fail closed). It compares
+the historical policy's authority fields with current policy. Observation pointers
+can refresh; identities, permission flags and operational limits cannot silently
+change. Artifact verification uses the original authenticated policy.
+
+A complete recursive manifest covers `.github/`, `tooling/opencode/` and
+`tests/deployment/`; only the separately authenticated collaboration policy is
+excluded. Benign main advances outside that boundary preserve evidence. Runtime
+or security-test changes require an explicit reviewed current-policy
+`execution_provenance.approved_manifests[SOURCE_SHA]` equal to the canonical digest
+of the original manifest. `revoked_revisions` always wins over such an approval.
+No revision or manifest has been approved by this change. Authority changes always
+require fresh proof even with a manifest approval. Unknown ancestry, incomplete
+trees, symlinks, unsigned lineage and mismatched artifact/run attempts fail closed.
+
+Both adapters can seal the captured old base after a base-only advance, provided
+the HEAD and original command remain unchanged and continuity policy allows it.
+The controller preserves that execution's original binding and digest, then marks
+the task BLOCKED when its live HEAD/base differs. It never accepts stale review
+evidence for a changed task. A new owner-bound task/current review is required.
+
+## Claude finding dispositions
+
+1. Unrelated comments have an ignored workflow title; completed skipped review
+   runs cannot supersede a review. Applicable newer BLOCK, failed, cancelled or
+   pending runs still prevent fallback. Source/check/App authentication remains
+   mandatory after candidate selection; titles alone grant no authority.
+2. Recovery authenticates issuer candidates before matching uniqueness. Spoofed
+   copies are ignored; conflicting genuine deliveries escalate only their task.
+   Regression tests demonstrate a second independent root continues processing.
+3. Original signed execution provenance survives benign main advancement under
+   the continuity/revocation policy above. Changed task bindings still block
+   acceptance. These fixes have offline tests; no live handoff is inferred.
 
 ## Activation boundary
 
