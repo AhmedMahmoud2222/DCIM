@@ -350,12 +350,12 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertIn('${OPENCODE_VERSION}', step['run'])
         self.assertNotRegex(self.text, r'curl[^\n]*\|\s*(ba)?sh')
         lock = json.loads((ROOT / '.github/opencode/runtime/package-lock.json').read_text())
-        self.assertEqual(lock['packages']['node_modules/opencode-ai']['version'], '1.19.3')
+        self.assertEqual(lock['packages']['node_modules/@opencode/cli']['version'], '2.1.4')
         for name, meta in lock['packages'].items():
             if name:
                 self.assertRegex(meta['integrity'], r'^sha512-')
         manifest = json.loads((ROOT / '.github/opencode/runtime/package.json').read_text())
-        self.assertEqual(manifest['dependencies'], {'opencode-ai': '1.19.3'})   # exact, no range
+        self.assertEqual(manifest['dependencies'], {'@opencode/cli': '2.1.4'})   # exact, no range
 
     def test_gate_exports_the_trusted_base_for_review_binding(self):
         self.assertIn('base_sha', self.jobs['gate']['outputs'])

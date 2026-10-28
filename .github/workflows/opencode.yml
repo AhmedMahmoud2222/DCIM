@@ -20,7 +20,7 @@ on:
 permissions: {}
 
 env:
-  OPENCODE_VERSION: '1.19.3'
+  OPENCODE_VERSION: '2.1.4'
 
 jobs:
   gate:
@@ -118,8 +118,8 @@ jobs:
           set -euo pipefail
           # npm verifies every tarball against the committed lockfile's sha512 integrity values.
           (cd trusted/.github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
-          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode /opt/opencode/bin/opencode
-          test "$(/opt/opencode/bin/opencode --version)" = "${OPENCODE_VERSION}"
+          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/@opencode/cli-linux-x64/bin/opencode /opt/opencode/bin/opencode
+          test "$(/opt/opencode/bin/opencode --version)" = "opencode v${OPENCODE_VERSION}"
       - name: Create isolated agent user and verify its filesystem view
         run: |
           set -euo pipefail
@@ -156,7 +156,7 @@ jobs:
           # router's model: it refuses to start for an ineligible model and rejects every other model.
           python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json &
           proxy_pid=$!
-          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then rejected="$(grep -c rejected "${OPENCODE_PROXY_LOG}" || true)"; if [[ "${rejected}" -gt 0 ]]; then echo "::warning::proxy rejected ${rejected} request(s)"; fi; fi' EXIT
+          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then rejected="$(grep -cE ^..rejected.: "${OPENCODE_PROXY_LOG}" || true)"; if [[ "${rejected}" -gt 0 ]]; then echo "::warning::proxy rejected ${rejected} request(s)"; fi; fi' EXIT
           for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
           port="$(cat "${RUNNER_TEMP}/proxy.port")"
           unset OPENCODE_API_KEY
@@ -222,8 +222,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd trusted/.github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
-          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode /opt/opencode/bin/opencode
-          test "$(/opt/opencode/bin/opencode --version)" = "${OPENCODE_VERSION}"
+          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/@opencode/cli-linux-x64/bin/opencode /opt/opencode/bin/opencode
+          test "$(/opt/opencode/bin/opencode --version)" = "opencode v${OPENCODE_VERSION}"
       - name: Create isolated read-only probe sandbox
         run: |
           set -euo pipefail
@@ -330,8 +330,8 @@ jobs:
           set -euo pipefail
           # npm verifies every tarball against the committed lockfile's sha512 integrity values.
           (cd trusted/.github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
-          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode /opt/opencode/bin/opencode
-          test "$(/opt/opencode/bin/opencode --version)" = "${OPENCODE_VERSION}"
+          sudo install -D -m 755 trusted/.github/opencode/runtime/node_modules/@opencode/cli-linux-x64/bin/opencode /opt/opencode/bin/opencode
+          test "$(/opt/opencode/bin/opencode --version)" = "opencode v${OPENCODE_VERSION}"
       - name: Create isolated agent user and root-controlled read-only source
         id: layout
         if: steps.pick.outputs.review_blocked == 'false'
@@ -371,7 +371,7 @@ jobs:
           # The reviewer's proxy is bound to the reviewer model and refuses every model that implemented here.
           python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json "${RUNNER_TEMP}/review/implementers.json" &
           proxy_pid=$!
-          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then rejected="$(grep -c rejected "${OPENCODE_PROXY_LOG}" || true)"; if [[ "${rejected}" -gt 0 ]]; then echo "::warning::proxy rejected ${rejected} request(s)"; fi; fi' EXIT
+          trap 'kill "${proxy_pid}" 2>/dev/null || true; if [[ -s "${OPENCODE_PROXY_LOG}" ]]; then rejected="$(grep -cE ^..rejected.: "${OPENCODE_PROXY_LOG}" || true)"; if [[ "${rejected}" -gt 0 ]]; then echo "::warning::proxy rejected ${rejected} request(s)"; fi; fi' EXIT
           for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
           port="$(cat "${RUNNER_TEMP}/proxy.port")"
           unset OPENCODE_API_KEY

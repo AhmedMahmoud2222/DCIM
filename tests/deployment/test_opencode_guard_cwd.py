@@ -20,8 +20,8 @@ class GuardWorkingDirectoryTests(unittest.TestCase):
             config = Path(tmp) / 'config.json'
             config.write_text('{}', encoding='utf-8')
             result = Path(tmp) / 'result.json'
-            completed = types.SimpleNamespace(stdout='', stderr='', returncode=1)
-            with patch.object(guard.subprocess, 'run', return_value=completed) as run, \
+            process = types.SimpleNamespace(returncode=1, communicate=lambda timeout=None: ('', ''))
+            with patch.object(guard.subprocess, 'Popen', return_value=process) as popen, \
                     patch.object(guard, 'reap_agent_processes', return_value=''):
                 exit_code = guard.main([
                     'opencode_guard.py', str(result), 'model', str(config),
@@ -29,8 +29,10 @@ class GuardWorkingDirectoryTests(unittest.TestCase):
                 ])
 
             self.assertEqual(exit_code, 1)
-            self.assertEqual(run.call_args.kwargs['cwd'], workdir)
-            self.assertNotEqual(run.call_args.kwargs['cwd'], str(Path.cwd()))
+            self.assertEqual(popen.call_args.kwargs['cwd'], workdir)
+            self.assertNotEqual(popen.call_args.kwargs['cwd'], str(Path.cwd()))
+            # v2 has no --dir flag: the work tree is selected by cwd (checked above) and by $PWD
+            self.assertIn(f'PWD={workdir}', popen.call_args.args[0])
 
 
 if __name__ == '__main__':

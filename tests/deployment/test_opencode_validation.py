@@ -136,7 +136,7 @@ class CiGateTests(unittest.TestCase):
 class InventoryTests(unittest.TestCase):
     def test_every_mutant_targets_production_code_and_applies_exactly_once(self):
         entries = mutants.inventory()
-        self.assertEqual(len(entries), 84)                 # changing the inventory size needs review
+        self.assertEqual(len(entries), 92)                 # changing the inventory size needs review
         for ident, (_, _, rel, old, new) in entries.items():
             self.assertTrue(rel.startswith('.github/scripts/opencode_'), ident)
             self.assertEqual((ROOT / rel).read_text().count(old), 1, ident)
@@ -217,7 +217,7 @@ class AggregateTests(unittest.TestCase):
     def test_all_caught_with_one_identity_passes(self):
         summary = mutants.aggregate(self.control, self.results)
         self.assertTrue(summary['passed'], summary['problems'])
-        self.assertEqual(summary['counts']['CAUGHT'], 84)
+        self.assertEqual(summary["counts"]["CAUGHT"], 92)
 
     def test_missing_duplicate_extra_malformed_mixed_or_uncaught_results_fail(self):
         def broken(change):
