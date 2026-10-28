@@ -519,6 +519,53 @@ class PreflightTests(unittest.TestCase):
         source = inspect.getsource(smoke._run_cli)
         self.assertIn('stdin=subprocess.DEVNULL', source)
 
+    @unittest.skipIf(os.name != 'posix',
+                     '_phase_timings seal logic is POSIX-only')
+    def test_non_dict_json_output_is_rejected_with_unparseable_output(self):
+        # Non-dict JSON (array, null, number, string) parses as valid JSON but
+        # has no .get() method. _phase_timings must skip it without crashing,
+        # and evaluate() must already have classified it as unparseable_output.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_dir = Path(tmp) / 'stubdir'
+            stub_dir.mkdir()
+            stub = stub_dir / 'opencode'
+            stub.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "--version" ]; then\n'
+                '  echo "1.19.3"\n'
+                '  exit 0\n'
+                'fi\n'
+                'printf "[]\\n"\n'
+                'exit 1\n',
+                encoding='utf-8')
+            stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                       | stat.S_IXOTH)
+            result = os.path.join(tmp, 'result.json')
+            agent_home = os.path.join(tmp, 'home')
+            workdir = os.path.join(tmp, 'work')
+            os.makedirs(agent_home)
+            os.makedirs(workdir)
+            environment = dict(os.environ)
+            environment.pop('OPENCODE_API_KEY', None)
+            environment['OPENCODE_API_KEY'] = 'synthetic-test-key'
+            environment['OPENCODE_SMOKE_ACCOUNT_HOME'] = agent_home
+            completed = subprocess.run(
+                [sys.executable,
+                 str(ROOT / '.github/scripts/opencode_native_smoke.py'),
+                 result, str(stub), agent_home, workdir, '2'],
+                env=environment, capture_output=True, text=True,
+                timeout=300)
+            record = None
+            if os.path.exists(result):
+                with open(result, encoding='utf-8') as handle:
+                    record = json.load(handle)
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertEqual(record['status'], 'failed')
+            self.assertEqual(record['reason'], 'unparseable_output')
+            self.assertEqual(record['error_class'], None)
+            self.assertEqual(record['error_status_code'], None)
+            self.assertEqual(set(record), smoke.RESULT_KEYS)
+
 
 # ---------------------------------------------------------------------------
 # Workflow YAML policy tests

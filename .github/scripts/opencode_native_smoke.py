@@ -555,6 +555,8 @@ def _phase_timings(lines: list[str], started_wall_ms: int,
             event = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(event, dict):
+            continue
         timestamp = event.get('timestamp')
         if isinstance(timestamp, bool) or not isinstance(timestamp, int):
             continue
