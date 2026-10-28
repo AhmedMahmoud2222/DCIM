@@ -87,7 +87,7 @@ describe("PowerAnalyticsPage", () => {
     first.unmount();
     vi.mocked(api.getRollup).mockRejectedValue(new ApiError(403, "Forbidden", "Permission denied", null));
     render();
-    expect(await screen.findByRole("alert")).toHaveTextContent("Permission denied");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access restricted: Permission denied");
   });
 
   it("changes breaker state with the current version and refreshes", async () => {
@@ -187,5 +187,18 @@ describe("PowerAnalyticsPage", () => {
     expect(screen.getByRole("tablist", { name: "Power analytics views" })).toBeInTheDocument();
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "tab-capacity");
+  });
+});
+
+describe("PowerAnalyticsPage without power:read", () => {
+  it("explains the restriction instead of loading, and requests nothing", () => {
+    const noRead = { ...MANAGER, role_names: ["Viewer"], permission_codes: ["power:manage"] };
+    render(noRead);
+
+    expect(screen.getByRole("heading", { name: "Access restricted" })).toBeInTheDocument();
+    expect(screen.getByText("power:read")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(accessApi.listAllSites).not.toHaveBeenCalled();
+    expect(api.getRollup).not.toHaveBeenCalled();
   });
 });

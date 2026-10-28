@@ -1,7 +1,8 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError } from "@/lib/apiClient";
+import { APP_TITLE } from "@/lib/appTitle";
 
 import { useAuth } from "./useAuth";
 
@@ -12,6 +13,14 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // The public sign-in page names itself, and gives the title back when it goes away.
+  useEffect(() => {
+    document.title = `Sign in · ${APP_TITLE}`;
+    return () => {
+      document.title = APP_TITLE;
+    };
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
