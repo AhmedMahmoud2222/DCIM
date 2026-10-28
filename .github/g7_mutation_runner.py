@@ -46,26 +46,37 @@ MUTATIONS = {
 }
 
 SETUP_ERROR_MARKERS = (
-    "ERROR collecting",
-    "errors during collection",
-    "ImportError",
-    "ModuleNotFoundError",
-    "OperationalError",
-    "ProgrammingError",
-    "sqlalchemy.exc",
-    "connection refused",
-    "fixture",
+    re.compile(r"(?im)^\s*(?:ERROR collecting\b|errors? during collection\b)"),
+    re.compile(r"(?im)^\s*ERROR at setup of\b"),
+    re.compile(r"(?im)^\s*ERROR\s+\S+::"),
+    re.compile(r"(?im)^\s*(?:E\s+)?fixture ['\"].+?['\"] not found\b"),
+    re.compile(r"(?i)\b(?:ImportError|ModuleNotFoundError)\b"),
+    re.compile(r"(?i)\b(?:OperationalError|ProgrammingError)\b"),
+    re.compile(r"(?i)\bsqlalchemy\.exc\.[A-Za-z_]+"),
+    re.compile(r"(?i)\b(?:psycopg2?\.(?:OperationalError|InterfaceError)|asyncpg\.exceptions\.[A-Za-z_]*Connection[A-Za-z_]*Error)\b"),
+    re.compile(r"(?i)\b(?:connection refused|could not connect to (?:server|database)|server closed the connection unexpectedly)\b"),
+    re.compile(r"(?i)\b(?:TimeoutExpired|TIMEOUT after|timed out)\b"),
+    re.compile(r"(?i)\bINTERNALERROR\b"),
+    re.compile(r"(?i)\b(?:PluginValidationError|PluginRegistrationError)\b"),
 )
 
 
 PYTEST_TIMEOUT_SECONDS = 300
-FAILED_LINE = re.compile(r"^FAILED " + re.escape(TEST) + r"::", re.MULTILINE)
+ASSERTION_FAILURE_LINE = re.compile(
+    r"^FAILED " + re.escape(TEST) + r"::\S+\s+-\s+AssertionError\b", re.MULTILINE
+)
+ASSERTION_TRACEBACK = re.compile(r"(?m)^E\s+AssertionError(?::|\b)")
 
 
 def run(cmd: list[str], cwd: pathlib.Path) -> tuple[int, str]:
     try:
         proc = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True, timeout=PYTEST_TIMEOUT_SECONDS
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=PYTEST_TIMEOUT_SECONDS,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         return 124, f"TIMEOUT after {exc.timeout}s"
@@ -75,16 +86,19 @@ def run(cmd: list[str], cwd: pathlib.Path) -> tuple[int, str]:
 def is_assertion_failure(code: int, output: str) -> bool:
     """True only when pytest ran the parity test and it failed an assertion.
 
-    Requires exit 1 (tests failed, not interrupted/internal/usage error), no
-    INTERNALERROR, no setup/infrastructure marker, a FAILED line naming the
-    parity test, and an AssertionError in the output.
+    Requires pytest's failed-test summary and traceback to identify an
+    AssertionError in the expected parity test. Targeted collection, fixture,
+    dependency, database, timeout, and internal-error evidence invalidates the
+    experiment. Warnings mentioning fixture configuration are not errors.
     """
-    if code != 1 or "INTERNALERROR" in output:
+    if code != 1:
         return False
-    lowered = output.lower()
-    if any(marker.lower() in lowered for marker in SETUP_ERROR_MARKERS):
+    if any(marker.search(output) for marker in SETUP_ERROR_MARKERS):
         return False
-    return bool(FAILED_LINE.search(output)) and "AssertionError" in output
+    return bool(
+        ASSERTION_FAILURE_LINE.search(output)
+        and ASSERTION_TRACEBACK.search(output)
+    )
 
 
 def main() -> int:
