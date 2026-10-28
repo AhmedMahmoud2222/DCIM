@@ -144,22 +144,21 @@ async def test_publish_racing_a_draft_outlet_replacement_never_yields_a_mixed_pu
     publish = _request("POST", f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
     patch_resp, publish_resp = await asyncio.gather(patch, publish)
 
-    assert publish_resp.status_code in (200, 409), publish_resp.text
+    # Both specs are valid, so publication must succeed under either interleaving (patch first -> publish sees 4 outlets;
+    # publish first -> the patch is rejected with 409 and the 2 outlets remain). A 409 on publish is never acceptable.
+    assert publish_resp.status_code == 200, publish_resp.text
     assert patch_resp.status_code in (200, 409), patch_resp.text
-    # The only forbidden outcome is a published revision whose outlets were changed after (or during) publication.
-    # Publish first -> the patch must be rejected and 2 outlets remain; patch first -> publish sees the 4.
     outlets = await _count(
         db_session, "SELECT count(*) FROM pdu_outlet_template WHERE catalog_model_revision_id = :r", r=revision["id"]
     )
     status = (await db_session.execute(
         text("SELECT lifecycle_status FROM catalog_model_revision WHERE id = :r"), {"r": revision["id"]}
     )).scalar_one()
+    assert status == "published", f"revision must end published, got {status!r}"
     if patch_resp.status_code == 200:
-        assert outlets == 4
+        assert outlets == 4, "patch committed before publish: the published revision must carry all 4 outlets"
     else:
-        assert outlets == 2 and patch_resp.status_code == 409 and status == "published"
-    assert status in ("draft", "published")
-    assert (status == "published") == (publish_resp.status_code == 200)
+        assert outlets == 2, "patch rejected after publish: the published revision must keep its original 2 outlets"
 
 
 async def test_concurrent_instantiate_with_one_idempotency_key_creates_one_pdu_graph(
