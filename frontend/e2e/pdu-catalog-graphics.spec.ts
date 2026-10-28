@@ -93,7 +93,8 @@ test.describe("Issue #150: PDU front/rear graphics and markers", () => {
     for (const [panel, label] of [[front, "Outlet 1"], [rear, "Outlet 2"]] as const) {
       await panel.getByRole("button", { name: "+ Other" }).click();
       await panel.getByTestId("graphic-canvas").click({ position: { x: 40, y: 20 } });
-      await panel.getByRole("textbox", { name: "Marker label" }).fill(label);
+      // With outlet-label suggestions the input carries a `list` (datalist), so its ARIA role is combobox, not textbox.
+      await panel.getByRole("combobox", { name: "Marker label" }).fill(label);
       await panel.getByRole("button", { name: "Place marker" }).click();
       await expect(panel.getByRole("button", { name: new RegExp(`Other marker, ${label}`) })).toBeVisible();
     }

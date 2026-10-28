@@ -80,11 +80,12 @@ async def _make_pdu_revision(headers: dict, *, publish: bool, outlets: int = 2) 
         },
     )
     assert patched.status_code == 200, patched.text
-    revision = patched.json()
+    # PATCH /pdu returns PDUDraftOut (keyed `revision_id`, no `id`/`version`); keep the original revision dict as the handle.
+    assert patched.json()["revision_id"] == revision["id"]
+    revision["version"] += 1  # lock_draft_revision_for_edit bumps the version; a later If-Match must use the new value
     if publish:
         published = await _request("POST", f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
         assert published.status_code == 200, published.text
-        revision = published.json()
     return revision
 
 
