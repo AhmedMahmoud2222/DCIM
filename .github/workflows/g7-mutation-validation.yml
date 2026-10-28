@@ -1,5 +1,8 @@
 name: G7 mutation validation
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -51,11 +54,13 @@ jobs:
         with:
           ref: ${{ env.EXPECTED_SHA }}
           path: runner
+          persist-credentials: false
       - name: Checkout exact G7 baseline
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.EXPECTED_SHA }}
           path: baseline
+          persist-credentials: false
       - name: Record and assert tested SHA
         shell: bash
         run: |

@@ -30,8 +30,22 @@ class G7WorkflowShaSelectionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = WORKFLOW.read_text(encoding="utf-8")
-        cls.job = yaml.safe_load(cls.text)["jobs"]["g7-mutation"]
+        cls.workflow = yaml.safe_load(cls.text)
+        cls.job = cls.workflow["jobs"]["g7-mutation"]
         cls.expected = cls.job["env"]["EXPECTED_SHA"]
+
+    def test_workflow_token_permissions_are_read_only(self) -> None:
+        self.assertEqual(self.workflow.get("permissions"), {"contents": "read"})
+
+    def test_both_checkouts_disable_credential_persistence(self) -> None:
+        checkouts = [
+            step for step in self.job["steps"]
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        ]
+        self.assertEqual(len(checkouts), 2)
+        for step in checkouts:
+            with self.subTest(step=step.get("name")):
+                self.assertIs(step["with"].get("persist-credentials"), False)
 
     def test_pull_request_uses_pr_head_not_merge_sha(self) -> None:
         pr_sha, dispatch_sha = "a" * 40, "b" * 40
