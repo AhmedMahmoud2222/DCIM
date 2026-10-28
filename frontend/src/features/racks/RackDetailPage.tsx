@@ -6,15 +6,7 @@ import { getEquipmentPowerSummary } from "@/features/power/api";
 import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/features/racks/api";
 import { RackElevationView } from "@/features/racks/RackElevationView";
 import { ApiError } from "@/lib/apiClient";
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
-};
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function RackDetailPage() {
   const { rackId } = useParams<{ rackId: string }>();
@@ -80,9 +72,7 @@ export function RackDetailPage() {
           <h1 className="text-lg font-semibold">{rack.name}</h1>
           <p className="font-mono text-sm text-slate-400">{rack.asset_tag}</p>
         </div>
-        <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[rack.lifecycle_status] ?? "bg-slate-700"}`}>
-          {rack.lifecycle_status}
-        </span>
+        <LifecycleStatus value={rack.lifecycle_status} />
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-6">

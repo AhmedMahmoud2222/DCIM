@@ -99,7 +99,7 @@ async function buildHierarchyThroughUi(page: Page): Promise<HierarchyNames> {
     roomName: `E2E Room ${suffix}`,
   };
 
-  await page.getByRole("link", { name: "Locations", exact: true }).click();
+  await page.getByRole("link", { name: "Location Hierarchy", exact: true }).click();
   await expect(page).toHaveURL("/locations");
   await expect(page.getByRole("heading", { name: "Location Administration" })).toBeVisible();
 
