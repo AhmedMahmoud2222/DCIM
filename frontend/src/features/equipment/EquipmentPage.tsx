@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { DataTable, EmptyRow, RowCount, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
@@ -11,15 +12,7 @@ import {
   listEquipment,
 } from "@/features/equipment/api";
 import { listRacks } from "@/features/racks/api";
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
-};
+import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function EquipmentPage() {
   const queryClient = useQueryClient();
@@ -59,9 +52,9 @@ export function EquipmentPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">Equipment</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link
             to="/equipment/instantiate"
             className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
@@ -135,58 +128,58 @@ export function EquipmentPage() {
         </form>
       )}
 
-      {equipmentQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-      {equipmentQuery.error && <p className="text-sm text-red-400">{(equipmentQuery.error as Error).message}</p>}
+      {equipmentQuery.isLoading && <TableLoading label="equipment" columns={4} />}
+      {equipmentQuery.error && (
+        <TableError error={equipmentQuery.error} what="the equipment list" permission="equipment:read" onRetry={() => equipmentQuery.refetch()} />
+      )}
 
       {equipmentQuery.data && (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-slate-800 text-left text-slate-400">
-              <th className="pb-2">Hostname</th>
-              <th className="pb-2">Asset Tag</th>
-              <th className="pb-2">Status</th>
-              <th className="pb-2">Placement</th>
-            </tr>
-          </thead>
-          <tbody>
-            {equipmentQuery.data.items.map((eq) => (
-              <tr key={eq.id} className="border-b border-slate-900 hover:bg-slate-900/50">
-                <td className="py-2">
-                  <Link to={`/equipment/${eq.id}`} className="font-medium text-blue-400 hover:underline">
-                    {eq.hostname ?? eq.asset_tag}
-                  </Link>
-                </td>
-                <td className="py-2 font-mono text-slate-300">{eq.asset_tag}</td>
-                <td className="py-2">
-                  <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[eq.lifecycle_status] ?? "bg-slate-700"}`}>
-                    {eq.lifecycle_status}
-                  </span>
-                </td>
-                <td className="py-2 text-slate-400">
-                  {eq.placement ? (
-                    eq.placement.placement_type === "rack_mounted" ? (
-                      <>
-                        {racksQuery.data?.items.find((r) => r.id === eq.placement!.rack_id)?.name ?? eq.placement.rack_id} — U
-                        {eq.placement.u_start}-{eq.placement.u_end} ({eq.placement.side})
-                      </>
+        <>
+          <RowCount shown={equipmentQuery.data.items.length} total={equipmentQuery.data.total} noun="equipment" />
+          <DataTable label="Equipment">
+            <thead>
+              <tr className="border-b border-line-subtle bg-surface-panel">
+                <th scope="col" className={TH}>Hostname</th>
+                <th scope="col" className={TH}>Asset Tag</th>
+                <th scope="col" className={TH}>Status</th>
+                <th scope="col" className={TH}>Placement</th>
+              </tr>
+            </thead>
+            <tbody>
+              {equipmentQuery.data.items.map((eq) => (
+                <tr key={eq.id} className={TR}>
+                  <td className={TD}>
+                    <Link to={`/equipment/${eq.id}`} className="font-medium text-link hover:underline">
+                      {eq.hostname ?? eq.asset_tag}
+                    </Link>
+                  </td>
+                  <td className={`${TD} font-mono text-fg-secondary`}>{eq.asset_tag}</td>
+                  <td className={TD}>
+                    <LifecycleStatus value={eq.lifecycle_status} />
+                  </td>
+                  <td className={`${TD} text-fg-secondary`}>
+                    {eq.placement ? (
+                      eq.placement.placement_type === "rack_mounted" ? (
+                        <>
+                          {racksQuery.data?.items.find((r) => r.id === eq.placement!.rack_id)?.name ?? eq.placement.rack_id} —{" "}
+                          <span className="whitespace-nowrap tabular-nums text-fg-primary">
+                            U{eq.placement.u_start}-{eq.placement.u_end}
+                          </span>{" "}
+                          ({eq.placement.side})
+                        </>
+                      ) : (
+                        eq.placement.placement_type
+                      )
                     ) : (
-                      eq.placement.placement_type
-                    )
-                  ) : (
-                    <span className="italic text-slate-600">unplaced</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {equipmentQuery.data.items.length === 0 && (
-              <tr>
-                <td colSpan={4} className="py-6 text-center text-slate-500">
-                  No equipment yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                      <span className="italic">unplaced</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {equipmentQuery.data.items.length === 0 && <EmptyRow columns={4}>No equipment yet.</EmptyRow>}
+            </tbody>
+          </DataTable>
+        </>
       )}
     </div>
   );

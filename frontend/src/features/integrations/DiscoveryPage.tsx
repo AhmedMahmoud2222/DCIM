@@ -1,3 +1,6 @@
+import { DataTable, EmptyRow, TD, TH, TR } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 
@@ -38,15 +41,15 @@ export function DiscoveryPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Discovery &amp; Reconciliation</h1>
-      <p className="mb-6 max-w-2xl text-sm text-slate-400">
-        Devices a collector observes but does not yet correspond to authoritative inventory. Discovery never creates or
-        modifies inventory itself — a human decides whether a discovered device matches an existing asset (Phase 8 §7).
-      </p>
+      <PageHeader
+        title="Discovery &amp; Reconciliation"
+        description="Devices a collector observes but does not yet correspond to authoritative inventory. Discovery never creates or modifies inventory itself — a human decides whether a discovered device matches an existing asset (Phase 8 §7)."
+      />
 
-      <div className="grid grid-cols-2 gap-6">
-        <div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="min-w-0">
           <h2 className="mb-2 text-sm font-semibold text-slate-300">Pending Reconciliation</h2>
+          <QueryStatus query={diffsQuery} what="pending reconciliations" permission="discovery:read" columns={2} />
           <div className="space-y-2">
             {diffsQuery.data?.map((diff) => {
               const device = devicesById.get(diff.discovered_device_id);
@@ -94,41 +97,39 @@ export function DiscoveryPage() {
                 </div>
               );
             })}
-            {diffsQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">Nothing pending reconciliation.</p>}
+            {diffsQuery.data?.length === 0 && <p className="text-xs italic text-fg-secondary">Nothing pending reconciliation.</p>}
           </div>
         </div>
 
-        <div>
+        <div className="min-w-0">
           <h2 className="mb-2 text-sm font-semibold text-slate-300">All Discovered Devices</h2>
-          <div className="overflow-x-auto rounded-sm border border-slate-800 bg-slate-900">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-slate-800 text-slate-400">
-                <tr>
-                  <th className="p-2">External ID</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2">Matched asset</th>
+          <QueryStatus query={devicesQuery} what="discovered devices" permission="discovery:read" columns={3} />
+
+          {devicesQuery.data && (
+            <DataTable label="Discovered devices" dense minWidthClass="min-w-[28rem]">
+              <thead>
+                <tr className="border-b border-line-subtle bg-surface-panel">
+                  <th scope="col" className={TH}>External ID</th>
+                  <th scope="col" className={TH}>Status</th>
+                  <th scope="col" className={TH}>Matched asset</th>
                 </tr>
               </thead>
               <tbody>
                 {devicesQuery.data?.map((d) => (
-                  <tr key={d.id} className="border-b border-slate-800/50">
-                    <td className="p-2 font-mono">{d.external_identifier}</td>
-                    <td className="p-2">
+                  <tr key={d.id} className={TR}>
+                    <td className={`${TD} font-mono`}>{d.external_identifier}</td>
+                    <td className={TD}>
                       <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[d.status] ?? "bg-slate-700"}`}>{d.status}</span>
                     </td>
-                    <td className="p-2">{d.matched_managed_asset_id ?? "—"}</td>
+                    <td className={TD}>{d.matched_managed_asset_id ?? "—"}</td>
                   </tr>
                 ))}
                 {devicesQuery.data?.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="p-4 text-center italic text-slate-500">
-                      No devices discovered yet.
-                    </td>
-                  </tr>
+                  <EmptyRow columns={3}>No devices discovered yet.</EmptyRow>
                 )}
               </tbody>
-            </table>
-          </div>
+                        </DataTable>
+          )}
         </div>
       </div>
     </div>
