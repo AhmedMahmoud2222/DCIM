@@ -73,6 +73,12 @@ class Validation:
                         HEALTH_CHECK_TIMEOUT='120', LOCK_TIMEOUT='2',
                         DCIM_TEST_REPO=str(self.repo), DCIM_TEST_FAIL_ROLLBACK='0',
                         DCIM_TEST_DOCKER_DELAY_INFO='0')
+        # Migration 0057 is fail-closed in production Compose (issue #214). This disposable
+        # fixture is not a production database, so it supplies the approval a real operator
+        # would; test_unapproved_migration_blocked() proves the unapproved default still blocks.
+        self.approval = {'DCIM_APPROVE_MIGRATION_0057': 'I_ACCEPT_PRODUCTION_INDEX_BUILD',
+                         'DCIM_MIGRATION_0057_CHANGE_ID': 'DISPOSABLE-CI-FIXTURE'}
+        self.env.update(self.approval)
         self.env['PATH'] = str(self.bin)+os.pathsep+self.env['PATH']
         github = os.getenv('GITHUB_ENV')
         if github:
@@ -190,7 +196,7 @@ exec /usr/bin/docker "$@"
         path=self.repo/'docker-compose.production.yml'
         baseline=git(self.repo,'show',self.baseline+':docker-compose.production.yml')+'\n'
         if kind=='migration':
-            anchor='    command: ["alembic", "upgrade", "head"]'
+            anchor='    command: ["python", "scripts/migration_gate_0057.py"]'
             changed='    command: ["sh", "-c", "exit 67"]'
         elif kind=='bootstrap':
             anchor='    entrypoint: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap_privileged_roles.sql"]'
@@ -227,8 +233,25 @@ exec /usr/bin/docker "$@"
             for line in relevant[-3:]:
                 print(f'{service} log: {line}')
 
+    def test_unapproved_migration_blocked(self):
+        # Production default (no approval variables): the gate must exit 2 on an empty database
+        # and leave the schema untouched.
+        env={k:v for k,v in self.env.items() if k not in self.approval}
+        up=run(['docker','compose','-f','docker-compose.yml','-f','docker-compose.production.yml',
+                'up','-d','--wait','postgres'],cwd=self.repo,env=env,check=False,timeout=300)
+        assert up.returncode==0, mask(up.stderr[-600:],self.env)
+        blocked=run(['docker','compose','-f','docker-compose.yml','-f','docker-compose.production.yml',
+                     'run','--rm','--no-deps','migrate'],cwd=self.repo,env=env,check=False,timeout=600)
+        assert blocked.returncode==2 and 'BLOCKED' in blocked.stderr, \
+            (blocked.returncode, mask(blocked.stderr[-600:],self.env))
+        tables=self.compose('exec','-T','postgres','psql','-U','postgres','-d','dcim_stage','-Atc',
+                            "SELECT count(*) FROM information_schema.tables WHERE table_name='alembic_version'").stdout
+        assert tables.strip()=='0', 'blocked gate modified the schema'
+        print('PASS: production default (no approval) blocks migration 0057 with exit 2 and an unchanged schema')
+
     def test(self):
         self.setup()
+        self.test_unapproved_migration_blocked()
         first=self.deploy(self.baseline)
         assert first.returncode==0, mask(first.stderr[-800:],self.env)
         self.good=self.baseline

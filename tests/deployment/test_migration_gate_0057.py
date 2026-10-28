@@ -52,16 +52,39 @@ class GateTests(unittest.TestCase):
             self.assertEqual(gate.run(OK_ENV, lambda: [], lambda c: PENDING, lambda: 1), 1)
 
     def test_real_pending_computation(self):
-        import os
-        os.chdir(ROOT / 'backend')
-        try:
-            pending = gate.pending_revisions(['0056_pdu_vertical_placement'])
-            self.assertIn(gate.GATED_REVISION, pending)
-            self.assertNotIn('0056_pdu_vertical_placement', pending)
-            self.assertNotIn(gate.GATED_REVISION, gate.pending_revisions([gate.GATED_REVISION]))
-            self.assertIn(gate.GATED_REVISION, gate.pending_revisions([]))
-        finally:
-            os.chdir(ROOT)
+        # Reads the real revision files; needs no alembic installation.
+        self.assertEqual(gate.pending_revisions(['0056_pdu_vertical_placement']), [gate.GATED_REVISION])
+        self.assertEqual(gate.pending_revisions([gate.GATED_REVISION]), [])
+        everything = gate.pending_revisions([])
+        self.assertIn(gate.GATED_REVISION, everything)
+        self.assertGreater(len(everything), 10)
+
+    def test_unknown_or_multiple_current_fails_closed(self):
+        with self.assertRaises(gate.GateError):
+            gate.pending_revisions(['9999_unknown'])
+        with self.assertRaises(gate.GateError):
+            gate.pending_revisions(['0055_alarm_rule_resolution', '0056_pdu_vertical_placement'])
+
+    def test_multiple_heads_and_unparseable_fail_closed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            v = Path(d)
+            (v / 'a.py').write_text('revision = "a"\ndown_revision = None\n')
+            (v / 'b.py').write_text('revision = "b"\ndown_revision = "a"\n')
+            self.assertEqual(gate.pending_revisions(['a'], v), ['b'])
+            (v / 'c.py').write_text('revision = "c"\ndown_revision = "a"\n')
+            with self.assertRaises(gate.GateError):
+                gate.pending_revisions([], v)
+            (v / 'c.py').write_text('x = 1\n')
+            with self.assertRaises(gate.GateError):
+                gate.pending_revisions([], v)
+
+    def test_end_to_end_blocks_real_graph_without_approval(self):
+        calls = []
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = gate.run({}, lambda: ['0056_pdu_vertical_placement'], gate.pending_revisions,
+                          lambda: calls.append('upgrade') or 0)
+        self.assertEqual((rc, calls), (2, []))
 
 
 class ComposeWiringTests(unittest.TestCase):

@@ -16,16 +16,19 @@ is pending blocks the migration.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 GATED_REVISION = "0057_fk_indexes"
 APPROVAL_VAR = "DCIM_APPROVE_MIGRATION_0057"
 APPROVAL_VALUE = "I_ACCEPT_PRODUCTION_INDEX_BUILD"
 CHANGE_ID_VAR = "DCIM_MIGRATION_0057_CHANGE_ID"
+VERSIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "versions"
 _REV_RE = re.compile(r"^([0-9A-Za-z_]+)\b")
 
 
@@ -53,26 +56,70 @@ def current_revisions() -> list[str]:
     return revs
 
 
-def pending_revisions(current: list[str]) -> list[str]:
-    """Revisions that ``upgrade head`` would apply, newest first."""
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
+def _literal_ids(value: ast.expr | None) -> list[str]:
+    if value is None:
+        return []
+    literal = ast.literal_eval(value)
+    if literal is None:
+        return []
+    if isinstance(literal, str):
+        return [literal]
+    if isinstance(literal, (tuple, list)) and all(isinstance(x, str) for x in literal):
+        return list(literal)
+    raise GateError(f"unsupported revision literal {literal!r}")
 
-    script = ScriptDirectory.from_config(Config("alembic.ini"))
-    heads = script.get_heads()
+
+def load_graph(versions: Path = VERSIONS_DIR) -> dict[str, list[str]]:
+    """``{revision: [down_revisions]}`` read statically from the revision files.
+
+    Independent of the ``alembic`` package so the graph logic is testable without it; any
+    unreadable or ambiguous file raises ``GateError`` (fail closed).
+    """
+    graph: dict[str, list[str]] = {}
+    files = sorted(versions.glob("*.py"))
+    if not files:
+        raise GateError(f"no migration files found in {versions}")
+    for path in files:
+        values: dict[str, ast.expr | None] = {}
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                values[node.targets[0].id] = node.value
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                values[node.target.id] = node.value
+        rev = _literal_ids(values.get("revision"))
+        if len(rev) != 1:
+            raise GateError(f"{path.name}: cannot determine revision id")
+        if rev[0] in graph:
+            raise GateError(f"duplicate revision {rev[0]}")
+        graph[rev[0]] = _literal_ids(values.get("down_revision"))
+    return graph
+
+
+def _ancestors(graph: dict[str, list[str]], start: str) -> set[str]:
+    seen: set[str] = set()
+    stack = [start]
+    while stack:
+        rev = stack.pop()
+        if rev in seen:
+            continue
+        if rev not in graph:
+            raise GateError(f"revision {rev} is unknown to this release")
+        seen.add(rev)
+        stack.extend(graph[rev])
+    return seen
+
+
+def pending_revisions(current: list[str], versions: Path = VERSIONS_DIR) -> list[str]:
+    """Revisions that ``upgrade head`` would apply."""
+    graph = load_graph(versions)
+    parents = {p for downs in graph.values() for p in downs}
+    heads = [r for r in graph if r not in parents]
     if len(heads) != 1:
         raise GateError(f"expected exactly one Alembic head, found {len(heads)}")
     if len(current) > 1:
         raise GateError(f"database reports multiple current revisions: {current}")
-    revs = [r.revision for r in script.walk_revisions()]
-    if not current:
-        return revs
-    applied = current[0]
-    if applied not in revs:
-        raise GateError(f"database revision {applied} is unknown to this release")
-    # `iterate_revisions(applied, "base")` yields applied and all its ancestors.
-    done = {r.revision for r in script.iterate_revisions(applied, "base")}
-    return [r for r in revs if r not in done]
+    done = _ancestors(graph, current[0]) if current else set()
+    return sorted(set(graph) - done)
 
 
 def run(
