@@ -96,7 +96,8 @@ class GitHub:
                     delay = max(delay, float(retry_after))
                 except (TypeError, ValueError):
                     pass
-            else:
+            elif exc.code in (429, 403) or headers.get('X-RateLimit-Remaining') == '0':
+                # Quota reset applies only to genuine rate limiting, not ordinary 5xx.
                 reset = headers.get('X-RateLimit-Reset')
                 if reset is not None:
                     try:

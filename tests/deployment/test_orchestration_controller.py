@@ -866,6 +866,31 @@ class ControllerTests(unittest.TestCase):
                         with self.assertRaises(Rejected, msg=conclusion):
                             c.execution_result(self.api, self.policy, task, 110)
 
+    def test_persisted_scan_state_is_bounded_and_journal_stays_readable(self):
+        # Many examined runs must not grow the signed journal: only reruns are recorded.
+        runs = self._scan_runs()
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        with patch.object(c, 'authenticated_execution', side_effect=Rejected('none')), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            for _ in range(3):
+                c.execution_result(self.api, self.policy, task, 110)
+        scan = task['deliveries'][-1]['scan']
+        self.assertEqual(scan['attempts'], {})
+        # 100 retained deliveries stay far below the 524,288-byte journal read limit.
+        self.assertLess(len(json.dumps([scan] * 100)), 100_000)
+
+    def test_rerun_tracking_is_capped_fail_closed(self):
+        runs = self._scan_runs()
+        for run in runs:
+            run['run_attempt'] = 2
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        with patch.object(c, 'authenticated_execution', side_effect=Rejected('none')), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, task, 110)
+
     def test_unchanged_runs_are_not_rescanned(self):
         runs = self._scan_runs()
         self.api.pages = lambda path, key=None: deepcopy(runs)

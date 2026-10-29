@@ -169,6 +169,45 @@ class RequestTests(unittest.TestCase):
         self.assertGreaterEqual(sleep.call_args_list[0].args[0], 0)
 
 
+def headered_error(code, **headers):
+    msg = email.message.Message()
+    for key, value in headers.items():
+        msg[key.replace('_', '-')] = str(value)
+    return urllib.error.HTTPError('https://api.github.com/repos/o/r/pulls/1', code, 'err', msg, None)
+
+
+class QuotaResetTests(unittest.TestCase):
+    def setUp(self):
+        self.api = RecordingAPI()
+
+    def test_500_with_quota_and_far_reset_uses_ordinary_backoff(self):
+        reset = int(time.time()) + 1800
+        self.api.fail_times = {'/pulls/1': 1, '_error': headered_error(
+            500, X_RateLimit_Remaining=4999, X_RateLimit_Reset=reset)}
+        with patch.object(a.time, 'sleep') as sleep, patch.dict(os.environ, {'GITHUB_TOKEN': TOKEN}):
+            result = self.api.request('/pulls/1')
+        self.assertEqual(result, dict(path='/pulls/1', ok=True))
+        self.assertEqual(self.api.calls.count(('/pulls/1', 'GET')), 2)
+        self.assertLessEqual(sleep.call_args_list[0].args[0], a.MAX_RETRY_DELAY_SECONDS)
+
+    def test_exhausted_quota_429_with_far_reset_is_transient_not_slept(self):
+        reset = int(time.time()) + 1800
+        self.api.fail_times = {'/pulls/1': 1, '_error': headered_error(
+            429, X_RateLimit_Remaining=0, X_RateLimit_Reset=reset)}
+        with patch.object(a.time, 'sleep') as sleep, patch.dict(os.environ, {'GITHUB_TOKEN': TOKEN}):
+            with self.assertRaises(a.TransientError):
+                self.api.request('/pulls/1')
+        sleep.assert_not_called()
+
+    def test_403_rate_limit_with_near_reset_is_honored(self):
+        reset = int(time.time()) + 10
+        self.api.fail_times = {'/pulls/1': 1, '_error': headered_error(
+            403, X_RateLimit_Remaining=0, X_RateLimit_Reset=reset)}
+        with patch.object(a.time, 'sleep') as sleep, patch.dict(os.environ, {'GITHUB_TOKEN': TOKEN}):
+            self.api.request('/pulls/1')
+        self.assertGreaterEqual(sleep.call_args_list[0].args[0], 5)
+
+
 class PagesTests(unittest.TestCase):
     """Pagination itself must not mask transient failures."""
 

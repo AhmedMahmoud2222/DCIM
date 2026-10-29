@@ -227,6 +227,7 @@ def choose(api, policy, task, now):
     return None
 
 
+MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-limited).
 SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
 
 
@@ -282,7 +283,7 @@ def execution_result(api, policy, task, now):
         # Reruns keep their run id but bump run_attempt: a run inside the examined
         # interval whose authenticated attempt differs (or that was never authenticated)
         # is stale evidence and is re-examined first.
-        stale = [i for i in reversed(ids) if low <= i <= high and scan['attempts'].get(str(i)) != attempt_of[i]]
+        stale = [i for i in reversed(ids) if low <= i <= high and scan['attempts'].get(str(i), 1) != attempt_of[i]]
         order = stale + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
     examined = 0
     for rid in order:
@@ -297,7 +298,15 @@ def execution_result(api, policy, task, now):
                                              delivery['provider'], now, task, delivery)
         except Rejected:
             result = None  # Spoofed, revoked, or bound to another task/delivery.
-        scan['attempts'][str(rid)] = attempt_of[rid]
+        # Sparse: only reruns (attempt > 1) are recorded; absent means attempt 1. Runs
+        # inside the interval are never unexamined (it never straddles unfinished runs),
+        # so this loses no evidence while keeping the shared journal bounded.
+        if attempt_of[rid] == 1:
+            scan['attempts'].pop(str(rid), None)
+        else:
+            scan['attempts'][str(rid)] = attempt_of[rid]
+            if len(scan['attempts']) > MAX_TRACKED_RERUNS:
+                raise Rejected('too many rerun workflow attempts to track safely')
         if low is None:
             low = high = rid
         elif low <= rid <= high:
