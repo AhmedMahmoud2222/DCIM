@@ -28,31 +28,36 @@ def load(name, rel):
 
 
 claude = load('claude_gate', '.github/scripts/claude_gate.py')
+guard = load('claude_write_guard', '.github/scripts/claude_write_guard.py')
 opencode = load('opencode_gate', '.github/scripts/opencode_gate.py')
 
 REPO = 'AhmedMahmoud2222/DCIM'
 OWNER_ID = 285010264
 SHA = 'a' * 40
 BASE_SHA = 'b' * 40
+PROTECTED_MAIN = {'name': 'main', 'protected': True}
 
 
-def event(body, user_id=OWNER_ID, assoc='OWNER', user_type='User', repo=REPO, pull=True, action='created'):
+def event(body, user_id=OWNER_ID, assoc='OWNER', user_type='User', repo=REPO, pull=True, action='created',
+          default_branch='main'):
     issue = {'number': 7}
     if pull:
         issue['pull_request'] = {'url': 'x'}
-    return {'action': action, 'repository': {'full_name': repo}, 'issue': issue,
+    return {'action': action, 'repository': {'full_name': repo, 'default_branch': default_branch}, 'issue': issue,
             'comment': {'id': 99, 'body': body, 'author_association': assoc,
                         'user': {'id': user_id, 'type': user_type}}}
 
 
-def pr(state='open', head_repo=REPO, base_repo=REPO, number=7, sha=SHA, ref='feature/x', merged=False):
+def pr(state='open', head_repo=REPO, base_repo=REPO, number=7, sha=SHA, ref='feature/x', merged=False,
+       base_ref='main'):
     return {'number': number, 'state': state, 'merged': merged,
             'head': {'sha': sha, 'ref': ref, 'repo': {'full_name': head_repo}},
-            'base': {'sha': BASE_SHA, 'repo': {'full_name': base_repo}}}
+            'base': {'sha': BASE_SHA, 'ref': base_ref, 'repo': {'full_name': base_repo}}}
 
 
-def decide(ev, pull=None, allowed=frozenset({OWNER_ID}), reactions=None, name='issue_comment'):
-    return claude.decide(name, ev, REPO, set(allowed), pr() if pull is None else pull, reactions)
+def decide(ev, pull=None, allowed=frozenset({OWNER_ID}), reactions=None, name='issue_comment',
+           base_branch=PROTECTED_MAIN):
+    return claude.decide(name, ev, REPO, set(allowed), pr() if pull is None else pull, reactions, base_branch)
 
 
 class AuthorizationTests(unittest.TestCase):
@@ -147,10 +152,11 @@ class DuplicateTests(unittest.TestCase):
             (tmp / 'e.json').write_text(json.dumps(event('@claude fix')))
             (tmp / 'p.json').write_text(json.dumps(pr()))
             (tmp / 'r.json').write_text(json.dumps([self.CLAIM]))
+            (tmp / 'b.json').write_text(json.dumps(PROTECTED_MAIN))
             out = tmp / 'out'
             env = {**os.environ, 'GITHUB_EVENT_PATH': str(tmp / 'e.json'), 'GITHUB_EVENT_NAME': 'issue_comment',
                    'GITHUB_REPOSITORY': REPO, 'ALLOWED_ACTOR_IDS': str(OWNER_ID), 'PR_JSON_PATH': str(tmp / 'p.json'),
-                   'GITHUB_OUTPUT': str(out)}
+                   'BASE_BRANCH_JSON_PATH': str(tmp / 'b.json'), 'GITHUB_OUTPUT': str(out)}
             run = lambda extra: subprocess.run(['python3', str(ROOT / '.github/scripts/claude_gate.py')],
                                                env={**env, **extra}, capture_output=True, text=True, check=True)
             run({'REACTIONS_JSON_PATH': str(tmp / 'r.json')})
@@ -161,6 +167,14 @@ class DuplicateTests(unittest.TestCase):
             self.assertIn('authorized=true', text)
             self.assertIn(f'authorized_sha={SHA}', text)
             self.assertIn('head_ref=feature/x', text)
+            out.write_text('')
+            (tmp / 'b.json').write_text(json.dumps({'name': 'main', 'protected': False}))
+            run({})
+            self.assertIn('authorized=false', out.read_text())
+            out.write_text('')
+            (tmp / 'b.json').unlink()
+            run({})
+            self.assertIn('authorized=false', out.read_text())
             out.write_text('')
             (tmp / 'p.json').write_text('{not json')
             run({})
@@ -224,7 +238,8 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertNotIn('${{ needs.', run)
 
     def test_head_recheck_and_branch_guard_present(self):
-        self.assertIn('PR head moved or closed after authorization', self.text)
+        steps = [s.get('name', '') for s in self.wf['jobs']['claude']['steps']]
+        self.assertTrue(any('Re-verify' in s for s in steps))
         self.assertIn('instead of the PR branch', self.text)
 
 

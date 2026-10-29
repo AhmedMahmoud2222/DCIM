@@ -9,6 +9,13 @@
 #
 # Flow: gate (no secrets; authorizes and claims the comment)
 #   -> claude (official action; changes only the existing same-repository PR branch)
+#
+# Trust boundaries (details: docs/security/CLAUDE_AGENT_AUTHORITY.md):
+#   - The action restores .claude/, .mcp.json and hooks from the PR base branch, so the base must be
+#     the protected default branch `main`; the gate and the claude job both revalidate it live.
+#   - Every write goes through the action's file-ops tools. A PreToolUse hook (trusted copy of
+#     claude_write_guard.py, outside the PR checkout) re-authorizes against live PR state before
+#     each write, and an invalid branch_prefix aborts the action's closed-PR branch-creation path.
 name: Claude Agent
 
 on:
@@ -52,12 +59,14 @@ jobs:
           set -euo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/pulls/${ISSUE_NUMBER}" > "${RUNNER_TEMP}/pr.json"
           gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" | jq -s 'add // []' > "${RUNNER_TEMP}/reactions.json"
+          gh api "repos/${GITHUB_REPOSITORY}/branches/main" > "${RUNNER_TEMP}/base_branch.json"
       - name: Authorize
         id: gate
         env:
           ALLOWED_ACTOR_IDS: ${{ vars.CLAUDE_ALLOWED_ACTOR_IDS }}
           PR_JSON_PATH: ${{ runner.temp }}/pr.json
           REACTIONS_JSON_PATH: ${{ runner.temp }}/reactions.json
+          BASE_BRANCH_JSON_PATH: ${{ runner.temp }}/base_branch.json
         run: |
           test -f .github/scripts/claude_gate.py || { echo "::error::gate script missing on this commit; refusing to run"; exit 1; }
           python3 .github/scripts/claude_gate.py
@@ -78,32 +87,43 @@ jobs:
     concurrency:
       group: claude-agent-${{ github.event.issue.number }}
       cancel-in-progress: false
+    env:
+      # Read by the trusted write guard (preflight, hooks, final verify); never by the PR checkout.
+      CLAUDE_GUARD_TOKEN: ${{ github.token }}
+      CLAUDE_GUARD_REPOSITORY: ${{ github.repository }}
+      CLAUDE_GUARD_NUMBER: ${{ needs.gate.outputs.number }}
+      CLAUDE_GUARD_AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+      CLAUDE_GUARD_HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+      CLAUDE_GUARD_STATE: ${{ runner.temp }}/claude_guard_state.json
     permissions:
       contents: write        # push to the existing PR branch
       pull-requests: write   # tracking comment on the PR
       issues: write          # tracking comment API
       actions: read          # read CI results of the PR
     steps:
-      - name: Re-verify the target PR is unchanged since authorization
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NUMBER: ${{ needs.gate.outputs.number }}
-          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
-          HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+      - name: Checkout the write guard from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts/claude_write_guard.py
+          sparse-checkout-cone-mode: false
+          path: trusted-guard
+          persist-credentials: false
+      - name: Install the trusted guard outside the workspace
         run: |
           set -euo pipefail
-          live=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq '[.state, .head.sha, .head.ref, .head.repo.full_name] | @tsv')
-          expected=$(printf 'open\t%s\t%s\t%s' "${AUTHORIZED_SHA}" "${HEAD_REF}" "${GITHUB_REPOSITORY}")
-          if [ "${live}" != "${expected}" ]; then
-            echo "::error::PR head moved or closed after authorization; refusing to run"
-            exit 1
-          fi
+          install -m 0444 trusted-guard/.github/scripts/claude_write_guard.py "${RUNNER_TEMP}/claude_write_guard.py"
+          rm -rf trusted-guard
+      - name: Re-verify the target PR, protected base and head branch are unchanged since authorization
+        run: python3 "${RUNNER_TEMP}/claude_write_guard.py" preflight
       - name: Checkout the authorized PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.gate.outputs.authorized_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Re-verify immediately before invoking Claude
+        run: python3 "${RUNNER_TEMP}/claude_write_guard.py" preflight
       - name: Run Claude
         id: claude
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13  # v1.0.262
@@ -113,10 +133,25 @@ jobs:
           trigger_phrase: '@claude'
           use_commit_signing: true
           allowed_bots: ''
+          # Deliberately invalid ref name: if the PR closes or merges mid-run the action falls back
+          # to creating a new branch, and its own name validation then aborts before anything is created.
+          branch_prefix: 'claude-denied~/'
+          # User-level settings (trusted, outside the PR checkout): every write through the action's
+          # file-ops tools is re-authorized against live PR state first; exit code 2 blocks it.
+          settings: |
+            {"hooks": {
+              "PreToolUse": [{"matcher": "mcp__github_file_ops__.*", "hooks": [{"type": "command", "timeout": 60,
+                "command": "python3 \"${{ runner.temp }}/claude_write_guard.py\" hook"}]}],
+              "PostToolUse": [{"matcher": "mcp__github_file_ops__.*", "hooks": [{"type": "command", "timeout": 60,
+                "command": "python3 \"${{ runner.temp }}/claude_write_guard.py\" record"}]}]
+            }}
           claude_args: |
             --max-turns 40
             --disallowedTools "Bash(gh:*),Bash(git push:*),Bash(git remote:*),Bash(curl:*),Bash(wget:*),WebFetch,WebSearch"
             --append-system-prompt "Work only on the pull request this comment belongs to. Commit only to its existing head branch. Never create branches or pull requests, never merge, close, approve or deploy, and never change files under .github/workflows or .github/scripts."
+      - name: Verify the write boundary held
+        if: always()
+        run: python3 "${RUNNER_TEMP}/claude_write_guard.py" verify
       - name: Verify Claude stayed on the PR branch
         if: always() && steps.claude.outputs.branch_name != ''
         env:

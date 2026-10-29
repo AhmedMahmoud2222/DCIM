@@ -21,6 +21,7 @@ TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
 COMMAND_RE = re.compile(r'\A@claude\s+(?P<task>\S[\s\S]*)\Z')
 MAX_TASK_CHARS = 8000
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
+APPROVED_BASE_REF = 'main'  # must match claude_write_guard.APPROVED_BASE_REF
 CLAIM_REACTION = 'eyes'
 CLAIM_USER = 'github-actions[bot]'
 
@@ -58,8 +59,9 @@ def already_claimed(reactions: list | None) -> bool:
 
 
 def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
-           pr: dict | None, reactions: list | None = None) -> tuple[bool, str]:
-    """Return (authorized, reason)."""
+           pr: dict | None, reactions: list | None = None,
+           base_branch: dict | None = None) -> tuple[bool, str]:
+    """Return (authorized, reason). `base_branch` is the live branches API object for the base."""
     if event_name not in COMMENT_EVENTS:
         return False, f'unsupported event {event_name}'
     if event.get('action') != 'created':
@@ -92,6 +94,14 @@ def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
     base_repo = ((pr_obj.get('base') or {}).get('repo') or {}).get('full_name')
     if head_repo != repository or base_repo != repository:
         return False, 'pull request head or base is not in this repository'
+    # The action restores executable agent configuration (.claude/, .mcp.json, hooks) from the
+    # PR base branch, so only the approved, protected default branch may be the base.
+    if (pr_obj.get('base') or {}).get('ref') != APPROVED_BASE_REF \
+            or (event.get('repository') or {}).get('default_branch') != APPROVED_BASE_REF:
+        return False, f'pull request base is not the approved {APPROVED_BASE_REF} branch'
+    if not isinstance(base_branch, dict) or base_branch.get('name') != APPROVED_BASE_REF \
+            or base_branch.get('protected') is not True:
+        return False, f'approved base {APPROVED_BASE_REF} is not verifiably protected'
     if pr_obj.get('state') != 'open' or pr_obj.get('merged') is True:
         return False, 'pull request is not open'
     if pr_obj.get('number') != issue.get('number'):
@@ -135,6 +145,7 @@ def main() -> int:
         authorized, reason = decide(
             os.environ['GITHUB_EVENT_NAME'], event, os.environ['GITHUB_REPOSITORY'],
             parse_allowlist(os.environ.get('ALLOWED_ACTOR_IDS', '')), pr, reactions,
+            _load('BASE_BRANCH_JSON_PATH'),
         )
         if authorized:
             target = {
