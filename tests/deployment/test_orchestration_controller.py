@@ -839,6 +839,33 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaises(Rejected):
                 c.execution_result(self.api, self.policy, task, 110)
 
+    def test_non_success_rerun_of_examined_run_never_yields_unbacked_acceptance(self):
+        # Invariant: acceptance needs a LIVE authenticated successful run backing the
+        # retained match. A non-success latest attempt carries no evidence (the real
+        # authenticated_execution requires conclusion == success), so it cannot
+        # contradict anything; it only matters if it is the retained match itself.
+        for conclusion in ('failure', 'cancelled', 'skipped'):
+            for rerun_id, expect_accept in ((75, False), (100, True)):
+                runs = self._scan_runs()
+                self.api.pages = lambda path, key=None: deepcopy(runs)
+                task = self.delivered_task()
+                def fake_auth(api, proof, *a, **k):
+                    run = runs[proof['run_id'] - 1]
+                    if proof['run_id'] not in (75, 100) or run['conclusion'] != 'success':
+                        raise Rejected('not a successful authenticated run')
+                    return self._run_result(proof['run_id'])
+                with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                        patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+                    self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+                    # Duplicates resolve to the lowest run id.
+                    self.assertEqual(task['deliveries'][-1]['scan']['match']['run_id'], 75)
+                    runs[rerun_id - 1].update(run_attempt=2, conclusion=conclusion)
+                    if expect_accept:  # a redundant duplicate lost; retained match is still live
+                        self.assertEqual(c.execution_result(self.api, self.policy, task, 110)[1], 75)
+                    else:  # the retained match itself lost its evidence: fail closed
+                        with self.assertRaises(Rejected, msg=conclusion):
+                            c.execution_result(self.api, self.policy, task, 110)
+
     def test_unchanged_runs_are_not_rescanned(self):
         runs = self._scan_runs()
         self.api.pages = lambda path, key=None: deepcopy(runs)
