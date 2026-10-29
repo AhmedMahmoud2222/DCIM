@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import sys
 
 COMMENT_EVENTS = {'issue_comment'}
@@ -122,7 +123,13 @@ def write_output(path: str | None, authorized: bool, reason: str, target: dict) 
         handle.write(f'authorized={"true" if authorized else "false"}\n')
         handle.write(f'reason={reason}\n')
         for key, value in target.items():
-            handle.write(f'{key}={value}\n')
+            text = str(value)
+            if '\n' in text or '\r' in text:
+                # Multi-line values use a random delimiter so task text cannot forge other outputs.
+                delimiter = f'CLAUDE_GATE_{secrets.token_hex(16)}'
+                handle.write(f'{key}<<{delimiter}\n{text}\n{delimiter}\n')
+            else:
+                handle.write(f'{key}={text}\n')
 
 
 def _load(path_env: str):
@@ -153,6 +160,7 @@ def main() -> int:
                 'comment_id': event['comment']['id'],
                 'authorized_sha': pr['head']['sha'],
                 'head_ref': pr['head']['ref'],
+                'task': extract_task(event['comment']['body'])[0],
             }
     except (KeyError, ValueError, TypeError, OSError):
         authorized, reason, target = False, 'gate failed closed on malformed input', {}

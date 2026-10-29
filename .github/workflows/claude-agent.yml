@@ -1,4 +1,4 @@
-# Claude agent (workflow v1.0): `@claude <task>` on a pull request conversation.
+# Claude agent (workflow v2.0): `@claude <task>` on a pull request conversation.
 # Design, permissions, setup and recovery: docs/security/CLAUDE_AGENT_AUTHORITY.md
 #
 # Independent of .github/workflows/opencode.yml: separate workflow, gate, allowlist
@@ -8,14 +8,18 @@
 # branch, so a PR author cannot edit this file or the gate script to widen access.
 #
 # Flow: gate (no secrets; authorizes and claims the comment)
-#   -> claude (official action; changes only the existing same-repository PR branch)
+#   -> claude   (holds the Claude secret; READ-ONLY repository token; edits a scratch checkout
+#                and emits a change manifest; cannot push, comment or create refs)
+#   -> publish  (holds write access; NO Claude and NO PR code; re-validates the manifest and
+#                fast-forwards the existing PR branch with one GitHub-signed commit)
 #
-# Trust boundaries (details: docs/security/CLAUDE_AGENT_AUTHORITY.md):
-#   - The action restores .claude/, .mcp.json and hooks from the PR base branch, so the base must be
-#     the protected default branch `main`; the gate and the claude job both revalidate it live.
-#   - Every write goes through the action's file-ops tools. A PreToolUse hook (trusted copy of
-#     claude_write_guard.py, outside the PR checkout) re-authorizes against live PR state before
-#     each write, and an invalid branch_prefix aborts the action's closed-PR branch-creation path.
+# Trust boundaries:
+#   - Only the protected default branch `main` may be the PR base; the gate and every later job
+#     revalidate it live.
+#   - The PR head is checked out into ./pr, never the workspace root where the action and the
+#     Claude CLI read startup configuration, and executable configuration inside it is removed.
+#   - The publisher updates its ref without force, so GitHub rejects the write if HEAD moved, and
+#     it can only move a ref that already exists.
 name: Claude Agent
 
 on:
@@ -41,8 +45,10 @@ jobs:
     outputs:
       authorized: ${{ steps.gate.outputs.authorized }}
       number: ${{ steps.gate.outputs.number }}
+      comment_id: ${{ steps.gate.outputs.comment_id }}
       authorized_sha: ${{ steps.gate.outputs.authorized_sha }}
       head_ref: ${{ steps.gate.outputs.head_ref }}
+      task: ${{ steps.gate.outputs.task }}
     steps:
       - name: Checkout scripts from the workflow commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -50,7 +56,7 @@ jobs:
           ref: ${{ github.sha }}
           sparse-checkout: .github/scripts
           persist-credentials: false
-      - name: Fetch PR metadata and existing claims
+      - name: Fetch PR metadata, base protection and existing claims
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -78,7 +84,7 @@ jobs:
         run: gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
 
   claude:
-    name: Run Claude on the existing PR
+    name: Run Claude (read-only)
     needs: gate
     if: needs.gate.outputs.authorized == 'true'
     runs-on: ubuntu-latest
@@ -88,76 +94,106 @@ jobs:
       group: claude-agent-${{ github.event.issue.number }}
       cancel-in-progress: false
     env:
-      # Read by the trusted write guard (preflight, hooks, final verify); never by the PR checkout.
-      CLAUDE_GUARD_TOKEN: ${{ github.token }}
+      CLAUDE_GUARD_TOKEN: ${{ github.token }}  # read-only in this job
       CLAUDE_GUARD_REPOSITORY: ${{ github.repository }}
       CLAUDE_GUARD_NUMBER: ${{ needs.gate.outputs.number }}
+      CLAUDE_GUARD_COMMENT_ID: ${{ needs.gate.outputs.comment_id }}
       CLAUDE_GUARD_AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
       CLAUDE_GUARD_HEAD_REF: ${{ needs.gate.outputs.head_ref }}
     permissions:
-      contents: write        # push to the existing PR branch
-      pull-requests: write   # tracking comment on the PR
-      issues: write          # tracking comment API
-      actions: read          # read CI results of the PR
+      contents: read         # read-only: this job cannot push, comment or create refs
+      pull-requests: read    # live PR state for the preflight checks
+    outputs:
+      has_changes: ${{ steps.collect.outputs.has_changes }}
     steps:
-      - name: Checkout the write guard from the workflow commit
+      - name: Checkout the trusted script from the workflow commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.sha }}
-          sparse-checkout: .github/scripts/claude_write_guard.py
+          sparse-checkout: .github/scripts/claude_publish.py
           sparse-checkout-cone-mode: false
           path: trusted-guard
           persist-credentials: false
-      - name: Install the trusted guard outside the workspace
+      - name: Install the trusted script outside the workspace
         run: |
           set -euo pipefail
-          install -m 0444 trusted-guard/.github/scripts/claude_write_guard.py "${RUNNER_TEMP}/claude_write_guard.py"
+          install -m 0444 trusted-guard/.github/scripts/claude_publish.py "${RUNNER_TEMP}/claude_publish.py"
           rm -rf trusted-guard
-      - name: Re-verify the target PR, protected base and head branch are unchanged since authorization
-        run: python3 "${RUNNER_TEMP}/claude_write_guard.py" preflight
-      - name: Checkout the authorized PR head
+      - name: Re-verify the target PR, protected base and head branch
+        run: python3 "${RUNNER_TEMP}/claude_publish.py" preflight
+      - name: Checkout the authorized PR head into ./pr
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.gate.outputs.authorized_sha }}
-          fetch-depth: 0
+          path: pr
+          fetch-depth: 1
           persist-credentials: false
+      - name: Pin the checkout, record its tree and remove executable configuration
+        run: python3 "${RUNNER_TEMP}/claude_publish.py" prepare
       - name: Re-verify immediately before invoking Claude
-        run: python3 "${RUNNER_TEMP}/claude_write_guard.py" preflight
+        run: python3 "${RUNNER_TEMP}/claude_publish.py" preflight
       - name: Run Claude
         id: claude
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13  # v1.0.262
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
-          trigger_phrase: '@claude'
-          use_commit_signing: true
           allowed_bots: ''
-          # Deliberately invalid ref name: if the PR closes or merges mid-run the action falls back
-          # to creating a new branch, and its own name validation then aborts before anything is created.
-          branch_prefix: 'claude-denied~/'
-          # User-level settings (trusted, outside the PR checkout): every write through the action's
-          # file-ops tools is re-authorized against live PR state first; exit code 2 blocks it.
-          settings: |
-            {"hooks": {
-              "PreToolUse": [{"matcher": "mcp__github_file_ops__.*", "hooks": [{"type": "command", "timeout": 60,
-                "command": "python3 \"${{ runner.temp }}/claude_write_guard.py\" hook"}]}],
-              "PostToolUse": [{"matcher": "mcp__github_file_ops__.*", "hooks": [{"type": "command", "timeout": 60,
-                "command": "python3 \"${{ runner.temp }}/claude_write_guard.py\" record"}]}]
-            }}
+          # An explicit prompt selects the action's agent mode: no tracking comment, no branch setup
+          # and no file-ops server. Edits stay in ./pr and are published by the separate job.
+          prompt: |
+            You are working on a pull request. Its files are checked out in ./pr (relative to the current directory). Make the requested changes by editing files under ./pr only. You cannot run commands, commit or push, and a separate trusted job publishes your edits to the existing pull request branch. Never edit anything under .github/, .claude/, CLAUDE.md or other agent or workflow configuration. The task, from an authorized maintainer:
+
+            ${{ needs.gate.outputs.task }}
           claude_args: |
             --max-turns 40
-            --disallowedTools "Bash(gh:*),Bash(git push:*),Bash(git remote:*),Bash(curl:*),Bash(wget:*),WebFetch,WebSearch"
-            --append-system-prompt "Work only on the pull request this comment belongs to. Commit only to its existing head branch. Never create branches or pull requests, never merge, close, approve or deploy, and never change files under .github/workflows or .github/scripts."
-      - name: Verify the write boundary held
-        if: always()
-        run: python3 "${RUNNER_TEMP}/claude_write_guard.py" verify
-      - name: Verify Claude stayed on the PR branch
-        if: always() && steps.claude.outputs.branch_name != ''
-        env:
-          BRANCH_NAME: ${{ steps.claude.outputs.branch_name }}
-          HEAD_REF: ${{ needs.gate.outputs.head_ref }}
-        run: |
-          if [ "${BRANCH_NAME}" != "${HEAD_REF}" ]; then
-            echo "::error::Claude used branch '${BRANCH_NAME}' instead of the PR branch '${HEAD_REF}'"
-            exit 1
-          fi
+            --allowedTools "Read,Glob,Grep,Edit,Write"
+            --disallowedTools "Bash,WebFetch,WebSearch"
+      - name: Collect the edits into a change manifest
+        id: collect
+        if: steps.claude.outcome == 'success'
+        run: python3 "${RUNNER_TEMP}/claude_publish.py" collect
+      - name: Upload the change manifest
+        if: steps.collect.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        with:
+          name: claude-changes
+          path: ${{ runner.temp }}/claude-changes/changes.json
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publish Claude changes (trusted)
+    needs: [gate, claude]
+    if: needs.gate.outputs.authorized == 'true' && needs.claude.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Separate group from the claude job: a queued publish must never replace, or be replaced by, a run.
+    concurrency:
+      group: claude-publish-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    env:
+      CLAUDE_GUARD_TOKEN: ${{ github.token }}
+      CLAUDE_GUARD_REPOSITORY: ${{ github.repository }}
+      CLAUDE_GUARD_NUMBER: ${{ needs.gate.outputs.number }}
+      CLAUDE_GUARD_COMMENT_ID: ${{ needs.gate.outputs.comment_id }}
+      CLAUDE_GUARD_AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+      CLAUDE_GUARD_HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+    permissions:
+      contents: write        # fast-forward the existing PR head branch; no ref creation is possible
+      pull-requests: read    # live PR state for the preflight checks
+    steps:
+      - name: Checkout the publisher script from the workflow commit (no PR code)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts/claude_publish.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Download the change manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: claude-changes
+          path: ${{ runner.temp }}/claude-changes
+      - name: Validate and publish
+        run: python3 .github/scripts/claude_publish.py publish

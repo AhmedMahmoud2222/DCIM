@@ -28,7 +28,7 @@ def load(name, rel):
 
 
 claude = load('claude_gate', '.github/scripts/claude_gate.py')
-guard = load('claude_write_guard', '.github/scripts/claude_write_guard.py')
+publisher = load('claude_publish', '.github/scripts/claude_publish.py')
 opencode = load('opencode_gate', '.github/scripts/opencode_gate.py')
 
 REPO = 'AhmedMahmoud2222/DCIM'
@@ -167,6 +167,8 @@ class DuplicateTests(unittest.TestCase):
             self.assertIn('authorized=true', text)
             self.assertIn(f'authorized_sha={SHA}', text)
             self.assertIn('head_ref=feature/x', text)
+            self.assertIn('task=fix\n', text)
+            self.assertIn('comment_id=99', text)
             out.write_text('')
             (tmp / 'b.json').write_text(json.dumps({'name': 'main', 'protected': False}))
             run({})
@@ -207,27 +209,31 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn('secrets.CLAUDE_CODE_OAUTH_TOKEN', yaml.safe_dump(jobs['claude']))
         self.assertEqual(self.text.count('secrets.'), 1)
 
-    def test_claude_job_requires_gate_and_signing(self):
+    def test_claude_job_requires_gate_and_runs_agent_mode_read_only(self):
         job = self.wf['jobs']['claude']
         self.assertEqual(job['needs'], 'gate')
         self.assertIn("needs.gate.outputs.authorized == 'true'", job['if'])
         step = next(s for s in job['steps'] if s.get('id') == 'claude')
-        self.assertIs(step['with']['use_commit_signing'], True)
+        self.assertIn('prompt', step['with'])  # an explicit prompt selects agent mode
+        for key in ('use_commit_signing', 'track_progress', 'settings', 'trigger_phrase', 'branch_prefix'):
+            self.assertNotIn(key, step['with'])
         self.assertEqual(step['with']['allowed_bots'], '')
         self.assertEqual(job['concurrency']['cancel-in-progress'], False)
 
     def test_least_privilege_permissions(self):
-        perms = self.wf['jobs']['claude']['permissions']
-        self.assertEqual(perms, {'contents': 'write', 'pull-requests': 'write', 'issues': 'write', 'actions': 'read'})
+        jobs = self.wf['jobs']
+        self.assertEqual(jobs['claude']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(jobs['publish']['permissions'], {'contents': 'write', 'pull-requests': 'read'})
+        self.assertEqual(jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'write'})
         self.assertNotIn('id-token', self.text)
-        self.assertEqual(self.wf['jobs']['gate']['permissions'], {'contents': 'read', 'pull-requests': 'write'})
 
     def test_no_merge_deploy_close_or_pr_creation(self):
         step = next(s for s in self.wf['jobs']['claude']['steps'] if s.get('id') == 'claude')
         args = step['with']['claude_args']
-        for token in ('Bash(gh:*)', 'Bash(git push:*)'):
-            self.assertIn(token, args)
-        self.assertNotIn('--allowedTools', args)
+        allowed = re.search(r'--allowedTools "([^"]*)"', args).group(1).split(',')
+        self.assertEqual(sorted(allowed), ['Edit', 'Glob', 'Grep', 'Read', 'Write'])
+        for token in ('Bash', 'WebFetch', 'WebSearch'):
+            self.assertIn(token, re.search(r'--disallowedTools "([^"]*)"', args).group(1))
         self.assertNotRegex(self.text, r'gh pr (create|merge|close)|merge_pull_request|auto-merge')
 
     def test_event_data_not_interpolated_into_shell(self):
@@ -240,7 +246,7 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_head_recheck_and_branch_guard_present(self):
         steps = [s.get('name', '') for s in self.wf['jobs']['claude']['steps']]
         self.assertTrue(any('Re-verify' in s for s in steps))
-        self.assertIn('instead of the PR branch', self.text)
+        self.assertIn('publish', self.wf['jobs'])
 
 
 class IsolationTests(unittest.TestCase):
