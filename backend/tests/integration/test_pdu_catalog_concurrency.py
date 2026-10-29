@@ -131,21 +131,53 @@ async def test_concurrent_publish_of_one_pdu_revision_has_exactly_one_winner(mak
     ) == 0
 
 
-async def _wait_for_lock_waiters(engine, expected: int, timeout: float = 20.0) -> None:
-    """Wait until exactly `expected` backends are blocked on a heavyweight lock. Polls observable database state (not a
-    fixed sleep), so the ordering below is forced by PostgreSQL's FIFO lock queue rather than by timing."""
+async def _wait_for_single_waiter_blocked_by(engine, blocker_pid: int, timeout: float = 20.0) -> int:
+    """Wait until exactly one backend is blocked *by `blocker_pid`* (pg_blocking_pids) and return its pid. Scoped to the
+    blocking relationship, so unrelated lock waiters in the database are never counted; more than one waiter behind the
+    same blocker, or no waiter before the timeout, fails closed. Polls database state, not a fixed sleep."""
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
         async with engine.connect() as conn:
-            waiting = (await conn.execute(text(
-                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
-                "AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'"
-            ))).scalar_one()
-        if waiting == expected:
-            return
-        assert waiting < expected, f"expected {expected} lock waiters, saw {waiting}"
-        assert asyncio.get_running_loop().time() < deadline, f"timed out waiting for {expected} lock waiters (saw {waiting})"
+            pids = [r[0] for r in await conn.execute(text(
+                "SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() "
+                "AND CAST(:b AS integer) = ANY(pg_blocking_pids(pid)) ORDER BY pid"
+            ), {"b": blocker_pid})]
+        assert len(pids) <= 1, f"expected one waiter blocked by pid {blocker_pid}, saw {pids}"
+        if pids:
+            return pids[0]
+        assert asyncio.get_running_loop().time() < deadline, f"timed out: no backend blocked by pid {blocker_pid}"
         await asyncio.sleep(0.02)
+
+
+async def test_waiter_detection_ignores_unrelated_lock_waiters():
+    """Adversarial regression for _wait_for_single_waiter_blocked_by: an unrelated lock wait (advisory lock) must not be
+    mistaken for a waiter on the held blocker, while a real waiter on that blocker is still found."""
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=6)
+    tasks: list[asyncio.Task] = []
+    try:
+        async with engine.connect() as holder, engine.connect() as other, engine.connect() as unrelated, engine.connect() as target:
+            key = uuid.uuid4().int % (2**31)
+            other_pid = (await other.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+            holder_pid = (await holder.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+            await other.execute(text("SELECT pg_advisory_lock(:k)"), {"k": key})
+            await holder.execute(text("SELECT pg_advisory_lock(:k)"), {"k": key + 1})
+            tasks.append(asyncio.create_task(unrelated.execute(text("SELECT pg_advisory_lock(:k)"), {"k": key})))
+            unrelated_pid = await _wait_for_single_waiter_blocked_by(engine, other_pid)  # waits on `other`, not `holder`
+            try:
+                await _wait_for_single_waiter_blocked_by(engine, holder_pid, timeout=0.5)
+            except AssertionError as exc:
+                assert "timed out" in str(exc)
+            else:
+                raise AssertionError("unrelated waiter was attributed to the holder")
+            tasks.append(asyncio.create_task(target.execute(text("SELECT pg_advisory_lock(:k)"), {"k": key + 1})))
+            assert await _wait_for_single_waiter_blocked_by(engine, holder_pid) != unrelated_pid
+            await holder.execute(text("SELECT pg_advisory_unlock_all()"))
+            await other.execute(text("SELECT pg_advisory_unlock_all()"))
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await engine.dispose()
 
 
 @pytest.mark.parametrize("patch_first", [True, False], ids=["patch_wins_lock", "publish_wins_lock"])
@@ -174,11 +206,16 @@ async def test_publish_vs_outlet_replacement_in_both_lock_orders(make_user, db_s
     try:
         async with engine.connect() as blocker:
             await blocker.execute(text("SELECT id FROM catalog_model_revision WHERE id = :r FOR UPDATE"), {"r": rid})
+            blocker_pid = (await blocker.execute(text("SELECT pg_backend_pid()"))).scalar_one()
             try:
                 tasks.append(asyncio.create_task(first()))
-                await _wait_for_lock_waiters(engine, 1)
+                first_pid = await _wait_for_single_waiter_blocked_by(engine, blocker_pid)
                 tasks.append(asyncio.create_task(second()))
-                await _wait_for_lock_waiters(engine, 2)
+                # the second request must queue behind the first request's backend (FIFO), not merely be "some waiter"
+                second_pid = await _wait_for_single_waiter_blocked_by(engine, first_pid)
+                assert second_pid not in (first_pid, blocker_pid)
+                assert await _wait_for_single_waiter_blocked_by(engine, blocker_pid) == first_pid
+                assert not any(t.done() for t in tasks), "a request completed before the revision lock was released"
             finally:
                 await blocker.rollback()  # release the lock; nothing was modified
         first_resp, second_resp = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
