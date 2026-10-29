@@ -703,7 +703,7 @@ class ControllerTests(unittest.TestCase):
             runs[0].update(status='completed', conclusion='skipped')
             outcome, run_id, _ = c.execution_result(self.api, self.policy, task, 110)
         self.assertEqual(run_id, 3)
-        self.assertEqual(calls, [3])  # retained evidence: not re-authenticated
+        self.assertEqual(calls, [3, 3])  # scanned once; retained match re-authenticated live
 
     def test_unfinished_run_cannot_hide_contradictory_evidence(self):
         runs = [dict(id=1, status='in_progress', conclusion=None, workflow_id=88, head_branch='main',
@@ -816,6 +816,66 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
             runs[1].update(status='completed', conclusion='skipped')
             self.assertEqual(c.execution_result(self.api, self.policy, task, 110)[1], 1)
+
+    def _scan_runs(self, n=150):
+        return [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment', run_attempt=1) for i in range(1, n + 1)]
+
+    def test_rerun_inside_scanned_interval_is_reexamined(self):
+        runs = self._scan_runs()
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        def fake_auth(api, proof, *a, **k):
+            if proof['run_id'] == 100:
+                return self._run_result(100)
+            if proof['run_id'] == 75 and runs[74]['run_attempt'] == 2:
+                return dict(self._run_result(75), result='FAILED')
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            self.assertEqual(task['deliveries'][-1]['scan']['match']['run_id'], 100)
+            runs[74].update(run_attempt=2)  # rerun of an already-examined run
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, task, 110)
+
+    def test_unchanged_runs_are_not_rescanned(self):
+        runs = self._scan_runs()
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        calls = []
+        def fake_auth(api, proof, *a, **k):
+            calls.append(proof['run_id'])
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            c.execution_result(self.api, self.policy, task, 110)
+            c.execution_result(self.api, self.policy, task, 110)
+        self.assertEqual(sorted(calls), list(range(1, 151)))
+
+    def test_retained_match_is_reauthenticated_before_acceptance(self):
+        for mode in ('rejected', 'changed', 'unchanged'):
+            runs = self._scan_runs()
+            self.api.pages = lambda path, key=None: deepcopy(runs)
+            task = self.delivered_task()
+            state = {'phase': 1}
+            def fake_auth(api, proof, *a, **k):
+                if proof['run_id'] != 100:
+                    raise Rejected('other')
+                if state['phase'] == 2 and mode == 'rejected':
+                    raise Rejected('witness edited/deleted')
+                if state['phase'] == 2 and mode == 'changed':
+                    return dict(self._run_result(100), provider_comment_id=9)
+                return self._run_result(100)
+            with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                    patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+                self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+                state['phase'] = 2
+                if mode == 'unchanged':
+                    self.assertEqual(c.execution_result(self.api, self.policy, task, 110)[1], 100)
+                else:
+                    with self.assertRaises(Rejected, msg=mode):
+                        c.execution_result(self.api, self.policy, task, 110)
 
     def test_duplicate_runs_same_reference_resolve_deterministically(self):
         runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,

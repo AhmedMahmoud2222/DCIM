@@ -253,7 +253,7 @@ def execution_result(api, policy, task, now):
     # of candidate run ids already authenticated, `match` the retained evidence.
     # Each reconciliation authenticates at most SCAN_BUDGET new candidates, so
     # genuine runs beyond any page/budget boundary are eventually reached.
-    candidates, pending = set(), set()
+    candidates, pending, attempt_of = set(), set(), {}
     for run in runs:
         if run.get('workflow_id') != proof['workflow_id'] or run.get('event') != 'issue_comment' \
                 or run.get('head_branch') != policy['default_branch']:
@@ -271,19 +271,25 @@ def execution_result(api, policy, task, now):
             pending.add(run['id'])
         elif run.get('conclusion') == 'success':
             candidates.add(run['id'])
+            attempt_of[run['id']] = run.get('run_attempt', 1)
     scan = deepcopy(delivery.get('scan') or dict(low=None, high=None, match=None))
+    scan.setdefault('attempts', {})
     low, high = scan['low'], scan['high']
     ids = sorted(candidates)
     if low is None:
         order = list(reversed(ids))
     else:
-        order = [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
+        # Reruns keep their run id but bump run_attempt: a run inside the examined
+        # interval whose authenticated attempt differs (or that was never authenticated)
+        # is stale evidence and is re-examined first.
+        stale = [i for i in reversed(ids) if low <= i <= high and scan['attempts'].get(str(i)) != attempt_of[i]]
+        order = stale + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
     examined = 0
     for rid in order:
         if examined >= SCAN_BUDGET:
             break
         lo, hi = (rid, rid) if low is None else (min(low, rid), max(high, rid))
-        if any(lo < p < hi for p in pending):
+        if not (low is not None and low <= rid <= high) and any(lo < p < hi for p in pending):
             continue  # Never let the examined interval straddle an unfinished run.
         examined += 1
         try:
@@ -291,8 +297,11 @@ def execution_result(api, policy, task, now):
                                              delivery['provider'], now, task, delivery)
         except Rejected:
             result = None  # Spoofed, revoked, or bound to another task/delivery.
+        scan['attempts'][str(rid)] = attempt_of[rid]
         if low is None:
             low = high = rid
+        elif low <= rid <= high:
+            pass  # Re-examined rerun inside the interval.
         elif rid > high:
             high = rid
         else:
@@ -307,8 +316,14 @@ def execution_result(api, policy, task, now):
     scan['low'], scan['high'] = low, high
     complete = not pending and len(order) <= SCAN_BUDGET
     if complete and scan['match']:
+        # A retained match is only a lead: mutable witnesses (provider comment/review,
+        # enrollment, policy, run attempt) are re-authenticated live before acceptance.
         match = scan['match']
-        return match['result'], match['run_id'], match['summary']
+        live = authenticated_execution(api, dict(proof, run_id=match['run_id']), policy,
+                                       delivery['provider'], now, task, delivery)  # Rejected fails closed
+        if result_key(live) != match['key']:
+            raise Rejected('retained provider result changed; contradictory evidence')
+        return match['result'], match['run_id'], execution_summary(live)
     if low is not None:
         delivery['scan'] = scan
     return None
