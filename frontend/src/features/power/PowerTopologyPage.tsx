@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 
+import { RequirePermission } from "@/components/feedback/AccessRestricted";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import {
   createConnection,
@@ -226,7 +227,7 @@ function PduOutletsPanel({
   );
 }
 
-export function PowerTopologyPage() {
+function PowerTopologyContent() {
   const queryClient = useQueryClient();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>("");
@@ -550,5 +551,15 @@ export function PowerTopologyPage() {
         onChanged={() => queryClient.invalidateQueries({ queryKey: ["power"] })}
       />
     </div>
+  );
+}
+
+/** The topology lists need `power:read`; without it the page explains the restriction instead of
+ * showing a failed or empty list. The backend refuses the same requests regardless. */
+export function PowerTopologyPage() {
+  return (
+    <RequirePermission permission="power:read" what="the power topology">
+      <PowerTopologyContent />
+    </RequirePermission>
   );
 }

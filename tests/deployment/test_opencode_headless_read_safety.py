@@ -287,6 +287,7 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
                 'OPENCODE_DISABLE_AUTOUPDATE': '1',
                 'OPENCODE_DISABLE_MODELS_FETCH': '1',
                 'OPENCODE_PURE': '1',
+                'npm_config_offline': 'true',
                 # Synthetic environment marker: a stand-in for the shape of
                 # the real key's location (/proc/self/environ) without ever
                 # holding a real credential.

@@ -51,6 +51,16 @@ describe("EventsPage", () => {
     expect(screen.getByRole("tab", { name: /Active/ })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("shows each alarm's workflow state as text with an icon, and ACTIVE never looks like Critical", async () => {
+    renderWithProviders(<EventsPage />);
+
+    const active = (await screen.findAllByText("ACTIVE"))[0].parentElement!;
+    expect(active.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(active.className).not.toMatch(/danger|red-/);
+    expect(active).toHaveAttribute("title", expect.stringMatching(/does not indicate severity/i));
+    expect(screen.getAllByText("ACKNOWLEDGED").length).toBeGreaterThan(0);
+  });
+
   it("filters visible events by the search box", async () => {
     const user = userEvent.setup();
     renderWithProviders(<EventsPage />);

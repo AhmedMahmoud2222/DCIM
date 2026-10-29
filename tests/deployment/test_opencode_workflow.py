@@ -27,7 +27,7 @@ ALLOWED = {OWNER_ID}
 def comment_event(body, user_id=OWNER_ID, assoc='OWNER', user_type='User', repo=REPO, **extra):
     event = {
         'action': 'created',
-        'repository': {'full_name': repo},
+        'repository': {'full_name': repo, 'owner': {'id': OWNER_ID}},
         'comment': {'body': body, 'author_association': assoc,
                     'user': {'id': user_id, 'type': user_type}},
         'issue': {'number': 5},
@@ -58,6 +58,14 @@ class GateDecisionTests(unittest.TestCase):
         self.assertEqual(task, 'fix the alarm bug')
         ok, _, task = self.run_gate(comment_event('/opencode\nadd tests'))
         self.assertTrue(ok)
+
+    def test_probe_is_exact_and_repository_owner_only(self):
+        ok, _, task = self.run_gate(comment_event('/oc probe'))
+        self.assertTrue(ok)
+        self.assertEqual(gate.split_mode(task), ('probe', ''))
+        for kwargs in ({'user_id': 1, 'assoc': 'MEMBER'}, {'assoc': 'COLLABORATOR'}):
+            self.assertFalse(self.run_gate(comment_event('/oc probe', **kwargs))[0])
+        self.assertFalse(self.run_gate(comment_event('/oc probe now'))[0])
 
     def test_unauthorized_caller_rejected(self):
         for kwargs in ({'user_id': 1}, {'assoc': 'NONE'}, {'assoc': 'CONTRIBUTOR'},
@@ -188,7 +196,8 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_permissions_are_minimal_per_job(self):
         self.assertEqual(self.wf['permissions'], {})
-        self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(self.jobs['gate']['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
         self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['publish']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['report']['permissions'], {})
@@ -235,6 +244,14 @@ class WorkflowPolicyTests(unittest.TestCase):
                          "outputs.has_changes == 'true'"):
             self.assertIn(required, condition)
         self.assertIn("needs.gate.outputs.authorized == 'true'", self.jobs['report']['if'])
+        probe = self.jobs['probe']
+        self.assertEqual(probe['if'], "needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'probe'")
+        self.assertEqual(probe['permissions'], {'contents': 'read'})
+        self.assertNotIn('APP_PRIVATE_KEY', yaml.dump(probe))
+        self.assertIn('GUARD_MODE=probe', yaml.dump(probe))
+        probe_run = next(step['run'] for step in probe['steps'] if step.get('name', '').startswith('Run 120-second'))
+        self.assertIn('/srv/ocimpl/work 120', probe_run)
+        self.assertNotIn('opencode-changes', yaml.dump(probe))
 
     def test_concurrency_cannot_be_displaced_by_unauthorized_comments(self):
         self.assertNotIn('concurrency', self.wf)
@@ -304,6 +321,28 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertLess(order.index('Select model'), order.index('Build sanitized sandbox copy'))
         self.assertLess(order.index('Build sanitized sandbox copy'), order.index(run_name))
         self.assertLess(order.index('Create isolated agent user and verify its filesystem view'), order.index(run_name))
+
+    def test_probe_sandbox_restores_root_ownership_and_uses_readonly_validator(self):
+        probe = self.jobs['probe']
+        steps = {step.get('name'): step for step in probe['steps']}
+        setup = steps['Create isolated read-only probe sandbox']['run']
+        copy = setup.index('sudo cp -a "${RUNNER_TEMP}/stage/." /srv/ocimpl/work/')
+        chown = setup.index('sudo chown -R root:root /srv/ocimpl/work')
+        readonly = setup.index('sudo chmod -R a-w /srv/ocimpl/work')
+        chain = setup.index('sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work')
+        validate = setup.index('sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocimpl/work')
+        self.assertLess(copy, chown)
+        self.assertLess(chown, readonly)
+        self.assertLess(readonly, chain)
+        self.assertLess(chain, validate)
+        self.assertNotIn('$(id -u ocagent)', setup)
+        self.assertNotIn('probe-parent', setup)
+        self.assertIn('sudo install -d -o ocagent -g ocagent -m 700 /srv/ocagent-home', setup)
+        run = steps['Run 120-second text-only probe through model-bound proxy']['run']
+        for preserved in ('--uid-owner ocagent -o lo -j ACCEPT', '--uid-owner ocagent -j REJECT',
+                          'opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}"',
+                          'unset OPENCODE_API_KEY', 'GUARD_MODE=probe', '/srv/ocimpl/work 120'):
+            self.assertIn(preserved, run)
 
     def test_opencode_is_installed_from_the_lockfile_not_an_unpinned_script(self):
         for job in ('opencode', 'review'):
