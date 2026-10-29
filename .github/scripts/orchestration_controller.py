@@ -26,6 +26,10 @@ SCRIPT = '.github/scripts/orchestration_controller.py'
 TERMINAL = {'ACCEPTED', 'BLOCKED', 'ESCALATED'}
 
 
+class AmbiguousWrite(Exception):
+    """A journal PUT whose outcome cannot be established. Aborts the whole run."""
+
+
 def timestamp(value):
     return int(datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp())
 
@@ -67,16 +71,16 @@ class Store:
         p = self.policy
         value = deepcopy(value)
         value['revision'] += 1
-        # GitHub rejects a stale content SHA with 409. Never fetch/retry this write:
+        # GitHub rejects a stale content SHA with 409. Never blindly retry this write:
         # another execution may already own the delivery intent.
         try:
             response = self.api.request('/contents/' + p['state_path'], 'PUT', {
                 'message': 'chore: record collaboration transition', 'branch': p['state_branch'],
                 'sha': blob, 'content': base64.b64encode(json.dumps(value, sort_keys=True).encode()).decode()})
         except TransientError:
-            # PUT definitely not applied (request failed before response).
-            raise
-        # PUT succeeded; verify commit signature.
+            # A timeout/5xx is AMBIGUOUS: the PUT may have landed. Resolve by reading
+            # the signed branch head instead of assuming either outcome.
+            return self._resolve(value, blob)
         try:
             commit = self.api.request('/commits/' + response['commit']['sha'])
             signed(commit)
@@ -85,16 +89,21 @@ class Store:
                     and commit['author'].get('login') == issuer['login'], 'unexpected journal signer')
             return value, response['content']['sha']
         except TransientError:
-            # Ambiguous: PUT may have landed but verification failed.
-            # Re-read branch head to determine authoritative state.
-            try:
-                fresh_value, fresh_blob = self.read()
-                if fresh_value.get('revision') == value['revision']:
-                    # PUT was applied; return committed state.
-                    return value, fresh_blob
-            except TransientError:
-                pass
-            raise TransientError('ambiguous save outcome; could not verify')
+            # PUT applied but its verification failed transiently: re-verify via read().
+            return self._resolve(value, blob)
+
+    def _resolve(self, value, blob):
+        """Decide whether an ambiguous PUT landed. read() re-verifies branch
+        protection, commit signature, trusted issuer author and journal schema."""
+        try:
+            fresh, fresh_blob = self.read()
+        except TransientError:
+            raise AmbiguousWrite('journal write outcome unknown; failing closed') from None
+        if fresh == value:
+            return value, fresh_blob  # Our exact write is the verified signed head.
+        if fresh_blob == blob:
+            raise TransientError('journal write was not applied')  # Provably unchanged.
+        raise AmbiguousWrite('journal moved to unrecognized content; failing closed')
 
 
 def owner_comment(comment, policy):
@@ -218,6 +227,13 @@ def choose(api, policy, task, now):
     return None
 
 
+SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
+
+
+def result_key(result):
+    return json.dumps([result['result'], result.get('provider_comment_id'), result.get('provider_review_id')])
+
+
 def execution_result(api, policy, task, now):
     delivery = task['deliveries'][-1] if task['deliveries'] else None
     if not delivery or delivery['status'] != 'DELIVERED':
@@ -233,51 +249,61 @@ def execution_result(api, policy, task, now):
     # Pre-filter only on metadata that identifies legitimate candidates.
     delivery_created = delivery.get('created_at', 0)
     runs = api.pages('/actions/workflows/' + str(proof['workflow_id']) + '/runs?event=issue_comment', 'workflow_runs')
-    matches = []
-    authenticated = 0
-    cap_exhausted = False
+    # Scan progress persists in the delivery: `low`..`high` is a contiguous interval
+    # of candidate run ids already authenticated, `match` the retained evidence.
+    # Each reconciliation authenticates at most SCAN_BUDGET new candidates, so
+    # genuine runs beyond any page/budget boundary are eventually reached.
+    candidates, pending = set(), None
     for run in runs:
-        if run.get('status') != 'completed' or run.get('conclusion') != 'success':
-            continue  # Skip incomplete/skipped runs; never accept stale evidence.
-        if run.get('workflow_id') != proof['workflow_id']:
+        if run.get('workflow_id') != proof['workflow_id'] or run.get('event') != 'issue_comment' \
+                or run.get('head_branch') != policy['default_branch']:
             continue
-        if run.get('head_branch') != policy['default_branch']:
-            continue
-        if run.get('event') != 'issue_comment':
-            continue
-        # Freshness: a run cannot predate its delivery.
         run_created = run.get('created_at', '')
         if run_created and delivery_created:
             try:
                 if timestamp(run_created) < delivery_created:
-                    continue  # Stale run predates delivery.
+                    continue  # A run cannot predate its delivery.
             except (ValueError, TypeError):
                 pass
-        # Candidate cap: treat exhaustion as incomplete (retry next run),
-        # not a terminal failure.
-        if authenticated >= 100:
-            cap_exhausted = True
-            break
-        authenticated += 1
+        if run.get('status') != 'completed':
+            # An unfinished run may still become the result: the scan cannot pass it.
+            pending = run['id'] if pending is None else min(pending, run['id'])
+        elif run.get('conclusion') == 'success':
+            candidates.add(run['id'])
+    scan = deepcopy(delivery.get('scan') or dict(low=None, high=None, match=None))
+    low, high = scan['low'], scan['high']
+    ids = sorted(i for i in candidates if pending is None or i < pending)
+    if low is None:
+        order = list(reversed(ids))
+    else:
+        order = [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
+    for rid in order[:SCAN_BUDGET]:
         try:
-            result = authenticated_execution(api, dict(proof, run_id=run['id']), policy,
+            result = authenticated_execution(api, dict(proof, run_id=rid), policy,
                                              delivery['provider'], now, task, delivery)
         except Rejected:
-            continue  # Spoofed, revoked, or bound to another task/delivery.
-        matches.append((result, run['id']))
-    if cap_exhausted:
-        return None  # Incomplete scan; retry next run.
-    if not matches:
-        return None
-    if len(matches) == 1:
-        return matches[0]
-    # Resolve duplicates deterministically: identical sealed results are one.
-    digests = set()
-    for result, _ in matches:
-        digests.add(digest(result))
-    if len(digests) == 1:
-        return matches[0]  # Duplicate runs with identical evidence → one result.
-    raise Rejected('contradictory provider results; multiple distinct evidence')
+            result = None  # Spoofed, revoked, or bound to another task/delivery.
+        if low is None:
+            low = high = rid
+        elif rid > high:
+            high = rid
+        else:
+            low = rid
+        if result:
+            match = scan['match']
+            if match and match['key'] != result_key(result):
+                raise Rejected('contradictory provider results; multiple distinct evidence')
+            if not match or rid < match['run_id']:  # Duplicates: lowest run id, deterministic.
+                scan['match'] = dict(run_id=rid, key=result_key(result), result=result['result'],
+                                     summary=execution_summary(result))
+    scan['low'], scan['high'] = low, high
+    complete = pending is None and len(order) <= SCAN_BUDGET
+    if complete and scan['match']:
+        match = scan['match']
+        return match['result'], match['run_id'], match['summary']
+    if low is not None:
+        delivery['scan'] = scan
+    return None
 
 
 def execution_summary(result):
@@ -288,34 +314,44 @@ def execution_summary(result):
 
 
 def reconcile(api, store, policy, state, blob, task_id, now):
-    # F5: Retain original state and blob before reconciliation to prevent
-    # leaking mutated (but uncommitted) state on failure.
-    original_state = state
-    original_blob = blob
+    # The signed journal is the authority. `tracked.committed` is the last CONFIRMED
+    # saved (state, blob); it starts as the caller's pair and advances only after a
+    # verified save. Failures return it, so uncommitted mutations never leak and
+    # committed writes (e.g. RESERVED) are never rolled back to a stale blob.
+    tracked = Tracked(store, state, blob)
     state = deepcopy(state)
     task = state['tasks'][task_id]
     if task['state'] in TERMINAL:
         return state, blob
     try:
-        return _reconcile(api, store, policy, state, task, blob, task_id, now)
+        return _reconcile(api, tracked, policy, state, task, blob, task_id, now)
     except TransientError:
-        # F5: Return original pre-call state and blob, never mutated state.
-        return original_state, original_blob
-    except Rejected:
-        # A definitive failure (unavailable PR, ambiguous/spoofed evidence,
-        # CAS conflict) escalates only this task; independent tasks continue
-        # in the main loop. The journal is signed and CAS-protected as usual.
-        # F5: Use original state (not mutated) to prevent leaking uncommitted
-        # transitions. Escalate on the original pre-call state.
-        state = deepcopy(original_state)
+        return tracked.committed
+    except Rejected as error:
+        # A definitive failure escalates only this task; independent tasks continue.
+        # AmbiguousWrite is deliberately not caught: it aborts the run fail-closed.
+        base, base_blob = tracked.committed
+        state = deepcopy(base)
         task = state['tasks'].get(task_id)
         if task is None or task['state'] in TERMINAL:
-            return state, original_blob
-        audit(task, 'ESCALATED', 'task reconciliation failed', now)
+            return base, base_blob
+        audit(task, 'ESCALATED', 'task reconciliation failed: ' + str(error)[:200], now)
         try:
-            return store.save(state, original_blob)
+            return tracked.save(state, base_blob)
         except TransientError:
-            return original_state, original_blob
+            return tracked.committed
+
+
+class Tracked:
+    """Store wrapper remembering the last confirmed saved (state, blob)."""
+
+    def __init__(self, store, state, blob):
+        self.store, self.committed = store, (state, blob)
+
+    def save(self, value, blob):
+        saved, saved_blob = self.store.save(value, blob)
+        self.committed = (deepcopy(saved), saved_blob)
+        return saved, saved_blob
 
 
 def _reconcile(api, store, policy, state, task, blob, task_id, now):
@@ -329,9 +365,10 @@ def _reconcile(api, store, policy, state, task, blob, task_id, now):
         # original exact binding, but NEVER accept it for the new HEAD/base.
         observed = execution_result(api, policy, task, now)
         if observed:
-            result, run_id = observed
-            task['deliveries'][-1].update(status='COMPLETED', result=result['result'],
-                                         run_id=run_id, execution_evidence=execution_summary(result))
+            outcome, run_id, summary = observed
+            task['deliveries'][-1].update(status='COMPLETED', result=outcome,
+                                         run_id=run_id, execution_evidence=summary)
+            task['deliveries'][-1].pop('scan', None)
         audit(task, 'BLOCKED', 'HEAD/base changed; new owner-bound task required', now)
         return store.save(state, blob)
     roots = api.pages('/issues/' + str(current['pr']) + '/comments')
@@ -355,12 +392,14 @@ def _reconcile(api, store, policy, state, task, blob, task_id, now):
             audit(task, 'INDEPENDENT_REVIEW', 'recovered authenticated delivery', now)
             return store.save(state, blob)
         if delivery['status'] == 'DELIVERED':
+            before = deepcopy(delivery.get('scan'))
             observed = execution_result(api, policy, task, now)
             if observed:
-                result, run_id = observed
-                delivery.update(status='COMPLETED', result=result['result'], run_id=run_id,
-                                execution_evidence=execution_summary(result))
-                if result['result'] == 'SUCCESS':
+                outcome, run_id, summary = observed
+                delivery.update(status='COMPLETED', result=outcome, run_id=run_id,
+                                execution_evidence=summary)
+                delivery.pop('scan', None)
+                if outcome == 'SUCCESS':
                     try:
                         # Live collector verifies exact current review, CI, signatures,
                         # owner attestation, Actions provenance and unresolved findings.
@@ -371,6 +410,8 @@ def _reconcile(api, store, policy, state, task, blob, task_id, now):
                 else:
                     audit(task, 'ASSIGNED', 'provider failed/blocked; bounded fallback', now)
                 return store.save(state, blob)
+            if delivery.get('scan') != before:
+                return store.save(state, blob)  # Persist bounded scan progress/evidence.
             return state, blob  # Interrupted/quota-limited providers expire at deadline.
     if len(task['deliveries']) >= policy['max_deliveries']:
         audit(task, 'ESCALATED', 'delegation budget exhausted', now)
@@ -478,5 +519,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (Rejected, TransientError, KeyError, ValueError, TypeError, OSError):
+    except (Rejected, TransientError, AmbiguousWrite, KeyError, ValueError, TypeError, OSError):
         raise SystemExit('Collaboration failed closed; inspect trusted run and journal. No automatic delivery retry.') from None

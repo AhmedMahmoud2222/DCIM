@@ -525,10 +525,11 @@ class ControllerTests(unittest.TestCase):
         try:
             with patch.object(c, 'choose', return_value='claude'):
                 value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
-            # F5: returned state is original (no uncommitted leak).
+            # The RESERVED save was confirmed, so the committed pair is returned.
             task = value['tasks'][self.task['id']]
             self.assertEqual(task['state'], 'ASSIGNED')
-            self.assertEqual(task['deliveries'], [])
+            self.assertEqual(task['deliveries'][-1]['status'], 'RESERVED')
+            self.assertEqual(blob, '1')
             # The RESERVED delivery was committed to the store before POST.
             committed = self.store.value['tasks'][self.task['id']]
             self.assertEqual(committed['deliveries'][-1]['status'], 'RESERVED')
@@ -631,9 +632,9 @@ class ControllerTests(unittest.TestCase):
             raise Rejected('not our run')
         with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            result, run_id = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+            outcome, run_id, _ = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
         self.assertEqual(run_id, 1)
-        self.assertEqual(result['result'], 'SUCCESS')
+        self.assertEqual(outcome, 'SUCCESS')
 
     def test_execution_result_missing_result(self):
         self.api.pages = lambda path, key=None: deepcopy([dict(id=5, status='completed',
@@ -694,7 +695,7 @@ class ControllerTests(unittest.TestCase):
             return self._run_result(proof['run_id'])
         with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            result, run_id = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+            outcome, run_id, _ = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
         self.assertEqual(run_id, 3)
         self.assertEqual(calls, [3])
 
@@ -709,23 +710,173 @@ class ControllerTests(unittest.TestCase):
             if proof['run_id'] == 202:
                 return self._run_result(202)
             raise Rejected('not our run')
-        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+        task = self.delivered_task()
+        calls = []
+        def counting(api, proof, *a, **k):
+            calls.append(proof['run_id'])
+            return fake_auth(api, proof, *a, **k)
+        with patch.object(c, 'authenticated_execution', side_effect=counting), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            result = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
-        # Cap (100 authenticated candidates) is hit before reaching run 202;
-        # returns None (incomplete, retry next run) rather than terminal failure.
-        self.assertIsNone(result)
+            # Passes 1-2 are incomplete (budget 100/pass) but persist progress and
+            # the retained match; pass 3 completes and returns the genuine run.
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            self.assertEqual(len(calls), 100)
+            self.assertEqual(task['deliveries'][-1]['scan']['match']['run_id'], 202)
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            self.assertEqual(len(calls), 200)
+            self.assertEqual(len(set(calls)), 200)  # never re-authenticates examined runs
+            outcome, run_id, _ = c.execution_result(self.api, self.policy, task, 110)
+        self.assertEqual((outcome, run_id), ('SUCCESS', 202))
 
-    def test_execution_result_pagination_exhaustion_returns_none(self):
-        """More than 100 authenticated candidate runs returns None (incomplete, retry next run)."""
+    def test_scan_progress_survives_100_plus_candidates_and_new_runs(self):
         runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
-                     head_branch='main', event='issue_comment', head_sha='a'*40)
-                for i in range(1, 102)]
+                     head_branch='main', event='issue_comment', head_sha='m'*40)
+                for i in range(1, 151)]
         self.api.pages = lambda path, key=None: deepcopy(runs)
-        with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
-                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            result = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
-            self.assertIsNone(result)
+        task = self.delivered_task()
+        def fake_auth(api, proof, *a, **k):
+            if proof['run_id'] == 1:
+                return self._run_result(1)
+            raise Rejected('other task')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            runs.append(dict(runs[0], id=151))  # a new unrelated run arrives
+            outcome, run_id, _ = c.execution_result(self.api, self.policy, task, 110)
+        self.assertEqual(run_id, 1)
+
+    def test_contradiction_on_later_pass_fails_closed(self):
+        runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment', head_sha='m'*40)
+                for i in range(1, 151)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        def fake_auth(api, proof, *a, **k):
+            if proof['run_id'] == 150:
+                return self._run_result(150)
+            if proof['run_id'] == 1:
+                return dict(self._run_result(1), provider_comment_id=6)
+            raise Rejected('other task')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, task, 110)
+
+    def test_pending_run_blocks_acceptance_until_it_completes(self):
+        runs = [dict(id=1, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment'),
+                dict(id=2, status='in_progress', conclusion=None, workflow_id=88,
+                     head_branch='main', event='issue_comment')]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        with patch.object(c, 'authenticated_execution', return_value=self._run_result(1)), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            runs[1].update(status='completed', conclusion='skipped')
+            self.assertEqual(c.execution_result(self.api, self.policy, task, 110)[1], 1)
+
+    def test_duplicate_runs_same_reference_resolve_deterministically(self):
+        runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment') for i in (4, 9)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        with patch.object(c, 'authenticated_execution', side_effect=lambda api, proof, *a, **k: self._run_result(proof['run_id'])), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertEqual(c.execution_result(self.api, self.policy, self.delivered_task(), 110)[1], 4)
+
+    # --- Journal authority: confirmed saves are never rolled back ---
+
+    def test_transient_after_reserved_save_returns_committed_pair_and_next_task_cas_ok(self):
+        original = self.api.request
+        def flaky(path, method='GET', body=None):
+            if method == 'POST':
+                raise TransientError('5xx')
+            return original(path, method, body)
+        self.api.request = flaky
+        with patch.object(c, 'choose', return_value='claude'):
+            value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+        self.assertEqual(blob, str(self.store.writes))  # current CAS blob, not '0'
+        self.assertEqual(value['revision'], self.store.value['revision'])
+        self.assertEqual(value['tasks'][self.task['id']]['deliveries'][-1]['status'], 'RESERVED')
+        self.api.request = original
+        # A following independent save uses the current blob and revision.
+        self.store.save(value, blob)
+
+    def test_rejected_after_reserved_save_escalates_from_committed_state(self):
+        original = self.api.request
+        calls = {'n': 0}
+        def flaky(path, method='GET', body=None):
+            if path == '/pulls/211':
+                calls['n'] += 1
+                if calls['n'] >= 2:  # second read, after RESERVED was saved
+                    return dict(original(path), head={'sha': 'c'*40, 'repo': {'full_name': self.policy['repository']}})
+            return original(path, method, body)
+        self.api.request = flaky
+        seen = []
+        real_save = self.store.save
+        def save(value, sha):
+            seen.append(sha)
+            return real_save(value, sha)
+        self.store.save = save
+        with patch.object(c, 'choose', return_value='claude'):
+            value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+        task = value['tasks'][self.task['id']]
+        self.assertEqual(task['state'], 'ESCALATED')
+        self.assertEqual(task['deliveries'][-1]['status'], 'RESERVED')  # not rolled back
+        self.assertEqual(seen[-1], '1')  # escalation CAS uses the committed blob
+        self.assertEqual(self.api.posts, [])
+
+    def test_nothing_saved_returns_exact_original(self):
+        original = self.api.request
+        self.api.request = lambda path, method='GET', body=None: (_ for _ in ()).throw(TransientError('x'))
+        value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+        self.api.request = original
+        self.assertIs(value, self.state)
+        self.assertEqual(blob, '0')
+
+
+class StoreAmbiguityTests(unittest.TestCase):
+    def setUp(self):
+        self.policy = json.loads((ROOT/c.POLICY).read_text())
+        self.policy['issuer'] = dict(id=100, login='native[bot]', app_id=200, app_slug='native')
+        self.value = dict(version=1, revision=3, tasks={})
+
+    def store(self, put, head):
+        store = c.Store.__new__(c.Store)
+        store.policy = self.policy
+        class Api:
+            def request(inner, path, method='GET', body=None):
+                if method == 'PUT':
+                    return put()
+                raise AssertionError(path)
+        store.api = Api()
+        store.read = head
+        return store
+
+    def test_put_timeout_that_landed_is_recognized(self):
+        landed = dict(self.value, revision=4)
+        def put(): raise TransientError('timeout')
+        store = self.store(put, lambda: (deepcopy(landed), 'new'))
+        value, blob = store.save(self.value, 'old')
+        self.assertEqual((value, blob), (landed, 'new'))
+
+    def test_put_timeout_not_applied_is_transient_with_unchanged_head(self):
+        def put(): raise TransientError('timeout')
+        store = self.store(put, lambda: (deepcopy(self.value), 'old'))
+        with self.assertRaises(TransientError):
+            store.save(self.value, 'old')
+
+    def test_put_timeout_and_unreadable_head_fails_closed(self):
+        def put(): raise TransientError('timeout')
+        def head(): raise TransientError('down')
+        with self.assertRaises(c.AmbiguousWrite):
+            self.store(put, head).save(self.value, 'old')
+
+    def test_put_timeout_head_moved_elsewhere_fails_closed(self):
+        def put(): raise TransientError('timeout')
+        store = self.store(put, lambda: (dict(self.value, revision=9), 'other'))
+        with self.assertRaises(c.AmbiguousWrite):
+            store.save(self.value, 'old')
 
 
 class TransportTests(unittest.TestCase):
