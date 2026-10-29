@@ -45,7 +45,21 @@ BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
     'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'presence_penalty',
     'frequency_penalty', 'seed', 'n', 'response_format', 'reasoning_effort', 'user'})
-FORWARD_HEADERS = ('content-type', 'accept', 'user-agent', 'x-opencode-request-id')
+FORWARD_HEADERS = ('content-type', 'accept', 'user-agent')
+# Identity headers the genuine OpenCode v2 CLI attaches to every inference request (captured from the pinned
+# binary). They are relayed unchanged, only when their value has the exact shape the real client produces;
+# anything else is dropped. The proxy never creates, completes or rewrites one: a header the client did not
+# send is not sent upstream, and `x-opencode-client` is relayed only as the literal `cli`.
+SESSION_TOKEN = re.compile(r'^ses_[A-Za-z0-9]{8,64}$')
+CLIENT_HEADER_SHAPES = {
+    'x-opencode-client': re.compile(r'^cli$'),
+    'x-opencode-project': re.compile(r'^[0-9a-f]{40}$'),
+    'x-opencode-session': SESSION_TOKEN,
+    'x-opencode-session-id': SESSION_TOKEN,
+    'x-session-id': SESSION_TOKEN,
+    'x-session-affinity': SESSION_TOKEN,
+    'x-opencode-request-id': re.compile(r'^[A-Za-z0-9_-]{1,100}$'),
+}
 HOP = {'connection', 'keep-alive', 'transfer-encoding', 'content-length', 'proxy-authenticate',
        'proxy-authorization', 'te', 'trailers', 'upgrade'}
 
@@ -71,6 +85,44 @@ def validate_bound_model(model: str, registry: dict, denied: set[str]) -> str:
     if router.blockers(registry['models'][full]):
         raise PolicyError('model_disabled_or_unhealthy')
     return bare(full)
+
+
+def client_identity_headers(headers) -> dict[str, str]:
+    """The v2 client identity headers present on the request and well formed (see CLIENT_HEADER_SHAPES)."""
+    relayed = {}
+    for name, shape in CLIENT_HEADER_SHAPES.items():
+        value = headers.get(name)
+        if value is not None and shape.fullmatch(value):
+            relayed[name] = value
+    return relayed
+
+
+# Provider rejections that stop the run. OpenCode v2 retries a rejected request internally and forever without
+# emitting an error event, so the guard relies on these records to stop the agent promptly. Only the HTTP status is
+# used: no response body or header content is read or logged. Categories the status alone cannot tell apart
+# (a rate limit versus an exhausted quota, an unsupported client versus another policy refusal) stay generic.
+TERMINAL_AFTER = {401: 1, 402: 1, 403: 1, 429: 2}
+UNAVAILABLE_AFTER = 3          # 5xx responses and failed upstream connections
+CATEGORY_BY_STATUS = {401: 'provider_auth_rejected', 402: 'provider_quota_exhausted'}
+
+
+def classify_provider_status(status: int | None) -> str:
+    """Sanitized category for an upstream failure; '' when the response is not a failure."""
+    if status is None:
+        return 'provider_unavailable'
+    if status in CATEGORY_BY_STATUS:
+        return CATEGORY_BY_STATUS[status]
+    if status >= 500:
+        return 'provider_unavailable'
+    if status >= 400:
+        return f'provider_http_{status}'
+    return ''
+
+
+def rejection_limit(status: int | None) -> int:
+    if status is None or status >= 500:
+        return UNAVAILABLE_AFTER
+    return TERMINAL_AFTER.get(status, 1)
 
 
 def _no_duplicate_keys(pairs):
@@ -134,6 +186,7 @@ class Proxy:
     def __init__(self, key: str, upstream: str, bound: str, log_path: str | None = None):
         self.key, self.upstream, self.bound, self.log_path = key, upstream, bound, log_path
         self.rejections: list[dict] = []
+        self.failures: dict[int, int] = {}
         self.forwarded = 0
         self.accepted = 0
         self._lock = threading.Lock()
@@ -147,6 +200,16 @@ class Proxy:
                 with open(self.log_path, 'a', encoding='utf-8') as handle:
                     handle.write(line + '\n')
         print('proxy telemetry: ' + line, file=sys.stderr, flush=True)
+
+    def provider_failure(self, status: int | None, request_count: int) -> None:
+        """Count an upstream failure and log a `provider_rejection` record, `terminal` once its limit is reached."""
+        key = status if status is not None else 0
+        with self._lock:
+            self.failures[key] = self.failures.get(key, 0) + 1
+            count = self.failures[key]
+        self.telemetry('provider_rejection', request_count=request_count, http_status=status,
+                       category=classify_provider_status(status), count=count,
+                       terminal=count >= rejection_limit(status))
 
     def record_rejection(self, code: str, method: str, path: str) -> None:
         entry = {'rejected': code, 'method': re.sub(r'[^A-Z]', '', method.upper())[:8],
@@ -195,6 +258,7 @@ def make_handler(proxy: Proxy):
             endpoint = 'chat_completions' if self.path in POST_PATHS else 'models'
             proxy.telemetry('accepted', request_count=request_count, endpoint=endpoint)
             headers = {k: v for k, v in ((n, self.headers.get(n)) for n in FORWARD_HEADERS) if v}
+            headers.update(client_identity_headers(self.headers))
             headers['Authorization'] = f'Bearer {proxy.key}'
             if target_scheme == 'https':
                 conn = http.client.HTTPSConnection(host, int(port or 443), timeout=300)
@@ -215,6 +279,8 @@ def make_handler(proxy: Proxy):
                 response = conn.getresponse()
                 status = response.status
                 proxy.telemetry('http_response', request_count=request_count, http_status=status)
+                if status >= 400:
+                    proxy.provider_failure(status, request_count)
                 self.send_response(response.status)
                 for name, value in response.getheaders():
                     if name.lower() not in HOP:
@@ -236,6 +302,8 @@ def make_handler(proxy: Proxy):
                 completion = 'completed'
             except (OSError, http.client.HTTPException):
                 completion = 'client_or_upstream_io_error' if connection_result == 'connected' else 'upstream_connection_error'
+                if connection_result != 'connected':
+                    proxy.provider_failure(None, request_count)
                 if not response_started:
                     try:
                         self._send(502, 'upstream unavailable')
