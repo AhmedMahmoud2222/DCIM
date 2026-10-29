@@ -133,6 +133,30 @@ class CiGateTests(unittest.TestCase):
             self.assertEqual(loader.loadTestsFromName(test_id).countTestCases(), 1, test_id)
 
 
+class EnvironmentTests(unittest.TestCase):
+    def test_binary_presence_follows_the_pinned_v2_layout_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modules = root / '.github/opencode/runtime/node_modules'
+            self.assertFalse(suite.environment(root)['opencode_binary_present'])
+            old = modules / 'opencode-linux-x64/bin/opencode'          # obsolete v1 layout is not accepted
+            old.parent.mkdir(parents=True)
+            old.write_text('')
+            self.assertFalse(suite.environment(root)['opencode_binary_present'])
+            new = modules / '@opencode/cli-linux-x64/bin/opencode'
+            new.parent.mkdir(parents=True)
+            new.write_text('')
+            self.assertTrue(suite.environment(root)['opencode_binary_present'])
+            new.unlink()
+            self.assertFalse(suite.environment(root)['opencode_binary_present'])
+
+    def test_a_missing_binary_fails_the_control_verdict(self):
+        full = IDS + [i for i in suite.manifest(suite.REQUIRED) if i.startswith('test_opencode_')]
+        missing = record(full)
+        missing['environment'] = {'disposable': True, 'opencode_binary_present': False}
+        self.assertEqual(mutants.control_verdict(missing)['verdict'], 'FAILED')
+
+
 class InventoryTests(unittest.TestCase):
     def test_every_mutant_targets_production_code_and_applies_exactly_once(self):
         entries = mutants.inventory()
