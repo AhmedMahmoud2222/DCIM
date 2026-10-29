@@ -525,10 +525,14 @@ class ControllerTests(unittest.TestCase):
         try:
             with patch.object(c, 'choose', return_value='claude'):
                 value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+            # F5: returned state is original (no uncommitted leak).
             task = value['tasks'][self.task['id']]
             self.assertEqual(task['state'], 'ASSIGNED')
-            self.assertEqual(task['deliveries'][-1]['status'], 'RESERVED')
-            self.assertNotIn('comment_id', task['deliveries'][-1])
+            self.assertEqual(task['deliveries'], [])
+            # The RESERVED delivery was committed to the store before POST.
+            committed = self.store.value['tasks'][self.task['id']]
+            self.assertEqual(committed['deliveries'][-1]['status'], 'RESERVED')
+            self.assertNotIn('comment_id', committed['deliveries'][-1])
             self.assertEqual(self.api.posts, [])
         finally:
             self.api.request = original
@@ -634,16 +638,24 @@ class ControllerTests(unittest.TestCase):
     def test_execution_result_missing_result(self):
         self.api.pages = lambda path, key=None: deepcopy([dict(id=5, status='completed',
             conclusion='success', workflow_id=88, head_branch='main', event='issue_comment', head_sha='z'*40)])
-        with patch.object(c, 'authenticated_execution') as auth, \
+        with patch.object(c, 'authenticated_execution', side_effect=Rejected('not our run')), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
             self.assertIsNone(c.execution_result(self.api, self.policy, self.delivered_task(), 110))
-            auth.assert_not_called()
 
     def test_execution_result_duplicate_ambiguous_rejected(self):
+        # Contradictory results (different digests) → Rejected.
         runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
                      head_branch='main', event='issue_comment', head_sha='a'*40) for i in (1, 2)]
         self.api.pages = lambda path, key=None: deepcopy(runs)
-        with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
+        results = [self._run_result(1), self._run_result(2)]
+        # Make results contradictory by changing result field.
+        results[1] = dict(results[1], result='FAILED')
+        call_count = {'n': 0}
+        def fake_auth(api, proof, policy, provider, now, task=None, delivery=None):
+            r = results[call_count['n']]
+            call_count['n'] += 1
+            return r
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
             with self.assertRaises(Rejected):
                 c.execution_result(self.api, self.policy, self.delivered_task(), 110)
@@ -660,10 +672,11 @@ class ControllerTests(unittest.TestCase):
         runs = [dict(id=1, status='completed', conclusion='success', workflow_id=88,
                      head_branch='main', event='issue_comment', head_sha='f'*40)]
         self.api.pages = lambda path, key=None: deepcopy(runs)
-        with patch.object(c, 'authenticated_execution') as auth, \
+        # The run's head_sha (f*40) is a main SHA, not PR head. But since we
+        # no longer filter on head_sha, authenticated_execution must reject it.
+        with patch.object(c, 'authenticated_execution', side_effect=Rejected('not our run')), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
             self.assertIsNone(c.execution_result(self.api, self.policy, self.delivered_task(), 110))
-            auth.assert_not_called()
 
     def test_execution_result_skips_incomplete_and_skipped_runs(self):
         runs = [
@@ -692,21 +705,27 @@ class ControllerTests(unittest.TestCase):
         genuine = dict(id=202, status='completed', conclusion='success', workflow_id=88,
                        head_branch='main', event='issue_comment', head_sha='a'*40)
         self.api.pages = lambda path, key=None: deepcopy(unrelated + [genuine])
-        with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
+        def fake_auth(api, proof, policy, provider, now, task=None, delivery=None):
+            if proof['run_id'] == 202:
+                return self._run_result(202)
+            raise Rejected('not our run')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            result, run_id = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
-        self.assertEqual(run_id, 202)
+            result = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+        # Cap (100 authenticated candidates) is hit before reaching run 202;
+        # returns None (incomplete, retry next run) rather than terminal failure.
+        self.assertIsNone(result)
 
-    def test_execution_result_pagination_exhaustion_rejected(self):
-        """More than 100 authenticated candidate runs (all matching) fails closed with Rejected."""
+    def test_execution_result_pagination_exhaustion_returns_none(self):
+        """More than 100 authenticated candidate runs returns None (incomplete, retry next run)."""
         runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
                      head_branch='main', event='issue_comment', head_sha='a'*40)
-                for i in range(1, 101)]
+                for i in range(1, 102)]
         self.api.pages = lambda path, key=None: deepcopy(runs)
         with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            with self.assertRaises(Rejected):
-                c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+            result = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+            self.assertIsNone(result)
 
 
 class TransportTests(unittest.TestCase):

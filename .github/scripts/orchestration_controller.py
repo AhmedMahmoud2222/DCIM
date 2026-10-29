@@ -69,15 +69,32 @@ class Store:
         value['revision'] += 1
         # GitHub rejects a stale content SHA with 409. Never fetch/retry this write:
         # another execution may already own the delivery intent.
-        response = self.api.request('/contents/' + p['state_path'], 'PUT', {
-            'message': 'chore: record collaboration transition', 'branch': p['state_branch'],
-            'sha': blob, 'content': base64.b64encode(json.dumps(value, sort_keys=True).encode()).decode()})
-        commit = self.api.request('/commits/' + response['commit']['sha'])
-        signed(commit)
-        issuer = p['issuer']
-        require(commit.get('author', {}).get('id') == issuer['id']
-                and commit['author'].get('login') == issuer['login'], 'unexpected journal signer')
-        return value, response['content']['sha']
+        try:
+            response = self.api.request('/contents/' + p['state_path'], 'PUT', {
+                'message': 'chore: record collaboration transition', 'branch': p['state_branch'],
+                'sha': blob, 'content': base64.b64encode(json.dumps(value, sort_keys=True).encode()).decode()})
+        except TransientError:
+            # PUT definitely not applied (request failed before response).
+            raise
+        # PUT succeeded; verify commit signature.
+        try:
+            commit = self.api.request('/commits/' + response['commit']['sha'])
+            signed(commit)
+            issuer = p['issuer']
+            require(commit.get('author', {}).get('id') == issuer['id']
+                    and commit['author'].get('login') == issuer['login'], 'unexpected journal signer')
+            return value, response['content']['sha']
+        except TransientError:
+            # Ambiguous: PUT may have landed but verification failed.
+            # Re-read branch head to determine authoritative state.
+            try:
+                fresh_value, fresh_blob = self.read()
+                if fresh_value.get('revision') == value['revision']:
+                    # PUT was applied; return committed state.
+                    return value, fresh_blob
+            except TransientError:
+                pass
+            raise TransientError('ambiguous save outcome; could not verify')
 
 
 def owner_comment(comment, policy):
@@ -208,14 +225,17 @@ def execution_result(api, policy, task, now):
     proof = policy['providers'].get(delivery['provider'], {}).get('proof')
     if not isinstance(proof, dict):
         return None  # Revoked/missing enrollment never authorizes a result.
-    head = task['binding']['head']
-    # Bounded pagination: every run list page is fetched within the client's
-    # rate-limit bounds. Unrelated runs (skipped, other workflows, other
-    # revisions) are filtered out here using only the list payload, so the
-    # expensive authenticated evidence check runs on genuine candidates only.
+    # F1: The workflow source SHA (run.head_sha) is the default-branch commit
+    # the workflow executed from, NOT the target PR HEAD. These are distinct
+    # bindings: (a) workflow source is authenticated by trusted-main provenance
+    # in authenticated_execution(); (b) PR head/base is authenticated through
+    # the command envelope and sealed result evidence (same_binding).
+    # Pre-filter only on metadata that identifies legitimate candidates.
+    delivery_created = delivery.get('created_at', 0)
     runs = api.pages('/actions/workflows/' + str(proof['workflow_id']) + '/runs?event=issue_comment', 'workflow_runs')
     matches = []
     authenticated = 0
+    cap_exhausted = False
     for run in runs:
         if run.get('status') != 'completed' or run.get('conclusion') != 'success':
             continue  # Skip incomplete/skipped runs; never accept stale evidence.
@@ -225,10 +245,19 @@ def execution_result(api, policy, task, now):
             continue
         if run.get('event') != 'issue_comment':
             continue
-        if run.get('head_sha') != head:
-            continue  # A genuine result is bound to this task's exact HEAD.
+        # Freshness: a run cannot predate its delivery.
+        run_created = run.get('created_at', '')
+        if run_created and delivery_created:
+            try:
+                if timestamp(run_created) < delivery_created:
+                    continue  # Stale run predates delivery.
+            except (ValueError, TypeError):
+                pass
+        # Candidate cap: treat exhaustion as incomplete (retry next run),
+        # not a terminal failure.
         if authenticated >= 100:
-            raise Rejected('too many candidate provider runs; fail closed')
+            cap_exhausted = True
+            break
         authenticated += 1
         try:
             result = authenticated_execution(api, dict(proof, run_id=run['id']), policy,
@@ -236,9 +265,19 @@ def execution_result(api, policy, task, now):
         except Rejected:
             continue  # Spoofed, revoked, or bound to another task/delivery.
         matches.append((result, run['id']))
-    if len(matches) > 1:
-        raise Rejected('ambiguous provider result; multiple authenticated runs')
-    return matches[0] if matches else None
+    if cap_exhausted:
+        return None  # Incomplete scan; retry next run.
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    # Resolve duplicates deterministically: identical sealed results are one.
+    digests = set()
+    for result, _ in matches:
+        digests.add(digest(result))
+    if len(digests) == 1:
+        return matches[0]  # Duplicate runs with identical evidence → one result.
+    raise Rejected('contradictory provider results; multiple distinct evidence')
 
 
 def execution_summary(result):
@@ -249,6 +288,10 @@ def execution_summary(result):
 
 
 def reconcile(api, store, policy, state, blob, task_id, now):
+    # F5: Retain original state and blob before reconciliation to prevent
+    # leaking mutated (but uncommitted) state on failure.
+    original_state = state
+    original_blob = blob
     state = deepcopy(state)
     task = state['tasks'][task_id]
     if task['state'] in TERMINAL:
@@ -256,22 +299,23 @@ def reconcile(api, store, policy, state, blob, task_id, now):
     try:
         return _reconcile(api, store, policy, state, task, blob, task_id, now)
     except TransientError:
-        # A transient GitHub outage (rate limit, HTTP 5xx, network or
-        # timeout) preserves the task exactly as-is. It is never classified
-        # as an authorization or task-ineligibility failure, never advances
-        # the task, never consumes a delivery budget and never issues a
-        # command. The next scheduled execution retries; a persistent outage
-        # escalates through the deadline rather than being mistaken for BLOCKED.
-        return state, blob
+        # F5: Return original pre-call state and blob, never mutated state.
+        return original_state, original_blob
     except Rejected:
         # A definitive failure (unavailable PR, ambiguous/spoofed evidence,
         # CAS conflict) escalates only this task; independent tasks continue
         # in the main loop. The journal is signed and CAS-protected as usual.
+        # F5: Use original state (not mutated) to prevent leaking uncommitted
+        # transitions. Escalate on the original pre-call state.
+        state = deepcopy(original_state)
+        task = state['tasks'].get(task_id)
+        if task is None or task['state'] in TERMINAL:
+            return state, original_blob
         audit(task, 'ESCALATED', 'task reconciliation failed', now)
         try:
-            return store.save(state, blob)
+            return store.save(state, original_blob)
         except TransientError:
-            return state, blob
+            return original_state, original_blob
 
 
 def _reconcile(api, store, policy, state, task, blob, task_id, now):
