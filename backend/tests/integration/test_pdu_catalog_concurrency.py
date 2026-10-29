@@ -9,6 +9,7 @@ including proof that the losing transaction left no partial PDU graph behind. Te
 import asyncio
 import uuid
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -130,24 +131,64 @@ async def test_concurrent_publish_of_one_pdu_revision_has_exactly_one_winner(mak
     ) == 0
 
 
-async def test_publish_racing_a_draft_outlet_replacement_never_yields_a_mixed_published_revision(
-    make_user, db_session, per_request_client
-):
+async def _wait_for_lock_waiters(engine, expected: int, timeout: float = 20.0) -> None:
+    """Wait until exactly `expected` backends are blocked on a heavyweight lock. Polls observable database state (not a
+    fixed sleep), so the ordering below is forced by PostgreSQL's FIFO lock queue rather than by timing."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        async with engine.connect() as conn:
+            waiting = (await conn.execute(text(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                "AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'"
+            ))).scalar_one()
+        if waiting == expected:
+            return
+        assert waiting < expected, f"expected {expected} lock waiters, saw {waiting}"
+        assert asyncio.get_running_loop().time() < deadline, f"timed out waiting for {expected} lock waiters (saw {waiting})"
+        await asyncio.sleep(0.02)
+
+
+@pytest.mark.parametrize("patch_first", [True, False], ids=["patch_wins_lock", "publish_wins_lock"])
+async def test_publish_vs_outlet_replacement_in_both_lock_orders(make_user, db_session, per_request_client, patch_first):
+    """An independent session holds the revision row lock; the intended winner's request is started and observed blocked
+    on it (pg_stat_activity), then the loser is started and observed queued behind it, and only then is the lock
+    released. PostgreSQL grants queued row locks FIFO, so each interleaving is forced rather than hoped for; if either
+    operation stopped taking the revision row lock it would never appear as a waiter and the test would fail."""
     headers = await _admin_headers(make_user)
     revision = await _make_pdu_revision(headers, publish=False, outlets=2)
+    rid = uuid.UUID(revision["id"])
 
-    patch = _request(
-        "PATCH", f"/api/v1/catalog/revisions/{revision['id']}/pdu",
-        headers={**headers, "If-Match": str(revision["version"])},
-        json={"outlets": [_outlet(n) for n in range(1, 5)]},
-    )
-    publish = _request("POST", f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
-    patch_resp, publish_resp = await asyncio.gather(patch, publish)
+    def patch():
+        return _request(
+            "PATCH", f"/api/v1/catalog/revisions/{revision['id']}/pdu",
+            headers={**headers, "If-Match": str(revision["version"])},
+            json={"outlets": [_outlet(n) for n in range(1, 5)]},
+        )
 
-    # Both specs are valid, so publication must succeed under either interleaving (patch first -> publish sees 4 outlets;
-    # publish first -> the patch is rejected with 409 and the 2 outlets remain). A 409 on publish is never acceptable.
+    def publish():
+        return _request("POST", f"/api/v1/catalog/revisions/{revision['id']}/publish", headers=headers)
+
+    first, second = (patch, publish) if patch_first else (publish, patch)
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=5)
+    tasks: list[asyncio.Task] = []
+    try:
+        async with engine.connect() as blocker:
+            await blocker.execute(text("SELECT id FROM catalog_model_revision WHERE id = :r FOR UPDATE"), {"r": rid})
+            try:
+                tasks.append(asyncio.create_task(first()))
+                await _wait_for_lock_waiters(engine, 1)
+                tasks.append(asyncio.create_task(second()))
+                await _wait_for_lock_waiters(engine, 2)
+            finally:
+                await blocker.rollback()  # release the lock; nothing was modified
+        first_resp, second_resp = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await engine.dispose()
+
+    patch_resp, publish_resp = (first_resp, second_resp) if patch_first else (second_resp, first_resp)
     assert publish_resp.status_code == 200, publish_resp.text
-    assert patch_resp.status_code in (200, 409), patch_resp.text
     outlets = await _count(
         db_session, "SELECT count(*) FROM pdu_outlet_template WHERE catalog_model_revision_id = :r", r=revision["id"]
     )
@@ -155,10 +196,16 @@ async def test_publish_racing_a_draft_outlet_replacement_never_yields_a_mixed_pu
         text("SELECT lifecycle_status FROM catalog_model_revision WHERE id = :r"), {"r": revision["id"]}
     )).scalar_one()
     assert status == "published", f"revision must end published, got {status!r}"
-    if patch_resp.status_code == 200:
+    if patch_first:
+        assert patch_resp.status_code == 200, patch_resp.text
         assert outlets == 4, "patch committed before publish: the published revision must carry all 4 outlets"
     else:
+        assert patch_resp.status_code == 409, patch_resp.text
         assert outlets == 2, "patch rejected after publish: the published revision must keep its original 2 outlets"
+    assert await _count(
+        db_session, "SELECT count(*) FROM audit_log WHERE action = 'catalog.revision.publish' AND entity_id = :r",
+        r=revision["id"],
+    ) == 1
 
 
 async def test_concurrent_instantiate_with_one_idempotency_key_creates_one_pdu_graph(
