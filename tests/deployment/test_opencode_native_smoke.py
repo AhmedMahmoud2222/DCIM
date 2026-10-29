@@ -390,6 +390,124 @@ class V2TranscriptEvaluationTests(unittest.TestCase):
         ]
         assert_outcome(self, lines, 0, False, 'ok', '')
 
+    SESSION = 'ses_e7f3df85fffeJWRHFxspCNW2ha'
+
+    def _shape(self, shape, *events):
+        """Wrap text-bearing events in the bare-text or the stepped shape."""
+        if shape == 'bare':
+            return list(events)
+        return ([json.dumps({'type': 'step_start', 'sessionID': self.SESSION,
+                             'part': {'type': 'step-start'}})]
+                + list(events)
+                + [json.dumps({'type': 'step_finish',
+                               'sessionID': self.SESSION,
+                               'part': {'type': 'step-finish',
+                                        'reason': 'stop'}})])
+
+    def _status(self, lines, exit_code=0):
+        return smoke.evaluate(lines, exit_code, False)[0]
+
+    def test_only_the_exact_ok_text_is_accepted_in_both_shapes(self):
+        for shape in ('bare', 'stepped'):
+            with self.subTest(shape=shape):
+                assert_outcome(self, self._shape(shape, text_event('OK')),
+                               0, False, 'ok', '')
+
+    def test_surrounding_whitespace_is_output_mismatch_in_both_shapes(self):
+        # The contract is exactly OK: no trimming of the model's reply.
+        texts = (' OK', 'OK ', ' OK ', '\tOK', 'OK\t', '\nOK', 'OK\n',
+                 'OK\r\n', '\r\nOK', ' \t\n OK \n\t ', '\u00a0OK',
+                 'OK\u2003', 'OK\u200b', '\u2028OK', 'OK\x0b', '\x0cOK')
+        for shape in ('bare', 'stepped'):
+            for text in texts:
+                with self.subTest(shape=shape, text=text):
+                    assert_outcome(self, self._shape(shape, text_event(text)),
+                                   0, False, 'failed', 'output_mismatch')
+
+    def test_additional_or_altered_text_is_output_mismatch(self):
+        texts = ('OK.', 'OK!', 'OK OK', 'OKAY', 'ok', 'Ok', 'oK', 'O K',
+                 'OK: done', 'Sure. OK', 'OK\nOK', '0K', 'O', 'K', '"OK"',
+                 '`OK`', 'OKay')
+        for shape in ('bare', 'stepped'):
+            for text in texts:
+                with self.subTest(shape=shape, text=text):
+                    assert_outcome(self, self._shape(shape, text_event(text)),
+                                   0, False, 'failed', 'output_mismatch')
+
+    def test_empty_or_blank_text_never_passes(self):
+        for shape in ('bare', 'stepped'):
+            for text in ('', ' ', '\n', '\t', ' \t\r\n '):
+                with self.subTest(shape=shape, text=text):
+                    self.assertEqual(
+                        self._status(self._shape(shape, text_event(text))),
+                        'failed')
+
+    def test_split_or_repeated_text_parts_never_pass(self):
+        # "OK" delivered as several parts, or OK plus any extra part, is not
+        # a single exact reply.
+        for shape in ('bare', 'stepped'):
+            for parts in (('O', 'K'), ('OK', 'OK'), ('OK', ''), ('', 'OK'),
+                          ('OK', ' '), (' ', 'OK'), ('OK', 'extra')):
+                with self.subTest(shape=shape, parts=parts):
+                    events = [text_event(part, stamp=i)
+                              for i, part in enumerate(parts)]
+                    self.assertEqual(
+                        self._status(self._shape(shape, *events)), 'failed')
+
+    def test_malformed_text_structures_never_pass(self):
+        def raw(part):
+            body = {'type': 'text', 'sessionID': self.SESSION}
+            if part is not ...:
+                body['part'] = part
+            return json.dumps(body)
+        malformed = {
+            'part_missing': raw(...),
+            'part_null': raw(None),
+            'part_string': raw('OK'),
+            'part_list': raw(['OK']),
+            'text_missing': raw({'type': 'text'}),
+            'text_null': raw({'type': 'text', 'text': None}),
+            'text_number': raw({'type': 'text', 'text': 0}),
+            'text_bool': raw({'type': 'text', 'text': True}),
+            'text_list': raw({'type': 'text', 'text': ['OK']}),
+            'text_object': raw({'type': 'text', 'text': {'text': 'OK'}}),
+            'text_codepoints': raw({'type': 'text', 'text': [79, 75]}),
+            'wrong_key': raw({'type': 'text', 'content': 'OK'}),
+        }
+        for shape in ('bare', 'stepped'):
+            for name, event in malformed.items():
+                with self.subTest(shape=shape, case=name):
+                    self.assertEqual(
+                        self._status(self._shape(shape, event)), 'failed')
+
+    def test_a_valid_ok_does_not_rescue_a_malformed_sibling(self):
+        malformed = json.dumps({'type': 'text', 'sessionID': self.SESSION,
+                                'part': {'type': 'text', 'text': 7}})
+        for shape in ('bare', 'stepped'):
+            with self.subTest(shape=shape):
+                self.assertEqual(self._status(self._shape(
+                    shape, text_event('OK'), malformed)), 'failed')
+
+    def test_ok_in_a_non_text_event_does_not_count(self):
+        reasoning = json.dumps({'type': 'reasoning', 'sessionID': self.SESSION,
+                                'part': {'type': 'reasoning', 'text': 'OK'}})
+        for shape in ('bare', 'stepped'):
+            with self.subTest(shape=shape):
+                self.assertEqual(
+                    self._status(self._shape(shape, reasoning)), 'failed')
+
+    def test_exact_ok_with_a_nonzero_exit_still_fails(self):
+        for shape in ('bare', 'stepped'):
+            with self.subTest(shape=shape):
+                self.assertEqual(self._status(
+                    self._shape(shape, text_event('OK')), exit_code=1),
+                    'failed')
+
+    def test_non_object_json_lines_fail_without_crashing(self):
+        for line in ('[]', 'null', '"OK"', '7', 'true', '{"type": 5}', '{'):
+            with self.subTest(line=line):
+                self.assertEqual(self._status([line]), 'failed')
+
     def test_unauthorized_401_reports_auth_error(self):
         lines, code, timed_out = transcript('auth_401')
         assert_outcome(self, lines, code, timed_out,

@@ -543,7 +543,7 @@ def _exact_ok(lines: list[str], error_class: str | None,
             if not isinstance(value, str):
                 return 'failed', 'output_mismatch', error_class, error_status_code
             text_parts.append(value)
-    if len(text_parts) != 1 or text_parts[0].strip() != 'OK':
+    if len(text_parts) != 1 or text_parts[0] != 'OK':
         return 'failed', 'output_mismatch', error_class, error_status_code
     return 'ok', '', error_class, error_status_code
 
