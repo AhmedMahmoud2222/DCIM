@@ -253,7 +253,7 @@ def execution_result(api, policy, task, now):
     # of candidate run ids already authenticated, `match` the retained evidence.
     # Each reconciliation authenticates at most SCAN_BUDGET new candidates, so
     # genuine runs beyond any page/budget boundary are eventually reached.
-    candidates, pending = set(), None
+    candidates, pending = set(), set()
     for run in runs:
         if run.get('workflow_id') != proof['workflow_id'] or run.get('event') != 'issue_comment' \
                 or run.get('head_branch') != policy['default_branch']:
@@ -266,18 +266,26 @@ def execution_result(api, policy, task, now):
             except (ValueError, TypeError):
                 pass
         if run.get('status') != 'completed':
-            # An unfinished run may still become the result: the scan cannot pass it.
-            pending = run['id'] if pending is None else min(pending, run['id'])
+            # An unfinished run may still become the result: acceptance waits for it, and
+            # the examined interval never straddles it, so it is reached once it completes.
+            pending.add(run['id'])
         elif run.get('conclusion') == 'success':
             candidates.add(run['id'])
     scan = deepcopy(delivery.get('scan') or dict(low=None, high=None, match=None))
     low, high = scan['low'], scan['high']
-    ids = sorted(i for i in candidates if pending is None or i < pending)
+    ids = sorted(candidates)
     if low is None:
         order = list(reversed(ids))
     else:
         order = [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
-    for rid in order[:SCAN_BUDGET]:
+    examined = 0
+    for rid in order:
+        if examined >= SCAN_BUDGET:
+            break
+        lo, hi = (rid, rid) if low is None else (min(low, rid), max(high, rid))
+        if any(lo < p < hi for p in pending):
+            continue  # Never let the examined interval straddle an unfinished run.
+        examined += 1
         try:
             result = authenticated_execution(api, dict(proof, run_id=rid), policy,
                                              delivery['provider'], now, task, delivery)
@@ -297,7 +305,7 @@ def execution_result(api, policy, task, now):
                 scan['match'] = dict(run_id=rid, key=result_key(result), result=result['result'],
                                      summary=execution_summary(result))
     scan['low'], scan['high'] = low, high
-    complete = pending is None and len(order) <= SCAN_BUDGET
+    complete = not pending and len(order) <= SCAN_BUDGET
     if complete and scan['match']:
         match = scan['match']
         return match['result'], match['run_id'], match['summary']

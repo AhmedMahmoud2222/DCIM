@@ -695,9 +695,50 @@ class ControllerTests(unittest.TestCase):
             return self._run_result(proof['run_id'])
         with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
                 patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
-            outcome, run_id, _ = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+            task = self.delivered_task()
+            # Skipped run 2 is ignored, but unfinished run 1 may still become the
+            # result, so run 3 is authenticated yet acceptance is withheld.
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            self.assertEqual(calls, [3])
+            runs[0].update(status='completed', conclusion='skipped')
+            outcome, run_id, _ = c.execution_result(self.api, self.policy, task, 110)
         self.assertEqual(run_id, 3)
-        self.assertEqual(calls, [3])
+        self.assertEqual(calls, [3])  # retained evidence: not re-authenticated
+
+    def test_unfinished_run_cannot_hide_contradictory_evidence(self):
+        runs = [dict(id=1, status='in_progress', conclusion=None, workflow_id=88, head_branch='main',
+                     event='issue_comment'),
+                dict(id=3, status='completed', conclusion='success', workflow_id=88, head_branch='main',
+                     event='issue_comment')]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        def fake_auth(api, proof, *a, **k):
+            result = self._run_result(proof['run_id'])
+            return dict(result, provider_comment_id=6) if proof['run_id'] == 1 else result
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            runs[0].update(status='completed', conclusion='success')
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, task, 110)
+
+    def test_scan_interval_never_straddles_unfinished_run(self):
+        runs = [dict(id=i, status='in_progress' if i == 2 else 'completed',
+                     conclusion=None if i == 2 else 'success', workflow_id=88,
+                     head_branch='main', event='issue_comment') for i in (1, 2, 3)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        seen = []
+        def fake_auth(api, proof, *a, **k):
+            seen.append(proof['run_id'])
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            c.execution_result(self.api, self.policy, task, 110)
+            self.assertEqual(seen, [3])  # 1 would straddle pending run 2
+            runs[1].update(status='completed', conclusion='skipped')
+            c.execution_result(self.api, self.policy, task, 110)
+        self.assertEqual(seen, [3, 1])
 
     def test_execution_result_handles_over_200_unrelated_runs(self):
         unrelated = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
