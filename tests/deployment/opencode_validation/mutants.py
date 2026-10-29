@@ -116,7 +116,7 @@ MUTATIONS = [
     ('R-5', 'manifest schema unchecked', S + 'opencode_publish.py', 'set(manifest) != TOP_KEYS', 'False'),
     ('R-6', 'generation failure still publishes', S + 'opencode_publish.py', "if env.get('GENERATION_STATUS') != 'success':", 'if False:'),
     ('R-7', 'forged baseline accepted', S + 'opencode_publish.py', 'if base != authorized:', 'if False:'),
-    ('R-8', 'gate accepts any commenter id', S + 'opencode_gate.py', "if user.get('id') not in allowed_ids:", 'if False:'),
+    ('R-8', 'gate accepts any commenter id', S + 'opencode_gate.py', "if not is_bot and user.get('id') not in allowed_ids:", 'if False:'),
     ('G-1', 'agent processes are not reaped after the run', S + 'opencode_guard.py', "    survivor = reap_agent_processes()                  #", "    survivor = ''                  #"),
     ('G-2', 'a surviving agent process does not fail the run', S + 'opencode_guard.py', "    if survivor:\n        status, reason = 'failed', survivor", "    if False:\n        status, reason = 'failed', survivor"),
     ('G-3', 'the reap never kills the agent processes', S + 'opencode_guard.py', "        subprocess.run(['sudo', '-n', 'pkill', '-KILL', '-u', AGENT_USER], check=False, capture_output=True)\n        left", "        left"),

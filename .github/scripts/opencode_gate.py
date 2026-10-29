@@ -17,6 +17,9 @@ import re
 import secrets
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import agent_authority
+
 # pull_request_review_comment is deliberately absent: GitHub runs that event's workflow
 # file from the PR merge ref, so PR content could rewrite this gate.
 COMMENT_EVENTS = {'issue_comment'}
@@ -24,8 +27,8 @@ TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
 # Command must be the first token of the comment, case-sensitive, followed by
 # whitespace and a non-empty task. Quoted replies, code blocks and mid-text
 # mentions never match.
-COMMAND_RE = re.compile(r'\A(?:/opencode|/oc)\s+(?P<task>\S[\s\S]*)\Z')
-MAX_TASK_CHARS = 8000
+COMMAND_RE = agent_authority.COMMAND_RE
+MAX_TASK_CHARS = agent_authority.MAX_TASK_CHARS
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 
 
@@ -56,21 +59,12 @@ def split_mode(task: str) -> tuple[str, str]:
 
 
 def extract_task(body: str) -> tuple[str | None, str]:
-    match = COMMAND_RE.match((body or '').replace('\r\n', '\n').lstrip('﻿'))
-    if not match:
-        return None, 'comment is not an exact /oc or /opencode command'
-    task = match.group('task').strip()
-    if not task:
-        return None, 'command has no task'
-    if len(task) > MAX_TASK_CHARS:
-        return None, 'task exceeds length limit'
-    if task.startswith('/'):
-        return None, 'task must not start with a slash command'
-    return task, ''
+    return agent_authority.parse_command(body)
 
 
 def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
-           pr: dict | None) -> tuple[bool, str, str]:
+           pr: dict | None, bots: list | None = None,
+           comments: list | None = None) -> tuple[bool, str, str]:
     """Return (authorized, reason, task)."""
     if event_name not in COMMENT_EVENTS:
         return False, f'unsupported event {event_name}', ''
@@ -80,13 +74,21 @@ def decide(event_name: str, event: dict, repository: str, allowed_ids: set[int],
         return False, 'event repository mismatch', ''
     comment = event.get('comment') or {}
     user = comment.get('user') or {}
-    if user.get('type') != 'User':
+    is_bot = user.get('type') == 'Bot'
+    if is_bot:
+        if 'pull_request' not in (event.get('issue') or {}):
+            return False, 'bot commands require an existing PR', ''
+        ok, reason = agent_authority.authorize(comment, bots or [], comments,
+                                               allowed_ids, ((pr or {}).get('head') or {}).get('sha'))
+        if not ok:
+            return False, reason, ''
+    elif user.get('type') != 'User':
         return False, 'commenter is not a User account', ''
     if not allowed_ids:
         return False, 'actor allowlist is empty or malformed', ''
-    if user.get('id') not in allowed_ids:
+    if not is_bot and user.get('id') not in allowed_ids:
         return False, 'commenter is not in the owner-approved allowlist', ''
-    if comment.get('author_association') not in TRUSTED_ASSOCIATIONS:
+    if not is_bot and comment.get('author_association') not in TRUSTED_ASSOCIATIONS:
         return False, 'commenter lacks owner/member/collaborator association', ''
 
     task, reason = extract_task(comment.get('body'))
@@ -167,9 +169,14 @@ def main() -> int:
             with open(pr_path, encoding='utf-8') as handle:
                 pr = json.load(handle)
         event_name = os.environ['GITHUB_EVENT_NAME']
+        comments = None
+        if os.environ.get('AGENT_COMMENTS_PATH'):
+            with open(os.environ['AGENT_COMMENTS_PATH'], encoding='utf-8') as handle:
+                comments = json.load(handle)
         authorized, reason, task = decide(
             event_name, event, os.environ['GITHUB_REPOSITORY'],
             parse_allowlist(os.environ.get('ALLOWED_ACTOR_IDS', '')), pr,
+            agent_authority.identities(os.environ.get('TRUSTED_AGENT_IDENTITIES', '')), comments,
         )
     except (KeyError, ValueError, OSError):
         authorized, reason, task = False, 'gate failed closed on malformed input', ''
@@ -183,6 +190,12 @@ def main() -> int:
                 raise ValueError('invalid binding')
         except (KeyError, ValueError, TypeError):
             authorized, reason, task, target = False, 'could not establish a trusted baseline', '', None
+    if authorized and (event.get('comment', {}).get('user') or {}).get('type') == 'Bot':
+        if not agent_authority.claim(os.environ['GITHUB_REPOSITORY'], event['comment'].get('id'),
+                                     agent_authority.root_id(event['comment'], comments,
+                                         parse_allowlist(os.environ.get('ALLOWED_ACTOR_IDS', ''))),
+                                     os.environ.get('GITHUB_TOKEN', '')):
+            authorized, reason, task, target = False, 'bot request already claimed or claim failed', '', None
     write_output(os.environ.get('GITHUB_OUTPUT'), authorized, reason, task, target)
     print(f'opencode gate: authorized={authorized} ({reason})')
     return 0

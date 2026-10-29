@@ -1,0 +1,47 @@
+name: DCIM owner attestation
+run-name: DCIM owner PR ${{ inputs.pr }}
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR receiving explicit owner authorization (not merge authorization)
+        type: number
+        required: true
+      head:
+        description: Exact full PR HEAD SHA
+        type: string
+        required: true
+      base:
+        description: Exact full current main/base SHA
+        type: string
+        required: true
+permissions: {}
+jobs:
+  attest:
+    if: github.ref == 'refs/heads/main' && github.actor_id == '285010264'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # An absent/unprotected environment cannot fabricate an approval audit record:
+    # the script requires an actual owner approval from GET actions/runs/ID/approvals.
+    environment: acceptance-owner
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ATTEST_PR: ${{ inputs.pr }}
+          ATTEST_HEAD: ${{ inputs.head }}
+          ATTEST_BASE: ${{ inputs.base }}
+        run: python3 .github/scripts/acceptance_gate.py attest
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: dcim-owner-pr-${{ inputs.pr }}-attempt-${{ github.run_attempt }}
+          path: sealed/evidence.json
+          retention-days: 90
+          if-no-files-found: error

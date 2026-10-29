@@ -18,21 +18,14 @@ import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { provenanceLabel } from "@/features/telemetry/provenanceHelpers";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
+import { deriveFreshness } from "@/features/status/freshness";
+import { LifecycleStatus, MeasurementFreshness } from "@/features/status/StatusBadges";
 
 const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
   dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
   single_feed: { text: "Single feed (no redundancy)", color: "bg-slate-700 text-slate-300" },
   degraded: { text: "Redundancy degraded", color: "bg-yellow-800 text-yellow-100" },
   no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-400" },
-};
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
 };
 
 export function EquipmentDetailPage() {
@@ -155,9 +148,7 @@ export function EquipmentDetailPage() {
           <h1 className="text-lg font-semibold">{equipment.hostname ?? equipment.asset_tag}</h1>
           <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
         </div>
-        <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[equipment.lifecycle_status] ?? "bg-slate-700"}`}>
-          {equipment.lifecycle_status}
-        </span>
+        <LifecycleStatus value={equipment.lifecycle_status} />
       </div>
 
       <div className="grid grid-cols-2 gap-6">
@@ -494,14 +485,19 @@ export function EquipmentDetailPage() {
         {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No telemetry is associated with this equipment.</p>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {latestTelemetryQuery.data?.map((reading) => {
-            const ageMs = Date.now() - new Date(reading.occurred_at).getTime();
-            // Two configured acquisition cycles is the MVP stale threshold.  The
-            // backend supplies the integration-specific cadence in the same query.
-            const stale = reading.expected_poll_interval_seconds != null && ageMs > reading.expected_poll_interval_seconds * 2_000;
+            // Derived in the browser from the real measurement time and the expected poll interval the
+            // backend supplies with the reading; see features/status/freshness.ts for the thresholds.
+            const freshness = deriveFreshness({
+              sourceType: "equipment_live_metric",
+              measuredAt: reading.occurred_at,
+              expectedIntervalSeconds: reading.expected_poll_interval_seconds,
+              now: Date.now(),
+            });
+            const occurredAt = Number.isNaN(Date.parse(reading.occurred_at)) ? "time unavailable" : new Date(reading.occurred_at).toLocaleString();
             return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded-sm bg-slate-800/60 p-3 text-left hover:bg-slate-800">
               <p className="text-xs uppercase tracking-wide text-slate-400">{reading.metric}</p>
               <p className="mt-1 text-xl font-semibold">{reading.presentation_value} <span className="text-sm text-slate-400">{reading.presentation_unit}</span></p>
-              <p className={stale ? "mt-1 text-xs text-yellow-400" : "mt-1 text-xs text-green-400"}>{stale ? "Stale" : "Current"} · occurred {new Date(reading.occurred_at).toLocaleString()}</p>
+              <p className="mt-1 text-xs text-slate-400"><MeasurementFreshness result={freshness} /> · occurred {occurredAt}</p>
               {reading.received_at !== reading.occurred_at && <p className="mt-1 text-xs text-slate-400">received {new Date(reading.received_at).toLocaleString()}</p>}
             </button>;
           })}

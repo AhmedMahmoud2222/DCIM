@@ -30,6 +30,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: write # Atomic bot-command claim; no provider secret is available here.
     outputs:
       authorized: ${{ steps.gate.outputs.authorized }}
       task: ${{ steps.gate.outputs.task }}
@@ -60,7 +61,17 @@ jobs:
         env:
           ALLOWED_ACTOR_IDS: ${{ vars.OPENCODE_ALLOWED_ACTOR_IDS }}
           PR_JSON_PATH: ${{ runner.temp }}/pr.json
+          TRUSTED_AGENT_IDENTITIES: ${{ vars.DCIM_TRUSTED_AGENT_IDENTITIES }}
+          AGENT_COMMENTS_PATH: ${{ runner.temp }}/agent-comments.json
+          GITHUB_TOKEN: ${{ github.token }}
+          COMMENT_TYPE: ${{ github.event.comment.user.type }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
+          if [[ "$COMMENT_TYPE" == Bot ]]; then
+            gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments?per_page=100" | jq 'add' > "${AGENT_COMMENTS_PATH}"
+          else
+            printf '[]' > "${AGENT_COMMENTS_PATH}"
+          fi
           test -f .github/scripts/opencode_gate.py || { echo "::error::gate script missing on this commit; refusing to run"; exit 1; }
           python3 .github/scripts/opencode_gate.py
 
@@ -420,6 +431,7 @@ jobs:
           sparse-checkout: |
             .github/scripts
             .github/opencode
+            .github/agents
           persist-credentials: false
       - name: Download review output
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -435,7 +447,9 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-pull-requests: write
+          permission-contents: read
       - name: Post independent review
+        id: published_review
         env:
           GH_PUBLISH_TOKEN: ${{ steps.app.outputs.token }}
           TARGET_NUMBER: ${{ needs.gate.outputs.number }}
@@ -446,6 +460,22 @@ jobs:
           REVIEWER_SESSION: ${{ needs.review.outputs.session_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out"
+      - name: Seal native collaboration execution result
+        if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          NATIVE_REVIEW_ID: ${{ steps.published_review.outputs.review_id }}
+          AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
+          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+        run: python3 .github/scripts/orchestration_opencode_result.py
+      - name: Retain authenticated native execution evidence
+        if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: dcim-agent-result-attempt-${{ github.run_attempt }}
+          path: sealed-collaboration/evidence.json
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: Publish signed commit and Draft PR

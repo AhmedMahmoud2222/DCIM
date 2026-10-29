@@ -196,7 +196,8 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_permissions_are_minimal_per_job(self):
         self.assertEqual(self.wf['permissions'], {})
-        self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(self.jobs['gate']['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
         self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['publish']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['report']['permissions'], {})

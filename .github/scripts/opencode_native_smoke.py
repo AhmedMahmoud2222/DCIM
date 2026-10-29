@@ -69,9 +69,11 @@ outcome writes a sanitized record and exits 1.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -178,14 +180,19 @@ CHILD_ENV_KEYS = frozenset({
     'OPENCODE_CONFIG_CONTENT', 'OPENCODE_DISABLE_AUTOUPDATE',
     'OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_PROJECT_CONFIG',
     'OPENCODE_CONFIG_PROJECT_DISABLE', 'OPENCODE_DISABLE_CLAUDE_CODE',
-    'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS',
+    'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS', 'npm_config_offline',
 })
 
 RESULT_KEYS = frozenset({
     'smoke_version', 'mode', 'opencode_expected_version', 'opencode_version',
-    'model', 'status', 'reason', 'error_class', 'error_status_code',
-    'exit_code', 'timed_out', 'event_count', 'stderr_lines', 'elapsed_ms',
+    'provider', 'model', 'effective_provider', 'effective_model',
+    'status', 'reason', 'error_class', 'error_status_code',
+    'exit_code', 'timed_out', 'event_count', 'stderr_lines',
+    'setup_ms', 'auth_ms', 'inference_ms', 'total_ms', 'execution_count',
+    'output_tokens',
 })
+
+RUNTIME_DIR = '.config/opencode'
 
 
 class VersionProbeError(Exception):
@@ -236,6 +243,7 @@ def build_child_env(agent_home: str, workdir: str, key: str) -> dict:
         'OPENCODE_CONFIG_PROJECT_DISABLE': '1',
         'OPENCODE_DISABLE_CLAUDE_CODE': '1',
         'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS': '1',
+        'npm_config_offline': 'true',
     }
     if key:
         env['OPENCODE_API_KEY'] = key
@@ -255,42 +263,110 @@ def build_command(binary: str) -> list[str]:
     ]
 
 
-def run_cli(command: list[str], env: dict, workdir: str, timeout_s: float
-            ) -> tuple[list[str], int, int | None, bool]:
-    """Run the CLI headless and bounded; return (lines, stderr_lines, exit, timed_out).
+RUNTIME_ROOT_NAMES = ('config', 'account-opencode')
 
-    stdin is /dev/null (an open idle stdin blocks a v2 run before any provider
-    contact). The child gets its own session so that, on timeout, the whole
-    process group is killed and the leader reaped; nothing it spawned can keep
-    running. OSError from the launch propagates to the caller.
+
+def _runtime_roots(agent_home: str) -> dict[str, str]:
+    """Config roots the pinned CLI reads and writes at startup.
+
+    XDG_CONFIG_HOME is honoured, so the agent-owned copy is used. The CLI also
+    loads and writes `~/.opencode` from the account's passwd home, which HOME
+    does not redirect (observed on the pinned linux-x64 binary), so that real
+    path is sealed as well.
     """
-    process = subprocess.Popen(
-        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, env=env, cwd=workdir, text=True,
-        start_new_session=True)
-    timed_out = False
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _kill_group(process)
-        stdout, stderr = process.communicate()
-    finally:
-        _kill_group(process)
-        process.wait()
-    exit_code = process.returncode
-    if exit_code in (124, 137):
-        timed_out = True
-    return (stdout or '').splitlines(), len((stderr or '').splitlines()), \
-        exit_code, timed_out
+    if os.name != 'posix':
+        raise ValueError('runtime_seal_unsupported')
+    import pwd
+    # The override exists only so the test suite never seals a developer's real
+    # home; the workflow does not set it.
+    account_home = (os.environ.get('OPENCODE_SMOKE_ACCOUNT_HOME')
+                    or pwd.getpwuid(os.getuid()).pw_dir)
+    return {
+        'config': os.path.join(agent_home, RUNTIME_DIR),
+        'account-opencode': os.path.join(account_home, '.opencode'),
+    }
 
 
-def _kill_group(process: subprocess.Popen) -> None:
-    """SIGKILL the child's process group; a group that is already gone is fine."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _walk_tree(root: str):
+    """Yield every directory and file under root; refuse symlinks."""
+    yield root
+    for current, dirs, files in os.walk(root, followlinks=False):
+        for name in dirs + files:
+            path = os.path.join(current, name)
+            if os.path.islink(path):
+                raise ValueError('runtime_config_symlink')
+            yield path
+
+
+def _seal_root(name: str, root: str) -> None:
+    """Make an existing or new config root read-only for the run identity.
+
+    The agent copy must start empty. The account copy may hold only what the
+    pinned runtime itself installs (its own `bin/` and `.gitignore`).
+    """
+    os.makedirs(root, exist_ok=True)
+    if os.path.islink(root):
+        raise ValueError('runtime_config_symlink')
+    entries = set(os.listdir(root))
+    allowed = {'bin', '.gitignore'} if name == 'account-opencode' else set()
+    if not entries <= allowed:
+        raise ValueError('runtime_config_not_empty')
+    for path in _walk_tree(root):
+        mode = os.stat(path, follow_symlinks=False).st_mode
+        os.chmod(path, 0o555 if stat.S_ISDIR(mode) else 0o444)
+
+
+def _verify_sealed(name: str, root: str) -> None:
+    if not os.path.isdir(root) or os.path.islink(root):
+        raise ValueError('runtime_config_missing')
+    entries = set(os.listdir(root))
+    allowed = {'bin', '.gitignore'} if name == 'account-opencode' else set()
+    if not entries <= allowed:
+        raise ValueError('runtime_config_not_empty')
+    for path in _walk_tree(root):
+        if os.stat(path, follow_symlinks=False).st_mode & 0o222:
+            raise ValueError('runtime_not_sealed')
+
+
+def prepare_runtime(agent_home: str, manifest_path: str, binary: str) -> None:
+    """Seal the runtime config roots and pin the installed CLI binary."""
+    if os.path.islink(binary) or not os.path.isfile(binary):
+        raise ValueError('runtime_binary_invalid')
+    roots = _runtime_roots(agent_home)
+    for name, root in roots.items():
+        _seal_root(name, root)
+    manifest = {
+        'version': 1,
+        'opencode_version': EXPECTED_OPENCODE_VERSION,
+        'binary_sha256': _file_sha256(binary),
+        'roots': sorted(roots),
+    }
+    with open(manifest_path, 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, sort_keys=True, separators=(',', ':'))
+
+
+def validate_runtime(agent_home: str, manifest_path: str, binary: str) -> None:
+    """Re-verify the pinned binary and the sealed config roots before key use."""
+    with open(manifest_path, encoding='utf-8') as f:
+        manifest = json.load(f)
+    roots = _runtime_roots(agent_home)
+    if (not isinstance(manifest, dict) or manifest.get('version') != 1
+            or manifest.get('opencode_version') != EXPECTED_OPENCODE_VERSION
+            or manifest.get('roots') != sorted(roots)
+            or not isinstance(manifest.get('binary_sha256'), str)):
+        raise ValueError('runtime_manifest_invalid')
+    if os.path.islink(binary) or _file_sha256(binary) != manifest['binary_sha256']:
+        raise ValueError('runtime_integrity_mismatch')
+    for name, root in roots.items():
+        _verify_sealed(name, root)
 
 
 SEMVER_LINE = re.compile(r'^(?:opencode\s+)?v?(\d+\.\d+\.\d+)$')
@@ -441,7 +517,7 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool
             return 'failed', 'no_supported_termination', error_class, error_status_code
         if exit_code != 0:
             return 'failed', f'nonzero_exit:{exit_code}', error_class, error_status_code
-        return 'ok', '', error_class, error_status_code
+        return _exact_ok(lines, error_class, error_status_code)
     if last_finish_reason is None:
         return 'failed', 'no_supported_termination', error_class, error_status_code
     if last_finish_reason != 'stop':
@@ -449,6 +525,26 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool
                 error_class, error_status_code)
     if exit_code != 0:
         return 'failed', f'nonzero_exit:{exit_code}', error_class, error_status_code
+    return _exact_ok(lines, error_class, error_status_code)
+
+
+def _exact_ok(lines: list[str], error_class: str | None,
+              error_status_code: int | None
+              ) -> tuple[str, str, str | None, int | None]:
+    """A clean run counts only if it answered exactly one `OK` text part."""
+    text_parts = []
+    for line in lines:
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get('type') == 'text':
+            part = event.get('part')
+            value = part.get('text') if isinstance(part, dict) else None
+            if not isinstance(value, str):
+                return 'failed', 'output_mismatch', error_class, error_status_code
+            text_parts.append(value)
+    if len(text_parts) != 1 or text_parts[0].strip() != 'OK':
+        return 'failed', 'output_mismatch', error_class, error_status_code
     return 'ok', '', error_class, error_status_code
 
 
@@ -486,7 +582,10 @@ def _write_result(path: str, *, mode: str = 'live', opencode_version: str | None
                   status: str, reason: str,
                   error_class: str | None, error_status_code: int | None,
                   exit_code: int | None, timed_out: bool, event_count: int,
-                  stderr_lines: int, elapsed_ms: int | None) -> dict:
+                  stderr_lines: int, setup_ms: int | None,
+                  auth_ms: int | None, inference_ms: int | None,
+                  total_ms: int | None, execution_count: int,
+                  output_tokens: int | None) -> dict:
     """Write the sanitized record with a closed field list: nothing else enters.
 
     Returns the record so tests can assert on the exact persisted artifact.
@@ -499,7 +598,12 @@ def _write_result(path: str, *, mode: str = 'live', opencode_version: str | None
         'mode': mode,
         'opencode_expected_version': EXPECTED_OPENCODE_VERSION,
         'opencode_version': opencode_version,
+        'provider': ENABLED_PROVIDERS[0],
         'model': MODEL,
+        # This pair is enforced by the fixed CLI selector and the one-provider
+        # allowlist; no fallback provider or model is enabled.
+        'effective_provider': ENABLED_PROVIDERS[0],
+        'effective_model': MODEL,
         'status': status,
         'reason': reason,
         'error_class': error_class,
@@ -508,9 +612,15 @@ def _write_result(path: str, *, mode: str = 'live', opencode_version: str | None
         'timed_out': timed_out,
         'event_count': event_count,
         'stderr_lines': stderr_lines,
-        'elapsed_ms': elapsed_ms,
+        'setup_ms': setup_ms,
+        'auth_ms': auth_ms,
+        'inference_ms': inference_ms,
+        'total_ms': total_ms,
+        'execution_count': execution_count,
+        'output_tokens': output_tokens,
     }
-    assert set(record) == RESULT_KEYS
+    if set(record) != RESULT_KEYS:
+        raise ValueError('result_schema_mismatch')
     with open(path, 'w', encoding='utf-8') as handle:
         json.dump(record, handle, indent=2)
     return record
@@ -524,8 +634,114 @@ def _summary(record: dict) -> str:
         f"reason={record['reason'] or '-'}",
         f"error_class={record['error_class'] or '-'}",
         f"error_status_code={record['error_status_code'] if record['error_status_code'] is not None else '-'}",
-        f"elapsed_ms={record['elapsed_ms'] if record['elapsed_ms'] is not None else '-'}",
+        f"total_ms={record['total_ms'] if record['total_ms'] is not None else '-'}",
     ]))
+
+
+def _phase_timings(lines: list[str], started_wall_ms: int,
+                   total_ms: int, mode: str) -> tuple[int | None, int | None,
+                                                        int | None]:
+    first_start = None
+    finish = None
+    error = None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        timestamp = event.get('timestamp')
+        if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+            continue
+        if event.get('type') == 'step_start' and first_start is None:
+            first_start = timestamp
+        elif event.get('type') == 'step_finish':
+            finish = timestamp
+        elif event.get('type') == 'error':
+            error = timestamp
+    setup_ms = max(0, first_start - started_wall_ms) if first_start else None
+    auth_ms = None
+    inference_ms = None
+    if first_start is not None:
+        if mode == 'preflight' and error is not None:
+            auth_ms = max(0, error - first_start)
+        elif mode == 'live' and finish is not None:
+            inference_ms = max(0, finish - first_start)
+    return setup_ms, auth_ms, inference_ms
+
+
+def _terminate_process_group(process: subprocess.Popen) -> None:
+    """Kill the whole CLI process tree without inheriting credential env."""
+    if os.name == 'posix':
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        return
+    system_root = os.environ.get('SystemRoot', r'C:\Windows')
+    subprocess.run(
+        ['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, env={'SystemRoot': system_root},
+        check=False, timeout=10,
+    )
+    if process.poll() is None:
+        process.kill()
+
+
+def _output_tokens(lines: list[str]) -> int | None:
+    total = None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get('type') != 'step_finish':
+            continue
+        part = event.get('part')
+        tokens = part.get('tokens') if isinstance(part, dict) else None
+        output = tokens.get('output') if isinstance(tokens, dict) else None
+        if isinstance(output, int) and not isinstance(output, bool):
+            total = (total or 0) + output
+    return total
+
+
+def _run_cli(command: list[str], env: dict, cwd: str,
+             timeout_s: int) -> tuple[str, str, int | None, bool]:
+    """Run the CLI headless in its own process group; bound it by `timeout_s`.
+
+    stdin is /dev/null (an open idle stdin blocks a v2 run before any provider
+    contact). On timeout the whole group is killed and the leader reaped. On
+    POSIX the group is also killed after a normal exit, so nothing the CLI
+    spawned can outlive the run. OSError from the launch propagates.
+    """
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, env=env, cwd=cwd,
+        start_new_session=(os.name == 'posix'))
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_s)
+        return stdout or '', stderr or '', process.returncode, False
+    except subprocess.TimeoutExpired:
+        _terminate_process_group(process)
+        stdout, stderr = process.communicate()
+        return stdout or '', stderr or '', None, True
+    finally:
+        if os.name == 'posix':
+            _terminate_process_group(process)
+        process.wait()
+
+
+def _record_failure(result_path: str, mode: str, version: str | None,
+                    reason: str, start: float, execution_count: int = 0) -> dict:
+    total_ms = int((time.monotonic() - start) * 1000)
+    return _write_result(
+        result_path, mode=mode, opencode_version=version, status='failed',
+        reason=reason, error_class=None, error_status_code=None,
+        exit_code=None, timed_out=False, event_count=0, stderr_lines=0,
+        setup_ms=None, auth_ms=None, inference_ms=None, total_ms=total_ms,
+        execution_count=execution_count, output_tokens=None)
 
 
 def main(argv: list[str]) -> int:
@@ -552,16 +768,14 @@ def main(argv: list[str]) -> int:
     binary = os.path.abspath(binary)
     agent_home = os.path.abspath(agent_home)
     workdir = os.path.abspath(workdir)
+    manifest_path = result_path + '.runtime.json'
     key = resolve_key(mode, os.environ)
 
     start = time.monotonic()
+    started_wall_ms = int(time.time() * 1000)
 
     if not key:
-        _write_result(result_path, mode=mode, opencode_version=None,
-                      status='failed', reason='missing_api_key',
-                      error_class=None, error_status_code=None, exit_code=None,
-                      timed_out=False, event_count=0, stderr_lines=0,
-                      elapsed_ms=None)
+        _record_failure(result_path, mode, None, 'missing_api_key', start)
         print(f'native smoke: mode={mode} status failed reason=missing_api_key')
         return 1
 
@@ -574,54 +788,75 @@ def main(argv: list[str]) -> int:
         os.makedirs(directory, exist_ok=True)
 
     try:
+        prepare_runtime(agent_home, manifest_path, binary)
+        validate_runtime(agent_home, manifest_path, binary)
+    except (ValueError, OSError) as error:
+        reason = str(error) if (isinstance(error, ValueError)
+                                and str(error).startswith('runtime_')) \
+            else 'runtime_seal_failed'
+        _record_failure(result_path, mode, None, reason, start)
+        print(f'native smoke: mode={mode} status failed reason={reason}')
+        return 1
+
+    try:
         version = read_version(binary, home_env)
     except (VersionProbeError, OSError, ValueError) as error:
         reason = _esc_reason(error) or 'opencode_version_unverified'
-        _write_result(result_path, mode=mode, opencode_version=None,
-                      status='failed', reason=reason, error_class=None,
-                      error_status_code=None, exit_code=None, timed_out=False,
-                      event_count=0, stderr_lines=0, elapsed_ms=None)
+        _record_failure(result_path, mode, None, reason, start)
         print(f'native smoke: mode={mode} status failed reason={reason}')
         return 1
 
     if version != EXPECTED_OPENCODE_VERSION:
-        _write_result(result_path, mode=mode, opencode_version=version,
-                      status='failed', reason='opencode_version_mismatch',
-                      error_class=None, error_status_code=None, exit_code=None,
-                      timed_out=False, event_count=0, stderr_lines=0,
-                      elapsed_ms=None)
+        _record_failure(result_path, mode, version,
+                        'opencode_version_mismatch', start)
         print(f'native smoke: mode={mode} status failed reason=opencode_version_mismatch')
+        return 1
+
+    try:
+        validate_runtime(agent_home, manifest_path, binary)
+    except (ValueError, OSError) as error:
+        _record_failure(result_path, mode, version, 'runtime_mutated_before_run',
+                        start)
+        print(f'native smoke: mode={mode} status failed reason=runtime_mutated_before_run')
         return 1
 
     env = build_child_env(agent_home, workdir, key)
     command = build_command(binary)
     try:
-        lines, stderr_lines, exit_code, timed_out = run_cli(
+        stdout, stderr, returncode, timed_out = _run_cli(
             command, env, workdir, timeout_min * 60 + 90)
     except OSError:
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-        _write_result(result_path, mode=mode, opencode_version=version,
-                      status='failed', reason='cli_launch_error',
-                      error_class=None, error_status_code=None, exit_code=None,
-                      timed_out=False, event_count=0, stderr_lines=0,
-                      elapsed_ms=elapsed_ms)
+        _record_failure(result_path, mode, version, 'cli_launch_error', start,
+                        execution_count=1)
         print(f'native smoke: mode={mode} status failed reason=cli_launch_error')
         return 1
-    elapsed_ms = int((time.monotonic() - start) * 1000)
+    lines = stdout.splitlines()
+    stderr_lines = len(stderr.splitlines())
+    exit_code = None if timed_out else returncode
 
     status, reason, error_class, error_status_code = evaluate(
         lines, exit_code, timed_out)
-    if mode == 'preflight':
+    try:
+        validate_runtime(agent_home, manifest_path, binary)
+    except (ValueError, OSError):
+        status, reason = 'failed', 'runtime_mutated_during_run'
+    if mode == 'preflight' and reason != 'runtime_mutated_during_run':
         # The objective is envelope compatibility, not inference: a synthetic
         # key must reach auth (401) rather than be policy-rejected (403).
         status, reason = probe_verdict(status, reason, error_class,
                                        error_status_code)
+    total_ms = int((time.monotonic() - start) * 1000)
+    setup_ms, auth_ms, inference_ms = _phase_timings(
+        lines, started_wall_ms, total_ms, mode)
     record = _write_result(result_path, mode=mode, opencode_version=version,
                            status=status, reason=reason, error_class=error_class,
                            error_status_code=error_status_code,
                            exit_code=exit_code, timed_out=timed_out,
                            event_count=len(lines), stderr_lines=stderr_lines,
-                           elapsed_ms=elapsed_ms)
+                           setup_ms=setup_ms, auth_ms=auth_ms,
+                           inference_ms=inference_ms, total_ms=total_ms,
+                           execution_count=1,
+                           output_tokens=_output_tokens(lines))
     print(_summary(record))
     return 0 if status == 'ok' else 1
 

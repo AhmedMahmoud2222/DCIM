@@ -39,6 +39,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import yaml
@@ -60,7 +61,7 @@ PINNED_VERSION = '2.1.4'
 
 # Captured from the real @opencode/cli 2.1.4 linux-x64 binary running the
 # SHIPPED smoke config (smoke.smoke_config(), smoke.build_command(),
-# smoke.build_child_env(), smoke.run_cli()) against a loopback scripted
+# smoke.build_child_env(), smoke._run_cli()) against a loopback scripted
 # OpenAI-compatible stub with a synthetic key; only the provider baseURL was
 # redirected. Lines are verbatim. Per case: (stdout lines, exit code,
 # timed_out). Notable v2 facts these encode:
@@ -361,6 +362,34 @@ class V2TranscriptEvaluationTests(unittest.TestCase):
         assert_outcome(self, lines, code, timed_out,
                        'failed', 'unexpected_tool_use')
 
+    def test_wrong_bare_text_answer_is_output_mismatch(self):
+        # A clean exit with some other reply must never count as a successful
+        # probe: the mandated answer is exactly OK, in either v2 shape.
+        assert_outcome(self, [text_event('Hello')], 0, False,
+                       'failed', 'output_mismatch')
+
+    def test_wrong_answer_on_a_clean_stepped_stop_is_output_mismatch(self):
+        session = 'ses_e7f3df85fffeJWRHFxspCNW2ha'
+        lines = [
+            json.dumps({'type': 'step_start', 'sessionID': session,
+                        'part': {'type': 'step-start'}}),
+            text_event('NOT OK', session),
+            json.dumps({'type': 'step_finish', 'sessionID': session,
+                        'part': {'type': 'step-finish', 'reason': 'stop'}}),
+        ]
+        assert_outcome(self, lines, 0, False, 'failed', 'output_mismatch')
+
+    def test_exact_ok_on_a_clean_stepped_stop_is_ok(self):
+        session = 'ses_e7f3df85fffeJWRHFxspCNW2ha'
+        lines = [
+            json.dumps({'type': 'step_start', 'sessionID': session,
+                        'part': {'type': 'step-start'}}),
+            text_event('OK', session),
+            json.dumps({'type': 'step_finish', 'sessionID': session,
+                        'part': {'type': 'step-finish', 'reason': 'stop'}}),
+        ]
+        assert_outcome(self, lines, 0, False, 'ok', '')
+
     def test_unauthorized_401_reports_auth_error(self):
         lines, code, timed_out = transcript('auth_401')
         assert_outcome(self, lines, code, timed_out,
@@ -527,7 +556,9 @@ class ArtifactSanitizationTests(unittest.TestCase):
             opencode_version=PINNED_VERSION, status='failed',
             reason='provider_error', error_class='forbidden',
             error_status_code=403, exit_code=1, timed_out=False,
-            event_count=1, stderr_lines=1, elapsed_ms=123,
+            event_count=1, stderr_lines=1, setup_ms=None, auth_ms=None,
+            inference_ms=None, total_ms=123, execution_count=1,
+            output_tokens=None,
         )
 
     def test_record_field_list_is_exactly_the_closed_set(self):
@@ -558,7 +589,8 @@ class ArtifactSanitizationTests(unittest.TestCase):
             opencode_version=PINNED_VERSION, status=status, reason=reason,
             error_class=error_class, error_status_code=error_status_code,
             exit_code=1, timed_out=False, event_count=1, stderr_lines=0,
-            elapsed_ms=7)
+            setup_ms=None, auth_ms=None, inference_ms=None, total_ms=7,
+            execution_count=1, output_tokens=None)
         text = json.dumps(record)
         self.assertEqual((record['error_class'], record['error_status_code']),
                          ('forbidden', 403))
@@ -573,7 +605,9 @@ class ArtifactSanitizationTests(unittest.TestCase):
             status='failed', reason='provider_error',
             error_class=smoke.evaluate(lines, code, timed_out)[2],
             error_status_code=401, exit_code=code, timed_out=timed_out,
-            event_count=len(lines), stderr_lines=0, elapsed_ms=1)
+            event_count=len(lines), stderr_lines=0, setup_ms=None,
+            auth_ms=None, inference_ms=None, total_ms=1, execution_count=1,
+            output_tokens=None)
         error = json.loads(lines[0])['error']
         text = json.dumps(record)
         self.assertNotIn(error['message'], text)
@@ -604,11 +638,11 @@ class SummaryLineTests(unittest.TestCase):
         record = {
             'model': MODEL, 'status': 'failed', 'reason': 'provider_error',
             'error_class': 'forbidden', 'error_status_code': 403,
-            'elapsed_ms': 1000,
+            'total_ms': 1000,
         }
         line = smoke._summary(record)
         self.assertIn('forbidden', line)
-        self.assertIn('elapsed_ms=1000', line)
+        self.assertIn('total_ms=1000', line)
         for sensitive in ('scripted', 'message', 'http://', 'Bearer'):
             self.assertNotIn(sensitive, line)
 
@@ -671,7 +705,8 @@ class PreflightTests(unittest.TestCase):
                 opencode_version=PINNED_VERSION, status='ok', reason='',
                 error_class='auth_error', error_status_code=401,
                 exit_code=1, timed_out=False, event_count=1, stderr_lines=0,
-                elapsed_ms=42)
+                setup_ms=None, auth_ms=None, inference_ms=None, total_ms=42,
+                execution_count=1, output_tokens=None)
         self.assertEqual(record['mode'], 'preflight')
         self.assertEqual(set(record), smoke.RESULT_KEYS)
         self.assertNotIn('synthetic-compatibility-probe-not-a-credential',
@@ -683,18 +718,67 @@ class PreflightTests(unittest.TestCase):
                 os.path.join(tmp, 'result.json'), opencode_version=PINNED_VERSION,
                 status='ok', reason='', error_class=None,
                 error_status_code=None, exit_code=0, timed_out=False,
-                event_count=3, stderr_lines=0, elapsed_ms=1)
+                event_count=3, stderr_lines=0, setup_ms=None, auth_ms=None,
+                inference_ms=None, total_ms=1, execution_count=1,
+                output_tokens=None)
         self.assertEqual(record['mode'], 'live')
 
     def test_cli_runs_with_stdin_closed_in_its_own_process_group(self):
         # An open idle stdin blocks a v2 run before any provider contact; the
         # child must always get /dev/null, and its own session so the whole
-        # group can be killed on timeout. main() must go through run_cli().
-        source = inspect.getsource(smoke.run_cli)
+        # group can be killed on timeout. main() must go through _run_cli().
+        source = inspect.getsource(smoke._run_cli)
         self.assertIn('stdin=subprocess.DEVNULL', source)
-        self.assertIn('start_new_session=True', source)
-        self.assertIn('run_cli(', inspect.getsource(smoke.main))
+        self.assertIn("start_new_session=(os.name == 'posix')", source)
+        self.assertIn('_run_cli(', inspect.getsource(smoke.main))
         self.assertNotIn('subprocess.run(command', inspect.getsource(smoke.main))
+
+    @unittest.skipIf(os.name != 'posix',
+                     '_phase_timings seal logic is POSIX-only')
+    def test_non_dict_json_output_is_rejected_with_unparseable_output(self):
+        # Non-dict JSON (array, null, number, string) parses as valid JSON but
+        # has no .get() method. _phase_timings must skip it without crashing,
+        # and evaluate() must already have classified it as unparseable_output.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_dir = Path(tmp) / 'stubdir'
+            stub_dir.mkdir()
+            stub = stub_dir / 'opencode'
+            stub.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "--version" ]; then\n'
+                '  echo "2.1.4"\n'
+                '  exit 0\n'
+                'fi\n'
+                'printf "[]\\n"\n'
+                'exit 1\n',
+                encoding='utf-8')
+            stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                       | stat.S_IXOTH)
+            result = os.path.join(tmp, 'result.json')
+            agent_home = os.path.join(tmp, 'home')
+            workdir = os.path.join(tmp, 'work')
+            os.makedirs(agent_home)
+            os.makedirs(workdir)
+            environment = dict(os.environ)
+            environment.pop('OPENCODE_API_KEY', None)
+            environment['OPENCODE_API_KEY'] = 'synthetic-test-key'
+            environment['OPENCODE_SMOKE_ACCOUNT_HOME'] = agent_home
+            completed = subprocess.run(
+                [sys.executable,
+                 str(ROOT / '.github/scripts/opencode_native_smoke.py'),
+                 result, str(stub), agent_home, workdir, '2'],
+                env=environment, capture_output=True, text=True,
+                timeout=300)
+            record = None
+            if os.path.exists(result):
+                with open(result, encoding='utf-8') as handle:
+                    record = json.load(handle)
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertEqual(record['status'], 'failed')
+            self.assertEqual(record['reason'], 'unparseable_output')
+            self.assertEqual(record['error_class'], None)
+            self.assertEqual(record['error_status_code'], None)
+            self.assertEqual(set(record), smoke.RESULT_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -982,6 +1066,15 @@ class MainEndToEndTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = self._tmp.name
         self.addCleanup(self._tmp.cleanup)
+        self._account = os.path.join(self.tmp, 'account-home')
+        os.makedirs(self._account)
+        patcher = unittest.mock.patch.dict(
+            os.environ, {'OPENCODE_SMOKE_ACCOUNT_HOME': self._account})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # Registered last, so it runs first: sealed trees need their owner
+        # write bits back before the temp dir can be removed.
+        self.addCleanup(_restore_tree, self.tmp)
 
     def stub_binary(self, media: str, exit_code: int,
                     banner: str = 'opencode v2.1.4') -> Path:
@@ -1056,7 +1149,11 @@ class MainEndToEndTests(unittest.TestCase):
         self.assertEqual(record['status'], 'ok')
         self.assertEqual(record['model'], MODEL)
         self.assertEqual(record['opencode_version'], PINNED_VERSION)
-        self.assertGreater(record['elapsed_ms'], 0)
+        self.assertGreater(record['total_ms'], 0)
+        self.assertEqual(record['execution_count'], 1)
+        # A bare-text reply has no step_finish event, hence no token count;
+        # the field must still be present in the closed record.
+        self.assertIsNone(record['output_tokens'])
         self.assertEqual(record['event_count'],
                          len(V2_TRANSCRIPTS['success_text']['lines']))
 
@@ -1203,7 +1300,7 @@ class MainEndToEndTests(unittest.TestCase):
 @unittest.skipIf(os.name == 'nt', 'process groups and stub scripts are POSIX')
 class HardTimeoutTests(unittest.TestCase):
     """v2 retries 429/5xx and broken streams forever, so the hard timeout is
-    the only bound. run_cli() must stop the run on time and leave nothing
+    the only bound. _run_cli() must stop the run on time and leave nothing
     behind: the CLI and everything it spawned are killed and reaped."""
 
     def test_hung_run_and_its_descendants_are_killed_and_reaped(self):
@@ -1218,13 +1315,14 @@ class HardTimeoutTests(unittest.TestCase):
             _make_executable(stub)
             env = {'PATH': '/usr/bin:/bin', 'PWD': tmp}
             started = time.monotonic()
-            lines, _stderr, exit_code, timed_out = smoke.run_cli(
+            stdout, _stderr, exit_code, timed_out = smoke._run_cli(
                 [str(stub)], env, tmp, 2)
+            lines = stdout.splitlines()
             elapsed = time.monotonic() - started
             with open(pid_file, encoding='utf-8') as handle:
                 grandchild = int(handle.read())
         self.assertTrue(timed_out)
-        self.assertEqual(exit_code, -9)
+        self.assertIsNone(exit_code)   # killed: no exit status is reported
         self.assertLess(elapsed, 30)
         self.assertEqual(len(lines), 1)   # output before the kill is kept
         deadline = time.monotonic() + 10
@@ -1239,9 +1337,29 @@ class HardTimeoutTests(unittest.TestCase):
             stub.write_text('#!/bin/sh\necho line\necho err >&2\nexit 3\n',
                             encoding='utf-8')
             _make_executable(stub)
-            outcome = smoke.run_cli([str(stub)], {'PATH': '/usr/bin:/bin'},
-                                    tmp, 30)
-        self.assertEqual(outcome, (['line'], 1, 3, False))
+            outcome = smoke._run_cli([str(stub)], {'PATH': '/usr/bin:/bin'},
+                                     tmp, 30)
+        self.assertEqual(outcome, ('line\n', 'err\n', 3, False))
+
+    def test_descendant_left_behind_by_a_clean_exit_is_killed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = os.path.join(tmp, 'grandchild.pid')
+            stub = Path(tmp) / 'opencode'
+            stub.write_text(
+                '#!/bin/sh\n'
+                f'sleep 300 </dev/null >/dev/null 2>&1 & echo $! > "{pid_file}"\n'
+                'exit 0\n', encoding='utf-8')
+            _make_executable(stub)
+            outcome = smoke._run_cli([str(stub)], {'PATH': '/usr/bin:/bin'},
+                                     tmp, 30)
+            with open(pid_file, encoding='utf-8') as handle:
+                grandchild = int(handle.read())
+        self.assertEqual(outcome[2:], (0, False))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and _alive(grandchild):
+            time.sleep(0.1)
+        self.assertFalse(_alive(grandchild),
+                         'a process spawned by the CLI outlived a clean exit')
 
 
 def _alive(pid: int) -> bool:
@@ -1251,6 +1369,136 @@ def _alive(pid: int) -> bool:
             return handle.read().rsplit(')', 1)[1].split()[0] != 'Z'
     except OSError:
         return False
+
+
+def _restore_tree(path: str) -> None:
+    """Give owner write bits back so sealed test trees can be removed."""
+    for current, _dirs, files in os.walk(path):
+        os.chmod(current, 0o755)
+        for name in files:
+            os.chmod(os.path.join(current, name), 0o644)
+
+
+class RuntimeHardeningTests(unittest.TestCase):
+    def test_runner_has_no_assert_statements(self):
+        # `python -O` strips assert; security checks must raise explicitly.
+        import ast
+        tree = ast.parse((ROOT / '.github/scripts/opencode_native_smoke.py')
+                         .read_text(encoding='utf-8'))
+        self.assertEqual([node.lineno for node in ast.walk(tree)
+                          if isinstance(node, ast.Assert)], [])
+
+    def test_child_env_forbids_package_installation(self):
+        env = smoke.build_child_env('/tmp/agent-home', '/tmp/smoke-work', 'k')
+        self.assertEqual(env['npm_config_offline'], 'true')
+        self.assertIn('npm_config_offline', smoke.CHILD_ENV_KEYS)
+
+
+@unittest.skipIf(os.name == 'nt', 'POSIX process groups and permission seal')
+class PosixRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        # Runs after the temp-dir cleanup above is registered: restore owner
+        # write bits first so sealed trees can be removed.
+        self.addCleanup(_restore_tree, self._tmp.name)
+        self.tmp = self._tmp.name
+        self._account = os.path.join(self.tmp, 'account')
+        os.makedirs(self._account)
+        patcher = unittest.mock.patch.dict(
+            os.environ, {'OPENCODE_SMOKE_ACCOUNT_HOME': self._account})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.agent = os.path.join(self.tmp, 'agent')
+        os.makedirs(self.agent)
+        self.binary = os.path.join(self.tmp, 'opencode')
+        with open(self.binary, 'w', encoding='utf-8') as handle:
+            handle.write('#!/bin/sh\necho 2.1.4\n')
+        os.chmod(self.binary, 0o755)
+        self.manifest = os.path.join(self.tmp, 'result.json.runtime.json')
+
+    def _alive(self, pid):
+        """Return True only if pid is an actively executing process.
+
+        A reaped process (no /proc entry) and a zombie (state 'Z', terminated
+        but awaiting reaping) are both not alive: neither is executing.
+        Any OSError reading /proc/{pid}/stat means the process is gone.
+        """
+        try:
+            with open(f'/proc/{pid}/stat', encoding='utf-8') as handle:
+                state = handle.read().rsplit(')', 1)[1].split()[0]
+        except OSError:
+            return False
+        # Executable states per proc(5): R running, S interruptible sleep,
+        # D uninterruptible sleep, T stopped, t traced/stopped. 'Z' is a
+        # zombie: already terminated, not executing.
+        return state in ('R', 'S', 'D', 't', 'T')
+
+    def test_timeout_kills_the_whole_process_group(self):
+        pidfile = os.path.join(self.tmp, 'grandchild.pid')
+        script = os.path.join(self.tmp, 'hang.sh')
+        with open(script, 'w', encoding='utf-8') as handle:
+            handle.write('#!/bin/sh\nsleep 300 &\necho $! > %s\nsleep 300\n'
+                         % pidfile)
+        os.chmod(script, 0o755)
+        started = time.monotonic()
+        _stdout, _stderr, code, timed_out = smoke._run_cli(
+            [script], {'PATH': os.environ.get('PATH', '/usr/bin:/bin')},
+            self.tmp, 2)
+        self.assertTrue(timed_out)
+        self.assertIsNone(code)
+        self.assertLess(time.monotonic() - started, 30)
+        with open(pidfile, encoding='utf-8') as handle:
+            grandchild = int(handle.read().strip())
+        self.assertGreater(grandchild, 0,
+                           'grandchild pid was not written by the script')
+        # Bounded wait for process-state convergence after the group kill.
+        deadline = time.monotonic() + 5
+        while self._alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(self._alive(grandchild),
+                         'a descendant survived the group kill '
+                         '(grandchild pid %d was not terminated)' % grandchild)
+
+    def test_prepare_then_validate_round_trip(self):
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        smoke.validate_runtime(self.agent, self.manifest, self.binary)
+
+    def test_sealed_roots_refuse_writes_by_the_run_identity(self):
+        if os.geteuid() == 0:
+            self.skipTest('root bypasses owner write bits')
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        with self.assertRaises(PermissionError):
+            open(os.path.join(self.agent, smoke.RUNTIME_DIR, 'planted.json'),
+                 'w', encoding='utf-8')
+        with self.assertRaises(PermissionError):
+            open(os.path.join(self._account, '.opencode', 'planted.json'),
+                 'w', encoding='utf-8')
+
+    def test_planted_agent_config_blocks_the_seal(self):
+        config_root = os.path.join(self.agent, smoke.RUNTIME_DIR)
+        os.makedirs(config_root)
+        with open(os.path.join(config_root, 'planted.json'), 'w',
+                  encoding='utf-8') as handle:
+            handle.write('{}')
+        with self.assertRaises(ValueError) as caught:
+            smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        self.assertEqual(str(caught.exception), 'runtime_config_not_empty')
+
+    def test_unsealed_root_is_rejected_by_validation(self):
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        os.chmod(os.path.join(self.agent, smoke.RUNTIME_DIR), 0o755)
+        with self.assertRaises(ValueError) as caught:
+            smoke.validate_runtime(self.agent, self.manifest, self.binary)
+        self.assertEqual(str(caught.exception), 'runtime_not_sealed')
+
+    def test_tampered_binary_is_rejected_by_validation(self):
+        smoke.prepare_runtime(self.agent, self.manifest, self.binary)
+        with open(self.binary, 'a', encoding='utf-8') as handle:
+            handle.write('# tampered\n')
+        with self.assertRaises(ValueError) as caught:
+            smoke.validate_runtime(self.agent, self.manifest, self.binary)
+        self.assertEqual(str(caught.exception), 'runtime_integrity_mismatch')
 
 
 if __name__ == '__main__':

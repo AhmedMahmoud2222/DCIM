@@ -1,0 +1,38 @@
+{
+  "source": "https://api.github.com/repos/AhmedMahmoud2222/DCIM/issues/comments/6424782080",
+  "note": "Live REST reaction round-trip on an existing owner review-request comment. This proves timestamp behavior for this endpoint/observation, not live bot authorization or a GitHub Actions atomic-claim race.",
+  "before": {
+    "id": 6424782080,
+    "created_at": "2026-10-26T19:00:13Z",
+    "updated_at": "2026-10-26T19:00:13Z",
+    "reactions": {
+      "url": "https://api.github.com/repos/AhmedMahmoud2222/DCIM/issues/comments/6424782080/reactions",
+      "total_count": 1,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 1
+    }
+  },
+  "after": {
+    "id": 6424782080,
+    "created_at": "2026-10-26T19:00:13Z",
+    "updated_at": "2026-10-26T19:00:13Z",
+    "reactions": {
+      "url": "https://api.github.com/repos/AhmedMahmoud2222/DCIM/issues/comments/6424782080/reactions",
+      "total_count": 2,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 2
+    }
+  }
+}

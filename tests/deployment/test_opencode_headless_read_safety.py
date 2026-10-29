@@ -5,7 +5,7 @@ Exercises the REAL pinned OpenCode v2 (@opencode/cli 2.1.4) permission engine
 in an unattended (headless, no TTY) run against a deterministic local stub
 model and proves, on the exact linux-x64 binary the CI runner installs from
 the committed lockfile, with the smoke's own shipped config, command line,
-child environment and runner (`smoke.run_cli`):
+child environment and runner (`smoke._run_cli`):
 
   1. `read: 'ask'` is NOT auto-approved headlessly: v2 rejects the call
      ("This non-interactive run cannot ask the user for permission");
@@ -287,7 +287,7 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
         specific target -- which is what makes the non-disclosure assertions
         below non-vacuous. `step` replaces that turn (e.g. a call to a tool
         that must not exist). DEVNULL runs go through the smoke's own runner
-        (`smoke.run_cli`); the IDLE_PIPE control needs its own spawner since
+        (`smoke._run_cli`); the IDLE_PIPE control needs its own spawner since
         the runner never hands the CLI an open stdin.
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -346,9 +346,9 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
                     outcome = self._spawn_idle(command, env, work, timeout_s)
                 else:
                     started = time.monotonic()
-                    lines, _stderr, exit_code, timed_out = smoke.run_cli(
+                    stdout, _stderr, exit_code, timed_out = smoke._run_cli(
                         command, env, work, timeout_s)
-                    outcome = {'stdout': '\n'.join(lines),
+                    outcome = {'stdout': stdout,
                                'exit_code': exit_code, 'timed_out': timed_out,
                                'elapsed': time.monotonic() - started}
             finally:
@@ -715,7 +715,7 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
 
     def test_endless_5xx_retry_is_bounded_and_reaped_by_the_runner(self):
         # v2 retries a 5xx forever (only step_start events, no error event).
-        # smoke.run_cli's hard timeout must end it, kill the whole process
+        # smoke._run_cli's hard timeout must end it, kill the whole process
         # group and leave no CLI process behind.
         before = set(_cli_pids())
         result = self._cached(
@@ -723,7 +723,8 @@ class RealHeadlessReadSafetyTests(unittest.TestCase):
             lambda: self._run('ask', TARGET_INSIDE, http_status=500,
                               timeout_s=RETRY_TIMEOUT_S))
         self.assertTrue(result['timed_out'])
-        self.assertEqual(result['exit_code'], -signal.SIGKILL)
+        # A runner-killed run reports no exit status; the timeout is the fact.
+        self.assertIsNone(result['exit_code'])
         self.assertLess(result['elapsed'], RETRY_TIMEOUT_S + 15)
         self.assertGreaterEqual(result['request_count'], 2,
                                 'the runtime did not retry; the scenario '
