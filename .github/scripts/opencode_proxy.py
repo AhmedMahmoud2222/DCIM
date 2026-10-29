@@ -45,6 +45,13 @@ BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
     'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'presence_penalty',
     'frequency_penalty', 'seed', 'n', 'response_format', 'reasoning_effort', 'user'})
+# Maximum JSON container nesting accepted in a request body (the top-level object is depth 1). Real OpenCode
+# envelopes (messages, tool schemas) nest well under 20; anything deeper is rejected before json.loads runs, so the
+# outcome never depends on the Python version or recursion limit.
+MAX_JSON_DEPTH = 64
+# A complete JSON string (skipped whole, so braces/brackets/escaped quotes inside it are never counted) or a
+# container delimiter. Possessive quantifiers keep matching linear on hostile input.
+_JSON_TOKEN = re.compile(rb'"[^"\\]*+(?:\\.[^"\\]*+)*+"|[\[\]{}]', re.DOTALL)
 FORWARD_HEADERS = ('content-type', 'accept', 'user-agent')
 # Identity headers the genuine OpenCode v2 CLI attaches to every inference request (captured from the pinned
 # binary). They are relayed unchanged, only when their value has the exact shape the real client produces;
@@ -138,6 +145,22 @@ def _reject_constant(_name):
     raise PolicyError('non_standard_json')
 
 
+def check_json_depth(body: bytes) -> None:
+    """Raise PolicyError('json_depth_exceeded') if containers nest deeper than MAX_JSON_DEPTH.
+
+    Single linear pass with O(1) state, run before json.loads. Malformed input is left to json.loads to reject.
+    """
+    depth = 0
+    for match in _JSON_TOKEN.finditer(body):
+        token = match.group()
+        if token in (b'{', b'['):
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise PolicyError('json_depth_exceeded')
+        elif token in (b'}', b']'):
+            depth -= 1
+
+
 def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str) -> None:
     """Raise PolicyError(code) unless the request may be forwarded with the real credential."""
     if '?' in raw_path or '#' in raw_path or '%' in raw_path or '\\' in raw_path or '//' in raw_path \
@@ -162,6 +185,7 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
         raise PolicyError('content_type_not_json')
     if not body:
         raise PolicyError('empty_body')
+    check_json_depth(body)
     try:
         data = json.loads(body.decode('utf-8'), object_pairs_hook=_no_duplicate_keys,
                           parse_constant=_reject_constant)

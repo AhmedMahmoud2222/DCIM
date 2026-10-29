@@ -655,7 +655,57 @@ class ProxyBindingTests(unittest.TestCase):
         self.assert_blocked('empty_body', 'POST', CHAT, b'')
         self.assert_blocked('messages_invalid', 'POST', CHAT, body(messages=[]))
         self.assert_blocked('messages_invalid', 'POST', CHAT, body(messages='hi'))
-        self.assert_blocked('malformed_json', 'POST', CHAT, b'{"a":' * 10000 + b'1' + b'}' * 10000)  # deep nesting
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT, b'{"a":' * 10000 + b'1' + b'}' * 10000)  # deep nesting
+
+    @staticmethod
+    def nested_body(depth, text='1'):
+        """Valid envelope whose message content is nested so the whole body reaches exactly `depth` containers."""
+        content = text
+        for _ in range(depth - 3):          # envelope object + messages array + message object = 3
+            content = [content]
+        return json.dumps({'model': BOUND, 'messages': [{'role': 'user', 'content': content}]}).encode()
+
+    def test_depth_boundary_inside_allowed_messages_field(self):
+        status, _ = self.raw('POST', CHAT, self.nested_body(proxy.MAX_JSON_DEPTH))
+        self.assertEqual(status, 200)
+        self.assertEqual(self.proxy.rejections, [])
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT, self.nested_body(proxy.MAX_JSON_DEPTH + 1))
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT, self.nested_body(10000))
+
+    def test_depth_guard_ignores_braces_and_escapes_inside_strings(self):
+        tricky = '{[' * 500 + '\\" ]} \\\\'
+        payload = json.dumps({'model': BOUND, 'messages': [{'role': 'user', 'content': tricky}]}).encode()
+        status, _ = self.raw('POST', CHAT, payload)
+        self.assertEqual(status, 200)
+        # an escaped quote must not end the string early: real nesting after it is still counted
+        deep = (b'{"model":"' + BOUND.encode() + b'","messages":[{"content":"a\\"b","x":'
+                + b'[' * 100 + b']' * 100 + b'}]}')
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT, deep)
+        # an escaped backslash does end the string: the brace after it is real
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT,
+                            b'{"a":"\\\\"' + b'[' * 100 + b']' * 100 + b'}')
+
+    def test_depth_guard_is_independent_of_recursion_limit(self):
+        deep, ok = self.nested_body(proxy.MAX_JSON_DEPTH + 1), self.nested_body(proxy.MAX_JSON_DEPTH)
+        limit = sys.getrecursionlimit()
+        self.addCleanup(sys.setrecursionlimit, limit)
+        for value in (limit, 100000):
+            sys.setrecursionlimit(value)
+            with self.assertRaises(proxy.PolicyError) as ctx:
+                proxy.check_json_depth(deep)
+            self.assertEqual(ctx.exception.code, 'json_depth_exceeded')
+            proxy.check_json_depth(ok)
+
+    def test_depth_rejection_is_logged_without_body_content(self):
+        marker = 'depth-prompt-secret'
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assert_blocked('json_depth_exceeded', 'POST', CHAT,
+                                self.nested_body(proxy.MAX_JSON_DEPTH + 1, text=marker))
+        with open(self.log, encoding='utf-8') as handle:
+            logged = handle.read() + err.getvalue()
+        self.assertNotIn(marker, logged)
+        self.assertEqual(set(self.proxy.rejections[-1]), {'rejected', 'method', 'path'})
 
     def test_oversized_and_invalid_lengths_are_rejected(self):
         status, _ = self.raw('POST', CHAT, b'x', {'Content-Type': 'application/json', 'Content-Length': '99999999999'})
@@ -674,10 +724,12 @@ class ProxyBindingTests(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             self.raw('POST', CHAT, body(model='gpt-5.4-nano', messages=[{'role': 'user', 'content': secret_prompt}]),
                      {'Content-Type': 'application/json', 'Authorization': 'Bearer attacker-supplied-token-123'})
-        logged = open(self.log).read() + err.getvalue()
+        with open(self.log, encoding='utf-8') as handle:
+            log_text = handle.read()
+        logged = log_text + err.getvalue()
         for forbidden in ('hunter2', 'ghp_', 'attacker-supplied-token', 'REAL-KEY', 'gpt-5.4-nano', 'hello'):
             self.assertNotIn(forbidden, logged)
-        entry = json.loads(open(self.log).read().splitlines()[-1])
+        entry = json.loads(log_text.splitlines()[-1])
         self.assertEqual(set(entry), {'rejected', 'method', 'path'})
         self.assertEqual(entry['rejected'], 'model_mismatch')
 
