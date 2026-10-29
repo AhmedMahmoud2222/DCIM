@@ -40,6 +40,9 @@ def signed(commit):
             'state commit is not GitHub-verified signed')
 
 
+JOURNAL_MAX_BYTES = 524288  # Must equal acceptance_core.decode()'s input limit.
+
+
 class Store:
     def __init__(self, api, policy):
         require(policy.get('state_branch') == 'automation/collaboration-state'
@@ -71,12 +74,17 @@ class Store:
         p = self.policy
         value = deepcopy(value)
         value['revision'] += 1
+        # Aggregate preflight: read() decodes with a hard byte cap, so a write above it
+        # would poison the shared journal for every task. Fail closed BEFORE the PUT;
+        # nothing is mutated and no evidence is dropped.
+        raw = json.dumps(value, sort_keys=True).encode()
+        require(len(raw) <= JOURNAL_MAX_BYTES, 'journal write would exceed the readable size limit')
         # GitHub rejects a stale content SHA with 409. Never blindly retry this write:
         # another execution may already own the delivery intent.
         try:
             response = self.api.request('/contents/' + p['state_path'], 'PUT', {
                 'message': 'chore: record collaboration transition', 'branch': p['state_branch'],
-                'sha': blob, 'content': base64.b64encode(json.dumps(value, sort_keys=True).encode()).decode()})
+                'sha': blob, 'content': base64.b64encode(raw).decode()})
         except TransientError:
             # A timeout/5xx is AMBIGUOUS: the PUT may have landed. Resolve by reading
             # the signed branch head instead of assuming either outcome.
@@ -370,7 +378,9 @@ def reconcile(api, store, policy, state, blob, task_id, now):
         audit(task, 'ESCALATED', 'task reconciliation failed: ' + str(error)[:200], now)
         try:
             return tracked.save(state, base_blob)
-        except TransientError:
+        except (TransientError, Rejected):
+            # Escalation could not be recorded (outage, or journal at its size cap):
+            # keep the last committed pair; the task retries and is never silently dropped.
             return tracked.committed
 
 

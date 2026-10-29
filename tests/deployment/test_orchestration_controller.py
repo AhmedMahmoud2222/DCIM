@@ -1025,6 +1025,54 @@ class StoreAmbiguityTests(unittest.TestCase):
         with self.assertRaises(c.AmbiguousWrite):
             self.store(put, head).save(self.value, 'old')
 
+    def _task(self, i, audit_entries=20):
+        return dict(state='INDEPENDENT_REVIEW', created_at=1, binding=dict(pr=i, head='a' * 40, base='b' * 40),
+                    audit=[dict(state='X', reason='r' * 80, at=n) for n in range(audit_entries)],
+                    deliveries=[dict(status='DELIVERED', body='b' * 200,
+                                     scan=dict(low=1, high=500, match=None, attempts={str(k): 2 for k in range(c.MAX_TRACKED_RERUNS)}))])
+
+    def test_journal_round_trip_100_tasks_is_readable(self):
+        """Any write Store.save accepts must decode with the same cap Store.read uses."""
+        from acceptance_core import decode
+        written = {}
+        value = dict(version=1, revision=0, tasks={str(i): self._task(i) for i in range(100)})
+        store = self.store(lambda: written.setdefault('r', None) or dict(commit=dict(sha='s'), content=dict(sha='n')), None)
+        def put(path, method, body):
+            written['raw'] = base64.b64decode(body['content'])
+            return dict(commit=dict(sha='s'), content=dict(sha='n'))
+        class Api:
+            def request(inner, path, method='GET', body=None):
+                if method == 'PUT':
+                    return put(path, method, body)
+                return dict(author=dict(id=100, login='native[bot]'),
+                            commit=dict(verification=dict(verified=True, reason='valid')))
+        store.api = Api()
+        store.save(value, 'old')
+        self.assertLessEqual(len(written['raw']), c.JOURNAL_MAX_BYTES)
+        self.assertEqual(decode(written['raw'])['revision'], 1)
+
+    def test_oversized_journal_fails_before_put_without_mutation(self):
+        calls = []
+        value = dict(version=1, revision=0, tasks={str(i): self._task(i, audit_entries=400) for i in range(100)})
+        self.assertGreater(len(json.dumps(value, sort_keys=True).encode()), c.JOURNAL_MAX_BYTES)
+        snapshot = deepcopy(value)
+        store = self.store(lambda: calls.append('PUT'), lambda: self.fail('no read expected'))
+        with self.assertRaises(Rejected):
+            store.save(value, 'old')
+        self.assertEqual(calls, [])
+        self.assertEqual(value, snapshot)
+
+    def test_oversized_escalation_keeps_committed_pair(self):
+        """reconcile must not abort the run when the escalation save is refused for size."""
+        class Big:
+            def save(self, value, sha): raise Rejected('journal write would exceed the readable size limit')
+        state = dict(version=1, revision=1, tasks={'t': dict(state='INDEPENDENT_REVIEW', audit=[], deliveries=[],
+                                                              binding={}, created_at=0)})
+        with patch.object(c, '_reconcile', side_effect=Rejected('x')):
+            out = c.reconcile(None, Big(), {}, state, 'blob', 't', 10)
+        self.assertEqual(out[1], 'blob')
+        self.assertEqual(out[0]['tasks']['t']['state'], 'INDEPENDENT_REVIEW')
+
     def test_put_timeout_head_moved_elsewhere_fails_closed(self):
         def put(): raise TransientError('timeout')
         store = self.store(put, lambda: (dict(self.value, revision=9), 'other'))
