@@ -244,6 +244,15 @@ class WriteGuardProcessTests(unittest.TestCase):
         self.assertBlocked(self.run_guard('hook'))
         self.assertEqual(self.run_guard('verify').returncode, 1)
 
+    def test_state_defaults_to_runner_temp_and_requires_it(self):
+        env = {'CLAUDE_GUARD_STATE': '', 'RUNNER_TEMP': self.tmp.name}
+        self.assertEqual(self.run_guard('hook', env=env).returncode, 0)
+        self.set_live(pull=pr(sha=CHILD), ref_obj=(200, live_ref(sha=CHILD)),
+                      extra={f'/repos/{REPO}/git/commits/{CHILD}': (200, {'parents': [{'sha': SHA}]})})
+        self.run_guard('record', env=env)
+        self.assertEqual(json.loads((Path(self.tmp.name) / 'claude_guard_state.json').read_text())['expected_head'], CHILD)
+        self.assertBlocked(self.run_guard('hook', env={'CLAUDE_GUARD_STATE': '', 'RUNNER_TEMP': ''}))
+
     def test_verify_passes_when_nothing_was_written(self):
         self.assertEqual(self.run_guard('verify', stdin='').returncode, 0)
 
@@ -308,6 +317,12 @@ class WorkflowWriteBoundaryTests(unittest.TestCase):
         self.assertEqual(env['CLAUDE_GUARD_AUTHORIZED_SHA'], '${{ needs.gate.outputs.authorized_sha }}')
         self.assertEqual(env['CLAUDE_GUARD_HEAD_REF'], '${{ needs.gate.outputs.head_ref }}')
         self.assertEqual(env['CLAUDE_GUARD_TOKEN'], '${{ github.token }}')
+
+    def test_job_env_uses_only_contexts_available_at_job_level(self):
+        # actionlint: `runner` is not available in jobs.<id>.env; the guard derives its state path
+        # from RUNNER_TEMP at runtime instead.
+        self.assertNotIn('runner.', json.dumps(self.job['env']))
+        self.assertNotIn('CLAUDE_GUARD_STATE', self.job['env'])
 
     def test_token_scopes_and_opencode_isolation_unchanged(self):
         self.assertEqual(self.job['permissions'],

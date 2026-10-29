@@ -94,7 +94,6 @@ jobs:
       CLAUDE_GUARD_NUMBER: ${{ needs.gate.outputs.number }}
       CLAUDE_GUARD_AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
       CLAUDE_GUARD_HEAD_REF: ${{ needs.gate.outputs.head_ref }}
-      CLAUDE_GUARD_STATE: ${{ runner.temp }}/claude_guard_state.json
     permissions:
       contents: write        # push to the existing PR branch
       pull-requests: write   # tracking comment on the PR

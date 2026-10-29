@@ -39,7 +39,8 @@ def target_from_env() -> dict:
         'number': os.environ.get('CLAUDE_GUARD_NUMBER', ''),
         'head_ref': os.environ.get('CLAUDE_GUARD_HEAD_REF', ''),
         'authorized_sha': os.environ.get('CLAUDE_GUARD_AUTHORIZED_SHA', ''),
-        'state_path': os.environ.get('CLAUDE_GUARD_STATE', ''),
+        'state_path': os.environ.get('CLAUDE_GUARD_STATE')
+        or (os.path.join(os.environ['RUNNER_TEMP'], 'claude_guard_state.json') if os.environ.get('RUNNER_TEMP') else ''),
     }
     if not re.fullmatch(r'[A-Za-z0-9._-]+/[A-Za-z0-9._-]+', target['repository']) \
             or not target['number'].isdigit() \
