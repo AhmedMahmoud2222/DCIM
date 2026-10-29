@@ -30,6 +30,15 @@ class AmbiguousWrite(Exception):
     """A journal PUT whose outcome cannot be established. Aborts the whole run."""
 
 
+class JournalFull(Rejected):
+    """Refused BEFORE any PUT: the journal would exceed its readable size cap."""
+
+
+class JournalConflict(Rejected):
+    """A journal write was definitively rejected (CAS conflict, unexpected signer).
+    The stored blob is no longer authoritative for this run, so it aborts the run."""
+
+
 def timestamp(value):
     return int(datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp())
 
@@ -78,7 +87,8 @@ class Store:
         # would poison the shared journal for every task. Fail closed BEFORE the PUT;
         # nothing is mutated and no evidence is dropped.
         raw = json.dumps(value, sort_keys=True).encode()
-        require(len(raw) <= JOURNAL_MAX_BYTES, 'journal write would exceed the readable size limit')
+        if len(raw) > JOURNAL_MAX_BYTES:
+            raise JournalFull('journal write would exceed the readable size limit')
         # GitHub rejects a stale content SHA with 409. Never blindly retry this write:
         # another execution may already own the delivery intent.
         try:
@@ -367,6 +377,11 @@ def reconcile(api, store, policy, state, blob, task_id, now):
         return _reconcile(api, tracked, policy, state, task, blob, task_id, now)
     except TransientError:
         return tracked.committed
+    except JournalConflict:
+        # A definitive journal write rejection (e.g. 409 CAS conflict) means our blob is
+        # no longer authoritative. Never escalate with a blind retry of the same CAS and
+        # never continue other tasks on it: abort the run; the next run re-reads the head.
+        raise
     except Rejected as error:
         # A definitive failure escalates only this task; independent tasks continue.
         # AmbiguousWrite is deliberately not caught: it aborts the run fail-closed.
@@ -378,7 +393,7 @@ def reconcile(api, store, policy, state, blob, task_id, now):
         audit(task, 'ESCALATED', 'task reconciliation failed: ' + str(error)[:200], now)
         try:
             return tracked.save(state, base_blob)
-        except (TransientError, Rejected):
+        except (TransientError, JournalFull):
             # Escalation could not be recorded (outage, or journal at its size cap):
             # keep the last committed pair; the task retries and is never silently dropped.
             return tracked.committed
@@ -391,7 +406,12 @@ class Tracked:
         self.store, self.committed = store, (state, blob)
 
     def save(self, value, blob):
-        saved, saved_blob = self.store.save(value, blob)
+        try:
+            saved, saved_blob = self.store.save(value, blob)
+        except JournalFull:
+            raise
+        except Rejected as error:
+            raise JournalConflict(str(error)) from error
         self.committed = (deepcopy(saved), saved_blob)
         return saved, saved_blob
 

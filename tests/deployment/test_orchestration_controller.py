@@ -59,9 +59,11 @@ class MemoryStore:
         self.value = None
         self.writes = 0
         self.conflict = False
+        self.attempts = 0
 
     def save(self, value, sha):
         if self.conflict:
+            self.attempts += 1
             raise Rejected('CAS conflict')
         self.value = deepcopy(value)
         self.value['revision'] += 1
@@ -101,6 +103,42 @@ class ControllerTests(unittest.TestCase):
         self.store.conflict = True
         with self.assertRaises(Rejected): self.run_task()
         self.assertEqual(self.api.posts, [])
+        # Definitive conflict: no blind CAS retry (one attempted save), nothing written.
+        self.assertEqual(self.store.attempts, 1)
+        self.assertEqual(self.store.writes, 0)
+        self.assertIsNone(self.store.value)
+        # Caller's input state is untouched, so the next run starts from the true head.
+        self.assertEqual(self.state['tasks'][self.task['id']]['deliveries'], [])
+
+    def test_cas_conflict_after_reserved_aborts_run_without_dispatch_or_retry(self):
+        """RESERVED committed, then a later journal save is rejected: abort, no POST."""
+        original = self.api.request
+        calls = {'n': 0}
+        def flaky(path, method='GET', body=None):
+            if path == '/pulls/211':
+                calls['n'] += 1
+                if calls['n'] >= 2:  # forces an escalation save after RESERVED
+                    return dict(original(path), head={'sha': 'c'*40, 'repo': {'full_name': self.policy['repository']}})
+            return original(path, method, body)
+        self.api.request = flaky
+        real_save = self.store.save
+        def save(value, sha):
+            if self.store.writes >= 1:
+                self.store.attempts += 1
+                raise Rejected('CAS conflict')
+            return real_save(value, sha)
+        self.store.save = save
+        with self.assertRaises(Rejected):
+            self.run_task()
+        self.assertEqual(self.api.posts, [])
+        self.assertEqual(self.store.writes, 1)      # only RESERVED landed
+        self.assertEqual(self.store.attempts, 1)    # escalation save attempted once, not retried
+        self.assertEqual(self.store.value['tasks'][self.task['id']]['state'], self.task['state'])
+        # Next run recovers from the durable RESERVED record by observation, never reposting
+        # more than once.
+        self.store.save = real_save
+        value, _ = self.run_task(deepcopy(self.store.value))
+        self.assertLessEqual(len(self.api.posts), 1)
 
     def test_ambiguous_post_is_not_retried(self):
         self.api.raise_post = True
@@ -1065,13 +1103,70 @@ class StoreAmbiguityTests(unittest.TestCase):
     def test_oversized_escalation_keeps_committed_pair(self):
         """reconcile must not abort the run when the escalation save is refused for size."""
         class Big:
-            def save(self, value, sha): raise Rejected('journal write would exceed the readable size limit')
+            def save(self, value, sha): raise c.JournalFull('journal write would exceed the readable size limit')
         state = dict(version=1, revision=1, tasks={'t': dict(state='INDEPENDENT_REVIEW', audit=[], deliveries=[],
                                                               binding={}, created_at=0)})
         with patch.object(c, '_reconcile', side_effect=Rejected('x')):
             out = c.reconcile(None, Big(), {}, state, 'blob', 't', 10)
         self.assertEqual(out[1], 'blob')
         self.assertEqual(out[0]['tasks']['t']['state'], 'INDEPENDENT_REVIEW')
+
+    def _real_store(self):
+        """Real Store.save/Store.read against an in-memory signed, protected, CAS branch."""
+        policy, issuer, owner = self.policy, self.policy['issuer'], self.policy['owner']
+        head = {'n': 0, 'raw': b'{"version":1,"revision":0,"tasks":{}}', 'puts': 0}
+        def commit_for(n):
+            who = owner if n == 0 else issuer
+            return dict(author=dict(id=who['id'], login=who['login']),
+                        commit=dict(verification=dict(verified=True, reason='valid')))
+        class Api:
+            def request(inner, path, method='GET', body=None):
+                if path.startswith('/branches/'):
+                    return dict(protected=True, commit=dict(sha='c%d' % head['n']))
+                if path.startswith('/commits/'):
+                    return commit_for(int(path.rsplit('/c', 1)[1]))
+                if method == 'PUT':
+                    head['puts'] += 1
+                    if body['sha'] != 'b%d' % head['n']:
+                        raise Rejected('409 stale sha')
+                    head['n'] += 1
+                    head['raw'] = base64.b64decode(body['content'])
+                    return dict(commit=dict(sha='c%d' % head['n']), content=dict(sha='b%d' % head['n']))
+                if path.startswith('/contents/'):
+                    return dict(type='file', encoding='base64', sha='b%d' % head['n'],
+                                content=base64.b64encode(head['raw']).decode())
+                raise AssertionError(path)
+        return c.Store(Api(), policy), head
+
+    def test_real_store_round_trip_100_tasks_save_then_authenticated_read(self):
+        store, head = self._real_store()
+        value = dict(version=1, revision=0, tasks={str(i): self._task(i) for i in range(100)})
+        saved, blob = store.save(value, 'b0')
+        read, read_blob = store.read()  # signature, protection, issuer author, schema, decode cap
+        self.assertEqual((read, read_blob), (saved, blob))
+        self.assertEqual(read['revision'], 1)
+        self.assertLessEqual(len(head['raw']), c.JOURNAL_MAX_BYTES)
+
+    def test_real_store_boundary_exact_cap_readable_and_one_over_refused_without_put(self):
+        store, head = self._real_store()
+        def sized(pad):
+            return dict(version=1, revision=0, tasks={'t': dict(pad='p' * pad)})
+        def encoded(v):  # what save() will PUT (revision incremented)
+            return len(json.dumps(dict(v, revision=v['revision'] + 1), sort_keys=True).encode())
+        pad = c.JOURNAL_MAX_BYTES - encoded(sized(0))
+        self.assertEqual(encoded(sized(pad)), c.JOURNAL_MAX_BYTES)
+        saved, blob = store.save(sized(pad), 'b0')   # exactly at the cap is accepted...
+        self.assertEqual(store.read(), (saved, blob))  # ...and remains readable
+        puts, raw = head['puts'], head['raw']
+        over = sized(pad + 1)
+        snapshot = deepcopy(over)
+        self.assertEqual(encoded(over), c.JOURNAL_MAX_BYTES + 1)
+        with self.assertRaises(c.JournalFull):
+            store.save(over, blob)
+        self.assertEqual(head['puts'], puts)           # no PUT issued
+        self.assertEqual(head['raw'], raw)             # branch content unchanged
+        self.assertEqual(over, snapshot)               # input not mutated
+        self.assertEqual(store.read(), (saved, blob))  # journal still readable
 
     def test_put_timeout_head_moved_elsewhere_fails_closed(self):
         def put(): raise TransientError('timeout')
