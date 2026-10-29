@@ -300,3 +300,63 @@ async def test_concurrent_instantiate_with_same_tag_and_different_keys_leaves_no
     assert await _count(
         db_session, "SELECT count(*) FROM outbox_event WHERE event_type = 'PDUInstantiated'"
     ) == 1
+
+
+async def test_failure_after_graph_flush_rolls_back_every_row_and_a_retry_succeeds(
+    make_user, db_session, per_request_client, monkeypatch
+):
+    """Fault injection AFTER the PDU graph has been flushed (the uniqueness-contention test above fails at the first
+    ManagedAsset flush, before any subtype/node/outlet exists). The patched outbox writer first flushes and counts the
+    request's own uncommitted rows - proving asset, pdu, nodes, outlets and the audit row really are in the transaction -
+    then raises. An independent session must then see none of them, and a retry with the same key and tag must succeed
+    (claim released, tag free). If the route committed early or skipped the rollback, the post-failure counts would be
+    non-zero and this test would fail."""
+    import app.api.v1.power as power_routes
+
+    headers = await _admin_headers(make_user)
+    revision = await _make_pdu_revision(headers, publish=True, outlets=3)
+    tag, key = f"PDU-FAULT-{uuid.uuid4().hex[:8]}", str(uuid.uuid4())
+    in_flight: dict[str, int] = {}
+    by_tag = "(SELECT id FROM managed_asset WHERE asset_tag = :t)"
+    probes = {
+        "asset": "SELECT count(*) FROM managed_asset WHERE asset_tag = :t",
+        "pdu": f"SELECT count(*) FROM pdu WHERE id IN {by_tag}",
+        "pdu_node": f"SELECT count(*) FROM power_node WHERE node_type = 'pdu' AND managed_asset_id IN {by_tag}",
+        "outlet_node": f"SELECT count(*) FROM power_node WHERE node_type = 'pdu_outlet' AND owning_asset_id IN {by_tag}",
+        "outlet": f"SELECT count(*) FROM pdu_outlet WHERE pdu_asset_id IN {by_tag}",
+        "audit": f"SELECT count(*) FROM audit_log WHERE action = 'power.pdu.instantiate' AND entity_id IN {by_tag}",
+    }
+
+    async def failing_outbox(db, **kwargs):
+        await db.flush()
+        for name, sql in probes.items():
+            in_flight[name] = (await db.execute(text(sql), {"t": tag})).scalar_one()
+        raise RuntimeError("injected failure after graph flush")
+
+    real_outbox = power_routes.write_outbox_event
+    monkeypatch.setattr(power_routes, "write_outbox_event", failing_outbox)
+    try:
+        failed = await _instantiate(headers, revision["id"], tag=tag, key=key)
+        assert failed.status_code == 500, failed.text
+    except RuntimeError as exc:  # ASGITransport re-raises unhandled app exceptions
+        assert "injected failure" in str(exc)
+    monkeypatch.setattr(power_routes, "write_outbox_event", real_outbox)
+
+    assert in_flight == {
+        "asset": 1, "pdu": 1, "pdu_node": 1, "outlet_node": 3, "outlet": 3, "audit": 1,
+    }, f"graph was not fully flushed before the injected failure: {in_flight}"
+
+    # independent session (db_session is not the request's session): nothing survived
+    assert await _count(db_session, "SELECT count(*) FROM managed_asset WHERE asset_tag = :t", t=tag) == 0
+    assert await _count(db_session, "SELECT count(*) FROM pdu") == 0
+    assert await _count(db_session, "SELECT count(*) FROM pdu_outlet") == 0
+    assert await _count(db_session, "SELECT count(*) FROM power_node WHERE node_type IN ('pdu', 'pdu_outlet')") == 0
+    assert await _count(db_session, "SELECT count(*) FROM audit_log WHERE action = 'power.pdu.instantiate'") == 0
+    assert await _count(db_session, "SELECT count(*) FROM outbox_event WHERE event_type = 'PDUInstantiated'") == 0
+
+    # normal path intact: the same key and tag now succeed and produce the full graph
+    retry = await _instantiate(headers, revision["id"], tag=tag, key=key)
+    assert retry.status_code == 201, retry.text
+    assert await _count(db_session, "SELECT count(*) FROM managed_asset WHERE asset_tag = :t", t=tag) == 1
+    assert await _count(db_session, "SELECT count(*) FROM pdu_outlet") == 3
+    assert await _count(db_session, "SELECT count(*) FROM outbox_event WHERE event_type = 'PDUInstantiated'") == 1
