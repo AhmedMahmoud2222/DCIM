@@ -80,7 +80,10 @@ unknown revision) it exits 3 and also changes nothing. If 0057 is already applie
 
 1. Take and test a backup/PITR point; confirm disk, WAL and replica headroom.
 2. In the host `.env` (never committed) set `DCIM_APPROVE_MIGRATION_0057=I_ACCEPT_PRODUCTION_INDEX_BUILD` and
-   `DCIM_MIGRATION_0057_CHANGE_ID=<approved change reference>`.
+   `DCIM_MIGRATION_0057_CHANGE_ID=<approved change reference>`. The reference must match `(CHG|CR|RFC)-<4-10 digits>` exactly
+   (no whitespace); anything else is treated as unapproved. This is a format check and an operator acknowledgement only: the
+   gate cannot verify the reference against the change system, so only the owner/DBA-approved change process may write these
+   variables into the production `.env`.
 3. Run `docker compose -f docker-compose.yml -f docker-compose.production.yml up -d` in the approved window; watch the
    `migrate` logs and the checks in step 7 above.
 4. Remove both variables afterwards. Once 0057 is applied they have no effect, but they should not outlive the change.

@@ -9,7 +9,7 @@ spec = importlib.util.spec_from_file_location('gate', ROOT / 'backend/scripts/mi
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
-OK_ENV = {gate.APPROVAL_VAR: gate.APPROVAL_VALUE, gate.CHANGE_ID_VAR: 'CHG-1'}
+OK_ENV = {gate.APPROVAL_VAR: gate.APPROVAL_VALUE, gate.CHANGE_ID_VAR: 'CHG-1234'}
 PENDING = ['0057_fk_indexes', '0056_pdu_vertical_placement']
 
 
@@ -33,6 +33,18 @@ class GateTests(unittest.TestCase):
                     {gate.APPROVAL_VAR: '1', gate.CHANGE_ID_VAR: 'CHG-1'},
                     {gate.APPROVAL_VAR: 'true', gate.CHANGE_ID_VAR: 'CHG-1'}):
             self.assertEqual(self.go(env)[:2], (2, []), env)
+
+    def test_malformed_change_reference_blocked(self):
+        for ref in ('x', 'not-a-change', 'CHG-1', 'CHG-12345678901', 'chg-1234', 'CHG-1234 ',
+                    ' CHG-1234', 'CHG-1234\n', 'CHG-12a4', 'TODO', 'DISPOSABLE-CI-FIXTURE', 'CHG-'):
+            env = {gate.APPROVAL_VAR: gate.APPROVAL_VALUE, gate.CHANGE_ID_VAR: ref}
+            self.assertFalse(gate.approved(env), ref)
+            self.assertEqual(self.go(env)[:2], (2, []), ref)
+
+    def test_wellformed_change_reference_accepted(self):
+        for ref in ('CHG-1234', 'CR-0000214', 'RFC-1234567890'):
+            env = {gate.APPROVAL_VAR: gate.APPROVAL_VALUE, gate.CHANGE_ID_VAR: ref}
+            self.assertEqual(self.go(env)[:2], (0, ['upgrade']), ref)
 
     def test_approved_runs_full_upgrade(self):
         self.assertEqual(self.go(OK_ENV)[:2], (0, ['upgrade']))

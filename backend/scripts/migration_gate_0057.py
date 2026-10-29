@@ -8,7 +8,8 @@ and every dependent service (bootstrap, backend, workers) stays down.
 
 Approval requires BOTH environment variables:
   DCIM_APPROVE_MIGRATION_0057=I_ACCEPT_PRODUCTION_INDEX_BUILD
-  DCIM_MIGRATION_0057_CHANGE_ID=<non-empty change/approval reference>
+  DCIM_MIGRATION_0057_CHANGE_ID=<change reference matching (CHG|CR|RFC)-<4-10 digits>>
+The reference is format-checked only; the gate cannot verify it against a change system.
 
 Fail-closed: any inability to determine the current revision, the head, or whether 0057
 is pending blocks the migration.
@@ -29,7 +30,8 @@ APPROVAL_VAR = "DCIM_APPROVE_MIGRATION_0057"
 APPROVAL_VALUE = "I_ACCEPT_PRODUCTION_INDEX_BUILD"
 CHANGE_ID_VAR = "DCIM_MIGRATION_0057_CHANGE_ID"
 VERSIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "versions"
-_REV_RE = re.compile(r"^([0-9A-Za-z_]+)\b")
+CHANGE_ID_RE = re.compile(r"(CHG|CR|RFC)-[0-9]{4,10}")  # exact match, no surrounding whitespace
+_REV_RE =re.compile(r"^([0-9A-Za-z_]+)\b")
 
 
 class GateError(Exception):
@@ -37,7 +39,13 @@ class GateError(Exception):
 
 
 def approved(env: dict[str, str]) -> bool:
-    return env.get(APPROVAL_VAR) == APPROVAL_VALUE and bool(env.get(CHANGE_ID_VAR, "").strip())
+    """Operator acknowledgement plus a well-formed change reference.
+
+    This is a format-checked operator acknowledgement, NOT proof of authority: the container
+    has no access to the change-management system. Owner/DBA approval is established out of
+    band, and only that approval process may place these variables in the deploy environment.
+    """
+    return env.get(APPROVAL_VAR) == APPROVAL_VALUE and CHANGE_ID_RE.fullmatch(env.get(CHANGE_ID_VAR, "")) is not None
 
 
 def _alembic(*args: str) -> str:
@@ -140,7 +148,7 @@ def run(
             f"BLOCKED: migration {GATED_REVISION} is pending and has not been approved for this "
             f"environment (issue #214). No migration was run and the schema is unchanged. "
             f"To proceed after owner/DBA approval set {APPROVAL_VAR}={APPROVAL_VALUE} and "
-            f"{CHANGE_ID_VAR}=<change reference>. See docs/FK_INDEX_ROLLOUT_0057.md.",
+            f"{CHANGE_ID_VAR}=<CHG|CR|RFC>-<digits>. See docs/FK_INDEX_ROLLOUT_0057.md.",
             file=sys.stderr,
         )
         return 2

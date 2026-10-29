@@ -77,7 +77,7 @@ class Validation:
         # fixture is not a production database, so it supplies the approval a real operator
         # would; test_unapproved_migration_blocked() proves the unapproved default still blocks.
         self.approval = {'DCIM_APPROVE_MIGRATION_0057': 'I_ACCEPT_PRODUCTION_INDEX_BUILD',
-                         'DCIM_MIGRATION_0057_CHANGE_ID': 'DISPOSABLE-CI-FIXTURE'}
+                         'DCIM_MIGRATION_0057_CHANGE_ID': 'CHG-0000214'}
         self.env.update(self.approval)
         self.env['PATH'] = str(self.bin)+os.pathsep+self.env['PATH']
         github = os.getenv('GITHUB_ENV')
