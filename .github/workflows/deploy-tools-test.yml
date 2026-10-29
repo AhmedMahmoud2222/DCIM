@@ -87,7 +87,7 @@ jobs:
           sudo -n true
           sudo apt-get install -y acl
           (cd .github/opencode/runtime && npm ci --ignore-scripts --no-audit --no-fund)
-          .github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode --version
+          .github/opencode/runtime/node_modules/@opencode/cli-linux-x64/bin/opencode --version
       - name: Run the deployment tests, privileged OpenCode tests included (any skip fails)
         env:
           OPENCODE_DISPOSABLE_HOST: '1'
