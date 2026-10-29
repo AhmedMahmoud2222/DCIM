@@ -115,8 +115,13 @@ class RecordingResult(unittest.TextTestResult):
             self._record(test, 'fail' if failed else 'error', err)
 
 
-def environment() -> dict:
-    binary = TESTS.parents[1] / '.github/opencode/runtime/node_modules/opencode-linux-x64/bin/opencode'
+def pinned_binary(root: Path | None = None) -> Path:
+    # OpenCode v2 ships the platform binary in the scoped @opencode/cli-linux-x64 package.
+    return (root or TESTS.parents[1]) / '.github/opencode/runtime/node_modules/@opencode/cli-linux-x64/bin/opencode'
+
+
+def environment(root: Path | None = None) -> dict:
+    binary = pinned_binary(root)
     return {'uid': os.geteuid(), 'disposable': os.environ.get('OPENCODE_DISPOSABLE_HOST') == '1',
             'runner_environment': os.environ.get('RUNNER_ENVIRONMENT', ''),
             'python': sys.version.split()[0], 'opencode_binary_present': binary.exists()}

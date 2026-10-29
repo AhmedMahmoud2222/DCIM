@@ -122,6 +122,14 @@ MUTATIONS = [
     ('G-3', 'the reap never kills the agent processes', S + 'opencode_guard.py', "        subprocess.run(['sudo', '-n', 'pkill', '-KILL', '-u', AGENT_USER], check=False, capture_output=True)\n        left", "        left"),
     ('G-4', 'the survivor check is not consulted', S + 'opencode_guard.py', "        if left.returncode == 1:                     # pgrep: no process matched", "        if True:                     # pgrep: no process matched"),
     ('G-5', 'a process check that cannot run counts as none left', S + 'opencode_guard.py', "            return f'agent_process_check_failed:{left.returncode}'", "            return ''"),
+    ('V2-1', 'any x-opencode-client value is relayed upstream', S + 'opencode_proxy.py', "'x-opencode-client': re.compile(r'^cli$'),", "'x-opencode-client': re.compile(r'.*'),"),
+    ('V2-2', 'a provider rejection never stops the agent', S + 'opencode_proxy.py', 'terminal=count >= rejection_limit(status))', 'terminal=False)'),
+    ('V2-3', 'v2 permission rules have no fail-closed catch-all', S + 'opencode_sandbox.py', "    rules = [rule('*', '*', 'deny')]\n", '    rules = []\n'),
+    ('V2-4', 'reply text accepted after a stop step', S + 'opencode_guard.py', "(not finished or finished[-1][0] == 'tool-calls')", 'True'),
+    ('V2-5', 'the proxy-reported provider failure is not named', S + 'opencode_guard.py', "if rejection and status == 'failed':", 'if False:'),
+    ('V2-6', 'non-terminal rejections stop the agent', S + 'opencode_guard.py', "or record.get('terminal') is not True:", 'or False:'),
+    ('V2-7', 'reply text accepted before a further step', S + 'opencode_guard.py', "if closing:\n                return fail('event_ordering')", "if False:\n                return fail('event_ordering')"),
+    ('V2-8', 'the agent is not stopped on a terminal rejection', S + 'opencode_guard.py', "                stop(process)\n                deadline = min(", "                pass\n                deadline = min("),
     ('G-6', 'the survivor check runs without sudo and can miss hidden processes', S + 'opencode_guard.py', "left = subprocess.run(['sudo', '-n', 'pgrep', '-u', AGENT_USER]", "left = subprocess.run(['pgrep', '-u', AGENT_USER]"),
 ]
 
