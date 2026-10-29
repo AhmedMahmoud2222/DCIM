@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 
+import { DataTable, EmptyRow, TD, TH } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import {
   CABLE_TYPES,
@@ -98,11 +101,10 @@ export function NeighborReviewPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Discovered Neighbors</h1>
-      <p className="mb-4 max-w-3xl text-sm text-slate-400">
-        LLDP/CDP evidence reported by collectors. This is not authoritative topology: nothing here changes a port or cable until an
-        operator confirms it, and a confirmed adjacency still becomes a physical cable only by an explicit action.
-      </p>
+      <PageHeader
+        title="Discovered Neighbors"
+        description="LLDP/CDP evidence reported by collectors. This is not authoritative topology: nothing here changes a port or cable until an operator confirms it, and a confirmed adjacency still becomes a physical cable only by an explicit action."
+      />
 
       <div className="mb-3 flex flex-wrap items-end gap-3 text-xs">
         <label className="text-slate-400">
@@ -138,16 +140,20 @@ export function NeighborReviewPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="overflow-x-auto rounded-sm border border-slate-800 bg-slate-900 lg:col-span-2">
-          <table className="w-full text-left text-xs">
-            <thead className="border-b border-slate-800 text-slate-400">
-              <tr>
-                <th className="p-2">Observed on</th>
-                <th className="p-2">Local port</th>
-                <th className="p-2">Remote device</th>
-                <th className="p-2">Remote port</th>
-                <th className="p-2">Proto</th>
-                <th className="p-2">State</th>
+        <div className="min-w-0 lg:col-span-2 empty:hidden">
+          <QueryStatus query={neighbors} what="discovered neighbors" permission="discovery:read" columns={6} />
+        </div>
+
+        {neighbors.data && (
+          <DataTable label="Discovered neighbors" dense minWidthClass="min-w-[44rem]" className="lg:col-span-2">
+            <thead>
+              <tr className="border-b border-line-subtle bg-surface-panel">
+                <th scope="col" className={TH}>Observed on</th>
+                <th scope="col" className={TH}>Local port</th>
+                <th scope="col" className={TH}>Remote device</th>
+                <th scope="col" className={TH}>Remote port</th>
+                <th scope="col" className={TH}>Proto</th>
+                <th scope="col" className={TH}>State</th>
               </tr>
             </thead>
             <tbody>
@@ -157,12 +163,12 @@ export function NeighborReviewPage() {
                   onClick={() => setSelectedId(n.id)}
                   className={`cursor-pointer border-b border-slate-800/50 hover:bg-slate-800/60 ${selectedId === n.id ? "bg-slate-800" : ""}`}
                 >
-                  <td className="p-2">{n.integration_name ?? n.integration_id}</td>
-                  <td className="p-2 font-mono">{n.local_port_name ?? `#${n.local_port_ref}`}</td>
-                  <td className="p-2">{n.remote_system_name ?? n.remote_chassis_ident}</td>
-                  <td className="p-2 font-mono">{n.remote_port_ident}</td>
-                  <td className="p-2 uppercase">{n.protocol}</td>
-                  <td className="p-2">
+                  <td className={TD}>{n.integration_name ?? n.integration_id}</td>
+                  <td className={`${TD} font-mono`}>{n.local_port_name ?? `#${n.local_port_ref}`}</td>
+                  <td className={TD}>{n.remote_system_name ?? n.remote_chassis_ident}</td>
+                  <td className={`${TD} font-mono`}>{n.remote_port_ident}</td>
+                  <td className={`${TD} uppercase`}>{n.protocol}</td>
+                  <td className={TD}>
                     <button onClick={() => setSelectedId(n.id)} className="text-left" aria-label={`Review neighbor ${n.remote_system_name ?? n.remote_chassis_ident} on ${n.local_port_name ?? n.local_port_ref}`}>
                       <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATE_STYLE[n.reconciliation_state]}`}>{n.reconciliation_state}</span>
                       {n.effective_status === "stale" && <span className="ml-1 rounded-sm bg-yellow-900 px-1.5 py-0.5 text-[10px] text-yellow-200">stale</span>}
@@ -171,14 +177,14 @@ export function NeighborReviewPage() {
                 </tr>
               ))}
               {neighbors.data?.items.length === 0 && (
-                <tr><td colSpan={6} className="p-4 text-center italic text-slate-500">No neighbors match.</td></tr>
+                <EmptyRow columns={6}>No neighbors match.</EmptyRow>
               )}
             </tbody>
-          </table>
-        </div>
+          </DataTable>
+        )}
 
         <aside aria-label="Neighbor detail" className="rounded-sm border border-slate-800 bg-slate-900 p-3 text-xs">
-          {!selected && <p className="italic text-slate-500">Select a neighbor to review its evidence.</p>}
+          {!selected && <p className="italic text-fg-secondary">Select a neighbor to review its evidence.</p>}
           {selected && (
             <div className="space-y-3">
               <div>
@@ -189,15 +195,15 @@ export function NeighborReviewPage() {
                 )}
               </div>
               <dl className="grid grid-cols-2 gap-1 text-slate-300">
-                <dt className="text-slate-500">Remote chassis</dt><dd className="break-all font-mono">{selected.remote_chassis_ident}</dd>
-                <dt className="text-slate-500">Remote port</dt><dd className="break-all font-mono">{selected.remote_port_ident}</dd>
-                <dt className="text-slate-500">Mgmt address</dt><dd className="font-mono">{selected.remote_management_address ?? "—"}</dd>
-                <dt className="text-slate-500">Platform</dt><dd>{selected.remote_platform ?? "—"}</dd>
-                <dt className="text-slate-500">Capabilities</dt><dd>{selected.capabilities.join(", ") || "—"}</dd>
-                <dt className="text-slate-500">Native VLAN</dt><dd>{selected.native_vlan ?? "—"}</dd>
-                <dt className="text-slate-500">First seen</dt><dd>{selected.first_seen_at}</dd>
-                <dt className="text-slate-500">Last seen</dt><dd>{selected.last_seen_at}</dd>
-                <dt className="text-slate-500">Source</dt><dd>{selected.protocol.toUpperCase()} via collector {selected.source_collector_id ?? "—"}</dd>
+                <dt className="text-fg-secondary">Remote chassis</dt><dd className="break-all font-mono">{selected.remote_chassis_ident}</dd>
+                <dt className="text-fg-secondary">Remote port</dt><dd className="break-all font-mono">{selected.remote_port_ident}</dd>
+                <dt className="text-fg-secondary">Mgmt address</dt><dd className="font-mono">{selected.remote_management_address ?? "—"}</dd>
+                <dt className="text-fg-secondary">Platform</dt><dd>{selected.remote_platform ?? "—"}</dd>
+                <dt className="text-fg-secondary">Capabilities</dt><dd>{selected.capabilities.join(", ") || "—"}</dd>
+                <dt className="text-fg-secondary">Native VLAN</dt><dd>{selected.native_vlan ?? "—"}</dd>
+                <dt className="text-fg-secondary">First seen</dt><dd>{selected.first_seen_at}</dd>
+                <dt className="text-fg-secondary">Last seen</dt><dd>{selected.last_seen_at}</dd>
+                <dt className="text-fg-secondary">Source</dt><dd>{selected.protocol.toUpperCase()} via collector {selected.source_collector_id ?? "—"}</dd>
               </dl>
               {explanation(selected).length > 0 && (
                 <div>

@@ -4,16 +4,12 @@
   "catalog_reference": "anomalyco/opencode packages/core/src/models-dev/snapshot.txt @ 50c5fce (2026-10-20): all six ids present under provider 'opencode' with cost 0",
   "models": {
     "opencode/glm-5.3-flash-free": {
-  "label": "GLM-5.3-Flash Free",
-  "terms_verified": true,
-  "terms_review": {
-    "reviewed_by": "AhmedMahmoud2222",
-    "date": "2026-10-25",
-    "source": "https://opencode.ai/v2/docs/console/models/"
-  },
-  "repo_code_approved": true,
-  "operational_status": "healthy"
-},
+      "label": "GLM-5.3-Flash Free",
+      "terms_verified": false,
+      "terms_review": null,
+      "repo_code_approved": false,
+      "operational_status": "unknown"
+    },
     "opencode/deepseek-v4.1-flash-free": {
       "label": "DeepSeek V4.1 Flash Free",
       "terms_verified": false,

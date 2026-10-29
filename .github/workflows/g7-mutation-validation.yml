@@ -1,0 +1,141 @@
+name: G7 mutation validation
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "G7 baseline SHA"
+        required: true
+        default: "d2039f6b5d1f8b52ffa5a58754b46ff3f6b1a675"
+  pull_request:
+    paths:
+      - '.github/workflows/g7-mutation-validation.yml'
+      - '.github/g7_mutation_runner.py'
+
+jobs:
+  g7-mutation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_test_admin_password
+          POSTGRES_DB: dcim_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d dcim_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event.inputs.sha }}
+      DATABASE_URL: postgresql+asyncpg://dcim_app:dcim_dev_password@localhost:5432/dcim_test
+      TEST_ADMIN_DATABASE_URL: postgresql+asyncpg://postgres:postgres_test_admin_password@localhost:5432/dcim_test
+      JWT_SECRET_KEY: test-only-secret-key-not-for-production-use-32ch
+      CREDENTIAL_ENCRYPTION_KEY: eHTZ8u6qF3v2N1oQwL9pR7sT4yU6iO0aB2cD5eF8gH0=
+      REDIS_URL: redis://localhost:6379/1
+    steps:
+      - name: Checkout mutation runner (workflow branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          path: runner
+          persist-credentials: false
+      - name: Checkout exact G7 baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          path: baseline
+          persist-credentials: false
+      - name: Record and assert tested SHA
+        shell: bash
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/baseline"
+          actual=$(git rev-parse HEAD)
+          echo "event=$GITHUB_EVENT_NAME expected_sha=$EXPECTED_SHA tested_sha=$actual" | tee "$GITHUB_WORKSPACE/tested_sha.txt"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected SHA is not 40-hex"; exit 1; }
+          [ "$actual" = "$EXPECTED_SHA" ] || { echo "checked-out SHA != expected"; exit 1; }
+          git log -1 --format='%H %G? %s' | tee "$GITHUB_WORKSPACE/tested_commit.txt"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "$GITHUB_WORKSPACE/baseline/backend[dev]"
+      - name: Provision extensions and roles
+        run: |
+          export PGPASSWORD=postgres_test_admin_password
+          psql -h localhost -U postgres -d dcim_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+          psql -h localhost -U postgres -d dcim_test -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          psql -h localhost -U postgres -d dcim_test -c "CREATE EXTENSION IF NOT EXISTS btree_gist;"
+          psql -h localhost -U postgres -d dcim_test -c "CREATE ROLE dcim_app WITH LOGIN PASSWORD 'dcim_dev_password';" || true
+          psql -h localhost -U postgres -d dcim_test -c "GRANT CREATE, USAGE ON SCHEMA public TO dcim_app;"
+          psql -h localhost -U postgres -d dcim_test -c "GRANT ALL PRIVILEGES ON DATABASE dcim_test TO dcim_app;"
+          psql -h localhost -U postgres -d dcim_test -c "SELECT version();" | tee "$GITHUB_WORKSPACE/pg_version.txt"
+      - name: Alembic single-head and migrate
+        run: |
+          cd "$GITHUB_WORKSPACE/baseline/backend"
+          python -m alembic heads
+          python -m alembic upgrade head
+      - name: Baseline parity (must pass)
+        shell: bash
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/baseline/backend"
+          pytest tests/integration/test_g7_provenance_parity_postgres.py tests/api/test_g7_series_key_boundary.py -q 2>&1 | tee "$GITHUB_WORKSPACE/baseline.log"
+      - name: M1-M4 mutation experiments
+        run: |
+          cp "$GITHUB_WORKSPACE/runner/.github/g7_mutation_runner.py" "$GITHUB_WORKSPACE/g7_mutation_runner.py"
+          cd "$GITHUB_WORKSPACE/baseline"
+          overall=0
+          for m in m1 m2 m3 m4; do
+            set +e
+            python "$GITHUB_WORKSPACE/g7_mutation_runner.py" "$m" 2>&1 | tee "$GITHUB_WORKSPACE/${m}.log"
+            rc=${PIPESTATUS[0]}
+            set -e
+            echo "${m}_exit=$rc" | tee -a "$GITHUB_WORKSPACE/mutation_results.txt"
+            if [ "$rc" -ne 0 ]; then overall=1; fi
+          done
+          echo "overall=$overall" | tee -a "$GITHUB_WORKSPACE/mutation_results.txt"
+          exit $overall
+      - name: Final baseline restore verification
+        shell: bash
+        run: |
+          set -eo pipefail
+          cd "$GITHUB_WORKSPACE/baseline"
+          git diff --stat
+          if [ -n "$(git status --porcelain)" ]; then echo "WORKTREE NOT CLEAN"; git status --porcelain; exit 1; fi
+          cd backend
+          pytest tests/integration/test_g7_provenance_parity_postgres.py -q 2>&1 | tee "$GITHUB_WORKSPACE/final_baseline.log"
+      - name: Assemble evidence artifact
+        if: always()
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p evidence
+          cp tested_sha.txt tested_commit.txt baseline.log final_baseline.log evidence/ 2>/dev/null || true
+          cp m1.log m2.log m3.log m4.log evidence/ 2>/dev/null || true
+          cp mutation_results.txt pg_version.txt evidence/ 2>/dev/null || true
+          cp g7_mutation_runner.py evidence/ 2>/dev/null || true
+          ls -la evidence/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        if: always()
+        with:
+          name: g7-mutation-evidence
+          path: evidence/
+          if-no-files-found: warn

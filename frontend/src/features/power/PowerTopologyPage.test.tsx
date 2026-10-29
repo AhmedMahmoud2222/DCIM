@@ -129,3 +129,15 @@ describe("PowerTopologyPage PDU outlets panel", () => {
     expect(screen.getByText("retired")).toBeInTheDocument();
   });
 });
+
+describe("PowerTopologyPage without power:read", () => {
+  it("explains the restriction and requests nothing", () => {
+    const user = { ...ADMINISTRATOR_TEST_USER, permission_codes: ["power:manage"] };
+    renderWithProviders(<PowerTopologyPage />, { user });
+
+    expect(screen.getByRole("heading", { name: "Access restricted" })).toBeInTheDocument();
+    expect(screen.getByText("power:read")).toBeInTheDocument();
+    expect(screen.queryByText(/No power nodes/i)).not.toBeInTheDocument();
+    expect(api.listPowerNodes).not.toHaveBeenCalled();
+  });
+});

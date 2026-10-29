@@ -276,12 +276,17 @@ class GuardTests(unittest.TestCase):
         joined = ' '.join(cmd)
         for leaked in ('GITHUB_TOKEN', 'GH_TOKEN', 'OPENCODE_API_KEY=', 'ACTIONS_', 'RUNNER_'):
             self.assertNotIn(leaked, joined)
-        for flag in ('OPENCODE_DISABLE_PROJECT_CONFIG=1', 'OPENCODE_PURE=1', 'OPENCODE_DISABLE_MODELS_FETCH=1',
-                     'OPENCODE_DISABLE_AUTOUPDATE=1', 'OPENCODE_CONFIG_CONTENT={"a":1}'):
+        for flag in ('OPENCODE_DISABLE_PROJECT_CONFIG=1', 'OPENCODE_CONFIG_PROJECT_DISABLE=1',
+                     'OPENCODE_DISABLE_CLAUDE_CODE=1', 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1',
+                     'OPENCODE_DISABLE_MODELS_FETCH=1', 'OPENCODE_DISABLE_AUTOUPDATE=1', 'PWD=/srv/ocimpl/work',
+                     'OPENCODE_CONFIG_CONTENT={"a":1}'):
             self.assertIn(flag, cmd)
+        self.assertNotIn('OPENCODE_PURE=1', cmd)
         self.assertNotIn('OPENCODE_DISABLE_EXTERNAL_SKILLS=1', cmd)
         run = cmd[cmd.index('opencode'):]
-        self.assertEqual(run[:6], ['opencode', 'run', '--pure', '--format', 'json', '--model'])
+        self.assertEqual(run[:7], ['opencode', 'run', '--standalone', '--format', 'json', '--model', 'opencode/glm-5.3-flash-free'])
+        self.assertNotIn('--pure', run)
+        self.assertNotIn('--dir', run)         # v2 has no --dir: the process cwd and $PWD select the work tree
         self.assertNotIn('--auto', run)
         self.assertNotIn('--dangerously-skip-permissions', run)
 
@@ -299,7 +304,7 @@ class GuardTests(unittest.TestCase):
         self.assertTrue(guard.probe_acknowledged([matching]))
         self.assertFalse(guard.probe_acknowledged([altered]))
 
-    def run_main(self, completed=None, raises=None, survivors=0, pgrep_error=None):
+    def run_main(self, completed=None, raises=None, survivors=0, pgrep_error=None, rejection=''):
         """Run guard.main with the agent run faked. `survivors` is how many pgrep checks still find an agent process."""
         calls, left = [], [survivors]
 
@@ -314,9 +319,13 @@ class GuardTests(unittest.TestCase):
                     left[0] -= 1
                     return mock.Mock(returncode=0, stdout='4242\n', stderr='')
                 return mock.Mock(returncode=1, stdout='', stderr='')
+            raise AssertionError('the agent run goes through guard.run_agent: ' + repr(cmd))
+
+        def fake_agent(command, workdir, wall_timeout, proxy_log, stop=None):
+            calls.append(list(command))
             if raises:
                 raise raises
-            return completed
+            return completed.stdout, completed.stderr, completed.returncode, rejection
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp, 'c.json')
@@ -326,6 +335,7 @@ class GuardTests(unittest.TestCase):
             try:
                 os.environ.update({'TASK': 'do it', 'GITHUB_OUTPUT': str(out)})
                 with mock.patch.object(guard.subprocess, 'run', side_effect=fake_run), \
+                        mock.patch.object(guard, 'run_agent', side_effect=fake_agent), \
                         mock.patch.object(guard.time, 'sleep'):
                     code = guard.main(['g', str(result), 'opencode/x-free', str(config), '/h', '/w', '25'])
                 self.calls = calls
