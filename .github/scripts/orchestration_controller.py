@@ -263,6 +263,15 @@ def reconcile(api, store, policy, state, blob, task_id, now):
         # command. The next scheduled execution retries; a persistent outage
         # escalates through the deadline rather than being mistaken for BLOCKED.
         return state, blob
+    except Rejected:
+        # A definitive failure (unavailable PR, ambiguous/spoofed evidence,
+        # CAS conflict) escalates only this task; independent tasks continue
+        # in the main loop. The journal is signed and CAS-protected as usual.
+        audit(task, 'ESCALATED', 'task reconciliation failed', now)
+        try:
+            return store.save(state, blob)
+        except TransientError:
+            return state, blob
 
 
 def _reconcile(api, store, policy, state, task, blob, task_id, now):

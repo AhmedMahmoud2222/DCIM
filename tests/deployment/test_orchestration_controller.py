@@ -104,10 +104,15 @@ class ControllerTests(unittest.TestCase):
 
     def test_ambiguous_post_is_not_retried(self):
         self.api.raise_post = True
-        with self.assertRaises(Rejected): self.run_task()
-        self.api.raise_post = False
-        value, _ = self.run_task(self.store.value)
+        # An ambiguous/definitive POST failure escalates only this task;
+        # it is not retried and no Rejected escapes reconcile.
+        value, _ = self.run_task()
         self.assertEqual(value['tasks'][self.task['id']]['state'], 'ESCALATED')
+        self.assertEqual(self.api.posts, [])
+        # A subsequent run leaves the terminal task untouched.
+        self.api.raise_post = False
+        value2, _ = self.run_task(value)
+        self.assertEqual(value2['tasks'][self.task['id']]['state'], 'ESCALATED')
         self.assertEqual(self.api.posts, [])
 
     def test_interrupted_success_recovers_exactly_once(self):
