@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import sys
 
-from acceptance_api import GitHub
+from acceptance_api import GitHub, TransientError
 from acceptance_core import Rejected, require, decode, digest, binding, provider_identity, same_binding, jobs_and_checks
 from acceptance_gate import load_policy, verify_check
 from agent_authority import parse_command, comment_binding
@@ -208,17 +208,37 @@ def execution_result(api, policy, task, now):
     proof = policy['providers'].get(delivery['provider'], {}).get('proof')
     if not isinstance(proof, dict):
         return None  # Revoked/missing enrollment never authorizes a result.
+    head = task['binding']['head']
+    # Bounded pagination: every run list page is fetched within the client's
+    # rate-limit bounds. Unrelated runs (skipped, other workflows, other
+    # revisions) are filtered out here using only the list payload, so the
+    # expensive authenticated evidence check runs on genuine candidates only.
     runs = api.pages('/actions/workflows/' + str(proof['workflow_id']) + '/runs?event=issue_comment', 'workflow_runs')
-    for run in sorted(runs, key=lambda r: r['id'], reverse=True)[:20]:
-        if run.get('status') != 'completed':
+    matches = []
+    authenticated = 0
+    for run in runs:
+        if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+            continue  # Skip incomplete/skipped runs; never accept stale evidence.
+        if run.get('workflow_id') != proof['workflow_id']:
             continue
+        if run.get('head_branch') != policy['default_branch']:
+            continue
+        if run.get('event') != 'issue_comment':
+            continue
+        if run.get('head_sha') != head:
+            continue  # A genuine result is bound to this task's exact HEAD.
+        if authenticated >= 100:
+            raise Rejected('too many candidate provider runs; fail closed')
+        authenticated += 1
         try:
             result = authenticated_execution(api, dict(proof, run_id=run['id']), policy,
                                              delivery['provider'], now, task, delivery)
         except Rejected:
-            continue
-        return result, run['id']
-    return None
+            continue  # Spoofed, revoked, or bound to another task/delivery.
+        matches.append((result, run['id']))
+    if len(matches) > 1:
+        raise Rejected('ambiguous provider result; multiple authenticated runs')
+    return matches[0] if matches else None
 
 
 def execution_summary(result):
@@ -233,6 +253,19 @@ def reconcile(api, store, policy, state, blob, task_id, now):
     task = state['tasks'][task_id]
     if task['state'] in TERMINAL:
         return state, blob
+    try:
+        return _reconcile(api, store, policy, state, task, blob, task_id, now)
+    except TransientError:
+        # A transient GitHub outage (rate limit, HTTP 5xx, network or
+        # timeout) preserves the task exactly as-is. It is never classified
+        # as an authorization or task-ineligibility failure, never advances
+        # the task, never consumes a delivery budget and never issues a
+        # command. The next scheduled execution retries; a persistent outage
+        # escalates through the deadline rather than being mistaken for BLOCKED.
+        return state, blob
+
+
+def _reconcile(api, store, policy, state, task, blob, task_id, now):
     try:
         current = binding(api.request('/pulls/' + str(task['binding']['pr'])), policy)
     except Rejected:
@@ -392,5 +425,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (Rejected, KeyError, ValueError, TypeError, OSError):
+    except (Rejected, TransientError, KeyError, ValueError, TypeError, OSError):
         raise SystemExit('Collaboration failed closed; inspect trusted run and journal. No automatic delivery retry.') from None

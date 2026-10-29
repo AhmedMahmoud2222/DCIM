@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +20,23 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+# Retryable failures are transient outages (rate limiting, server errors,
+# network and timeout failures). Anything else - authorization (401/403),
+# task-ineligibility (404/422), CAS conflicts (409) and malformed responses -
+# is definitive and fails closed without retry.
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+MAX_REQUEST_ATTEMPTS = 5
+
+
+class TransientError(Exception):
+    """A retryable GitHub API failure exhausted its bounded backoff budget.
+
+    Callers must treat this as an outage, never as an authorization or
+    task-ineligibility decision, and preserve the existing task state so the
+    next scheduled execution can retry.
+    """
+
+
 class GitHub:
     def __init__(self, policy, root=None):
         self.policy = policy
@@ -26,7 +44,20 @@ class GitHub:
         self.api_root = 'https://api.github.com/repos/' + policy['repository']
         self.opener = urllib.request.build_opener(NoRedirect)
 
-    def request(self, path, method='GET', body=None):
+    def _retry_delay(self, attempt, exc=None):
+        """Bounded exponential backoff, honoring GitHub's Retry-After when given."""
+        delay = min(30.0, 0.5 * (2 ** attempt))
+        if isinstance(exc, urllib.error.HTTPError):
+            retry_after = exc.headers.get('Retry-After') or exc.headers.get('X-RateLimit-Reset')
+            if retry_after is not None:
+                try:
+                    delay = max(delay, float(retry_after))
+                except (TypeError, ValueError):
+                    pass
+        return delay
+
+    def _raw_request(self, path, method='GET', body=None):
+        """One HTTP attempt; overridable by test stubs."""
         require(path.startswith('/') and not path.startswith('//'), 'invalid API path')
         token = os.environ.get('GITHUB_TOKEN')
         require(bool(token), 'GitHub token absent')
@@ -34,13 +65,45 @@ class GitHub:
             data=None if body is None else json.dumps(body).encode(), headers={
                 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
                 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'dcim-acceptance-gate'})
-        try:
-            with self.opener.open(request, timeout=25) as response:
-                raw = response.read(8 * 1024 * 1024 + 1)
-                require(len(raw) <= 8 * 1024 * 1024, 'API response too large')
-                return json.loads(raw)
-        except (urllib.error.URLError, ValueError, TimeoutError) as exc:
-            raise Rejected('GitHub API failed: ' + path.split('?')[0]) from exc
+        with self.opener.open(request, timeout=25) as response:
+            raw = response.read(8 * 1024 * 1024 + 1)
+            require(len(raw) <= 8 * 1024 * 1024, 'API response too large')
+            return json.loads(raw)
+
+    def request(self, path, method='GET', body=None):
+        """Bounded, backoff-aware retries over transient GitHub failures.
+
+        Retryable network, rate-limit (429), timeout and HTTP 5xx failures are
+        retried with backoff. Definitive authorization (401/403) and
+        task-ineligibility (404/422) failures fail closed immediately, as do
+        CAS conflicts (409). A persistent outage raises TransientError after
+        exhausting the bounded budget; callers treat it as an outage, never an
+        authorization decision, and preserve existing task state.
+        """
+        for attempt in range(MAX_REQUEST_ATTEMPTS):
+            try:
+                return self._raw_request(path, method, body)
+            except urllib.error.HTTPError as exc:
+                # Definitive authorization (401/403) and task-ineligibility
+                # (404/422/CAS 409) failures fail closed immediately and are
+                # never retried. Retryable 5xx/429 failures back off; a
+                # persistent outage escalates as TransientError, never as an
+                # authorization failure.
+                if exc.code not in RETRYABLE_HTTP_CODES:
+                    raise Rejected('GitHub API failed: ' + path.split('?')[0] +
+                                   f' (HTTP {exc.code})') from exc
+                if attempt == MAX_REQUEST_ATTEMPTS - 1:
+                    raise TransientError('GitHub API unavailable: ' + path.split('?')[0]) from exc
+                time.sleep(self._retry_delay(attempt, exc))
+                continue
+            except (urllib.error.URLError, TimeoutError) as exc:
+                if attempt == MAX_REQUEST_ATTEMPTS - 1:
+                    raise TransientError('GitHub API unavailable: ' + path.split('?')[0]) from exc
+                time.sleep(self._retry_delay(attempt, exc))
+                continue
+            except ValueError as exc:
+                raise Rejected('GitHub API failed: ' + path.split('?')[0]) from exc
+        raise Rejected('GitHub API failed: ' + path.split('?')[0])  # unreachable
 
     def pages(self, path, key=None, total_key='total_count', limit=2000):
         values, total = [], None

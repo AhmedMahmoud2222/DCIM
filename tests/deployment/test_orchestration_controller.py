@@ -3,6 +3,7 @@ import base64
 from copy import deepcopy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / '.github/scripts'))
 import orchestration_controller as c
 from acceptance_core import Rejected, digest
+from acceptance_api import TransientError, MAX_REQUEST_ATTEMPTS
 from agent_authority import comment_binding
 
 
@@ -45,7 +47,10 @@ class API:
         if path.startswith('/issues/'):
             return deepcopy(self.comments)
         if path.startswith('/actions/workflows/'):
-            return [{'id': 77, 'status': 'completed'}]
+            return [{'id': 77, 'status': 'completed', 'conclusion': 'success',
+                     'workflow_id': 88, 'head_branch': 'main', 'event': 'issue_comment',
+                     'head_sha': 'a' * 40, 'repository': {'full_name': self.policy['repository']},
+                     'run_attempt': 1, 'check_suite_id': 9}]
         raise AssertionError(path)
 
 
@@ -439,6 +444,350 @@ class ControllerTests(unittest.TestCase):
             comment['commit_id'] = 'a'*40
             comment.pop('performed_via_github_app')
             with self.assertRaises(Rejected): c.authenticated_execution(self.api,proof,self.policy,'opencode',now)
+
+    # --- Defect 1: transient GitHub API failures must not terminally BLOCK ---
+
+    def test_transient_pull_fetch_preserves_task_and_recovers(self):
+        original = self.api.request
+        pulled = {'done': False}
+        def flaky(path, method='GET', body=None):
+            if path == '/pulls/211' and not pulled['done']:
+                pulled['done'] = True
+                raise TransientError('rate limited')
+            return original(path, method, body)
+        self.api.request = flaky
+        try:
+            with patch.object(c, 'choose', return_value='claude'):
+                # First execution: a transient outage preserves the task (no BLOCK,
+                # no journal write, no command issued).
+                value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+                task = value['tasks'][self.task['id']]
+                self.assertEqual(task['state'], 'ASSIGNED')
+                self.assertEqual(self.store.writes, 0)
+                self.assertEqual(self.api.posts, [])
+                # The next scheduled execution retries and delivers.
+                value, _ = c.reconcile(self.api, self.store, self.policy, value, blob, self.task['id'], 110)
+                self.assertEqual(value['tasks'][self.task['id']]['state'], 'INDEPENDENT_REVIEW')
+                self.assertEqual(len(self.api.posts), 1)
+        finally:
+            self.api.request = original
+
+    def test_definitive_pr_unavailable_still_blocks(self):
+        original = self.api.request
+        def flaky(path, method='GET', body=None):
+            if path == '/pulls/211':
+                raise Rejected('HTTP 404')
+            return original(path, method, body)
+        self.api.request = flaky
+        try:
+            value, _ = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+        finally:
+            self.api.request = original
+        task = value['tasks'][self.task['id']]
+        self.assertEqual(task['state'], 'BLOCKED')
+        self.assertEqual(task['audit'][-1]['reason'], 'PR unavailable or no longer eligible')
+
+    def test_transient_result_discovery_preserves_delivered_task(self):
+        value, _ = self.run_task()  # delivery DELIVERED
+        task_id = self.task['id']
+        writes_before = self.store.writes
+        original = c.execution_result
+        c.execution_result = lambda *a, **k: (_ for _ in ()).throw(TransientError('outage'))
+        try:
+            value2, blob2 = c.reconcile(self.api, self.store, self.policy, value, '0', task_id, 110)
+            self.assertEqual(value2, value)
+            self.assertEqual(value2['tasks'][task_id]['state'], 'INDEPENDENT_REVIEW')
+            self.assertEqual(self.store.writes, writes_before)
+        finally:
+            c.execution_result = original
+        # Recovery: a genuine result completes the delivery.
+        with patch.object(c, 'authenticated_execution',
+                          return_value=dict(result='SUCCESS', binding=self.task['binding'], source_sha='b'*40,
+                                            run_id=77, attempt=1, policy_digest=digest(self.policy),
+                                            provider='claude', mode='review', provider_comment_id=44)), \
+                patch.object(c, 'verify_check'):
+            value3, _ = c.reconcile(self.api, self.store, self.policy, value2, blob2, task_id, 110)
+        self.assertEqual(value3['tasks'][task_id]['deliveries'][-1]['status'], 'COMPLETED')
+        self.assertEqual(value3['tasks'][task_id]['state'], 'ACCEPTED')
+
+    def test_transient_post_after_reserve_keeps_reserved_without_repost(self):
+        original = self.api.request
+        def flaky(path, method='GET', body=None):
+            if method == 'POST':
+                raise TransientError('post outage')
+            return original(path, method, body)
+        self.api.request = flaky
+        try:
+            with patch.object(c, 'choose', return_value='claude'):
+                value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+            task = value['tasks'][self.task['id']]
+            self.assertEqual(task['state'], 'ASSIGNED')
+            self.assertEqual(task['deliveries'][-1]['status'], 'RESERVED')
+            self.assertNotIn('comment_id', task['deliveries'][-1])
+            self.assertEqual(self.api.posts, [])
+        finally:
+            self.api.request = original
+
+    def test_repeated_transient_interruptions_then_recovery(self):
+        original = self.api.request
+        outcomes = [TransientError('429'), TransientError('502'), None]
+        calls = {'n': 0}
+        def flaky(path, method='GET', body=None):
+            if method == 'POST':
+                return original(path, method, body)
+            calls['n'] += 1
+            item = outcomes[min(calls['n'] - 1, len(outcomes) - 1)]
+            if isinstance(item, Exception):
+                raise item
+            return original(path, method, body)
+        self.api.request = flaky
+        try:
+            with patch.object(c, 'choose', return_value='claude'):
+                # Two executions hit transient outages; both preserve the task.
+                value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0', self.task['id'], 110)
+                self.assertEqual(value['tasks'][self.task['id']]['state'], 'ASSIGNED')
+                self.assertEqual(self.api.posts, [])
+                value, blob = c.reconcile(self.api, self.store, self.policy, value, blob, self.task['id'], 110)
+                self.assertEqual(value['tasks'][self.task['id']]['state'], 'ASSIGNED')
+                self.assertEqual(self.api.posts, [])
+                # The third execution recovers after the repeated interruptions.
+                value, _ = c.reconcile(self.api, self.store, self.policy, value, blob, self.task['id'], 110)
+                self.assertEqual(value['tasks'][self.task['id']]['state'], 'INDEPENDENT_REVIEW')
+                self.assertEqual(len(self.api.posts), 1)
+        finally:
+            self.api.request = original
+
+    def test_definitive_error_in_one_task_does_not_block_another(self):
+        """A definitive (Rejected) failure in one task blocks only that task;
+        independent tasks continue in the reconciliation loop."""
+        second = deepcopy(self.task)
+        second['id'] = 'pr-211-root-2'
+        second['root'] = 2
+        second['binding'] = dict(self.task['binding'])
+        # Add an owner root comment for the second task so it can reconcile.
+        root2 = deepcopy(self.api.root_comment)
+        root2['id'] = 2
+        self.api.comments.append(root2)
+        second['root_digest'] = digest(comment_binding(root2))
+        state_two = dict(version=1, revision=0, tasks={
+            self.task['id']: self.task,
+            second['id']: second,
+        })
+        original = self.api.request
+        calls = {'n': 0}
+        def flaky(path, method='GET', body=None):
+            calls['n'] += 1
+            if path == '/pulls/211' and calls['n'] == 1:
+                raise Rejected('HTTP 404')
+            return original(path, method, body)
+        self.api.request = flaky
+        try:
+            with patch.object(c, 'choose', return_value='claude'):
+                value, blob = c.reconcile(self.api, self.store, self.policy, state_two, '0', self.task['id'], 110)
+                self.assertEqual(value['tasks'][self.task['id']]['state'], 'BLOCKED')
+                # The second task is unaffected and proceeds normally.
+                value2, blob2 = c.reconcile(self.api, self.store, self.policy, value, blob, second['id'], 110)
+                self.assertEqual(value2['tasks'][second['id']]['state'], 'INDEPENDENT_REVIEW')
+                self.assertEqual(len(self.api.posts), 1)
+        finally:
+            self.api.request = original
+
+    # --- Defect 2: provider-run discovery beyond the newest 20 runs ---
+
+    def delivered_task(self):
+        task = deepcopy(self.task)
+        task['deliveries'] = [dict(id='nonce-1', provider='claude', status='DELIVERED',
+                                   comment_id=20, created_at=100)]
+        self.policy['providers']['claude']['proof'] = dict(run_id=77, workflow_id=88,
+            workflow_path='.github/workflows/claude.yml', jobs=['review'])
+        return task
+
+    def _run_result(self, run_id):
+        return dict(result='SUCCESS', binding=self.task['binding'], source_sha='a'*40,
+                    run_id=run_id, attempt=1, policy_digest=digest(self.policy),
+                    provider='claude', mode='review', provider_comment_id=5)
+
+    def test_execution_result_finds_genuine_beyond_first_twenty(self):
+        # 25 newer unrelated runs would displace the genuine (oldest) run under
+        # the old :20 slice; bounded pagination must still find it.
+        genuine = dict(id=1, status='completed', conclusion='success', workflow_id=88,
+                       head_branch='main', event='issue_comment', head_sha='a'*40)
+        unrelated = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                          head_branch='main', event='issue_comment', head_sha='z'*40)
+                     for i in range(2, 27)]
+        self.api.pages = lambda path, key=None: deepcopy([genuine] + unrelated)
+        def fake_auth(api, proof, policy, provider, now, task=None, delivery=None):
+            if proof['run_id'] == 1:
+                return self._run_result(1)
+            raise Rejected('not our run')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            result, run_id = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+        self.assertEqual(run_id, 1)
+        self.assertEqual(result['result'], 'SUCCESS')
+
+    def test_execution_result_missing_result(self):
+        self.api.pages = lambda path, key=None: deepcopy([dict(id=5, status='completed',
+            conclusion='success', workflow_id=88, head_branch='main', event='issue_comment', head_sha='z'*40)])
+        with patch.object(c, 'authenticated_execution') as auth, \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, self.delivered_task(), 110))
+            auth.assert_not_called()
+
+    def test_execution_result_duplicate_ambiguous_rejected(self):
+        runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment', head_sha='a'*40) for i in (1, 2)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+
+    def test_execution_result_spoofed_or_stale_run_rejected(self):
+        runs = [dict(id=1, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment', head_sha='a'*40)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        with patch.object(c, 'authenticated_execution', side_effect=Rejected('spoofed')), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, self.delivered_task(), 110))
+
+    def test_execution_result_stale_revision_skipped(self):
+        runs = [dict(id=1, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment', head_sha='f'*40)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        with patch.object(c, 'authenticated_execution') as auth, \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, self.delivered_task(), 110))
+            auth.assert_not_called()
+
+    def test_execution_result_skips_incomplete_and_skipped_runs(self):
+        runs = [
+            dict(id=1, status='in_progress', conclusion=None, workflow_id=88, head_branch='main',
+                 event='issue_comment', head_sha='a'*40),
+            dict(id=2, status='completed', conclusion='skipped', workflow_id=88, head_branch='main',
+                 event='issue_comment', head_sha='a'*40),
+            dict(id=3, status='completed', conclusion='success', workflow_id=88, head_branch='main',
+                 event='issue_comment', head_sha='a'*40),
+        ]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        calls = []
+        def fake_auth(api, proof, policy, provider, now, task=None, delivery=None):
+            calls.append(proof['run_id'])
+            return self._run_result(proof['run_id'])
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            result, run_id = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+        self.assertEqual(run_id, 3)
+        self.assertEqual(calls, [3])
+
+    def test_execution_result_handles_over_200_unrelated_runs(self):
+        unrelated = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                          head_branch='main', event='issue_comment', head_sha='z'*40)
+                     for i in range(1, 202)]
+        genuine = dict(id=202, status='completed', conclusion='success', workflow_id=88,
+                       head_branch='main', event='issue_comment', head_sha='a'*40)
+        self.api.pages = lambda path, key=None: deepcopy(unrelated + [genuine])
+        with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            result, run_id = c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+        self.assertEqual(run_id, 202)
+
+    def test_execution_result_pagination_exhaustion_rejected(self):
+        """More than 100 authenticated candidate runs (all matching) fails closed with Rejected."""
+        runs = [dict(id=i, status='completed', conclusion='success', workflow_id=88,
+                     head_branch='main', event='issue_comment', head_sha='a'*40)
+                for i in range(1, 101)]
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        with patch.object(c, 'authenticated_execution', return_value=self._run_result(0)), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='a'*40):
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, self.delivered_task(), 110)
+
+
+class TransportTests(unittest.TestCase):
+    """Transport-level tests of GitHub.request retry/backoff behavior."""
+
+    def setUp(self):
+        self.policy = json.loads((ROOT / c.POLICY).read_text())
+        self.policy['issuer'] = dict(id=100, login='native[bot]', app_id=200, app_slug='native')
+        os.environ['GITHUB_TOKEN'] = 'test-token-123'
+
+    def _make_api(self):
+        return c.GitHub(self.policy, root=ROOT)
+
+    def test_transport_timeout_exhaustion_raises_transient_error(self):
+        """A persistent transport TimeoutError raises TransientError after bounded retries."""
+        api = self._make_api()
+        attempts = {'n': 0}
+        def fail_open(request, timeout=25):
+            attempts['n'] += 1
+            raise TimeoutError('gateway timeout')
+        api.opener.open = fail_open
+        with patch.object(api, '_retry_delay', return_value=0):
+            with self.assertRaises(TransientError):
+                api.request('/pulls/1')
+        self.assertEqual(attempts['n'], MAX_REQUEST_ATTEMPTS)
+
+    def test_transport_429_exhaustion_raises_transient_error_not_rejected(self):
+        """A persistent HTTP 429 raises TransientError after bounded retries, never Rejected."""
+        import urllib.error
+        api = self._make_api()
+        attempts = {'n': 0}
+        def fail_open(request, timeout=25):
+            attempts['n'] += 1
+            raise urllib.error.HTTPError(
+                'https://api.github.com/repos/o/r/pulls/1', 429,
+                'Too Many Requests', {}, None)
+        api.opener.open = fail_open
+        with patch.object(api, '_retry_delay', return_value=0):
+            with self.assertRaises(TransientError):
+                api.request('/pulls/1')
+        self.assertEqual(attempts['n'], 5)
+
+    def test_transport_definitive_404_raises_rejected_immediately_no_retry(self):
+        """A definitive HTTP 404 raises Rejected immediately, with no retry."""
+        import urllib.error
+        api = self._make_api()
+        attempts = {'n': 0}
+        def fail_open(request, timeout=25):
+            attempts['n'] += 1
+            raise urllib.error.HTTPError(
+                'https://api.github.com/repos/o/r/pulls/1', 404,
+                'Not Found', {}, None)
+        api.opener.open = fail_open
+        with self.assertRaises(Rejected):
+            api.request('/pulls/1')
+        self.assertEqual(attempts['n'], 1)
+
+    def test_transport_503_exhaustion_raises_transient_error(self):
+        """A persistent HTTP 503 raises TransientError after bounded retries."""
+        import urllib.error
+        api = self._make_api()
+        attempts = {'n': 0}
+        def fail_open(request, timeout=25):
+            attempts['n'] += 1
+            raise urllib.error.HTTPError(
+                'https://api.github.com/repos/o/r/pulls/1', 503,
+                'Service Unavailable', {}, None)
+        api.opener.open = fail_open
+        with patch.object(api, '_retry_delay', return_value=0):
+            with self.assertRaises(TransientError):
+                api.request('/pulls/1')
+        self.assertEqual(attempts['n'], 5)
+
+    def test_transport_urlerror_exhaustion_raises_transient_error(self):
+        """A persistent URLError raises TransientError after bounded retries."""
+        import urllib.error
+        api = self._make_api()
+        attempts = {'n': 0}
+        def fail_open(request, timeout=25):
+            attempts['n'] += 1
+            raise urllib.error.URLError('network down')
+        api.opener.open = fail_open
+        with patch.object(api, '_retry_delay', return_value=0):
+            with self.assertRaises(TransientError):
+                api.request('/pulls/1')
+        self.assertEqual(attempts['n'], 5)
 
 
 if __name__ == '__main__': unittest.main()
