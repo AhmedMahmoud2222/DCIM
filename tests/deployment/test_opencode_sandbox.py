@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -655,7 +656,67 @@ class ProxyBindingTests(unittest.TestCase):
         self.assert_blocked('empty_body', 'POST', CHAT, b'')
         self.assert_blocked('messages_invalid', 'POST', CHAT, body(messages=[]))
         self.assert_blocked('messages_invalid', 'POST', CHAT, body(messages='hi'))
-        self.assert_blocked('malformed_json', 'POST', CHAT, b'{"a":' * 10000 + b'1' + b'}' * 10000)  # deep nesting
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT, b'{"a":' * 10000 + b'1' + b'}' * 10000)
+
+    def test_json_depth_bound_is_enforced_before_parsing(self):
+        limit = proxy.MAX_JSON_DEPTH
+        prefix = b'{"model": "glm-5.3-flash-free", "messages": [{"role": "user", "content": '
+        base_levels = 3  # body object + messages array + message object
+        for extra, accepted in ((limit - base_levels - 1, True), (limit - base_levels, True),
+                                (limit - base_levels + 1, False)):
+            raw = prefix + b'[' * extra + b']' * extra + b'}]}'
+            before = len(_Upstream.seen)
+            status, _ = self.raw('POST', CHAT, raw, {'Content-Type': 'application/json'})
+            if accepted:
+                self.assertEqual(status, 200)
+            else:
+                self.assertEqual(status, 400)
+                self.assertEqual(self.proxy.rejections[-1]['rejected'], 'json_depth_exceeded')
+                self.assertEqual(len(_Upstream.seen), before, 'over-deep request reached the provider')
+
+    def test_json_depth_scanner_handles_strings_and_escapes(self):
+        check, limit = proxy.check_json_depth, proxy.MAX_JSON_DEPTH
+        check(b'{"a": "' + b'[{' * 5000 + b'"}')  # brackets inside a string do not count
+        check(b'{"a": "\\\\", "b": "\\"[[[["}')  # escaped backslash closes; escaped quote stays inside
+        check(b'[' * limit + b']' * limit)
+        for raw, code in ((b'[' * (limit + 1), 'json_depth_exceeded'),
+                          (b'["\\\\", ' + b'{"k": ' * (limit + 1), 'json_depth_exceeded'),
+                          (b'{"a": "unterminated [[[', 'malformed_json')):
+            with self.assertRaises(proxy.PolicyError) as ctx:
+                check(raw)
+            self.assertEqual(str(ctx.exception), code)
+        check(b'\xff\xfe' + b'[' * 3)  # invalid UTF-8 is left for the decoder
+
+    def test_depth_guard_does_not_change_other_rejection_codes(self):
+        headers = {'Content-Type': 'application/json'}
+        deep = b'[' * (proxy.MAX_JSON_DEPTH + 5)
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT,
+                            b'{"model": "glm-5.3-flash-free", "messages": [' + deep, headers)
+        self.assert_blocked('json_depth_exceeded', 'POST', CHAT,
+                            b'{"model": "glm-5.3-flash-free", "stream": true, "messages": [{"content": '
+                            + deep + b']}', headers)
+        self.assert_blocked('duplicate_json_key', 'POST', CHAT,
+                            b'{"model": "glm-5.3-flash-free", "model": "x", "messages": [1]}', headers)
+        self.assert_blocked('unsupported_field', 'POST', CHAT,
+                            b'{"model": "glm-5.3-flash-free", "messages": [1], "evil": 1}', headers)
+        self.assert_blocked('malformed_json', 'POST', CHAT, b'\xff{"a": 1}', headers)
+
+    def test_depth_rejection_log_has_no_request_content(self):
+        marker = 'SECRET-PROMPT-MARKER'
+        self.raw('POST', CHAT, b'{"model": "glm-5.3-flash-free", "messages": [{"content": "' + marker.encode()
+                 + b'", "x": ' + b'[' * (proxy.MAX_JSON_DEPTH + 1), {'Content-Type': 'application/json'})
+        with open(self.log, encoding='utf-8') as handle:
+            logged = handle.read()
+        self.assertNotIn(marker, logged)
+        self.assertEqual(json.loads(logged.splitlines()[-1])['rejected'], 'json_depth_exceeded')
+
+    def test_depth_guard_is_linear_on_large_hostile_input(self):
+        started = time.monotonic()
+        for raw, code in ((b'"' + b'\\"' * 2_000_000, 'malformed_json'), (b'[' * 2_000_000, 'json_depth_exceeded')):
+            with self.assertRaises(proxy.PolicyError) as ctx:
+                proxy.check_json_depth(raw)
+            self.assertEqual(str(ctx.exception), code)
+        self.assertLess(time.monotonic() - started, 20)
 
     def test_oversized_and_invalid_lengths_are_rejected(self):
         status, _ = self.raw('POST', CHAT, b'x', {'Content-Type': 'application/json', 'Content-Length': '99999999999'})
@@ -674,10 +735,12 @@ class ProxyBindingTests(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             self.raw('POST', CHAT, body(model='gpt-5.4-nano', messages=[{'role': 'user', 'content': secret_prompt}]),
                      {'Content-Type': 'application/json', 'Authorization': 'Bearer attacker-supplied-token-123'})
-        logged = open(self.log).read() + err.getvalue()
+        with open(self.log, encoding='utf-8') as handle:
+            log_text = handle.read()
+        logged = log_text + err.getvalue()
         for forbidden in ('hunter2', 'ghp_', 'attacker-supplied-token', 'REAL-KEY', 'gpt-5.4-nano', 'hello'):
             self.assertNotIn(forbidden, logged)
-        entry = json.loads(open(self.log).read().splitlines()[-1])
+        entry = json.loads(log_text.splitlines()[-1])
         self.assertEqual(set(entry), {'rejected', 'method', 'path'})
         self.assertEqual(entry['rejected'], 'model_mismatch')
 

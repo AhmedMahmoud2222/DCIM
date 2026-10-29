@@ -41,6 +41,9 @@ import opencode_router as router  # noqa: E402
 POST_PATHS = ('/inference/openai/v1/chat/completions',)
 GET_PATHS = ('/inference/openai/v1/models', '/zen/v1/models')
 MAX_BODY = 20 * 1024 * 1024
+# Maximum container nesting accepted in a client JSON body. Real OpenCode (v1.19.3 / v2.1.4)
+# envelopes nest well under 20 levels (tool JSON schemas included); 64 leaves ample headroom.
+MAX_JSON_DEPTH = 64
 BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
     'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'presence_penalty',
@@ -138,6 +141,29 @@ def _reject_constant(_name):
     raise PolicyError('non_standard_json')
 
 
+_JSON_TOKEN = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*"|[\[\]{}]|"', re.DOTALL)
+
+
+def check_json_depth(body: bytes, limit: int = MAX_JSON_DEPTH) -> None:
+    """Reject over-deep nesting before json.loads can recurse. Linear time, O(1) memory.
+
+    Works on raw bytes (UTF-8 continuation bytes never collide with ASCII structure characters),
+    skips string contents including escaped quotes/backslashes, and treats an unterminated string
+    as malformed. Invalid encodings are left for the decoder to reject.
+    """
+    depth = 0
+    for match in _JSON_TOKEN.finditer(body):
+        token = match.group()
+        if token in (b'{', b'['):
+            depth += 1
+            if depth > limit:
+                raise PolicyError('json_depth_exceeded')
+        elif token in (b'}', b']'):
+            depth = max(depth - 1, 0)
+        elif token == b'"':
+            raise PolicyError('malformed_json')
+
+
 def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str) -> None:
     """Raise PolicyError(code) unless the request may be forwarded with the real credential."""
     if '?' in raw_path or '#' in raw_path or '%' in raw_path or '\\' in raw_path or '//' in raw_path \
@@ -162,6 +188,7 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
         raise PolicyError('content_type_not_json')
     if not body:
         raise PolicyError('empty_body')
+    check_json_depth(body)
     try:
         data = json.loads(body.decode('utf-8'), object_pairs_hook=_no_duplicate_keys,
                           parse_constant=_reject_constant)
