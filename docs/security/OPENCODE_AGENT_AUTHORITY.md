@@ -1,5 +1,7 @@
 # OpenCode agent authority (v6.1)
 
+> **Runtime update (OpenCode v2).** The runtime is now `@opencode/cli` 2.1.4 (it was `opencode-ai` 1.19.3). Statements below that cite 1.19.3, `--pure`, `OPENCODE_PURE` or `--dir` describe the v1 design; the v2 command line, event lifecycle, permission rules and provider fail-fast are specified in [`docs/diagnostics/opencode-v2-migration.md`](../diagnostics/opencode-v2-migration.md), which takes precedence.
+
 Scope: `.github/workflows/opencode.yml`, `.github/scripts/opencode_{gate,router,catalog,sandbox,fsisolate,proxy,guard,collect,publish,review,verify_signatures}.py`, `.github/opencode/` (registry, reviewer capability matrix, secret-scan allowlist, pinned runtime lockfile), `tests/deployment/test_opencode_*.py`, `tests/deployment/fixtures/opencode_1_19_3/`, `tests/deployment/opencode_validation/` and `.github/workflows/opencode-security-validation.yml`. Delivered through PR #180.
 
 Status: implemented; test infrastructure simplified in v6.0 (architecture proposal v1.0 to v1.2 on PR #180). Not run on GitHub-hosted runners with real secrets. Not accepted: exact-head independent review of this revision has not happened. Earlier heads (`29740c6`, `bc54f2e`) were rejected and are not evidence for this one.

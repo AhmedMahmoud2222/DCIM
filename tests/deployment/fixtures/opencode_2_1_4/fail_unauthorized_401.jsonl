@@ -1,0 +1,1 @@
+{"type":"error","timestamp":1793161644965,"sessionID":"ses_e7f3cb5c3ffeJaXka38y6Ms7Lj","error":{"type":"provider.auth","message":"synthetic","status":401,"response":{"body":"{\"error\": {\"message\": \"synthetic\"}}"}}}

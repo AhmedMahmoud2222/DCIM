@@ -13,9 +13,9 @@ before inference ever started.
 These tests lock the shipping prerequisites of that install step, without any
 network or subprocess access:
 
-  1. package.json and the lockfile agree on the pinned `opencode-ai` version,
+  1. package.json and the lockfile agree on the pinned `@opencode/cli` version,
      the package name and the platform-optional manifests;
-  2. every platform-specific optional package that `opencode-ai` declares has
+  2. every platform-specific optional package that `@opencode/cli` declares has
      a complete lockfile entry (pinned version, registry-npmjs.org resolved
      URL, sha512 integrity) so `npm ci` cannot fail with EUSAGE on any runner
      platform or npm major — the failure classes observed in runs 39972207857
@@ -24,7 +24,7 @@ network or subprocess access:
      drift by accumulating unrelated packages.
 
 The clean installation itself (and the installed CLI reporting exactly
-`1.19.3` before any credential is mapped) is asserted in the deployment
+`2.1.4` before any credential is mapped) is asserted in the deployment
 runner's prepare step of the deploy-tools workflow on every push/PR, plus by
 the smoke workflow's own install step before its dispatch. These tests ensure
 that installation can no longer fail for lockfile reasons.
@@ -37,8 +37,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / '.github/opencode/runtime'
 
-PINNED_VERSION = '1.19.3'
-ROOT_PACKAGE = 'opencode-ai'
+PINNED_VERSION = '2.1.4'
+ROOT_PACKAGE = '@opencode/cli'
+SCOPE_PREFIX = '@opencode/'
 REGISTRY = 'https://registry.npmjs.org/'
 
 
@@ -85,7 +86,7 @@ class PlatformPackageLockfileTests(unittest.TestCase):
         declared = (self.lock_packages[f'node_modules/{ROOT_PACKAGE}']
                     .get('optionalDependencies'))
         self.assertTrue(declared,
-                        'opencode-ai must declare platform optionals')
+                        '@opencode/cli must declare platform optionals')
         for package, version in sorted(declared.items()):
             with self.subTest(package=package):
                 self.assertEqual(version, PINNED_VERSION)
@@ -97,7 +98,7 @@ class PlatformPackageLockfileTests(unittest.TestCase):
                 resolved = entry.get('resolved')
                 self.assertEqual(
                     resolved,
-                    REGISTRY + f'{package}/-/{package}-{version}.tgz',
+                    REGISTRY + f'{package}/-/{package.split("/")[-1]}-{version}.tgz',
                     f'{package}: resolved URL must be the exact registry '
                     'tarball')
                 integrity = entry.get('integrity')
@@ -120,7 +121,7 @@ class PlatformPackageLockfileTests(unittest.TestCase):
         # The smoke workflow installs on linux/x64 glibc: those variants must
         # NOT be excluded by their own selectors (regression for a lockfile
         # whose own linux/x64 entries were absent).
-        for package in ('opencode-linux-x64', 'opencode-linux-x64-musl'):
+        for package in ('@opencode/cli-linux-x64', '@opencode/cli-linux-x64-musl'):
             entry = self.lock_packages[f'node_modules/{package}']
             self.assertIn('linux', entry.get('os', []),
                           f'{package}: linux selector missing')
@@ -132,12 +133,12 @@ class PlatformPackageLockfileTests(unittest.TestCase):
         self.assertEqual(entry.get('version'), PINNED_VERSION)
         self.assertEqual(entry.get('resolved'),
                          REGISTRY + f'{ROOT_PACKAGE}/-/'
-                         f'{ROOT_PACKAGE}-{PINNED_VERSION}.tgz')
+                         f'{ROOT_PACKAGE.split("/")[-1]}-{PINNED_VERSION}.tgz')
         self.assertTrue(re.fullmatch(
             r'sha512-[A-Za-z0-9+/]{86}==', entry.get('integrity', '')),
-            'opencode-ai: sha512 integrity missing or malformed')
+            '@opencode/cli: sha512 integrity missing or malformed')
         self.assertTrue(entry.get('hasInstallScript'),
-                        'opencode-ai must keep its install-script marker so '
+                        '@opencode/cli must keep its install-script marker so '
                         'the npm ci wrapper reproduces previous installs')
 
     # -- 3. lockfile is closed ---------------------------------------------
@@ -168,7 +169,7 @@ class PlatformPackageLockfileTests(unittest.TestCase):
                       workflow_text,
                       'the smoke install must run npm ci (never a mutable '
                       'install) from the committed lockfile')
-        self.assertIn('node_modules/opencode-linux-x64/bin/opencode',
+        self.assertIn('node_modules/@opencode/cli-linux-x64/bin/opencode',
                       workflow_text,
                       'the smoke workflow must keep using the pinned '
                       'linux-x64 binary path')
