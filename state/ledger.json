@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T15:12:01.108Z",
-  "last_run_at": "2026-10-30T15:12:46.112Z",
+  "last_full_run_at": "2026-10-30T15:13:29.366Z",
+  "last_run_at": "2026-10-30T15:13:29.366Z",
   "last_run_mode": "FULL",
   "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
   "merge_policy": {
@@ -2614,7 +2614,7 @@
     ],
     "production_hold": "intact"
   },
-  "last_full_event_path": "state/events/2026-10-30/full-20261030T140419658Z.json",
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T145921048Z.json",
   "run_notes": {
     "run_id": "full-20261030T145921048Z",
     "mode": "FULL",
@@ -2675,6 +2675,25 @@
       "jules": "pending Codex acceptance",
       "open_threads": 0,
       "findings_open": 0
-    }
-  }
+    },
+    "event_supplements": [
+      "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
+      "state/events/2026-10-30/full-20261030T145921048Z-review-ready.json"
+    ],
+    "codex_228": "ask #6526123791 pending; no native review as of final check",
+    "optional_copilot_228": "quota failure; optional infrastructure, not product defect",
+    "conflicts_verified_live": [
+      181,
+      171,
+      158,
+      146,
+      117,
+      113
+    ],
+    "main_ci_201": "run 41073838767 in_progress; do not claim postmerge CI success"
+  },
+  "last_full_event_supplements": [
+    "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
+    "state/events/2026-10-30/full-20261030T145921048Z-review-ready.json"
+  ]
 }
