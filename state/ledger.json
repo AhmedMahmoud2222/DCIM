@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T07:08:46.559Z",
-  "last_run_at": "2026-10-30T07:08:46.559Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T07:19:50.424Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -161,15 +161,15 @@
         "at": "2026-10-30T07:08:46.559Z",
         "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
         "comment_id": 6517069213,
-        "status": "awaiting result"
+        "status": "terminal: partial report"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "waiting Claude supersession report; Codex verification after result; owner decides closure",
+      "queued": "Claude report received; lacks complete main comparison; independent verification and owner closure decision still required",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
-      "updated_at": "2026-10-23T15:51:04Z",
+      "updated_at": "2026-10-30T07:19:50.424Z",
       "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -206,15 +206,15 @@
         "at": "2026-10-30T07:08:46.559Z",
         "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
         "comment_id": 6517069899,
-        "status": "awaiting result"
+        "status": "terminal: partial report"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "waiting Claude supersession report; Codex verification after result; owner decides closure",
+      "queued": "Claude report received; lacks complete main comparison; independent verification and owner closure decision still required",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
-      "updated_at": "2026-10-23T15:51:02Z",
+      "updated_at": "2026-10-30T07:19:50.424Z",
       "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -798,10 +798,11 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
-        "frontend": "pending",
+        "backend": "in_progress",
+        "frontend": "in_progress",
         "exact_head_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
-        "checked_at": "2026-10-30T07:08:46.559Z"
+        "checked_at": "2026-10-30T07:19:50.424Z",
+        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -826,7 +827,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
+      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
       "updated_at": "2026-10-29T20:06:13Z",
@@ -858,10 +859,11 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
-        "frontend": "pending",
+        "backend": "in_progress",
+        "frontend": "in_progress",
         "exact_head_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
-        "checked_at": "2026-10-30T07:08:46.559Z"
+        "checked_at": "2026-10-30T07:19:50.424Z",
+        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -886,7 +888,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
+      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
       "updated_at": "2026-10-29T17:02:48Z",
@@ -1101,10 +1103,11 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
-        "frontend": "pending",
+        "backend": "in_progress",
+        "frontend": "in_progress",
         "exact_head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
-        "checked_at": "2026-10-30T07:08:46.559Z"
+        "checked_at": "2026-10-30T07:19:50.424Z",
+        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -1129,7 +1132,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
+      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
       "updated_at": "2026-10-29T19:30:39Z",
@@ -1162,10 +1165,11 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
-        "frontend": "pending",
+        "backend": "in_progress",
+        "frontend": "in_progress",
         "exact_head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
-        "checked_at": "2026-10-30T07:08:46.559Z"
+        "checked_at": "2026-10-30T07:19:50.424Z",
+        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -1190,7 +1194,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
+      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
       "updated_at": "2026-10-29T18:32:41Z",
@@ -1897,32 +1901,24 @@
   ],
   "last_actions": [
     {
-      "type": "ruleset",
-      "result": "Hash changed to fnv1a64:246f1cc05c72e8a4; all six bypass actors pull_request; strict checks/threads unchanged"
+      "at": "2026-10-30T07:19:50.424Z",
+      "type": "verification",
+      "items": [
+        201,
+        200,
+        173,
+        172
+      ],
+      "result": "new-head CI workflows in_progress; optional deployment tests successful; no reviews requested"
     },
     {
-      "type": "workflow_security",
-      "result": "T5 complete: claude.yml missing workflow-level trusted-actor gate; other three workflows have pre-secret authorization wiring; DX7 updated"
-    },
-    {
-      "type": "issue",
-      "result": "Created #223 for suspected authority-lock test intermittency; DX9 closed"
-    },
-    {
-      "type": "dependabot",
-      "result": "Requested rebase #201/#200/#173/#172; all four rebased, patches identical file-by-file, new CI pending"
-    },
-    {
-      "type": "supersession",
-      "result": "Requested Claude review-only reports #83/#87; waiting on agent, Codex verification next"
-    },
-    {
-      "type": "new_pr",
-      "result": "#222 opened from orchestrator-state; DX10 owner closure, never merge"
-    },
-    {
-      "type": "merge_gate",
-      "result": "No PR satisfies all exact-head CI/review/thread/current-branch gates; zero merges/resolutions"
+      "at": "2026-10-30T07:19:50.424Z",
+      "type": "agent outcome",
+      "items": [
+        83,
+        87
+      ],
+      "result": "Claude reported incomplete main comparison; no accepted supersession"
     }
   ],
   "priority_snapshot": {
@@ -1964,23 +1960,5 @@
     },
     "refresh_workflow_present": false
   },
-  "last_run_summary": {
-    "run_id": "full-20261030-0703Z-turn4",
-    "at": "2026-10-30T07:08:46.559Z",
-    "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
-    "open_prs": 25,
-    "open_issues": 14,
-    "open_threads": 34,
-    "pr_changes": 5,
-    "owner_decisions": 0,
-    "ci_transitions": 4,
-    "merged": 0,
-    "resolved": 0,
-    "comments_posted": 6,
-    "agent_prompts": 2,
-    "dependabot_rebases": 4,
-    "issue_created": 223,
-    "ruleset_bypass_fixed": true,
-    "production_hold_intact": true
-  }
+  "last_run_summary": "FOLLOW-UP: 25 open PRs, 14 open issues; unchanged 34 unresolved threads per last FULL; four Dependabot CI runs in progress; Claude #83/#87 supersession reports incomplete; no merge, reviews, resolutions or new asks."
 }
