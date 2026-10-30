@@ -76,7 +76,7 @@
     "DX10": "CLOSED: PR #222 closed without merge at 2026-10-30T07:30:19Z",
     "D5": "a — scoped independent design review only",
     "D6": "OWNER LATEST 2026-10-30T11:45:39Z: retain OpenCode on #184/#185 for 72h; previous Claude reassignment superseded; deadline 2026-11-02T11:45:39Z; then Claude via DX12 if no substantive OpenCode result",
-    "DX3": "owner login confirmed; separate identity decision still open",
+    "DX3": "ANSWERED 2026-10-30: keep owner in bypass list as pull_request ONLY, never bypass; stop/report if any actor reads always. Unmarked owner #220 comment 6523498494",
     "DX5": "confirmed with category-based exclusions",
     "DX6": "YES: one workflow per PR after #224 merge and abuse-test checklist",
     "DX11": "CLOSED: PR #227 closed without merge 2026-10-30T10:45:09Z",
@@ -93,7 +93,7 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30T13:03:49.058Z: processed new unmarked owner #220 comment 6523128063 (DX13 exact-head approvals #201/#173/#172). #173 merged; #201 approval stale after rebase; #172 CI finding remains open.",
+    "T2": "FULL 2026-10-30: processed owner DX13 #6523128063 and new DX3 #6523498494; DX3 retains owner in pull_request bypass mode, no settings mutation; #173 merged; #201 old approval stale after rebase; #172 finding still open.",
     "T3": "D5(a) scoped review returned 2 new Codex P2 at ab3f964; now 12 open threads, implementation/merge still stopped pending owner direction",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "Main workflow ci.yml changed in #173 merge at 69c60af; targeted diff confirmed only setup-node immutable pin updates, no change to claude.yml/agent-claude.yml/acceptance-review.yml authorization wiring; original DX7 hardening still pending.",
@@ -2329,7 +2329,7 @@
     "open_issues": 16,
     "open_threads": 41
   },
-  "last_run_summary": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact.",
+  "last_run_summary": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact. New owner DX3 answer: retain owner bypass actor with pull_request mode only; closed decision, no bypass.",
   "last_followup_delta": {
     "at": "2026-10-30T12:28:58.616Z",
     "from": "2026-10-30T12:12:20.955Z",
@@ -2358,7 +2358,7 @@
     "owner_copy_pending": 224,
     "production_hold_intact": true
   },
-  "last_full_delta": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact.",
+  "last_full_delta": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact. New owner DX3 answer: retain owner bypass actor with pull_request mode only; closed decision, no bypass.",
   "last_followup_summary": {
     "run_id": "followup-20261030T122726270Z",
     "mode": "FOLLOW-UP",
