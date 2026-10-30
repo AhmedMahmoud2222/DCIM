@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T225629Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T22:56:29.236Z",
+  "finished_at": "2026-10-30T23:01:01.817Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "thread_resolution": true,
+    "linear_history": true,
+    "approvals": 0,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "mode": "pull_request"
+      }
+    ],
+    "any_always": false
+  },
+  "inventory": {
+    "open_prs": 28,
+    "open_issues": 16,
+    "unresolved_threads": 51,
+    "open_orchestrator_state_prs": 0
+  },
+  "actions": [
+    {
+      "type": "lease_acquire",
+      "at": "2026-10-30T22:56:29.236Z",
+      "branch": "orchestrator-state"
+    },
+    {
+      "type": "live_full_inventory",
+      "detail": "All 28 open PR heads and inline thread counts rechecked, all 16 open issue metadata rechecked; no new owner decisions in #220"
+    },
+    {
+      "type": "verify_action_tags",
+      "items": [
+        {
+          "pr": 231,
+          "tag": "actions/setup-python v7.1.0",
+          "sha": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
+        },
+        {
+          "pr": 232,
+          "tag": "anthropics/claude-code-action v1.0.264 annotated tag dereferenced",
+          "sha": "d70510b174a1244958df0b03166a54912811f3e6"
+        },
+        {
+          "pr": 233,
+          "tag": "actions/checkout v7.0.1",
+          "sha": "3d3c42e5aac5ba805825da76410c181273ba90b1"
+        }
+      ]
+    },
+    {
+      "type": "tier_classification",
+      "items": [
+        {
+          "pr": 231,
+          "tier": 0
+        },
+        {
+          "pr": 232,
+          "tier": 0,
+          "previous": 2,
+          "reason": "patch Action bump and coupled pin strings; no workflow permissions/triggers/secrets changed"
+        },
+        {
+          "pr": 233,
+          "tier": 1,
+          "previous": 2,
+          "reason": "major Action bump only; dependency without permission change not Tier2"
+        }
+      ]
+    },
+    {
+      "type": "signature_verification",
+      "items": [
+        {
+          "pr": 229,
+          "verified": false,
+          "reason": "unsigned"
+        },
+        {
+          "pr": 231,
+          "verified": true,
+          "reason": "valid"
+        },
+        {
+          "pr": 232,
+          "verified": true,
+          "reason": "valid"
+        },
+        {
+          "pr": 233,
+          "verified": true,
+          "reason": "valid"
+        }
+      ]
+    },
+    {
+      "type": "ci_check",
+      "items": [
+        {
+          "pr": 229,
+          "backend": "in_progress",
+          "frontend": "success",
+          "no_exact_head_codex_acceptance": true
+        },
+        {
+          "pr": 231,
+          "backend": "in_progress",
+          "frontend": "success",
+          "no_exact_head_codex_acceptance": true
+        },
+        {
+          "pr": 232,
+          "backend": "in_progress",
+          "frontend": "success",
+          "no_exact_head_codex_acceptance": true
+        },
+        {
+          "pr": 233,
+          "backend": "in_progress",
+          "frontend": "success",
+          "no_exact_head_codex_acceptance": true
+        }
+      ]
+    },
+    {
+      "type": "human_ledger_update",
+      "issue": 220,
+      "comment_id": 6500987889,
+      "at": "2026-10-30T23:00:13.205Z"
+    },
+    {
+      "type": "machine_ledger_update",
+      "branch": "orchestrator-state",
+      "commit": "ecd70e292a083c5a056a9fa46428a0f161866c4a",
+      "at": "2026-10-30T23:00:39.477Z"
+    },
+    {
+      "type": "workflow_presence",
+      "path": ".github/workflows/refresh-branch.yml",
+      "main": "absent (404 verified twice)"
+    },
+    {
+      "type": "merge_gate",
+      "merged": [],
+      "resolved_threads": [],
+      "reason": "No eligible PR satisfies all exact-head CI, independent review, thread, and branch gates"
+    },
+    {
+      "type": "owner_queue",
+      "decide_now": [
+        "DX19",
+        "DX13 (#224)",
+        "DX18"
+      ],
+      "other": [
+        "DX13 (#200)",
+        "DX13 (#230)"
+      ],
+      "new_decisions": []
+    },
+    {
+      "type": "production_safety",
+      "migration_0057": "PROHIBITED until representative staging qualification and written owner and DBA approval",
+      "production_actions": []
+    }
+  ],
+  "failures": [],
+  "notes": [
+    "No agent prompts: required backend checks still running on new Action bumps and #229; three-attempt Codex limits on #224/#200/#230; no duplicate decision requests.",
+    "No merge bypass, force push, auto merge, code/workflow changes, production execution, or schedule modifications.",
+    "Human summary and machine ledger updated under active lease; lease release follows event write."
+  ]
+}
