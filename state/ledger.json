@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T04:04:47.075Z",
-  "last_run_at": "2026-10-30T04:33:30.097Z",
+  "last_run_at": "2026-10-30T04:34:48.034Z",
   "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
@@ -52,7 +52,7 @@
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy"
   },
   "agent_capabilities": {
-    "claude": "API signed commits; cannot run tests, merge main, rebase, check signatures, reply/resolve threads",
+    "claude": "API signed commits; cannot run tests, merge main, rebase, check signatures, reply/resolve threads; cannot create Draft PR or commit when only main checked out",
     "codex": "COMMENTED native review with P1/P2 inline findings or clean reviewed-SHA pass; A4 YES",
     "jules": "manual Ahmed-run Tier 2 review only",
     "opencode": "owner #184/#185; #218 superseded by D1(b)"
@@ -67,7 +67,9 @@
     "D3": "a",
     "DX1": "answered YES",
     "DX2": "answered ruleset policy; bypass not yet changed",
-    "DX4": "answered API-signed and owner branch update"
+    "DX4": "answered API-signed and owner branch update",
+    "DX7": "OPEN potential P1 issue_comment workflow actor gate",
+    "DX8": "OPEN owner-created docs branch/Draft PR"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
@@ -76,7 +78,7 @@
     "T1": "main #221 evidence documented on #218; post-merge main CI green; no issue closure",
     "T2": "no new owner D/DX answers since last ledger",
     "T3": "D5 stop #219",
-    "T4": "@claude docs PR request posted #220 comment 6515039876, awaiting response"
+    "T4": "ONE @claude ask posted #6515039876; Claude capability denial #6515042979 (no branch, no Draft PR tool, AGENTS.md absent); clarified #6515060340; DX8 owner branch/PR decision queued; no repeat"
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -1536,11 +1538,59 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T04:33:12Z",
+      "last_activity_at": "2026-10-30T04:34:48.034Z",
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": "DX3, DX5, DX6, DX7, DX8 owner decisions"
     }
-  }
+  },
+  "new_findings": [
+    {
+      "id": "SEC-WORKFLOW-CLAUDE-ACTOR-GATE",
+      "severity": "P1 candidate",
+      "source_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "path": ".github/workflows/claude.yml",
+      "lines": "4-8, 15-19, 21-25, 32-39",
+      "status": "Open",
+      "description": "Public issue_comment @claude trigger lacks workflow-level trusted-actor check before secret-bearing job",
+      "owner_decision": "DX7",
+      "exploitation_proven": false
+    }
+  ],
+  "last_actions": [
+    {
+      "type": "branch",
+      "path": "orchestrator-state",
+      "result": "created"
+    },
+    {
+      "type": "lease",
+      "result": "acquired"
+    },
+    {
+      "type": "ledger",
+      "result": "initialized"
+    },
+    {
+      "type": "decision_comment",
+      "result": "edited DX1-DX8"
+    },
+    {
+      "type": "T4",
+      "result": "asked once, agent denied capability, DX8 queued"
+    },
+    {
+      "type": "security",
+      "result": "P1 candidate DX7 queued"
+    },
+    {
+      "type": "CI",
+      "result": "PR #219 diagnostic attempt 2 still in progress"
+    },
+    {
+      "type": "merge",
+      "result": "none"
+    }
+  ]
 }
