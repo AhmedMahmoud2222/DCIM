@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T09:02:22.628Z",
-  "last_run_at": "2026-10-30T09:02:22.628Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T09:31:01.216Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T09:02:22.628Z",
+    "last_verified_at": "2026-10-30T09:31:01.216Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -80,7 +80,7 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "Issue #220 re-read at 2026-10-30T09:02:22.628Z: no new owner D/DX answers without orchestrator marker",
+    "T2": "Issue #220 re-read at 2026-10-30T09:31:01.216Z: no new unmarked owner D/DX answers",
     "T3": "D5 unanswered; #219 10 threads preserved; no fix/review cycles",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "COMPLETE one-time static workflow authorization verification; DX7 report updated in #220 decision comment #6501005762"
@@ -183,12 +183,12 @@
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": 1,
-      "queued": "1 open P2 thread; historical supersession evidence incomplete; D4 owner decision and unique-work audit; do not merge/close",
+      "queued": "1 open P2 finding (owner comment #6519049159 acknowledges valid 401 interleaving); D4 supersession decision, no fix or closure authorized",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
       "updated_at": "2026-10-30T07:19:50.424Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_thread_verified_at": "2026-10-30T09:31:01.216Z",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "review-only supersession report: main contents, unique work, recommendation",
@@ -240,8 +240,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
       "updated_at": "2026-10-30T07:19:50.424Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_thread_verified_at": "2026-10-30T09:31:01.216Z",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "review-only supersession report: main contents, unique work, recommendation",
@@ -831,12 +831,12 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "rerun attempt 2 in_progress; original failed Python 3.14",
+        "backend": "success (rerun attempt 2)",
         "frontend": "success",
         "exact_head_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
-        "checked_at": "2026-10-30T09:02:22.628Z"
+        "checked_at": "2026-10-30T09:31:01.216Z"
       },
-      "optional_ci": "not rechecked this follow-up",
+      "optional_ci": "claude-review bot-actor rejection (nonrequired infrastructure failure); required checks passed",
       "merge_state": "blocked",
       "head_verification": {
         "verified": true,
@@ -853,27 +853,27 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41018069155/job/123938860735",
           "severity": "P2",
           "required_change": "tests/integration/test_fk_index_benchmark_harness.py::test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers[kill_client]: AssertionError migration advisory lock must be released with the connection",
-          "status": "Open pending single rerun",
-          "evidence": "Main's last three push CI runs green; exact test-by-test execution not independently established; same-head rerun attempt 2 started"
+          "status": "Open — intermittent CI failure tracked in #225; same-SHA rerun green; Codex disposition pending",
+          "evidence": "First Python 3.14 job 123938860735: 1 failed/3645 passed; same-head rerun job 123968999522: 3646 passed, 6 skipped at 09:21Z; issue #225. A separate issue is not by itself a Codex-accepted deferral."
         }
       ],
       "last_prompt": {
-        "agent": "Dependabot",
-        "ask": "@dependabot rebase",
-        "at": "2026-10-30T07:06:00Z",
-        "sha": "6569ac358b1df8be222385321e4dc576b65ae985",
-        "comment_id": 6517039153,
-        "status": "completed"
+        "agent": "Codex",
+        "ask": "Tier 0 exact-head review of action pin and flaky-test disposition",
+        "at": "2026-10-30T09:30:03Z",
+        "sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+        "comment_id": 6519511392,
+        "status": "awaiting native review submission"
       },
-      "asks_per_sha": 0,
+      "asks_per_sha": 1,
       "fix_review_cycles": null,
-      "stale_level": null,
-      "queued": "failed-job rerun attempt 2 in progress, Python 3.14; no required backend result yet; no merge",
+      "stale_level": 0,
+      "queued": "required CI green on same SHA after one rerun; flaky test issue #225 created; native Codex review and finding disposition pending; no merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_thread_verified_at": "2026-10-30T09:31:01.216Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
         "new_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
@@ -937,8 +937,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
       "updated_at": "2026-10-29T17:02:48Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_thread_verified_at": "2026-10-30T09:31:01.216Z",
       "review_carryover": {
         "old_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
         "new_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
@@ -1153,10 +1153,10 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "rerun attempt 2 in_progress; original failed Python 3.14",
+        "backend": "rerun attempt 2 still in_progress (Python 3.14)",
         "frontend": "success",
         "exact_head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
-        "checked_at": "2026-10-30T09:02:22.628Z"
+        "checked_at": "2026-10-30T09:31:01.216Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -1194,7 +1194,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
       "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
@@ -1260,8 +1260,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_thread_verified_at": "2026-10-30T09:31:01.216Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
@@ -1862,8 +1862,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
       "updated_at": "2026-10-30T08:01:54Z",
-      "last_state_verified_at": "2026-10-30T09:02:22.628Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z"
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_thread_verified_at": "2026-10-30T09:31:01.216Z"
     }
   },
   "issues": {
@@ -2010,12 +2010,12 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T08:37:16.500Z",
+      "last_activity_at": "2026-10-30T09:31:01.216Z",
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
       "queued": "DX3, DX5, DX6, DX7; DX6 includes #224 three new P2 findings, D4 #83 new P2",
-      "last_state_verified_at": "2026-10-30T09:03:50.672Z"
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z"
     },
     "223": {
       "title": "test(ci): investigate intermittent authority-lock serialization timeout (Python 3.13)",
@@ -2030,6 +2030,20 @@
       "acceptance_on_main": "not established; intermittent TimeoutError on PR #219 with three green main baseline runs",
       "queued": "investigate deterministically without D5 fix/review cycles",
       "last_state_verified_at": "2026-10-30T07:08:46.559Z"
+    },
+    "225": {
+      "title": "test(ci): investigate intermittent migration advisory-lock release on interrupted index build (Python 3.14)",
+      "labels": [
+        "orchestrator"
+      ],
+      "last_activity_at": "2026-10-30T09:31:01.216Z",
+      "owner": "unassigned; investigation only",
+      "linked_prs": [
+        172
+      ],
+      "acceptance_on_main": "not established; same-head rerun green on #172, intermittent test defect unresolved",
+      "queued": "tracking only; no implementation authorization",
+      "last_state_verified_at": "2026-10-30T09:31:01.216Z"
     }
   },
   "new_findings": [
@@ -2093,51 +2107,28 @@
   ],
   "last_actions": [
     {
-      "item": "#224",
+      "item": "#172",
       "agent": "Codex",
-      "action": "Tier 2 independent security review requested after exact-head required CI passed",
-      "comment_id": 6518989718,
-      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714"
+      "action": "Requested native exact-HEAD Tier 0 review after Python 3.14 same-SHA rerun made backend/frontend green",
+      "sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+      "comment_id": 6519511392
     },
     {
-      "item": "#83",
-      "agent": "Codex",
-      "action": "one-hour stale re-prompt for independent supersession evidence",
-      "comment_id": 6519008326,
-      "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584"
+      "item": "#225",
+      "action": "Created orchestrator-labeled flaky migration advisory-lock test investigation issue; first attempt failed, second passed",
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/225"
     },
     {
-      "item": "#87",
-      "agent": "Codex",
-      "action": "one-hour stale re-prompt for independent supersession evidence",
-      "comment_id": 6519009035,
-      "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd"
+      "item": "#200",
+      "action": "Python 3.14 rerun still in progress; backend required check not green"
     },
     {
       "item": "ruleset",
-      "action": "verified same hash; all six bypass actors pull_request"
+      "action": "hash unchanged, all six bypass actors pull_request"
     },
     {
-      "item": "#172/#200",
-      "action": "verified failed-job reruns still running Python 3.14"
-    },
-    {
-      "item": "#224",
-      "action": "Codex native review produced three P2 findings; recorded in cumulative checklist; workflow-write capability blocker DX6",
-      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
-      "threads": [
-        "PRRT_kwDOUdC8Ds6x53x2",
-        "PRRT_kwDOUdC8Ds6x53x5",
-        "PRRT_kwDOUdC8Ds6x53x_"
-      ]
-    },
-    {
-      "item": "#83",
-      "action": "Codex native review produced one P2 test finding; recorded in cumulative checklist; historical D4 hold",
-      "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
-      "threads": [
-        "PRRT_kwDOUdC8Ds6x53k4"
-      ]
+      "item": "#220",
+      "action": "No new unmarked owner D/DX answers; 38 review threads still open; no resolution or merge"
     }
   ],
   "priority_snapshot": {
@@ -2156,33 +2147,26 @@
       "#83/#87 historical supersession needs independent evidence"
     ]
   },
-  "last_run_summary": "FULL: 25 open PRs, 14 issues, 38 unresolved threads. #224 exact-head CI green but Codex published 3 P2 workflow findings; #83 Codex published P2 concurrency-test finding; #87 clean generic receipt only. DX6/D4 owner routes; no merges/resolutions. #172/#200 Python 3.14 reruns pending; #173/#201 native reviews missing; all six ruleset bypass actors pull_request; Migration 0057 hold intact.",
+  "last_run_summary": "FOLLOW-UP: #172 same-head Python 3.14 rerun green; flaky test issue #225 created and native Codex exact-head review requested; #200 rerun still running; 25 open PRs, 15 open issues, 38 open threads; no merge or thread resolution. DX6/DX7/D5 remain; Migration 0057 production hold intact.",
   "last_followup_delta": {
-    "at": "2026-10-30T08:37:16.500Z",
+    "at": "2026-10-30T09:31:01.216Z",
     "prs_open": 25,
-    "issues_open": 14,
-    "new_pr": 224,
-    "required_ci_green": [
-      173,
-      201
+    "issues_open": 15,
+    "threads_open": 38,
+    "required_ci_new_green": [
+      172
     ],
-    "required_ci_failed_rerunning": [
-      172,
+    "required_ci_pending": [
       200
     ],
     "codex_prompted": [
-      173,
-      201
+      172
     ],
-    "review_receipts": [
-      83,
-      87
+    "new_issues": [
+      225
     ],
     "merged": [],
     "threads_resolved": [],
-    "production_hold_intact": true,
-    "codex_receipts": [
-      173
-    ]
+    "production_hold_intact": true
   }
 }
