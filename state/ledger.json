@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T14:08:42.502Z",
-  "last_run_at": "2026-10-30T14:08:42.502Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T14:29:47.995Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -74,14 +74,14 @@
     "DX8": "CLOSED by T4: no agent branch exists, owner supplies branch if proceeding",
     "DX9": "CLOSED: issue #223 created by orchestrator",
     "DX10": "CLOSED: PR #222 closed without merge at 2026-10-30T07:30:19Z",
-    "D5": "a — scoped independent design review only",
+    "D5": "SPEC FIRST owner #6524910028: Claude complete docs patch via DX12; isolated Draft docs PR; Codex and Jules must review before #219 implementation resumes.",
     "D6": "OWNER LATEST 2026-10-30T11:45:39Z: retain OpenCode on #184/#185 for 72h; previous Claude reassignment superseded; deadline 2026-11-02T11:45:39Z; then Claude via DX12 if no substantive OpenCode result",
     "DX3": "ANSWERED 2026-10-30: keep owner in bypass list as pull_request ONLY, never bypass; stop/report if any actor reads always. Unmarked owner #220 comment 6523498494",
     "DX5": "confirmed with category-based exclusions",
     "DX6": "YES: one workflow per PR after #224 merge and abuse-test checklist",
     "DX11": "CLOSED: PR #227 closed without merge 2026-10-30T10:45:09Z",
     "DX12": "YES: Claude complete patch in issue; orchestrator applies verbatim on isolated branch and opens Draft PR, few files max, never .github/workflows; owner approves larger patches",
-    "DX13": "YES: Dependabot patch/minor identical-patch rebase + green CI may carry qualifying earlier Codex acceptance; otherwise exact owner approval DX13: approved #N <sha> after diff review; no fourth Codex ask",
+    "DX13": "AMENDED owner #6524910028: prior DX13 Dependabot approval carries to rebase onto main with identical per-file patch and green backend/frontend; no reapproval. No waiver of other gates.",
     "D13": "#179 scoped one-P2 continuation; #115/#116 deferred until #224/#216/#217 and Dependabot PRs resolved",
     "D4": "evidence reports only; each historical PR closure still requires owner",
     "DX13_201": "Old owner approval 3dc8fe6942ebf60f13cc478278d9c0c38f77266d stale; identical 2-file Dependabot rebase 389d6ecda15c45d3d944ae63a427a491356de38a; exact-new-head owner approval required",
@@ -94,11 +94,11 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30T14:08:42.502Z: #220 owner comments re-read; no new unmarked D/DX answers after DX3 #6523498494; all prior answers retained.",
-    "T3": "D5(a) scoped review returned 2 new Codex P2 at ab3f964; now 12 open threads, implementation/merge still stopped pending owner direction",
+    "T2": "FOLLOW-UP 2026-10-30T14:29:47.995Z: owner #6524910028 D5 and DX13 amendment verified, acted via #6525176990.",
+    "T3": "D5 spec-first: Claude one-file patch requested #6525176990, receipt #6525183319 pending. #219 frozen with 12 threads until separate spec Codex and Jules acceptance.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "Main workflow ci.yml changed in #173 merge at 69c60af; targeted diff confirmed only setup-node immutable pin updates, no change to claude.yml/agent-claude.yml/acceptance-review.yml authorization wiring; original DX7 hardening still pending.",
-    "T6": "ACTIVE 2026-10-30T14:08:42.502Z: PR #224 active v3 file and proposed draft blob identical 767dcc1d; backend/frontend exact-head green; 4 P2 threads open, behind main by 1; Codex/Jules exact-current-head acceptance absent; no refresh workflow on main, no merge."
+    "T6": "FOLLOW-UP 2026-10-30T14:29:47.995Z: #224 active v3, 4 open P2, behind main, exact-head CI green, no Codex/Jules acceptance."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -865,7 +865,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
-        "checked_at": "2026-10-30T14:08:42.502Z"
+        "checked_at": "2026-10-30T14:29:47.995Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "blocked (DX13 and open #225; required CI green)",
@@ -899,12 +899,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "required CI green at current head, but owner DX13 approval of prior SHA stale; Open CI-172-PY314 finding #225 not dispositioned by Codex; no merge",
-      "last_qualifying_review_sha": null,
+      "queued": "Owner DX13 carried after identical 11-file rebase and green backend/frontend. Finding #225 remains Open; no merge.",
+      "last_qualifying_review_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1 (owner DX13 carryover; not native Codex)",
       "last_ci_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
-      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_state_verified_at": "2026-10-30T14:29:47.995Z",
+      "last_thread_verified_at": "2026-10-30T14:29:47.995Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
         "new_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
@@ -933,6 +933,15 @@
         "qualifying_codex_acceptance_on_old_head": false,
         "review_carries": false,
         "checked_at": "2026-10-30T13:34:09.117Z"
+      },
+      "acceptance_carryover": {
+        "basis": "owner DX13 approval #6523128063 and amendment #6524910028",
+        "old_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+        "new_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
+        "identical_patch_files": 11,
+        "all_files_equal": true,
+        "required_ci_green": true,
+        "verified_at": "2026-10-30T14:29:47.995Z"
       }
     },
     "173": {
@@ -1220,10 +1229,10 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
-        "checked_at": "2026-10-30T14:08:42.502Z"
+        "checked_at": "2026-10-30T14:29:47.995Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "blocked (backend pending; DX13 and open #226)",
@@ -1257,12 +1266,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "backend matrix in progress, DX13 exact-head approval missing, Open CI-200-PY314 finding #226 not dispositioned",
+      "queued": "Required backend/frontend green at CI run 41059907778. No owner DX13 approval, finding #226 Open, zero threads.",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
-      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_state_verified_at": "2026-10-30T14:29:47.995Z",
+      "last_thread_verified_at": "2026-10-30T14:29:47.995Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
@@ -1292,7 +1301,8 @@
         "qualifying_codex_acceptance_on_old_head": false,
         "review_carries": false,
         "checked_at": "2026-10-30T13:34:09.117Z"
-      }
+      },
+      "blocker_class": "Authorization blocker: owner DX13 review; verification failure: Open finding #226."
     },
     "201": {
       "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
@@ -1307,10 +1317,10 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
-        "checked_at": "2026-10-30T14:08:42.502Z"
+        "checked_at": "2026-10-30T14:29:47.995Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "blocked (backend pending; DX13 owner approval missing)",
@@ -1335,12 +1345,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "backend matrix in progress on current head, owner DX13 exact-new-head approval required, no qualifying native Codex review",
-      "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "queued": "Owner DX13 carries after exact 2-file rebase; required CI green, zero threads, no findings. Merge attempted twice through connector; internal failures; PR remains open. Optional claude-review failure known bot-actor infra, REST mergeable_state unstable. No bypass; retry next run after fresh gates.",
+      "last_qualifying_review_sha": "389d6ecda15c45d3d944ae63a427a491356de38a (owner DX13 carryover; not native Codex)",
+      "last_ci_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
-      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_state_verified_at": "2026-10-30T14:29:47.995Z",
+      "last_thread_verified_at": "2026-10-30T14:29:47.995Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
@@ -1382,7 +1392,20 @@
         "qualifying_codex_acceptance_on_old_head": false,
         "review_carries": false,
         "checked_at": "2026-10-30T13:34:09.117Z"
-      }
+      },
+      "acceptance_carryover": {
+        "basis": "owner DX13 approval #6523128063 and amendment #6524910028",
+        "old_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+        "new_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
+        "old_parent": "731c2084e60c51ad825effcf699e4c429be44675",
+        "new_parent": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+        "identical_patch_files": 2,
+        "all_files_equal": true,
+        "required_ci_green": true,
+        "verified_at": "2026-10-30T14:29:47.995Z"
+      },
+      "blocker_class": "Infrastructure failure: merge connector internal error (two attempts)",
+      "merge_attempts_this_run": 2
     },
     "207": {
       "title": "feat(ci): dedicated @claude PR-comment workflow, isolated from OpenCode (Draft)",
@@ -1844,7 +1867,7 @@
       "asks_per_sha": 1,
       "fix_review_cycles": 4,
       "stale_level": null,
-      "queued": "D5(a) review-only completed, 12 open findings, >3-cycle stop, further implementation/review frozen pending new owner direction; GitHub draft=false despite title; behind main after #173 squash merge",
+      "queued": "D5 spec first owner #6524910028; Claude patch-only request #6525176990, receipt #6525183319 pending; no #219 implementation, review, or merge until separate docs spec accepted by Codex AND Jules.",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
       "updated_at": "2026-10-30T02:47:28Z",
@@ -1922,7 +1945,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
-        "checked_at": "2026-10-30T14:08:42.502Z"
+        "checked_at": "2026-10-30T14:29:47.995Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
       "merge_state": "behind",
@@ -2001,12 +2024,12 @@
       "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "active v3 workflow copied and file-blob verified; 4 P2 threads still open; exact-head backend/frontend green, but branch behind main by 1; native Codex and Jules not accepted; do not refresh while Tier 0 priority queued",
+      "queued": "active v3 workflow on PR branch; 4 open P2 threads, behind main; exact-head Codex/Jules missing. No /refresh-branch before main deployment.",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
-      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_state_verified_at": "2026-10-30T14:29:47.995Z",
+      "last_thread_verified_at": "2026-10-30T14:29:47.995Z",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
@@ -2259,12 +2282,19 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T13:34:09.117Z",
+      "last_activity_at": "2026-10-30T14:29:47.995Z",
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "D5(a), D6(b), DX3 confirmed, DX5 confirmed, DX6 YES, DX7 harden; DX11 state PR, DX12 issue checkout; D4/D13 remain",
-      "last_state_verified_at": "2026-10-30T13:34:09.117Z"
+      "queued": "D5 spec patch pending; DX13 owner approval carried #201/#172; #200 owner review pending; #201 merge connector failure.",
+      "last_state_verified_at": "2026-10-30T13:34:09.117Z",
+      "last_prompt": {
+        "agent": "Claude",
+        "ask": "D5 separate controller reliability spec, full one-file docs patch via DX12",
+        "at": "2026-10-30T14:29:47.995Z",
+        "comment_id": 6525176990,
+        "status": "receipt pending #6525183319"
+      }
     },
     "223": {
       "title": "test(ci): investigate intermittent authority-lock serialization timeout (Python 3.13)",
@@ -2397,5 +2427,28 @@
     ],
     "production_hold": "intact"
   },
-  "last_full_event_path": "state/events/2026-10-30/full-20261030T140419658Z.json"
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T140419658Z.json",
+  "run_notes": {
+    "run_id": "followup-20261030T142520Z",
+    "merged": [],
+    "threads_resolved": [],
+    "open_threads": 41,
+    "agent_asks": [
+      {
+        "item": 220,
+        "agent": "Claude",
+        "comment_id": 6525176990
+      }
+    ],
+    "merge_failure": {
+      "pr": 201,
+      "attempts": 2,
+      "error": "connector internal failure",
+      "pr_still_open": true
+    },
+    "owner_answers": [
+      6524910028
+    ],
+    "no_production_actions": true
+  }
 }
