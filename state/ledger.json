@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T17:58:22.258Z",
-  "last_run_at": "2026-10-30T17:58:22.258Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T18:34:18.869Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -102,7 +102,7 @@
     "T3": "D5 spec-first #219 frozen with 12 threads; #228 b0601b30 1 behind, backend/frontend green, seven open Codex threads with candidate fixes; owner refresh then Codex+Jules; DX17 1/3.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "No main SHA change since targeted recheck; T5 workflow auth finding remains open pending DX6; exploitability unproven.",
-    "T6": "FULL 2026-10-30T17:58:22.258Z: PR #224 e8892327 active workflow branch current, backend/frontend green, 4 unresolved P2 threads with candidate fixes; no qualifying native exact-head Codex review (ask 1/3 at 17:00Z generic receipt); Jules not eligible; next ask no earlier than 18:00:10Z."
+    "T6": "FOLLOW-UP 2026-10-30T18:34:18.869Z: #224 e8892327 exact-head CI green, branch current; 4 P2 threads open; second Codex native review ask #6530592913 (2/3) pending; Jules not eligible."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -2073,21 +2073,21 @@
       ],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "first exact-head native Tier 2 review: four P2 threads, allowlist, concurrency, base-main, token scope, CI triggering; A4 verdict line",
-        "at": "2026-10-30T17:00:10Z",
+        "ask": "second exact-head native Tier 2 review; four P2 threads, exact allowlist, job concurrency, same-repo/base-main, concatenated JSON, token scope, CI trigger; A4 verdict line",
+        "at": "2026-10-30T18:33:39.760Z",
         "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
-        "comment_id": 6528502356,
-        "status": "terminal: Codex generic clean receipt #6528544286; NO native PR review submission; first ask 1/3, slot released"
+        "comment_id": 6530592913,
+        "status": "awaiting native review; second ask 2/3; no review result yet"
       },
-      "asks_per_sha": 1,
+      "asks_per_sha": 2,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Codex exact-head request 1/3 17:00Z returned generic receipt; wait until >=18:00:10Z for second request; Jules pending",
+      "queued": "Codex second exact-head native Tier 2 review asked at 18:33:39Z; four P2 threads remain open, Jules pending; no third ask before 19:33:39Z",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T17:58:22.258Z",
-      "last_thread_verified_at": "2026-10-30T17:58:22.258Z",
+      "last_state_verified_at": "2026-10-30T18:34:18.869Z",
+      "last_thread_verified_at": "2026-10-30T18:34:18.869Z",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
@@ -2142,7 +2142,7 @@
         "active_workflow_matches_proposed_draft": true,
         "review_acceptance_carryover": false
       },
-      "last_ci_verified_at": "2026-10-30T17:28:01.486Z"
+      "last_ci_verified_at": "2026-10-30T18:34:18.869Z"
     },
     "227": {
       "title": "Orchestrator state",
@@ -2562,14 +2562,14 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T17:28:01.486Z",
+      "last_activity_at": "2026-10-30T18:33:42.033Z",
       "owner": "Claude delivered complete numbered one-file DX12 patch #6528574316; textual applicability verified, root cause and SQL semantics unproven",
       "linked_prs": [
         219
       ],
-      "acceptance_on_main": "VERIFIED main@613cb935: CI run 41083732966 Python 3.13 job 124159375548 same TimeoutError; backend required failed; failed-jobs rerun attempt 2 in progress; issue remains open",
-      "queued": "main 41083732966 attempt 2 Python 3.13 job 124198642857 still in_progress as of 2026-10-30T17:58:22.258Z; Claude one-file DX12 patch exact-context only, not applied; root cause and pg_locks runtime semantics unproven",
-      "last_state_verified_at": "2026-10-30T17:58:22.258Z",
+      "acceptance_on_main": "main@613cb935 CI run 41083732966 attempt 1 failed Python3.13 authority-lock test; attempt 2 Python3.13 and aggregate backend plus frontend SUCCESS on same SHA; intermittent failure remains open #223, no root cause proven",
+      "queued": "Main rerun attempt 2 completed green at 17:57:32Z; intermittent main test failure tracked; Claude DX12 patch textually applicable but NOT applied, root cause and pg_locks SQL semantics unproven",
+      "last_state_verified_at": "2026-10-30T18:34:18.869Z",
       "last_prompt": {
         "agent": "Claude",
         "ask": "one scoped completion correction: exact-context numbered one-file patch or blocker, verify pg_locks predicate; no code/test/PR actions",
@@ -2592,6 +2592,18 @@
         "root_cause_established": false,
         "pg_locks_sql_verified": false,
         "checked_at": "2026-10-30T17:28:01.486Z"
+      },
+      "ci_rerun": {
+        "run_id": 41083732966,
+        "attempt": 2,
+        "python313_job": 124198642857,
+        "python313_conclusion": "success",
+        "backend_job": 124223209906,
+        "backend_conclusion": "success",
+        "frontend_conclusion": "success",
+        "completed_at": "2026-10-30T17:57:32Z",
+        "verified_at": "2026-10-30T18:34:18.869Z",
+        "evidence_comment_id": 6530593813
       }
     },
     "225": {
@@ -2634,21 +2646,26 @@
   ],
   "last_actions": [
     {
-      "type": "issue_comment",
-      "issue": 223,
-      "comment_id": 6529064024,
-      "summary": "verified Claude one-file unified patch exact textual applicability; NOT applied"
+      "type": "pr_comment",
+      "pr": 224,
+      "comment_id": 6530592913,
+      "summary": "second exact-head Codex native review request, no prior qualifying review"
     },
     {
-      "type": "main_ci_pending",
-      "run": 41083732966,
-      "attempt": 2,
-      "job": 124198642857
+      "type": "issue_comment",
+      "issue": 223,
+      "comment_id": 6530593813,
+      "summary": "main CI attempt 2 succeeded, intermittent baseline failure remains open"
     },
     {
       "type": "ruleset_read",
       "id": 23651422,
-      "bypass": "six actors pull_request"
+      "bypass": "all six pull_request"
+    },
+    {
+      "type": "schedule_health",
+      "full_enabled": true,
+      "followup_enabled": true
     }
   ],
   "priority_snapshot": {
@@ -2682,8 +2699,8 @@
     "open_issues": 16,
     "open_threads": 48
   },
-  "last_run_summary": "FULL 2026-10-30T17:58:22.258Z: 23 PRs, 16 issues, 48 open threads; no merges/resolutions; ruleset unchanged and no always bypass; #224 review pending; #228 branch behind and threads; #200 DX13 owner; #223 main rerun pending; Migration 0057 hold intact.",
-  "last_followup_delta": "No new PR head, owner decision, merge or thread resolution since prior FULL. #223 Claude numbered patch verified to match main file in two hunks, but not applied; Python3.13 main rerun still in progress. #200 and #224 exact-head backend/frontend green, review/owner gates still blocking. #184/#185 stalled OpenCode, 72-hour owner deadline preserved. Six bypass actors pull_request. Migration 0057 production hold intact.",
+  "last_run_summary": "FOLLOW-UP 2026-10-30T18:34:18.869Z: 23 product PRs, 16 issues, 48 open threads; no merges or resolutions. #224 second exact-head Codex request 2/3; #223 main Python3.13 rerun and aggregate backend green, investigation open; #200 owner DX13, #228 owner refresh remain. Migration 0057 hold intact.",
+  "last_followup_delta": "#224 second Codex native review requested on e8892327 (2/3) with 4 open P2 threads; #223 main CI run 41083732966 attempt 2 now green after first-attempt intermittent authority-lock timeout; issue remains open and Claude patch unapplied. No new heads, owner decisions, merges or resolutions. 23 PRs, 16 issues, 48 open threads; six ruleset bypass actors pull_request; both schedules enabled; Migration 0057 hold intact.",
   "last_full_delta": {
     "at": "2026-10-30T17:58:22.258Z",
     "run_id": "full-20261030T175520Z",
@@ -2703,19 +2720,20 @@
     ]
   },
   "last_followup_summary": {
-    "run_id": "followup-20261030T172620128Z",
-    "at": "2026-10-30T17:28:01.486Z",
+    "run_id": "followup-20261030T183243883Z",
+    "at": "2026-10-30T18:34:18.869Z",
     "merged": 0,
     "threads_resolved": 0,
     "open_threads": 48,
     "actions": [
-      "#223 exact-context patch verification comment 6529064024"
+      "#224 second Codex review ask #6530592913",
+      "#223 CI rerun-success evidence #6530593813"
     ],
     "blocked": [
-      "#200 DX13 owner approval",
-      "#224 Codex native and Jules Tier2 acceptance, 4 threads",
-      "#228 owner refresh and 7 threads",
-      "#223 main Python3.13 rerun pending"
+      "#200 DX13 owner exact-head approval",
+      "#224 4 P2 threads, native Codex and Jules acceptance",
+      "#228 owner branch refresh, 7 threads, Codex and Jules",
+      "#217 five threads, behind main, owner DX13"
     ],
     "production_hold": "intact"
   },
@@ -2738,6 +2756,12 @@
       "at": "2026-10-30T17:28:01.486Z",
       "mode": "FOLLOW-UP",
       "summary": "No merges/new PR heads; #223 patch textual applicability verified, no implementation; main CI rerun pending; review and owner gates unchanged"
+    },
+    {
+      "run_id": "followup-20261030T183243883Z",
+      "at": "2026-10-30T18:34:18.869Z",
+      "mode": "FOLLOW-UP",
+      "summary": "Main CI rerun green; #224 Codex ask 2/3; no merges/resolutions; no owner decision change; migration hold intact"
     }
   ],
   "last_full_event_supplements": [
