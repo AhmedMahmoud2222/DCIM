@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T145921048Z",
+  "record_type": "append_only_supplement",
+  "parent_event": "state/events/2026-10-30/full-20261030T145921048Z.json",
+  "prior_supplement": "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
+  "recorded_at": "2026-10-30T15:13:20.099Z",
+  "reason": "Late exact-head CI and independent-review gate actions after the initial append-only event was sealed",
+  "actions": [
+    {
+      "type": "verified exact-head CI",
+      "pr": 228,
+      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "run_id": 41078019903,
+      "backend": "success",
+      "frontend": "success",
+      "threads": 0,
+      "base": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8"
+    },
+    {
+      "type": "mark ready for review",
+      "pr": 228,
+      "head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "result": "draft=false"
+    },
+    {
+      "type": "evidence comment",
+      "pr": 228,
+      "comment_id": 6526108289
+    },
+    {
+      "type": "Codex review request",
+      "pr": 228,
+      "comment_id": 6526123791,
+      "head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "status": "awaiting native COMMENTED review; owner-run Jules still required"
+    },
+    {
+      "type": "ledger update",
+      "commit": "296f78753cce0977926fd99c0b26a29dbbd70f3b"
+    },
+    {
+      "type": "T5 targeted workflow recheck",
+      "main": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+      "files": [
+        ".github/workflows/agent-collaboration.yml",
+        ".github/workflows/opencode.yml"
+      ],
+      "finding": "only pinned create-github-app-token SHA updated, no actor-gate wiring change",
+      "ledger_commit": "2a707889f00c2576aadad59737eb4b9c1eb91913"
+    }
+  ],
+  "state": {
+    "open_prs": 24,
+    "open_issues": 16,
+    "open_threads": 41,
+    "merged_this_run": [],
+    "external_merge_201": true,
+    "ci172": "backend pending, frontend green",
+    "ci200": "backend pending, frontend green",
+    "owner_decisions": [
+      "DX13 #172 merge-refresh",
+      "DX13 #200",
+      "DX13 #217"
+    ],
+    "jules_eligible": [],
+    "production_migration_0057_hold": "intact",
+    "production_actions": []
+  }
+}
