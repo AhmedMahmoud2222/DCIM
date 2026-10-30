@@ -1,0 +1,82 @@
+{
+  "run_id": "full-20261030T100046062Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T10:00:46.062Z",
+  "completed_at": "2026-10-30T10:03:57.938Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "ruleset_hash": "fnv1a64:246f1cc05c72e8a4",
+  "counts": {
+    "open_prs": 25,
+    "open_issues": 16,
+    "open_review_threads": 38
+  },
+  "actions": [
+    {
+      "item": "#173",
+      "agent": "Codex",
+      "action": "Posted exact-head native-review follow-up 2/3 after generic receipt; upstream v7.1.0 SHA pin verified",
+      "sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+      "comment_id": 6520062881
+    },
+    {
+      "item": "#201",
+      "agent": "Codex",
+      "action": "Posted exact-head native-review follow-up 2/3 after generic receipt; upstream v3.3.0 SHA pin verified",
+      "sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "comment_id": 6520063505
+    },
+    {
+      "item": "T1 #218",
+      "action": "Re-verified main CI run 40991452249: all 12 jobs passed; prior code/test evidence remains complete"
+    },
+    {
+      "item": "T2 #220",
+      "action": "No new unmarked owner D/DX answers"
+    },
+    {
+      "item": "T5 DX7",
+      "action": "One-time check already completed; not repeated"
+    },
+    {
+      "item": "ruleset",
+      "action": "unchanged fnv1a64:246f1cc05c72e8a4; six actors pull_request"
+    },
+    {
+      "item": "inventory",
+      "action": "25 open PRs, 16 open issues, 38 unresolved threads; zero merges/resolutions"
+    }
+  ],
+  "merged": [],
+  "threads_resolved": [],
+  "open_decisions": [
+    "DX3",
+    "DX5",
+    "DX6",
+    "DX7",
+    "D4",
+    "D5",
+    "D6"
+  ],
+  "standing_holds": {
+    "migration_0057_production": true
+  },
+  "checks": {
+    "required_backend_frontend_green": 22,
+    "required_backend_failed": [
+      146,
+      171,
+      181
+    ],
+    "refresh_workflow_on_main": false,
+    "all_six_bypass_actors_pull_request": true
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "notes": [
+    "No new owner D/DX answers",
+    "No Tier 2 PR qualified for Jules",
+    "No PR met all merge gates"
+  ]
+}
