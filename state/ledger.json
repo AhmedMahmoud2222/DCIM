@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T19:08:44.040Z",
-  "last_run_at": "2026-10-30T19:08:44.040Z",
+  "last_full_run_at": "2026-10-30T19:09:55.766Z",
+  "last_run_at": "2026-10-30T19:09:55.766Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -172,7 +172,8 @@
       "merge_state": "behind main 166 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "tests-only RBAC regression",
@@ -240,7 +241,8 @@
       "merge_state": "behind main 156 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "empty current patch; historical review PR",
@@ -302,7 +304,8 @@
       "merge_state": "behind main 142 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "docs-only spatial architecture",
@@ -350,7 +353,8 @@
       "merge_state": "behind main 82 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "docs-only CFD architecture; findings still open",
@@ -496,7 +500,8 @@
       "merge_state": "behind main 141 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "docs-only AI architecture",
@@ -534,7 +539,8 @@
       "merge_state": "behind main 141 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "workflow file changes (even if comments only)",
@@ -582,7 +588,8 @@
       "merge_state": "behind main 139 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "empty current patch; historical review PR",
@@ -620,7 +627,8 @@
       "merge_state": "behind main 133 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "empty current patch; historical review PR",
@@ -660,7 +668,8 @@
       "merge_state": "behind main 109 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "database migration and telemetry retention",
@@ -761,7 +770,8 @@
       "merge_state": "behind main 107 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "docs-only security verification",
@@ -799,7 +809,8 @@
       "merge_state": "behind main 107 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "empty current patch; historical review PR",
@@ -837,7 +848,8 @@
       "merge_state": "behind main 98 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "RBAC/security permissions and access controls",
@@ -1076,7 +1088,8 @@
       "merge_state": "behind main 12 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "tests-only JWT test-clock",
@@ -1143,7 +1156,8 @@
       "merge_state": "behind main 85 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "workflow, migration, concurrency and alarm service",
@@ -1193,7 +1207,8 @@
       "merge_state": "behind main 83 commits",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "tests-only",
@@ -1231,7 +1246,8 @@
       "merge_state": "behind main 30 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 0,
       "tier_reason": "docs-only",
@@ -1280,7 +1296,8 @@
       "merge_state": "unstable only due optional claude-review bot-actor failure; required backend/frontend green; DX13 owner approval pending",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "major pinned GitHub Action bump, no permissions change",
@@ -1485,7 +1502,8 @@
       "merge_state": "behind main 3 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "workflow, credentials, auth and publishing guards",
@@ -1604,7 +1622,8 @@
       "merge_state": "behind main 3 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "migration 0057 release gate and production Compose",
@@ -1643,7 +1662,8 @@
       "merge_state": "behind main 3 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "tests-only PDU concurrency/migration acceptance",
@@ -1749,7 +1769,8 @@
       "merge_state": "behind main 2 commits",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "concurrency/journal/retry state-machine code",
@@ -2010,7 +2031,8 @@
       "merge_state": "blocked: 4 unresolved review threads; current main",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 2,
       "tier_reason": "Active .github/workflows/refresh-branch.yml added at 438ed150; 4 inert proposed-workflows files remain in diff",
@@ -2213,7 +2235,8 @@
       "tier_reason": "docs-only one file; owner D5 separately mandates Codex and Jules acceptance",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "findings_checklist": [
         {
@@ -2449,12 +2472,13 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "checked_at": "2026-10-30T19:08:44.040Z"
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "merge_state": "draft: backend in progress; exact-head independent review absent",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "tests-only, DX12 Claude-authored patch applied verbatim",
@@ -2486,15 +2510,16 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "queued",
-        "frontend": "queued",
+        "backend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "8669217825beaf09451e22644336258747f20c16",
-        "checked_at": "2026-10-30T19:08:44.040Z"
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "merge_state": "draft: exact-head CI queued; independent review absent",
       "head_verification": {
         "verified": false,
-        "reason": "unsigned"
+        "reason": "unsigned",
+        "checked_at": "2026-10-30T19:09:55.766Z"
       },
       "tier": 1,
       "tier_reason": "tests-only, DX12 Claude-authored patch applied verbatim",
@@ -2939,5 +2964,29 @@
     "state/events/2026-10-30/full-20261030T145921048Z-review-ready.json",
     "state/events/2026-10-30/full-20261030T165859172Z-supplement.json"
   ],
-  "last_run_id": "full-20261030T185615Z"
+  "last_run_id": "full-20261030T185615Z",
+  "signature_summary": {
+    "checked_at": "2026-10-30T19:09:55.766Z",
+    "open_prs": 25,
+    "verified": 10,
+    "unverified": 15,
+    "unverified_pr_numbers": [
+      83,
+      87,
+      113,
+      116,
+      117,
+      118,
+      125,
+      146,
+      158,
+      161,
+      171,
+      183,
+      228,
+      229,
+      230
+    ],
+    "signatures_required": false
+  }
 }
