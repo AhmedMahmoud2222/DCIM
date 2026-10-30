@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T15:13:29.366Z",
-  "last_run_at": "2026-10-30T15:32:21.019Z",
-  "last_run_mode": "FOLLOW-UP",
-  "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+  "last_full_run_at": "2026-10-30T16:08:27.777Z",
+  "last_run_at": "2026-10-30T16:08:27.777Z",
+  "last_run_mode": "FULL",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
     "hash": "fnv1a64:246f1cc05c72e8a4",
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T15:06:05.111Z",
+    "last_verified_at": "2026-10-30T16:08:27.777Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -89,18 +89,20 @@
     "DX13_172": "owner prior approval through identical rebase 879d081; current 8b9 merge main requires owner clarification/approval",
     "DX13_200": "no prior owner approval; exact new head 409750b715f677d2f4f673ce456329d3ba1e3444 queued",
     "DX15": "ANSWERED owner 2026-10-30: #225/#226 nonblocking for unrelated PR patches; issues stay open; do not weaken/skip tests",
-    "DX16": "ANSWERED owner 2026-10-30: Claude investigate #226 then #225 one PR each via DX12, lower priority than #224 and Dependabot merges"
+    "DX16": "ANSWERED owner 2026-10-30: Claude investigate #226 then #225 one PR each via DX12, lower priority than #224 and Dependabot merges",
+    "DX13_amendment2": "Owner unmarked #220 comment 6526791660: qualifying owner DX13 acceptance also carries through merge-main refresh with identical per-file patch, no conflict edits, green required CI, unchanged findings; all other gates apply",
+    "DX17": "Owner unmarked #220 comment 6526791660: #228 specification max 3 Codex fix cycles; after third stop and queue remaining findings; each Claude patch addresses complete open checklist in one patch with finding-to-line table"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30T15:06:05.111Z: unmarked owner DX15 and DX16 #6525448788 verified and applied to #172/#200; #226 then #225 investigation authorized but deferred by priority.",
-    "T3": "D5 spec-first: PR #228 ready at 9c9ac7a8, 257-line verified thread-map, backend/frontend success (CI 41078019903), native Codex review requested #6526123791; Jules after Codex; #219 frozen.",
+    "T2": "FULL 2026-10-30T16:08:27.777Z: owner unmarked #220 comment 6526791660 verified: DX13 approval #172 exact 8b9ecb and amendment2 merge-main carry-over; DX17 max 3 Codex fix cycles for #228; #172 owner-merged at 15:46 UTC.",
+    "T3": "D5 spec-first: #228 Claude 15-hunk verbatim patch applied at b0601b3020cc5fcd8a390633cbd3d5fc6571d527, 7 Codex findings have candidate fixes and evidence replies; 7 threads remain open; exact-head backend/frontend green, branch behind main; Codex/Jules pending; #219 frozen.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
-    "T5": "REOPENED and targeted re-verified on 2026-10-30 after #201 main workflow changes at 7e93a7bd: PR #201 diff changes only actions/create-github-app-token immutable pin in agent-collaboration.yml and opencode.yml; no actor-gate, secret, trigger, permission or needs wiring change. Original claude.yml DX7 hardening remains pending; no exploit established. T5 check complete for this main change.",
-    "T6": "FULL 2026-10-30T15:06:05.111Z: #224 signed 6d14f19, exact-head CI green, four P2 threads open, behind main 2, no exact-head Codex/Jules acceptance; refresh workflow absent on main."
+    "T5": "REOPENED TARGETED after #172 main workflow-file pin updates at 613cb935 on 2026-10-30: 11 .github/workflows files changed only actions/upload-artifact immutable SHA, no issue_comment trigger, actor gate, permissions or secrets change; claude.yml still lacks job-level actor guard; DX7 hardening pending; no exploit established. Targeted check complete.",
+    "T6": "FULL 2026-10-30T16:08:27.777Z: #224 signed two-parent merge-main e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005; active PR workflow blob 767dcc equals proposed v3, current with main, frontend green/backend in progress, 4 P2 threads open; exact-head Codex/Jules pending; workflow absent main."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -163,7 +165,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 166 commits",
@@ -231,7 +233,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 156 commits",
@@ -293,7 +295,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 142 commits",
@@ -341,7 +343,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 82 commits",
@@ -487,7 +489,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "d05ab33aca5893e19b99d809f2922922da180440",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 141 commits",
@@ -525,7 +527,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 141 commits",
@@ -573,7 +575,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 139 commits",
@@ -611,7 +613,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 133 commits",
@@ -651,7 +653,7 @@
         "backend": "failure",
         "frontend": "success",
         "exact_head_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 109 commits",
@@ -752,7 +754,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 107 commits",
@@ -790,7 +792,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 107 commits",
@@ -828,7 +830,7 @@
         "backend": "failure",
         "frontend": "success",
         "exact_head_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 98 commits",
@@ -915,7 +917,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "Owner DX13 carried after identical 11-file rebase and green backend/frontend. Finding #225 remains Open; no merge.",
+      "queued": "MERGED by owner 2026-10-30 15:46 UTC; no orchestrator merge",
       "last_qualifying_review_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1 (owner DX13 carryover; not native Codex)",
       "last_ci_sha": null,
       "updated_at": "2026-10-29T20:06:13Z",
@@ -969,7 +971,11 @@
         "file_by_file_patch": "identical across 11 files (compared old 69c60af...879d and new 7e93...8b9)",
         "required_ci": "frontend success, backend pending",
         "owner_approval": "DX13 rebase-only amendment does not expressly cover merge; queued"
-      }
+      },
+      "merged": true,
+      "state": "closed",
+      "merge_commit_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+      "merged_at": "2026-10-30T15:46:00Z"
     },
     "173": {
       "title": "chore(deps): bump actions/setup-node from 7.0.0 to 7.1.0",
@@ -1063,7 +1069,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 12 commits",
@@ -1128,9 +1134,9 @@
       "behind_main": 85,
       "required_ci": {
         "backend": "failure",
-        "frontend": "success",
+        "frontend": "unknown",
         "exact_head_sha": "b17c37a270d57d60962d2261271666aa934c805b",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 85 commits",
@@ -1180,7 +1186,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 83 commits",
@@ -1218,7 +1224,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 30 commits",
@@ -1253,10 +1259,10 @@
     },
     "200": {
       "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
-      "head_sha": "409750b715f677d2f4f673ce456329d3ba1e3444",
+      "head_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
       "head_branch": "dependabot/github_actions/actions/download-artifact-8.0.2",
       "base_branch": "main",
-      "base_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+      "base_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
       "draft": false,
       "labels": [
         "dependencies",
@@ -1266,11 +1272,11 @@
       "required_ci": {
         "backend": "in_progress",
         "frontend": "success",
-        "exact_head_sha": "409750b715f677d2f4f673ce456329d3ba1e3444",
-        "checked_at": "2026-10-30T15:32:21.019Z"
+        "exact_head_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "blocked: exact-head backend running",
+      "merge_state": "BLOCKED: backend pending, owner DX13 exact-head approval absent",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1303,11 +1309,11 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "Required backend/frontend green at CI run 41059907778. No owner DX13 approval, finding #226 Open, zero threads.",
+      "queued": "DX13 owner independent exact-head approval required; 4-file identical Dependabot rebase, frontend green/backend pending; optional claude-review bot actor rejection nonblocking",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T15:32:21.019Z",
+      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
       "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
@@ -1328,7 +1334,7 @@
         "source": "upstream git/ref/tags",
         "checked_at": "2026-10-30T08:00:20.821Z"
       },
-      "previous_head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+      "previous_head_sha": "409750b715f677d2f4f673ce456329d3ba1e3444",
       "previous_head_asks": 3,
       "patch_carry_over": {
         "from_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
@@ -1342,12 +1348,14 @@
       "blocker_class": "Authorization blocker: owner DX13 review; verification failure: Open finding #226.",
       "owner_exception_dx15": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6525448788",
       "carry_over": {
-        "old_sha": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
-        "new_sha": "409750b715f677d2f4f673ce456329d3ba1e3444",
+        "old_sha": "409750b715f677d2f4f673ce456329d3ba1e3444",
+        "new_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
         "refresh_type": "Dependabot rebase",
         "file_by_file_patch": "identical across 4 files",
-        "required_ci": "frontend success, backend pending",
-        "owner_approval": "none; DX13 exact-head owner approval queued"
+        "required_ci": "frontend green/backend pending",
+        "prior_owner_approval": false,
+        "owner_approval_carries": false,
+        "checked_at": "2026-10-30T16:08:27.777Z"
       }
     },
     "201": {
@@ -1470,7 +1478,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 3 commits",
@@ -1589,7 +1597,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 3 commits",
@@ -1628,7 +1636,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 3 commits",
@@ -1734,7 +1742,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind main 2 commits",
@@ -1984,21 +1992,21 @@
     },
     "224": {
       "title": "Add workflow to refresh PR branch via comment",
-      "head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+      "head_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
       "head_branch": "chore/refresh-branch-workflow",
       "base_branch": "main",
-      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "base_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
       "draft": false,
       "labels": [],
-      "behind_main": 2,
+      "behind_main": 0,
       "required_ci": {
-        "backend": "success",
+        "backend": "in_progress",
         "frontend": "success",
-        "exact_head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "exact_head_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+        "checked_at": "2026-10-30T16:08:27.777Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
-      "merge_state": "behind main 2 commits",
+      "merge_state": "BLOCKED: exact-head backend pending, 4 open P2 threads, Codex and Jules acceptance missing",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -2074,12 +2082,12 @@
       "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Four open P2 Codex threads with candidate fixes; behind main 2; exact-head CI green; new Codex review only after current; Jules after Codex; no workflow on main",
+      "queued": "Current with main after owner merge-main refresh; backend pending, frontend green, four P2 threads open; request Codex on exact head only after backend green, then Jules",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+      "last_ci_sha": null,
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T15:06:05.111Z",
-      "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
+      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
+      "last_thread_verified_at": "2026-10-30T16:08:27.777Z",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
@@ -2112,15 +2120,8 @@
         ],
         "tests_executed": false
       },
-      "owner_copy_pending": {
-        "source": "proposed-workflows/refresh-branch.yml",
-        "target": ".github/workflows/refresh-branch.yml",
-        "draft_sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
-        "live_blob_sha": "47f1190f5b38984f431b96ae145590d15bc0d243",
-        "finding": "PRRT_kwDOUdC8Ds6x9OYj",
-        "owner": "AhmedMahmoud2222"
-      },
-      "previous_head_sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
+      "owner_copy_pending": null,
+      "previous_head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
       "owner_copy": {
         "at": "2026-10-30T12:55:25Z",
         "sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
@@ -2129,7 +2130,18 @@
         "match": true,
         "verified": true
       },
-      "active_workflow_blob_sha": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958"
+      "active_workflow_blob_sha": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958",
+      "refresh": {
+        "from_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+        "to_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+        "type": "two-parent merge main",
+        "parents": [
+          "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+          "613cb935544a7b01664fe40a32e113a74c4e3ef7"
+        ],
+        "active_workflow_matches_proposed_draft": true,
+        "review_acceptance_carryover": false
+      }
     },
     "227": {
       "title": "Orchestrator state",
@@ -2175,27 +2187,27 @@
     },
     "228": {
       "title": "docs: D5 controller reliability specification for PR #219 (Claude-authored)",
-      "head_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "head_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
       "head_branch": "docs/d5-controller-reliability-spec-20261030",
       "base_branch": "main",
-      "base_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+      "base_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
       "draft": false,
       "labels": [],
-      "behind_main": 0,
+      "behind_main": 1,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
-        "exact_head_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-        "checked_at": "2026-10-30T15:12:01.108Z",
-        "run_id": 41078019903
+        "exact_head_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+        "checked_at": "2026-10-30T16:08:27.777Z",
+        "run_id": 41086174575
       },
       "open_thread_count": 7,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T15:32:21.019Z",
-      "last_thread_verified_at": "2026-10-30T15:32:21.019Z",
-      "last_ci_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-      "merge_state": "current with main; native Codex review and owner-run Jules acceptance absent",
+      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
+      "last_thread_verified_at": "2026-10-30T16:08:27.777Z",
+      "last_ci_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+      "merge_state": "BEHIND main after #172 owner merge; 7 Codex threads unresolved, exact-head Codex and Jules acceptance missing",
       "tier_reason": "docs-only one file; owner D5 separately mandates Codex and Jules acceptance",
       "head_verification": {
         "verified": false,
@@ -2223,89 +2235,96 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196743",
           "severity": "P1",
           "required_change": "Cross-run rollback trust anchor: independently monotonic checkpoint/non-rewindable history, initialize and recover, FI-28 inter-process restored signed journal rejection",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:53; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:53; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: INV-S4/S5 lines 34–35; FI-28, FI-37–39 lines 207,216–218; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 53,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwW",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196751",
           "severity": "P1",
           "required_change": "Separate new-admission reserve threshold from existing-task mutation max; test final signed bytes and reserve consumption",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:58; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:58; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: INV-B2/B3/B3a lines 59–61; FI-31/32 lines 210–211; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 58,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwv",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196789",
           "severity": "P1",
           "required_change": "Separate logical outcome comparison key from per-attempt provenance; compare authenticated opposing verdicts across attempts and extend FI-21",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:124; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:124; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: EV-6 line 120, EV-9 line 129, FI-21 cross-attempt cases; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 124,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbw5",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196802",
           "severity": "P1",
           "required_change": "Rescan status/conclusion changes of same run attempt after cursor pass; resumable FI test",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:226; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:226; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: EV-13 line 121 and FI-33 line 212; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 226,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwf",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196766",
           "severity": "P2",
           "required_change": "T3 reservation permits POST then T4 outcome write; fix circular universal write-before-effect invariant; FI-07..09",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:96; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:96; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: T3/T4 and universal transition rule lines 88,98–100; FI-07..09; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 96,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwn",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196779",
           "severity": "P2",
           "required_change": "Unknown durable state after ambiguous applied PUT plus failed recovery reads; split FI-04 and reconcile safely",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:48; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:48; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: INV-A3 line 50 and FI-04 applied/unapplied variants; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 48,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbxC",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196815",
           "severity": "P2",
           "required_change": "Define authoritative live witness identity/bindings and mutation/deletion/retry tests",
-          "status": "Open",
-          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:227; code inspected by orchestrator 2026-10-30",
+          "status": "Open — candidate fix verified at b0601b3020cc5fcd8a390633cbd3d5fc6571d527; independent Codex confirmation pending",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:227; code inspected by orchestrator 2026-10-30; DX12 verbatim 15-hunk patch inspected at b0601b30: EV-14 line 126, FI-34..36 lines 213–215; evidence reply posted, thread remains open",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 227,
-          "author": "chatgpt-codex-connector"
+          "author": "chatgpt-codex-connector",
+          "candidate_fix_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527"
         }
       ],
       "last_prompt": {
         "agent": "Claude",
-        "ask": "D5 DX12 patch-only fix all seven exact-head Codex findings (4 P1, 3 P2); no #219 implementation",
+        "ask": "DX12 one-file complete seven-finding spec patch",
         "at": "2026-10-30T15:32:21.019Z",
         "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
         "comment_id": 6526604184,
-        "status": "awaiting complete one-file unified patch and checklist completion report"
+        "status": "terminal: complete 15-hunk patch + mapping table posted in issue #220 comment 6526611421; orchestrator applied verbatim at b0601b30"
       },
       "asks_per_sha": 2,
-      "queued": "BLOCKED: 7 open Codex threads (4 P1, 3 P2) on D5 spec; Claude one-file patch requested via issue #220 comment 6526604184; #219 frozen, Jules not yet eligible, no merge",
+      "queued": "Update branch owner click; CI green but behind main; 7 open Codex threads, exact-head Codex and owner-run Jules acceptance pending; DX17 cycle 1/3",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "D5 12-thread map correction via DX12",
@@ -2329,10 +2348,10 @@
       "open_threads": [
         "PRRT_kwDOUdC8Ds6yBbwQ",
         "PRRT_kwDOUdC8Ds6yBbwW",
-        "PRRT_kwDOUdC8Ds6yBbwv",
-        "PRRT_kwDOUdC8Ds6yBbw5",
         "PRRT_kwDOUdC8Ds6yBbwf",
         "PRRT_kwDOUdC8Ds6yBbwn",
+        "PRRT_kwDOUdC8Ds6yBbwv",
+        "PRRT_kwDOUdC8Ds6yBbw5",
         "PRRT_kwDOUdC8Ds6yBbxC"
       ],
       "last_native_review_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
@@ -2340,7 +2359,28 @@
       "asks_per_sha_by_agent": {
         "Codex": 1,
         "Claude": 1
-      }
+      },
+      "previous_head_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "max_fix_review_cycles": 3,
+      "owner_jules_required_by_D5": true,
+      "last_completion_report": {
+        "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6526611421",
+        "sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+        "one_file": true,
+        "hunks": 15,
+        "changed_lines": "257 to 276",
+        "tests_executed": false,
+        "pr_comment": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#issuecomment-6527338334"
+      },
+      "evidence_replies": [
+        4425691195,
+        4425691665,
+        4425692156,
+        4425692632,
+        4425693135,
+        4425693647,
+        4425694145
+      ]
     }
   },
   "issues": {
@@ -2427,19 +2467,19 @@
       "labels": [
         "stalled"
       ],
-      "last_activity_at": "2026-10-30T13:34:09.117Z",
+      "last_activity_at": "2026-10-30T16:08:27.777Z",
       "owner": "OpenCode (owner D6 latest, 72-hour deadline 2026-11-02T11:45:39Z)",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "OpenCode D6 owner deadline 2026-11-02T11:45:39Z; last prompt 2026-10-30T13:32:53Z; no substantive response",
-      "stale_level": 1,
-      "last_state_verified_at": "2026-10-30T15:06:05.111Z",
+      "queued": "needs-attention, retain OpenCode until 2026-11-02T11:45:39Z per owner D6; no early reassignment",
+      "stale_level": 2,
+      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
       "last_prompt": {
         "agent": "OpenCode",
-        "ask": "1-hour follow-up: report substantive status, branch/PR SHA or precise blocker; no reassignment",
-        "at": "2026-10-30T13:34:09.117Z",
-        "comment_id": 6524064325,
-        "status": "awaiting substantive response"
+        "ask": "2-hour status follow-up; report branch/PR SHA or exact capability blocker",
+        "at": "2026-10-30T16:08:27.777Z",
+        "comment_id": 6527318422,
+        "status": "awaiting substantive result; owner D6 72-hour deadline remains"
       }
     },
     "185": {
@@ -2447,19 +2487,19 @@
       "labels": [
         "stalled"
       ],
-      "last_activity_at": "2026-10-30T13:34:09.117Z",
+      "last_activity_at": "2026-10-30T16:08:27.777Z",
       "owner": "OpenCode (owner D6 latest, 72-hour deadline 2026-11-02T11:45:39Z)",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "OpenCode D6 owner deadline 2026-11-02T11:45:39Z; last prompt 2026-10-30T13:32:56Z; no substantive response",
-      "stale_level": 1,
-      "last_state_verified_at": "2026-10-30T15:06:05.111Z",
+      "queued": "needs-attention, retain OpenCode until 2026-11-02T11:45:39Z per owner D6; no early reassignment",
+      "stale_level": 2,
+      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
       "last_prompt": {
         "agent": "OpenCode",
-        "ask": "1-hour follow-up: report substantive status, branch/PR SHA or precise blocker; no reassignment",
-        "at": "2026-10-30T13:34:09.117Z",
-        "comment_id": 6524065536,
-        "status": "awaiting substantive response"
+        "ask": "2-hour status follow-up; report branch/PR SHA or exact capability blocker",
+        "at": "2026-10-30T16:08:27.777Z",
+        "comment_id": 6527319920,
+        "status": "awaiting substantive result; owner D6 72-hour deadline remains"
       }
     },
     "195": {
@@ -2571,80 +2611,67 @@
   ],
   "last_actions": [
     {
-      "type": "created_draft_pr",
-      "pr": 228,
-      "sha": "6d505459381920ad9e3c178d3539c0dd366e8a88",
-      "reason": "D5 DX12 verbatim Claude specification patch"
+      "type": "owner_external_merge",
+      "pr": 172,
+      "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+      "at": "2026-10-30T15:46:00Z"
     },
     {
-      "type": "comment",
+      "type": "apply_claude_patch",
+      "pr": 228,
+      "sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+      "source_comment": 6526611421,
+      "hunks": 15
+    },
+    {
+      "type": "thread_evidence_replies",
+      "pr": 228,
+      "reply_ids": [
+        4425691195,
+        4425691665,
+        4425692156,
+        4425692632,
+        4425693135,
+        4425693647,
+        4425694145
+      ],
+      "resolved": 0
+    },
+    {
+      "type": "pr_comment",
+      "pr": 228,
+      "comment_id": 6527338334
+    },
+    {
+      "type": "stale_prompt",
+      "issue": 184,
+      "agent": "OpenCode",
+      "comment_id": 6527318422
+    },
+    {
+      "type": "stale_prompt",
+      "issue": 185,
+      "agent": "OpenCode",
+      "comment_id": 6527319920
+    },
+    {
+      "type": "update_decision_comment",
       "issue": 220,
-      "id": 6525942724,
-      "reason": "D5 12-thread mapping correction"
+      "comment_id": 6501005762
     },
     {
-      "type": "decision_comment_update",
+      "type": "update_human_ledger",
       "issue": 220,
-      "id": 6501005762,
-      "reason": "DX15/DX16, #172/#200 owner gates"
-    },
-    {
-      "type": "verified_post_merge",
-      "pr": 201,
-      "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8"
-    },
-    {
-      "type": "verbatim_patch_update",
-      "pr": 228,
-      "sha": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
-      "source_comment": 6525948313,
-      "lines": 257
-    },
-    {
-      "type": "agent_request",
-      "issue": 220,
-      "agent": "Claude",
-      "comment_id": 6526043369,
-      "reason": "correct orchestrator-vs-owner attribution"
-    },
-    {
-      "type": "verbatim_patch_update",
-      "pr": 228,
-      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-      "source_comment": 6526048626,
-      "changed_lines": [
-        205
-      ]
-    },
-    {
-      "type": "mark_ready",
-      "pr": 228,
-      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-      "reason": "D5 spec corrections complete, CI green"
-    },
-    {
-      "type": "comment",
-      "pr": 228,
-      "comment_id": 6526108289,
-      "reason": "D5 evidence checkpoint"
-    },
-    {
-      "type": "agent_request",
-      "pr": 228,
-      "agent": "Codex",
-      "comment_id": 6526123791,
-      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-      "reason": "D5 independent spec review"
+      "comment_id": 6500987889
     }
   ],
   "priority_snapshot": {
     "merged_since_previous_run": [
-      201
+      172
     ],
     "merged_this_run": [],
     "tier0_next": [
       228,
-      172,
       188
     ],
     "tier1_next": [
@@ -2660,11 +2687,11 @@
       115,
       116
     ],
-    "open_product_prs": 24,
+    "open_product_prs": 23,
     "open_issues": 16,
     "open_threads": 48
   },
-  "last_run_summary": "FOLLOW-UP: 24 open PRs, 16 issues, 48 unresolved threads; #228 new Codex review 4 P1+3 P2, Claude patch-only remediation asked; #172/#200 required backend pending; no merges or thread resolutions; migration 0057 production hold intact.",
+  "last_run_summary": "FULL: 23 open PRs, 16 issues, 48 open threads; #172 owner merged, #228 first D5 remediation patch applied and verified, #224 and #200 exact-head backend pending; no orchestrator merge; Migration 0057 hold intact.",
   "last_followup_delta": {
     "at": "2026-10-30T15:32:21.019Z",
     "from": "2026-10-30T15:13:29.366Z",
@@ -2705,7 +2732,7 @@
     ],
     "production_hold": "intact"
   },
-  "last_full_delta": "Owner DX15/DX16 applied; #201 external merge; #228 created and two verbatim Claude patches applied; marked ready after exact-head backend/frontend green; Codex native review requested at 9c9ac7a8; #219 frozen, Jules pending; #172/#200 backend pending and DX13 owner decisions queued; no merges or thread resolutions.",
+  "last_full_delta": "Owner-merged #172 at main 613cb935; #224 merge-main refresh e889 current with main and backend pending; #200 Dependabot rebase 2a83 identical four-file patch, backend pending and DX13 owner approval needed; #228 Claude complete 15-hunk DX12 patch applied verbatim b060, seven evidence replies, 7 open Codex threads, backend/frontend green but behind; owner DX17 max 3 cycles; OpenCode #184/#185 two-hour prompts; no orchestrator merge/resolution.",
   "last_followup_summary": {
     "run_id": "followup-20261030T153012684Z",
     "no_merges": true,
@@ -2717,63 +2744,44 @@
     ],
     "production_hold": "intact"
   },
-  "last_full_event_path": "state/events/2026-10-30/full-20261030T145921048Z.json",
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T160040941Z.json",
   "run_notes": {
-    "run_id": "followup-20261030T153012684Z",
-    "mode": "FOLLOW-UP",
+    "run_id": "full-20261030T160040941Z",
+    "mode": "FULL",
     "merged_this_run": [],
+    "merged_externally": [
+      172
+    ],
     "threads_resolved": [],
+    "thread_evidence_replies": 7,
     "open_threads": 48,
     "agent_asks": [
       {
-        "item": 228,
-        "agent": "Claude",
-        "comment_id": 6526604184,
-        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2"
+        "item": 184,
+        "agent": "OpenCode",
+        "comment_id": 6527318422
+      },
+      {
+        "item": 185,
+        "agent": "OpenCode",
+        "comment_id": 6527319920
       }
     ],
-    "owner_answers": [],
+    "owner_answers": [
+      {
+        "id": "DX13 amendment2",
+        "comment_id": 6526791660
+      },
+      {
+        "id": "DX17",
+        "comment_id": 6526791660
+      }
+    ],
     "required_ci_pending": [
-      172,
+      224,
       200
     ],
-    "new_findings": [
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbwQ",
-        "severity": "P1"
-      },
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbwW",
-        "severity": "P1"
-      },
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbwv",
-        "severity": "P1"
-      },
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbw5",
-        "severity": "P1"
-      },
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbwf",
-        "severity": "P2"
-      },
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbwn",
-        "severity": "P2"
-      },
-      {
-        "pr": 228,
-        "id": "PRRT_kwDOUdC8Ds6yBbxC",
-        "severity": "P2"
-      }
-    ],
+    "new_findings": [],
     "failed_writes": [],
     "production_hold": "intact"
   },
