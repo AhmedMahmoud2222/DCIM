@@ -3,5 +3,6 @@
   "mode": "FOLLOW-UP",
   "started_at": "2026-10-30T21:29:37.879Z",
   "expires_at": "2026-10-30T21:54:37.879Z",
-  "status": "active"
+  "status": "released",
+  "released_at": "2026-10-30T21:32:34.812Z"
 }
