@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T05:08:17.787Z",
-  "last_run_at": "2026-10-30T05:08:17.787Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T05:30:36.915Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -49,7 +49,8 @@
         "mode": "always"
       }
     ],
-    "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy"
+    "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
+    "last_verified_at": "2026-10-30T05:30:36.915Z"
   },
   "agent_capabilities": {
     "claude": "API signed commits; cannot run tests, merge main, rebase, check signatures, reply/resolve threads; cannot create Draft PR or commit when only main checked out",
@@ -1136,7 +1137,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:30:36.915Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1275,7 +1276,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-        "checked_at": "2026-10-30T05:08:17.787Z",
+        "checked_at": "2026-10-30T05:30:36.915Z",
         "diagnostic": "attempt 1 Python 3.13 TimeoutError; single attempt 2 passed, all required checks green"
       },
       "optional_ci": "not rechecked this follow-up",
@@ -1616,28 +1617,20 @@
   ],
   "last_actions": [
     {
-      "type": "T1",
-      "result": "commented #218 evidence #6515440013"
-    },
-    {
-      "type": "CI",
-      "result": "#219 exact head rerun attempt 2 success; suspected flaky authority-lock test, DX9"
-    },
-    {
-      "type": "stale",
-      "result": "labeled #184 and #185 stalled; D6 queued"
+      "type": "delta",
+      "result": "No new PR/issue commits, reviews, thread changes, owner decisions or CI transitions since last FULL; verified 24 open PRs, 13 issues, 34 unresolved threads."
     },
     {
       "type": "ruleset",
-      "result": "hash unchanged; 6 bypass actors still always"
+      "result": "Rule 23651422 unchanged; all six bypass actors remain always (DX2 outstanding)."
     },
     {
-      "type": "threads",
-      "result": "34 unresolved; 0 resolved"
+      "type": "checks",
+      "result": "#219 backend/frontend green on ab3f9641; D5 hold remains. #216 backend/frontend green on f82d64ec but BEHIND and Tier 2 review absent."
     },
     {
       "type": "merge",
-      "result": "0; no gate-complete PR"
+      "result": "0 merges; 0 resolutions; no new agent prompts; no production actions."
     }
   ]
 }
