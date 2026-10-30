@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T19:09:55.766Z",
-  "last_run_at": "2026-10-30T19:09:55.766Z",
+  "last_full_run_at": "2026-10-30T19:11:20.387Z",
+  "last_run_at": "2026-10-30T19:11:20.387Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -92,7 +92,8 @@
     "DX16": "ANSWERED owner 2026-10-30: Claude investigate #226 then #225 one PR each via DX12, lower priority than #224 and Dependabot merges",
     "DX13_amendment2": "Owner unmarked #220 comment 6526791660: qualifying owner DX13 acceptance also carries through merge-main refresh with identical per-file patch, no conflict edits, green required CI, unchanged findings; all other gates apply",
     "DX17": "Owner unmarked #220 comment 6526791660: #228 specification max 3 Codex fix cycles; after third stop and queue remaining findings; each Claude patch addresses complete open checklist in one patch with finding-to-line table",
-    "DX18": "OPEN owner decision: #226 code-derived cooling lock-order inversion; DX16 no production change; options targeted lock-order correction, 40P01/40001 mitigation, hold; queued in #220."
+    "DX18": "OPEN owner decision: #226 code-derived cooling lock-order inversion; DX16 no production change; options targeted lock-order correction, 40P01/40001 mitigation, hold; queued in #220.",
+    "DX19": "OPEN owner decision: #228/#219 spec after DX17 cap; (a) explicit extra scoped patch+review, (b) integrated redesign recommended, (c) hold/closure; no action until owner unmarked answer"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
@@ -100,7 +101,7 @@
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
     "T2": "FULL 2026-10-30T19:05:59.964Z: #220 re-read, no new unmarked owner D/DX answers since #6526791660; DX18 new orchestrator decision awaiting owner.",
-    "T3": "D5 #219 frozen; #228 exact head 7b2eb31 signed=false, current and required CI green; Claude DX12 round-2 6-hunk patch applied verbatim, 9 threads open; third/final Codex review requested #6531321969, Jules only after acceptance; no fourth cycle.",
+    "T3": "D5 #219 frozen; #228 final Codex review on 7b2eb31 added two P2, total 11 unresolved, DX17 3/3 cap STOP; root cause #6531389782; owner DX19 pending; no Claude/Codex further, Jules ineligible.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "DONE: workflow actor hardening remains pending DX6, exploitability unproven; main workflow SHA unchanged since last targeted review.",
     "T6": "FULL 2026-10-30T19:05:59.964Z: #224 e8892327 current/required CI green, 4 P2 threads unresolved; second Codex ask #6530592913 returned generic clean PR-level receipt (no qualifying native review), third not before 2026-10-30T19:33:39Z; Jules not eligible."
@@ -2225,13 +2226,13 @@
         "checked_at": "2026-10-30T19:08:44.040Z",
         "notes": "docs-only route; backend/frontend required checks succeeded, underlying suites skipped"
       },
-      "open_thread_count": 9,
+      "open_thread_count": 11,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T19:08:44.040Z",
-      "last_thread_verified_at": "2026-10-30T19:08:44.040Z",
+      "last_state_verified_at": "2026-10-30T19:11:20.387Z",
+      "last_thread_verified_at": "2026-10-30T19:11:20.387Z",
       "last_ci_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
-      "merge_state": "blocked: nine unresolved Codex review threads, final native Codex review running, owner Jules not yet eligible",
+      "merge_state": "blocked: 11 unresolved Codex threads; DX17 cap reached; owner DX19 pending",
       "tier_reason": "docs-only one file; owner D5 separately mandates Codex and Jules acceptance",
       "head_verification": {
         "verified": false,
@@ -2364,6 +2365,30 @@
           "author": "chatgpt-codex-connector",
           "comment_id": 4427459837,
           "candidate_fix_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yHAJ-",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4427546100",
+          "severity": "P2",
+          "required_change": "FI-09b must distinguish applied and unapplied ambiguous T4 PUT outcomes; reconcile durable reserved versus delivered_unconfirmed without duplicate POST, like FI-04a/b",
+          "status": "Open",
+          "evidence": "Native third/final Codex review at 7b2eb31 2026-10-30T19:10:03Z; independently verified FI-09b line 189 asserts stays reserved/T4r despite ambiguous PUT possibly applied",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 189,
+          "author": "chatgpt-codex-connector",
+          "comment_id": 4427546100
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yHAKC",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4427546106",
+          "severity": "P2",
+          "required_change": "Make FI-33 same-attempt revisit setup consistent with EV-13 cursor rule: do not advance cursor past incomplete run, retain open_runs, then test completion and contradiction",
+          "status": "Open",
+          "evidence": "Native third/final Codex review at 7b2eb31 2026-10-30T19:10:03Z; independently verified EV-13 line 122 prohibits cursor advance, FI-33 line 214 requires it",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 214,
+          "author": "chatgpt-codex-connector",
+          "comment_id": 4427546106
         }
       ],
       "last_prompt": {
@@ -2372,10 +2397,10 @@
         "at": "2026-10-30T19:07:33Z",
         "sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
         "comment_id": 6531321969,
-        "status": "awaiting native review; third/final cycle; no fourth fix cycle without Ahmed"
+        "status": "terminal: third/final native Codex review completed with two new P2, DX17 cap reached; no further automatic fix/review"
       },
       "asks_per_sha": 1,
-      "queued": "9 open Codex threads; third/final DX17 native review running on current/green SHA; owner-run Jules only after Codex accepts; no merge",
+      "queued": "DX19 owner decision REQUIRED: 11 open threads after third/final Codex review; choose explicit extra cycle, integrated spec redesign, or hold/closure; #219 frozen, Jules ineligible",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "D5 12-thread map correction via DX12",
@@ -2412,10 +2437,12 @@
         "PRRT_kwDOUdC8Ds6yBbw5",
         "PRRT_kwDOUdC8Ds6yBbxC",
         "PRRT_kwDOUdC8Ds6yGzNO",
-        "PRRT_kwDOUdC8Ds6yGzNV"
+        "PRRT_kwDOUdC8Ds6yGzNV",
+        "PRRT_kwDOUdC8Ds6yHAJ-",
+        "PRRT_kwDOUdC8Ds6yHAKC"
       ],
-      "last_native_review_sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
-      "last_native_review_outcome": "Changes required: 2 new findings (P1, P2) on exact head; 7 earlier candidate-fix threads still open",
+      "last_native_review_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
+      "last_native_review_outcome": "Changes required: third/final DX17 native review added two new P2 on exact head; 11 cumulative threads open",
       "asks_per_sha_by_agent": {
         "Codex": 1,
         "Claude": 0
@@ -2457,7 +2484,16 @@
         "tests_run": false,
         "checked_at": "2026-10-30T19:08:44.040Z"
       },
-      "last_ci_verified_at": "2026-10-30T19:08:44.040Z"
+      "last_ci_verified_at": "2026-10-30T19:08:44.040Z",
+      "loop_cap": {
+        "max_cycles": 3,
+        "completed_cycles": 3,
+        "stopped_at": "2026-10-30T19:11:20.387Z",
+        "root_cause": "Local patch-by-patch state-machine/FI edits without integrated cross-section consistency proof: T3 ambiguous PUT split FI-04a/b but T4 FI-09b retained one-sided assumption; EV-13 cursor guard contradicts FI-33 setup",
+        "report_comment_id": 6531389782,
+        "owner_decision_id": "DX19",
+        "recommendation": "integrated spec redesign before further review"
+      }
     },
     "229": {
       "title": "test(ci): investigate authority-lock waiter synchronization flake (#223)",
@@ -2706,7 +2742,7 @@
         228
       ],
       "acceptance_on_main": null,
-      "queued": "DX13 owner #200/#217, DX18 owner #226; #228 final Codex review running; #229/#230 Draft CI pending",
+      "queued": "Decide now DX19 #228/#219 spec convergence, DX13 #200 and #217; DX18 #226 open. #228 stopped at DX17 cap with 11 threads. #229/#230 Draft CI pending",
       "last_state_verified_at": "2026-10-30T19:05:59.964Z",
       "last_prompt": {
         "agent": "Claude",
