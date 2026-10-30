@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T19:11:20.387Z",
-  "last_run_at": "2026-10-30T19:11:20.387Z",
+  "last_full_run_at": "2026-10-30T19:11:45.267Z",
+  "last_run_at": "2026-10-30T19:11:45.267Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T19:05:59.964Z",
+    "last_verified_at": "2026-10-30T19:11:45.267Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -2223,7 +2223,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
-        "checked_at": "2026-10-30T19:08:44.040Z",
+        "checked_at": "2026-10-30T19:11:45.267Z",
         "notes": "docs-only route; backend/frontend required checks succeeded, underlying suites skipped"
       },
       "open_thread_count": 11,
@@ -2484,7 +2484,7 @@
         "tests_run": false,
         "checked_at": "2026-10-30T19:08:44.040Z"
       },
-      "last_ci_verified_at": "2026-10-30T19:08:44.040Z",
+      "last_ci_verified_at": "2026-10-30T19:11:45.267Z",
       "loop_cap": {
         "max_cycles": 3,
         "completed_cycles": 3,
@@ -2493,6 +2493,13 @@
         "report_comment_id": 6531389782,
         "owner_decision_id": "DX19",
         "recommendation": "integrated spec redesign before further review"
+      },
+      "optional_ci": {
+        "claude_review": "success",
+        "compose_smoke": "success",
+        "ci_policy": "success",
+        "deployment_validation": "success",
+        "backend_suite": "skipped (docs-only route)"
       }
     },
     "229": {
@@ -2505,10 +2512,10 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "missing (aggregate not yet started; backend-suite running)",
         "frontend": "success",
         "exact_head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "checked_at": "2026-10-30T19:09:55.766Z"
+        "checked_at": "2026-10-30T19:11:45.267Z"
       },
       "merge_state": "draft: backend in progress; exact-head independent review absent",
       "head_verification": {
@@ -2526,10 +2533,10 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Draft CI running; hypothesis pg_locks waiter detection unverified; repeated-run sensitivity and Codex acceptance missing",
+      "queued": "Draft; frontend green, backend aggregate missing while backend suite runs on exact head; independent Codex review, deterministic/repeated-run sensitivity and readiness missing",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T19:05:59.964Z",
+      "last_state_verified_at": "2026-10-30T19:11:45.267Z",
       "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
@@ -2546,10 +2553,10 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "missing (aggregate not yet started; backend-suite running)",
         "frontend": "success",
         "exact_head_sha": "8669217825beaf09451e22644336258747f20c16",
-        "checked_at": "2026-10-30T19:09:55.766Z"
+        "checked_at": "2026-10-30T19:11:45.267Z"
       },
       "merge_state": "draft: exact-head CI queued; independent review absent",
       "head_verification": {
@@ -2567,10 +2574,10 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Draft CI queued; migration lock session-lifetime hypothesis unverified; repeated-run sensitivity and Codex acceptance missing",
+      "queued": "Draft; frontend green, backend aggregate missing while backend suite runs on exact head; independent Codex review, deterministic/repeated-run sensitivity and readiness missing",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T19:08:44.040Z",
+      "last_state_verified_at": "2026-10-30T19:11:45.267Z",
       "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
       "source_patch_comment_id": 6531197158,
       "source_issue": 225,
