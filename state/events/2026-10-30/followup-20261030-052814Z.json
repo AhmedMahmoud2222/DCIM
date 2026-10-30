@@ -1,0 +1,47 @@
+{
+  "run_id": "followup-20261030-052814Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T05:28:14.000Z",
+  "completed_at": "2026-10-30T05:30:36.915Z",
+  "baseline_run_at": "2026-10-30T05:08:17.787Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "counts": {
+    "open_prs": 24,
+    "open_issues": 13,
+    "unresolved_threads": 34
+  },
+  "delta": {
+    "merges": [],
+    "thread_resolutions": [],
+    "agent_prompts": [],
+    "owner_answers": [],
+    "new_commits": [],
+    "new_review_submissions": [],
+    "ci_transitions": []
+  },
+  "checks": {
+    "pr219": {
+      "sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "backend": "success",
+      "frontend": "success",
+      "blocked_by": "D5 and 10 open threads"
+    },
+    "pr216": {
+      "sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
+      "backend": "success",
+      "frontend": "success",
+      "blocked_by": "BEHIND and Tier 2 independent acceptance"
+    }
+  },
+  "ruleset": {
+    "id": 23651422,
+    "bypass_modes": "six actors still always; owner action outstanding"
+  },
+  "holds": {
+    "migration_0057": "unchanged; production execution prohibited"
+  },
+  "schedule": {
+    "full_enabled": true,
+    "followup_enabled": true
+  }
+}
