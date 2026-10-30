@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T05:59:03.006Z",
-  "last_run_at": "2026-10-30T06:27:50.177Z",
-  "last_run_mode": "FOLLOW-UP",
+  "last_full_run_at": "2026-10-30T07:08:46.559Z",
+  "last_run_at": "2026-10-30T07:08:46.559Z",
+  "last_run_mode": "FULL",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
-    "hash": "fnv1a64:5e05ac30729a2ad2",
+    "hash": "fnv1a64:246f1cc05c72e8a4",
     "hash_algorithm": "FNV-1a 64-bit over JSON.stringify(ruleset API response)",
     "required_checks": [
       "backend",
@@ -21,39 +21,40 @@
       {
         "id": 842251,
         "type": "Integration",
-        "mode": "always"
+        "mode": "pull_request"
       },
       {
         "id": 946600,
         "type": "Integration",
-        "mode": "always"
+        "mode": "pull_request"
       },
       {
         "id": 1144995,
         "type": "Integration",
-        "mode": "always"
+        "mode": "pull_request"
       },
       {
         "id": 1236702,
         "type": "Integration",
-        "mode": "always"
+        "mode": "pull_request"
       },
       {
         "id": 4229212,
         "type": "Integration",
-        "mode": "always"
+        "mode": "pull_request"
       },
       {
         "id": 285010264,
         "type": "User",
-        "mode": "always"
+        "mode": "pull_request"
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T05:59:03.006Z"
+    "last_verified_at": "2026-10-30T07:08:46.559Z",
+    "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
-    "claude": "API signed commits; cannot run tests, merge main, rebase, check signatures, reply/resolve threads; cannot create Draft PR or commit when only main checked out",
+    "claude": "GitHub API commits, may push implementation branch from issue, cannot create PR, run tests, merge/rebase main, detect conflicts, check signatures, reply/resolve threads; ask branch name and open Draft PR from agent branch only",
     "codex": "COMMENTED native review with P1/P2 inline findings or clean reviewed-SHA pass; A4 YES",
     "jules": "manual Ahmed-run Tier 2 review only",
     "opencode": "owner #184/#185; #218 superseded by D1(b)"
@@ -67,24 +68,64 @@
     "D2": "a",
     "D3": "a",
     "DX1": "answered YES",
-    "DX2": "answered ruleset policy; bypass not yet changed",
+    "DX2": "ANSWERED and VERIFIED: all six bypass actors pull_request",
     "DX4": "answered API-signed and owner branch update",
-    "DX7": "OPEN potential P1 issue_comment workflow actor gate",
-    "DX8": "OPEN owner-created docs branch/Draft PR"
+    "DX7": "OPEN P1 candidate; T5 verified workflow static authorization wiring",
+    "DX8": "CLOSED by T4: no agent branch exists, owner supplies branch if proceeding",
+    "DX9": "CLOSED: issue #223 created by orchestrator",
+    "DX10": "OPEN: owner to close PR #222; never merge orchestrator-state"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
-    "T1": "COMPLETE: reconfirmed main@731c2084 pre-parse depth guard and 12/12 successful jobs run 40991452249; evidence on #218, no close or activation",
-    "T2": "No new unmarked owner D/DX answers on #220 through 2026-10-30T06:27:50.177Z",
-    "T3": "D5 unanswered; #219 10 threads preserved, no fix/review cycles",
-    "T4": "One-time ask completed as capability denial; DX8 owner branch/Draft PR route pending, no repeat"
+    "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
+    "T2": "No new unmarked owner D/DX answers in #220 through 2026-10-30T07:08:46.559Z",
+    "T3": "D5 unanswered; #219 10 threads preserved; no fix/review cycles",
+    "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
+    "T5": "COMPLETE one-time static workflow authorization verification; DX7 report updated in #220 decision comment #6501005762"
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
-    "opencode_yml": "secrets jobs gated by needs.gate.outputs.authorized from opencode_gate.py",
-    "agent_claude_yml": "bot type at workflow if; adapter verifies trusted issuer and sender before secret-bearing review job"
+    "opencode_yml": {
+      "verified": "no-secret gate + authorized output dependencies",
+      "nonwriter_can_start_gate": true,
+      "nonwriter_can_reach_secret": false,
+      "secret_jobs": [
+        "OPENCODE_API_KEY",
+        "OPENCODE_APP_PRIVATE_KEY"
+      ],
+      "runtime_adversarial_proof": "not established"
+    },
+    "agent_claude_yml": {
+      "verified": "prepare condition + trusted adapter + needs wiring",
+      "nonwriter_user_can_start_prepare": false,
+      "nonwriter_can_reach_secret": false,
+      "allowed_bots": "needs.prepare.outputs.allowed_bot",
+      "secret": "CLAUDE_CODE_OAUTH_TOKEN"
+    },
+    "T5_at": "2026-10-30T07:08:46.559Z",
+    "T5_main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+    "claude_yml": {
+      "verified": "static job condition and secret wiring",
+      "nonwriter_can_start_job": true,
+      "nonwriter_can_reach_secret_step_by_workflow_condition": true,
+      "secret": "CLAUDE_CODE_OAUTH_TOKEN",
+      "permissions": [
+        "contents:read",
+        "pull-requests:read",
+        "issues:read",
+        "actions:read",
+        "id-token:write"
+      ],
+      "actor_gate": "missing",
+      "action_internal_enforcement": "unverified"
+    },
+    "acceptance_review_yml": {
+      "verified": "owner ID in prepare condition + needs wiring",
+      "nonwriter_can_reach_secret": false,
+      "secret": "CLAUDE_CODE_OAUTH_TOKEN"
+    }
   },
   "prs": {
     "83": {
@@ -114,15 +155,22 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 0,
+      "last_prompt": {
+        "agent": "Claude",
+        "ask": "review-only supersession report: main contents, unique work, recommendation",
+        "at": "2026-10-30T07:08:46.559Z",
+        "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+        "comment_id": 6517069213,
+        "status": "awaiting result"
+      },
+      "asks_per_sha": 1,
       "fix_review_cycles": null,
-      "stale_level": null,
-      "queued": null,
+      "stale_level": 0,
+      "queued": "waiting Claude supersession report; Codex verification after result; owner decides closure",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
       "updated_at": "2026-10-23T15:51:04Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "87": {
@@ -152,15 +200,22 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 0,
+      "last_prompt": {
+        "agent": "Claude",
+        "ask": "review-only supersession report: main contents, unique work, recommendation",
+        "at": "2026-10-30T07:08:46.559Z",
+        "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+        "comment_id": 6517069899,
+        "status": "awaiting result"
+      },
+      "asks_per_sha": 1,
       "fix_review_cycles": null,
-      "stale_level": null,
-      "queued": null,
+      "stale_level": 0,
+      "queued": "waiting Claude supersession report; Codex verification after result; owner decides closure",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
       "updated_at": "2026-10-23T15:51:02Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "113": {
@@ -200,7 +255,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
       "updated_at": "2026-10-29T15:04:59Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "115": {
@@ -346,7 +401,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
       "updated_at": "2026-10-29T15:04:46Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "116": {
@@ -386,7 +441,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d05ab33aca5893e19b99d809f2922922da180440",
       "updated_at": "2026-10-29T15:04:51Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "117": {
@@ -424,7 +479,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
       "updated_at": "2026-10-23T15:51:25Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "118": {
@@ -462,7 +517,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
       "updated_at": "2026-10-23T15:50:58Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "125": {
@@ -500,7 +555,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
       "updated_at": "2026-10-23T15:50:56Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "146": {
@@ -602,7 +657,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -641,7 +696,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
       "updated_at": "2026-10-23T15:50:53Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "161": {
@@ -679,7 +734,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
       "updated_at": "2026-10-23T15:50:51Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "171": {
@@ -726,30 +781,30 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
       "updated_at": "2026-10-23T15:50:49Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "172": {
       "title": "chore(deps): bump actions/upload-artifact from 7.0.1 to 7.0.2",
-      "head_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+      "head_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "head_branch": "dependabot/github_actions/actions/upload-artifact-7.0.2",
       "base_branch": "main",
-      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
       "draft": false,
       "labels": [
         "dependencies",
         "github_actions"
       ],
-      "behind_main": 1,
+      "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+        "checked_at": "2026-10-30T07:08:46.559Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "behind",
+      "merge_state": "blocked",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -760,37 +815,56 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 3,
+      "last_prompt": {
+        "agent": "Dependabot",
+        "ask": "@dependabot rebase",
+        "at": "2026-10-30T07:06:00Z",
+        "sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+        "comment_id": 6517039153,
+        "status": "completed"
+      },
+      "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "review_carryover": {
+        "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+        "new_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+        "old_base": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+        "new_base": "731c2084e60c51ad825effcf699e4c429be44675",
+        "per_file_patch_identical": true,
+        "files_compared": 11,
+        "dependabot_rebase": true,
+        "required_ci": "pending",
+        "prior_qualifying_native_review": "not established",
+        "acceptance_carried": false
+      }
     },
     "173": {
       "title": "chore(deps): bump actions/setup-node from 7.0.0 to 7.1.0",
-      "head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+      "head_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
       "head_branch": "dependabot/github_actions/actions/setup-node-7.1.0",
       "base_branch": "main",
-      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
       "draft": false,
       "labels": [
         "dependencies",
         "github_actions"
       ],
-      "behind_main": 1,
+      "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+        "checked_at": "2026-10-30T07:08:46.559Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "behind",
+      "merge_state": "blocked",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -801,16 +875,35 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 3,
+      "last_prompt": {
+        "agent": "Dependabot",
+        "ask": "@dependabot rebase",
+        "at": "2026-10-30T07:06:00Z",
+        "sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+        "comment_id": 6517038475,
+        "status": "completed"
+      },
+      "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
       "updated_at": "2026-10-29T17:02:48Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "review_carryover": {
+        "old_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+        "new_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+        "old_base": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+        "new_base": "731c2084e60c51ad825effcf699e4c429be44675",
+        "per_file_patch_identical": true,
+        "files_compared": 1,
+        "dependabot_rebase": true,
+        "required_ci": "pending",
+        "prior_qualifying_native_review": "not established",
+        "acceptance_carried": false
+      }
     },
     "179": {
       "title": "test(auth): deterministic JWT test clock and authenticated-client reliability (#176)",
@@ -864,7 +957,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
       "updated_at": "2026-10-29T15:04:31Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "181": {
@@ -913,7 +1006,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b17c37a270d57d60962d2261271666aa934c805b",
       "updated_at": "2026-10-29T15:05:02Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -954,7 +1047,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
       "updated_at": "2026-10-29T15:05:05Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "188": {
@@ -992,29 +1085,29 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
       "updated_at": "2026-10-24T21:56:39Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "200": {
       "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
-      "head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+      "head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
       "head_branch": "dependabot/github_actions/actions/download-artifact-8.0.2",
       "base_branch": "main",
-      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
       "draft": false,
       "labels": [
         "dependencies",
         "github_actions"
       ],
-      "behind_main": 1,
+      "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
-        "checked_at": "2026-10-30T06:27:50.177Z"
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+        "checked_at": "2026-10-30T07:08:46.559Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "behind",
+      "merge_state": "blocked",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1025,38 +1118,57 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 3,
+      "last_prompt": {
+        "agent": "Dependabot",
+        "ask": "@dependabot rebase",
+        "at": "2026-10-30T07:06:00Z",
+        "sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+        "comment_id": 6517037798,
+        "status": "completed"
+      },
+      "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
-      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
+      "review_carryover": {
+        "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+        "new_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+        "old_base": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+        "new_base": "731c2084e60c51ad825effcf699e4c429be44675",
+        "per_file_patch_identical": true,
+        "files_compared": 4,
+        "dependabot_rebase": true,
+        "required_ci": "pending",
+        "prior_qualifying_native_review": "not established",
+        "acceptance_carried": false
+      }
     },
     "201": {
       "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
-      "head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+      "head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
       "head_branch": "dependabot/github_actions/actions/create-github-app-token-3.3.0",
       "base_branch": "main",
-      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
       "draft": false,
       "labels": [
         "dependencies",
         "github_actions"
       ],
-      "behind_main": 1,
+      "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
-        "checked_at": "2026-10-30T06:27:50.177Z"
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+        "checked_at": "2026-10-30T07:08:46.559Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "behind",
+      "merge_state": "blocked",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1067,17 +1179,36 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 3,
+      "last_prompt": {
+        "agent": "Dependabot",
+        "ask": "@dependabot rebase",
+        "at": "2026-10-30T07:06:00Z",
+        "sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+        "comment_id": 6517037255,
+        "status": "completed"
+      },
+      "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "queued": "wait exact-head backend/frontend; then native Codex review or verify qualifying review",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
-      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
+      "review_carryover": {
+        "old_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+        "new_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+        "old_base": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+        "new_base": "731c2084e60c51ad825effcf699e4c429be44675",
+        "per_file_patch_identical": true,
+        "files_compared": 2,
+        "dependabot_rebase": true,
+        "required_ci": "pending",
+        "prior_qualifying_native_review": "not established",
+        "acceptance_carried": false
+      }
     },
     "207": {
       "title": "feat(ci): dedicated @claude PR-comment workflow, isolated from OpenCode (Draft)",
@@ -1194,7 +1325,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1233,7 +1364,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
       "updated_at": "2026-10-29T19:01:54Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1339,7 +1470,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
       "updated_at": "2026-10-29T20:06:34Z",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1532,9 +1663,47 @@
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
       },
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
+    },
+    "222": {
+      "title": "Orchestrator state",
+      "head_sha": "fe3c8a8d686ab5d17110e73a16dd0a8f98ab2f98",
+      "head_branch": "orchestrator-state",
+      "base_branch": "main",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "draft": false,
+      "labels": [],
+      "behind_main": 0,
+      "required_ci": {
+        "backend": "missing",
+        "frontend": "missing",
+        "exact_head_sha": "fe3c8a8d686ab5d17110e73a16dd0a8f98ab2f98",
+        "checked_at": "2026-10-30T07:08:46.559Z"
+      },
+      "optional_ci": "other checks running; PR is not intended for merge",
+      "merge_state": "blocked",
+      "head_verification": {
+        "verified": false,
+        "reason": "unsigned"
+      },
+      "tier": 1,
+      "tier_reason": "machine state/lease/event JSON; not product code or docs-only",
+      "tier_verified_by_diff": true,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": 0,
+      "stale_level": null,
+      "queued": "DX10 owner closure; NEVER merge state branch into main",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": null,
+      "updated_at": "2026-10-30T07:04:06Z",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "note": "Self-updating branch; PR HEAD changes when ledger/lease/events are committed. Head shown is snapshot, not stable."
     }
   },
   "issues": {
@@ -1545,7 +1714,8 @@
       "owner": "unconfirmed",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "72": {
       "title": "PR #70: active-content screening does not cover objects stored in compressed object streams",
@@ -1554,7 +1724,8 @@
       "owner": "unconfirmed",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "74": {
       "title": "PR #70: catalog document upload hardening gaps (raw filename in audit, duplicate-vs-purge race, orphan objects, unscanned documents)",
@@ -1563,7 +1734,8 @@
       "owner": "unconfirmed",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "106": {
       "title": "R4: Implement validated CFD / thermal analysis with sensor calibration and uncertainty",
@@ -1574,7 +1746,8 @@
         115
       ],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "107": {
       "title": "R5: AI-assisted operations, anomaly detection, predictive maintenance and controlled self-healing",
@@ -1585,7 +1758,8 @@
         116
       ],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "150": {
       "title": "P1 Catalog: define and implement supported PDU model lifecycle/designer workflow",
@@ -1596,7 +1770,8 @@
         217
       ],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "176": {
       "title": "Follow-up B: deterministic JWT test-clock and authenticated-client token reliability (LOW)",
@@ -1607,7 +1782,8 @@
         179
       ],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "184": {
       "title": "SEC-175-01: Document and verify Windows NTFS ACLs for preflight report directories (LOW)",
@@ -1620,7 +1796,7 @@
       "acceptance_on_main": null,
       "queued": "D6 owner decision; OpenCode inactive; A1 NO",
       "stale_level": "stalled",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "185": {
       "title": "SEC-175-02: Restore portable preflight cleanup negative regression coverage (LOW)",
@@ -1633,7 +1809,7 @@
       "acceptance_on_main": null,
       "queued": "D6 owner decision; OpenCode inactive; A1 NO",
       "stale_level": "stalled",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "195": {
       "title": "Updated Architecture proposal",
@@ -1642,7 +1818,8 @@
       "owner": "unconfirmed",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "214": {
       "title": "P1 release gate: qualify Migration 0057 FK indexes on representative staging before production",
@@ -1653,7 +1830,8 @@
         216
       ],
       "acceptance_on_main": null,
-      "queued": "production hold"
+      "queued": "production hold",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "218": {
       "title": "P1 security: bound OpenCode proxy JSON depth across Python versions (follow-up in PR #215)",
@@ -1665,7 +1843,7 @@
       ],
       "acceptance_on_main": "Verified pre-json.loads depth guard (64), linear scan, adversarial tests on main@731c2084; post-merge CI run 40991452249 12/12 success; T1 evidence comment #6515440013; issue OPEN pending owner closure; activation prohibited",
       "queued": null,
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     },
     "220": {
       "title": "DCIM Orchestrator Ledger",
@@ -1677,7 +1855,21 @@
       "linked_prs": [],
       "acceptance_on_main": null,
       "queued": "DX3, DX5, DX6, DX7, DX8 owner decisions",
-      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
+    },
+    "223": {
+      "title": "test(ci): investigate intermittent authority-lock serialization timeout (Python 3.13)",
+      "labels": [
+        "orchestrator"
+      ],
+      "last_activity_at": "2026-10-30T07:08:46.559Z",
+      "owner": "unassigned; investigation only, #219 D5 hold",
+      "linked_prs": [
+        219
+      ],
+      "acceptance_on_main": "not established; intermittent TimeoutError on PR #219 with three green main baseline runs",
+      "queued": "investigate deterministically without D5 fix/review cycles",
+      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
     }
   },
   "new_findings": [
@@ -1697,89 +1889,98 @@
       "type": "suspected_flaky_test",
       "pr": 219,
       "sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-      "status": "tracking issue required from owner DX9",
+      "status": "tracked in issue #223; root cause unproven",
       "evidence": "attempt 1 TimeoutError in test_authority_changing_mutations_are_serialised, attempt 2 3646 passed, 6 skipped; main last 3 CI runs succeeded",
-      "run": 40993725164
+      "run": 40993725164,
+      "issue": 223
     }
   ],
   "last_actions": [
     {
-      "type": "full_state",
-      "at": "2026-10-30T05:59:03.006Z",
-      "result": "24 open PRs, 13 issues, 34 unresolved threads; no new commits/reviews/owner decisions/CI transitions since 05:30Z; all 24 live PR heads and merge states checked"
-    },
-    {
       "type": "ruleset",
-      "result": "23651422 hash unchanged; six bypass actors still always, DX2 owner correction pending"
+      "result": "Hash changed to fnv1a64:246f1cc05c72e8a4; all six bypass actors pull_request; strict checks/threads unchanged"
     },
     {
-      "type": "ci",
-      "result": "Rechecked exact-head required backend/frontend success for 9 priority PRs; historical backend failures #146/#171/#181 confirmed from logs and added to cumulative findings"
+      "type": "workflow_security",
+      "result": "T5 complete: claude.yml missing workflow-level trusted-actor gate; other three workflows have pre-secret authorization wiring; DX7 updated"
     },
     {
-      "type": "standing_tasks",
-      "result": "T1 verified 12/12 main CI; T2 no owner answers; T3 D5 hold; T4 DX8 blocked"
+      "type": "issue",
+      "result": "Created #223 for suspected authority-lock test intermittency; DX9 closed"
     },
     {
-      "type": "actions",
-      "result": "0 merges, 0 resolutions, 0 agent prompts, no deployment or migration"
+      "type": "dependabot",
+      "result": "Requested rebase #201/#200/#173/#172; all four rebased, patches identical file-by-file, new CI pending"
+    },
+    {
+      "type": "supersession",
+      "result": "Requested Claude review-only reports #83/#87; waiting on agent, Codex verification next"
+    },
+    {
+      "type": "new_pr",
+      "result": "#222 opened from orchestrator-state; DX10 owner closure, never merge"
+    },
+    {
+      "type": "merge_gate",
+      "result": "No PR satisfies all exact-head CI/review/thread/current-branch gates; zero merges/resolutions"
     }
   ],
   "priority_snapshot": {
-    "at": "2026-10-30T05:59:03.006Z",
+    "at": "2026-10-30T07:08:46.559Z",
     "ranked": [
       {
         "pr": 219,
-        "reason": "P1 controller, D5 stop",
-        "status": "authorization blocked"
+        "status": "D5 hold; 10 threads"
       },
       {
         "pr": 207,
-        "reason": "workflow security, D2(a) route unprovisioned",
-        "status": "capability blocked"
+        "status": "DX6 owner workflow route; 6 threads"
       },
       {
         "pr": 216,
-        "reason": "P1 migration gate, behind main and Tier 2 review missing",
-        "status": "owner branch refresh"
+        "status": "owner Update branch + Tier 2 Codex/Jules"
       },
       {
         "pr": 217,
-        "reason": "P1 PDU acceptance, behind main and 5 open threads",
-        "status": "owner branch refresh"
+        "status": "owner Update branch + 5 open threads"
       },
       {
         "prs": [
-          172,
-          173,
           201,
-          200
+          200,
+          173,
+          172
         ],
-        "reason": "fast-lane dependencies (200 is Tier 1 major bump), all behind main",
-        "status": "owner branch refresh"
+        "status": "rebased with identical patches; CI pending; no merge"
+      },
+      {
+        "pr": 222,
+        "status": "state branch PR; owner close DX10"
       }
     ],
     "agent_slots": {
-      "claude_open": 0,
+      "claude_open": 2,
       "codex_open": 0
     },
     "refresh_workflow_present": false
   },
   "last_run_summary": {
-    "run_id": "follow-20261030-0626Z-turn4",
-    "at": "2026-10-30T06:27:50.177Z",
+    "run_id": "full-20261030-0703Z-turn4",
+    "at": "2026-10-30T07:08:46.559Z",
     "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
-    "open_prs": 24,
-    "open_issues": 13,
+    "open_prs": 25,
+    "open_issues": 14,
     "open_threads": 34,
-    "pr_changes": 0,
+    "pr_changes": 5,
     "owner_decisions": 0,
-    "ci_transitions": 0,
+    "ci_transitions": 4,
     "merged": 0,
     "resolved": 0,
-    "comments_posted": 0,
-    "agent_prompts": 0,
-    "checks": "24 PR thread sets rechecked; 6 priority exact-head required CI states rechecked; owner answers and schedules rechecked",
+    "comments_posted": 6,
+    "agent_prompts": 2,
+    "dependabot_rebases": 4,
+    "issue_created": 223,
+    "ruleset_bypass_fixed": true,
     "production_hold_intact": true
   }
 }
