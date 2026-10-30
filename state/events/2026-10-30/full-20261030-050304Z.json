@@ -1,0 +1,85 @@
+{
+  "run_id": "full-20261030-050304Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T05:03:24.670Z",
+  "finished_at": "2026-10-30T05:08:59.480Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "counts": {
+    "open_prs": 24,
+    "open_issues": 13,
+    "unresolved_threads": 34,
+    "merged": 0,
+    "threads_resolved": 0
+  },
+  "actions": [
+    {
+      "type": "comment",
+      "issue": 218,
+      "id": 6515440013,
+      "reason": "T1 post-merge main code and CI evidence"
+    },
+    {
+      "type": "label",
+      "issues": [
+        184,
+        185
+      ],
+      "label": "stalled",
+      "reason": "OpenCode no response since Oct 23; D6"
+    },
+    {
+      "type": "decision_edit",
+      "issue": 220,
+      "id": 6501005762,
+      "added": "DX9 suspected flaky authority-lock test"
+    },
+    {
+      "type": "ledger_edit",
+      "issue": 220,
+      "id": 6500987889
+    },
+    {
+      "type": "machine_ledger_update",
+      "path": "state/ledger.json"
+    },
+    {
+      "type": "CI",
+      "pr": 219,
+      "run": 40993725164,
+      "attempt": 2,
+      "result": "success",
+      "previous": "Python 3.13 TimeoutError",
+      "required": "backend and frontend success"
+    },
+    {
+      "type": "ruleset",
+      "id": 23651422,
+      "hash": "fnv1a64:5e05ac30729a2ad2",
+      "bypass_always": 6
+    },
+    {
+      "type": "threads",
+      "open": 34,
+      "resolved": 0
+    },
+    {
+      "type": "merge",
+      "count": 0
+    }
+  ],
+  "owner_decisions": {
+    "new_answers": [],
+    "open": [
+      "D5",
+      "D6",
+      "DX3",
+      "DX5",
+      "DX6",
+      "DX7",
+      "DX8",
+      "DX9"
+    ],
+    "bypass_correction": "not applied"
+  },
+  "production_migration_0057": "HOLD; no execution, request, scheduling, or approval"
+}
