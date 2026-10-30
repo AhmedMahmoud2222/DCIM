@@ -202,24 +202,35 @@ Conventions: "POSTs" is the number of non-idempotent POSTs to the external syste
 
 ## 8. Mapping of PR #219 review findings to this specification
 
-The author could read only the findings quoted in the #220 ledger, not the live thread list. Rows with a known thread ID cite it; others are identified by description and need the orchestrator to supply IDs. The count of 12 is not verified by this author.
+The 12 open, unresolved review threads on PR #219 below were supplied by the owner as the verified authoritative inventory. Each is mapped once. A gap names a requirement or test the current specification does not yet state; no design decision is invented for it. Proposed tests for gaps are not yet added to section 7. Coverage has not been assessed by any reviewer, and no test or implementation result is asserted.
 
-| # | Finding (as recorded in the ledger) | Thread reference | Spec sections | Tests |
-| --- | --- | --- | --- | --- |
-| 1 | Temporary artifact download failures treated as `Rejected` | `PRRT_kwDOUdC8Ds6xyuAg` | EV-3, ERR-1, ERR-2 | FI-14, FI-15 |
-| 2 | Persisted scan cursor skips recovered evidence | `PRRT_kwDOUdC8Ds6xyuAg` | EV-2, EV-3 | FI-14, FI-16 |
-| 3 | Run-attempt scan-cursor bypass (reruns) | ledger, ID not supplied | EV-5, EV-6 | FI-18 |
-| 4 | Retained-match witness reauthentication bypass | ledger, ID not supplied | EV-7, EV-8 | FI-19, FI-20 |
-| 5 | Shared-journal growth/read DoS (P1) | discussion `r4416733430` | INV-B1..B5, EV-12 | FI-25, FI-26 |
-| 6 | Quota-reset backoff defect (P2) | discussion `r4416733436` | 6.2 rate limited, BUD-5 | FI-12, FI-13 |
-| 7 | Ambiguous PUT / CAS handling | `PRRT_kwDOUdC8Ds6xg8Vi`, `PRRT_kwDOUdC8Ds6xmLxk` or `PRRT_kwDOUdC8Ds6xn4us` (exact pairing not verified) | 2.2, 2.3, 4 | FI-01..FI-05 |
-| 8 | Pending-run evidence contradiction / retention | one of the three IDs above (not verified) | EV-7, EV-9 | FI-19, FI-21 |
-| 9 | Pre-PUT size guard / decoder cap mismatch | ledger, ID not supplied | INV-B1, INV-B2 | FI-25 |
-| 10 | Non-idempotent POST at-most-once | ledger, ID not supplied | INV-D1..D3, T3/T4 | FI-07..FI-09 |
-| 11 | P2: ingestion exceeds execution budget | latest P2, ID not supplied | BUD-1..BUD-4 | FI-17, FI-23 |
-| 12 | P2: near-cap journal admission starves existing tasks | latest P2, ID not supplied | INV-B3, INV-F1..F3 | FI-24 |
+| # | Thread (`PRRT_kwDOUdC8Ds6...`) and finding | Invariants | Transitions / sections | FI tests | Gap |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `xg8Vi`: TransientError handler returns stale pre-save journal state/blob after committed writes; ambiguous PUT recovery | INV-A1..A4, INV-C2..C4, INV-N1 | Section 4 step 5, T3 | FI-01..FI-04 | G-1 |
+| 2 | `xmLxk`: capped discovery scans restart, lose cursor and retained evidence | INV-B3 | EV-1..EV-4, EV-12 | FI-16, FI-17 | G-2 |
+| 3 | `xn4us`: stale original_blob after partial journal writes, CAS conflict and abort | INV-C1, INV-C3, INV-C4, INV-N1 | Section 4, 6.4 | FI-05, FI-30 | G-1 |
+| 4 | `xrV8T` (P1): persisted scan interval misses rerun attempt/status changes and contradictory evidence | none | EV-5, EV-6, EV-9, T8 | FI-18, FI-21 | G-3 |
+| 5 | `xrV8f` (P2): retained match not reauthenticated after mutable witness changes | none | EV-7, EV-8, EV-10, EV-11 | FI-19, FI-20 | G-4 |
+| 6 | `xtjVE` (P1): shared journal grows past 524288-byte decoder limit and blocks all work | INV-B1..B5, INV-F1 | EV-12 | FI-24, FI-25, FI-26 | G-10 |
+| 7 | `xtjVH` (P2): quota-reset delay applied to HTTP 500 even when quota remains | none | 6.2, BUD-4, BUD-5 | FI-12, FI-13 | G-5 |
+| 8 | `xyuAg` (P1): retryable artifact download/storage failure treated as permanent Rejected and skipped | none | ERR-1, ERR-2, EV-3, T5, T8 | FI-14, FI-15 | G-6 |
+| 9 | `x0PNt` (P2): transient evidence-read failure bypasses persisted task deadline | INV-D3 | T6, T7, ERR-2 | FI-10, FI-14 | G-7 |
+| 10 | `x0phT` (P2): transient ingestion lookup aborts reconciliation of existing tasks | INV-F4 | BUD-2, BUD-3 | FI-23, FI-27 | G-8 |
+| 11 | `x7kSO` (P2): ingestion retries exhaust 8-minute controller execution budget | none | BUD-1..BUD-4, BUD-6 | FI-17, FI-23 | G-9 |
+| 12 | `x7kSU` (P2): near-cap JournalFull admission aborts existing-task reconciliation | INV-B3, INV-F1..F3 | BUD-3 | FI-24 | G-10 |
 
-The orchestrator MUST replace descriptions with verified thread IDs before the spec PR is reviewed. Any thread not covered by a row is an open gap (D-1).
+Gaps (each needs owner or reviewer disposition):
+
+- **G-1** (threads 1, 3) No test covers a multi-write run where a transient error or CAS abort follows earlier committed writes; FI-01..FI-05 each exercise one write. Possibly also a missing explicit invariant: act only on the last confirmed journal.
+- **G-2** (thread 2) FI-16 and FI-17 assert the cursor only; nothing asserts retained matches survive a cap-triggered exit.
+- **G-3** (thread 4) The spec covers reruns (attempts) but not status or conclusion changes of already-scanned runs inside a persisted interval. Spec gap.
+- **G-4** (thread 5) "Witness" is undefined and FI-19 replaces an artifact only; no test mutates a witness after retention. Spec and test gap.
+- **G-5** (thread 7) The taxonomy separates 429 from 5xx, but no test asserts an HTTP 500 with quota remaining gets no quota-reset delay; FI-13 covers backoff reset only.
+- **G-6** (thread 8) The thread says "download/storage failure"; ERR-1 covers artifact download only. A reviewer must say whether journal storage failures are meant (those follow section 2.3).
+- **G-7** (thread 9) No test asserts that a transient evidence-read failure still lets the deadline escalation (T6/T7) run for that task.
+- **G-8** (thread 10) No explicit rule or test that a transient ingestion lookup error leaves reconciliation of existing tasks running; BUD-3 ordering only implies it.
+- **G-9** (thread 11) FI-23 uses a slow Store only; no test covers ingestion retry exhaustion, and the constants are open (D-5).
+- **G-10** (threads 6, 12) Capacity numbers (D-3) and retention (D-4) are unanswered, so FI-24..FI-26 pin no numbers.
 
 ## 9. Acceptance criteria
 
@@ -233,7 +244,7 @@ The specification is acceptable for implementation to resume only when all hold:
 
 ## 10. Unresolved design decisions
 
-- **D-1** Confirm the authoritative list of 12 threads and whether any thread requires a requirement not captured here.
+- **D-1** Thread inventory is now verified (12 threads, section 8). Open: assess coverage of gaps G-1..G-10 and confirm whether any thread needs a requirement not captured here.
 - **D-2** Is a single shared journal acceptable, or should journals be sharded per task or per time window? Sharding removes global CAS contention and the growth cap but increases complexity and cross-journal consistency work.
 - **D-3** Values for `JOURNAL_MAX_BYTES`, `JOURNAL_RESERVE_BYTES`, the admitted-task cap and the per-transition growth bound.
 - **D-4** Archival/retention policy for terminal tasks (preserve immutable audit evidence, safe restart). No deletion is authorized by this spec.
