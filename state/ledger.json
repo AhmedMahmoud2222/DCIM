@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T09:02:22.628Z",
-  "last_run_at": "2026-10-30T09:31:01.216Z",
+  "last_run_at": "2026-10-30T09:32:11.622Z",
   "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
@@ -863,16 +863,16 @@
         "at": "2026-10-30T09:30:03Z",
         "sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
         "comment_id": 6519511392,
-        "status": "awaiting native review submission"
+        "status": "Codex clean exact-HEAD receipt at 09:31:19Z, no native PR review submission; independent acceptance still missing"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "required CI green on same SHA after one rerun; flaky test issue #225 created; native Codex review and finding disposition pending; no merge",
+      "queued": "required CI green after one rerun; #225 tracks flake; Codex clean receipt but no native review, no Codex-accepted finding disposition; do not merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
+      "last_state_verified_at": "2026-10-30T09:32:11.622Z",
       "last_thread_verified_at": "2026-10-30T09:31:01.216Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
@@ -1153,10 +1153,10 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "rerun attempt 2 still in_progress (Python 3.14)",
+        "backend": "success (rerun attempt 2)",
         "frontend": "success",
         "exact_head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
-        "checked_at": "2026-10-30T09:31:01.216Z"
+        "checked_at": "2026-10-30T09:32:11.622Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -1175,27 +1175,27 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41018055503/job/123938810010",
           "severity": "P2",
           "required_change": "tests/integration/test_cooling_concurrency.py::test_retiring_a_unit_races_with_adding_a_zone_relationship: PostgreSQL deadlock detected",
-          "status": "Open pending single rerun",
-          "evidence": "Main's last three push CI runs green; exact test-by-test execution not independently established; same-head rerun attempt 2 started"
+          "status": "Open — intermittent PostgreSQL deadlock tracked in #226; same-SHA rerun green; Codex disposition pending",
+          "evidence": "First Python 3.14 job 123938810010: 1 failed/3645 passed; same-head rerun job 123969014873: 3646 passed, 6 skipped at 09:31Z; issue #226. Separate issue alone is not Codex-accepted deferral."
         }
       ],
       "last_prompt": {
-        "agent": "Dependabot",
-        "ask": "@dependabot rebase",
-        "at": "2026-10-30T07:06:00Z",
-        "sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
-        "comment_id": 6517037798,
-        "status": "completed"
+        "agent": "Codex",
+        "ask": "Tier 1 exact-head review of major Action bump and flaky PostgreSQL deadlock disposition",
+        "at": "2026-10-30T09:32:45Z",
+        "sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+        "comment_id": 6519543422,
+        "status": "awaiting native review submission"
       },
-      "asks_per_sha": 0,
+      "asks_per_sha": 1,
       "fix_review_cycles": null,
-      "stale_level": null,
-      "queued": "failed-job rerun attempt 2 in progress, Python 3.14; no required backend result yet; no merge",
+      "stale_level": 0,
+      "queued": "required CI green after one rerun; flaky PostgreSQL deadlock issue #226 created; native Codex Tier 1 review and finding disposition pending; no merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T09:31:01.216Z",
-      "last_thread_verified_at": "2026-10-30T09:02:22.628Z",
+      "last_state_verified_at": "2026-10-30T09:32:11.622Z",
+      "last_thread_verified_at": "2026-10-30T09:32:11.622Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
@@ -2010,7 +2010,7 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T09:31:01.216Z",
+      "last_activity_at": "2026-10-30T09:32:11.622Z",
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
@@ -2044,6 +2044,20 @@
       "acceptance_on_main": "not established; same-head rerun green on #172, intermittent test defect unresolved",
       "queued": "tracking only; no implementation authorization",
       "last_state_verified_at": "2026-10-30T09:31:01.216Z"
+    },
+    "226": {
+      "title": "test(ci): investigate intermittent PostgreSQL deadlock in cooling relationship concurrency (Python 3.14)",
+      "labels": [
+        "orchestrator"
+      ],
+      "last_activity_at": "2026-10-30T09:32:11.622Z",
+      "owner": "unassigned; investigation only",
+      "linked_prs": [
+        200
+      ],
+      "acceptance_on_main": "not established; same-head rerun green on #200, concurrency deadlock unresolved",
+      "queued": "tracking only; no implementation authorization",
+      "last_state_verified_at": "2026-10-30T09:32:11.622Z"
     }
   },
   "new_findings": [
@@ -2109,26 +2123,38 @@
     {
       "item": "#172",
       "agent": "Codex",
-      "action": "Requested native exact-HEAD Tier 0 review after Python 3.14 same-SHA rerun made backend/frontend green",
+      "action": "Requested native exact-HEAD review after green rerun; clean receipt only",
       "sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "comment_id": 6519511392
     },
     {
+      "item": "#200",
+      "agent": "Codex",
+      "action": "Requested native exact-HEAD review after green rerun; awaiting result",
+      "sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+      "comment_id": 6519543422
+    },
+    {
       "item": "#225",
-      "action": "Created orchestrator-labeled flaky migration advisory-lock test investigation issue; first attempt failed, second passed",
+      "action": "Created flaky migration advisory-lock release test issue",
       "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/225"
     },
     {
-      "item": "#200",
-      "action": "Python 3.14 rerun still in progress; backend required check not green"
+      "item": "#226",
+      "action": "Created flaky PostgreSQL cooling deadlock test issue",
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/226"
     },
     {
       "item": "ruleset",
-      "action": "hash unchanged, all six bypass actors pull_request"
+      "action": "unchanged hash; six bypass actors pull_request"
+    },
+    {
+      "item": "schedule",
+      "action": "FULL and FOLLOW-UP automations enabled"
     },
     {
       "item": "#220",
-      "action": "No new unmarked owner D/DX answers; 38 review threads still open; no resolution or merge"
+      "action": "No new unmarked owner D/DX answers; 38 open threads; no merge"
     }
   ],
   "priority_snapshot": {
@@ -2147,23 +2173,23 @@
       "#83/#87 historical supersession needs independent evidence"
     ]
   },
-  "last_run_summary": "FOLLOW-UP: #172 same-head Python 3.14 rerun green; flaky test issue #225 created and native Codex exact-head review requested; #200 rerun still running; 25 open PRs, 15 open issues, 38 open threads; no merge or thread resolution. DX6/DX7/D5 remain; Migration 0057 production hold intact.",
+  "last_run_summary": "FOLLOW-UP: #172/#200 Python 3.14 same-head reruns green; flaky-test issues #225/#226 created and exact-head Codex reviews requested; #172 returned clean receipt only. 25 open PRs, 16 open issues, 38 open threads; no merge/resolution. DX6/DX7/D5 remain; Migration 0057 hold intact.",
   "last_followup_delta": {
-    "at": "2026-10-30T09:31:01.216Z",
+    "at": "2026-10-30T09:32:11.622Z",
     "prs_open": 25,
-    "issues_open": 15,
+    "issues_open": 16,
     "threads_open": 38,
     "required_ci_new_green": [
-      172
-    ],
-    "required_ci_pending": [
+      172,
       200
     ],
     "codex_prompted": [
-      172
+      172,
+      200
     ],
     "new_issues": [
-      225
+      225,
+      226
     ],
     "merged": [],
     "threads_resolved": [],
