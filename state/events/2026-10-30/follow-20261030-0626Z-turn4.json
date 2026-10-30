@@ -1,0 +1,56 @@
+{
+  "run_id": "follow-20261030-0626Z-turn4",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T06:26:52.397Z",
+  "verified_at": "2026-10-30T06:27:58.172Z",
+  "repository": "AhmedMahmoud2222/DCIM",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "state": {
+    "open_prs": 24,
+    "open_issues": 13,
+    "unresolved_threads": 34,
+    "pr_head_changes": 0,
+    "new_owner_decisions": 0,
+    "required_ci_transitions": 0,
+    "qualifying_jules_kits": 0
+  },
+  "actions": {
+    "merged": [],
+    "threads_resolved": [],
+    "comments_posted": [],
+    "agents_prompted": [],
+    "labels_changed": [],
+    "code_changes": [],
+    "production_actions": []
+  },
+  "checks": {
+    "schedules": {
+      "full_enabled": true,
+      "followup_enabled": true
+    },
+    "ruleset_bypass": "six actors remain always",
+    "required_ci": "backend/frontend green on PRs 219,217,216,207,201,200 at unchanged exact heads",
+    "review_threads": "24 PRs rechecked; 34 remain unresolved",
+    "issues": "No owner decision since previous ledger timestamp",
+    "standing_hold": "Migration 0057 production execution prohibited"
+  },
+  "blocked": {
+    "pr219": "D5 unanswered; 10 threads",
+    "pr207": "unwired security guard; DX6/D2(a) route",
+    "pr216": "BEHIND; Tier 2 acceptance missing",
+    "pr217": "BEHIND; 5 threads",
+    "issues184_185": "stalled; D6 unanswered"
+  },
+  "owner_decisions_pending": [
+    "D5",
+    "D6",
+    "DX3",
+    "DX5",
+    "DX6",
+    "DX7",
+    "DX8",
+    "DX9"
+  ],
+  "merge_gate_result": "No PR satisfies all project merge gates; no merge attempted",
+  "notification": "No new substantive delta"
+}
