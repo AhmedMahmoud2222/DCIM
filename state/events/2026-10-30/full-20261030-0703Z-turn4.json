@@ -1,0 +1,117 @@
+{
+  "run_id": "full-20261030-0703Z-turn4",
+  "mode": "FULL",
+  "started_at": "2026-10-30T07:04:03.026Z",
+  "recorded_at": "2026-10-30T07:08:58.589Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "summary": {
+    "open_prs": 25,
+    "open_issues": 14,
+    "open_threads": 34,
+    "merges": 0,
+    "thread_resolutions": 0,
+    "production_actions": 0
+  },
+  "ruleset": {
+    "id": 23651422,
+    "old_hash": "fnv1a64:5e05ac30729a2ad2",
+    "new_hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_actors": "six actors now pull_request",
+    "other_gates_unchanged": true
+  },
+  "actions": [
+    {
+      "type": "issue_created",
+      "issue": 223,
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/223",
+      "reason": "DX9 suspected flaky authority-lock test"
+    },
+    {
+      "type": "decision_queue_updated",
+      "comment_id": 6501005762,
+      "closed": [
+        "DX8",
+        "DX9"
+      ],
+      "new": [
+        "DX10"
+      ],
+      "security_report": "T5 DX7"
+    },
+    {
+      "type": "dependabot_rebase",
+      "prs": [
+        {
+          "pr": 201,
+          "old": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+          "new": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+          "comment_id": 6517037255,
+          "patch_identical": true
+        },
+        {
+          "pr": 200,
+          "old": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+          "new": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+          "comment_id": 6517037798,
+          "patch_identical": true
+        },
+        {
+          "pr": 173,
+          "old": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+          "new": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+          "comment_id": 6517038475,
+          "patch_identical": true
+        },
+        {
+          "pr": 172,
+          "old": "6569ac358b1df8be222385321e4dc576b65ae985",
+          "new": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+          "comment_id": 6517039153,
+          "patch_identical": true
+        }
+      ],
+      "ci": "pending on new heads",
+      "acceptance": "not carried until exact-head CI and native review qualification"
+    },
+    {
+      "type": "supersession_report_requested",
+      "prs": [
+        {
+          "pr": 83,
+          "comment_id": 6517069213
+        },
+        {
+          "pr": 87,
+          "comment_id": 6517069899
+        }
+      ],
+      "agent": "Claude",
+      "codex_verification": "pending"
+    },
+    {
+      "type": "workflow_authorization_T5",
+      "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "claude": "nonwriter @claude can satisfy job if and reach secret-bearing step by workflow wiring; action internal rejection unverified",
+      "agent_claude": "Bot + trusted adapter before secret",
+      "acceptance_review": "owner ID condition before secret",
+      "opencode": "nonsecret gate for any comment; authorized output before secret jobs"
+    },
+    {
+      "type": "new_pr",
+      "pr": 222,
+      "branch": "orchestrator-state",
+      "state": "non-Draft, blocked, never merge; owner decision DX10"
+    }
+  ],
+  "holds": [
+    "#214 Migration 0057 production execution prohibited until representative staging qualification and written owner AND DBA approval",
+    "#219 no further fix/review cycles until D5"
+  ],
+  "schedules": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "agent_capabilities": {
+    "claude": "no tests, no local git rebase, no PR creation from issue; can push branch"
+  }
+}
