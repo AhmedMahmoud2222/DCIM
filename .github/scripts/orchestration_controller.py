@@ -376,7 +376,19 @@ def reconcile(api, store, policy, state, blob, task_id, now):
     try:
         return _reconcile(api, tracked, policy, state, task, blob, task_id, now)
     except TransientError:
-        return tracked.committed
+        # An outage preserves the task only until its persisted deadline; afterwards
+        # the expiry is recorded from the last committed state (never a new command).
+        base, base_blob = tracked.committed
+        expired = base['tasks'].get(task_id)
+        if expired is None or expired['state'] in TERMINAL \
+                or now - expired['created_at'] < policy['timeout_seconds']:
+            return tracked.committed
+        state = deepcopy(base)
+        audit(state['tasks'][task_id], 'ESCALATED', 'task deadline exhausted during evidence outage', now)
+        try:
+            return tracked.save(state, base_blob)
+        except (TransientError, JournalFull):
+            return tracked.committed
     except JournalConflict:
         # A definitive journal write rejection (e.g. 409 CAS conflict) means our blob is
         # no longer authoritative. Never escalate with a blind retry of the same CAS and

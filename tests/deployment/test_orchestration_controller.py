@@ -515,6 +515,61 @@ class ControllerTests(unittest.TestCase):
         finally:
             self.api.request = original
 
+    def _outage(self, path_prefix):
+        original = self.api.request
+        original_pages = self.api.pages
+        def failing_request(path, method='GET', body=None):
+            if path_prefix == '/pulls' and path.startswith('/pulls/'):
+                raise TransientError('outage')
+            return original(path, method, body)
+        def failing_pages(path, *a, **k):
+            if path_prefix == '/issues' and path.startswith('/issues/'):
+                raise TransientError('outage')
+            return original_pages(path, *a, **k)
+        self.api.request, self.api.pages = failing_request, failing_pages
+        self.addCleanup(setattr, self.api, 'request', original)
+        self.addCleanup(setattr, self.api, 'pages', original_pages)
+
+    def test_outage_past_deadline_escalates_exactly_once(self):
+        deadline = self.task['created_at'] + self.policy['timeout_seconds']
+        for prefix in ('/pulls', '/issues'):
+            with self.subTest(read=prefix):
+                self.setUp()
+                self._outage(prefix)
+                for now in (deadline + 1, deadline + 3601):
+                    value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0',
+                                              self.task['id'], now)
+                    task = value['tasks'][self.task['id']]
+                    self.assertEqual(task['state'], 'ESCALATED')
+                    self.assertEqual(self.api.posts, [])
+                    self.assertEqual(self.store.writes, 1)
+                    # Terminal: a later outage run neither rewrites nor re-escalates.
+                    again, _ = c.reconcile(self.api, self.store, self.policy, value, blob,
+                                           self.task['id'], now + 1)
+                    self.assertEqual(self.store.writes, 1)
+                    self.assertEqual(again['tasks'][self.task['id']]['state'], 'ESCALATED')
+                    break
+
+    def test_outage_before_deadline_still_preserves_task(self):
+        self._outage('/pulls')
+        deadline = self.task['created_at'] + self.policy['timeout_seconds']
+        value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0',
+                                  self.task['id'], deadline - 1)
+        self.assertEqual(value['tasks'][self.task['id']]['state'], 'ASSIGNED')
+        self.assertEqual(self.store.writes, 0)
+
+    def test_outage_past_deadline_with_journal_failure_keeps_committed_pair(self):
+        self._outage('/pulls')
+        deadline = self.task['created_at'] + self.policy['timeout_seconds']
+        def failing_save(value, blob):
+            raise TransientError('journal outage')
+        self.store.save = failing_save
+        value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0',
+                                  self.task['id'], deadline + 1)
+        self.assertEqual(blob, '0')
+        self.assertEqual(value['tasks'][self.task['id']]['state'], 'ASSIGNED')
+        self.assertEqual(self.api.posts, [])
+
     def test_definitive_pr_unavailable_still_blocks(self):
         original = self.api.request
         def flaky(path, method='GET', body=None):
