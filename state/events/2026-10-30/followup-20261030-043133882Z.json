@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "run_id": "followup-20261030-043133882Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T04:31:33.882Z",
+  "completed_at": "2026-10-30T04:35:02.899Z",
+  "source_main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "previous_full_at": "2026-10-30T04:04:47.075Z",
+  "counts": {
+    "open_prs": 24,
+    "open_issues": 13,
+    "unresolved_threads": 34,
+    "merged": 0,
+    "resolved_threads": 0,
+    "new_commits": 0
+  },
+  "changes": [
+    {
+      "type": "state_branch_created",
+      "name": "orchestrator-state"
+    },
+    {
+      "type": "lease_acquired",
+      "path": "state/lease.json"
+    },
+    {
+      "type": "machine_ledger_initialized",
+      "path": "state/ledger.json",
+      "prs": 24,
+      "issues": 13,
+      "findings": 34
+    },
+    {
+      "type": "ruleset_verified",
+      "id": 23651422,
+      "hash": "fnv1a64:5e05ac30729a2ad2",
+      "bypass_actors_always": [
+        842251,
+        946600,
+        1144995,
+        1236702,
+        4229212,
+        285010264
+      ]
+    },
+    {
+      "type": "workflow_security_finding",
+      "severity": "P1 candidate",
+      "path": ".github/workflows/claude.yml",
+      "description": "Public issue_comment trigger with @claude, secret-bearing job, no explicit trusted-actor gate; exploitation not proven",
+      "decision": "DX7"
+    },
+    {
+      "type": "T4_agent_prompt",
+      "issue": 220,
+      "comment_id": 6515039876
+    },
+    {
+      "type": "T4_agent_capability_denial",
+      "comment_id": 6515042979,
+      "reason": "No implementation branch or Draft PR creation capability; AGENTS.md absent; no commit/PR"
+    },
+    {
+      "type": "T4_clarification",
+      "comment_id": 6515060340,
+      "decision": "DX8"
+    },
+    {
+      "type": "human_ledger_updated",
+      "comment_id": 6500987889
+    },
+    {
+      "type": "decision_queue_updated",
+      "comment_id": 6501005762,
+      "decisions": [
+        "DX1",
+        "DX2",
+        "DX3",
+        "DX4",
+        "DX5",
+        "DX6",
+        "DX7",
+        "DX8"
+      ]
+    },
+    {
+      "type": "CI_check",
+      "pr": 219,
+      "head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "run_id": 40993725164,
+      "attempt": 2,
+      "status": "in_progress",
+      "action": "no additional rerun"
+    }
+  ],
+  "blocked": [
+    {
+      "item": "PR #219",
+      "reason": "D5 hold, 10 open threads, no tier2 acceptance, diagnostic CI pending"
+    },
+    {
+      "item": "T4",
+      "reason": "DX8 owner-created branch/Draft PR"
+    },
+    {
+      "item": "Workflow claude.yml",
+      "reason": "DX7 P1 candidate actor guard"
+    },
+    {
+      "item": "Ruleset",
+      "reason": "6 bypass actors still always despite owner order"
+    }
+  ],
+  "production_safety": "Migration 0057 production execution categorically prohibited; no deployment, migration, activation, merge or bypass requested",
+  "next": "Owner decisions DX7/DX8; check PR #219 diagnostic CI after completion; preserve D5 and migration hold"
+}
