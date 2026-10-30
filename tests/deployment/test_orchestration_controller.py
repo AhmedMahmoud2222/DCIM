@@ -943,6 +943,58 @@ class ControllerTests(unittest.TestCase):
             c.execution_result(self.api, self.policy, task, 110)
         self.assertEqual(sorted(calls), list(range(1, 151)))
 
+    def test_transient_artifact_failure_does_not_advance_scan_progress(self):
+        runs = self._scan_runs(150)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        state = {'outage': True}
+        calls = []
+        def fake_auth(api, proof, *a, **k):
+            rid = proof['run_id']
+            calls.append(rid)
+            if rid == 150 and state['outage']:
+                raise TransientError('artifact storage unavailable')
+            if rid == 150:
+                return self._run_result(150)
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            with self.assertRaises(TransientError):
+                c.execution_result(self.api, self.policy, task, 110)
+            self.assertNotIn('scan', task['deliveries'][-1])  # No cursor advance.
+            state['outage'] = False
+            del calls[:]
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            self.assertIn(150, calls)  # Same run is re-authenticated after recovery.
+            result = c.execution_result(self.api, self.policy, task, 110)
+        self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
+
+    def test_transient_failure_on_later_pass_keeps_persisted_interval_and_contradiction(self):
+        runs = self._scan_runs(150)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        state = {'phase': 1}
+        def fake_auth(api, proof, *a, **k):
+            rid = proof['run_id']
+            if rid == 150:
+                return self._run_result(150)
+            if rid == 10 and state['phase'] == 2:
+                raise TransientError('artifact redirect 503')
+            if rid == 10 and state['phase'] == 3:
+                return dict(self._run_result(10), result='FAILED')
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            saved = deepcopy(task['deliveries'][-1]['scan'])
+            state['phase'] = 2
+            with self.assertRaises(TransientError):
+                c.execution_result(self.api, self.policy, task, 110)
+            self.assertEqual(task['deliveries'][-1]['scan'], saved)
+            state['phase'] = 3  # Recovery reveals contradictory evidence: fail closed.
+            with self.assertRaises(Rejected):
+                c.execution_result(self.api, self.policy, task, 110)
+
     def test_retained_match_is_reauthenticated_before_acceptance(self):
         for mode in ('rejected', 'changed', 'unchanged'):
             runs = self._scan_runs()

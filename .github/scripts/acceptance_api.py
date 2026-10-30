@@ -266,8 +266,12 @@ class GitHub:
             self.opener.open(req, timeout=25)
             raise Rejected('artifact redirect missing')
         except urllib.error.HTTPError as exc:
+            if exc.code in RETRYABLE_HTTP_CODES:
+                raise TransientError('artifact download unavailable (HTTP %d)' % exc.code) from exc
             require(exc.code == 302, 'artifact download failed')
             location = exc.headers.get('Location', '')
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise TransientError('artifact download unavailable') from exc
         u = urllib.parse.urlsplit(location)
         require(u.scheme == 'https' and u.hostname and not u.username and not u.password
                 and u.port in (None, 443) and not u.fragment
@@ -277,8 +281,14 @@ class GitHub:
         try:
             with self.opener.open(urllib.request.Request(location), timeout=25) as response:
                 raw = response.read(1048577)
+        except urllib.error.HTTPError as exc:
+            # Throttling/outage of signed storage is temporary; anything else (expired
+            # or forbidden URL, missing blob) is definitive negative evidence.
+            if exc.code in RETRYABLE_HTTP_CODES:
+                raise TransientError('artifact storage unavailable (HTTP %d)' % exc.code) from exc
+            raise Rejected('artifact storage download failed') from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise Rejected('artifact storage unavailable') from exc
+            raise TransientError('artifact storage unavailable') from exc
         require(len(raw) <= 1048576 and artifact.get('digest') == 'sha256:' + hashlib.sha256(raw).hexdigest(),
                 'artifact integrity mismatch')
         try:

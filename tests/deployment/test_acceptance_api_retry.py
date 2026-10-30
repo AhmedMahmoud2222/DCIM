@@ -232,5 +232,58 @@ class PagesTests(unittest.TestCase):
             self.api.pages('/actions/workflows/1/runs', 'workflow_runs')
 
 
+class ArtifactRetrievalTests(unittest.TestCase):
+    """Temporary artifact outages are TransientError; definitive failures stay Rejected."""
+    LOCATION = 'https://pipelines.actions.githubusercontent.com/blob'
+
+    def _api(self, outcomes):
+        api = RecordingAPI()
+        api.pages = lambda path, key=None: [dict(
+            id=5, name='evidence', expired=False, size_in_bytes=10, digest='sha256:00',
+            workflow_run=dict(id=7, head_sha='m' * 40))]
+        outcomes = list(outcomes)
+
+        class Opener:
+            def open(self_inner, req, timeout=None):
+                outcome = outcomes.pop(0)
+                raise outcome
+        api.opener = Opener()
+        return api
+
+    def _fetch(self, outcomes):
+        api = self._api(outcomes)
+        with patch.dict(os.environ, {'GITHUB_TOKEN': TOKEN}):
+            return api.artifact(dict(id=7, head_sha='m' * 40, run_attempt=1), 'evidence')
+
+    def _redirect(self):
+        headers = email.message.Message()
+        headers['Location'] = self.LOCATION
+        return urllib.error.HTTPError('https://api.github.com/x', 302, 'found', headers, None)
+
+    def test_redirect_step_outages_are_transient(self):
+        for exc in (http_error(429), http_error(500), http_error(503),
+                    urllib.error.URLError('down'), TimeoutError()):
+            with self.assertRaises(a.TransientError, msg=repr(exc)):
+                self._fetch([exc])
+
+    def test_storage_outages_are_transient(self):
+        for exc in (urllib.error.URLError('down'), TimeoutError(), http_error(503), http_error(429)):
+            with self.assertRaises(a.TransientError, msg=repr(exc)):
+                self._fetch([self._redirect(), exc])
+
+    def test_definitive_artifact_failures_stay_rejected(self):
+        for outcomes in ([http_error(404)], [http_error(403)],
+                         [self._redirect(), http_error(404)], [self._redirect(), http_error(403)]):
+            with self.assertRaises(Rejected):
+                self._fetch(outcomes)
+            # A definitive failure must not be misclassified as an outage.
+            try:
+                self._fetch(list(outcomes))
+            except a.TransientError:
+                self.fail('definitive failure classified as transient')
+            except Rejected:
+                pass
+
+
 if __name__ == '__main__':
     unittest.main()
