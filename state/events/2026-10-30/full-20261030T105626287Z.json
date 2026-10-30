@@ -1,0 +1,192 @@
+{
+  "run_id": "full-20261030T105626287Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T10:56:26.287Z",
+  "finished_at": "2026-10-30T11:07:07.198Z",
+  "repository": "AhmedMahmoud2222/DCIM",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "changed": false,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "bypass_mode": "pull_request"
+      }
+    ],
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "required_thread_resolution": true
+  },
+  "inventory": {
+    "open_prs": 25,
+    "open_issues": 16,
+    "open_threads": 40,
+    "open_state_branch_prs": 0,
+    "open_threads_by_pr": {
+      "83": 1,
+      "115": 8,
+      "146": 4,
+      "179": 1,
+      "207": 6,
+      "217": 5,
+      "219": 12,
+      "224": 3
+    }
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "actions": [
+    {
+      "type": "read",
+      "scope": "all 25 open PRs, 16 issues, exact-head CI, threads, reviews, signatures, behind counts, ruleset"
+    },
+    {
+      "type": "verification",
+      "pr": 224,
+      "head": "438ed1505d2b9ca3f3284fdc830cb12caf49f276",
+      "evidence": "owner-copied live refresh workflow executable body identical to proposed v2; verified signed commit; 3 prior P2 threads still open",
+      "ci": {
+        "frontend": "success",
+        "backend": "pending"
+      },
+      "codex_accepted": false,
+      "jules_accepted": false
+    },
+    {
+      "type": "verification",
+      "pr": 219,
+      "head": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "new_findings": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6x7kSO",
+          "severity": "P2",
+          "reason": "ingestion retries exhaust 8-min workflow before reconciliation"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6x7kSU",
+          "severity": "P2",
+          "reason": "JournalFull during ingestion prevents existing-task reconciliation"
+        }
+      ],
+      "open_threads": 12,
+      "implementation_frozen": true
+    },
+    {
+      "type": "observed",
+      "pr": 227,
+      "action": "closed without merge",
+      "closed_at": "2026-10-30T10:45:09Z"
+    },
+    {
+      "type": "comment",
+      "pr": 201,
+      "agent": "Codex",
+      "sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "comment_id": 6521121918,
+      "attempt": "3/3",
+      "result": "generic clean receipt 6521148748, no native review"
+    },
+    {
+      "type": "comment",
+      "pr": 173,
+      "agent": "Codex",
+      "sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+      "comment_id": 6521122871,
+      "attempt": "3/3",
+      "result": "generic clean receipt 6521151906, no native review"
+    },
+    {
+      "type": "state",
+      "path": "state/ledger.json",
+      "commits": [
+        "e1d5eeea2f776c69048a01135ba4642c58d95464",
+        "2c11bc30504e5bfe59dbba5a07e783de9d1bb66c"
+      ]
+    },
+    {
+      "type": "decision_queue",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "updated": true,
+      "new_decision": "DX13",
+      "closed_decision": "DX11"
+    },
+    {
+      "type": "human_ledger",
+      "issue": 220,
+      "comment_id": 6500987889,
+      "status": "pending final summary update"
+    }
+  ],
+  "merged": [],
+  "threads_resolved": [],
+  "review_kits_posted": [],
+  "agent_capability_blockers": [
+    "#184/#185 Claude issue sessions checkout main; DX12 owner patch route",
+    "Workflow writes owner-only; #224 owner copy completed"
+  ],
+  "blocked": [
+    "#224 exact-head backend CI pending, Codex/Jules and 3 P2 threads",
+    "#219 12 threads and D5 review-only hold",
+    "#201/#173 no native Codex review after 3 asks (DX13)",
+    "#217 5 threads, behind main",
+    "#216 Tier 2 review and behind main",
+    "#146/#171/#181 historical backend failures and conflicts"
+  ],
+  "decisions": {
+    "decide_now": [
+      "D13",
+      "DX13",
+      "D4"
+    ],
+    "other_open": [
+      "DX12",
+      "DX3",
+      "DX6 future drafts",
+      "DX7 hardening"
+    ]
+  },
+  "production_safety": {
+    "issue": 214,
+    "migration": "0057",
+    "hold_intact": true,
+    "staging_qualification_required": true,
+    "written_owner_and_DBA_approval_required": true,
+    "production_actions": [],
+    "deployments": [],
+    "activations": []
+  },
+  "errors": [
+    {
+      "type": "tool",
+      "description": "container/python waiting tool transient ClientError; no effect on GitHub work"
+    }
+  ]
+}
