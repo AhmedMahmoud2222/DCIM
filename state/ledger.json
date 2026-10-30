@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T15:09:39.147Z",
-  "last_run_at": "2026-10-30T15:09:39.147Z",
+  "last_full_run_at": "2026-10-30T15:12:01.108Z",
+  "last_run_at": "2026-10-30T15:12:01.108Z",
   "last_run_mode": "FULL",
   "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
   "merge_policy": {
@@ -97,7 +97,7 @@
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
     "T2": "FULL 2026-10-30T15:06:05.111Z: unmarked owner DX15 and DX16 #6525448788 verified and applied to #172/#200; #226 then #225 investigation authorized but deferred by priority.",
-    "T3": "D5 spec-first: Draft #228 now 257 lines at 9c9ac7a8; all 12 #219 thread mappings verified and Claude attribution corrected via verbatim DX12 patches; exact-head CI pending, Codex/Jules not yet requested; #219 frozen with 12 threads.",
+    "T3": "D5 spec-first: PR #228 ready at 9c9ac7a8, 257-line verified thread-map, backend/frontend success (CI 41078019903), native Codex review requested #6526123791; Jules after Codex; #219 frozen.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "Main workflow ci.yml changed in #173 merge at 69c60af; targeted diff confirmed only setup-node immutable pin updates, no change to claude.yml/agent-claude.yml/acceptance-review.yml authorization wiring; original DX7 hardening still pending.",
     "T6": "FULL 2026-10-30T15:06:05.111Z: #224 signed 6d14f19, exact-head CI green, four P2 threads open, behind main 2, no exact-head Codex/Jules acceptance; refresh workflow absent on main."
@@ -2177,23 +2177,23 @@
       "head_branch": "docs/d5-controller-reliability-spec-20261030",
       "base_branch": "main",
       "base_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
-      "draft": true,
+      "draft": false,
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
-        "frontend": "pending",
+        "backend": "success",
+        "frontend": "success",
         "exact_head_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-        "checked_at": "2026-10-30T15:09:39.147Z",
-        "diagnostic": "CI check runs started but required job contexts not yet completed"
+        "checked_at": "2026-10-30T15:12:01.108Z",
+        "run_id": 41078019903
       },
       "open_thread_count": 0,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T15:09:39.147Z",
+      "last_state_verified_at": "2026-10-30T15:12:01.108Z",
       "last_thread_verified_at": "2026-10-30T15:09:39.147Z",
-      "last_ci_sha": null,
-      "merge_state": "current with main; other gates apply",
+      "last_ci_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "merge_state": "current with main; native Codex review and owner-run Jules acceptance absent",
       "tier_reason": "docs-only specification patch; owner D5 separately requires Codex AND Jules review before #219 resumes",
       "head_verification": {
         "verified": false,
@@ -2218,15 +2218,15 @@
         }
       ],
       "last_prompt": {
-        "agent": "Claude",
-        "ask": "D5 spec attribution single-line correction via DX12",
-        "at": "2026-10-30T15:07:30Z",
-        "sha": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
-        "comment_id": 6526043369,
-        "status": "terminal: patch delivered in comment 6526048626 and applied at 9c9ac7a8"
+        "agent": "Codex",
+        "ask": "D5 specification-first native independent review of 12 threads, G-1..G-10, invariants, transitions, FI tests; verdict line",
+        "at": "2026-10-30T15:11:20Z",
+        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+        "comment_id": 6526123791,
+        "status": "awaiting native COMMENTED review"
       },
-      "asks_per_sha": 0,
-      "queued": "Draft; verified all 12 #219 thread mappings and corrected attribution; 10 explicitly open design/test gaps; exact-head backend/frontend pending, no Codex or Jules acceptance; mark ready/request review only after green current CI",
+      "asks_per_sha": 1,
+      "queued": "Ready for review; backend/frontend SUCCESS on 9c9ac7a8, zero threads, all prior spec checklist fixed; Codex ask #6526123791 pending; D5 owner-run Jules mandatory after Codex acceptance; do not merge",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "D5 12-thread map correction via DX12",
@@ -2521,6 +2521,26 @@
       "changed_lines": [
         205
       ]
+    },
+    {
+      "type": "mark_ready",
+      "pr": 228,
+      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "reason": "D5 spec corrections complete, CI green"
+    },
+    {
+      "type": "comment",
+      "pr": 228,
+      "comment_id": 6526108289,
+      "reason": "D5 evidence checkpoint"
+    },
+    {
+      "type": "agent_request",
+      "pr": 228,
+      "agent": "Codex",
+      "comment_id": 6526123791,
+      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "reason": "D5 independent spec review"
     }
   ],
   "priority_snapshot": {
@@ -2549,7 +2569,7 @@
     "open_issues": 16,
     "open_threads": 41
   },
-  "last_run_summary": "FULL: 24 open PRs, 16 open issues, 41 unresolved threads; #201 merged externally; #228 Draft spec at 9c9ac7a8 with all 12 verified mappings, 10 gaps for review; backend/frontend pending; no orchestrator merge or production action.",
+  "last_run_summary": "FULL: 24 open PRs, 16 issues, 41 unresolved threads; #201 externally merged; #228 Claude-authored docs spec ready, exact-head CI green, Codex review requested, Jules pending; #172/#200 backend pending, DX13 owner decisions queued; no orchestrator merge or production action.",
   "last_followup_delta": {
     "at": "2026-10-30T12:28:58.616Z",
     "from": "2026-10-30T12:12:20.955Z",
@@ -2578,7 +2598,7 @@
     "owner_copy_pending": 224,
     "production_hold_intact": true
   },
-  "last_full_delta": "DX15/DX16 owner answers applied; #201 external merge; #228 Draft created from Claude verbatim patch, then two Claude-authored verbatim corrections applied at 38c3dd and 9c9ac7a8; exact-head CI pending, independent review pending; #172/#200 backend pending and owner DX13 decisions queued; no orchestrator merge, no thread resolutions, hold intact.",
+  "last_full_delta": "Owner DX15/DX16 applied; #201 external merge; #228 created and two verbatim Claude patches applied; marked ready after exact-head backend/frontend green; Codex native review requested at 9c9ac7a8; #219 frozen, Jules pending; #172/#200 backend pending and DX13 owner decisions queued; no merges or thread resolutions.",
   "last_followup_summary": {
     "run_id": "followup-20261030T133114Z",
     "no_merges": true,
@@ -2612,6 +2632,11 @@
         "item": 228,
         "agent": "Claude",
         "comment_id": 6526043369
+      },
+      {
+        "item": 228,
+        "agent": "Codex",
+        "comment_id": 6526123791
       }
     ],
     "owner_answers": [
@@ -2639,6 +2664,15 @@
         "source": 6526048626
       }
     ],
-    "event_supplement_path": "state/events/2026-10-30/full-20261030T145921048Z-supplement.json"
+    "event_supplement_path": "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
+    "pr228": {
+      "head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "draft": false,
+      "ci": "backend/frontend SUCCESS run 41078019903",
+      "codex_ask": 6526123791,
+      "jules": "pending Codex acceptance",
+      "open_threads": 0,
+      "findings_open": 0
+    }
   }
 }
