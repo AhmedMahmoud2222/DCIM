@@ -1,0 +1,62 @@
+{
+  "run_id": "full-20261030T075619Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T07:56:19Z",
+  "finished_at": "2026-10-30T08:00:29.113Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "ruleset_hash": "fnv1a64:246f1cc05c72e8a4",
+  "ruleset_bypass": "all six pull_request",
+  "inventory": {
+    "open_prs": 24,
+    "open_issues": 14,
+    "open_review_threads": 34
+  },
+  "actions": [
+    {
+      "kind": "comment",
+      "pr": 83,
+      "id": 6517873686,
+      "agent": "Codex",
+      "reason": "verify Claude partial supersession report against main"
+    },
+    {
+      "kind": "comment",
+      "pr": 87,
+      "id": 6517874682,
+      "agent": "Codex",
+      "reason": "verify historical empty-patch supersession"
+    },
+    {
+      "kind": "edit_comment",
+      "issue": 220,
+      "id": 6501005762,
+      "reason": "correct DX7 pinned action source check; close DX10 after PR #222 closure"
+    },
+    {
+      "kind": "update_file",
+      "path": "state/ledger.json",
+      "commit": "7d47dfe349f596e5a0f71243919b7238c6c8520b"
+    }
+  ],
+  "checks": {
+    "dependabot": {
+      "172": "backend in_progress, frontend success",
+      "173": "backend in_progress, frontend success",
+      "200": "backend in_progress, frontend success",
+      "201": "backend in_progress, frontend success"
+    },
+    "pinned_action_tags": "four exact SHA matches verified",
+    "new_owner_answers": 0,
+    "production_hold": "intact"
+  },
+  "merges": [],
+  "threads_resolved": [],
+  "production_actions": [],
+  "blocked": [
+    "#219 D5",
+    "#216 behind, Tier 2 Jules not qualified",
+    "#217 behind, five open threads",
+    "#207 owner workflow permission route",
+    "#201/#200/#173/#172 backend pending"
+  ]
+}
