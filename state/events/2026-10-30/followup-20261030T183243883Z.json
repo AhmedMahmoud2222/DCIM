@@ -1,0 +1,106 @@
+{
+  "run_id": "followup-20261030T183243883Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T18:32:43.883Z",
+  "recorded_at": "2026-10-30T18:34:28.650Z",
+  "previous_ledger_at": "2026-10-30T17:58:22.258Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "inventory": {
+    "open_product_prs": 23,
+    "open_issues": 16,
+    "open_review_threads": 48,
+    "open_orchestrator_state_prs": 0
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "ruleset": {
+    "id": 23651422,
+    "unchanged_hash": "fnv1a64:246f1cc05c72e8a4",
+    "all_six_bypass_actors": "pull_request",
+    "always_bypass_actors": []
+  },
+  "owner_decisions": {
+    "new_unmarked_since_last_run": 0,
+    "last_owner_comment_id": 6526791660
+  },
+  "actions": [
+    {
+      "type": "comment",
+      "target": "PR #224",
+      "id": 6530592913,
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#issuecomment-6530592913",
+      "reason": "second exact-head Codex native Tier2 review request (2/3), four open P2 threads",
+      "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005"
+    },
+    {
+      "type": "comment",
+      "target": "issue #223",
+      "id": 6530593813,
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/223#issuecomment-6530593813",
+      "reason": "main CI run 41083732966 attempt2 Python3.13 and aggregate backend green; intermittent failure still open",
+      "sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7"
+    },
+    {
+      "type": "update_file",
+      "path": "state/ledger.json",
+      "commit_sha": "241ee0cdaf9936550abd0e387e740559c529c8d1"
+    }
+  ],
+  "merged": [],
+  "resolved_threads": [],
+  "blocked": [
+    {
+      "pr": 224,
+      "first_gate": "4 open P2 threads and missing native Codex exact-head acceptance; Jules afterward"
+    },
+    {
+      "pr": 200,
+      "first_gate": "DX13 owner exact-head independent acceptance"
+    },
+    {
+      "pr": 228,
+      "first_gate": "1 commit behind main; 7 open P1/P2 threads; Codex and owner-mandated Jules"
+    },
+    {
+      "pr": 217,
+      "first_gate": "5 open threads, behind main and owner DX13"
+    },
+    {
+      "pr": 216,
+      "first_gate": "behind main; Codex/Jules acceptance absent"
+    }
+  ],
+  "waiting": [
+    {
+      "item": "#224",
+      "agent": "Codex",
+      "since": "2026-10-30T18:33:39.760Z",
+      "stale_level": 0
+    },
+    {
+      "item": "#184/#185",
+      "agent": "OpenCode",
+      "until": "2026-11-02T11:45:39Z",
+      "reason": "owner D6 72-hour window"
+    },
+    {
+      "item": "#228",
+      "agent": "Ahmed",
+      "reason": "Update branch before independent review"
+    },
+    {
+      "item": "#200",
+      "agent": "Ahmed",
+      "reason": "DX13 exact-head review"
+    }
+  ],
+  "production_safety": {
+    "migration_0057_hold": "intact; no production execution until representative staging qualification and written owner+DBA approval",
+    "migration_or_deployment_requested": false,
+    "approved": false,
+    "scheduled": false
+  },
+  "write_failures": []
+}
