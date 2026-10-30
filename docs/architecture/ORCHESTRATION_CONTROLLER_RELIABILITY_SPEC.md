@@ -31,6 +31,8 @@ Each invariant has an ID used by the test matrix (section 7).
 - **INV-S1** Every journal write carries a signature over the canonical serialization, bound to the journal schema version and a monotonic `generation` counter. The signature covers all task records.
 - **INV-S2** A journal that fails signature, schema or generation validation MUST be rejected whole. The controller MUST NOT act on partially valid content and MUST NOT overwrite it (fail closed, escalate to a human).
 - **INV-S3** `generation` MUST strictly increase by exactly one per successful write. A read returning a lower generation than one previously observed in this run MUST be treated as stale (see INV-C3).
+- **INV-S4** (cross-run non-rewindable history) The controller MUST verify every journal read against an independently trusted monotonic checkpoint `(generation, journal_digest)` held outside the Store's writable path, in a medium that the Store write credential cannot rewrite (candidate media and the safe default are in D-8). Each journal records `prev_digest` (the digest of the journal at `generation - 1`). A journal with `generation` lower than the checkpoint's, or equal to it with a different digest, or whose `prev_digest` chain does not reach the checkpoint, MUST be refused before any PUT, any POST, and any mutation. This holds across processes and restarts; run-local memory (INV-S3) is not sufficient.
+- **INV-S5** (checkpoint initialization, advance and recovery) The checkpoint is advance-only and is advanced only after a journal write is confirmed (INV-A2). A checkpoint lagging the journal by exactly one generation, with a matching `prev_digest`, is accepted and advanced (crash between journal write and checkpoint write); any larger gap is refused. A missing checkpoint with a non-empty journal fails closed. Initialization requires an owner-attested bootstrap record of the first `(generation, digest)`. Recovery from checkpoint loss or an intentional rollback requires a separately owner-authorized, audited checkpoint reset; the controller MUST NOT perform it automatically.
 
 ### 2.2 CAS and version ownership
 - **INV-C1** Every write is a conditional PUT carrying the version token of the last journal this run read or successfully wrote. An unconditional write MUST NOT exist.
@@ -45,7 +47,7 @@ A PUT is *ambiguous* when the caller cannot tell whether it applied: timeout, co
   - *applied*: the journal contains the intended mutation (identified by a mutation id and generation, not by blob equality alone);
   - *not applied*: the journal equals the pre-write journal;
   - *superseded*: the journal contains neither (another writer advanced it).
-- **INV-A3** If recovery reads also fail, the run MUST end without side effects and leave the task in its prior durable state. The next run repeats recovery.
+- **INV-A3** If recovery reads also fail, the run MUST end without any external side effect that depends on the write, and MUST NOT assume the write did not apply: the durable state is *unknown* (prior or intended) until a later recovery read succeeds. The next run MUST start with read, validation (INV-S4) and classification (INV-A2) before any new mutation or side effect. Because mutations are functions of the journal (INV-C4) and are guarded by state preconditions, an already-applied mutation is simply no longer applicable on the fresh read; an applied `reserved` write is handled by T4r and never leads to a POST.
 - **INV-A4** Each mutation carries a unique `mutation_id` persisted in the journal so that recovery and duplicate callbacks are idempotent at the journal level.
 
 ### 2.4 No stale blob overwrite
@@ -54,8 +56,9 @@ A PUT is *ambiguous* when the caller cannot tell whether it applied: timeout, co
 
 ### 2.5 Bounded journal size
 - **INV-B1** The serialized journal MUST NOT exceed `JOURNAL_MAX_BYTES`. The reader's decoder cap and the writer's pre-PUT guard MUST use the same constant (current baseline value: 524288 bytes; the value is a design parameter, see D-3).
-- **INV-B2** The size guard MUST run on the final serialized, signed bytes before any PUT, and MUST compare against the cap minus a reserved headroom (INV-B3).
-- **INV-B3** `JOURNAL_RESERVE_BYTES` MUST be reserved exclusively for mutations to already admitted tasks (state advancement, terminal transitions, evidence). Admission of new tasks MUST be refused once the journal would exceed `JOURNAL_MAX_BYTES - JOURNAL_RESERVE_BYTES`.
+- **INV-B2** The size guard MUST run on the final serialized, signed bytes before any PUT and MUST apply one of two distinct thresholds: `ADMISSION_LIMIT = JOURNAL_MAX_BYTES - JOURNAL_RESERVE_BYTES` for any mutation that adds a task, and `MUTATION_LIMIT = JOURNAL_MAX_BYTES` for every mutation of an already admitted task.
+- **INV-B3** `JOURNAL_RESERVE_BYTES` is reserved exclusively for mutations to already admitted tasks (state advancement, terminal and escalation transitions, evidence, cursor). Admission of a new task MUST be refused (`JournalFull`) when the final signed bytes would exceed `ADMISSION_LIMIT`. Existing-task mutations MAY consume the reserve, up to `MUTATION_LIMIT`, so that every admitted task can reach a terminal state.
+- **INV-B3a** An existing-task mutation whose final signed bytes would exceed `MUTATION_LIMIT` MUST NOT be sent. It is a reserve-sizing fault: the run fails loudly with a typed error and alerts, and no other task is blocked (INV-F4).
 - **INV-B4** Per-task size MUST be bounded (evidence is stored as digests and bounded-length identifiers, never raw artifacts) so that reserve sizing is computable: `reserve >= admitted_task_cap * max_transition_growth`.
 - **INV-B5** Terminal tasks older than the retention window MAY be compacted only via the archival procedure in D-4. Until that is designed and reviewed, there MUST be no deletion; the journal fails closed for admission instead.
 
@@ -93,7 +96,7 @@ All "Persisted write" entries are single CAS journal writes obeying section 2. "
 | T10 | any | Journal validation failure (INV-S2) | - | None | None | Run exits failed; no side effects | Workflow log |
 
 Rules that hold for all rows:
-- A row's external side effect is permitted only after that row's journal write is confirmed (INV-A1).
+- A row's external side effect is permitted only after the journal write that *authorizes* it is confirmed. For T3/T4 the confirmed T3 `reserved` write authorizes the single POST; the T4 write records the POST outcome after the POST and does not authorize it. No row requires the write that records an effect to precede that effect (INV-A1).
 - Terminal and escalation writes for existing tasks always use the reserved headroom (INV-B3).
 
 ## 4. Journal write procedure (normative sequence)
@@ -114,14 +117,16 @@ Rules that hold for all rows:
 
 ### 5.2 Reruns and attempts
 - **EV-5** Evidence identity includes `run_id` and `run_attempt`. A rerun (a higher `run_attempt` of an already-scanned `run_id`) inside a retained interval MUST be discovered. The cursor therefore tracks `(run_id, max_attempt_seen)`, not only `run_id`.
-- **EV-6** A newer attempt supersedes older attempts of the same run only for the same identity tuple, and conflicting verdicts between attempts follow EV-9.
+- **EV-6** Each authenticated evidence record has two parts: a *logical outcome key* (repository, PR number, head SHA, workflow path and ref, `delivery_id`; explicitly excluding `run_id` and `run_attempt`), which is the only key used to compare outcomes, and *per-attempt provenance* (`run_id`, `run_attempt`, artifact digest, timestamps), which is used for authentication, audit and freshness. A newer attempt never silently supersedes an older authenticated attempt for the same logical key; all are compared under EV-9.
+- **EV-13** (same-attempt revisit) The cursor MUST NOT pass a run whose `status` is not `completed` or whose conclusion is not final. Such runs are kept in a bounded `open_runs` set `{run_id, run_attempt, last_status, last_checked, artifact_digest_set}` and re-evaluated on every run until they complete, the deadline passes, or the set cap is reached. When the set cap is reached the cursor stops advancing (fail closed; no skipping). A change of status, conclusion, completion or artifact digest set at an unchanged `run_attempt` MUST be re-evaluated without incrementing the attempt, and a contradiction found there follows EV-9.
 
 ### 5.3 Retention and reauthentication
 - **EV-7** Retained matches (candidate evidence kept across runs) MUST be stored as references plus digests. Before a retained match can drive `confirmed` it MUST be freshly re-fetched and re-authenticated (signature/witness, identity binding, artifact digest) in the current run. A stored match is never trusted by itself.
 - **EV-8** If re-fetch of a retained match fails retryably, the match stays retained and the task stays unchanged. If re-authentication fails permanently (digest or witness mismatch), the match is discarded and the failure recorded (and may lead to T8 under EV-9).
+- **EV-14** (live witness authentication) A *witness* is a mutable external reference (for example a comment, check run or status) that attests an artifact or verdict. A retained match backed by a witness MUST be re-fetched from the provider in the current run and accepted only if all hold: provider identity (expected app or account by immutable numeric id, not login string alone, on an allowlisted API host); stable reference id; binding to PR number, head SHA, `run_id`/`run_attempt` and `delivery_id`; content constraints (expected schema, size bound, digest equal to the retained digest); time constraints (creation inside the task interval, and any `updated_at` later than the retained snapshot forces re-authentication of the changed content as a new candidate, never as the old one). A mutated witness is a new candidate; a definitively deleted witness (404/410 on an existing reference) discards the match and records the failure; a retryable fetch failure leaves the match retained and the task unchanged (EV-8).
 
 ### 5.4 Contradictory evidence
-- **EV-9** Two authenticated pieces of evidence for the same identity tuple with different outcomes block the task (T8 with `contradiction`). Unauthenticated or wrong-identity artifacts are ignored and counted (bounded) but do not by themselves block, unless they impersonate a valid identity tuple, in which case they block as `forged`.
+- **EV-9** Two authenticated pieces of evidence with the same logical outcome key (EV-6) and different outcomes block the task (T8 with `contradiction`), including when they come from different `run_attempt` or `run_id` values. Unauthenticated or wrong-identity artifacts are ignored and counted (bounded) but do not by themselves block, unless they impersonate a valid identity tuple, in which case they block as `forged`. Whether a later attempt may supersede an earlier contradictory one is a policy decision (D-9); the fail-closed default is to block.
 
 ### 5.5 Identity binding
 - **EV-10** Accepted evidence MUST match all of: repository, PR number, head SHA, workflow identity (path and ref), `delivery_id`, `run_id` and `run_attempt`. Any mismatch is a rejection with the specific mismatching field recorded.
@@ -172,12 +177,15 @@ Conventions: "POSTs" is the number of non-idempotent POSTs to the external syste
 | FI-01 | Ambiguous PUT, applied | 1 `pending` task | Store applies T3 then drops the response | `pending` -> `reserved` (found via recovery) | 1 only after recovery confirms applied | 480 s | Journal contains the `mutation_id`; exactly one POST; no second PUT of the same blob |
 | FI-02 | Ambiguous PUT, not applied | as FI-01 | Store drops request | Stays `pending`, then T3 retried via fresh read-modify-write | 1 (after confirmed T3) | 480 s | Generation increased by exactly 1; POST issued only after confirmed write |
 | FI-03 | Ambiguous PUT, superseded | Other writer advances journal in between | Response lost and external write | Mutation re-derived from fresh journal; dropped if invalid | 0 or 1 per validity | 480 s | No overwrite of the other writer's change (INV-N1) |
-| FI-04 | Recovery reads also fail | as FI-01 | All reads fail | No change | 0 | 480 s | Run ends without side effects; next run completes recovery |
+| FI-04a | Recovery reads fail, PUT had applied | as FI-01 (T3 `pending` -> `reserved` applied) | Store applies the PUT, drops the response, then all reads fail | Unknown until a read succeeds; durable journal holds `reserved` | 0 | 480 s | Run ends with no POST and no assumption of rollback; next run reads, validates, finds `reserved`, applies T4r (`delivered_unconfirmed`, `post_status=unknown`), still 0 POSTs; the task resolves by evidence or escalates at its deadline |
+| FI-04b | Recovery reads fail, PUT had not applied | as FI-01 | Store drops the request, then all reads fail | Unknown until a read succeeds; durable journal still `pending` | 0 | 480 s | Run ends with no POST; next run reads, finds `pending`, and performs a fresh T3 read-modify-write, then exactly 1 POST |
 | FI-05 | Stale CAS | Two runs read the same token | Run B writes first | Run A gets 409, re-reads, re-derives | Total across runs: 1 | 480 s | Final journal contains both mutations or A's is dropped validly; never A's stale blob |
 | FI-06 | Duplicate callbacks | Same `task_id` delivered 3 times concurrently | Concurrent ingestion | One `ingested`; two no-ops | 0 | 480 s | One task record; journal generation advances once for ingestion |
 | FI-07 | Crash after T3 before POST | `reserved` task | Process kill | On restart: T4r -> `delivered_unconfirmed(post_status=unknown)` | 0 on restart | 480 s | Zero POSTs after restart; deadline escalation still occurs |
 | FI-08 | Crash after POST before T4 write | POST sent, journal write not made | Kill after POST | Same as FI-07 | Total 1 | 480 s | Total POST count across both runs is 1 |
 | FI-09 | Ambiguous POST | POST times out | Timeout after send | `delivered_unconfirmed` | 1, no retry | 480 s | No second POST in same or later run |
+| FI-09b | Outcome write fails after POST (amends FI-07..FI-09) | `reserved` task, T3 confirmed | POST succeeds or is ambiguous, then the T4 PUT fails (5xx, timeout or conflict) | Journal stays `reserved`; next run applies T4r | 1 total | 480 s | Zero further POSTs in any later run; T3 alone authorized the POST; no pre-write of T4 is required |
+| FI-09c | Reservation authorizes POST (amends FI-07..FI-09) | `pending` task | Observe journal at the moment of POST | `reserved` durable at POST time; `delivered_unconfirmed` written only afterwards | 1 | 480 s | At the POST instant the Store already holds `reserved` with the `delivery_id`; the T4 record appears only after the POST; a POST attempted without a confirmed `reserved` write fails the test |
 | FI-10 | Prolonged Store outage | Store returns 503 for N runs spanning the deadline | Store | Tasks unchanged until reachable; then T6 for expired | 0 extra | N x 480 s | Deadlines not extended; after recovery expired tasks are `escalated`, not re-posted |
 | FI-11 | Prolonged external API outage | API 5xx for all runs | External | `reserved`/`pending` kept; T6 at deadline | At most 1 per `delivery_id` | N x 480 s | No POST storm; escalation recorded |
 | FI-12 | Rate-limit headers | 429 with `Retry-After` beyond remaining budget | External read | `not_before` persisted | 0 | 480 s | Run exits success quickly; next run does not call before `not_before` |
@@ -189,16 +197,25 @@ Conventions: "POSTs" is the number of non-idempotent POSTs to the external syste
 | FI-18 | Rerun in retained interval | Run R attempt 1 scanned without evidence, attempt 2 carries it | Attempt tracking | `confirmed` from attempt 2 | 0 | 480 s | Cursor `max_attempt_seen` raised; evidence identity cites attempt 2 |
 | FI-19 | Retained match tampered | Retained reference whose artifact was replaced | Reauthentication | Match discarded, task unchanged or `blocked` if forging | 0 | 480 s | No `confirmed` from stored data alone (EV-7) |
 | FI-20 | Retained match fetch fails | Retryable fetch error on retained match | Reauthentication | Unchanged | 0 | 480 s | Match remains retained |
-| FI-21 | Contradictory evidence | Two authenticated artifacts, opposite outcomes | Evidence | `blocked(contradiction)` | 0 | 480 s | Terminal, immutable on later runs (T9) |
+| FI-21 | Contradictory evidence | Two authenticated artifacts with the same logical outcome key and opposite outcomes, in variants: same run and attempt, different `run_attempt`, different `run_id` | Evidence | `blocked(contradiction)` in every variant | 0 | 480 s | Terminal, immutable on later runs (T9); per-attempt provenance of both pieces recorded; no variant is resolved by attempt ordering (EV-6, EV-9, D-9) |
 | FI-22 | Forged artifact | Wrong workflow/ref/SHA/attempt, valid shape | Evidence | Ignored; if impersonating identity then `blocked(forged)` | 0 | 480 s | Each mismatching field recorded individually (EV-10) |
 | FI-23 | Ingestion exceeds execution budget | Many inbound events, slow Store | Time | Ingestion stops early, remaining events deferred, reconciliation done | 0 | 480 s | Run succeeds; existing tasks reconciled; reserve respected (BUD-2/3) |
 | FI-24 | Near-cap admission | Journal at `MAX - RESERVE` with 20 active tasks | Admission | New task refused (`JournalFull`); existing tasks progress to terminal | Existing tasks' POSTs per normal | 480 s | No journal write for the refused task; existing tasks reach `confirmed`/`escalated`; size never exceeds MAX (INV-F2) |
 | FI-25 | Over-cap write guard | Mutation would exceed MAX | Pre-PUT | No PUT sent | 0 | 480 s | Zero PUT requests; typed error; Store and decoder caps equal (INV-B1) |
 | FI-26 | Journal growth DoS | Attacker floods events with distinct ids | Ingestion | Admission capped; per-task event bound | 0 | 480 s | Journal size bounded; reads stay under decoder cap |
 | FI-27 | Concurrent independent tasks | 10 tasks, one with ambiguous PUT, one with outage | Mixed | Others progress independently | 1 per task max | 480 s | No task blocked by another's fault (INV-F4) |
-| FI-28 | Replay of older journal | Store restored to older valid-signed journal | Store | Rejected (INV-S3/N2) | 0 | 480 s | No write; escalation alert |
+| FI-28 | Validly signed older journal restored between processes | Process 1 advances to generation N and the checkpoint; the Store is then restored to a validly signed generation N-k (variant: generation N with a different digest); process 2 starts fresh with no in-memory state | Store read | Rejected whole before any mutation (INV-S4, INV-N2) | 0 | 480 s | Zero PUT and zero POST requests; checkpoint unchanged; escalation alert recorded |
 | FI-29 | Corrupted or unsigned journal | Bad signature | Store read | Rejected whole | 0 | 480 s | No write; run fails closed |
 | FI-30 | CAS retry exhaustion | Persistent 409 | Store | No change | 0 | 480 s | Bounded retry count; run exits without side effects |
+| FI-31 | Admission versus mutation boundary | Journal at `ADMISSION_LIMIT` with 20 active tasks; one new admission and existing-task terminal transitions that grow the journal above `ADMISSION_LIMIT` but not above `MUTATION_LIMIT` | Pre-PUT size guard on final signed bytes | New task refused (`JournalFull`); each existing task reaches `confirmed`/`escalated` using the reserve | Existing tasks' POSTs per normal; 0 for the refused task | 480 s | Zero PUT for the refused admission; all 20 tasks terminal; final signed size never exceeds `JOURNAL_MAX_BYTES` (INV-B2, INV-B3) |
+| FI-32 | Existing mutation above `MUTATION_LIMIT` | Mutation of an admitted task whose final signed bytes exceed `JOURNAL_MAX_BYTES` | Pre-PUT size guard | No change for that task | 0 | 480 s | Zero PUT; typed reserve-sizing fault and alert; other tasks still progress (INV-B3a, INV-F4) |
+| FI-33 | Same-attempt in-progress run revisit | Run R attempt 1 is `in_progress` when scanned and the cursor moves past its position; R later completes at attempt 1 with evidence (variant: a contradicting authenticated artifact appears) | Run status and artifact change at an unchanged attempt | R stays in `open_runs`; then `confirmed` (variant: `blocked(contradiction)`) | 0 | 2 runs of 480 s | `run_attempt` unchanged; the change is detected from status, conclusion or artifact digest; a full `open_runs` set stops cursor advance without skipping (EV-13) |
+| FI-34 | Witness mutation after retention | Retained match backed by a witness that is later edited (content or `updated_at` changes) | Live reauthentication | Old match not reused; changed content treated as a new candidate and authenticated from scratch | 0 | 480 s | No `confirmed` from the stale snapshot (EV-14) |
+| FI-35 | Witness deletion | Retained witness definitively deleted (404/410 on an existing reference) | Live reauthentication | Match discarded and failure recorded; task unchanged | 0 | 480 s | No `confirmed` from stored data; discard is recorded (EV-14) |
+| FI-36 | Witness retryable fetch failure | Witness fetch returns 5xx or times out | Live reauthentication | Unchanged; match retained | 0 | 480 s | No rejection and no `blocked`; a later healthy fetch resolves (EV-8, EV-14) |
+| FI-37 | Missing checkpoint, non-empty journal | Checkpoint absent while the journal has generation greater than 0 | Checkpoint read | Run fails closed | 0 | 480 s | Zero PUT and zero POST; owner alert; no automatic bootstrap (INV-S5) |
+| FI-38 | Checkpoint lags by one generation | Crash after a journal write but before the checkpoint advance | Restart | Checkpoint advanced after `prev_digest` verification; run proceeds | per normal | 480 s | Checkpoint equals journal generation; no rewind accepted (INV-S5) |
+| FI-39 | Checkpoint gap larger than one | Journal generation exceeds checkpoint by 2 or more, or `prev_digest` chain does not reach it | Checkpoint read | Rejected whole | 0 | 480 s | Zero PUT and zero POST; escalation alert (INV-S4) |
 
 ## 8. Mapping of PR #219 review findings to this specification
 
@@ -223,8 +240,8 @@ Gaps (each needs owner or reviewer disposition):
 
 - **G-1** (threads 1, 3) No test covers a multi-write run where a transient error or CAS abort follows earlier committed writes; FI-01..FI-05 each exercise one write. Possibly also a missing explicit invariant: act only on the last confirmed journal.
 - **G-2** (thread 2) FI-16 and FI-17 assert the cursor only; nothing asserts retained matches survive a cap-triggered exit.
-- **G-3** (thread 4) The spec covers reruns (attempts) but not status or conclusion changes of already-scanned runs inside a persisted interval. Spec gap.
-- **G-4** (thread 5) "Witness" is undefined and FI-19 replaces an artifact only; no test mutates a witness after retention. Spec and test gap.
+- **G-3** (thread 4) Addressed in the specification by EV-6, EV-9 and EV-13 (same-attempt revisit, cross-attempt contradiction); coverage by FI-21 and FI-33 awaits independent review. Open policy question D-9.
+- **G-4** (thread 5) Addressed by EV-14 (live witness authentication); coverage by FI-34..FI-36 awaits independent review. Exact provider, reference and time constraints remain a design parameter (D-5, D-8).
 - **G-5** (thread 7) The taxonomy separates 429 from 5xx, but no test asserts an HTTP 500 with quota remaining gets no quota-reset delay; FI-13 covers backoff reset only.
 - **G-6** (thread 8) The thread says "download/storage failure"; ERR-1 covers artifact download only. A reviewer must say whether journal storage failures are meant (those follow section 2.3).
 - **G-7** (thread 9) No test asserts that a transient evidence-read failure still lets the deadline escalation (T6/T7) run for that task.
@@ -237,7 +254,7 @@ Gaps (each needs owner or reviewer disposition):
 The specification is acceptable for implementation to resume only when all hold:
 1. Codex and owner-run Jules have each reviewed the exact head of the spec PR and published a verdict (`Verdict: Accepted`).
 2. Every open thread on PR #219 maps to at least one spec section and one FI test (section 8 has verified IDs).
-3. Design decisions D-1..D-7 are answered by the owner.
+3. Design decisions D-1..D-9 are answered by the owner.
 4. The implementation PR contains a test for every FI row, each asserting on the observables listed, with exact-head CI green. (This is a future criterion; nothing here claims it is met.)
 5. No `JournalFull` path can fail an existing-task mutation within the reserve (test FI-24 plus a property/boundary test at `MAX - RESERVE`).
 6. Production execution and activation remain separately owner-authorized.
@@ -251,6 +268,8 @@ The specification is acceptable for implementation to resume only when all hold:
 - **D-5** Budget constants: `R_reconcile`, `R_exit`, retry counts, page size, `MAX_PAGES_PER_RUN`, `reserved_grace`.
 - **D-6** Whether `delivered_unconfirmed` with `post_status=unknown` should escalate immediately (safer, more human work) or wait for the deadline (current spec).
 - **D-7** Whether a rate-limit `not_before` is stored per task or globally in the journal.
+- **D-8** Trust anchor for the cross-run checkpoint (INV-S4/S5). Options: (a) a checkpoint ledger in a separate protected location written with a distinct credential and signing key that the controller's Store credential cannot overwrite; (b) a signed append-only git ref or tag in this repository, protected by a ruleset that forbids deletion and force-push; (c) an owner-held external anchor (for example a signed release or ledger entry updated by the owner). Safe default until decided: (c) with controller activation held; no activation without a decided anchor.
+- **D-9** Whether a later `run_attempt` with an authenticated, different verdict may supersede an earlier authenticated verdict for the same logical outcome key. Fail-closed default: block as contradiction (EV-9).
 
 ## 11. Non-goals
 
