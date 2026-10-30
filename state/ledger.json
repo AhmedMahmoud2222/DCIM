@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T11:03:15.451Z",
-  "last_run_at": "2026-10-30T11:06:19.908Z",
+  "last_full_run_at": "2026-10-30T11:07:55.733Z",
+  "last_run_at": "2026-10-30T11:07:55.733Z",
   "last_run_mode": "FULL",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
@@ -2304,6 +2304,21 @@
       "action": "Codex third/final review request",
       "comment_id": 6521122871,
       "result": "generic receipt #6521151906, no native review"
+    },
+    {
+      "at": "2026-10-30T11:07:55.733Z",
+      "item": "Issue #220",
+      "action": "edited current-state ledger and decision queue",
+      "comment_ids": [
+        6500987889,
+        6501005762
+      ]
+    },
+    {
+      "at": "2026-10-30T11:07:55.733Z",
+      "item": "orchestrator-state",
+      "action": "appended immutable FULL event",
+      "path": "state/events/2026-10-30/full-20261030T105626287Z.json"
     }
   ],
   "priority_snapshot": {
@@ -2322,7 +2337,7 @@
       "#83/#87 D4 historical supersession unresolved"
     ]
   },
-  "last_run_summary": "FULL: 25 open PRs, 16 open issues, 40 unresolved threads; no merges/resolutions. #224 owner copied signed live workflow at 438ed150, backend pending; #219 Codex D5(a) review added 2 P2. #227 closed without merge. Ruleset hash unchanged, six bypass actors pull_request; no production action. #201/#173 final Codex asks returned generic receipts, no native reviews; DX13 owner decision required.",
+  "last_run_summary": "FULL complete: 25 PRs, 16 issues, 40 open threads, 0 merges/resolutions; #224 owner live workflow copy 438ed150 backend CI pending, #219 two new P2, #227 closed without merge, #201/#173 third Codex asks returned only generic receipts (DX13); ruleset unchanged and six bypass modes pull_request; schedules enabled; Migration 0057 hold intact.",
   "last_followup_delta": {
     "at": "2026-10-30T10:35:50.127Z",
     "prs_open": 26,
@@ -2403,6 +2418,14 @@
     ],
     "new_decisions": [
       "DX13"
-    ]
+    ],
+    "event_path": "state/events/2026-10-30/full-20261030T105626287Z.json",
+    "human_ledger_comment_id": 6500987889,
+    "decision_comment_id": 6501005762,
+    "state_branch_pr_open": false,
+    "schedule_health": {
+      "full_enabled": true,
+      "followup_enabled": true
+    }
   }
 }
