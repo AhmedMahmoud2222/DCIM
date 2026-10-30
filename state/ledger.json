@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T08:00:20.821Z",
-  "last_run_at": "2026-10-30T08:37:16.500Z",
+  "last_run_at": "2026-10-30T08:38:08.688Z",
   "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
@@ -913,12 +913,12 @@
         "at": "2026-10-30T08:37:16.500Z",
         "sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
         "comment_id": 6518595766,
-        "status": "awaiting native review"
+        "status": "Codex clean exact-head receipt at 08:36:46Z, no native PR review submission; result not accepted under strict native review gate"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "await exact-head Codex Tier 0 review, request posted; no merge until accepted",
+      "queued": "clean exact-head receipt but no native PR review submission; exact-head acceptance remains unverified",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
       "updated_at": "2026-10-29T17:02:48Z",
@@ -1231,17 +1231,17 @@
       "open_threads": [],
       "findings_checklist": [],
       "last_prompt": {
-        "agent": "Dependabot",
-        "ask": "@dependabot rebase",
-        "at": "2026-10-30T07:06:00Z",
-        "sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
-        "comment_id": 6517037255,
-        "status": "completed"
+        "agent": "Codex",
+        "ask": "Tier 0 exact-head review of App token action v3.3.0, security pin integrity",
+        "at": "2026-10-30T08:38:08.688Z",
+        "sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+        "comment_id": 6518644442,
+        "status": "awaiting native review"
       },
-      "asks_per_sha": 0,
+      "asks_per_sha": 1,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "exact-head required CI green; await available Codex review slot, no exact-head acceptance",
+      "queued": "await exact-head native Codex Tier 0 review; required CI green",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
       "updated_at": "2026-10-29T18:32:41Z",
@@ -2044,7 +2044,8 @@
       200
     ],
     "codex_prompted": [
-      173
+      173,
+      201
     ],
     "review_receipts": [
       83,
@@ -2052,6 +2053,9 @@
     ],
     "merged": [],
     "threads_resolved": [],
-    "production_hold_intact": true
+    "production_hold_intact": true,
+    "codex_receipts": [
+      173
+    ]
   }
 }
