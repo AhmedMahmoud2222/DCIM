@@ -1,0 +1,84 @@
+{
+  "run_id": "followup-20261030T112644Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T11:26:44Z",
+  "recorded_at": "2026-10-30T11:28:31.926Z",
+  "last_run_at_before": "2026-10-30T11:07:55.733Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "open_pr_count": 25,
+  "open_issue_count": 16,
+  "open_machine_state_prs": 0,
+  "merges": [],
+  "threads_resolved": [],
+  "comments_posted": [],
+  "review_requests": [],
+  "new_owner_answers": [],
+  "agent_replies_new": [],
+  "verified_actions": [
+    {
+      "type": "check_all_open_pr_threads",
+      "count": 25,
+      "result": "no new thread resolutions or verified fix evidence"
+    },
+    {
+      "type": "read_owner_decisions",
+      "issue": 220,
+      "result": "no new unmarked owner D/DX answers"
+    },
+    {
+      "type": "check_exact_head_CI",
+      "pr": 224,
+      "sha": "438ed1505d2b9ca3f3284fdc830cb12caf49f276",
+      "result": "frontend success; backend suite and Python 3.12, 3.13, 3.14 in_progress; 3 open Codex P2; exact-head review pending"
+    },
+    {
+      "type": "check_native_reviews",
+      "prs": [
+        172,
+        173,
+        200,
+        201,
+        224
+      ],
+      "result": "none qualifying; #172/#200 second ask <60 min; #173/#201 exhausted 3/3, DX13"
+    },
+    {
+      "type": "check_schedule",
+      "result": "FULL and FOLLOW-UP enabled"
+    },
+    {
+      "type": "verify_refresh_workflow",
+      "pr": 224,
+      "result": "owner-copied live v2 content matches proposed draft except header; still requires Codex and Jules review"
+    }
+  ],
+  "blocked": [
+    {
+      "pr": 224,
+      "gate": "backend CI and exact-head Tier 2 independent acceptance"
+    },
+    {
+      "prs": [
+        172,
+        200
+      ],
+      "gate": "native Codex review; next request only after 60 min"
+    },
+    {
+      "prs": [
+        173,
+        201
+      ],
+      "gate": "DX13 alternate-reviewer decision"
+    },
+    {
+      "issues": [
+        184,
+        185
+      ],
+      "gate": "DX12 isolated branch capability"
+    }
+  ],
+  "safety": "Migration 0057 production hold preserved; no production execution or deployment triggered",
+  "next": "FULL run rechecks backend; if green, request exact-head Codex #224. No merges until all gates."
+}
