@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T19:11:45.267Z",
-  "last_run_at": "2026-10-30T19:11:45.267Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T19:36:04.727Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T19:11:45.267Z",
+    "last_verified_at": "2026-10-30T19:36:04.727Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -100,11 +100,11 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30T19:05:59.964Z: #220 re-read, no new unmarked owner D/DX answers since #6526791660; DX18 new orchestrator decision awaiting owner.",
+    "T2": "FOLLOW-UP 2026-10-30T19:36:04.727Z: #220 re-read; no new unmarked owner D/DX answer since #6526791660; owner Jules summary on #224 is not an authorization decision.",
     "T3": "D5 #219 frozen; #228 final Codex review on 7b2eb31 added two P2, total 11 unresolved, DX17 3/3 cap STOP; root cause #6531389782; owner DX19 pending; no Claude/Codex further, Jules ineligible.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "DONE: workflow actor hardening remains pending DX6, exploitability unproven; main workflow SHA unchanged since last targeted review.",
-    "T6": "FULL 2026-10-30T19:05:59.964Z: #224 e8892327 current/required CI green, 4 P2 threads unresolved; second Codex ask #6530592913 returned generic clean PR-level receipt (no qualifying native review), third not before 2026-10-30T19:33:39Z; Jules not eligible."
+    "T6": "FOLLOW-UP 2026-10-30T19:36:04.727Z: #224 e8892327 CI green, four P2 threads; third @codex review by owner 19:19 returned generic receipt, no native review (3/3). Owner Jules summary insufficient (no session link/eight sections). DX13 owner review queued; no fourth ask."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -2026,7 +2026,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
-        "checked_at": "2026-10-30T19:05:59.964Z"
+        "checked_at": "2026-10-30T19:36:04.727Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
       "merge_state": "blocked: 4 unresolved review threads; current main",
@@ -2097,21 +2097,21 @@
       ],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "second exact-head native Tier 2 review; four P2 threads, exact allowlist, job concurrency, same-repo/base-main, concatenated JSON, token scope, CI trigger; A4 verdict line",
-        "at": "2026-10-30T18:33:39.760Z",
+        "ask": "owner unmarked third exact-head @codex review; generic clean PR-level receipt, no native review",
+        "at": "2026-10-30T19:19:20Z",
         "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
-        "comment_id": 6530592913,
-        "status": "terminal: second Codex ask yielded generic clean PR-level receipt #6530630557; no qualifying native review; 2/3 asks used"
+        "comment_id": 6531564896,
+        "status": "terminal generic receipt 6531582547; 3/3 exhausted"
       },
-      "asks_per_sha": 2,
+      "asks_per_sha": 3,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Four P2 threads open; no native exact-head Codex acceptance after 2/3 asks; third request no earlier than 2026-10-30T19:33:39Z; Jules after Codex",
+      "queued": "DX13 exact-head owner independent review required; 3/3 Codex asks generic receipts, four P2 threads unresolved. Owner Jules summary #6531493837 lacks session link and eight sections, posted before Codex acceptance; not qualifying. No fourth ask; no merge.",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T19:05:59.964Z",
-      "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
+      "last_state_verified_at": "2026-10-30T19:36:04.727Z",
+      "last_thread_verified_at": "2026-10-30T19:36:04.727Z",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
@@ -2166,7 +2166,14 @@
         "active_workflow_matches_proposed_draft": true,
         "review_acceptance_carryover": false
       },
-      "last_ci_verified_at": "2026-10-30T18:34:18.869Z"
+      "last_ci_verified_at": "2026-10-30T18:34:18.869Z",
+      "jules_review": {
+        "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+        "comment_id": 6531493837,
+        "at": "2026-10-30T19:15:45Z",
+        "status": "NOT_ACCEPTED",
+        "reason": "Owner-posted summary missing Jules session link and all eight mandatory sections; Codex preconditions unmet"
+      }
     },
     "227": {
       "title": "Orchestrator state",
@@ -2229,8 +2236,8 @@
       "open_thread_count": 11,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T19:11:20.387Z",
-      "last_thread_verified_at": "2026-10-30T19:11:20.387Z",
+      "last_state_verified_at": "2026-10-30T19:36:04.727Z",
+      "last_thread_verified_at": "2026-10-30T19:36:04.727Z",
       "last_ci_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
       "merge_state": "blocked: 11 unresolved Codex threads; DX17 cap reached; owner DX19 pending",
       "tier_reason": "docs-only one file; owner D5 separately mandates Codex and Jules acceptance",
@@ -2512,10 +2519,10 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "missing (aggregate not yet started; backend-suite running)",
+        "backend": "pending (backend-suite in progress; aggregate backend absent)",
         "frontend": "success",
         "exact_head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "checked_at": "2026-10-30T19:11:45.267Z"
+        "checked_at": "2026-10-30T19:36:04.727Z"
       },
       "merge_state": "draft: backend in progress; exact-head independent review absent",
       "head_verification": {
@@ -2533,10 +2540,10 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Draft; frontend green, backend aggregate missing while backend suite runs on exact head; independent Codex review, deterministic/repeated-run sensitivity and readiness missing",
+      "queued": "Draft; exact-head backend suite in progress at 19:34 UTC; no independent Codex review or readiness, do not merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T19:11:45.267Z",
+      "last_state_verified_at": "2026-10-30T19:36:04.727Z",
       "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
@@ -2553,10 +2560,10 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "missing (aggregate not yet started; backend-suite running)",
+        "backend": "pending (backend-suite in progress; aggregate backend absent)",
         "frontend": "success",
         "exact_head_sha": "8669217825beaf09451e22644336258747f20c16",
-        "checked_at": "2026-10-30T19:11:45.267Z"
+        "checked_at": "2026-10-30T19:36:04.727Z"
       },
       "merge_state": "draft: exact-head CI queued; independent review absent",
       "head_verification": {
@@ -2574,10 +2581,10 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Draft; frontend green, backend aggregate missing while backend suite runs on exact head; independent Codex review, deterministic/repeated-run sensitivity and readiness missing",
+      "queued": "Draft; exact-head backend suite in progress at 19:34 UTC; no independent Codex review or readiness, do not merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T19:11:45.267Z",
+      "last_state_verified_at": "2026-10-30T19:36:04.727Z",
       "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
       "source_patch_comment_id": 6531197158,
       "source_issue": 225,
@@ -2749,8 +2756,8 @@
         228
       ],
       "acceptance_on_main": null,
-      "queued": "Decide now DX19 #228/#219 spec convergence, DX13 #200 and #217; DX18 #226 open. #228 stopped at DX17 cap with 11 threads. #229/#230 Draft CI pending",
-      "last_state_verified_at": "2026-10-30T19:05:59.964Z",
+      "queued": "Decide now DX19 #228, DX13 #224, DX13 #200; DX13 #217 lower. #224 third Codex receipt and incomplete Jules report; 4 P2 threads. #229/#230 Draft backend CI pending.",
+      "last_state_verified_at": "2026-10-30T19:36:04.727Z",
       "last_prompt": {
         "agent": "Claude",
         "ask": "D5 separate controller reliability spec, full one-file docs patch via DX12",
@@ -2935,7 +2942,19 @@
     "open_issues": 16,
     "open_threads": 48
   },
-  "last_run_summary": "FOLLOW-UP 2026-10-30T18:34:18.869Z: 23 product PRs, 16 issues, 48 open threads; no merges or resolutions. #224 second exact-head Codex request 2/3; #223 main Python3.13 rerun and aggregate backend green, investigation open; #200 owner DX13, #228 owner refresh remain. Migration 0057 hold intact.",
+  "last_run_summary": {
+    "run_id": "follow-20261030T1934Z",
+    "merged": [],
+    "resolved_threads": [],
+    "actions": [
+      "read 25 open PRs, 16 issues, 52 unresolved review threads",
+      "verified #224 active workflow at e8892327",
+      "observed owner third Codex receipt and insufficient Jules summary #224",
+      "updated #220 decision queue",
+      "checked exact-head #229/#230 backend suites pending"
+    ],
+    "production_migration_0057": "HOLD"
+  },
   "last_followup_delta": "#224 second Codex native review requested on e8892327 (2/3) with 4 open P2 threads; #223 main CI run 41083732966 attempt 2 now green after first-attempt intermittent authority-lock timeout; issue remains open and Claude patch unapplied. No new heads, owner decisions, merges or resolutions. 23 PRs, 16 issues, 48 open threads; six ruleset bypass actors pull_request; both schedules enabled; Migration 0057 hold intact.",
   "last_full_delta": {
     "at": "2026-10-30T17:58:22.258Z",
@@ -3031,5 +3050,10 @@
       230
     ],
     "signatures_required": false
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true,
+    "checked_at": "2026-10-30T19:36:04.727Z"
   }
 }
