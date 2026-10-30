@@ -1,0 +1,140 @@
+{
+  "run_id": "full-20261030T140419658Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T14:04:19.658Z",
+  "recorded_at": "2026-10-30T14:08:55.228Z",
+  "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_modes": [
+      {
+        "id": 842251,
+        "mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "mode": "pull_request"
+      }
+    ]
+  },
+  "inventory": {
+    "open_prs": 24,
+    "open_issues": 16,
+    "unresolved_threads": 41,
+    "orchestrator_state_prs": 0
+  },
+  "verified_changes": [
+    {
+      "pr": 224,
+      "head": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+      "backend": "success",
+      "frontend": "success",
+      "behind_main": 1,
+      "open_threads": 4,
+      "review": "Codex/Jules not accepted",
+      "active_draft_blob_identical": true
+    },
+    {
+      "pr": 172,
+      "head": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
+      "backend": "success",
+      "frontend": "success",
+      "behind_main": 0,
+      "open_findings": [
+        "CI-172-PY314-20261030"
+      ],
+      "owner_DX13": "old SHA stale"
+    },
+    {
+      "pr": 201,
+      "head": "389d6ecda15c45d3d944ae63a427a491356de38a",
+      "backend": "in_progress",
+      "frontend": "success",
+      "owner_DX13": "missing"
+    },
+    {
+      "pr": 200,
+      "head": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
+      "backend": "in_progress",
+      "frontend": "success",
+      "open_findings": [
+        "CI-200-PY314-20261030"
+      ]
+    },
+    {
+      "pr": 87,
+      "behind_main": 155,
+      "changed_files": 0,
+      "patch_files": 0,
+      "disposition": "D4 evidence only; no closure"
+    },
+    {
+      "pr": 117,
+      "behind_main": 140,
+      "merge_state": "dirty",
+      "changed_files": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/deploy-tools-test.yml"
+      ],
+      "unique_comment_only_hunks": true,
+      "disposition": "D4 evidence only; no closure"
+    }
+  ],
+  "standing_tasks": {
+    "T1": "previously completed, no repeat",
+    "T2": "no new unmarked owner decisions",
+    "T3": "D5(a) design-only completed; no further cycles",
+    "T4": "one-time request complete; no branch",
+    "T5": "completed; no relevant main workflow changes",
+    "T6": "tracked; awaiting current branch, independent reviews"
+  },
+  "stale": {
+    "issues_184_185": "OpenCode follow-up 2026-10-30T13:34Z; less than 1h since latest ask; 72h owner deadline 2026-11-02T11:45:39Z"
+  },
+  "actions": {
+    "merged": [],
+    "threads_resolved": [],
+    "agent_prompts": [],
+    "new_prs": [],
+    "production_actions": [],
+    "state_files_updated": [
+      "state/lease.json",
+      "state/ledger.json"
+    ],
+    "human_ledger_comment": "pending"
+  },
+  "blocked": [
+    "DX13 current-head owner approvals #201/#172/#200",
+    "#172 open CI finding #225",
+    "#200 open CI finding #226",
+    "#224 behind and 4 Codex P2 threads; Codex and Jules missing",
+    "#216 behind, Tier2 independent acceptance missing",
+    "#217 behind, 5 open review threads",
+    "#219 frozen, 12 open threads"
+  ],
+  "safety": {
+    "migration_0057_hold_intact": true,
+    "production_execution_requested": false,
+    "production_execution_scheduled": false,
+    "production_execution_approved": false,
+    "bypass_used": false,
+    "auto_merge_used": false
+  }
+}
