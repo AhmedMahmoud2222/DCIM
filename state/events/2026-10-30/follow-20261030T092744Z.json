@@ -1,0 +1,57 @@
+{
+  "run_id": "follow-20261030T092744Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T09:27:44Z",
+  "completed_at": "2026-10-30T09:31:11.081Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "ruleset_hash": "fnv1a64:246f1cc05c72e8a4",
+  "open_prs": 25,
+  "open_issues": 15,
+  "unresolved_review_threads": 38,
+  "actions": [
+    {
+      "type": "created_issue",
+      "number": 225,
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/225",
+      "reason": "#172 same-SHA Python 3.14 flaky migration advisory-lock test; failed 1st run, green rerun"
+    },
+    {
+      "type": "comment",
+      "pr": 172,
+      "id": 6519511392,
+      "agent": "Codex",
+      "reason": "native exact-HEAD review and flaky test disposition"
+    },
+    {
+      "type": "state_update",
+      "path": "state/ledger.json",
+      "commit": "bbe941850d5a8526811a3465710955c0ee038b37"
+    }
+  ],
+  "ci": {
+    "172": {
+      "backend": "success",
+      "frontend": "success",
+      "rerun": "Python 3.14 success, 3646 passed, 6 skipped"
+    },
+    "200": {
+      "backend": "pending rerun",
+      "frontend": "success"
+    }
+  },
+  "decisions": {
+    "DX6": "open",
+    "DX7": "open",
+    "D5": "open"
+  },
+  "threads_resolved": [],
+  "merged": [],
+  "holds": {
+    "migration_0057": "intact; no production action"
+  },
+  "schedule_health": {
+    "full": true,
+    "followup": true
+  },
+  "notes": "No unmarked owner D/DX answers. All six ruleset bypass actors pull_request. #224 three open P2 workflow findings; no workflow edit. #219 D5 hold. #83 P2 owner correction, no fix. #173/#201 Codex native reviews missing."
+}
