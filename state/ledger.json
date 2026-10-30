@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T17:03:43.512Z",
-  "last_run_at": "2026-10-30T17:03:43.512Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T17:28:01.486Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -1273,10 +1273,10 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
-        "checked_at": "2026-10-30T17:02:20.085Z"
+        "checked_at": "2026-10-30T17:28:01.486Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "BLOCKED: backend pending, owner DX13 exact-head approval absent",
+      "merge_state": "BLOCKED: exact-head required CI green, zero threads; owner DX13 approval missing (optional Claude Code Review infrastructure failure)",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1313,9 +1313,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T17:02:20.085Z",
+      "last_state_verified_at": "2026-10-30T17:28:01.486Z",
       "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
-      "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T17:28:01.486Z",
       "review_carryover": {
         "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
         "new_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
@@ -2003,10 +2003,10 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
-        "checked_at": "2026-10-30T17:02:20.085Z"
+        "checked_at": "2026-10-30T17:28:01.486Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
-      "merge_state": "BLOCKED: exact-head backend pending, 4 open P2 threads, Codex and Jules acceptance missing",
+      "merge_state": "BLOCKED: exact-head required CI green; four unresolved P2 threads; native Codex and Jules Tier 2 acceptance missing",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -2086,7 +2086,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T17:03:43.512Z",
+      "last_state_verified_at": "2026-10-30T17:28:01.486Z",
       "last_thread_verified_at": "2026-10-30T17:02:20.085Z",
       "previous_prompt": {
         "agent": "Codex",
@@ -2141,7 +2141,8 @@
         ],
         "active_workflow_matches_proposed_draft": true,
         "review_acceptance_carryover": false
-      }
+      },
+      "last_ci_verified_at": "2026-10-30T17:28:01.486Z"
     },
     "227": {
       "title": "Orchestrator state",
@@ -2561,21 +2562,36 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T17:03:43.512Z",
-      "owner": "Claude report #6528537172: root cause unproven, lazy DB connection/timing hypothesis; one scoped exact-context patch correction #6528569259 awaiting reply",
+      "last_activity_at": "2026-10-30T17:28:01.486Z",
+      "owner": "Claude delivered complete numbered one-file DX12 patch #6528574316; textual applicability verified, root cause and SQL semantics unproven",
       "linked_prs": [
         219
       ],
       "acceptance_on_main": "VERIFIED main@613cb935: CI run 41083732966 Python 3.13 job 124159375548 same TimeoutError; backend required failed; failed-jobs rerun attempt 2 in progress; issue remains open",
-      "queued": "main backend rerun attempt2 in progress; Claude proposed illustrative unnumbered patch NOT applied; await complete DX12 patch and independent evidence",
-      "last_state_verified_at": "2026-10-30T17:02:20.085Z",
+      "queued": "main backend failed-jobs rerun attempt 2 Python 3.13 in progress; Claude one-file patch exact-context applicable, NOT applied; wait for rerun and independent root-cause verification",
+      "last_state_verified_at": "2026-10-30T17:28:01.486Z",
       "last_prompt": {
         "agent": "Claude",
         "ask": "one scoped completion correction: exact-context numbered one-file patch or blocker, verify pg_locks predicate; no code/test/PR actions",
         "at": "2026-10-30T17:03:43.512Z",
         "sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
         "comment_id": 6528569259,
-        "status": "awaiting patch-only response"
+        "status": "terminal: complete numbered patch #6528574316 delivered; exact-context verified; no further ask"
+      },
+      "patch_verification": {
+        "source_comment_id": 6528574316,
+        "verification_comment_id": 6529064024,
+        "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+        "file": "backend/tests/integration/test_pr67_authority_lock_protocol.py",
+        "blob_sha": "84c8ac1e6c6e57136a35fd053568f1c22a971eb5",
+        "hunks": 2,
+        "old_new_counts_valid": true,
+        "old_side_context_exact": true,
+        "applied": false,
+        "tests_run": false,
+        "root_cause_established": false,
+        "pg_locks_sql_verified": false,
+        "checked_at": "2026-10-30T17:28:01.486Z"
       }
     },
     "225": {
@@ -2618,50 +2634,21 @@
   ],
   "last_actions": [
     {
-      "type": "codex_review_request",
-      "pr": 224,
-      "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
-      "comment_id": 6528502356
-    },
-    {
-      "type": "main_ci_failure_verified",
-      "issue": 223,
-      "run": 41083732966,
-      "job": 124159375548,
-      "sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7"
-    },
-    {
-      "type": "main_ci_failed_jobs_rerun_requested",
-      "run": 41083732966,
-      "attempt": 2
-    },
-    {
       "type": "issue_comment",
       "issue": 223,
-      "comment_id": 6528526353
+      "comment_id": 6529064024,
+      "summary": "verified Claude one-file unified patch exact textual applicability; NOT applied"
     },
     {
-      "type": "claude_issue_request",
-      "issue": 223,
-      "comment_id": 6528531356
+      "type": "main_ci_pending",
+      "run": 41083732966,
+      "attempt": 2,
+      "job": 124198642857
     },
     {
-      "type": "codex_generic_receipt",
-      "pr": 224,
-      "comment_id": 6528544286,
-      "qualifies": false
-    },
-    {
-      "type": "claude_read_only_report",
-      "issue": 223,
-      "comment_id": 6528537172,
-      "root_cause": "unproven",
-      "patch": "illustrative not applicable"
-    },
-    {
-      "type": "claude_completion_correction",
-      "issue": 223,
-      "comment_id": 6528569259
+      "type": "ruleset_read",
+      "id": 23651422,
+      "bypass": "six actors pull_request"
     }
   ],
   "priority_snapshot": {
@@ -2696,27 +2683,24 @@
     "open_threads": 48
   },
   "last_run_summary": "FULL: 23 open PRs, 16 issues, 48 open threads; #224 Codex generic receipt not acceptance; main backend #223 failed, rerun pending; Claude patch correction pending; #200 green needs owner DX13; no merge or resolution; Migration 0057 hold intact.",
-  "last_followup_delta": {
-    "run_id": "followup-20261030T162527080Z",
-    "at": "2026-10-30T16:28:13.831Z",
-    "changed_pr_heads": [],
-    "new_owner_decisions": [],
-    "new_findings": [],
-    "merges": [],
-    "resolved_threads": [],
-    "pending": "#200/#224 required backend; #228 owner branch update and Codex/Jules; #184/#185 OpenCode D6"
-  },
+  "last_followup_delta": "No new PR head, owner decision, merge or thread resolution since prior FULL. #223 Claude numbered patch verified to match main file in two hunks, but not applied; Python3.13 main rerun still in progress. #200 and #224 exact-head backend/frontend green, review/owner gates still blocking. #184/#185 stalled OpenCode, 72-hour owner deadline preserved. Six bypass actors pull_request. Migration 0057 production hold intact.",
   "last_full_delta": "No merges or thread resolutions. #224 exact-head backend/frontend now green; native Codex Tier 2 review requested. New main@613cb935 Python3.13 authority-lock timeout failed backend; linked #223, requested one failed-job rerun (attempt 2 in progress), asked Claude for DX12 patch-only root-cause analysis. #200 exact-head CI green but owner DX13 acceptance missing. #228 remains 1 commit behind with 7 open threads; owner refresh needed. All six ruleset bypass actors pull_request; production hold intact. Codex #224 responded with generic clean receipt, NOT native acceptance; 1/3 asks consumed, no immediate repeat. Claude #223 supplied read-only hypothesis and illustrative inapplicable patch; one exact-context correction requested, no code applied.",
   "last_followup_summary": {
-    "run_id": "followup-20261030T162527080Z",
-    "no_merges": true,
+    "run_id": "followup-20261030T172620128Z",
+    "at": "2026-10-30T17:28:01.486Z",
+    "merged": 0,
     "threads_resolved": 0,
     "open_threads": 48,
     "actions": [
-      "Compacted #220 decision comment to 7212 chars; full previous text archived in append-only event"
+      "#223 exact-context patch verification comment 6529064024"
     ],
-    "production_hold": "intact",
-    "checks": "#200/#224 backend running; #228 backend/frontend passed, one behind"
+    "blocked": [
+      "#200 DX13 owner approval",
+      "#224 Codex native and Jules Tier2 acceptance, 4 threads",
+      "#228 owner refresh and 7 threads",
+      "#223 main Python3.13 rerun pending"
+    ],
+    "production_hold": "intact"
   },
   "last_full_event_path": "state/events/2026-10-30/full-20261030T165859172Z.json",
   "run_notes": [
@@ -2731,6 +2715,12 @@
       "at": "2026-10-30T17:02:20.085Z",
       "mode": "FULL",
       "summary": "No merges or thread resolutions. #224 exact-head backend/frontend now green; native Codex Tier 2 review requested. New main@613cb935 Python3.13 authority-lock timeout failed backend; linked #223, requested one failed-job rerun (attempt 2 in progress), asked Claude for DX12 patch-only root-cause analysis. #200 exact-head CI green but owner DX13 acceptance missing. #228 remains 1 commit behind with 7 open threads; owner refresh needed. All six ruleset bypass actors pull_request; production hold intact."
+    },
+    {
+      "run_id": "followup-20261030T172620128Z",
+      "at": "2026-10-30T17:28:01.486Z",
+      "mode": "FOLLOW-UP",
+      "summary": "No merges/new PR heads; #223 patch textual applicability verified, no implementation; main CI rerun pending; review and owner gates unchanged"
     }
   ],
   "last_full_event_supplements": [
