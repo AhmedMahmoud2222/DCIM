@@ -1,0 +1,55 @@
+{
+  "run_id": "follow-20261030T083216Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T08:32:16.000Z",
+  "recorded_at": "2026-10-30T08:37:26.979Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "actions": [
+    {
+      "type": "lease_acquired",
+      "sha": "0703be106af6f76da0ac8f6f03cef94a123721e0"
+    },
+    {
+      "type": "new_pr_discovered",
+      "pr": 224,
+      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "tier": 2,
+      "merge": false
+    },
+    {
+      "type": "review_request",
+      "pr": 173,
+      "agent": "Codex",
+      "sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+      "comment_id": 6518595766
+    },
+    {
+      "type": "ci_failed_job_rerun",
+      "pr": 172,
+      "run_id": 41018069155,
+      "attempt": 2
+    },
+    {
+      "type": "ci_failed_job_rerun",
+      "pr": 200,
+      "run_id": 41018055503,
+      "attempt": 2
+    },
+    {
+      "type": "decision_queue_updated",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "decision": "DX6",
+      "detail": "new owner-authored Tier 2 PR #224 not on main, owner route unresolved"
+    },
+    {
+      "type": "ledger_updated",
+      "sha": "19c79daaac2facbe6e2a60bfaa386e6e299431c4"
+    }
+  ],
+  "merge_count": 0,
+  "thread_resolution_count": 0,
+  "production_migration_0057": "hold intact; no execution or scheduling",
+  "new_owner_decisions": [],
+  "open_threads": 34
+}
