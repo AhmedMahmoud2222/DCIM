@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T05:59:03.006Z",
-  "last_run_at": "2026-10-30T05:59:03.006Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T06:27:50.177Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -77,7 +77,7 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: reconfirmed main@731c2084 pre-parse depth guard and 12/12 successful jobs run 40991452249; evidence on #218, no close or activation",
-    "T2": "No new unmarked owner D/DX answers on #220 through 2026-10-30T05:59:03.006Z",
+    "T2": "No new unmarked owner D/DX answers on #220 through 2026-10-30T06:27:50.177Z",
     "T3": "D5 unanswered; #219 10 threads preserved, no fix/review cycles",
     "T4": "One-time ask completed as capability denial; DX8 owner branch/Draft PR route pending, no repeat"
   },
@@ -122,7 +122,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
       "updated_at": "2026-10-23T15:51:04Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "87": {
       "title": "docs(review): independent review of PRs #80, #81, and #84",
@@ -159,7 +160,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
       "updated_at": "2026-10-23T15:51:02Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "113": {
       "title": "feat: calibrated spatial digital twin and CAD/Visio import (#104)",
@@ -198,7 +200,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
       "updated_at": "2026-10-29T15:04:59Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "115": {
       "title": "feat: validated CFD and calibrated thermal analysis (#106)",
@@ -343,7 +346,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
       "updated_at": "2026-10-29T15:04:46Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "116": {
       "title": "docs: M1 architecture audit and read-only AI foundation for #107",
@@ -382,7 +386,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d05ab33aca5893e19b99d809f2922922da180440",
       "updated_at": "2026-10-29T15:04:51Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "117": {
       "title": "docs(ci): correct versions beside immutable action pins",
@@ -419,7 +424,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
       "updated_at": "2026-10-23T15:51:25Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "118": {
       "title": "Full Independent System Review Report",
@@ -456,7 +462,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
       "updated_at": "2026-10-23T15:50:58Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "125": {
       "title": "Verify PR 111 task status and deliver detailed report",
@@ -493,7 +500,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
       "updated_at": "2026-10-23T15:50:56Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "146": {
       "title": "Fix G6 migration test transaction wrapping for CI remediation",
@@ -594,8 +602,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z",
-      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "158": {
       "title": "docs(security): verify SEC-RBAC-59-02 (#64) with ACCEPTED verdict",
@@ -632,7 +641,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
       "updated_at": "2026-10-23T15:50:53Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "161": {
       "title": "docs(security): independent acceptance report for Issue #65 (SEC-RBAC-59-03)",
@@ -669,7 +679,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
       "updated_at": "2026-10-23T15:50:51Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "171": {
       "title": "docs(security): independent security review for SEC-ARCH-02 (PR 169 / Issue #163)",
@@ -715,8 +726,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
       "updated_at": "2026-10-23T15:50:49Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z",
-      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "172": {
       "title": "chore(deps): bump actions/upload-artifact from 7.0.1 to 7.0.2",
@@ -756,7 +768,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "173": {
       "title": "chore(deps): bump actions/setup-node from 7.0.0 to 7.1.0",
@@ -796,7 +809,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
       "updated_at": "2026-10-29T17:02:48Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "179": {
       "title": "test(auth): deterministic JWT test clock and authenticated-client reliability (#176)",
@@ -850,7 +864,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
       "updated_at": "2026-10-29T15:04:31Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "181": {
       "title": "ci: G7 mutation validation workflow",
@@ -898,8 +913,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b17c37a270d57d60962d2261271666aa934c805b",
       "updated_at": "2026-10-29T15:05:02Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z",
-      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "183": {
       "title": "test: require floor-standing equipment in the all-racks collection total",
@@ -938,7 +954,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
       "updated_at": "2026-10-29T15:05:05Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "188": {
       "title": "docs(opencode): record the PR #180 acceptance, merge and activation status (v6.3)",
@@ -975,7 +992,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
       "updated_at": "2026-10-24T21:56:39Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "200": {
       "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
@@ -993,7 +1011,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "checked_at": "2026-10-30T06:27:50.177Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1015,7 +1033,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "201": {
       "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
@@ -1033,7 +1053,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "checked_at": "2026-10-30T06:27:50.177Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1055,7 +1075,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "207": {
       "title": "feat(ci): dedicated @claude PR-comment workflow, isolated from OpenCode (Draft)",
@@ -1070,7 +1092,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "checked_at": "2026-10-30T06:27:50.177Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1172,7 +1194,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "216": {
       "title": "fix(deployment): fail-closed migration 0057 production release gate (#214)",
@@ -1187,7 +1211,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "checked_at": "2026-10-30T06:27:50.177Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1209,7 +1233,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
       "updated_at": "2026-10-29T19:01:54Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "217": {
       "title": "test(pdu-catalog): close Issue #150 acceptance evidence gaps",
@@ -1224,7 +1250,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
-        "checked_at": "2026-10-30T05:59:03.006Z"
+        "checked_at": "2026-10-30T06:27:50.177Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1313,7 +1339,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
       "updated_at": "2026-10-29T20:06:34Z",
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "219": {
       "title": "fix: P1 collaboration controller reliability remediation (Draft)",
@@ -1328,7 +1356,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-        "checked_at": "2026-10-30T05:59:03.006Z",
+        "checked_at": "2026-10-30T06:27:50.177Z",
         "diagnostic": "attempt 1 Python 3.13 TimeoutError; single attempt 2 passed, all required checks green"
       },
       "optional_ci": "not rechecked this follow-up",
@@ -1504,7 +1532,9 @@
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
       },
-      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     }
   },
   "issues": {
@@ -1589,7 +1619,8 @@
       "linked_prs": [],
       "acceptance_on_main": null,
       "queued": "D6 owner decision; OpenCode inactive; A1 NO",
-      "stale_level": "stalled"
+      "stale_level": "stalled",
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "185": {
       "title": "SEC-175-02: Restore portable preflight cleanup negative regression coverage (LOW)",
@@ -1601,7 +1632,8 @@
       "linked_prs": [],
       "acceptance_on_main": null,
       "queued": "D6 owner decision; OpenCode inactive; A1 NO",
-      "stale_level": "stalled"
+      "stale_level": "stalled",
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "195": {
       "title": "Updated Architecture proposal",
@@ -1632,7 +1664,8 @@
         221
       ],
       "acceptance_on_main": "Verified pre-json.loads depth guard (64), linear scan, adversarial tests on main@731c2084; post-merge CI run 40991452249 12/12 success; T1 evidence comment #6515440013; issue OPEN pending owner closure; activation prohibited",
-      "queued": null
+      "queued": null,
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "220": {
       "title": "DCIM Orchestrator Ledger",
@@ -1643,7 +1676,8 @@
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "DX3, DX5, DX6, DX7, DX8 owner decisions"
+      "queued": "DX3, DX5, DX6, DX7, DX8 owner decisions",
+      "last_state_verified_at": "2026-10-30T06:27:50.177Z"
     }
   },
   "new_findings": [
@@ -1730,5 +1764,22 @@
       "codex_open": 0
     },
     "refresh_workflow_present": false
+  },
+  "last_run_summary": {
+    "run_id": "follow-20261030-0626Z-turn4",
+    "at": "2026-10-30T06:27:50.177Z",
+    "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+    "open_prs": 24,
+    "open_issues": 13,
+    "open_threads": 34,
+    "pr_changes": 0,
+    "owner_decisions": 0,
+    "ci_transitions": 0,
+    "merged": 0,
+    "resolved": 0,
+    "comments_posted": 0,
+    "agent_prompts": 0,
+    "checks": "24 PR thread sets rechecked; 6 priority exact-head required CI states rechecked; owner answers and schedules rechecked",
+    "production_hold_intact": true
   }
 }
