@@ -1,0 +1,89 @@
+{
+  "run_id": "followup-20261030T142520Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T14:25:20Z",
+  "recorded_at": "2026-10-30T14:29:57.379Z",
+  "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+  "new_owner_decisions": [
+    {
+      "comment_id": 6524910028,
+      "D5": "spec first via DX12; Codex and Jules review separate docs PR before #219 implementation",
+      "DX13": "prior owner Dependabot approval carries on identical patch rebase plus green required CI"
+    }
+  ],
+  "actions": [
+    {
+      "type": "issue_comment",
+      "issue": 220,
+      "id": 6525176990,
+      "agent": "Claude",
+      "purpose": "D5 patch-only controller spec"
+    },
+    {
+      "type": "decision_queue_update",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "preserved_historical_D1_D15": true
+    },
+    {
+      "type": "ledger_update",
+      "branch": "orchestrator-state",
+      "sha": "b043e7075e2b95758ba9932d1beba6217237a55b"
+    },
+    {
+      "type": "merge_attempt",
+      "pr": 201,
+      "attempts": 2,
+      "tool_result": "internal error both attempts",
+      "github_state_after": "open",
+      "merge_success": false
+    }
+  ],
+  "verification": {
+    "ruleset": 23651422,
+    "bypass_modes": [
+      "pull_request",
+      "pull_request",
+      "pull_request",
+      "pull_request",
+      "pull_request",
+      "pull_request"
+    ],
+    "required_checks": {
+      "172": "backend/frontend success",
+      "200": "backend/frontend success",
+      "201": "backend/frontend success",
+      "224": "backend/frontend success"
+    },
+    "patch_identity": {
+      "172": {
+        "old": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+        "new": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
+        "files": 11,
+        "identical": true
+      },
+      "201": {
+        "old": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+        "new": "389d6ecda15c45d3d944ae63a427a491356de38a",
+        "files": 2,
+        "identical": true
+      }
+    },
+    "open_threads_total": 41,
+    "review_threads_resolved": 0
+  },
+  "merge_count": 0,
+  "production_migration_0057_hold_intact": true,
+  "production_actions": [],
+  "blocked": {
+    "172": "finding #225 open",
+    "200": "owner DX13 approval absent and finding #226 open",
+    "201": "connector merge failure; optional claude-review infrastructure failure; mergeable_state unstable",
+    "219": "spec-first design freeze",
+    "224": "behind main, 4 P2 threads, no exact-head Codex/Jules"
+  },
+  "waiting": {
+    "Claude": "D5 spec patch request #6525176990; receipt #6525183319",
+    "OpenCode": "#184 and #185; D6 owner deadline 2026-11-02T11:45:39Z"
+  }
+}
