@@ -2,6 +2,7 @@
   "run_id": "full-20261030T120218775Z",
   "mode": "FULL",
   "started_at": "2026-10-30T12:02:18.775Z",
-  "expires_at": "2026-10-30T12:27:18.775Z",
-  "status": "active"
+  "expires_at": "2026-10-30T12:12:31.668Z",
+  "status": "released",
+  "released_at": "2026-10-30T12:12:31.668Z"
 }
