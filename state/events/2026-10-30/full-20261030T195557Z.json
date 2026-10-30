@@ -1,0 +1,175 @@
+{
+  "run_id": "full-20261030T195557Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T19:55:57.385Z",
+  "recorded_at": "2026-10-30T19:59:35.347Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_actors": [
+      {
+        "actor_id": 842251,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "actor_id": 946600,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "actor_id": 1144995,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "actor_id": 1236702,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "actor_id": 4229212,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "actor_id": 285010264,
+        "bypass_mode": "pull_request"
+      }
+    ],
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "thread_resolution": true
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "inventory": {
+    "open_prs": 25,
+    "open_issues": 16,
+    "unresolved_threads": 52,
+    "open_state_branch_prs": 0
+  },
+  "merge": [],
+  "thread_resolutions": [],
+  "comments_posted": [
+    {
+      "pr": 200,
+      "id": 6532274260,
+      "at": "2026-10-30T19:58:06.342Z",
+      "sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
+      "agent": "Codex",
+      "ask": "native exact-head Tier1 review, verify pinned action and compatibility",
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/200#issuecomment-6532274260"
+    },
+    {
+      "pr": 230,
+      "id": 6532275138,
+      "at": "2026-10-30T19:58:08.955Z",
+      "sha": "8669217825beaf09451e22644336258747f20c16",
+      "agent": "Codex",
+      "ask": "native exact-head Tier1 test-only advisory-lock review",
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/230#issuecomment-6532275138"
+    }
+  ],
+  "ci": [
+    {
+      "pr": 200,
+      "sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
+      "backend": "success",
+      "frontend": "success",
+      "optional_failure": "claude-review known bot-actor rejection"
+    },
+    {
+      "pr": 230,
+      "sha": "8669217825beaf09451e22644336258747f20c16",
+      "backend": "success",
+      "frontend": "success"
+    },
+    {
+      "pr": 229,
+      "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "backend": "pending (Python 3.12/3.14 suites running)",
+      "frontend": "success"
+    },
+    {
+      "pr": 224,
+      "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+      "backend": "success",
+      "frontend": "success",
+      "open_threads": 4
+    }
+  ],
+  "upstream_pin_verification": {
+    "repository": "actions/download-artifact",
+    "old_tag": "v4.3.0",
+    "old_sha": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "new_tag": "v8.0.2",
+    "new_sha": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+    "verified_by": "GitHub git/ref/tags API"
+  },
+  "blocked": [
+    {
+      "pr": 224,
+      "gate": "4 unresolved P2, 3 generic Codex receipts; owner DX13 and qualifying eight-section Jules review pending"
+    },
+    {
+      "pr": 228,
+      "gate": "DX17 cap 3/3, 11 open threads, owner DX19"
+    },
+    {
+      "pr": 219,
+      "gate": "D5 frozen until spec accepted, 12 threads"
+    },
+    {
+      "pr": 217,
+      "gate": "behind main, five open threads, exact-head independent acceptance missing"
+    },
+    {
+      "pr": 216,
+      "gate": "behind main, Tier2 Codex/Jules acceptance missing"
+    },
+    {
+      "pr": 230,
+      "gate": "Draft and independent review pending"
+    },
+    {
+      "pr": 229,
+      "gate": "Draft, required backend pending"
+    },
+    {
+      "pr": 200,
+      "gate": "native Codex independent review pending"
+    }
+  ],
+  "decisions_pending": [
+    "DX19 #228/#219",
+    "DX13 #224",
+    "DX18 #226",
+    "DX13 fallback #200 if Codex fails"
+  ],
+  "standing_tasks": {
+    "T1": "previously completed; no reactivation",
+    "T2": "no new unmarked owner D/DX answer",
+    "T3": "#219 frozen; #228 DX17 cap",
+    "T4": "previously completed, owner-merge-only",
+    "T5": "previously completed; active claude.yml hardening unwired",
+    "T6": "#224 blocked, no Jules kit eligible"
+  },
+  "production_safety": {
+    "issue": 214,
+    "migration": "0057",
+    "hold": "production execution prohibited until representative staging qualification and written owner and DBA approval",
+    "triggered": false,
+    "scheduled": false,
+    "approved": false
+  },
+  "write_errors": [],
+  "read_errors": [
+    {
+      "tool": "mcp__GitHub__fetch",
+      "url": "https://api.github.com/repos/AhmedMahmoud2222/DCIM/contents/.github/workflows/refresh-branch.yml?ref=main",
+      "error": "404 Not Found (expected: workflow not on main)"
+    }
+  ]
+}
