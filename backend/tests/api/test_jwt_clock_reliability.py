@@ -30,6 +30,28 @@ def _bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _tamper_signature(token: str) -> str:
+    """Corrupt the first signature character, which carries 6 significant bits.
+
+    The final base64url character of an HS256 signature carries unused padding bits, so
+    changing it can leave the decoded signature bytes identical (and the token valid).
+    """
+    token = token.strip()
+    head, signature = token.rsplit(".", 1)
+    flipped = "B" if signature[0] == "A" else "A"
+    tampered = f"{head}.{flipped}{signature[1:]}"
+    assert tampered != token
+    return tampered
+
+
+def test_tamper_signature_always_changes_signature_bytes():
+    settings = get_settings()
+    for subject in ("user-1", "user-2", "user-3", "user-4"):
+        token, _, _ = create_token(subject=subject, token_type="access")
+        with pytest.raises(jwt.InvalidSignatureError):
+            jwt.decode(_tamper_signature(token), settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+
+
 def test_production_token_policy_is_unchanged():
     assert get_settings().access_token_expire_minutes == 15
 
@@ -85,7 +107,7 @@ async def test_session_does_not_hide_a_401_for_an_unexpired_token(client, token_
     session = await token_session(clock=jwt_clock)
     headers = await session.headers()
     await client.post("/api/v1/auth/logout", headers=headers)  # no-op for access token; token stays unexpired
-    tampered = {"Authorization": headers["Authorization"][:-1] + ("A" if headers["Authorization"][-1] != "A" else "B")}
+    tampered = {"Authorization": f"Bearer {_tamper_signature(headers['Authorization'].removeprefix('Bearer '))}"}
     assert (await client.get("/api/v1/auth/me", headers=tampered)).status_code == 401
     assert session.logins == 1  # an unexpired token never triggers a silent re-login
 
