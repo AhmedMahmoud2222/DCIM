@@ -928,12 +928,12 @@
         "at": "2026-10-30T10:03:57.938Z",
         "sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
         "comment_id": 6520062881,
-        "status": "awaiting native review; no receipt/result yet"
+        "status": "Codex returned generic clean exact-HEAD receipt #6520084424; no native PR review submission; independent acceptance missing; slot released"
       },
       "asks_per_sha": 2,
       "fix_review_cycles": null,
-      "stale_level": 1,
-      "queued": "required CI green, exact SHA current, tag pin verified; native Codex PR review missing; follow-up 2/3 sent",
+      "stale_level": 0,
+      "queued": "2/3 asks this SHA; both generic clean receipts, no native PR review; do not merge; next ask no sooner than 60 min",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
       "updated_at": "2026-10-29T17:02:48Z",
@@ -1251,12 +1251,12 @@
         "at": "2026-10-30T10:03:57.938Z",
         "sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
         "comment_id": 6520063505,
-        "status": "awaiting native review; no receipt/result yet"
+        "status": "Codex returned generic clean exact-HEAD receipt #6520086439; no native PR review submission; independent acceptance missing; slot released"
       },
       "asks_per_sha": 2,
       "fix_review_cycles": null,
-      "stale_level": 1,
-      "queued": "required CI green, exact SHA current, tag pin verified; native Codex PR review missing; follow-up 2/3 sent",
+      "stale_level": 0,
+      "queued": "2/3 asks this SHA; both generic clean receipts, no native PR review; do not merge; next ask no sooner than 60 min",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
       "updated_at": "2026-10-29T18:32:41Z",
@@ -2153,6 +2153,11 @@
     {
       "item": "inventory",
       "action": "25 open PRs, 16 open issues, 38 unresolved threads; zero merges/resolutions"
+    },
+    {
+      "item": "#173/#201",
+      "agent": "Codex",
+      "action": "Second exact-head requests returned generic clean receipts (#6520084424, #6520086439); no native review submissions; no merge"
     }
   ],
   "priority_snapshot": {
@@ -2172,7 +2177,7 @@
       "#83/#87 D4 supersession needs independent evidence; third Codex ask exhausted"
     ]
   },
-  "last_run_summary": "FULL: 25 open PRs, 16 open issues, 38 open review threads; no merges or thread resolutions. Required CI exact-head: 22 green / 3 failing (#146, #171, #181). #173/#201 Codex native-review follow-up 2/3 posted; all four Dependabot pins match upstream tags. DX6/DX7/D5 still open; Migration 0057 production hold intact.",
+  "last_run_summary": "FULL: 25 open PRs, 16 open issues, 38 open threads; no merges/resolutions. #173/#201 second exact-head Codex asks each returned clean generic receipt, no native review. All four Dependabot action pins match upstream tags. 22/25 required CI green, 3 backend failing (#146/#171/#181). DX6/DX7/D5 open; Migration 0057 hold intact.",
   "last_followup_delta": {
     "at": "2026-10-30T09:32:11.622Z",
     "prs_open": 25,
