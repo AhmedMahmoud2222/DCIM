@@ -73,6 +73,9 @@ class MemoryStore:
 
 class ControllerTests(unittest.TestCase):
     def setUp(self):
+        self._fresh()
+
+    def _fresh(self):
         self.policy = json.loads((ROOT/c.POLICY).read_text())
         self.policy['issuer'] = dict(id=100, login='native[bot]', app_id=200, app_slug='native')
         self.policy['providers']['claude']['proof'] = dict(run_id=77, workflow_id=88, workflow_path='.github/workflows/claude.yml', jobs=['review'])
@@ -533,22 +536,24 @@ class ControllerTests(unittest.TestCase):
     def test_outage_past_deadline_escalates_exactly_once(self):
         deadline = self.task['created_at'] + self.policy['timeout_seconds']
         for prefix in ('/pulls', '/issues'):
-            with self.subTest(read=prefix):
-                self.setUp()
-                self._outage(prefix)
-                for now in (deadline + 1, deadline + 3601):
+            for now in (deadline + 1, deadline + 3601):
+                with self.subTest(read=prefix, now=now):
+                    self._fresh()  # Independent fixture per case: one escalation each.
+                    self._outage(prefix)
                     value, blob = c.reconcile(self.api, self.store, self.policy, self.state, '0',
                                               self.task['id'], now)
                     task = value['tasks'][self.task['id']]
                     self.assertEqual(task['state'], 'ESCALATED')
                     self.assertEqual(self.api.posts, [])
                     self.assertEqual(self.store.writes, 1)
-                    # Terminal: a later outage run neither rewrites nor re-escalates.
-                    again, _ = c.reconcile(self.api, self.store, self.policy, value, blob,
-                                           self.task['id'], now + 1)
+                    # Terminal: a later outage run neither rewrites nor re-escalates,
+                    # and the returned blob stays the confirmed head.
+                    again, again_blob = c.reconcile(self.api, self.store, self.policy, value, blob,
+                                                    self.task['id'], now + 1)
                     self.assertEqual(self.store.writes, 1)
+                    self.assertEqual(again_blob, blob)
+                    self.assertEqual(self.api.posts, [])
                     self.assertEqual(again['tasks'][self.task['id']]['state'], 'ESCALATED')
-                    break
 
     def test_outage_before_deadline_still_preserves_task(self):
         self._outage('/pulls')
