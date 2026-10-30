@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T145921048Z",
+  "record_type": "append_only_supplement",
+  "parent_event": "state/events/2026-10-30/full-20261030T145921048Z.json",
+  "recorded_at": "2026-10-30T15:09:48.500Z",
+  "reason": "Claude completed two DX12 corrections after initial event was sealed; initial event was not edited",
+  "actions": [
+    {
+      "type": "Claude patch delivered",
+      "issue": 220,
+      "comment_id": 6525948313,
+      "baseline": "6d505459381920ad9e3c178d3539c0dd366e8a88",
+      "scope": "12 verified #219 review threads and G-1..G-10 gaps"
+    },
+    {
+      "type": "verbatim patch applied",
+      "pr": 228,
+      "commit": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
+      "file": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+      "old_lines": 246,
+      "new_lines": 257,
+      "hunks": 2
+    },
+    {
+      "type": "Claude correction requested",
+      "issue": 220,
+      "comment_id": 6526043369,
+      "scope": "correct false owner attribution in section 8"
+    },
+    {
+      "type": "Claude patch delivered",
+      "issue": 220,
+      "comment_id": 6526048626,
+      "baseline": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
+      "scope": "single line 205"
+    },
+    {
+      "type": "verbatim patch applied",
+      "pr": 228,
+      "commit": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "file": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+      "changed_line": 205
+    },
+    {
+      "type": "ledger update",
+      "commit": "720de3f5547b562b7d3312604b19244533bd76b0"
+    }
+  ],
+  "verification": {
+    "head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+    "commit_verified": false,
+    "commit_reason": "unsigned, not a ruleset blocker",
+    "thread_map": "all 12 unique #219 threads matched",
+    "remaining_gaps": "G-1..G-10 for independent reviewers and owner",
+    "required_ci": "started but not yet green on final SHA",
+    "codex_review": "not requested",
+    "jules_review": "not requested",
+    "pr_draft": true
+  },
+  "production_safety": {
+    "migration_0057_hold": "intact",
+    "execution_requested": false,
+    "scheduled": false,
+    "approved": false
+  }
+}
