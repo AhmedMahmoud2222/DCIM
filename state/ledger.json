@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T22:12:45.336Z",
-  "last_run_at": "2026-10-30T22:12:45.336Z",
+  "last_full_run_at": "2026-10-30T22:13:50.328Z",
+  "last_run_at": "2026-10-30T22:13:50.328Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -2545,11 +2545,11 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "queued",
-        "frontend": "not yet reported",
+        "backend": "in_progress",
+        "frontend": "in_progress",
         "exact_head_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-        "checked_at": "2026-10-30T22:12:45.336Z",
-        "notes": "12 new-head jobs queued/in progress; required aggregate checks not yet complete"
+        "checked_at": "2026-10-30T22:13:50.328Z",
+        "notes": "backend suite 3.12/3.13/3.14 and frontend suite running; route, ci-policy, edge jobs green; required aggregates not complete"
       },
       "merge_state": "draft, current, required CI green; independent review pending",
       "head_verification": {
@@ -2589,10 +2589,10 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "Wait for exact-head backend/frontend CI to pass and branch remain current, then scoped native Codex review on b6975308e0f8777f11fd9dac70209b19c6873944; 1 P2 thread open pending reviewer confirmation; Draft",
+      "queued": "CI in progress on b6975308; wait backend/frontend exact-head success, then scoped Codex re-review P2; 1 thread open; Draft",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T22:12:45.336Z",
+      "last_state_verified_at": "2026-10-30T22:13:50.328Z",
       "last_thread_verified_at": "2026-10-30T22:12:45.336Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
@@ -2869,7 +2869,7 @@
         229
       ],
       "acceptance_on_main": "main@613cb935 CI run 41083732966 attempt 1 failed Python3.13 authority-lock test; attempt 2 Python3.13 and aggregate backend plus frontend SUCCESS on same SHA; intermittent failure remains open #223, no root cause proven",
-      "queued": "New #229 head b6975308e0f8777f11fd9dac70209b19c6873944 CI queued; Codex P2 thread open; no issue closure or production changes",
+      "queued": "Draft #229 b6975308 exact-head backend/frontend suites running; Codex P2 thread remains open; no closure",
       "last_state_verified_at": "2026-10-30T22:12:45.336Z",
       "last_prompt": {
         "agent": "Claude",
@@ -3053,9 +3053,10 @@
     "merged": [],
     "resolved_threads": [],
     "actions": [
-      "25 open PRs, 16 issues, 51 unresolved threads",
-      "Codex final asks #200/#230 yielded generic receipts, owner DX13 required",
-      "#229 native Codex P2; Claude delivered complete DX12 patch; applied verbatim new SHA b6975308e0f8777f11fd9dac70209b19c6873944; CI queued, thread remains open"
+      "25 open PRs, 16 open issues, 51 unresolved review threads",
+      "Final Codex #200/#230 generic receipts, DX13 owner fallback; #229 native P2",
+      "Claude DX12 one-file patch applied verbatim to existing Draft #229, new head b6975308, CI in progress; thread evidence and completion report posted",
+      "Ruleset hash and bypass modes unchanged; no owner decisions"
     ],
     "production_migration_0057": "HOLD"
   },
@@ -3102,7 +3103,9 @@
         "thread_reply": 4428924258,
         "comment": 6534596044
       }
-    ]
+    ],
+    "finalized_at": "2026-10-30T22:13:50.328Z",
+    "event_file": "state/events/2026-10-30/full-20261030T215847947Z.json"
   },
   "last_followup_summary": {
     "run_id": "followup-20261030T212937879Z",
@@ -3187,6 +3190,12 @@
       "at": "2026-10-30T22:12:45.336Z",
       "mode": "FULL",
       "summary": "#229 Claude DX12 P2 patch applied verbatim at b6975308, CI queued, thread remains open pending Codex; #200/#230 owner DX13."
+    },
+    {
+      "run_id": "full-20261030T215847947Z",
+      "at": "2026-10-30T22:13:50.328Z",
+      "mode": "FULL",
+      "summary": "Final: #229 new head b6975308 CI in progress; 51 threads; #200/#230 DX13 owner fallback; 0 merges, 0 resolutions, hold intact."
     }
   ],
   "last_full_event_supplements": [
