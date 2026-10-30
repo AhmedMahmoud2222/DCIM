@@ -1,0 +1,143 @@
+{
+  "run_id": "follow-20261030T1934Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T19:34:02.994Z",
+  "completed_at": "2026-10-30T19:36:18.596Z",
+  "last_ledger_at_start": "2026-10-30T19:11:45.267Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "inventory": {
+    "open_prs": 25,
+    "open_issues": 16,
+    "unresolved_threads": 52,
+    "state_branch_prs": 0
+  },
+  "schedule_health": {
+    "full": true,
+    "followup": true
+  },
+  "ruleset": {
+    "id": 23651422,
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "thread_resolution": true,
+    "linear_history": true,
+    "bypass_modes": {
+      "842251": "pull_request",
+      "946600": "pull_request",
+      "1144995": "pull_request",
+      "1236702": "pull_request",
+      "4229212": "pull_request",
+      "285010264": "pull_request"
+    }
+  },
+  "merged": [],
+  "resolved_threads": [],
+  "agent_triggers": [],
+  "actions": [
+    {
+      "type": "read",
+      "items": "open PRs/issues, ledger, issue #220 owner answers, all 25 PR thread lists, selected exact-head checks and reviews"
+    },
+    {
+      "type": "verification",
+      "item": "PR #224",
+      "sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+      "evidence": "active workflow blob 767dcc1d3f01c8dd90ddba5b0af14793be5c8958; jq -s -e exact one array; job-level concurrency; same-repo/base-main/stale-SHA guard; backend/frontend success; four unresolved P2"
+    },
+    {
+      "type": "review_status",
+      "item": "PR #224",
+      "evidence": "owner third @codex review comment 6531564896 (19:19:20Z), generic receipt 6531582547 (19:20:17Z); 3/3 requests, no native exact-head review. Owner Jules summary comment 6531493837 at 19:15:45Z names head and accepted, but no Jules session link and lacks required eight sections, posted before Codex acceptance. Not accepted."
+    },
+    {
+      "type": "CI",
+      "item": "PR #229",
+      "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "evidence": "frontend success, backend-suite and Python 3.12/3.13/3.14 in_progress at 19:34Z; Draft, no independent review"
+    },
+    {
+      "type": "CI",
+      "item": "PR #230",
+      "sha": "8669217825beaf09451e22644336258747f20c16",
+      "evidence": "frontend success, backend-suite in_progress at 19:34Z; Draft, no independent review"
+    },
+    {
+      "type": "owner_decisions",
+      "item": "#220",
+      "evidence": "No new unmarked D/DX answers since 6526791660; DX19 #228 remains open; DX13 #224 elevated to Decide now; DX13 #200 remains; DX13 #217 preserved"
+    },
+    {
+      "type": "write",
+      "item": "#220 decision comment",
+      "comment_id": 6501005762,
+      "result": "updated at 19:35:51Z",
+      "length": 11524
+    },
+    {
+      "type": "write",
+      "item": "state/ledger.json",
+      "result": "commit bf483ff0b67ec276bfde156f4a63ff5696ecdfc1"
+    }
+  ],
+  "blocked": [
+    {
+      "pr": 224,
+      "class": "verification/authorization",
+      "gate": "native Codex absent after 3 requests; four unresolved P2 threads; Jules review insufficient"
+    },
+    {
+      "pr": 228,
+      "class": "authorization",
+      "gate": "DX17 3-cycle cap and DX19 pending, 11 open threads"
+    },
+    {
+      "pr": 200,
+      "class": "authorization",
+      "gate": "DX13 owner exact-SHA review"
+    },
+    {
+      "pr": 217,
+      "class": "verification/authorization",
+      "gate": "5 open threads, branch behind, DX13 owner review"
+    },
+    {
+      "pr": 229,
+      "class": "verification",
+      "gate": "Draft and backend suite running"
+    },
+    {
+      "pr": 230,
+      "class": "verification",
+      "gate": "Draft and backend suite running"
+    },
+    {
+      "issues": [
+        184,
+        185
+      ],
+      "class": "agent_wait",
+      "gate": "OpenCode no substantive result; D6 owner 72-hour deadline 2026-11-02T11:45:39Z"
+    }
+  ],
+  "stale": {
+    "184": "stalled; owner retention",
+    "185": "stalled; owner retention"
+  },
+  "production_safety": {
+    "migration_0057_hold": "unchanged",
+    "production_execution_requested": false,
+    "scheduled": false,
+    "approved": false
+  },
+  "failed_write_calls": [],
+  "next_actions": [
+    "Ahmed: DX19 choose spec convergence route #228/#219",
+    "Ahmed: review #224 exact SHA under DX13; do not waive four threads or Tier 2 Jules",
+    "Ahmed: DX13 #200 review",
+    "Await backend suites on #229/#230; no reviews until exact-head required checks green",
+    "Retain OpenCode on #184/#185 until owner D6 deadline"
+  ]
+}
