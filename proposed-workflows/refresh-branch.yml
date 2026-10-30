@@ -1,5 +1,5 @@
 # proposed-workflows/refresh-branch.yml
-# DRAFT v2. NOT ACTIVE: lives outside .github/workflows, so GitHub does not run it.
+# DRAFT v3 (adds P2-4: single-document allowlist). NOT ACTIVE: lives outside .github/workflows, so GitHub does not run it.
 # Not tested. Requires independent Codex review and owner-run Jules Tier 2 review
 # on the exact SHA before the owner copies it to .github/workflows/refresh-branch.yml.
 #
@@ -23,7 +23,9 @@
 #        login-shaped strings, exact element match; no contains() on a string.
 #   P2-2 workflow-level concurrency            -> concurrency only on the `refresh` job,
 #        which runs only when the gate passed, so rejected comments never enter the group.
-#   P2-3 arbitrary PR base                     -> refresh step requires open PR,
+#   P2-4 concatenated JSON documents          -> gate uses jq -s -e and requires exactly
+#        one document (length == 1) that is a nonempty array of login strings.
+#   P2-3 arbitrary PR base                    -> refresh step requires open PR,
 #        base.repo == this repo, base.ref == main, head.repo == this repo.
 
 name: Refresh PR branch
@@ -53,11 +55,16 @@ jobs:
         run: |
           set -euo pipefail
           allowed=false
-          if printf '%s' "${ALLOWED:-}" | jq -e --arg a "$ACTOR" '
-              type == "array"
-              and length > 0
-              and all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$"))
-              and (map(select(. == $a)) | length) == 1
+          # -s slurps every JSON document into one array, so `null ["x"]` has length 2
+          # and is denied. Exactly one document is required (P2-4); jq -e then exits
+          # nonzero on false, null, malformed input (parse error) and empty input.
+          if printf '%s' "${ALLOWED:-}" | jq -s -e --arg a "$ACTOR" '
+              length == 1
+              and (.[0]
+                | type == "array"
+                  and length > 0
+                  and all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$"))
+                  and (map(select(. == $a)) | length) == 1)
             ' >/dev/null 2>&1; then
             allowed=true
           fi
