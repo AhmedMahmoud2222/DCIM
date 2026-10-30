@@ -1,0 +1,84 @@
+{
+  "run_id": "followup-20261030T122726270Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T12:27:26.270Z",
+  "completed_at": "2026-10-30T12:29:08.423Z",
+  "previous_ledger_at": "2026-10-30T12:12:20.955Z",
+  "inventory": {
+    "open_prs": 25,
+    "open_issues": 16,
+    "unresolved_threads": 41,
+    "excluded_state_branch_prs": 0
+  },
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "merge_policy": {
+    "ruleset_id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_modes": "six actors pull_request; none always"
+  },
+  "owner_answers_new": [],
+  "merged": [],
+  "threads_resolved": [],
+  "agent_prompts": [],
+  "actions": [
+    {
+      "type": "acquire_lease",
+      "branch": "orchestrator-state"
+    },
+    {
+      "type": "read_prs_issues_threads_reviews_comments",
+      "scope": "25 open PRs, 16 open issues; delta and waiting agents"
+    },
+    {
+      "type": "verify_required_ci",
+      "pr": 224,
+      "head": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
+      "frontend": "success",
+      "backend": "in_progress"
+    },
+    {
+      "type": "verify_required_ci",
+      "pr": 179,
+      "head": "261287dbc58047b40846cb6efa441e6456c93d4a",
+      "frontend": "success",
+      "backend": "in_progress"
+    },
+    {
+      "type": "verify_ruleset",
+      "hash": "fnv1a64:246f1cc05c72e8a4"
+    },
+    {
+      "type": "update_ledger",
+      "commit": "36c2c7cb9627ed9be0667095672c49da3bc62a8c"
+    }
+  ],
+  "waiting": [
+    {
+      "pr": 224,
+      "on": "Ahmed copy proposed-workflows/refresh-branch.yml v3 to active workflow; then CI/Codex/Jules"
+    },
+    {
+      "pr": 179,
+      "on": "backend CI and owner refresh before Codex; Draft"
+    },
+    {
+      "pr": 217,
+      "on": "five open Codex threads, independent review, branch refresh"
+    },
+    {
+      "issues": [
+        184,
+        185
+      ],
+      "on": "OpenCode under D6, 72h owner deadline"
+    }
+  ],
+  "decisions": [
+    "DX13 owner exact-SHA approval for #201/#173/#172/#200",
+    "D5 next phase #219",
+    "DX3 bypass identity"
+  ],
+  "no_merge_reason": "All candidate PRs lack at least one mandatory gate: current CI, exact-head review, resolved threads, branch currency, or owner decision.",
+  "production_safety": "Migration 0057 hold unchanged; no production migration/deployment requested, scheduled or approved",
+  "state_branch_pr": "none open"
+}
