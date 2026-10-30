@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T07:08:46.559Z",
-  "last_run_at": "2026-10-30T07:19:50.424Z",
-  "last_run_mode": "FOLLOW-UP",
+  "last_full_run_at": "2026-10-30T08:00:20.821Z",
+  "last_run_at": "2026-10-30T08:00:20.821Z",
+  "last_run_mode": "FULL",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T07:08:46.559Z",
+    "last_verified_at": "2026-10-30T08:00:20.821Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -73,14 +73,14 @@
     "DX7": "OPEN P1 candidate; T5 verified workflow static authorization wiring",
     "DX8": "CLOSED by T4: no agent branch exists, owner supplies branch if proceeding",
     "DX9": "CLOSED: issue #223 created by orchestrator",
-    "DX10": "OPEN: owner to close PR #222; never merge orchestrator-state"
+    "DX10": "CLOSED: PR #222 closed without merge at 2026-10-30T07:30:19Z"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "No new unmarked owner D/DX answers in #220 through 2026-10-30T07:08:46.559Z",
+    "T2": "No new unmarked owner D/DX answers in #220 through 2026-10-30T08:00:20.821Z",
     "T3": "D5 unanswered; #219 10 threads preserved; no fix/review cycles",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "COMPLETE one-time static workflow authorization verification; DX7 report updated in #220 decision comment #6501005762"
@@ -109,7 +109,7 @@
     "claude_yml": {
       "verified": "static job condition and secret wiring",
       "nonwriter_can_start_job": true,
-      "nonwriter_can_reach_secret_step_by_workflow_condition": true,
+      "nonwriter_can_reach_secret_step_by_workflow_condition": "workflow step eligible on @claude, but human nonwriter rejected before model; bot-specific path unverified end-to-end",
       "secret": "CLAUDE_CODE_OAUTH_TOKEN",
       "permissions": [
         "contents:read",
@@ -119,13 +119,15 @@
         "id-token:write"
       ],
       "actor_gate": "missing",
-      "action_internal_enforcement": "unverified"
+      "action_internal_enforcement": "VERIFIED: human actor write/admin collaborator check in run.ts:193-208, permissions.ts:124-138; no allowed_non_write_users; [bot] actor bypasses collaborator lookup in permissions.ts:111-117; unauthorized bot exploitability/secret exposure UNVERIFIED",
+      "action_pinned_sha": "925afb53776cf1a2b738c6bdbed37b4d4000ef13"
     },
     "acceptance_review_yml": {
       "verified": "owner ID in prepare condition + needs wiring",
       "nonwriter_can_reach_secret": false,
       "secret": "CLAUDE_CODE_OAUTH_TOKEN"
-    }
+    },
+    "T5_source_correction_at": "2026-10-30T08:00:20.821Z"
   },
   "prs": {
     "83": {
@@ -156,22 +158,30 @@
       "open_threads": [],
       "findings_checklist": [],
       "last_prompt": {
+        "agent": "Codex",
+        "ask": "independent supersession verification against main; no changes/closure",
+        "at": "2026-10-30T08:00:20.821Z",
+        "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+        "comment_id": 6517873686,
+        "status": "awaiting native review"
+      },
+      "asks_per_sha": 2,
+      "fix_review_cycles": null,
+      "stale_level": 0,
+      "queued": "await independent Codex supersession verification; owner closure only after evidence",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+      "updated_at": "2026-10-30T07:19:50.424Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "previous_prompt": {
         "agent": "Claude",
         "ask": "review-only supersession report: main contents, unique work, recommendation",
         "at": "2026-10-30T07:08:46.559Z",
         "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
         "comment_id": 6517069213,
         "status": "terminal: partial report"
-      },
-      "asks_per_sha": 1,
-      "fix_review_cycles": null,
-      "stale_level": 0,
-      "queued": "Claude report received; lacks complete main comparison; independent verification and owner closure decision still required",
-      "last_qualifying_review_sha": null,
-      "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
-      "updated_at": "2026-10-30T07:19:50.424Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
+      }
     },
     "87": {
       "title": "docs(review): independent review of PRs #80, #81, and #84",
@@ -201,22 +211,30 @@
       "open_threads": [],
       "findings_checklist": [],
       "last_prompt": {
+        "agent": "Codex",
+        "ask": "independent supersession verification against main; no changes/closure",
+        "at": "2026-10-30T08:00:20.821Z",
+        "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+        "comment_id": 6517874682,
+        "status": "awaiting native review"
+      },
+      "asks_per_sha": 2,
+      "fix_review_cycles": null,
+      "stale_level": 0,
+      "queued": "await independent Codex supersession verification; owner closure only after evidence",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+      "updated_at": "2026-10-30T07:19:50.424Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "previous_prompt": {
         "agent": "Claude",
         "ask": "review-only supersession report: main contents, unique work, recommendation",
         "at": "2026-10-30T07:08:46.559Z",
         "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
         "comment_id": 6517069899,
         "status": "terminal: partial report"
-      },
-      "asks_per_sha": 1,
-      "fix_review_cycles": null,
-      "stale_level": 0,
-      "queued": "Claude report received; lacks complete main comparison; independent verification and owner closure decision still required",
-      "last_qualifying_review_sha": null,
-      "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
-      "updated_at": "2026-10-30T07:19:50.424Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
+      }
     },
     "113": {
       "title": "feat: calibrated spatial digital twin and CAD/Visio import (#104)",
@@ -255,7 +273,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
       "updated_at": "2026-10-29T15:04:59Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "115": {
@@ -401,7 +419,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
       "updated_at": "2026-10-29T15:04:46Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "116": {
@@ -441,7 +459,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d05ab33aca5893e19b99d809f2922922da180440",
       "updated_at": "2026-10-29T15:04:51Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "117": {
@@ -479,7 +497,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
       "updated_at": "2026-10-23T15:51:25Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "118": {
@@ -517,7 +535,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
       "updated_at": "2026-10-23T15:50:58Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "125": {
@@ -555,7 +573,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
       "updated_at": "2026-10-23T15:50:56Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "146": {
@@ -657,7 +675,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -696,7 +714,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
       "updated_at": "2026-10-23T15:50:53Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "161": {
@@ -734,7 +752,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
       "updated_at": "2026-10-23T15:50:51Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "171": {
@@ -781,7 +799,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
       "updated_at": "2026-10-23T15:50:49Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -799,10 +817,10 @@
       "behind_main": 0,
       "required_ci": {
         "backend": "in_progress",
-        "frontend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
-        "checked_at": "2026-10-30T07:19:50.424Z",
-        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
+        "checked_at": "2026-10-30T08:00:20.821Z",
+        "qualifier": "backend matrix in_progress; required backend aggregator not yet emitted"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -827,12 +845,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
+      "queued": "required backend check pending; exact-head independent acceptance not yet established; no merge",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+      "last_ci_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "last_thread_verified_at": "2026-10-30T08:00:20.821Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
         "new_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
@@ -844,6 +862,11 @@
         "required_ci": "pending",
         "prior_qualifying_native_review": "not established",
         "acceptance_carried": false
+      },
+      "pin_integrity": {
+        "verified": true,
+        "source": "upstream git/ref/tags",
+        "checked_at": "2026-10-30T08:00:20.821Z"
       }
     },
     "173": {
@@ -860,10 +883,10 @@
       "behind_main": 0,
       "required_ci": {
         "backend": "in_progress",
-        "frontend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
-        "checked_at": "2026-10-30T07:19:50.424Z",
-        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
+        "checked_at": "2026-10-30T08:00:20.821Z",
+        "qualifier": "backend matrix in_progress; required backend aggregator not yet emitted"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -888,12 +911,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
+      "queued": "required backend check pending; exact-head independent acceptance not yet established; no merge",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+      "last_ci_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
       "updated_at": "2026-10-29T17:02:48Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "last_thread_verified_at": "2026-10-30T08:00:20.821Z",
       "review_carryover": {
         "old_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
         "new_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
@@ -905,6 +928,11 @@
         "required_ci": "pending",
         "prior_qualifying_native_review": "not established",
         "acceptance_carried": false
+      },
+      "pin_integrity": {
+        "verified": true,
+        "source": "upstream git/ref/tags",
+        "checked_at": "2026-10-30T08:00:20.821Z"
       }
     },
     "179": {
@@ -959,7 +987,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
       "updated_at": "2026-10-29T15:04:31Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "181": {
@@ -1008,7 +1036,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b17c37a270d57d60962d2261271666aa934c805b",
       "updated_at": "2026-10-29T15:05:02Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1049,7 +1077,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
       "updated_at": "2026-10-29T15:05:05Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "188": {
@@ -1087,7 +1115,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
       "updated_at": "2026-10-24T21:56:39Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "200": {
@@ -1104,10 +1132,10 @@
       "behind_main": 0,
       "required_ci": {
         "backend": "in_progress",
-        "frontend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
-        "checked_at": "2026-10-30T07:19:50.424Z",
-        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
+        "checked_at": "2026-10-30T08:00:20.821Z",
+        "qualifier": "backend matrix in_progress; required backend aggregator not yet emitted"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -1132,12 +1160,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
+      "queued": "required backend check pending; exact-head independent acceptance not yet established; no merge",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+      "last_ci_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "last_thread_verified_at": "2026-10-30T08:00:20.821Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
@@ -1150,6 +1178,11 @@
         "required_ci": "pending",
         "prior_qualifying_native_review": "not established",
         "acceptance_carried": false
+      },
+      "pin_integrity": {
+        "verified": true,
+        "source": "upstream git/ref/tags",
+        "checked_at": "2026-10-30T08:00:20.821Z"
       }
     },
     "201": {
@@ -1166,10 +1199,10 @@
       "behind_main": 0,
       "required_ci": {
         "backend": "in_progress",
-        "frontend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
-        "checked_at": "2026-10-30T07:19:50.424Z",
-        "qualifier": "CI workflow in_progress; per-job result not yet independently established"
+        "checked_at": "2026-10-30T08:00:20.821Z",
+        "qualifier": "backend matrix in_progress; required backend aggregator not yet emitted"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "blocked",
@@ -1194,12 +1227,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "await exact-head required CI completion; check A4 acceptance only after CI green",
+      "queued": "required backend check pending; exact-head independent acceptance not yet established; no merge",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+      "last_ci_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "last_thread_verified_at": "2026-10-30T08:00:20.821Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
@@ -1212,6 +1245,11 @@
         "required_ci": "pending",
         "prior_qualifying_native_review": "not established",
         "acceptance_carried": false
+      },
+      "pin_integrity": {
+        "verified": true,
+        "source": "upstream git/ref/tags",
+        "checked_at": "2026-10-30T08:00:20.821Z"
       }
     },
     "207": {
@@ -1329,7 +1367,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1368,7 +1406,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
       "updated_at": "2026-10-29T19:01:54Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1474,7 +1512,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
       "updated_at": "2026-10-29T20:06:34Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -1667,13 +1705,13 @@
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
       },
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
       "last_thread_verified_at": "2026-10-30T06:27:50.177Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "222": {
       "title": "Orchestrator state",
-      "head_sha": "fe3c8a8d686ab5d17110e73a16dd0a8f98ab2f98",
+      "head_sha": "c4b184b318d459bdb835135366f62653e24aacab",
       "head_branch": "orchestrator-state",
       "base_branch": "main",
       "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
@@ -1702,12 +1740,15 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": null,
-      "queued": "DX10 owner closure; NEVER merge state branch into main",
+      "queued": "DX10 closed; never merge orchestrator-state to main",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-30T07:04:06Z",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z",
-      "note": "Self-updating branch; PR HEAD changes when ledger/lease/events are committed. Head shown is snapshot, not stable."
+      "last_state_verified_at": "2026-10-30T08:00:20.821Z",
+      "note": "Self-updating branch; PR HEAD changes when ledger/lease/events are committed. Head shown is snapshot, not stable.",
+      "state": "closed",
+      "merged": false,
+      "closed_at": "2026-10-30T07:30:19Z"
     }
   },
   "issues": {
@@ -1901,64 +1942,40 @@
   ],
   "last_actions": [
     {
-      "at": "2026-10-30T07:19:50.424Z",
-      "type": "verification",
-      "items": [
-        201,
-        200,
-        173,
-        172
-      ],
-      "result": "new-head CI workflows in_progress; optional deployment tests successful; no reviews requested"
+      "item": "#83",
+      "agent": "Codex",
+      "action": "independent supersession verification requested",
+      "comment_id": 6517873686
     },
     {
-      "at": "2026-10-30T07:19:50.424Z",
-      "type": "agent outcome",
-      "items": [
-        83,
-        87
-      ],
-      "result": "Claude reported incomplete main comparison; no accepted supersession"
+      "item": "#87",
+      "agent": "Codex",
+      "action": "independent supersession verification requested",
+      "comment_id": 6517874682
+    },
+    {
+      "item": "#220",
+      "action": "corrected DX7 pinned-action human write check and bot exception; marked DX10 closed"
+    },
+    {
+      "item": "#201/#200/#173/#172",
+      "action": "verified pinned action tags, CI backend pending, no merge"
     }
   ],
   "priority_snapshot": {
-    "at": "2026-10-30T07:08:46.559Z",
-    "ranked": [
-      {
-        "pr": 219,
-        "status": "D5 hold; 10 threads"
-      },
-      {
-        "pr": 207,
-        "status": "DX6 owner workflow route; 6 threads"
-      },
-      {
-        "pr": 216,
-        "status": "owner Update branch + Tier 2 Codex/Jules"
-      },
-      {
-        "pr": 217,
-        "status": "owner Update branch + 5 open threads"
-      },
-      {
-        "prs": [
-          201,
-          200,
-          173,
-          172
-        ],
-        "status": "rebased with identical patches; CI pending; no merge"
-      },
-      {
-        "pr": 222,
-        "status": "state branch PR; owner close DX10"
-      }
+    "at": "2026-10-30T08:00:20.821Z",
+    "highest": [
+      "#219 P1 controller reliability held by D5; 10 open threads",
+      "#216 P1 production migration gate behind main; Tier 2 Codex+Jules needed",
+      "#217 PDU acceptance evidence behind main; 5 open threads",
+      "#207 workflow credential/trust fixes blocked by D2(a)/DX6",
+      "#201/#200/#173/#172 Dependabot exact-head backend CI still running"
     ],
-    "agent_slots": {
-      "claude_open": 2,
-      "codex_open": 0
-    },
-    "refresh_workflow_present": false
+    "dependencies": [
+      "#214 production hold persists independent of #216 gate PR",
+      "#207 requires owner workflow-write route",
+      "#83/#87 historical supersession awaits Codex"
+    ]
   },
-  "last_run_summary": "FOLLOW-UP: 25 open PRs, 14 open issues; unchanged 34 unresolved threads per last FULL; four Dependabot CI runs in progress; Claude #83/#87 supersession reports incomplete; no merge, reviews, resolutions or new asks."
+  "last_run_summary": "FULL: 24 open PRs, 14 issues, 34 unresolved review threads; no merges/resolutions; Codex supersession requests #83/#87; DX7 correction; DX10 #222 closed; four Dependabot backend checks pending; migration hold intact."
 }
