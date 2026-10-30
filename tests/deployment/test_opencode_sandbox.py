@@ -660,10 +660,10 @@ class ProxyBindingTests(unittest.TestCase):
     @staticmethod
     def nested_body(depth, text='1'):
         """Valid envelope whose message content is nested so the whole body reaches exactly `depth` containers."""
-        content = text
-        for _ in range(depth - 3):          # envelope object + messages array + message object = 3
-            content = [content]
-        return json.dumps({'model': BOUND, 'messages': [{'role': 'user', 'content': content}]}).encode()
+        # Built as bytes: json.dumps on deeply nested Python lists raises RecursionError in the fixture itself.
+        nest = depth - 3                    # envelope object + messages array + message object = 3
+        return (b'{"model":' + json.dumps(BOUND).encode() + b',"messages":[{"role":"user","content":'
+                + b'[' * nest + json.dumps(text).encode() + b']' * nest + b'}]}')
 
     def test_depth_boundary_inside_allowed_messages_field(self):
         status, _ = self.raw('POST', CHAT, self.nested_body(proxy.MAX_JSON_DEPTH))
