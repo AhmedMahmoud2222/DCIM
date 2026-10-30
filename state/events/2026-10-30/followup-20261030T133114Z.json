@@ -1,0 +1,58 @@
+{
+  "run_id": "followup-20261030T133114Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T13:31:14Z",
+  "recorded_at": "2026-10-30T13:34:23.877Z",
+  "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+  "prior_ledger_at": "2026-10-30T13:03:49.058Z",
+  "actions": [
+    {
+      "type": "issue_comment",
+      "issue": 184,
+      "comment_id": 6524064325,
+      "agent": "OpenCode",
+      "reason": "one-hour stale re-prompt; 72-hour owner deadline preserved"
+    },
+    {
+      "type": "issue_comment",
+      "issue": 185,
+      "comment_id": 6524065536,
+      "agent": "OpenCode",
+      "reason": "one-hour stale re-prompt; 72-hour owner deadline preserved"
+    },
+    {
+      "type": "decision_comment_edit",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "reason": "DX13 current-head approvals for 172,200,201; D1-D15 preserved"
+    },
+    {
+      "type": "ledger_update",
+      "commit_sha": "452e83bde7f0652af358c5411d3ca76e0798e556"
+    }
+  ],
+  "verified": {
+    "ruleset_bypass_actors": "six pull_request, none always",
+    "new_dependabot_shas": {
+      "172": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
+      "200": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
+      "201": "389d6ecda15c45d3d944ae63a427a491356de38a"
+    },
+    "patch_comparison": {
+      "172": "11/11 files identical old/new",
+      "200": "4/4 files identical old/new",
+      "201": "2/2 identical per prior full-run verification"
+    },
+    "required_ci": "frontend green; backend matrix in progress on all three new Dependabot heads and PR #224",
+    "threads": "41 open, none resolved",
+    "merged": [],
+    "production_migration_0057": "hold intact; no production action"
+  },
+  "blockers": [
+    "#224 behind main, four open P2 threads, Codex and Jules pending",
+    "#172 #200 cumulative CI findings Open, owner DX13 approvals stale/missing",
+    "#201 owner DX13 exact-head approval missing",
+    "#219 12 threads and D5 design hold"
+  ],
+  "notes": "No new owner D/DX answers after 2026-10-30T13:03:49Z. No PR from orchestrator-state observed. No code, settings, secrets, workflow, migration, deployment or bypass changed."
+}
