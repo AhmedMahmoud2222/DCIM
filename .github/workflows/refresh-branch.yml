@@ -1,0 +1,74 @@
+# .github/workflows/refresh-branch.yml  (DRAFT v1, not reviewed, not tested)
+#
+# Purpose: let the orchestrator refresh a PR branch with main through a comment.
+#   Comment format: /refresh-branch <full 40-character head SHA>
+#
+# One-time setup by the repository owner (no one else can do these):
+#   1. Create a fine-grained personal access token limited to this repository:
+#        Contents: Read and write
+#        Pull requests: Read and write
+#        Workflows: Read and write   (needed when main contains workflow-file changes)
+#      Use a short expiry (for example 90 days).
+#      The default GITHUB_TOKEN will not do: a push made with it does not start CI.
+#   2. Save it as the repository secret REFRESH_PAT.
+#   3. Create the repository variable REFRESH_ALLOWED_ACTORS with a JSON array of the
+#      logins whose comments may trigger this job, for example ["AhmedMahmoud2222"].
+#      If the orchestrator comments under a different login, add that login.
+#   4. Add this file through a pull request (it is a workflow change, so treat it as
+#      Tier 2 and run the Jules review first).
+#
+# Safety notes:
+#   - issue_comment workflows run from the default branch, so a PR cannot edit this job.
+#   - Comment text goes through environment variables, never into the shell script.
+#   - The job refuses to run when the PR head differs from the SHA in the comment.
+#   - The job calls only the update-branch API. It does not check out or run PR code.
+#   - The token holds workflow-write power. Keep the job this small.
+
+name: Refresh PR branch
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-branch-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/refresh-branch') &&
+      contains(fromJSON(vars.REFRESH_ALLOWED_ACTORS), github.event.comment.user.login)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Update the PR branch from main
+        env:
+          GH_TOKEN: ${{ secrets.REFRESH_PAT }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+
+          WANT_SHA="$(printf '%s\n' "$COMMENT_BODY" \
+            | sed -n 's|^/refresh-branch[[:space:]]\{1,\}\([0-9a-f]\{40\}\)[[:space:]]*$|\1|p' \
+            | head -n 1)"
+          if [ -z "$WANT_SHA" ]; then
+            echo "Usage: /refresh-branch <full 40-character head SHA>"
+            exit 1
+          fi
+
+          HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          if [ "$HEAD_SHA" != "$WANT_SHA" ]; then
+            echo "Head moved: PR head is ${HEAD_SHA}, comment named ${WANT_SHA}. Not refreshing."
+            exit 1
+          fi
+
+          gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/update-branch" \
+            -f expected_head_sha="${WANT_SHA}"
+          echo "Refresh requested for PR ${PR_NUMBER} at ${WANT_SHA}."
