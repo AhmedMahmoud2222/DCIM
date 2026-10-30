@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T125819281Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T12:58:19.281Z",
+  "recorded_at": "2026-10-30T13:03:14.608Z",
+  "main_before": "731c2084e60c51ad825effcf699e4c429be44675",
+  "main_after": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+  "merge_policy_hash": "fnv1a64:246f1cc05c72e8a4",
+  "bypass_actors": "six pull_request, zero always",
+  "schedule_health": "FULL and FOLLOW-UP enabled",
+  "open_product_prs": 24,
+  "open_issues": 16,
+  "open_threads": 41,
+  "actions": [
+    {
+      "type": "merge",
+      "pr": 173,
+      "head": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
+      "merge_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+      "method": "squash",
+      "owner_authorization": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6523128063",
+      "checks": "backend/frontend success",
+      "optional_failure": "claude-review bot-actor rejection",
+      "post_merge_comment": 6523482953
+    },
+    {
+      "type": "dependabot_rebase_request",
+      "pr": 201,
+      "old_head": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "comment_id": 6523431897,
+      "new_head": "389d6ecda15c45d3d944ae63a427a491356de38a",
+      "own_patch_identical": true,
+      "files_compared": 2,
+      "exact_head_ci": "in_progress",
+      "owner_approval": "old SHA only, new exact DX13 approval needed"
+    },
+    {
+      "type": "owner_copy_verified",
+      "pr": 224,
+      "head": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+      "active_workflow_matches_draft_v3": true,
+      "commit_verified": true,
+      "open_threads": 4,
+      "ci": "backend in_progress, frontend passed",
+      "branch": "behind main",
+      "review": "Codex and Jules pending"
+    },
+    {
+      "type": "evidence_replies",
+      "pr": 224,
+      "head": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+      "threads": [
+        "PRRT_kwDOUdC8Ds6x53x2",
+        "PRRT_kwDOUdC8Ds6x53x5",
+        "PRRT_kwDOUdC8Ds6x53x_",
+        "PRRT_kwDOUdC8Ds6x9OYj"
+      ],
+      "reply_ids": [
+        4423887720,
+        4423888192,
+        4423888617,
+        4423889098
+      ],
+      "resolved": 0
+    },
+    {
+      "type": "owner_answers",
+      "issue": 220,
+      "comment_id": 6523128063,
+      "approved_exact_head": [
+        201,
+        173,
+        172
+      ],
+      "merged_173": true,
+      "approval_201_stale_after_rebase": true,
+      "issue_172_open_flake_finding": true
+    },
+    {
+      "type": "post_merge_validation",
+      "pr": 173,
+      "main_pin": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
+      "old_pin_absent": true,
+      "branch_deleted": true
+    },
+    {
+      "type": "safety",
+      "migration_0057_hold": "intact; no production actions"
+    }
+  ],
+  "waiting": {
+    "pr224": "exact-head backend CI, refresh main, native Codex and owner-run Jules; four open threads",
+    "pr201": "new-head CI and owner DX13",
+    "pr172": "CI #225 finding disposition despite old-head DX13",
+    "pr200": "CI #226 finding and DX13 owner review",
+    "pr219": "D5 design decision",
+    "pr184_185": "OpenCode deadline 2026-11-02T11:45:39Z"
+  },
+  "no_production_execution": true
+}
