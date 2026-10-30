@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T12:12:20.955Z",
-  "last_run_at": "2026-10-30T12:12:20.955Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T12:28:58.616Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T12:09:47.179Z",
+    "last_verified_at": "2026-10-30T12:28:58.616Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -984,10 +984,10 @@
       "behind_main": 10,
       "required_ci": {
         "backend": "in_progress",
-        "frontend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
-        "checked_at": "2026-10-30T12:09:47.179Z",
-        "diagnostic": "backend-suite and browser-e2e in progress; no required aggregate backend/frontend pass yet"
+        "checked_at": "2026-10-30T12:28:58.616Z",
+        "diagnostic": "backend-suite running; aggregate backend not yet emitted"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "draft",
@@ -1031,7 +1031,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T15:04:31Z",
-      "last_state_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T12:28:58.616Z",
       "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
       "last_completion_report": {
         "comment_id": 6522354550,
@@ -1846,10 +1846,10 @@
       "behind_main": 0,
       "required_ci": {
         "backend": "in_progress",
-        "frontend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
-        "checked_at": "2026-10-30T12:11:26.287Z",
-        "diagnostic": "new draft-only push triggered CI, aggregate required checks not yet complete; prior 438ed150 green does not carry"
+        "checked_at": "2026-10-30T12:28:58.616Z",
+        "diagnostic": "Python 3.12/3.13/3.14 backend matrix running; aggregate backend not yet emitted"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
       "merge_state": "blocked",
@@ -1932,7 +1932,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T12:11:26.287Z",
+      "last_state_verified_at": "2026-10-30T12:28:58.616Z",
       "last_thread_verified_at": "2026-10-30T12:11:26.287Z",
       "previous_prompt": {
         "agent": "Codex",
@@ -2327,57 +2327,44 @@
     ]
   },
   "last_run_summary": {
-    "run_id": "full-20261030T120218775Z",
-    "mode": "FULL",
+    "run_id": "followup-20261030T122726270Z",
+    "mode": "FOLLOW-UP",
+    "at": "2026-10-30T12:28:58.616Z",
     "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
     "open_prs": 25,
     "open_issues": 16,
     "open_threads": 41,
     "merged": 0,
     "resolved": 0,
-    "new_security_findings": 1,
-    "owner_copy_pending_pr": 224,
-    "notes": "Signed draft v3 aa91cfae on #224, live workflow unchanged; signed JWT fix 261287d on #179; DX13 owner approvals pending; migration hold intact"
+    "actions": "read-only verification; ledger/event writes only",
+    "note": "No new owner answer or agent result; PR #224 and #179 frontend success, backend pending. #224 owner copy of v3 still pending; DX13 approvals pending; migration hold intact."
   },
   "last_followup_delta": {
-    "at": "2026-10-30T10:35:50.127Z",
-    "prs_open": 26,
+    "at": "2026-10-30T12:28:58.616Z",
+    "from": "2026-10-30T12:12:20.955Z",
+    "prs_open": 25,
     "issues_open": 16,
-    "threads_open": 38,
-    "new_prs": [
-      227
-    ],
-    "new_owner_decisions": [
-      "D5(a)",
-      "D6(b)",
-      "DX3",
-      "DX5",
-      "DX6 YES",
-      "DX7"
-    ],
-    "new_agent_draft_sha": {
-      "pr224": "3a218da4b4148b61df6b6bc7b9ba63de1ba18756"
-    },
-    "codex_prompted": [
-      219,
-      172,
-      200
-    ],
-    "claude_prompted": [
-      184,
-      185,
-      224
-    ],
-    "capability_blocked": [
-      184,
-      185
-    ],
-    "new_decisions": [
-      "DX11",
-      "DX12"
-    ],
+    "threads_open": 41,
     "merged": [],
     "threads_resolved": [],
+    "owner_decisions": [],
+    "new_commits": [],
+    "new_agent_results": [],
+    "ci_progress": [
+      {
+        "pr": 224,
+        "sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
+        "frontend": "success",
+        "backend": "in_progress"
+      },
+      {
+        "pr": 179,
+        "sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
+        "frontend": "success",
+        "backend": "in_progress"
+      }
+    ],
+    "owner_copy_pending": 224,
     "production_hold_intact": true
   },
   "last_full_delta": {
@@ -2416,18 +2403,17 @@
     "note": "#224 owner copy of draft v3 pending; no merge/Jules. #179 signed fix, CI pending. 41 open threads."
   },
   "last_followup_summary": {
-    "at": "2026-10-30T11:28:23.473Z",
-    "run_id": "followup-20261030T112644Z",
+    "run_id": "followup-20261030T122726270Z",
+    "mode": "FOLLOW-UP",
+    "at": "2026-10-30T12:28:58.616Z",
+    "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
     "open_prs": 25,
     "open_issues": 16,
-    "main_unchanged": true,
-    "new_owner_answers": 0,
-    "new_qualifying_reviews": 0,
-    "merged": [],
-    "threads_resolved": [],
-    "waiting_for_backend_pr": 224,
-    "agent_requests_sent": 0,
-    "notes": "All 25 open PR threads rechecked; no verified new fixes or owner decisions; #224 backend CI in progress; #172/#200 Codex next ask after 11:32Z; #173/#201 held DX13."
+    "open_threads": 41,
+    "merged": 0,
+    "resolved": 0,
+    "actions": "read-only verification; ledger/event writes only",
+    "note": "No new owner answer or agent result; PR #224 and #179 frontend success, backend pending. #224 owner copy of v3 still pending; DX13 approvals pending; migration hold intact."
   },
   "last_full_event_path": "state/events/2026-10-30/full-20261030T120218775Z.json"
 }
