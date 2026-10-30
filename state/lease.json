@@ -3,5 +3,6 @@
   "mode": "FULL",
   "started_at": "2026-10-30T16:58:59.172Z",
   "expires_at": "2026-10-30T17:23:59.172Z",
-  "status": "active"
+  "status": "released",
+  "released_at": "2026-10-30T17:04:11.855Z"
 }
