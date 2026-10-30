@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T19:05:59.964Z",
-  "last_run_at": "2026-10-30T19:05:59.964Z",
+  "last_full_run_at": "2026-10-30T19:08:44.040Z",
+  "last_run_at": "2026-10-30T19:08:44.040Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -100,7 +100,7 @@
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
     "T2": "FULL 2026-10-30T19:05:59.964Z: #220 re-read, no new unmarked owner D/DX answers since #6526791660; DX18 new orchestrator decision awaiting owner.",
-    "T3": "D5 #219 frozen (12 threads). #228 signed merge-main 11ccef25 current/green; second native Codex review added P1 evidence closure + P2 ingested restart; 9 open, DX17 2/3; Claude round-2 6-hunk patch had malformed third header, correction requested; Jules not eligible.",
+    "T3": "D5 #219 frozen; #228 exact head 7b2eb31 signed=false, current and required CI green; Claude DX12 round-2 6-hunk patch applied verbatim, 9 threads open; third/final Codex review requested #6531321969, Jules only after acceptance; no fourth cycle.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "DONE: workflow actor hardening remains pending DX6, exploitability unproven; main workflow SHA unchanged since last targeted review.",
     "T6": "FULL 2026-10-30T19:05:59.964Z: #224 e8892327 current/required CI green, 4 P2 threads unresolved; second Codex ask #6530592913 returned generic clean PR-level receipt (no qualifying native review), third not before 2026-10-30T19:33:39Z; Jules not eligible."
@@ -2189,7 +2189,7 @@
     },
     "228": {
       "title": "docs: D5 controller reliability specification for PR #219 (Claude-authored)",
-      "head_sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
+      "head_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
       "head_branch": "docs/d5-controller-reliability-spec-20261030",
       "base_branch": "main",
       "base_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
@@ -2199,20 +2199,21 @@
       "required_ci": {
         "backend": "success",
         "frontend": "success",
-        "exact_head_sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
-        "checked_at": "2026-10-30T19:05:59.964Z"
+        "exact_head_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
+        "checked_at": "2026-10-30T19:08:44.040Z",
+        "notes": "docs-only route; backend/frontend required checks succeeded, underlying suites skipped"
       },
       "open_thread_count": 9,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T19:05:59.964Z",
-      "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
-      "last_ci_sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
-      "merge_state": "blocked: 9 unresolved review threads; current with main",
+      "last_state_verified_at": "2026-10-30T19:08:44.040Z",
+      "last_thread_verified_at": "2026-10-30T19:08:44.040Z",
+      "last_ci_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
+      "merge_state": "blocked: nine unresolved Codex review threads, final native Codex review running, owner Jules not yet eligible",
       "tier_reason": "docs-only one file; owner D5 separately mandates Codex and Jules acceptance",
       "head_verification": {
-        "verified": true,
-        "reason": "valid"
+        "verified": false,
+        "reason": "unsigned"
       },
       "findings_checklist": [
         {
@@ -2320,36 +2321,38 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4427459828",
           "severity": "P1",
           "required_change": "Define bounded evidence closure before immutable T5 confirmation or safe post-confirmation contradiction transition; FI-21 cross-run late opposing verdict test",
-          "status": "Open",
-          "evidence": "Native Codex COMMENTED review on 11ccef25 2026-10-30T19:00:13Z; T5 line 91 permits confirmation on incomplete evidence, T9 line 95 terminal immutable; Claude candidate patch #6531176514 not applied due invalid header",
+          "status": "Open — candidate fix verified at 7b2eb31c06d157a7c4c57c85c697f0438f4a9d12; final Codex confirmation pending",
+          "evidence": "Native Codex COMMENTED review on 11ccef25 2026-10-30T19:00:13Z; T5 line 91 permits confirmation on incomplete evidence, T9 line 95 terminal immutable; Claude candidate patch #6531176514 not applied due invalid header; T5/EV-15/T11 FI-40..42 verified on exact committed blob 7b2eb31c06d157a7c4c57c85c697f0438f4a9d12; evidence reply posted, unresolved",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 95,
           "author": "chatgpt-codex-connector",
-          "comment_id": 4427459828
+          "comment_id": 4427459828,
+          "candidate_fix_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12"
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yGzNV",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4427459837",
           "severity": "P2",
           "required_change": "Allow persisted ingested tasks to resume T2 after crash and to escalate at deadline; add crash-between-T1/T2 fault injection",
-          "status": "Open",
-          "evidence": "Native Codex COMMENTED review on 11ccef25 2026-10-30T19:00:13Z; T2 line 86 says same run and T7 line 93 excludes ingested; Claude candidate patch #6531176514 not applied due invalid header",
+          "status": "Open — candidate fix verified at 7b2eb31c06d157a7c4c57c85c697f0438f4a9d12; final Codex confirmation pending",
+          "evidence": "Native Codex COMMENTED review on 11ccef25 2026-10-30T19:00:13Z; T2 line 86 says same run and T7 line 93 excludes ingested; Claude candidate patch #6531176514 not applied due invalid header; T2/T7 FI-43..44 verified on exact committed blob 7b2eb31c06d157a7c4c57c85c697f0438f4a9d12; evidence reply posted, unresolved",
           "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
           "line": 86,
           "author": "chatgpt-codex-connector",
-          "comment_id": 4427459837
+          "comment_id": 4427459837,
+          "candidate_fix_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12"
         }
       ],
       "last_prompt": {
-        "agent": "Claude",
-        "ask": "one patch-format correction: six-hunk round-2 DX12 patch third hunk header declared 3/4 but actual 2/3; no design change",
-        "at": "2026-10-30T19:05:00Z",
-        "sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
-        "comment_id": 6531259650,
-        "status": "awaiting corrected full patch; first delivery #6531176514 invalid hunk header; no credit or commit"
+        "agent": "Codex",
+        "ask": "third/final DX17 exact-head native D5 spec review of nine cumulative findings, EV-15/T11 and T2 crash, A4 verdict line",
+        "at": "2026-10-30T19:07:33Z",
+        "sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
+        "comment_id": 6531321969,
+        "status": "awaiting native review; third/final cycle; no fourth fix cycle without Ahmed"
       },
       "asks_per_sha": 1,
-      "queued": "9 open Codex threads, DX17 2/3; Claude corrected 6-hunk patch pending, then apply verbatim if exact, CI, final Codex, owner-run Jules",
+      "queued": "9 open Codex threads; third/final DX17 native review running on current/green SHA; owner-run Jules only after Codex accepts; no merge",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "D5 12-thread map correction via DX12",
@@ -2358,7 +2361,7 @@
         "comment_id": 6525942724,
         "status": "terminal: patch delivered 6525948313 and applied at 38c3dd894"
       },
-      "fix_review_cycles": 2,
+      "fix_review_cycles": 3,
       "last_qualifying_review_sha": null,
       "completed_patch_reports": [
         6525183319,
@@ -2368,7 +2371,14 @@
       "verbatim_patch_commits": [
         "6d505459381920ad9e3c178d3539c0dd366e8a88",
         "38c3dd8940719d39e23e52a3c5be311f848c64d9",
-        "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2"
+        "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+        {
+          "sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
+          "source_comment_id": 6531265282,
+          "hunks": 6,
+          "old_blob": "b59171e22286edb0a0c93cb4d3b91937dfa0f327",
+          "new_blob": "e018a167d0d4e700804d0a2f847608355711884a"
+        }
       ],
       "open_threads": [
         "PRRT_kwDOUdC8Ds6yBbwQ",
@@ -2385,31 +2395,46 @@
       "last_native_review_outcome": "Changes required: 2 new findings (P1, P2) on exact head; 7 earlier candidate-fix threads still open",
       "asks_per_sha_by_agent": {
         "Codex": 1,
-        "Claude": 2
+        "Claude": 0
       },
-      "previous_head_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+      "previous_head_sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
       "max_fix_review_cycles": 3,
       "owner_jules_required_by_D5": true,
-      "last_completion_report": "Round 2 candidate patch #6531176514 supplied with nine-finding mapping, but malformed hunk @@ -126,3 +127,4 @@ (actual 2 old/3 new); correction #6531259650 pending; NOT applied",
-      "evidence_replies": [
-        4425691195,
-        4425691665,
-        4425692156,
-        4425692632,
-        4425693135,
-        4425693647,
-        4425694145
-      ],
+      "last_completion_report": "Claude round-2 nine-finding mapped patch #6531176514 corrected only invalid hunk header in #6531265282; all six exact-context verified; applied verbatim at 7b2eb31; actual 284 lines (not claimed 287); tests not run by Claude",
+      "evidence_replies": {
+        "0": 4425691195,
+        "1": 4425691665,
+        "2": 4425692156,
+        "3": 4425692632,
+        "4": 4425693135,
+        "5": 4425693647,
+        "6": 4425694145,
+        "PRRT_kwDOUdC8Ds6yGzNO": {
+          "comment_id": 4427520254,
+          "sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12"
+        },
+        "PRRT_kwDOUdC8Ds6yGzNV": {
+          "comment_id": 4427520663,
+          "sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12"
+        }
+      },
       "patch_validation": {
-        "source_comment_id": 6531176514,
+        "source_comment_id": 6531265282,
+        "original_comment_id": 6531176514,
         "base_sha": "11ccef258c44b1a15b6b840a7509e7d2f284d9de",
-        "file_blob_sha": "b59171e22286edb0a0c93cb4d3b91937dfa0f327",
+        "base_blob_sha": "b59171e22286edb0a0c93cb4d3b91937dfa0f327",
+        "new_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
+        "new_blob_sha": "e018a167d0d4e700804d0a2f847608355711884a",
         "hunks": 6,
-        "valid_hunks": 5,
-        "invalid_hunk": "@@ -126,3 +127,4 @@ actual old=2 new=3",
-        "applied": false,
-        "checked_at": "2026-10-30T19:05:59.964Z"
-      }
+        "all_counts_and_context": true,
+        "only_header_changed": true,
+        "old_lines": 276,
+        "new_lines": 284,
+        "applied": true,
+        "tests_run": false,
+        "checked_at": "2026-10-30T19:08:44.040Z"
+      },
+      "last_ci_verified_at": "2026-10-30T19:08:44.040Z"
     },
     "229": {
       "title": "test(ci): investigate authority-lock waiter synchronization flake (#223)",
@@ -2424,7 +2449,7 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "checked_at": "2026-10-30T19:05:59.964Z"
+        "checked_at": "2026-10-30T19:08:44.040Z"
       },
       "merge_state": "draft: backend in progress; exact-head independent review absent",
       "head_verification": {
@@ -2464,7 +2489,7 @@
         "backend": "queued",
         "frontend": "queued",
         "exact_head_sha": "8669217825beaf09451e22644336258747f20c16",
-        "checked_at": "2026-10-30T19:05:59.964Z"
+        "checked_at": "2026-10-30T19:08:44.040Z"
       },
       "merge_state": "draft: exact-head CI queued; independent review absent",
       "head_verification": {
@@ -2484,7 +2509,7 @@
       "queued": "Draft CI queued; migration lock session-lifetime hypothesis unverified; repeated-run sensitivity and Codex acceptance missing",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T19:05:59.964Z",
+      "last_state_verified_at": "2026-10-30T19:08:44.040Z",
       "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
       "source_patch_comment_id": 6531197158,
       "source_issue": 225,
@@ -2656,7 +2681,7 @@
         228
       ],
       "acceptance_on_main": null,
-      "queued": "D5 #228 round-2 correction pending; DX13 #200/#217 owner review pending; DX18 #226 owner authorization; #229/#230 Draft CI pending",
+      "queued": "DX13 owner #200/#217, DX18 owner #226; #228 final Codex review running; #229/#230 Draft CI pending",
       "last_state_verified_at": "2026-10-30T19:05:59.964Z",
       "last_prompt": {
         "agent": "Claude",
@@ -2730,7 +2755,7 @@
         230
       ],
       "acceptance_on_main": "not established; same-head rerun green on #172, intermittent test defect unresolved",
-      "queued": "Draft PR #230 CI queued, diagnosis hypothesis not proven; no production migration changes",
+      "queued": "Draft PR #230 exact-head CI queued, hypothesis unproven; no production migration changes",
       "last_state_verified_at": "2026-10-30T19:05:59.964Z",
       "last_prompt": {
         "agent": "Claude",
