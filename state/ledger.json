@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T12:11:26.287Z",
-  "last_run_at": "2026-10-30T12:11:26.287Z",
+  "last_full_run_at": "2026-10-30T12:12:20.955Z",
+  "last_run_at": "2026-10-30T12:12:20.955Z",
   "last_run_mode": "FULL",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
@@ -2326,7 +2326,19 @@
       "#115/#116 deferred by D13"
     ]
   },
-  "last_run_summary": "FULL complete: 25 PRs, 16 issues, 40 open threads, 0 merges/resolutions; #224 owner live workflow copy 438ed150 backend CI pending, #219 two new P2, #227 closed without merge, #201/#173 third Codex asks returned only generic receipts (DX13); ruleset unchanged and six bypass modes pull_request; schedules enabled; Migration 0057 hold intact.",
+  "last_run_summary": {
+    "run_id": "full-20261030T120218775Z",
+    "mode": "FULL",
+    "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+    "open_prs": 25,
+    "open_issues": 16,
+    "open_threads": 41,
+    "merged": 0,
+    "resolved": 0,
+    "new_security_findings": 1,
+    "owner_copy_pending_pr": 224,
+    "notes": "Signed draft v3 aa91cfae on #224, live workflow unchanged; signed JWT fix 261287d on #179; DX13 owner approvals pending; migration hold intact"
+  },
   "last_followup_delta": {
     "at": "2026-10-30T10:35:50.127Z",
     "prs_open": 26,
@@ -2416,5 +2428,6 @@
     "waiting_for_backend_pr": 224,
     "agent_requests_sent": 0,
     "notes": "All 25 open PR threads rechecked; no verified new fixes or owner decisions; #224 backend CI in progress; #172/#200 Codex next ask after 11:32Z; #173/#201 held DX13."
-  }
+  },
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T120218775Z.json"
 }
