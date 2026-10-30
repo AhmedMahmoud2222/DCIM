@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T05:08:17.787Z",
-  "last_run_at": "2026-10-30T05:30:36.915Z",
-  "last_run_mode": "FOLLOW-UP",
+  "last_full_run_at": "2026-10-30T05:59:03.006Z",
+  "last_run_at": "2026-10-30T05:59:03.006Z",
+  "last_run_mode": "FULL",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T05:30:36.915Z"
+    "last_verified_at": "2026-10-30T05:59:03.006Z"
   },
   "agent_capabilities": {
     "claude": "API signed commits; cannot run tests, merge main, rebase, check signatures, reply/resolve threads; cannot create Draft PR or commit when only main checked out",
@@ -76,10 +76,10 @@
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
-    "T1": "COMPLETE evidence on #218 comment 6515440013: main code/tests + post-merge 12/12 green CI 40991452249; no issue closure/activation",
-    "T2": "No new unmarked owner D/DX answers on #220",
-    "T3": "D5 hold #219; single CI rerun passed; no fix/review prompts",
-    "T4": "Capability blocked, DX8 queued; no repeat ask"
+    "T1": "COMPLETE: reconfirmed main@731c2084 pre-parse depth guard and 12/12 successful jobs run 40991452249; evidence on #218, no close or activation",
+    "T2": "No new unmarked owner D/DX answers on #220 through 2026-10-30T05:59:03.006Z",
+    "T3": "D5 unanswered; #219 10 threads preserved, no fix/review cycles",
+    "T4": "One-time ask completed as capability denial; DX8 owner branch/Draft PR route pending, no repeat"
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -121,7 +121,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
-      "updated_at": "2026-10-23T15:51:04Z"
+      "updated_at": "2026-10-23T15:51:04Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "87": {
       "title": "docs(review): independent review of PRs #80, #81, and #84",
@@ -157,7 +158,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
-      "updated_at": "2026-10-23T15:51:02Z"
+      "updated_at": "2026-10-23T15:51:02Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "113": {
       "title": "feat: calibrated spatial digital twin and CAD/Visio import (#104)",
@@ -195,7 +197,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
-      "updated_at": "2026-10-29T15:04:59Z"
+      "updated_at": "2026-10-29T15:04:59Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "115": {
       "title": "feat: validated CFD and calibrated thermal analysis (#106)",
@@ -339,7 +342,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
-      "updated_at": "2026-10-29T15:04:46Z"
+      "updated_at": "2026-10-29T15:04:46Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "116": {
       "title": "docs: M1 architecture audit and read-only AI foundation for #107",
@@ -377,7 +381,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d05ab33aca5893e19b99d809f2922922da180440",
-      "updated_at": "2026-10-29T15:04:51Z"
+      "updated_at": "2026-10-29T15:04:51Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "117": {
       "title": "docs(ci): correct versions beside immutable action pins",
@@ -413,7 +418,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
-      "updated_at": "2026-10-23T15:51:25Z"
+      "updated_at": "2026-10-23T15:51:25Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "118": {
       "title": "Full Independent System Review Report",
@@ -449,7 +455,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
-      "updated_at": "2026-10-23T15:50:58Z"
+      "updated_at": "2026-10-23T15:50:58Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "125": {
       "title": "Verify PR 111 task status and deliver detailed report",
@@ -485,7 +492,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
-      "updated_at": "2026-10-23T15:50:56Z"
+      "updated_at": "2026-10-23T15:50:56Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "146": {
       "title": "Fix G6 migration test transaction wrapping for CI remediation",
@@ -568,6 +576,14 @@
           "line": 292,
           "author": "chatgpt-codex-connector",
           "comment_id": "PRRC_kwDOUdC8Ds8AAAABA_aLZg"
+        },
+        {
+          "id": "CI-146-38531703295",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/38531703295",
+          "severity": "CI blocker",
+          "required_change": "Resolve 11 failed G6 lineage migration/integration tests, including missing daily_telemetry_aggregate_lineage and evidence_class schema",
+          "status": "Open",
+          "evidence": "Failing historical exact-head backend job; main baseline green but test-by-test baseline not established; supersession/owner D4 pending"
         }
       ],
       "last_prompt": null,
@@ -577,7 +593,9 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
-      "updated_at": "2026-10-29T15:05:10Z"
+      "updated_at": "2026-10-29T15:05:10Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z",
+      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation"
     },
     "158": {
       "title": "docs(security): verify SEC-RBAC-59-02 (#64) with ACCEPTED verdict",
@@ -613,7 +631,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
-      "updated_at": "2026-10-23T15:50:53Z"
+      "updated_at": "2026-10-23T15:50:53Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "161": {
       "title": "docs(security): independent acceptance report for Issue #65 (SEC-RBAC-59-03)",
@@ -649,7 +668,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
-      "updated_at": "2026-10-23T15:50:51Z"
+      "updated_at": "2026-10-23T15:50:51Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "171": {
       "title": "docs(security): independent security review for SEC-ARCH-02 (PR 169 / Issue #163)",
@@ -677,7 +697,16 @@
       "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
-      "findings_checklist": [],
+      "findings_checklist": [
+        {
+          "id": "CI-171-38879192239",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/38879192239",
+          "severity": "CI blocker",
+          "required_change": "Resolve test_new_permissions_seeded_for_administrator_only assertion: unexpected seeded role membership",
+          "status": "Open",
+          "evidence": "Failing historical exact-head backend job; main baseline green but test-by-test baseline not established; supersession/owner D4 pending"
+        }
+      ],
       "last_prompt": null,
       "asks_per_sha": 0,
       "fix_review_cycles": null,
@@ -685,7 +714,9 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
-      "updated_at": "2026-10-23T15:50:49Z"
+      "updated_at": "2026-10-23T15:50:49Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z",
+      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation"
     },
     "172": {
       "title": "chore(deps): bump actions/upload-artifact from 7.0.1 to 7.0.2",
@@ -703,7 +734,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -724,7 +755,8 @@
       "queued": "reviewer fallback superseded by DX1 if tier0/1",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
-      "updated_at": "2026-10-29T20:06:13Z"
+      "updated_at": "2026-10-29T20:06:13Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "173": {
       "title": "chore(deps): bump actions/setup-node from 7.0.0 to 7.1.0",
@@ -742,7 +774,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -763,7 +795,8 @@
       "queued": "reviewer fallback superseded by DX1 if tier0/1",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
-      "updated_at": "2026-10-29T17:02:48Z"
+      "updated_at": "2026-10-29T17:02:48Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "179": {
       "title": "test(auth): deterministic JWT test clock and authenticated-client reliability (#176)",
@@ -816,7 +849,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
-      "updated_at": "2026-10-29T15:04:31Z"
+      "updated_at": "2026-10-29T15:04:31Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "181": {
       "title": "ci: G7 mutation validation workflow",
@@ -846,7 +880,16 @@
       "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
-      "findings_checklist": [],
+      "findings_checklist": [
+        {
+          "id": "CI-181-39391037320",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/39391037320",
+          "severity": "CI blocker",
+          "required_change": "Resolve test_attach_requires_matching_model_and_current_version KeyError: id",
+          "status": "Open",
+          "evidence": "Failing historical exact-head backend job; main baseline green but test-by-test baseline not established; supersession/owner D4 pending"
+        }
+      ],
       "last_prompt": null,
       "asks_per_sha": 0,
       "fix_review_cycles": null,
@@ -854,7 +897,9 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b17c37a270d57d60962d2261271666aa934c805b",
-      "updated_at": "2026-10-29T15:05:02Z"
+      "updated_at": "2026-10-29T15:05:02Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z",
+      "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation"
     },
     "183": {
       "title": "test: require floor-standing equipment in the all-racks collection total",
@@ -892,7 +937,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
-      "updated_at": "2026-10-29T15:05:05Z"
+      "updated_at": "2026-10-29T15:05:05Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "188": {
       "title": "docs(opencode): record the PR #180 acceptance, merge and activation status (v6.3)",
@@ -907,7 +953,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -928,7 +974,8 @@
       "queued": null,
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
-      "updated_at": "2026-10-24T21:56:39Z"
+      "updated_at": "2026-10-24T21:56:39Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "200": {
       "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
@@ -946,7 +993,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -967,7 +1014,8 @@
       "queued": "reviewer fallback superseded by DX1 if tier0/1",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
-      "updated_at": "2026-10-29T19:30:39Z"
+      "updated_at": "2026-10-29T19:30:39Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "201": {
       "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
@@ -985,7 +1033,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1006,7 +1054,8 @@
       "queued": "reviewer fallback superseded by DX1 if tier0/1",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
-      "updated_at": "2026-10-29T18:32:41Z"
+      "updated_at": "2026-10-29T18:32:41Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "207": {
       "title": "feat(ci): dedicated @claude PR-comment workflow, isolated from OpenCode (Draft)",
@@ -1021,7 +1070,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1122,7 +1171,8 @@
       "queued": "D2(a) workflow permission unprovisioned",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
-      "updated_at": "2026-10-29T15:05:10Z"
+      "updated_at": "2026-10-29T15:05:10Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "216": {
       "title": "fix(deployment): fail-closed migration 0057 production release gate (#214)",
@@ -1137,7 +1187,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
-        "checked_at": "2026-10-30T05:30:36.915Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1158,7 +1208,8 @@
       "queued": "reviewer fallback superseded by DX1 if tier0/1",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
-      "updated_at": "2026-10-29T19:01:54Z"
+      "updated_at": "2026-10-29T19:01:54Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "217": {
       "title": "test(pdu-catalog): close Issue #150 acceptance evidence gaps",
@@ -1173,7 +1224,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
-        "checked_at": "2026-10-30T05:08:17.787Z"
+        "checked_at": "2026-10-30T05:59:03.006Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1261,7 +1312,8 @@
       "queued": "reviewer fallback superseded by DX1 if tier0/1",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
-      "updated_at": "2026-10-29T20:06:34Z"
+      "updated_at": "2026-10-29T20:06:34Z",
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     },
     "219": {
       "title": "fix: P1 collaboration controller reliability remediation (Draft)",
@@ -1276,7 +1328,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-        "checked_at": "2026-10-30T05:30:36.915Z",
+        "checked_at": "2026-10-30T05:59:03.006Z",
         "diagnostic": "attempt 1 Python 3.13 TimeoutError; single attempt 2 passed, all required checks green"
       },
       "optional_ci": "not rechecked this follow-up",
@@ -1451,7 +1503,8 @@
         "issue": "owner tracking issue needed (DX9); no issue creation under guardrails",
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
-      }
+      },
+      "last_state_verified_at": "2026-10-30T05:59:03.006Z"
     }
   },
   "issues": {
@@ -1617,20 +1670,65 @@
   ],
   "last_actions": [
     {
-      "type": "delta",
-      "result": "No new PR/issue commits, reviews, thread changes, owner decisions or CI transitions since last FULL; verified 24 open PRs, 13 issues, 34 unresolved threads."
+      "type": "full_state",
+      "at": "2026-10-30T05:59:03.006Z",
+      "result": "24 open PRs, 13 issues, 34 unresolved threads; no new commits/reviews/owner decisions/CI transitions since 05:30Z; all 24 live PR heads and merge states checked"
     },
     {
       "type": "ruleset",
-      "result": "Rule 23651422 unchanged; all six bypass actors remain always (DX2 outstanding)."
+      "result": "23651422 hash unchanged; six bypass actors still always, DX2 owner correction pending"
     },
     {
-      "type": "checks",
-      "result": "#219 backend/frontend green on ab3f9641; D5 hold remains. #216 backend/frontend green on f82d64ec but BEHIND and Tier 2 review absent."
+      "type": "ci",
+      "result": "Rechecked exact-head required backend/frontend success for 9 priority PRs; historical backend failures #146/#171/#181 confirmed from logs and added to cumulative findings"
     },
     {
-      "type": "merge",
-      "result": "0 merges; 0 resolutions; no new agent prompts; no production actions."
+      "type": "standing_tasks",
+      "result": "T1 verified 12/12 main CI; T2 no owner answers; T3 D5 hold; T4 DX8 blocked"
+    },
+    {
+      "type": "actions",
+      "result": "0 merges, 0 resolutions, 0 agent prompts, no deployment or migration"
     }
-  ]
+  ],
+  "priority_snapshot": {
+    "at": "2026-10-30T05:59:03.006Z",
+    "ranked": [
+      {
+        "pr": 219,
+        "reason": "P1 controller, D5 stop",
+        "status": "authorization blocked"
+      },
+      {
+        "pr": 207,
+        "reason": "workflow security, D2(a) route unprovisioned",
+        "status": "capability blocked"
+      },
+      {
+        "pr": 216,
+        "reason": "P1 migration gate, behind main and Tier 2 review missing",
+        "status": "owner branch refresh"
+      },
+      {
+        "pr": 217,
+        "reason": "P1 PDU acceptance, behind main and 5 open threads",
+        "status": "owner branch refresh"
+      },
+      {
+        "prs": [
+          172,
+          173,
+          201,
+          200
+        ],
+        "reason": "fast-lane dependencies (200 is Tier 1 major bump), all behind main",
+        "status": "owner branch refresh"
+      }
+    ],
+    "agent_slots": {
+      "claude_open": 0,
+      "codex_open": 0
+    },
+    "refresh_workflow_present": false
+  }
 }
