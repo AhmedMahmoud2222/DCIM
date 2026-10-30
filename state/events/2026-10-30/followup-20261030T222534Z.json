@@ -1,0 +1,223 @@
+{
+  "run_id": "followup-20261030T222534Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T22:25:37.570Z",
+  "completed_state_at": "2026-10-30T22:30:16.334Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "previous_ledger_at": "2026-10-30T22:13:50.328Z",
+  "lease_acquired": {
+    "commit": "7d667c6520e131118f3dc06df298f4c0bee6529d",
+    "status": "active",
+    "expires_at": "2026-10-30T22:50:37.570Z"
+  },
+  "inventory": {
+    "open_prs": 28,
+    "new_prs": [
+      231,
+      232,
+      233
+    ],
+    "open_issues": 16,
+    "unresolved_review_threads": 51,
+    "state_branch_prs": 0
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true,
+    "old_disabled_task": "DCIM Hourly Orchestrator (superseded; not a required minute-00 or minute-30 task)"
+  },
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "changed": false,
+    "required": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "mode": "pull_request"
+      }
+    ]
+  },
+  "new_prs": [
+    {
+      "pr": 231,
+      "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
+      "tier": 0,
+      "verified_signature": true,
+      "pin": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+      "tag_verified": true,
+      "required_ci": {
+        "frontend": "success",
+        "backend": "pending"
+      },
+      "optional_ci": "claude-review failed (known bot actor infrastructure)",
+      "threads": 0,
+      "reviews": 0
+    },
+    {
+      "pr": 232,
+      "initial_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
+      "current_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "tier": 2,
+      "verified_signature": true,
+      "pin": "d70510b174a1244958df0b03166a54912811f3e6",
+      "tag_verified": true,
+      "initial_ci": "Deployment tooling regressions failed 3/779; backend pending; frontend success",
+      "new_head_ci": "optional deployment tooling in progress; backend/frontend absent at <10 minutes after push",
+      "threads": 0,
+      "reviews": 0,
+      "findings": [
+        "CI232-1",
+        "CI232-2",
+        "CI232-3"
+      ],
+      "fix_evidence": "https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927",
+      "completion_report": "https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534835930",
+      "fix_files": [
+        ".github/acceptance/policy.json",
+        ".github/scripts/orchestration_claude_adapter.py"
+      ],
+      "code_verification": "all three original failures explained by old pin; code updated, CI not accepted"
+    },
+    {
+      "pr": 233,
+      "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
+      "tier": 2,
+      "verified_signature": true,
+      "pin": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "tag_verified": true,
+      "required_ci": {
+        "frontend": "success",
+        "backend": "pending"
+      },
+      "threads": 0,
+      "reviews": 0
+    }
+  ],
+  "actions": [
+    {
+      "tool": "mcp__GitHub__update_file",
+      "path": "state/lease.json",
+      "at": "2026-10-30T22:25:37.570Z",
+      "result_commit": "7d667c6520e131118f3dc06df298f4c0bee6529d",
+      "action": "lease acquired"
+    },
+    {
+      "tool": "mcp__GitHub__add_comment_to_issue",
+      "pr": 232,
+      "at": "2026-10-30T22:28:08.902Z",
+      "comment_id": 6534832589,
+      "action": "Claude full 3-item CI failure remediation request"
+    },
+    {
+      "tool": "mcp__GitHub__update_issue_comment",
+      "issue": 220,
+      "comment_id": 6500987889,
+      "at": "2026-10-30T22:28:37.131Z",
+      "action": "human ledger summary updated"
+    },
+    {
+      "tool": "mcp__GitHub__update_file",
+      "path": "state/ledger.json",
+      "at": "2026-10-30T22:28:57.294Z",
+      "result_commit": "1b9e8050de3a9d828e7d1a6518079cc6129ec082",
+      "action": "new PRs and CI failure recorded"
+    },
+    {
+      "agent": "Claude",
+      "pr": 232,
+      "at": "2026-10-30T22:29:12Z",
+      "action": "one signed commit on Dependabot branch; completion report; no workflows modified",
+      "new_head": "2cd4380b930e601716dbd685a57a02ebff74c97f"
+    },
+    {
+      "tool": "mcp__GitHub__add_comment_to_issue",
+      "pr": 232,
+      "at": "2026-10-30T22:29:41.323Z",
+      "comment_id": 6534854927,
+      "action": "verified all 3 fixes in exact-head code; Tier2; CI pending"
+    },
+    {
+      "tool": "mcp__GitHub__update_file",
+      "path": "state/ledger.json",
+      "at": "2026-10-30T22:29:51.455Z",
+      "result_commit": "32d7715aca78c25007f754b7500c84ee4d36c838",
+      "action": "new head, Tier2 and findings evidence recorded"
+    },
+    {
+      "tool": "mcp__GitHub__update_issue_comment",
+      "issue": 220,
+      "comment_id": 6500987889,
+      "at": "2026-10-30T22:30:03.209Z",
+      "action": "human ledger updated to new SHA"
+    }
+  ],
+  "merge_attempts": [],
+  "merges": [],
+  "threads_resolved": [],
+  "write_failures": [],
+  "owner_decisions_new": [],
+  "owner_decisions_pending": [
+    "DX19",
+    "DX18",
+    "DX13 for #224/#200/#230"
+  ],
+  "waiting": {
+    "claude": [],
+    "codex": [],
+    "ci": [
+      231,
+      232,
+      233,
+      229
+    ],
+    "owner": [
+      224,
+      200,
+      230,
+      228,
+      226
+    ],
+    "opencode": [
+      184,
+      185
+    ]
+  },
+  "production_safety": {
+    "migration_0057": "PROHIBITED until representative staging and written owner and DBA approval",
+    "production_actions_requested": 0,
+    "production_actions_approved": 0,
+    "production_actions_scheduled": 0
+  },
+  "notes": [
+    "T1/T4/T5 already complete; T2 no new owner decisions; T6 #224 unchanged",
+    "No review requested on failing or missing required CI",
+    "No main merge, bypass, deployment, production migration, or thread resolution",
+    "Old generic Codex receipts not accepted as native reviews",
+    "No open PR head orchestrator-state"
+  ]
+}
