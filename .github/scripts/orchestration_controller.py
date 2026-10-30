@@ -526,7 +526,10 @@ def ingest_pending(api, store, policy, state, blob, now):
     state = deepcopy(state)
     for number in sorted(enrolled, key=int):
         require(re.fullmatch(r'[1-9][0-9]*', number), 'invalid enrolled PR')
-        comments = api.pages('/issues/' + number + '/comments')
+        try:
+            comments = api.pages('/issues/' + number + '/comments')
+        except TransientError:
+            continue  # Per-PR isolation: retried on the next scheduled run.
         for comment in sorted(comments, key=lambda item: item['id']):
             if not owner_comment(comment, policy) or not isinstance(comment.get('body'), str):
                 continue
@@ -541,6 +544,10 @@ def ingest_pending(api, store, policy, state, blob, now):
                 require(0 <= now - created < policy['timeout_seconds'], 'stale initiating command')
                 task = new_task(api, policy, int(number), comment, comments, now)
             except (Rejected, ValueError):
+                continue
+            except TransientError:
+                # Retryable PR read outage: nothing is journaled, so the command is
+                # rediscovered by the next scheduled run; existing tasks still reconcile.
                 continue
             require(len(state['tasks']) < 100, 'journal capacity; owner archival required')
             task['created_at'] = created

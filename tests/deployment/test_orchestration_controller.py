@@ -451,6 +451,28 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(value['tasks'],{})
             self.assertEqual(self.store.writes,0)
 
+    def test_transient_pr_lookup_during_ingestion_is_isolated_and_retried(self):
+        now, command, state = self.pending_fixture()
+        existing = deepcopy(state)
+        existing['tasks']['pr-9-root-1'] = dict(id='pr-9-root-1', state='ASSIGNED')
+        with patch.object(c, 'new_task', side_effect=TransientError('outage')):
+            value, blob = c.ingest_pending(self.api,self.store,self.policy,existing,'0',now)
+        self.assertEqual(value, existing)  # Existing task intact; command not persisted.
+        self.assertEqual(blob, '0')
+        self.assertEqual(self.store.writes, 0)
+        self.assertEqual(self.api.posts, [])
+        value, blob = c.ingest_pending(self.api,self.store,self.policy,existing,'0',now+30)
+        self.assertIn(self.task['id'], value['tasks'])  # Later retry ingests it.
+        self.assertIn('pr-9-root-1', value['tasks'])
+        self.assertEqual(self.store.writes, 1)
+
+    def test_transient_comment_listing_during_ingestion_is_isolated(self):
+        now, command, state = self.pending_fixture()
+        with patch.object(self.api, 'pages', side_effect=TransientError('outage')):
+            value, blob = c.ingest_pending(self.api,self.store,self.policy,state,'0',now)
+        self.assertEqual(value, state)
+        self.assertEqual(self.store.writes, 0)
+
     def test_pending_scan_cas_conflict_is_not_retried(self):
         now, command, state = self.pending_fixture()
         self.store.conflict = True
