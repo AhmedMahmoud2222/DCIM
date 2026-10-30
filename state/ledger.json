@@ -1,0 +1,1546 @@
+{
+  "schema_version": 1,
+  "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
+  "last_full_run_at": "2026-10-30T04:04:47.075Z",
+  "last_run_at": "2026-10-30T04:33:30.097Z",
+  "last_run_mode": "FOLLOW-UP",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "merge_policy": {
+    "ruleset_id": 23651422,
+    "hash": "fnv1a64:5e05ac30729a2ad2",
+    "hash_algorithm": "FNV-1a 64-bit over JSON.stringify(ruleset API response)",
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "review_threads_required": true,
+    "approvals_required": 0,
+    "linear_history": true,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "type": "Integration",
+        "mode": "always"
+      },
+      {
+        "id": 946600,
+        "type": "Integration",
+        "mode": "always"
+      },
+      {
+        "id": 1144995,
+        "type": "Integration",
+        "mode": "always"
+      },
+      {
+        "id": 1236702,
+        "type": "Integration",
+        "mode": "always"
+      },
+      {
+        "id": 4229212,
+        "type": "Integration",
+        "mode": "always"
+      },
+      {
+        "id": 285010264,
+        "type": "User",
+        "mode": "always"
+      }
+    ],
+    "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy"
+  },
+  "agent_capabilities": {
+    "claude": "API signed commits; cannot run tests, merge main, rebase, check signatures, reply/resolve threads",
+    "codex": "COMMENTED native review with P1/P2 inline findings or clean reviewed-SHA pass; A4 YES",
+    "jules": "manual Ahmed-run Tier 2 review only",
+    "opencode": "owner #184/#185; #218 superseded by D1(b)"
+  },
+  "authorizations": {
+    "A1": false,
+    "A2": false,
+    "A3": false,
+    "A4": true,
+    "D1": "b",
+    "D2": "a",
+    "D3": "a",
+    "DX1": "answered YES",
+    "DX2": "answered ruleset policy; bypass not yet changed",
+    "DX4": "answered API-signed and owner branch update"
+  },
+  "standing_holds": {
+    "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
+  },
+  "standing_tasks": {
+    "T1": "main #221 evidence documented on #218; post-merge main CI green; no issue closure",
+    "T2": "no new owner D/DX answers since last ledger",
+    "T3": "D5 stop #219",
+    "T4": "@claude docs PR request posted #220 comment 6515039876, awaiting response"
+  },
+  "workflow_security": {
+    "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
+    "opencode_yml": "secrets jobs gated by needs.gate.outputs.authorized from opencode_gate.py",
+    "agent_claude_yml": "bot type at workflow if; adapter verifies trusted issuer and sender before secret-bearing review job"
+  },
+  "prs": {
+    "83": {
+      "title": "test: non-vacuous object matrix and exact route sweep for PR #59 (PR #69 remediation)",
+      "head_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+      "head_branch": "claude/dcim01-pr69-nonvacuous-authz-matrix",
+      "base_branch": "security/pr59-authorization-coverage-tests",
+      "base_sha": "d26cc2dbc0f4f84a863e82ba366de101243c0f6b",
+      "draft": false,
+      "labels": [],
+      "behind_main": 164,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 1,
+      "tier_reason": "tests-only",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+      "updated_at": "2026-10-23T15:51:04Z"
+    },
+    "87": {
+      "title": "docs(review): independent review of PRs #80, #81, and #84",
+      "head_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+      "head_branch": "jules-13238228512440318183-46761524",
+      "base_branch": "main",
+      "base_sha": "8b6d0044aab9dbb6c10e20637e3416174e4133db",
+      "draft": false,
+      "labels": [],
+      "behind_main": 154,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+      "updated_at": "2026-10-23T15:51:02Z"
+    },
+    "113": {
+      "title": "feat: calibrated spatial digital twin and CAD/Visio import (#104)",
+      "head_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
+      "head_branch": "feature/r4-spatial-digital-twin-104",
+      "base_branch": "main",
+      "base_sha": "6f4f104240cba8625f418db0caef91207a2e746f",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 140,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": null,
+      "tier_reason": "classify by exact diff on next FULL",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
+      "updated_at": "2026-10-29T15:04:59Z"
+    },
+    "115": {
+      "title": "feat: validated CFD and calibrated thermal analysis (#106)",
+      "head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
+      "head_branch": "feature/r4-cfd-106",
+      "base_branch": "main",
+      "base_sha": "92be69284d246868bb1c740bd98d4eba0edd7abc",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 80,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 2,
+      "tier_reason": "concurrency/security architecture changes; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 8,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6ulIgx",
+        "PRRT_kwDOUdC8Ds6ulIg2",
+        "PRRT_kwDOUdC8Ds6ulIg6",
+        "PRRT_kwDOUdC8Ds6ulIg9",
+        "PRRT_kwDOUdC8Ds6ulIhB",
+        "PRRT_kwDOUdC8Ds6ulIhH",
+        "PRRT_kwDOUdC8Ds6ulIhO",
+        "PRRT_kwDOUdC8Ds6ulIhV"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIgx",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Claim the run row before inserting an attempt**\n\nThe proposed atomic claim updates `cfd_run_attempt` using `execution_state`, but the entity table in section 2 places `execution_state` on `cfd_run`, while an attempt has no such column; an `UPDATE` also cannot simultaneously insert the first attempt as described. With two deliveries ",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/architecture/CFD_SERVICE_SECURITY_ARCHITECTURE.md",
+          "line": 60,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYSA"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIg2",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Redispatch queued runs whose broker message is lost**\n\nIf Redis loses `run_cfd_attempt` after the outbox handler has marked its event `dispatched`, no attempt or lease exists, so the expired-attempt sweeper in step 5 cannot see the run and the outbox reclaimer will not revisit the dispatched event. The run consequently remains `queu",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/architecture/CFD_SERVICE_SECURITY_ARCHITECTURE.md",
+          "line": 66,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYTw"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIg6",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Correct the impossible handedness assertion**\n\nUnder the transform immediately above, the coordinate unit vectors map to `e_x=(1,0,0)`, `e_y=(0,-1,0)`, and `e_z=(0,0,1)`, so `(e_x cross e_y) dot e_z` is negative, not positive. Thus the required M2 test cannot pass while implementing the documented transform, even though a negative d",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/architecture/CFD_INPUT_CONTRACT_V1.md",
+          "line": 84,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYVQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIg9",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Remove volatile assembly metadata from the content hash**\n\nThe hash covers the complete document except `hashes`, while section 2 includes `assembled_at` and `assembled_by`; assembling the same revisions at a later time or as another actor therefore produces different bytes and a different hash despite unchanged database state. This",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/architecture/CFD_INPUT_CONTRACT_V1.md",
+          "line": 226,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYWQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIhB",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Remove the nonexistent signature-gate workaround**\n\nFor the inspected PR state, ruleset 23651422 has no required-signatures rule and applies only to the default branch, with no classic protection applying to `feature/r4-cfd-106`. Presenting squash or a waiver as ways to satisfy a signature requirement is therefore speculative and ca",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/implementation/ISSUE_106_CFD_THERMAL_ANALYSIS.md",
+          "line": 60,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYYQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIhH",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Use the existing registry for length conversions**\n\nThe dependency matrix says the registry has no length unit, but the reviewed tree's `backend/app/domain/telemetry/registry.py` defines `mm`, `cm`, `m`, `in`, and `ft` as length units at lines 78–82. The input contract repeats this error and consequently proposes a private geometry-",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/implementation/ISSUE_106_CFD_THERMAL_ANALYSIS.md",
+          "line": 80,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYaQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIhO",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Remove aggregate arithmetic from the CFD dependency path**\n\nThis row classifies G4-A exact aggregate sums as a CFD dependency, but G4-A changes `DailyTelemetryAggregate` arithmetic while this document and the V&V policy expressly require raw readings and prohibit daily aggregates from comparison windows. Grouping it with the raw-rea",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/implementation/ISSUE_106_CFD_THERMAL_ANALYSIS.md",
+          "line": 130,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYcg"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6ulIhV",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Count inlet-temperature probes in the coverage gate**\n\nThe proposed 30% rule counts proximity to any sensor, so an exhaust, return-air, humidity, or airflow sensor can make a rack inlet appear covered even though it supplies no representative inlet-temperature measurement; a rear exhaust probe can also be within 1 m of the inlet acr",
+          "status": "Open",
+          "evidence": null,
+          "path": "docs/architecture/CFD_VERIFICATION_VALIDATION_POLICY.md",
+          "line": 84,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABAjKYeQ"
+        }
+      ],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
+      "updated_at": "2026-10-29T15:04:46Z"
+    },
+    "116": {
+      "title": "docs: M1 architecture audit and read-only AI foundation for #107",
+      "head_sha": "d05ab33aca5893e19b99d809f2922922da180440",
+      "head_branch": "feature/r5-ai-operations-107",
+      "base_branch": "main",
+      "base_sha": "703f74e7edcaa515e044095b4e2ce7e4e67917ea",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 139,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "d05ab33aca5893e19b99d809f2922922da180440"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "d05ab33aca5893e19b99d809f2922922da180440",
+      "updated_at": "2026-10-29T15:04:51Z"
+    },
+    "117": {
+      "title": "docs(ci): correct versions beside immutable action pins",
+      "head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
+      "head_branch": "codex/ci-action-version-comments",
+      "base_branch": "main",
+      "base_sha": "703f74e7edcaa515e044095b4e2ce7e4e67917ea",
+      "draft": false,
+      "labels": [],
+      "behind_main": 139,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
+      "updated_at": "2026-10-23T15:51:25Z"
+    },
+    "118": {
+      "title": "Full Independent System Review Report",
+      "head_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
+      "head_branch": "independent-system-review-report-8513273708482400866",
+      "base_branch": "main",
+      "base_sha": "825c3e42df1afc0f04899d6f8e0e4284c71fe74f",
+      "draft": true,
+      "labels": [],
+      "behind_main": 137,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": null,
+      "tier_reason": "classify by exact diff on next FULL",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
+      "updated_at": "2026-10-23T15:50:58Z"
+    },
+    "125": {
+      "title": "Verify PR 111 task status and deliver detailed report",
+      "head_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
+      "head_branch": "jules-7187645011972844085-d0582950",
+      "base_branch": "main",
+      "base_sha": "dd228303e3e918eda7cb2ab78ab1b4f4804710d0",
+      "draft": true,
+      "labels": [],
+      "behind_main": 131,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "531b931eba269938d4be795fa298cc15cf7820a3"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": null,
+      "tier_reason": "classify by exact diff on next FULL",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
+      "updated_at": "2026-10-23T15:50:56Z"
+    },
+    "146": {
+      "title": "Fix G6 migration test transaction wrapping for CI remediation",
+      "head_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
+      "head_branch": "jules-739123300565037280-453b90f5",
+      "base_branch": "main",
+      "base_sha": "bd12390544164132df90002c3ea40119198db2cb",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 107,
+      "required_ci": {
+        "backend": "fail historical",
+        "frontend": "fail historical",
+        "exact_head_sha": "431846d64e374b2af5b0470972012c6e25b881ad"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 2,
+      "tier_reason": "migration",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 4,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6vrCAT",
+        "PRRT_kwDOUdC8Ds6vrCAb",
+        "PRRT_kwDOUdC8Ds6vrCAh",
+        "PRRT_kwDOUdC8Ds6vrCAn"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6vrCAT",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/146",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Do not reintroduce the already-merged 0051 revision**\n\nCurrent `main` already contains the G6 migration merged by #143, with `0051_aggregate_lineage` parented to `0054_role_assignment_scope_types`; this PR defines the same revision ID against `0049_telemetry_replay_ledger`. Resolving the resulting add/add conflict in favor of this v",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/migrations/versions/0051_aggregate_lineage.py",
+          "line": 11,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABA_aLRg"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6vrCAb",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/146",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Wrap migration helpers in a context transaction**\n\nWhen either PostgreSQL upgrade helper reaches `autocommit_block()`, the preceding DDL has already autobegun a SQLAlchemy transaction, but `MigrationContext._transaction` is unset because this wrapper never calls `context.begin_transaction()`. Alembic therefore asserts while trying t",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/tests/integration/test_g6_lineage_migration.py",
+          "line": 22,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABA_aLUQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6vrCAh",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/146",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Preserve configured hold-retention policy on downgrade**\n\nIf an owner changes `resolved_hold_retention_days` from its seeded value, this guard still permits downgrade and line 88 irreversibly drops that configuration. The downgrade must lock `monitoring_policy` and refuse when the value differs from the seed, just as it protects agg",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/migrations/versions/0051_aggregate_lineage.py",
+          "line": 80,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABA_aLXA"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6vrCAn",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/146",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Expose the new retention policy through monitoring settings**\n\nAdding this persisted policy only to the ORM and migration leaves it absent from `MonitoringPolicyOut`, so `/api/v1/settings/monitoring` neither returns nor accepts it and the audit payload cannot record changes. Operators using the existing supported settings API theref",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/app/domain/telemetry/models.py",
+          "line": 292,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABA_aLZg"
+        }
+      ],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
+      "updated_at": "2026-10-29T15:05:10Z"
+    },
+    "158": {
+      "title": "docs(security): verify SEC-RBAC-59-02 (#64) with ACCEPTED verdict",
+      "head_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
+      "head_branch": "security/issue64-rack-scope-verification-10970924927308911969",
+      "base_branch": "main",
+      "base_sha": "47141e83335ffef1d6eebf7d7ec0b34541f7d80d",
+      "draft": true,
+      "labels": [],
+      "behind_main": 105,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
+      "updated_at": "2026-10-23T15:50:53Z"
+    },
+    "161": {
+      "title": "docs(security): independent acceptance report for Issue #65 (SEC-RBAC-59-03)",
+      "head_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
+      "head_branch": "jules/sec-rbac-59-03-review-188116265654213342",
+      "base_branch": "main",
+      "base_sha": "6c8a4a3dbcfccdede78b3c811708b1be44d7505e",
+      "draft": true,
+      "labels": [],
+      "behind_main": 105,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "09130572bded5f9728cac6849a243f15508f5e7e"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
+      "updated_at": "2026-10-23T15:50:51Z"
+    },
+    "171": {
+      "title": "docs(security): independent security review for SEC-ARCH-02 (PR 169 / Issue #163)",
+      "head_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
+      "head_branch": "fix/sec-arch-02-permission-scopes-163-6288434409581895149",
+      "base_branch": "main",
+      "base_sha": "5be4025d14b4f6738e803eb52a28cae65f8480ea",
+      "draft": true,
+      "labels": [],
+      "behind_main": 96,
+      "required_ci": {
+        "backend": "fail historical",
+        "frontend": "fail historical",
+        "exact_head_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
+      "updated_at": "2026-10-23T15:50:49Z"
+    },
+    "172": {
+      "title": "chore(deps): bump actions/upload-artifact from 7.0.1 to 7.0.2",
+      "head_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+      "head_branch": "dependabot/github_actions/actions/upload-artifact-7.0.2",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": false,
+      "labels": [
+        "dependencies",
+        "github_actions"
+      ],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "6569ac358b1df8be222385321e4dc576b65ae985"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "patch pinned Action bump",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 3,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+      "updated_at": "2026-10-29T20:06:13Z"
+    },
+    "173": {
+      "title": "chore(deps): bump actions/setup-node from 7.0.0 to 7.1.0",
+      "head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+      "head_branch": "dependabot/github_actions/actions/setup-node-7.1.0",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": false,
+      "labels": [
+        "dependencies",
+        "github_actions"
+      ],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "minor pinned Action bump",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 3,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+      "updated_at": "2026-10-29T17:02:48Z"
+    },
+    "179": {
+      "title": "test(auth): deterministic JWT test clock and authenticated-client reliability (#176)",
+      "head_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
+      "head_branch": "test/jwt-clock-deterministic-auth-tests",
+      "base_branch": "main",
+      "base_sha": "51f2981247bb8cb4a2aa9c830f036da1db6a9411",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 10,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 1,
+      "tier_reason": "tests-only",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 1,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6wNSLk"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6wNSLk",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/179",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Mutate signature bytes rather than base64 padding bits**\n\nWith supported PyJWT versions such as 2.9 and 2.10 (`backend/pyproject.toml` allows `pyjwt>=2.9.0`), this mutation can leave the signature unchanged. An HS256 signature ending in `A` becomes `B`, which changes only unused base64url padding bits and decodes to the same signatu",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/tests/api/test_jwt_clock_reliability.py",
+          "line": 88,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBNJqvA"
+        }
+      ],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
+      "updated_at": "2026-10-29T15:04:31Z"
+    },
+    "181": {
+      "title": "ci: G7 mutation validation workflow",
+      "head_sha": "b17c37a270d57d60962d2261271666aa934c805b",
+      "head_branch": "workflow/g7-mutation-validation",
+      "base_branch": "main",
+      "base_sha": "bbcb7a5c4bcf7207ba147ba81604da4969b85ada",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 83,
+      "required_ci": {
+        "backend": "fail historical",
+        "frontend": "fail historical",
+        "exact_head_sha": "b17c37a270d57d60962d2261271666aa934c805b"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 2,
+      "tier_reason": "workflow file",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "b17c37a270d57d60962d2261271666aa934c805b",
+      "updated_at": "2026-10-29T15:05:02Z"
+    },
+    "183": {
+      "title": "test: require floor-standing equipment in the all-racks collection total",
+      "head_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
+      "head_branch": "jules-9669984242232275811-a93922a5",
+      "base_branch": "main",
+      "base_sha": "bbcb7a5c4bcf7207ba147ba81604da4969b85ada",
+      "draft": true,
+      "labels": [
+        "stalled"
+      ],
+      "behind_main": 81,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "2506b84893f7d3ad5992c455423544a23e1a369b"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": false,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": null,
+      "tier_reason": "classify by exact diff on next FULL",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": "stalled",
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
+      "updated_at": "2026-10-29T15:05:05Z"
+    },
+    "188": {
+      "title": "docs(opencode): record the PR #180 acceptance, merge and activation status (v6.3)",
+      "head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
+      "head_branch": "claude/inspiring-cerf-2hgdud",
+      "base_branch": "main",
+      "base_sha": "87a13a17f5491ca4c7dad4828ab0b649e1ace8b7",
+      "draft": false,
+      "labels": [],
+      "behind_main": 28,
+      "required_ci": {
+        "backend": "pass historical",
+        "frontend": "pass historical",
+        "exact_head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "docs only; verify diff",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
+      "updated_at": "2026-10-24T21:56:39Z"
+    },
+    "200": {
+      "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
+      "head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+      "head_branch": "dependabot/github_actions/actions/download-artifact-8.0.2",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": false,
+      "labels": [
+        "dependencies",
+        "github_actions"
+      ],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass at head before main advance",
+        "frontend": "pass at head before main advance",
+        "exact_head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 1,
+      "tier_reason": "major Action bump without permission changes",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 3,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+      "updated_at": "2026-10-29T19:30:39Z"
+    },
+    "201": {
+      "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
+      "head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+      "head_branch": "dependabot/github_actions/actions/create-github-app-token-3.3.0",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": false,
+      "labels": [
+        "dependencies",
+        "github_actions"
+      ],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass at head before main advance",
+        "frontend": "pass at head before main advance",
+        "exact_head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 0,
+      "tier_reason": "minor pinned Action bump",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 3,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+      "updated_at": "2026-10-29T18:32:41Z"
+    },
+    "207": {
+      "title": "feat(ci): dedicated @claude PR-comment workflow, isolated from OpenCode (Draft)",
+      "head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
+      "head_branch": "claude/friendly-darwin-8sn223",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": true,
+      "labels": [],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass at head before main advance",
+        "frontend": "pass at head before main advance",
+        "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 2,
+      "tier_reason": "workflow permissions/secrets",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 6,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6xX8Of",
+        "PRRT_kwDOUdC8Ds6xX8Ol",
+        "PRRT_kwDOUdC8Ds6xg5fa",
+        "PRRT_kwDOUdC8Ds6xjgcP",
+        "PRRT_kwDOUdC8Ds6xjgcU",
+        "PRRT_kwDOUdC8Ds6xk0ln"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6xX8Of",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/207",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Require a trusted PR base before exposing credentials**\n\nFor a same-repository PR targeting an unprotected contributor-controlled branch, this check authorizes execution even though that base can contain executable Claude configuration. The pinned action's [`restoreConfigFromBase`](https://github.com/anthropics/claude-code-action/bl",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/claude_gate.py",
+          "line": 97,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBrXleA"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xX8Ol",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/207",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Enforce the authorized branch before the action can publish**\n\nIf the PR closes or merges after the initial recheck but before the action fetches PR metadata, the pinned action's [`setupBranch`](https://github.com/anthropics/claude-code-action/blob/925afb53776cf1a2b738c6bdbed37b4d4000ef13/src/github/operations/branch.ts#L153-L162) d",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/workflows/claude-agent.yml",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBrXlgQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xg5fa",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/207",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Provide a trusted Git worktree for the pinned action**\n\nFor the supported PR-comment trigger, this action fails before Claude runs because the workspace root is not a Git worktree: the trusted checkout is deleted and the only remaining checkout is under `./pr`. Contrary to the assumption in the new authority documentation, the pinne",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/workflows/claude-agent.yml",
+          "line": 137,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBu_fRQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xjgcP",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/207",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Use an exact-head compare-and-swap when publishing**\n\nIf a maintainer resets the PR branch to an ancestor of the authorized SHA between the final `live_check()` and this PATCH, the update still succeeds: `force: false` enforces ancestry, not equality with the authorized SHA. The publisher consequently restores the commits the mainta",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/claude_publish.py",
+          "line": 347,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBwCwRQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xjgcU",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/207",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Preserve pending requests instead of replacing them**\n\nWhen one Claude job is running and two more authorized comments arrive on the same PR, the third job cancels the second pending job despite `cancel-in-progress: false`. Its gate has already added the permanent `eyes` claim, so rerunning the canceled request is then rejected as a",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/workflows/claude-agent.yml",
+          "line": 95,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBwCwTg"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xk0ln",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/207",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Restrict file tools to the sanitized PR checkout**\n\nIf Claude follows instructions embedded in PR content, these unrestricted file-tool approvals let it read runner credentials and copy them into a publishable file under `./pr`. Denying Bash and network tools does not prevent this: the publisher accepts ordinary file contents withou",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/workflows/claude-agent.yml",
+          "line": 151,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBwkomg"
+        }
+      ],
+      "last_prompt": null,
+      "asks_per_sha": 0,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "D2(a) workflow permission unprovisioned",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
+      "updated_at": "2026-10-29T15:05:10Z"
+    },
+    "216": {
+      "title": "fix(deployment): fail-closed migration 0057 production release gate (#214)",
+      "head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
+      "head_branch": "claude/issue-214-20261028-1829",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": false,
+      "labels": [],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass at head before main advance",
+        "frontend": "pass at head before main advance",
+        "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 2,
+      "tier_reason": "migration release gate",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 3,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
+      "updated_at": "2026-10-29T19:01:54Z"
+    },
+    "217": {
+      "title": "test(pdu-catalog): close Issue #150 acceptance evidence gaps",
+      "head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
+      "head_branch": "claude/issue-150-20261028-1927",
+      "base_branch": "main",
+      "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
+      "draft": false,
+      "labels": [],
+      "behind_main": 1,
+      "required_ci": {
+        "backend": "pass at head before main advance",
+        "frontend": "pass at head before main advance",
+        "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 1,
+      "tier_reason": "tests-only",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 5,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6xTtsC",
+        "PRRT_kwDOUdC8Ds6xU8_H",
+        "PRRT_kwDOUdC8Ds6xWLRa",
+        "PRRT_kwDOUdC8Ds6xYlf8",
+        "PRRT_kwDOUdC8Ds6xqJaf"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6xTtsC",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/217",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Preserve the revision ID when consuming the PDU PATCH response**\n\nEvery new concurrency test calls this helper, but the `/pdu` PATCH endpoint returns `PDUDraftOut`, whose identifier is `revision_id`, not `id` (see `backend/app/api/v1/pdu_catalog.py`). Replacing `revision` with that response drops its `id`, so the published setup imm",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/tests/integration/test_pdu_catalog_concurrency.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBpoHJw"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xU8_H",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/217",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Locate the outlet marker label by its combobox role**\n\nAfter this test saves the two PDU outlets, `RevisionEditorPage.tsx` passes their labels to `GraphicsEditorPage.tsx`, whose marker placement input gets a `list` attribute referencing the suggestions datalist. That makes its implicit accessibility role `combobox`, not `textbox`, s",
+          "status": "Open",
+          "evidence": null,
+          "path": "frontend/e2e/pdu-catalog-graphics.spec.ts",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBqI5Jw"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xWLRa",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/217",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Require publication to succeed in the publish-versus-edit race**\n\nWith these valid two-outlet and four-outlet specifications, publication should succeed regardless of which transaction acquires the revision lock first: either the PATCH wins and publication sees four outlets, or publication wins and the PATCH receives 409. Allowing p",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/tests/integration/test_pdu_catalog_concurrency.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBqpA7g"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xYlf8",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/217",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Exercise both publish-versus-edit lock orderings deterministically**\n\nThis single `asyncio.gather` uses independent sessions, but it neither forces a lock ordering nor requires both outcomes to occur. Consequently, it can pass while exercising only publication-first (PATCH 409, two outlets) or only edit-first (PATCH 200, four outlet",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/tests/integration/test_pdu_catalog_concurrency.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBrokvQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xqJaf",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/217",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Exercise rollback after successful PDU graph writes**\n\nMajor acceptance-evidence gap: with the shared asset tag used here, every losing request fails at the first `ManagedAsset` flush in `backend/app/application/pdu_instantiation_service.py:120–122`, before inserting any PDU subtype, graph node, or outlet. Consequently, these counts",
+          "status": "Open",
+          "evidence": null,
+          "path": "backend/tests/integration/test_pdu_catalog_concurrency.py",
+          "line": 294,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABByvGdQ"
+        }
+      ],
+      "last_prompt": null,
+      "asks_per_sha": 3,
+      "fix_review_cycles": null,
+      "stale_level": null,
+      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
+      "updated_at": "2026-10-29T20:06:34Z"
+    },
+    "219": {
+      "title": "fix: P1 collaboration controller reliability remediation (Draft)",
+      "head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "head_branch": "fix/collaboration-post-merge-remediation",
+      "base_branch": "main",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "draft": false,
+      "labels": [],
+      "behind_main": 0,
+      "required_ci": {
+        "backend": "failed attempt 1; rerun attempt 2 in progress",
+        "frontend": "passed",
+        "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc"
+      },
+      "optional_ci": "not rechecked this follow-up",
+      "merge_state": "not merge-ready",
+      "head_verification": {
+        "verified": true,
+        "reason": "legacy snapshot; no new head"
+      },
+      "tier": 2,
+      "tier_reason": "concurrency/journal/state machine",
+      "tier_verified_by_diff": false,
+      "open_thread_count": 10,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6xg8Vi",
+        "PRRT_kwDOUdC8Ds6xmLxk",
+        "PRRT_kwDOUdC8Ds6xn4us",
+        "PRRT_kwDOUdC8Ds6xrV8T",
+        "PRRT_kwDOUdC8Ds6xrV8f",
+        "PRRT_kwDOUdC8Ds6xtjVE",
+        "PRRT_kwDOUdC8Ds6xtjVH",
+        "PRRT_kwDOUdC8Ds6xyuAg",
+        "PRRT_kwDOUdC8Ds6x0PNt",
+        "PRRT_kwDOUdC8Ds6x0phT"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6xg8Vi",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "unclassified",
+          "required_change": "**Bug: `TransientError` handler discards already-committed journal state.**\n\n`_reconcile` can call `store.save(...)` several times (e.g. the `RESERVED` delivery save before the POST). If a later request then raises `TransientError` (the POST to `/issues/{pr}/comments` is non-idempotent and raises `TransientError` on any 5xx or timeout), this handler returns `original_state, original_blob`, which a",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": 378,
+          "author": "claude",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBvAoDw"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xmLxk",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Resume capped discovery scans instead of restarting them**\n\nWhen more than 100 completed, successful workflow runs pass the metadata filters after a delivery, this branch returns `None` even if an authenticated matching result was already found. No continuation cursor or accumulated evidence is retained, so subsequent scheduled reco",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBxH5tw"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xn4us",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "unclassified",
+          "required_change": "**Bug: `reconcile` returns or saves against a stale `original_blob` after `_reconcile` has already committed journal writes.**\n\n`_reconcile` can call `store.save` several times. For example, the `RESERVED` delivery is saved before the second PR read and the command POST. If a `TransientError` or `Rejected` is raised after that save (a transient failure on the second `/pulls/` read, or a `wrong del",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": null,
+          "author": "claude",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBx0WwQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xrV8T",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Track workflow attempts within the persisted scan interval**\n\nWhen a workflow run inside the persisted `[low, high]` interval is rerun between reconciliations, this filter permanently excludes its new attempt because its run ID is unchanged. I reproduced a 150-candidate scan that retained SUCCESS from run 100, restarted with run 75 ",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBzOXag"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xrV8f",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Reauthenticate retained matches before completing the delivery**\n\nWhen a match is retained across scan passes, this return uses its cached result without rechecking the mutable evidence that `authenticated_execution()` normally validates. For example, editing or deleting the referenced provider comment between passes should fail the",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABBzOXeQ"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xtjVE",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Bound scan state before persisting the shared journal**\n\nWhen enough deliveries retain scan progress, recording every examined run here grows the shared journal beyond its reader's hard limit. I reproduced 100 permitted tasks retaining 500 examined IDs each: the actual `Store.save()` accepted the 551,916-byte journal, but `Store.rea",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABB0IA9g"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xtjVH",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Apply quota-reset delays only when the quota is exhausted**\n\nIf a retryable server error carries `X-RateLimit-Reset` while quota remains available, this branch incorrectly waits for the quota reset rather than using ordinary exponential backoff. I reproduced an HTTP 500 with `X-RateLimit-Remaining: 4999` and a reset 30 minutes away ",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/acceptance_api.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABB0IA_A"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6xyuAg",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P1",
+          "required_change": "**![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)  Major: Preserve retryability when artifact retrieval fails**\n\nWhen artifact retrieval temporarily fails, `GitHub.artifact()` still raises `Rejected` for download HTTP errors and storage timeouts (`acceptance_api.py:265–281`). This handler treats that outage as definitive negative evidence and advances the persisted scan interval, so",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": 318,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABB2P3Xg"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6x0PNt",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Enforce the task deadline before retryable evidence reads**\n\nIf the PR or comment endpoint keeps failing transiently while the journal remains writable, this unconditional return bypasses deadline enforcement indefinitely: `_reconcile()` reads `/pulls/...` and issue comments before checking `timeout_seconds` at lines 441–443. With t",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/orchestration_controller.py",
+          "line": null,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABB24a3Q"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6x0phT",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/219",
+          "severity": "P2",
+          "required_change": "**![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)  Isolate transient task-ingestion failures from existing tasks**\n\nWhen a fresh, unjournaled owner command is discovered and its PR lookup exhausts retries, the new `TransientError` bypasses `ingest_pending()`'s `except (Rejected, ValueError)` at `orchestration_controller.py:539–544`. Because `main()` performs ingestion before its rec",
+          "status": "Open",
+          "evidence": null,
+          "path": ".github/scripts/acceptance_api.py",
+          "line": 34,
+          "author": "chatgpt-codex-connector",
+          "comment_id": "PRRC_kwDOUdC8Ds8AAAABB3DUzw"
+        }
+      ],
+      "last_prompt": {
+        "agent": "Claude",
+        "at": "2026-10-30T02:35:00Z",
+        "sha": "8f388a9bdc",
+        "status": "answered before current HEAD"
+      },
+      "asks_per_sha": 0,
+      "fix_review_cycles": 4,
+      "stale_level": null,
+      "queued": null,
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "updated_at": "2026-10-30T02:47:28Z"
+    }
+  },
+  "issues": {
+    "52": {
+      "title": "Restore GHAS code scanning AI findings after unsupported-model failure",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:48:08Z",
+      "owner": "unconfirmed",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "72": {
+      "title": "PR #70: active-content screening does not cover objects stored in compressed object streams",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:48:01Z",
+      "owner": "unconfirmed",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "74": {
+      "title": "PR #70: catalog document upload hardening gaps (raw filename in audit, duplicate-vs-purge race, orphan objects, unscanned documents)",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:48:05Z",
+      "owner": "unconfirmed",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "106": {
+      "title": "R4: Implement validated CFD / thermal analysis with sensor calibration and uncertainty",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:47:58Z",
+      "owner": "Claude",
+      "linked_prs": [
+        115
+      ],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "107": {
+      "title": "R5: AI-assisted operations, anomaly detection, predictive maintenance and controlled self-healing",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:47:56Z",
+      "owner": "Claude",
+      "linked_prs": [
+        116
+      ],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "150": {
+      "title": "P1 Catalog: define and implement supported PDU model lifecycle/designer workflow",
+      "labels": [],
+      "last_activity_at": "2026-10-28T20:25:40Z",
+      "owner": "Claude",
+      "linked_prs": [
+        217
+      ],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "176": {
+      "title": "Follow-up B: deterministic JWT test-clock and authenticated-client token reliability (LOW)",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:47:45Z",
+      "owner": "Claude",
+      "linked_prs": [
+        179
+      ],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "184": {
+      "title": "SEC-175-01: Document and verify Windows NTFS ACLs for preflight report directories (LOW)",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:47:40Z",
+      "owner": "OpenCode",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": "D6 OpenCode inactivity"
+    },
+    "185": {
+      "title": "SEC-175-02: Restore portable preflight cleanup negative regression coverage (LOW)",
+      "labels": [],
+      "last_activity_at": "2026-10-23T15:47:43Z",
+      "owner": "OpenCode",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": "D6 OpenCode inactivity"
+    },
+    "195": {
+      "title": "Updated Architecture proposal",
+      "labels": [],
+      "last_activity_at": "2026-10-23T14:40:03Z",
+      "owner": "unconfirmed",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": null
+    },
+    "214": {
+      "title": "P1 release gate: qualify Migration 0057 FK indexes on representative staging before production",
+      "labels": [],
+      "last_activity_at": "2026-10-28T18:32:30Z",
+      "owner": "Ahmed + DBA staging authorization",
+      "linked_prs": [
+        216
+      ],
+      "acceptance_on_main": null,
+      "queued": "production hold"
+    },
+    "218": {
+      "title": "P1 security: bound OpenCode proxy JSON depth across Python versions (follow-up in PR #215)",
+      "labels": [],
+      "last_activity_at": "2026-10-30T02:35:12Z",
+      "owner": "Claude (D1(b), formerly OpenCode)",
+      "linked_prs": [
+        221
+      ],
+      "acceptance_on_main": "implementation merged #221; post-merge evidence exists; issue remains open",
+      "queued": null
+    },
+    "220": {
+      "title": "DCIM Orchestrator Ledger",
+      "labels": [
+        "orchestrator"
+      ],
+      "last_activity_at": "2026-10-30T04:33:12Z",
+      "owner": "Orchestrator",
+      "linked_prs": [],
+      "acceptance_on_main": null,
+      "queued": null
+    }
+  }
+}
