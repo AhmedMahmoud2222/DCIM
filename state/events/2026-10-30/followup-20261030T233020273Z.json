@@ -1,0 +1,143 @@
+{
+  "run_id": "followup-20261030T233020273Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T23:30:20.273Z",
+  "recorded_at": "2026-10-30T23:33:03.813Z",
+  "previous_ledger_at": "2026-10-30T23:00:39.477Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "inventory": {
+    "open_prs": 28,
+    "open_issues": 16,
+    "open_threads": 51,
+    "orchestrator_state_prs": 0
+  },
+  "schedule_health": {
+    "full": true,
+    "followup": true
+  },
+  "actions": [
+    {
+      "tool": "mcp__GitHub__rerun_workflow_job",
+      "args": {
+        "repo_full_name": "AhmedMahmoud2222/DCIM",
+        "job_id": 124341777631
+      },
+      "at": "2026-10-30T23:31:31.373Z",
+      "result": {
+        "success": true
+      },
+      "pr": 233
+    },
+    {
+      "tool": "mcp__GitHub__add_comment_to_issue",
+      "pr": 229,
+      "comment_id": 6535728535,
+      "at": "2026-10-30T23:31:50.365Z",
+      "agent": "Codex",
+      "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "purpose": "scoped P2 re-review"
+    },
+    {
+      "tool": "mcp__GitHub__add_comment_to_issue",
+      "pr": 231,
+      "comment_id": 6535729037,
+      "at": "2026-10-30T23:31:50.365Z",
+      "agent": "Codex",
+      "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
+      "purpose": "Tier0 pin and comments review"
+    },
+    {
+      "tool": "mcp__GitHub__add_comment_to_issue",
+      "pr": 232,
+      "comment_id": 6535729473,
+      "at": "2026-10-30T23:31:50.365Z",
+      "agent": "Codex",
+      "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "purpose": "Tier0 pin coupling review"
+    },
+    {
+      "tool": "mcp__GitHub__add_comment_to_issue",
+      "pr": 233,
+      "comment_id": 6535730945,
+      "at": "2026-10-30T23:31:57.443Z",
+      "purpose": "document required CI deadlock and one rerun"
+    }
+  ],
+  "ci_deltas": [
+    {
+      "pr": 229,
+      "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "backend": "success",
+      "frontend": "success",
+      "threads_open": 1
+    },
+    {
+      "pr": 231,
+      "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
+      "backend": "success",
+      "frontend": "success",
+      "threads_open": 0
+    },
+    {
+      "pr": 232,
+      "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "backend": "success",
+      "frontend": "success",
+      "threads_open": 0
+    },
+    {
+      "pr": 233,
+      "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
+      "backend": "failure",
+      "frontend": "success",
+      "failed_test": "tests/integration/test_cooling_concurrency.py::test_retiring_a_unit_races_with_adding_a_zone_relationship",
+      "error": "asyncpg.exceptions.DeadlockDetectedError on INSERT INTO cooling_unit_zone",
+      "failed_job_id": 124341777631,
+      "main_py314_baseline_runs": [
+        41083732966,
+        41073838767,
+        41059584409
+      ],
+      "main_py314_results": [
+        "success",
+        "success",
+        "success"
+      ],
+      "rerun_requested": true,
+      "issue": 226,
+      "owner_decision": "DX18"
+    }
+  ],
+  "merged": [],
+  "threads_resolved": [],
+  "owner_answers_new": [],
+  "waiting": {
+    "codex": [
+      229,
+      231,
+      232
+    ],
+    "owner": [
+      "DX19 #228/#219",
+      "DX13 #224/#200/#230",
+      "DX18 #226",
+      "D6 #184/#185 until 72h"
+    ],
+    "jules": []
+  },
+  "production_safety": {
+    "migration_0057_prohibited": true,
+    "staging_qualification_required": true,
+    "written_owner_and_dba_approval_required": true,
+    "production_migrations_requested": 0,
+    "deployments_requested": 0
+  },
+  "write_failures": [],
+  "read_limitations": [
+    "GET /actions/workflows collection and /actions/workflows/ci.yml/runs not accepted by connector; main push-run collection returned three CI baselines instead"
+  ],
+  "notes": [
+    "#233 major Action bump changes workflow files; classified Tier2 under explicit category, despite previous Tier1 ledger classification.",
+    "No open orchestrator-state head PR; no PR merge attempt; no bypass or auto-merge."
+  ]
+}
