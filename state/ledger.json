@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T15:13:29.366Z",
-  "last_run_at": "2026-10-30T15:13:29.366Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T15:32:21.019Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -876,10 +876,10 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
+        "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "8b9ecb0f93fa61fc712f0d90ab0b0436bf3a0f1a",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T15:32:21.019Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "blocked: exact-head backend running",
@@ -919,7 +919,7 @@
       "last_qualifying_review_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1 (owner DX13 carryover; not native Codex)",
       "last_ci_sha": null,
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T15:06:05.111Z",
+      "last_state_verified_at": "2026-10-30T15:32:21.019Z",
       "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
@@ -1264,10 +1264,10 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending",
+        "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "409750b715f677d2f4f673ce456329d3ba1e3444",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "checked_at": "2026-10-30T15:32:21.019Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "blocked: exact-head backend running",
@@ -1307,7 +1307,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T15:06:05.111Z",
+      "last_state_verified_at": "2026-10-30T15:32:21.019Z",
       "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
@@ -2189,14 +2189,14 @@
         "checked_at": "2026-10-30T15:12:01.108Z",
         "run_id": 41078019903
       },
-      "open_thread_count": 0,
+      "open_thread_count": 7,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T15:12:01.108Z",
-      "last_thread_verified_at": "2026-10-30T15:09:39.147Z",
+      "last_state_verified_at": "2026-10-30T15:32:21.019Z",
+      "last_thread_verified_at": "2026-10-30T15:32:21.019Z",
       "last_ci_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
       "merge_state": "current with main; native Codex review and owner-run Jules acceptance absent",
-      "tier_reason": "docs-only specification patch; owner D5 separately requires Codex AND Jules review before #219 resumes",
+      "tier_reason": "docs-only one file; owner D5 separately mandates Codex and Jules acceptance",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -2217,18 +2217,95 @@
           "required_change": "Correct falsely owner-attributed review-thread inventory to orchestrator verification",
           "status": "Fixed at 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
           "evidence": "Claude one-line patch applied verbatim at line 205; live PR head verified; no other line changed"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbwQ",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwQ",
+          "severity": "P1",
+          "required_change": "Cross-run rollback trust anchor: independently monotonic checkpoint/non-rewindable history, initialize and recover, FI-28 inter-process restored signed journal rejection",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:53; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 53,
+          "author": "chatgpt-codex-connector"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbwW",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwW",
+          "severity": "P1",
+          "required_change": "Separate new-admission reserve threshold from existing-task mutation max; test final signed bytes and reserve consumption",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:58; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 58,
+          "author": "chatgpt-codex-connector"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbwv",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwv",
+          "severity": "P1",
+          "required_change": "Separate logical outcome comparison key from per-attempt provenance; compare authenticated opposing verdicts across attempts and extend FI-21",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:124; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 124,
+          "author": "chatgpt-codex-connector"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbw5",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbw5",
+          "severity": "P1",
+          "required_change": "Rescan status/conclusion changes of same run attempt after cursor pass; resumable FI test",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:226; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 226,
+          "author": "chatgpt-codex-connector"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbwf",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwf",
+          "severity": "P2",
+          "required_change": "T3 reservation permits POST then T4 outcome write; fix circular universal write-before-effect invariant; FI-07..09",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:96; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 96,
+          "author": "chatgpt-codex-connector"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbwn",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwn",
+          "severity": "P2",
+          "required_change": "Unknown durable state after ambiguous applied PUT plus failed recovery reads; split FI-04 and reconcile safely",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:48; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 48,
+          "author": "chatgpt-codex-connector"
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6yBbxC",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbxC",
+          "severity": "P2",
+          "required_change": "Define authoritative live witness identity/bindings and mutation/deletion/retry tests",
+          "status": "Open",
+          "evidence": "Codex native COMMENTED review 2026-10-30T15:15:21Z, exact HEAD 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2, docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md:227; code inspected by orchestrator 2026-10-30",
+          "path": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+          "line": 227,
+          "author": "chatgpt-codex-connector"
         }
       ],
       "last_prompt": {
-        "agent": "Codex",
-        "ask": "D5 specification-first native independent review of 12 threads, G-1..G-10, invariants, transitions, FI tests; verdict line",
-        "at": "2026-10-30T15:11:20Z",
+        "agent": "Claude",
+        "ask": "D5 DX12 patch-only fix all seven exact-head Codex findings (4 P1, 3 P2); no #219 implementation",
+        "at": "2026-10-30T15:32:21.019Z",
         "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-        "comment_id": 6526123791,
-        "status": "awaiting native COMMENTED review"
+        "comment_id": 6526604184,
+        "status": "awaiting complete one-file unified patch and checklist completion report"
       },
-      "asks_per_sha": 1,
-      "queued": "Ready for review; backend/frontend SUCCESS on 9c9ac7a8, zero threads, all prior spec checklist fixed; Codex ask #6526123791 pending; D5 owner-run Jules mandatory after Codex acceptance; do not merge",
+      "asks_per_sha": 2,
+      "queued": "BLOCKED: 7 open Codex threads (4 P1, 3 P2) on D5 spec; Claude one-file patch requested via issue #220 comment 6526604184; #219 frozen, Jules not yet eligible, no merge",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "D5 12-thread map correction via DX12",
@@ -2237,7 +2314,7 @@
         "comment_id": 6525942724,
         "status": "terminal: patch delivered 6525948313 and applied at 38c3dd894"
       },
-      "fix_review_cycles": 0,
+      "fix_review_cycles": 1,
       "last_qualifying_review_sha": null,
       "completed_patch_reports": [
         6525183319,
@@ -2248,7 +2325,22 @@
         "6d505459381920ad9e3c178d3539c0dd366e8a88",
         "38c3dd8940719d39e23e52a3c5be311f848c64d9",
         "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2"
-      ]
+      ],
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6yBbwQ",
+        "PRRT_kwDOUdC8Ds6yBbwW",
+        "PRRT_kwDOUdC8Ds6yBbwv",
+        "PRRT_kwDOUdC8Ds6yBbw5",
+        "PRRT_kwDOUdC8Ds6yBbwf",
+        "PRRT_kwDOUdC8Ds6yBbwn",
+        "PRRT_kwDOUdC8Ds6yBbxC"
+      ],
+      "last_native_review_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "last_native_review_outcome": "Changes required (4 P1, 3 P2)",
+      "asks_per_sha_by_agent": {
+        "Codex": 1,
+        "Claude": 1
+      }
     }
   },
   "issues": {
@@ -2551,6 +2643,7 @@
     ],
     "merged_this_run": [],
     "tier0_next": [
+      228,
       172,
       188
     ],
@@ -2569,128 +2662,120 @@
     ],
     "open_product_prs": 24,
     "open_issues": 16,
-    "open_threads": 41
+    "open_threads": 48
   },
-  "last_run_summary": "FULL: 24 open PRs, 16 issues, 41 unresolved threads; #201 externally merged; #228 Claude-authored docs spec ready, exact-head CI green, Codex review requested, Jules pending; #172/#200 backend pending, DX13 owner decisions queued; no orchestrator merge or production action.",
+  "last_run_summary": "FOLLOW-UP: 24 open PRs, 16 issues, 48 unresolved threads; #228 new Codex review 4 P1+3 P2, Claude patch-only remediation asked; #172/#200 required backend pending; no merges or thread resolutions; migration 0057 production hold intact.",
   "last_followup_delta": {
-    "at": "2026-10-30T12:28:58.616Z",
-    "from": "2026-10-30T12:12:20.955Z",
-    "prs_open": 25,
+    "at": "2026-10-30T15:32:21.019Z",
+    "from": "2026-10-30T15:13:29.366Z",
+    "prs_open": 24,
     "issues_open": 16,
-    "threads_open": 41,
+    "threads_open": 48,
     "merged": [],
     "threads_resolved": [],
     "owner_decisions": [],
     "new_commits": [],
-    "new_agent_results": [],
-    "ci_progress": [
+    "new_agent_results": [
       {
-        "pr": 224,
-        "sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
-        "frontend": "success",
-        "backend": "in_progress"
-      },
-      {
-        "pr": 179,
-        "sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
-        "frontend": "success",
-        "backend": "in_progress"
+        "pr": 228,
+        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+        "agent": "Codex",
+        "result": "native COMMENTED review, 4 P1 and 3 P2"
       }
     ],
-    "owner_copy_pending": 224,
-    "production_hold_intact": true
+    "ci_progress": [
+      {
+        "pr": 172,
+        "backend": "in_progress",
+        "frontend": "success"
+      },
+      {
+        "pr": 200,
+        "backend": "in_progress",
+        "frontend": "success"
+      }
+    ],
+    "actions": [
+      {
+        "issue": 220,
+        "comment_id": 6526604184,
+        "agent": "Claude",
+        "purpose": "DX12 spec remediation patch"
+      }
+    ],
+    "production_hold": "intact"
   },
   "last_full_delta": "Owner DX15/DX16 applied; #201 external merge; #228 created and two verbatim Claude patches applied; marked ready after exact-head backend/frontend green; Codex native review requested at 9c9ac7a8; #219 frozen, Jules pending; #172/#200 backend pending and DX13 owner decisions queued; no merges or thread resolutions.",
   "last_followup_summary": {
-    "run_id": "followup-20261030T133114Z",
+    "run_id": "followup-20261030T153012684Z",
     "no_merges": true,
     "threads_resolved": 0,
-    "open_threads": 41,
+    "open_threads": 48,
     "actions": [
-      "OpenCode #184 1h follow-up comment 6524064325",
-      "OpenCode #185 1h follow-up comment 6524065536",
-      "DX13 decision overlay updated for #172/#200/#201 new exact SHAs",
-      "identical old/new file patches verified for #172 (11) and #200 (4)"
+      "#228 Codex exact-head review 7 open findings; Claude DX12 patch-only asked in #220 comment 6526604184",
+      "No merges; #172/#200 backend still running; #224 behind main with 4 open threads"
     ],
     "production_hold": "intact"
   },
   "last_full_event_path": "state/events/2026-10-30/full-20261030T145921048Z.json",
   "run_notes": {
-    "run_id": "full-20261030T145921048Z",
-    "mode": "FULL",
+    "run_id": "followup-20261030T153012684Z",
+    "mode": "FOLLOW-UP",
     "merged_this_run": [],
-    "external_merges": [
-      201
-    ],
     "threads_resolved": [],
-    "open_threads": 41,
+    "open_threads": 48,
     "agent_asks": [
       {
         "item": 228,
         "agent": "Claude",
-        "comment_id": 6525942724
-      },
-      {
-        "item": 228,
-        "agent": "Claude",
-        "comment_id": 6526043369
-      },
-      {
-        "item": 228,
-        "agent": "Codex",
-        "comment_id": 6526123791
+        "comment_id": 6526604184,
+        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2"
       }
     ],
-    "owner_answers": [
-      6525448788
-    ],
-    "new_pr": 228,
+    "owner_answers": [],
     "required_ci_pending": [
       172,
       200
     ],
-    "owner_decisions_queued": [
-      "DX13 #172",
-      "DX13 #200",
-      "DX13 #217"
-    ],
-    "no_production_actions": true,
-    "new_pr_head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-    "patch_corrections": [
+    "new_findings": [
       {
-        "sha": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
-        "source": 6525948313
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbwQ",
+        "severity": "P1"
       },
       {
-        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-        "source": 6526048626
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbwW",
+        "severity": "P1"
+      },
+      {
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbwv",
+        "severity": "P1"
+      },
+      {
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbw5",
+        "severity": "P1"
+      },
+      {
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbwf",
+        "severity": "P2"
+      },
+      {
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbwn",
+        "severity": "P2"
+      },
+      {
+        "pr": 228,
+        "id": "PRRT_kwDOUdC8Ds6yBbxC",
+        "severity": "P2"
       }
     ],
-    "event_supplement_path": "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
-    "pr228": {
-      "head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-      "draft": false,
-      "ci": "backend/frontend SUCCESS run 41078019903",
-      "codex_ask": 6526123791,
-      "jules": "pending Codex acceptance",
-      "open_threads": 0,
-      "findings_open": 0
-    },
-    "event_supplements": [
-      "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
-      "state/events/2026-10-30/full-20261030T145921048Z-review-ready.json"
-    ],
-    "codex_228": "ask #6526123791 pending; no native review as of final check",
-    "optional_copilot_228": "quota failure; optional infrastructure, not product defect",
-    "conflicts_verified_live": [
-      181,
-      171,
-      158,
-      146,
-      117,
-      113
-    ],
-    "main_ci_201": "run 41073838767 in_progress; do not claim postmerge CI success"
+    "failed_writes": [],
+    "production_hold": "intact"
   },
   "last_full_event_supplements": [
     "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
