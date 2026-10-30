@@ -1,0 +1,87 @@
+{
+  "run_id": "full-20261030T175520Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T17:55:20Z",
+  "recorded_at": "2026-10-30T17:58:06.930Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_modes": {
+      "842251": "pull_request",
+      "946600": "pull_request",
+      "1144995": "pull_request",
+      "1236702": "pull_request",
+      "4229212": "pull_request",
+      "285010264": "pull_request"
+    },
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true
+  },
+  "inventory": {
+    "open_prs": 23,
+    "open_issues": 16,
+    "open_threads": 48,
+    "thread_counts": {
+      "83": 1,
+      "115": 8,
+      "146": 4,
+      "179": 1,
+      "207": 6,
+      "217": 5,
+      "219": 12,
+      "224": 4,
+      "228": 7
+    }
+  },
+  "standing_tasks": {
+    "T1": "complete, evidence already posted on #218",
+    "T2": "no new owner D/DX answer since #6526791660",
+    "T3": "#219 frozen under D5 spec-first, 12 threads preserved",
+    "T4": "complete one-time request, no agent branch, owner only",
+    "T5": "main unchanged since targeted recheck; DX7 hardening remains pending",
+    "T6": "#224 e8892327 exact-head backend/frontend green, 4 P2 candidate fixes not independently accepted; Codex ask 1/3 17:00Z receipt only; next eligible >=18:00Z"
+  },
+  "issues": {
+    "184": "OpenCode owner deadline 2026-11-02T11:45:39Z",
+    "185": "OpenCode owner deadline 2026-11-02T11:45:39Z",
+    "214": "Migration 0057 production hold intact",
+    "218": "post-merge validation done, issue remains open owner-only",
+    "223": "main run 41083732966 attempt 2 Python 3.13 backend job 124198642857 still in_progress; Claude patch #6528574316 exact-context only, untested and not applied; root cause unproven"
+  },
+  "pr_findings": {
+    "200": "major action bump current and green, zero threads; no qualifying review, DX13 exact-head owner approval needed",
+    "216": "Tier2 gate PR behind 3; no Codex/Jules acceptance; no production authorization",
+    "217": "5 threads open; three Codex asks exhausted; 3 commits behind",
+    "219": "12 threads frozen under D5",
+    "224": "4 P2 threads open, fixes present on e889, no native exact-head Codex review or Jules",
+    "228": "7 Codex threads open, candidate fixes present on b0601b30, branch 1 behind, Codex+Jules required by D5, DX17 1/3"
+  },
+  "merge_actions": [],
+  "resolved_threads": [],
+  "posted_comments": [],
+  "agent_prompts": [],
+  "failed_writes": [],
+  "decisions": {
+    "decide_now": [
+      "DX13 #200 exact-head owner review",
+      "DX13 #217 exact-head owner review"
+    ],
+    "update_branch": [
+      "#228"
+    ],
+    "conflicts": [
+      "#117 (DIRTY), historical PR; no owner closure"
+    ],
+    "run_jules": []
+  },
+  "blocked": {
+    "main_ci": "main run 41083732966 rerun pending; issue #223",
+    "workflow_refresh": "not on main; #224 awaits Codex+Jules"
+  },
+  "production_safety": "Migration 0057 production execution not requested, scheduled or approved; staging and written owner+DBA approval required",
+  "note": "No PR merged; no threads resolved; no production action. 23 open PRs exclude orchestrator-state branch; #201 previously merged at 14:41Z. Exact-head checks re-read for all 23 PRs; signatures re-read; ruleset unchanged."
+}
