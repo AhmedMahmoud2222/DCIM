@@ -1,0 +1,143 @@
+{
+  "run_id": "followup-20261030T212937879Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T21:29:37.879Z",
+  "finished_at": "2026-10-30T21:32:28.498Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "inventory": {
+    "open_prs": 25,
+    "open_issues": 16,
+    "unresolved_threads": 50,
+    "open_state_branch_prs": 0
+  },
+  "merged_this_run": [],
+  "resolved_threads": [],
+  "actions_taken": [],
+  "read_only_verification": {
+    "review_threads": "all 25 open PRs rechecked, 50 unresolved unchanged",
+    "exact_head_required_checks_green": [
+      200,
+      216,
+      217,
+      224,
+      228,
+      229,
+      230
+    ],
+    "branch_currency": {
+      "179": 13,
+      "188": 31,
+      "200": 0,
+      "216": 4,
+      "217": 4,
+      "224": 0,
+      "228": 0,
+      "229": 0,
+      "230": 0
+    },
+    "owner_answers_since_last_run": [],
+    "new_heads": [],
+    "new_native_codex_reviews": [],
+    "no_duplicate_prompts": true
+  },
+  "waiting": {
+    "Codex": [
+      {
+        "pr": 200,
+        "asks": 2,
+        "sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee"
+      },
+      {
+        "pr": 229,
+        "asks": 2,
+        "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8"
+      },
+      {
+        "pr": 230,
+        "asks": 2,
+        "sha": "8669217825beaf09451e22644336258747f20c16"
+      }
+    ],
+    "OpenCode": [
+      {
+        "issue": 184,
+        "level": "stalled",
+        "owner_deadline": "2026-11-02T11:45:39Z"
+      },
+      {
+        "issue": 185,
+        "level": "stalled",
+        "owner_deadline": "2026-11-02T11:45:39Z"
+      }
+    ]
+  },
+  "blocked": [
+    {
+      "pr": 224,
+      "reason": "4 unresolved P2, owner DX13 exact-head review, Jules"
+    },
+    {
+      "pr": 228,
+      "reason": "11 unresolved, DX17 cycle cap, DX19"
+    },
+    {
+      "pr": 219,
+      "reason": "frozen D5 spec-first"
+    },
+    {
+      "pr": 200,
+      "reason": "native Codex review and Jules absent"
+    },
+    {
+      "pr": 217,
+      "reason": "3 open threads and 4 behind main"
+    },
+    {
+      "pr": 216,
+      "reason": "4 behind main and Tier 2 review absent"
+    },
+    {
+      "pr": 229,
+      "reason": "Draft, native Codex absent"
+    },
+    {
+      "pr": 230,
+      "reason": "Draft, native Codex absent"
+    },
+    {
+      "issue": 226,
+      "reason": "DX18 owner production-code authorization"
+    }
+  ],
+  "needs_ahmed": [
+    "DX19 #228/#219",
+    "DX13 #224",
+    "DX18 #226"
+  ],
+  "update_branch": [],
+  "conflicts_new": [],
+  "run_jules": [],
+  "decision_queue_comment_id": 6501005762,
+  "merged_in_last_six_hours": true,
+  "production_safety": {
+    "migration_0057_hold": "intact",
+    "production_execution_requested": false,
+    "production_execution_scheduled": false,
+    "production_execution_approved": false,
+    "deployments_requested": false
+  },
+  "writes": [
+    {
+      "tool": "mcp__GitHub__update_file",
+      "path": "state/ledger.json",
+      "commit": "32483b670aee07eecee672c71cc23a1b45f864cb",
+      "result": "success"
+    },
+    {
+      "tool": "mcp__GitHub__update_issue_comment",
+      "comment_id": 6500987889,
+      "result": "success"
+    }
+  ],
+  "write_errors": []
+}
