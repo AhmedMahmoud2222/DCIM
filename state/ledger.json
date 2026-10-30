@@ -2220,7 +2220,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwQ",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwQ",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196743",
           "severity": "P1",
           "required_change": "Cross-run rollback trust anchor: independently monotonic checkpoint/non-rewindable history, initialize and recover, FI-28 inter-process restored signed journal rejection",
           "status": "Open",
@@ -2231,7 +2231,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwW",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwW",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196751",
           "severity": "P1",
           "required_change": "Separate new-admission reserve threshold from existing-task mutation max; test final signed bytes and reserve consumption",
           "status": "Open",
@@ -2242,7 +2242,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwv",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwv",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196789",
           "severity": "P1",
           "required_change": "Separate logical outcome comparison key from per-attempt provenance; compare authenticated opposing verdicts across attempts and extend FI-21",
           "status": "Open",
@@ -2253,7 +2253,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbw5",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbw5",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196802",
           "severity": "P1",
           "required_change": "Rescan status/conclusion changes of same run attempt after cursor pass; resumable FI test",
           "status": "Open",
@@ -2264,7 +2264,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwf",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwf",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196766",
           "severity": "P2",
           "required_change": "T3 reservation permits POST then T4 outcome write; fix circular universal write-before-effect invariant; FI-07..09",
           "status": "Open",
@@ -2275,7 +2275,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbwn",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbwn",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196779",
           "severity": "P2",
           "required_change": "Unknown durable state after ambiguous applied PUT plus failed recovery reads; split FI-04 and reconcile safely",
           "status": "Open",
@@ -2286,7 +2286,7 @@
         },
         {
           "id": "PRRT_kwDOUdC8Ds6yBbxC",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_PRRT_kwDOUdC8Ds6yBbxC",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/228#discussion_r4425196815",
           "severity": "P2",
           "required_change": "Define authoritative live witness identity/bindings and mutation/deletion/retry tests",
           "status": "Open",
