@@ -49,9 +49,10 @@ BODY_KEYS = frozenset({
 # envelopes (messages, tool schemas) nest well under 20; anything deeper is rejected before json.loads runs, so the
 # outcome never depends on the Python version or recursion limit.
 MAX_JSON_DEPTH = 64
-# A complete JSON string (skipped whole, so braces/brackets/escaped quotes inside it are never counted) or a
-# container delimiter. Possessive quantifiers keep matching linear on hostile input.
-_JSON_TOKEN = re.compile(rb'"[^"\\]*+(?:\\.[^"\\]*+)*+"|[\[\]{}]', re.DOTALL)
+# Single-character classes only (no variable-length alternatives), so every search resumes where the previous one
+# ended and the depth scan never revisits a byte, even on unterminated strings full of escaped quotes.
+_JSON_STRUCT = re.compile(rb'["\[\]{}]')
+_JSON_STRING_STOP = re.compile(rb'["\\]')
 FORWARD_HEADERS = ('content-type', 'accept', 'user-agent')
 # Identity headers the genuine OpenCode v2 CLI attaches to every inference request (captured from the pinned
 # binary). They are relayed unchanged, only when their value has the exact shape the real client produces;
@@ -148,16 +149,31 @@ def _reject_constant(_name):
 def check_json_depth(body: bytes) -> None:
     """Raise PolicyError('json_depth_exceeded') if containers nest deeper than MAX_JSON_DEPTH.
 
-    Single linear pass with O(1) state, run before json.loads. Malformed input is left to json.loads to reject.
+    Single linear byte scan with O(1) state, run before json.loads. Strings are skipped whole (braces and escaped
+    quotes inside them are never counted). Malformed input, including an unterminated string, is left to json.loads.
     """
     depth = 0
-    for match in _JSON_TOKEN.finditer(body):
-        token = match.group()
-        if token in (b'{', b'['):
+    pos = 0
+    while True:
+        match = _JSON_STRUCT.search(body, pos)
+        if match is None:
+            return
+        char = body[match.start()]
+        pos = match.end()
+        if char == 0x22:                        # '"': skip to the closing quote, honouring backslash escapes
+            while True:
+                stop = _JSON_STRING_STOP.search(body, pos)
+                if stop is None:                # unterminated: stop scanning, json.loads rejects it
+                    return
+                pos = stop.end()
+                if body[stop.start()] == 0x22:
+                    break
+                pos += 1                        # backslash: the next byte is escaped, never a terminator
+        elif char in (0x7B, 0x5B):              # '{' '['
             depth += 1
             if depth > MAX_JSON_DEPTH:
                 raise PolicyError('json_depth_exceeded')
-        elif token in (b'}', b']'):
+        else:
             depth -= 1
 
 

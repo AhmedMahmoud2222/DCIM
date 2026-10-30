@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -684,6 +685,17 @@ class ProxyBindingTests(unittest.TestCase):
         # an escaped backslash does end the string: the brace after it is real
         self.assert_blocked('json_depth_exceeded', 'POST', CHAT,
                             b'{"a":"\\\\"' + b'[' * 100 + b']' * 100 + b'}')
+
+    def test_unterminated_escaped_strings_scan_in_linear_time(self):
+        def scan(size):
+            body = b'{"messages":[{"content":"' + b'\\"' * (size // 2)
+            start = time.perf_counter()
+            proxy.check_json_depth(body)        # unterminated: no depth error, json.loads rejects it later
+            return time.perf_counter() - start
+        for size in (8192, 16384, 32768):
+            self.assertLess(min(scan(size) for _ in range(3)), 0.1)     # quadratic scanning took 0.18/0.69/2.74s
+        self.assertLess(scan(1 << 20), 2.0)
+        self.assert_blocked('malformed_json', 'POST', CHAT, b'{"model":"x","messages":[{"content":"' + b'\\"' * 16384)
 
     def test_depth_guard_is_independent_of_recursion_limit(self):
         deep, ok = self.nested_body(proxy.MAX_JSON_DEPTH + 1), self.nested_body(proxy.MAX_JSON_DEPTH)
