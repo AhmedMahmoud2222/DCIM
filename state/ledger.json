@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T15:06:05.111Z",
-  "last_run_at": "2026-10-30T15:06:05.111Z",
+  "last_full_run_at": "2026-10-30T15:09:39.147Z",
+  "last_run_at": "2026-10-30T15:09:39.147Z",
   "last_run_mode": "FULL",
   "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
   "merge_policy": {
@@ -97,7 +97,7 @@
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
     "T2": "FULL 2026-10-30T15:06:05.111Z: unmarked owner DX15 and DX16 #6525448788 verified and applied to #172/#200; #226 then #225 investigation authorized but deferred by priority.",
-    "T3": "D5 spec-first: Claude verbatim 246-line patch applied to Draft PR #228 at 6d505459; correction request #6525942724 pending for 12 exact thread IDs; #219 remains frozen.",
+    "T3": "D5 spec-first: Draft #228 now 257 lines at 9c9ac7a8; all 12 #219 thread mappings verified and Claude attribution corrected via verbatim DX12 patches; exact-head CI pending, Codex/Jules not yet requested; #219 frozen with 12 threads.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "Main workflow ci.yml changed in #173 merge at 69c60af; targeted diff confirmed only setup-node immutable pin updates, no change to claude.yml/agent-claude.yml/acceptance-review.yml authorization wiring; original DX7 hardening still pending.",
     "T6": "FULL 2026-10-30T15:06:05.111Z: #224 signed 6d14f19, exact-head CI green, four P2 threads open, behind main 2, no exact-head Codex/Jules acceptance; refresh workflow absent on main."
@@ -314,7 +314,15 @@
       "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
       "updated_at": "2026-10-29T15:04:59Z",
       "last_state_verified_at": "2026-10-30T15:06:05.111Z",
-      "last_thread_verified_at": "2026-10-30T15:06:05.111Z"
+      "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
+      "supersession_evidence": {
+        "at": "2026-10-30T15:09:39.147Z",
+        "behind_main": 142,
+        "changed_file": "docs/implementation/ISSUE_104_SPATIAL_DIGITAL_TWIN.md",
+        "main_blob": "207b6b3fcd56c29ee86266cab0a0313aef3c7d0f",
+        "pr_blob": "7540e31ce918ff5a0a465493833b063cf29c5204",
+        "conclusion": "Not byte-identical to main; unique docs delta remains; no closure authorized under D4"
+      }
     },
     "115": {
       "title": "feat: validated CFD and calibrated thermal analysis (#106)",
@@ -540,12 +548,14 @@
       "last_state_verified_at": "2026-10-30T15:06:05.111Z",
       "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
       "supersession_evidence": {
-        "at": "2026-10-30T14:08:42.502Z",
+        "at": "2026-10-30T15:09:39.147Z",
         "changed_files": 2,
-        "behind_main": 140,
+        "behind_main": 141,
         "conflicted": true,
         "unique_hunks": "workflow action version comments only; current main still has old comments, so patch not fully superseded",
-        "conclusion": "Do not merge or close without D4 owner decision and independent verification"
+        "conclusion": "Workflow file differs from main, conflict/behind and owner D4 evidence only; no merge/closure",
+        "main_ci_blob": "93cce2aa22254d4a57d11736aa48d9aa1b1b4588",
+        "pr_ci_blob": "92d6fcc9ee8142a5410816e22734e77885f13eea"
       }
     },
     "118": {
@@ -1229,7 +1239,15 @@
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
       "updated_at": "2026-10-24T21:56:39Z",
       "last_state_verified_at": "2026-10-30T15:06:05.111Z",
-      "last_thread_verified_at": "2026-10-30T15:06:05.111Z"
+      "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
+      "supersession_evidence": {
+        "at": "2026-10-30T15:09:39.147Z",
+        "behind_main": 30,
+        "changed_file": "docs/security/OPENCODE_AGENT_AUTHORITY.md",
+        "main_blob": "7031a2ed2448f7e5784ed62ccd828aef6fc8946e",
+        "pr_blob": "7cc1aa0629e1b9123be6c7e384db8e6bb0c31a93",
+        "conclusion": "Unique docs delta remains; refresh only when no Tier 0 ahead and ready for merge"
+      }
     },
     "200": {
       "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
@@ -2155,7 +2173,7 @@
     },
     "228": {
       "title": "docs: D5 controller reliability specification for PR #219 (Claude-authored)",
-      "head_sha": "6d505459381920ad9e3c178d3539c0dd366e8a88",
+      "head_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
       "head_branch": "docs/d5-controller-reliability-spec-20261030",
       "base_branch": "main",
       "base_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
@@ -2163,17 +2181,18 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "6d505459381920ad9e3c178d3539c0dd366e8a88",
-        "checked_at": "2026-10-30T15:06:05.111Z"
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+        "checked_at": "2026-10-30T15:09:39.147Z",
+        "diagnostic": "CI check runs started but required job contexts not yet completed"
       },
       "open_thread_count": 0,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T15:06:05.111Z",
-      "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
-      "last_ci_sha": "6d505459381920ad9e3c178d3539c0dd366e8a88",
+      "last_state_verified_at": "2026-10-30T15:09:39.147Z",
+      "last_thread_verified_at": "2026-10-30T15:09:39.147Z",
+      "last_ci_sha": null,
       "merge_state": "current with main; other gates apply",
       "tier_reason": "docs-only specification patch; owner D5 separately requires Codex AND Jules review before #219 resumes",
       "head_verification": {
@@ -2183,23 +2202,51 @@
       "findings_checklist": [
         {
           "id": "D5-SPEC-MAP-1",
-          "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6525183319",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6525948313",
           "severity": "P2",
-          "required_change": "Replace inaccurate/guessed section 8 thread IDs with verified 12-thread mapping, adjust D-1 status; Claude-authored patch only",
-          "status": "Open",
-          "evidence": "PR #219 live thread list verified; correction requested in #220 comment 6525942724"
+          "required_change": "Map all 12 exact #219 review threads, no guessed IDs",
+          "status": "Fixed at 38c3dd8940719d39e23e52a3c5be311f848c64d9",
+          "evidence": "Claude-authored 2-hunk patch applied verbatim; 257-line file, all 12 unique suffix IDs matched live threads; 10 design gaps explicitly open for reviewer/owner disposition"
+        },
+        {
+          "id": "D5-SPEC-ATTR-1",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6526048626",
+          "severity": "P3",
+          "required_change": "Correct falsely owner-attributed review-thread inventory to orchestrator verification",
+          "status": "Fixed at 9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+          "evidence": "Claude one-line patch applied verbatim at line 205; live PR head verified; no other line changed"
         }
       ],
       "last_prompt": {
         "agent": "Claude",
-        "ask": "DX12 correction patch for 12 verified #219 thread IDs in D5 spec, no code edit by orchestrator",
+        "ask": "D5 spec attribution single-line correction via DX12",
+        "at": "2026-10-30T15:07:30Z",
+        "sha": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
+        "comment_id": 6526043369,
+        "status": "terminal: patch delivered in comment 6526048626 and applied at 9c9ac7a8"
+      },
+      "asks_per_sha": 0,
+      "queued": "Draft; verified all 12 #219 thread mappings and corrected attribution; 10 explicitly open design/test gaps; exact-head backend/frontend pending, no Codex or Jules acceptance; mark ready/request review only after green current CI",
+      "previous_prompt": {
+        "agent": "Claude",
+        "ask": "D5 12-thread map correction via DX12",
         "at": "2026-10-30T15:03:00Z",
         "sha": "6d505459381920ad9e3c178d3539c0dd366e8a88",
         "comment_id": 6525942724,
-        "status": "awaiting complete patch"
+        "status": "terminal: patch delivered 6525948313 and applied at 38c3dd894"
       },
-      "asks_per_sha": 1,
-      "queued": "Draft; exact-head backend/frontend green; correction patch pending; owner D5 requires Codex and Jules review; do not merge"
+      "fix_review_cycles": 0,
+      "last_qualifying_review_sha": null,
+      "completed_patch_reports": [
+        6525183319,
+        6525948313,
+        6526048626
+      ],
+      "verbatim_patch_commits": [
+        "6d505459381920ad9e3c178d3539c0dd366e8a88",
+        "38c3dd8940719d39e23e52a3c5be311f848c64d9",
+        "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2"
+      ]
     }
   },
   "issues": {
@@ -2451,6 +2498,29 @@
       "type": "verified_post_merge",
       "pr": 201,
       "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8"
+    },
+    {
+      "type": "verbatim_patch_update",
+      "pr": 228,
+      "sha": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
+      "source_comment": 6525948313,
+      "lines": 257
+    },
+    {
+      "type": "agent_request",
+      "issue": 220,
+      "agent": "Claude",
+      "comment_id": 6526043369,
+      "reason": "correct orchestrator-vs-owner attribution"
+    },
+    {
+      "type": "verbatim_patch_update",
+      "pr": 228,
+      "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "source_comment": 6526048626,
+      "changed_lines": [
+        205
+      ]
     }
   ],
   "priority_snapshot": {
@@ -2479,7 +2549,7 @@
     "open_issues": 16,
     "open_threads": 41
   },
-  "last_run_summary": "FULL: 24 open PRs (including new Draft #228), 16 open issues, 41 unresolved threads; #201 externally merged, main 7e93a7; owner DX15/DX16 applied, #228 created; backend pending on #172/#200; no orchestrator merges; no production actions.",
+  "last_run_summary": "FULL: 24 open PRs, 16 open issues, 41 unresolved threads; #201 merged externally; #228 Draft spec at 9c9ac7a8 with all 12 verified mappings, 10 gaps for review; backend/frontend pending; no orchestrator merge or production action.",
   "last_followup_delta": {
     "at": "2026-10-30T12:28:58.616Z",
     "from": "2026-10-30T12:12:20.955Z",
@@ -2508,7 +2578,7 @@
     "owner_copy_pending": 224,
     "production_hold_intact": true
   },
-  "last_full_delta": "Owner DX15/DX16 applied; #201 merged externally at 14:41Z; main 7e93a7; #172 merge-refresh 8b9 exact 11-file patch, backend pending, owner DX13 scope queued; #200 rebase 409750 identical 4-file patch, backend pending, owner DX13 missing; D5 Claude patch applied verbatim as Draft #228, CI green, 12-thread map correction requested; #224 behind 2 with 4 open P2; no orchestrator merge or thread resolution; hold intact.",
+  "last_full_delta": "DX15/DX16 owner answers applied; #201 external merge; #228 Draft created from Claude verbatim patch, then two Claude-authored verbatim corrections applied at 38c3dd and 9c9ac7a8; exact-head CI pending, independent review pending; #172/#200 backend pending and owner DX13 decisions queued; no orchestrator merge, no thread resolutions, hold intact.",
   "last_followup_summary": {
     "run_id": "followup-20261030T133114Z",
     "no_merges": true,
@@ -2537,6 +2607,11 @@
         "item": 228,
         "agent": "Claude",
         "comment_id": 6525942724
+      },
+      {
+        "item": 228,
+        "agent": "Claude",
+        "comment_id": 6526043369
       }
     ],
     "owner_answers": [
@@ -2552,6 +2627,18 @@
       "DX13 #200",
       "DX13 #217"
     ],
-    "no_production_actions": true
+    "no_production_actions": true,
+    "new_pr_head": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+    "patch_corrections": [
+      {
+        "sha": "38c3dd8940719d39e23e52a3c5be311f848c64d9",
+        "source": 6525948313
+      },
+      {
+        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+        "source": 6526048626
+      }
+    ],
+    "event_supplement_path": "state/events/2026-10-30/full-20261030T145921048Z-supplement.json"
   }
 }
