@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T22:10:13.105Z",
-  "last_run_at": "2026-10-30T22:10:13.105Z",
+  "last_full_run_at": "2026-10-30T22:12:45.336Z",
+  "last_run_at": "2026-10-30T22:12:45.336Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -2537,7 +2537,7 @@
     },
     "229": {
       "title": "test(ci): investigate authority-lock waiter synchronization flake (#223)",
-      "head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "head_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
       "head_branch": "claude/issue-223-authority-lock-dx12",
       "base_branch": "main",
       "base_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
@@ -2545,16 +2545,17 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "checked_at": "2026-10-30T21:32:07.749Z"
+        "backend": "queued",
+        "frontend": "not yet reported",
+        "exact_head_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+        "checked_at": "2026-10-30T22:12:45.336Z",
+        "notes": "12 new-head jobs queued/in progress; required aggregate checks not yet complete"
       },
       "merge_state": "draft, current, required CI green; independent review pending",
       "head_verification": {
         "verified": false,
         "reason": "unsigned",
-        "checked_at": "2026-10-30T22:07:12.387Z"
+        "checked_at": "2026-10-30T22:12:45.336Z"
       },
       "tier": 1,
       "tier_reason": "tests-only, DX12 Claude-authored patch applied verbatim",
@@ -2569,8 +2570,8 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/229#discussion_r4428900802",
           "severity": "P2",
           "required_change": "Cancel and await still-running waiter on _wait_until_authority_waiter_queued polling failure/timeout before async session cleanup; retain original timeout diagnostic and deterministic test semantics.",
-          "status": "Open",
-          "evidence": "Codex native review on cab2ac65fc57eca914ab5a1be3595bba9b8023e8, backend/tests/integration/test_pr67_authority_lock_protocol.py:66; code confirms helper raises without cancelling waiter",
+          "status": "Fixed at b6975308e0f8777f11fd9dac70209b19c6873944 (candidate; pending Codex confirmation)",
+          "evidence": "Verified exact Claude patch applied verbatim, lines 81-97 cancel/await waiter before session close; thread evidence #4428924258; new test line 100; CI queued; no Codex confirmation",
           "path": "backend/tests/integration/test_pr67_authority_lock_protocol.py",
           "line": 66,
           "author": "chatgpt-codex-connector",
@@ -2579,20 +2580,20 @@
       ],
       "last_prompt": {
         "agent": "Claude",
-        "ask": "DX12 one-file exact-context patch for P2 waiter cancellation and await; no commits or tests",
+        "ask": "DX12 one-file patch for P2 waiter cancellation and await",
         "at": "2026-10-30T22:09:37.176Z",
         "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
         "comment_id": 6534553387,
-        "status": "awaiting complete issue patch"
+        "status": "terminal: complete patch #6534556926 applied verbatim, new SHA b6975308e0f8777f11fd9dac70209b19c6873944"
       },
-      "asks_per_sha": 3,
+      "asks_per_sha": 0,
       "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "Native Codex review has P2 cleanup finding; Claude DX12 issue patch requested; Draft, no merge or fourth Codex ask on current SHA",
+      "queued": "Wait for exact-head backend/frontend CI to pass and branch remain current, then scoped native Codex review on b6975308e0f8777f11fd9dac70209b19c6873944; 1 P2 thread open pending reviewer confirmation; Draft",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-      "last_state_verified_at": "2026-10-30T22:10:13.105Z",
-      "last_thread_verified_at": "2026-10-30T22:10:13.105Z",
+      "last_ci_sha": null,
+      "last_state_verified_at": "2026-10-30T22:12:45.336Z",
+      "last_thread_verified_at": "2026-10-30T22:12:45.336Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
       "patch_commit": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
@@ -2606,7 +2607,31 @@
         "comment_id": 6534508590,
         "status": "awaiting native review; no fourth ask on this SHA"
       },
-      "last_review_result_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8"
+      "last_review_result_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "asks_history": {
+        "cab2ac65fc57eca914ab5a1be3595bba9b8023e8": 3,
+        "b6975308e0f8777f11fd9dac70209b19c6873944": 0
+      },
+      "completion_report": {
+        "source_issue_comment": 6534556926,
+        "pr_evidence_comment": 6534596044,
+        "thread_reply": 4428924258,
+        "old_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+        "new_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+        "single_push": true,
+        "changed_files": [
+          "backend/tests/integration/test_pr67_authority_lock_protocol.py"
+        ],
+        "tests": [
+          "test_authority_changing_mutations_are_serialised",
+          "test_waiter_queue_helper_reports_a_waiter_that_never_queues"
+        ],
+        "limitations": [
+          "mid-connect cancellation not tested",
+          "positive pg_locks predicate not established",
+          "original flake root cause unproven"
+        ]
+      }
     },
     "230": {
       "title": "test(ci): wait for migration advisory-lock session release (#225)",
@@ -2837,22 +2862,22 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T22:09:37.176Z",
-      "owner": "Claude DX12 patch requested for P2 Codex finding on existing Draft #229",
+      "last_activity_at": "2026-10-30T22:12:45.336Z",
+      "owner": "Claude delivered DX12 patch; orchestrator applied to Draft #229; independent review pending",
       "linked_prs": [
         219,
         229
       ],
       "acceptance_on_main": "main@613cb935 CI run 41083732966 attempt 1 failed Python3.13 authority-lock test; attempt 2 Python3.13 and aggregate backend plus frontend SUCCESS on same SHA; intermittent failure remains open #223, no root cause proven",
-      "queued": "P2 waiter cleanup finding in #229; Claude issue patch pending; no production code change or #219 work",
-      "last_state_verified_at": "2026-10-30T22:10:13.105Z",
+      "queued": "New #229 head b6975308e0f8777f11fd9dac70209b19c6873944 CI queued; Codex P2 thread open; no issue closure or production changes",
+      "last_state_verified_at": "2026-10-30T22:12:45.336Z",
       "last_prompt": {
         "agent": "Claude",
         "ask": "full P2 cleanup patch against #229 head, one file, DX12, no tests/commits",
         "at": "2026-10-30T22:09:37.176Z",
         "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
         "comment_id": 6534553387,
-        "status": "awaiting complete patch"
+        "status": "terminal: complete one-file patch #6534556926 applied verbatim at b6975308e0f8777f11fd9dac70209b19c6873944"
       },
       "patch_verification": {
         "source_comment_id": 6528574316,
@@ -2977,17 +3002,28 @@
       "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
       "comment_id": 6534553387,
       "at": "2026-10-30T22:09:37.176Z"
+    },
+    {
+      "item": "PR #229",
+      "agent": "orchestrator (Claude patch verbatim)",
+      "action": "applied exact one-file DX12 patch; evidence reply and completion report",
+      "old_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "source_comment": 6534556926,
+      "thread_reply": 4428924258,
+      "pr_comment": 6534596044,
+      "at": "2026-10-30T22:12:45.336Z"
     }
   ],
   "priority_snapshot": {
     "merged_since_previous_run": [],
     "merged_this_run": [],
     "highest_priority": [
-      "#224 Tier 2 DX13/Jules, four P2",
-      "#200 Tier 2 DX13 owner fallback then Jules",
-      "#229 new Codex P2, Claude DX12 patch pending",
-      "#217 three open threads and branch behind",
-      "#216 migration gate Tier 2 review/refresh"
+      "#224 DX13/Jules, four P2",
+      "#200 DX13/Jules owner fallback",
+      "#229 new head CI queued, Codex P2 re-review later",
+      "#217 three findings and behind",
+      "#216 Tier 2 migration gate behind/review"
     ],
     "tier0_next": [
       228,
@@ -3017,9 +3053,9 @@
     "merged": [],
     "resolved_threads": [],
     "actions": [
-      "25 open PRs, 16 issues, now 51 unresolved threads",
-      "Codex third/final requests #200/#229/#230; #200 and #230 returned only generic receipts; DX13 owner fallback required",
-      "New native Codex P2 on #229; Claude DX12 scoped patch requested #223 comment 6534553387"
+      "25 open PRs, 16 issues, 51 unresolved threads",
+      "Codex final asks #200/#230 yielded generic receipts, owner DX13 required",
+      "#229 native Codex P2; Claude delivered complete DX12 patch; applied verbatim new SHA b6975308e0f8777f11fd9dac70209b19c6873944; CI queued, thread remains open"
     ],
     "production_migration_0057": "HOLD"
   },
@@ -3029,7 +3065,15 @@
     "at": "2026-10-30T22:07:12.387Z",
     "merged": [],
     "resolved": [],
-    "new_heads": [],
+    "new_heads": [
+      {
+        "pr": 229,
+        "old": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+        "new": "b6975308e0f8777f11fd9dac70209b19c6873944",
+        "source": "Claude DX12 patch",
+        "ci": "queued"
+      }
+    ],
     "new_owner_answers": [],
     "agent_asks": [
       200,
@@ -3049,6 +3093,15 @@
     "codex_terminal_receipts": [
       200,
       230
+    ],
+    "actions": [
+      {
+        "pr": 229,
+        "action": "DX12 patch applied, one file, exact hunk context verified",
+        "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+        "thread_reply": 4428924258,
+        "comment": 6534596044
+      }
     ]
   },
   "last_followup_summary": {
@@ -3128,6 +3181,12 @@
       "at": "2026-10-30T22:10:13.105Z",
       "mode": "FULL",
       "summary": "Final Codex asks #200/#230 generic receipts, DX13 needed; #229 new P2 cleanup finding and Claude DX12 patch request; open threads 51."
+    },
+    {
+      "run_id": "full-20261030T215847947Z",
+      "at": "2026-10-30T22:12:45.336Z",
+      "mode": "FULL",
+      "summary": "#229 Claude DX12 P2 patch applied verbatim at b6975308, CI queued, thread remains open pending Codex; #200/#230 owner DX13."
     }
   ],
   "last_full_event_supplements": [
@@ -3169,15 +3228,6 @@
   "last_followup_event_path": "state/events/2026-10-30/followup-20261030T212937879Z.json",
   "agent_slots": {
     "codex": [],
-    "claude": [
-      {
-        "issue": 223,
-        "pr": 229,
-        "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "started_at": "2026-10-30T22:09:37.176Z",
-        "expires_at": "2026-10-31T00:09:37.176Z",
-        "status": "awaiting DX12 patch"
-      }
-    ]
+    "claude": []
   }
 }
