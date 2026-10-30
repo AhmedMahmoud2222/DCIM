@@ -1,0 +1,135 @@
+{
+  "run_id": "full-20261030T165859172Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T16:58:59.172Z",
+  "recorded_at": "2026-10-30T17:02:03.576Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_modes": {
+      "842251": "pull_request",
+      "946600": "pull_request",
+      "1144995": "pull_request",
+      "1236702": "pull_request",
+      "4229212": "pull_request",
+      "285010264": "pull_request"
+    }
+  },
+  "inventory": {
+    "open_product_prs": 23,
+    "open_issues": 16,
+    "unresolved_threads": 48,
+    "state_branch_prs": 0
+  },
+  "actions": [
+    {
+      "type": "lease_acquired",
+      "commit": "b460cdc0b6686e8b254c61be5f89ab4fd6f049be"
+    },
+    {
+      "type": "codex_review_request",
+      "pr": 224,
+      "head": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+      "comment_id": 6528502356,
+      "required_ci": {
+        "backend": "success",
+        "frontend": "success"
+      },
+      "open_threads": 4
+    },
+    {
+      "type": "main_ci_failure_verified",
+      "issue": 223,
+      "run_id": 41083732966,
+      "job_id": 124159375548,
+      "head": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+      "test": "tests/integration/test_pr67_authority_lock_protocol.py::test_authority_changing_mutations_are_serialised",
+      "error": "TimeoutError",
+      "summary": "1 failed, 3645 passed, 6 skipped",
+      "backend_gate": "failure",
+      "frontend": "success"
+    },
+    {
+      "type": "rerun_failed_jobs",
+      "run_id": 41083732966,
+      "result": "successfully requested; attempt 2 in progress"
+    },
+    {
+      "type": "issue_comment",
+      "issue": 223,
+      "comment_id": 6528526353,
+      "summary": "main-baseline failure and rerun evidence"
+    },
+    {
+      "type": "claude_issue_request",
+      "issue": 223,
+      "comment_id": 6528531356,
+      "summary": "DX12 patch-only deterministic authority-lock investigation; no code or workflow writes"
+    }
+  ],
+  "unresolved": {
+    "83": 1,
+    "115": 8,
+    "146": 4,
+    "179": 1,
+    "207": 6,
+    "217": 5,
+    "219": 12,
+    "224": 4,
+    "228": 7
+  },
+  "blocked": [
+    {
+      "pr": 200,
+      "reason": "owner DX13 independent acceptance missing despite green required CI"
+    },
+    {
+      "pr": 228,
+      "reason": "behind main 1 commit; seven open Codex findings; D5 requires Jules after Codex"
+    },
+    {
+      "pr": 224,
+      "reason": "four P2 threads and Tier 2 Codex/Jules acceptance pending"
+    },
+    {
+      "issue": 223,
+      "reason": "main backend failed; rerun attempt 2 in progress; root cause unproven"
+    }
+  ],
+  "waiting": [
+    {
+      "pr": 224,
+      "agent": "Codex",
+      "since": "2026-10-30T17:00:10Z"
+    },
+    {
+      "issue": 223,
+      "agent": "Claude",
+      "since": "2026-10-30T17:02:03.576Z"
+    },
+    {
+      "issue": 184,
+      "agent": "OpenCode",
+      "owner_deadline": "2026-11-02T11:45:39Z"
+    },
+    {
+      "issue": 185,
+      "agent": "OpenCode",
+      "owner_deadline": "2026-11-02T11:45:39Z"
+    }
+  ],
+  "merged": [],
+  "threads_resolved": [],
+  "production_safety": {
+    "migration_0057_hold": "intact",
+    "production_executions": 0,
+    "production_deployments": 0,
+    "approvals": 0
+  },
+  "failed_write_calls": [],
+  "read_limitations": [
+    "main .github/workflows/refresh-branch.yml absent (404, expected)",
+    "workflow-scoped CI main runs URL rejected by connector; used run ID and jobs directly"
+  ]
+}
