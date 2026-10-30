@@ -1,0 +1,33 @@
+{
+  "run_id": "follow-20261030T071758Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T07:17:58.889Z",
+  "finished_at": "2026-10-30T07:20:07.538Z",
+  "observations": {
+    "open_prs": 25,
+    "open_issues": 14,
+    "unresolved_review_threads": "34 per last FULL; not all threads reread",
+    "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+    "ci_in_progress": [
+      201,
+      200,
+      173,
+      172
+    ],
+    "claude_partial_reports": [
+      83,
+      87
+    ],
+    "ruleset_bypass": "all 6 pull_request"
+  },
+  "actions": {
+    "agent_asks": 0,
+    "merges": 0,
+    "resolutions": 0,
+    "ledger_updated": true
+  },
+  "safety": {
+    "production_migration_0057": "hold retained",
+    "deployments": 0
+  }
+}
