@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T13:03:49.058Z",
-  "last_run_at": "2026-10-30T13:34:09.117Z",
-  "last_run_mode": "FOLLOW-UP",
+  "last_full_run_at": "2026-10-30T14:08:42.502Z",
+  "last_run_at": "2026-10-30T14:08:42.502Z",
+  "last_run_mode": "FULL",
   "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T13:03:49.058Z",
+    "last_verified_at": "2026-10-30T14:08:42.502Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -94,11 +94,11 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30: processed owner DX13 #6523128063 and new DX3 #6523498494; DX3 retains owner in pull_request bypass mode, no settings mutation; #173 merged; #201 old approval stale after rebase; #172 finding still open.",
+    "T2": "FULL 2026-10-30T14:08:42.502Z: #220 owner comments re-read; no new unmarked D/DX answers after DX3 #6523498494; all prior answers retained.",
     "T3": "D5(a) scoped review returned 2 new Codex P2 at ab3f964; now 12 open threads, implementation/merge still stopped pending owner direction",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "Main workflow ci.yml changed in #173 merge at 69c60af; targeted diff confirmed only setup-node immutable pin updates, no change to claude.yml/agent-claude.yml/acceptance-review.yml authorization wiring; original DX7 hardening still pending.",
-    "T6": "ACTIVE 2026-10-30T13:03:49.058Z: owner copied v3 draft verbatim to active .github/workflows/refresh-branch.yml at signed PR #224 head 6d14f19e7c8e3002eacee9a4493784002f15bba7; jq -s -e single-document gate verified in file, four P2 evidence replies posted, all four threads remain open; exact-head backend CI running, branch behind main after #173; Codex+Jules not yet accepted. Other drafts inert."
+    "T6": "ACTIVE 2026-10-30T14:08:42.502Z: PR #224 active v3 file and proposed draft blob identical 767dcc1d; backend/frontend exact-head green; 4 P2 threads open, behind main by 1; Codex/Jules exact-current-head acceptance absent; no refresh workflow on main, no merge."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -154,15 +154,15 @@
       "base_sha": "d26cc2dbc0f4f84a863e82ba366de101243c0f6b",
       "draft": false,
       "labels": [],
-      "behind_main": 164,
+      "behind_main": 165,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "clean stacked",
+      "merge_state": "clean stacked base; main 165 ahead",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -203,8 +203,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
       "updated_at": "2026-10-30T07:19:50.424Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "review-only supersession report: main contents, unique work, recommendation",
@@ -222,15 +222,15 @@
       "base_sha": "8b6d0044aab9dbb6c10e20637e3416174e4133db",
       "draft": false,
       "labels": [],
-      "behind_main": 154,
+      "behind_main": 155,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "behind",
+      "merge_state": "behind; zero changed files; D4 evidence only",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -256,8 +256,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
       "updated_at": "2026-10-30T07:19:50.424Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "previous_prompt": {
         "agent": "Claude",
         "ask": "review-only supersession report: main contents, unique work, recommendation",
@@ -265,6 +265,13 @@
         "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
         "comment_id": 6517069899,
         "status": "terminal: partial report"
+      },
+      "supersession_evidence": {
+        "at": "2026-10-30T14:08:42.502Z",
+        "changed_files": 0,
+        "pr_patch_files": 0,
+        "behind_main": 155,
+        "conclusion": "No unique patch exposed by GitHub PR diff; owner D4 closure authorization not granted"
       }
     },
     "113": {
@@ -277,15 +284,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 140,
+      "behind_main": 141,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "dirty",
+      "merge_state": "draft/dirty",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -304,8 +311,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
       "updated_at": "2026-10-29T15:04:59Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "115": {
       "title": "feat: validated CFD and calibrated thermal analysis (#106)",
@@ -317,15 +324,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 80,
+      "behind_main": 81,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind; owner D13 deferred",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -450,8 +457,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
       "updated_at": "2026-10-29T15:04:46Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "116": {
       "title": "docs: M1 architecture audit and read-only AI foundation for #107",
@@ -463,15 +470,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 139,
+      "behind_main": 140,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "d05ab33aca5893e19b99d809f2922922da180440",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind; owner D13 deferred",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -490,8 +497,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "d05ab33aca5893e19b99d809f2922922da180440",
       "updated_at": "2026-10-29T15:04:51Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "117": {
       "title": "docs(ci): correct versions beside immutable action pins",
@@ -501,12 +508,12 @@
       "base_sha": "703f74e7edcaa515e044095b4e2ce7e4e67917ea",
       "draft": false,
       "labels": [],
-      "behind_main": 139,
+      "behind_main": 140,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "dirty",
@@ -528,8 +535,16 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
       "updated_at": "2026-10-23T15:51:25Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
+      "supersession_evidence": {
+        "at": "2026-10-30T14:08:42.502Z",
+        "changed_files": 2,
+        "behind_main": 140,
+        "conflicted": true,
+        "unique_hunks": "workflow action version comments only; current main still has old comments, so patch not fully superseded",
+        "conclusion": "Do not merge or close without D4 owner decision and independent verification"
+      }
     },
     "118": {
       "title": "Full Independent System Review Report",
@@ -539,15 +554,15 @@
       "base_sha": "825c3e42df1afc0f04899d6f8e0e4284c71fe74f",
       "draft": true,
       "labels": [],
-      "behind_main": 137,
+      "behind_main": 138,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -566,8 +581,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
       "updated_at": "2026-10-23T15:50:58Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "125": {
       "title": "Verify PR 111 task status and deliver detailed report",
@@ -577,15 +592,15 @@
       "base_sha": "dd228303e3e918eda7cb2ab78ab1b4f4804710d0",
       "draft": true,
       "labels": [],
-      "behind_main": 131,
+      "behind_main": 132,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -604,8 +619,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
       "updated_at": "2026-10-23T15:50:56Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "146": {
       "title": "Fix G6 migration test transaction wrapping for CI remediation",
@@ -617,15 +632,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 107,
+      "behind_main": 108,
       "required_ci": {
         "backend": "failure",
         "frontend": "success",
         "exact_head_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "dirty",
+      "merge_state": "draft/dirty",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -706,9 +721,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "158": {
       "title": "docs(security): verify SEC-RBAC-59-02 (#64) with ACCEPTED verdict",
@@ -718,15 +733,15 @@
       "base_sha": "47141e83335ffef1d6eebf7d7ec0b34541f7d80d",
       "draft": true,
       "labels": [],
-      "behind_main": 105,
+      "behind_main": 106,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "dirty",
+      "merge_state": "draft/dirty",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -745,8 +760,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
       "updated_at": "2026-10-23T15:50:53Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "161": {
       "title": "docs(security): independent acceptance report for Issue #65 (SEC-RBAC-59-03)",
@@ -756,15 +771,15 @@
       "base_sha": "6c8a4a3dbcfccdede78b3c811708b1be44d7505e",
       "draft": true,
       "labels": [],
-      "behind_main": 105,
+      "behind_main": 106,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -783,8 +798,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
       "updated_at": "2026-10-23T15:50:51Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "171": {
       "title": "docs(security): independent security review for SEC-ARCH-02 (PR 169 / Issue #163)",
@@ -794,15 +809,15 @@
       "base_sha": "5be4025d14b4f6738e803eb52a28cae65f8480ea",
       "draft": true,
       "labels": [],
-      "behind_main": 96,
+      "behind_main": 97,
       "required_ci": {
         "backend": "failure",
         "frontend": "success",
         "exact_head_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "dirty",
+      "merge_state": "draft/dirty",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -830,9 +845,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-23T15:50:49Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "172": {
       "title": "chore(deps): bump actions/upload-artifact from 7.0.1 to 7.0.2",
@@ -847,13 +862,13 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
-        "checked_at": "2026-10-30T13:34:09.117Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "blocked — exact-head backend matrix still running; branch current with main",
+      "merge_state": "blocked (DX13 and open #225; required CI green)",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -884,12 +899,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13 exact-new-SHA owner approval required; old #172 approval stale; CI-172-PY314 finding remains Open (#225), exact-head backend pending",
+      "queued": "required CI green at current head, but owner DX13 approval of prior SHA stale; Open CI-172-PY314 finding #225 not dispositioned by Codex; no merge",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T13:34:09.117Z",
-      "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
         "new_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
@@ -1007,15 +1022,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 10,
+      "behind_main": 11,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
-        "checked_at": "2026-10-30T13:03:49.058Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft / behind",
+      "merge_state": "draft/behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1054,10 +1069,10 @@
       "stale_level": 0,
       "queued": "Exact-head CI green; still Draft, behind main, one open Codex thread; scoped review only after branch current and ready",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
       "updated_at": "2026-10-29T15:04:31Z",
-      "last_state_verified_at": "2026-10-30T12:28:58.616Z",
-      "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_completion_report": {
         "comment_id": 6522354550,
         "sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
@@ -1074,15 +1089,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 83,
+      "behind_main": 84,
       "required_ci": {
         "backend": "failure",
         "frontend": "success",
         "exact_head_sha": "b17c37a270d57d60962d2261271666aa934c805b",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "dirty",
+      "merge_state": "draft/dirty",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1110,9 +1125,9 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T15:05:02Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
       "failure_class": "implementation/verification failure on historical branch; exact cause needs baseline isolation",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "183": {
       "title": "test: require floor-standing equipment in the all-racks collection total",
@@ -1124,15 +1139,15 @@
       "labels": [
         "stalled"
       ],
-      "behind_main": 81,
+      "behind_main": 82,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind",
       "head_verification": {
         "verified": false,
         "reason": "unsigned"
@@ -1151,8 +1166,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
       "updated_at": "2026-10-29T15:05:05Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "188": {
       "title": "docs(opencode): record the PR #180 acceptance, merge and activation status (v6.3)",
@@ -1162,12 +1177,12 @@
       "base_sha": "87a13a17f5491ca4c7dad4828ab0b649e1ace8b7",
       "draft": false,
       "labels": [],
-      "behind_main": 28,
+      "behind_main": 29,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1189,8 +1204,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
       "updated_at": "2026-10-24T21:56:39Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z"
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z"
     },
     "200": {
       "title": "chore(deps): bump actions/download-artifact from 4.3.0 to 8.0.2",
@@ -1208,10 +1223,10 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
-        "checked_at": "2026-10-30T13:34:09.117Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "blocked — exact-head backend matrix still running; branch current with main",
+      "merge_state": "blocked (backend pending; DX13 and open #226)",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1242,12 +1257,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13 exact-new-SHA owner approval required; no native Codex acceptance; CI-200-PY314 finding remains Open (#226), exact-head backend pending",
+      "queued": "backend matrix in progress, DX13 exact-head approval missing, Open CI-200-PY314 finding #226 not dispositioned",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T13:34:09.117Z",
-      "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
@@ -1295,10 +1310,10 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
-        "checked_at": "2026-10-30T13:34:09.117Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "blocked — exact-head backend matrix still running; branch current with main",
+      "merge_state": "blocked (backend pending; DX13 owner approval missing)",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1320,12 +1335,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13 exact-new-SHA owner approval required; old #201 approval stale; no qualifying native Codex review; exact-head backend pending",
+      "queued": "backend matrix in progress on current head, owner DX13 exact-new-head approval required, no qualifying native Codex review",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T13:34:09.117Z",
-      "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
@@ -1377,15 +1392,15 @@
       "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
       "draft": true,
       "labels": [],
-      "behind_main": 1,
+      "behind_main": 2,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft/behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1484,8 +1499,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
       "updated_at": "2026-10-29T15:05:10Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "216": {
@@ -1496,12 +1511,12 @@
       "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
       "draft": false,
       "labels": [],
-      "behind_main": 1,
+      "behind_main": 2,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1523,8 +1538,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
       "updated_at": "2026-10-29T19:01:54Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "217": {
@@ -1535,12 +1550,12 @@
       "base_sha": "c907aa6a52bef2d87d3b831bcd430db9b90e446a",
       "draft": false,
       "labels": [],
-      "behind_main": 1,
+      "behind_main": 2,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1629,8 +1644,8 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
       "updated_at": "2026-10-29T20:06:34Z",
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "219": {
@@ -1641,12 +1656,12 @@
       "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
       "draft": false,
       "labels": [],
-      "behind_main": 0,
+      "behind_main": 1,
       "required_ci": {
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "not rechecked this follow-up",
       "merge_state": "behind",
@@ -1849,8 +1864,8 @@
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
       },
-      "last_state_verified_at": "2026-10-30T11:03:15.451Z",
-      "last_thread_verified_at": "2026-10-30T11:28:23.473Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "222": {
@@ -1904,13 +1919,13 @@
       "labels": [],
       "behind_main": 1,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
-        "checked_at": "2026-10-30T13:34:09.117Z"
+        "checked_at": "2026-10-30T14:08:42.502Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
-      "merge_state": "behind main by 1; four P2 Codex threads open, exact-head backend in progress",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1986,12 +2001,12 @@
       "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Owner copy DONE at 6d14f19; backend CI pending and branch BEHIND after #173; four P2 threads received evidence replies but stay open pending native Codex re-review, then owner-run Jules on exact head; no refresh until just-in-time eligible",
+      "queued": "active v3 workflow copied and file-blob verified; 4 P2 threads still open; exact-head backend/frontend green, but branch behind main by 1; native Codex and Jules not accepted; do not refresh while Tier 0 priority queued",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T13:34:09.117Z",
-      "last_thread_verified_at": "2026-10-30T13:03:49.058Z",
+      "last_state_verified_at": "2026-10-30T14:08:42.502Z",
+      "last_thread_verified_at": "2026-10-30T14:08:42.502Z",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
@@ -2040,7 +2055,8 @@
         "draft_file_blob_sha": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958",
         "match": true,
         "verified": true
-      }
+      },
+      "active_workflow_blob_sha": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958"
     },
     "227": {
       "title": "Orchestrator state",
@@ -2302,43 +2318,9 @@
       "status": "Open"
     }
   ],
-  "last_actions": [
-    {
-      "type": "merge",
-      "pr": 173,
-      "sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5"
-    },
-    {
-      "type": "rebase",
-      "pr": 201,
-      "old": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
-      "new": "389d6ecda15c45d3d944ae63a427a491356de38a",
-      "patch_identical": true
-    },
-    {
-      "type": "owner_copy",
-      "pr": 224,
-      "sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7"
-    },
-    {
-      "type": "thread_evidence",
-      "pr": 224,
-      "threads": 4,
-      "resolved": 0
-    },
-    {
-      "type": "owner_DX13",
-      "approved": [
-        173,
-        201,
-        172
-      ]
-    }
-  ],
+  "last_actions": [],
   "priority_snapshot": {
-    "merged": [
-      173
-    ],
+    "merged": [],
     "tier0_next": [
       201,
       172,
@@ -2361,7 +2343,7 @@
     "open_issues": 16,
     "open_threads": 41
   },
-  "last_run_summary": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact. New owner DX3 answer: retain owner bypass actor with pull_request mode only; closed decision, no bypass.",
+  "last_run_summary": "FULL: #224 and #172 now exact-head backend/frontend green but merge gates still fail; #201/#200 backend pending; 24 PRs, 16 issues, 41 unresolved threads; ruleset unchanged and bypass safe; no new owner answers, merges, thread resolutions, agent prompts, or production actions.",
   "last_followup_delta": {
     "at": "2026-10-30T12:28:58.616Z",
     "from": "2026-10-30T12:12:20.955Z",
@@ -2390,7 +2372,18 @@
     "owner_copy_pending": 224,
     "production_hold_intact": true
   },
-  "last_full_delta": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact. New owner DX3 answer: retain owner bypass actor with pull_request mode only; closed decision, no bypass.",
+  "last_full_delta": {
+    "run_id": "full-20261030T140419658Z",
+    "at": "2026-10-30T14:08:42.502Z",
+    "changes": [
+      "#224 exact-head backend became green; still behind main, 4 open P2 threads, Codex/Jules missing",
+      "#172 exact-head backend became green; owner DX13 old approval stale, #225 finding Open",
+      "#201 and #200 backend matrix still in progress; DX13 approvals missing",
+      "#87 PR patch empty at 155 behind; historical D4 evidence-only",
+      "#117 two-file workflow-comment patch unique but conflicted at 140 behind",
+      "All six ruleset bypass actors remain pull_request; 24 PRs, 16 issues, 41 threads; no merges or thread resolutions"
+    ]
+  },
   "last_followup_summary": {
     "run_id": "followup-20261030T133114Z",
     "no_merges": true,
@@ -2404,5 +2397,5 @@
     ],
     "production_hold": "intact"
   },
-  "last_full_event_path": "state/events/2026-10-30/full-20261030T125819281Z.json"
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T140419658Z.json"
 }
