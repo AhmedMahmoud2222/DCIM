@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T12:12:20.955Z",
-  "last_run_at": "2026-10-30T12:28:58.616Z",
-  "last_run_mode": "FOLLOW-UP",
-  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "last_full_run_at": "2026-10-30T13:03:49.058Z",
+  "last_run_at": "2026-10-30T13:03:49.058Z",
+  "last_run_mode": "FULL",
+  "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
   "merge_policy": {
     "ruleset_id": 23651422,
     "hash": "fnv1a64:246f1cc05c72e8a4",
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T12:28:58.616Z",
+    "last_verified_at": "2026-10-30T13:03:49.058Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -83,18 +83,21 @@
     "DX12": "YES: Claude complete patch in issue; orchestrator applies verbatim on isolated branch and opens Draft PR, few files max, never .github/workflows; owner approves larger patches",
     "DX13": "YES: Dependabot patch/minor identical-patch rebase + green CI may carry qualifying earlier Codex acceptance; otherwise exact owner approval DX13: approved #N <sha> after diff review; no fourth Codex ask",
     "D13": "#179 scoped one-P2 continuation; #115/#116 deferred until #224/#216/#217 and Dependabot PRs resolved",
-    "D4": "evidence reports only; each historical PR closure still requires owner"
+    "D4": "evidence reports only; each historical PR closure still requires owner",
+    "DX13_201": "Owner approved 3dc8fe6942ebf60f13cc478278d9c0c38f77266d at issue #220 comment 6523128063; STALE after Dependabot rebase to 389d6ecda15c45d3d944ae63a427a491356de38a; new exact-head approval required",
+    "DX13_173": "Owner approved cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9 at #220 comment 6523128063; merged 2026-10-30T12:59:45Z",
+    "DX13_172": "Owner approved 0b8280f52f9d05adb875e42eb99eb5f245b5966d at #220 comment 6523128063; finding CI-172-PY314 remains Open, branch now behind main"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30T12:09:47.179Z: processed unmarked owner answer #6521860072 (DX12/DX13, D4/D5/D6/D13/DX6); no later unmarked D/DX answer",
+    "T2": "FULL 2026-10-30T13:03:49.058Z: processed new unmarked owner #220 comment 6523128063 (DX13 exact-head approvals #201/#173/#172). #173 merged; #201 approval stale after rebase; #172 CI finding remains open.",
     "T3": "D5(a) scoped review returned 2 new Codex P2 at ab3f964; now 12 open threads, implementation/merge still stopped pending owner direction",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
-    "T5": "COMPLETE one-time static workflow authorization verification; DX7 report updated in #220 decision comment #6501005762",
-    "T6": "ACTIVE 2026-10-30T12:11:26.287Z: #224 signed draft v3 aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8 only in proposed-workflows; owner copy pending to .github/workflows/refresh-branch.yml; new CI in progress; 4 open Codex P2 threads; fresh exact-head CI, Codex and Jules required after owner copy."
+    "T5": "Main workflow ci.yml changed in #173 merge at 69c60af; targeted diff confirmed only setup-node immutable pin updates, no change to claude.yml/agent-claude.yml/acceptance-review.yml authorization wiring; original DX7 hardening still pending.",
+    "T6": "ACTIVE 2026-10-30T13:03:49.058Z: owner copied v3 draft verbatim to active .github/workflows/refresh-branch.yml at signed PR #224 head 6d14f19e7c8e3002eacee9a4493784002f15bba7; jq -s -e single-document gate verified in file, four P2 evidence replies posted, all four threads remain open; exact-head backend CI running, branch behind main after #173; Codex+Jules not yet accepted. Other drafts inert."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -849,7 +852,7 @@
         "checked_at": "2026-10-30T11:03:15.451Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "unstable",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -880,7 +883,7 @@
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13: exact-head owner diff approval required (no qualifying earlier native Codex review despite identical Dependabot rebase patch); 3/3 current-head asks exhausted; no merge",
+      "queued": "DX13: exact-head owner diff approval required (no qualifying earlier native Codex review despite identical Dependabot rebase patch); 3/3 current-head asks exhausted; no merge; behind main after #173 squash merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "updated_at": "2026-10-29T20:06:13Z",
@@ -921,7 +924,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "checked_at": "2026-10-30T13:03:49.058Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "unstable",
@@ -946,8 +949,8 @@
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13: exact-head owner diff approval required (no qualifying earlier native Codex review despite identical Dependabot rebase patch); 3/3 current-head asks exhausted; no merge",
-      "last_qualifying_review_sha": null,
+      "queued": null,
+      "last_qualifying_review_sha": "DX13 owner exact-head approval #6523128063 (fallback after 3 Codex asks)",
       "last_ci_sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
       "updated_at": "2026-10-29T17:02:48Z",
       "last_state_verified_at": "2026-10-30T12:09:47.179Z",
@@ -969,6 +972,17 @@
         "verified": true,
         "source": "upstream git/ref/tags",
         "checked_at": "2026-10-30T08:00:20.821Z"
+      },
+      "state": "merged",
+      "merge_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+      "merged_at": "2026-10-30T12:59:45Z",
+      "merge_method": "squash",
+      "branch_deleted": true,
+      "post_merge_verified": {
+        "main_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+        "pin": "949feb2413d6458794dcd2491c4babbbce0c15c1",
+        "old_pin_absent": true,
+        "comment_id": 6523482953
       }
     },
     "179": {
@@ -983,14 +997,13 @@
       ],
       "behind_main": 10,
       "required_ci": {
-        "backend": "in_progress",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
-        "checked_at": "2026-10-30T12:28:58.616Z",
-        "diagnostic": "backend-suite running; aggregate backend not yet emitted"
+        "checked_at": "2026-10-30T13:03:49.058Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "draft",
+      "merge_state": "draft / behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1027,7 +1040,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "Draft, behind main, exact-head CI pending; one P2 code fix verified but review thread remains open pending independent Codex acceptance after just-in-time refresh",
+      "queued": "Exact-head CI green; still Draft, behind main, one open Codex thread; scoped review only after branch current and ready",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T15:04:31Z",
@@ -1160,7 +1173,7 @@
       "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": null,
+      "queued": "; behind main after #173 squash merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
       "updated_at": "2026-10-24T21:56:39Z",
@@ -1186,7 +1199,7 @@
         "checked_at": "2026-10-30T11:03:15.451Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "unstable",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1217,7 +1230,7 @@
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13: exact-head owner diff approval required (no qualifying earlier native Codex review despite identical Dependabot rebase patch); 3/3 current-head asks exhausted; no merge",
+      "queued": "DX13: exact-head owner diff approval required (no qualifying earlier native Codex review despite identical Dependabot rebase patch); 3/3 current-head asks exhausted; no merge; behind main after #173 squash merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
       "updated_at": "2026-10-29T19:30:39Z",
@@ -1245,10 +1258,10 @@
     },
     "201": {
       "title": "chore(deps): bump actions/create-github-app-token from 3.2.0 to 3.3.0",
-      "head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "head_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
       "head_branch": "dependabot/github_actions/actions/create-github-app-token-3.3.0",
       "base_branch": "main",
-      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "base_sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
       "draft": false,
       "labels": [
         "dependencies",
@@ -1256,13 +1269,13 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
-        "checked_at": "2026-10-30T11:03:15.451Z"
+        "backend": "in_progress",
+        "frontend": "pending",
+        "exact_head_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
+        "checked_at": "2026-10-30T13:03:49.058Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
-      "merge_state": "unstable",
+      "merge_state": "unstable (new-head CI pending)",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1274,21 +1287,21 @@
       "open_threads": [],
       "findings_checklist": [],
       "last_prompt": {
-        "agent": "Codex",
-        "ask": "THIRD and FINAL native exact-head Tier 0 review request; no further asks on this SHA",
-        "at": "2026-10-30T11:04:08Z",
+        "agent": "Dependabot",
+        "ask": "@dependabot rebase after #173 merge",
+        "at": "2026-10-30T13:00:00Z",
         "sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
-        "comment_id": 6521121918,
-        "status": "terminal: third generic clean PR-level receipt #6521148748; 0 native PR review submissions, A4 not met"
+        "comment_id": 6523431897,
+        "status": "terminal: rebase pushed new signed SHA"
       },
-      "asks_per_sha": 3,
+      "asks_per_sha": 0,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "DX13: exact-head owner diff approval required (no qualifying earlier native Codex review despite identical Dependabot rebase patch); 3/3 current-head asks exhausted; no merge",
+      "queued": "Await backend/frontend exact-head CI and new unmarked DX13 owner approval for 389d6ecda15c45d3d944ae63a427a491356de38a; no 4th Codex ask",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "last_ci_sha": null,
       "updated_at": "2026-10-29T18:32:41Z",
-      "last_state_verified_at": "2026-10-30T12:09:47.179Z",
+      "last_state_verified_at": "2026-10-30T13:03:49.058Z",
       "last_thread_verified_at": "2026-10-30T12:09:47.179Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
@@ -1308,6 +1321,20 @@
         "verified": true,
         "source": "upstream git/ref/tags",
         "checked_at": "2026-10-30T08:00:20.821Z"
+      },
+      "previous_head_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "review_carryover_after_173": {
+        "old_sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+        "new_sha": "389d6ecda15c45d3d944ae63a427a491356de38a",
+        "old_base": "731c2084e60c51ad825effcf699e4c429be44675",
+        "new_base": "69c60af3360fcfea4401080c1b9276ffd418e4d5",
+        "per_file_patch_identical": true,
+        "files_compared": 2,
+        "dependabot_rebase": true,
+        "old_owner_DX13_exact_head_approval": "stale",
+        "native_codex_review": "none",
+        "acceptance_carried": false,
+        "checked_at": "2026-10-30T13:03:49.058Z"
       }
     },
     "207": {
@@ -1460,7 +1487,7 @@
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "reviewer fallback superseded by DX1 if tier0/1",
+      "queued": "reviewer fallback superseded by DX1 if tier0/1; behind main after #173 squash merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
       "updated_at": "2026-10-29T19:01:54Z",
@@ -1566,7 +1593,7 @@
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": null,
-      "queued": "Five findings verified as code-fixed on current head, but five Codex review threads remain open and 3/3 native review asks exhausted; branch behind; no acceptance or merge.",
+      "queued": "Five findings verified as code-fixed on current head, but five Codex review threads remain open and 3/3 native review asks exhausted; branch behind; no acceptance or merge.; behind main after #173 squash merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
       "updated_at": "2026-10-29T20:06:34Z",
@@ -1590,7 +1617,7 @@
         "checked_at": "2026-10-30T11:03:15.451Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "blocked",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1770,7 +1797,7 @@
       "asks_per_sha": 1,
       "fix_review_cycles": 4,
       "stale_level": null,
-      "queued": "D5(a) review-only completed, 12 open findings, >3-cycle stop, further implementation/review frozen pending new owner direction; GitHub draft=false despite title",
+      "queued": "D5(a) review-only completed, 12 open findings, >3-cycle stop, further implementation/review frozen pending new owner direction; GitHub draft=false despite title; behind main after #173 squash merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
       "updated_at": "2026-10-30T02:47:28Z",
@@ -1837,22 +1864,21 @@
     },
     "224": {
       "title": "Add workflow to refresh PR branch via comment",
-      "head_sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
+      "head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
       "head_branch": "chore/refresh-branch-workflow",
       "base_branch": "main",
       "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
       "draft": false,
       "labels": [],
-      "behind_main": 0,
+      "behind_main": 1,
       "required_ci": {
         "backend": "in_progress",
         "frontend": "success",
-        "exact_head_sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
-        "checked_at": "2026-10-30T12:28:58.616Z",
-        "diagnostic": "Python 3.12/3.13/3.14 backend matrix running; aggregate backend not yet emitted"
+        "exact_head_sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+        "checked_at": "2026-10-30T13:03:49.058Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
-      "merge_state": "blocked",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
         "reason": "valid"
@@ -1873,8 +1899,8 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014259",
           "severity": "P2",
           "required_change": "Validate REFRESH_ALLOWED_ACTORS as a JSON array of exact login strings in a secret-free gate before exposing REFRESH_PAT; prevent substring match when variable is a JSON string.",
-          "status": "Open",
-          "evidence": "Live workflow at 438ed150 matches proposed v2 executable body; fix candidate verified by file diff, awaiting Codex published confirmation and thread disposition",
+          "status": "Open — active code fix at 6d14f19 independently inspected, exact-head Codex and Jules confirmation pending",
+          "evidence": "Active .github/workflows/refresh-branch.yml at 6d14f19; evidence reply 4423887720, not resolved",
           "path": ".github/workflows/refresh-branch.yml",
           "line": 45,
           "author": "chatgpt-codex-connector",
@@ -1885,8 +1911,8 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014265",
           "severity": "P2",
           "required_change": "Move concurrency from workflow scope to authorized refresh job so unauthorized comments cannot replace a pending authorized refresh.",
-          "status": "Open",
-          "evidence": "Live workflow at 438ed150 matches proposed v2 executable body; fix candidate verified by file diff, awaiting Codex published confirmation and thread disposition",
+          "status": "Open — active code fix at 6d14f19 independently inspected, exact-head Codex and Jules confirmation pending",
+          "evidence": "Active .github/workflows/refresh-branch.yml at 6d14f19; evidence reply 4423888192, not resolved",
           "path": ".github/workflows/refresh-branch.yml",
           "line": 38,
           "author": "chatgpt-codex-connector",
@@ -1897,8 +1923,8 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014275",
           "severity": "P2",
           "required_change": "Verify PR base repo and base.ref == main before calling update-branch; API merges the PR base, not necessarily main.",
-          "status": "Open",
-          "evidence": "Live workflow at 438ed150 matches proposed v2 executable body; fix candidate verified by file diff, awaiting Codex published confirmation and thread disposition",
+          "status": "Open — active code fix at 6d14f19 independently inspected, exact-head Codex and Jules confirmation pending",
+          "evidence": "Active .github/workflows/refresh-branch.yml at 6d14f19; evidence reply 4423888617, not resolved",
           "path": ".github/workflows/refresh-branch.yml",
           "line": 66,
           "author": "chatgpt-codex-connector",
@@ -1909,8 +1935,8 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4423421202",
           "severity": "P2",
           "required_change": "Require exactly one JSON document in REFRESH_ALLOWED_ACTORS: jq -e consumes concatenated JSON values independently; a last valid array after an invalid value may grant access. Use jq -s with length==1 and validate the sole document as exact-match nonempty array.",
-          "status": "Open",
-          "evidence": "Verified live .github/workflows/refresh-branch.yml at 438ed1505d2b9ca3f3284fdc830cb12caf49f276 uses jq -e without -s; Codex reproduced null [\"AhmedMahmoud2222\"] granting.",
+          "status": "Open — active code fix at 6d14f19 independently inspected, exact-head Codex and Jules confirmation pending",
+          "evidence": "Active .github/workflows/refresh-branch.yml at 6d14f19; evidence reply 4423889098, not resolved",
           "path": ".github/workflows/refresh-branch.yml",
           "line": 59,
           "author": "chatgpt-codex-connector",
@@ -1928,12 +1954,12 @@
       "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Owner copy pending: v3 draft single-document jq -s -e remedy verified in signed aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8; live .github/workflows/refresh-branch.yml remains jq -e and P2-4 OPEN. New CI pending; exact-head Codex/Jules invalid until owner copy and green CI; 4 unresolved threads.",
+      "queued": "Owner copy DONE at 6d14f19; backend CI pending and branch BEHIND after #173; four P2 threads received evidence replies but stay open pending native Codex re-review, then owner-run Jules on exact head; no refresh until just-in-time eligible",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T12:28:58.616Z",
-      "last_thread_verified_at": "2026-10-30T12:11:26.287Z",
+      "last_state_verified_at": "2026-10-30T13:03:49.058Z",
+      "last_thread_verified_at": "2026-10-30T13:03:49.058Z",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
@@ -1973,6 +1999,15 @@
         "live_blob_sha": "47f1190f5b38984f431b96ae145590d15bc0d243",
         "finding": "PRRT_kwDOUdC8Ds6x9OYj",
         "owner": "AhmedMahmoud2222"
+      },
+      "previous_head_sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
+      "owner_copy": {
+        "at": "2026-10-30T12:55:25Z",
+        "sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+        "active_file_blob_sha": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958",
+        "draft_file_blob_sha": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958",
+        "match": true,
+        "verified": true
       }
     },
     "227": {
@@ -2237,108 +2272,64 @@
   ],
   "last_actions": [
     {
-      "at": "2026-10-30T12:11:26.287Z",
-      "item": "#224",
-      "agent": "Claude",
-      "action": "signed single-push proposed-workflows v3 fix for jq multi-document P2; owner copy pending; live unchanged",
-      "sha": "aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8",
-      "comment_id": 6522415628
+      "type": "merge",
+      "pr": 173,
+      "sha": "69c60af3360fcfea4401080c1b9276ffd418e4d5"
     },
     {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#224",
-      "agent": "Codex",
-      "action": "exact-head Tier2 review after CI green; new P2 jq multi-document fail-open",
-      "sha": "438ed1505d2b9ca3f3284fdc830cb12caf49f276",
-      "comment_id": 6522291490
+      "type": "rebase",
+      "pr": 201,
+      "old": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
+      "new": "389d6ecda15c45d3d944ae63a427a491356de38a",
+      "patch_identical": true
     },
     {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#224",
-      "agent": "Claude",
-      "action": "draft-only P2-4 remediation request, owner live copy pending",
-      "sha": "438ed1505d2b9ca3f3284fdc830cb12caf49f276",
-      "comment_id": 6522407768
+      "type": "owner_copy",
+      "pr": 224,
+      "sha": "6d14f19e7c8e3002eacee9a4493784002f15bba7"
     },
     {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#179",
-      "agent": "Claude",
-      "action": "scoped D13 fix pushed signed single commit, completion report verified, thread evidence reply",
-      "sha": "261287dbc58047b40846cb6efa441e6456c93d4a",
-      "comment_id": 6522348015
+      "type": "thread_evidence",
+      "pr": 224,
+      "threads": 4,
+      "resolved": 0
     },
     {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#217",
-      "action": "verified five findings code-fixed, fifth thread evidence reply, all five still open",
-      "sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
-      "comment_id": 4423428708
-    },
-    {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#172/#200",
-      "agent": "Codex",
-      "action": "third/final exact-head requests returned generic receipts; no native review",
-      "comment_ids": [
-        6522310911,
-        6522312116
+      "type": "owner_DX13",
+      "approved": [
+        173,
+        201,
+        172
       ]
-    },
-    {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#184/#185",
-      "agent": "OpenCode",
-      "action": "owner D6 latest reinstated OpenCode, scoped original trigger, 72h deadline",
-      "comment_ids": [
-        6522358895,
-        6522360045
-      ]
-    },
-    {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "#201/#173/#172/#200",
-      "action": "verified file-by-file identical Dependabot rebase patches (2/1/11/4 files), green CI; no earlier native qualifying review, no acceptance carryover"
-    },
-    {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "ruleset",
-      "action": "unchanged hash fnv1a64:246f1cc05c72e8a4, all six bypass pull_request; no merge"
-    },
-    {
-      "at": "2026-10-30T12:09:47.179Z",
-      "item": "production",
-      "action": "Migration 0057 hold intact, no production execution requested"
     }
   ],
   "priority_snapshot": {
-    "at": "2026-10-30T12:11:26.287Z",
-    "highest": [
-      "#224 Tier2 4 P2 threads incl multi-document fail-open, signed draft v3 aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8 owner copy pending; CI then Codex/Jules",
-      "#217 five code-fixed findings but open Codex threads and behind 1",
-      "#216 behind 1, Tier2 Codex/Jules missing",
-      "#201/#173/#172/#200 DX13 owner exact-SHA diff approval, no qualifying native Codex review",
-      "#179 scoped fix signed and verified, Draft, behind and CI running"
+    "merged": [
+      173
     ],
-    "dependencies": [
-      "#224 live workflow not on main until owner copy + exact-head acceptance and merge",
-      "#217/#216 behind and not eligible for just-in-time refresh while Tier0 review blockers exist",
-      "#115/#116 deferred by D13"
-    ]
-  },
-  "last_run_summary": {
-    "run_id": "followup-20261030T122726270Z",
-    "mode": "FOLLOW-UP",
-    "at": "2026-10-30T12:28:58.616Z",
-    "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
-    "open_prs": 25,
+    "tier0_next": [
+      201,
+      172,
+      188
+    ],
+    "tier1_next": [
+      200,
+      217
+    ],
+    "tier2_next": [
+      224,
+      216
+    ],
+    "frozen": [
+      219,
+      115,
+      116
+    ],
+    "open_product_prs": 24,
     "open_issues": 16,
-    "open_threads": 41,
-    "merged": 0,
-    "resolved": 0,
-    "actions": "read-only verification; ledger/event writes only",
-    "note": "No new owner answer or agent result; PR #224 and #179 frontend success, backend pending. #224 owner copy of v3 still pending; DX13 approvals pending; migration hold intact."
+    "open_threads": 41
   },
+  "last_run_summary": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact.",
   "last_followup_delta": {
     "at": "2026-10-30T12:28:58.616Z",
     "from": "2026-10-30T12:12:20.955Z",
@@ -2367,41 +2358,7 @@
     "owner_copy_pending": 224,
     "production_hold_intact": true
   },
-  "last_full_delta": {
-    "at": "2026-10-30T12:11:26.287Z",
-    "run_id": "full-20261030T120218775Z",
-    "open_prs": 25,
-    "open_issues": 16,
-    "open_threads": 41,
-    "merged": [],
-    "resolved": [],
-    "new_findings": [
-      "#224 P2 jq multi-document authorization"
-    ],
-    "new_commits": [
-      "#179 261287dbc58047b40846cb6efa441e6456c93d4a",
-      "#224 aa91cfae8bfbc8d16a24c240a52ab3740fa42aa8 proposed-workflows draft only"
-    ],
-    "agent_asks": [
-      "#224 Codex",
-      "#224 Claude",
-      "#172 Codex final",
-      "#200 Codex final",
-      "#179 Claude",
-      "#184 OpenCode",
-      "#185 OpenCode"
-    ],
-    "owner_decisions_processed": [
-      "DX12",
-      "DX13",
-      "D4",
-      "D5",
-      "D6",
-      "D13",
-      "DX6"
-    ],
-    "note": "#224 owner copy of draft v3 pending; no merge/Jules. #179 signed fix, CI pending. 41 open threads."
-  },
+  "last_full_delta": "Merged #173 via exact owner DX13 and green required CI; verified main pin and branch deletion. Dependabot rebased #201 to 389d6ec, identical two-file patch, CI pending and new DX13 approval required. #224 owner copied v3 to active file at 6d14f19; four P2 evidence replies posted but remain open, branch behind and CI/reviews pending. Owner approved #172 but open flaky CI finding remains. Ruleset unchanged, six bypass actors pull_request, production hold intact.",
   "last_followup_summary": {
     "run_id": "followup-20261030T122726270Z",
     "mode": "FOLLOW-UP",
@@ -2415,5 +2372,5 @@
     "actions": "read-only verification; ledger/event writes only",
     "note": "No new owner answer or agent result; PR #224 and #179 frontend success, backend pending. #224 owner copy of v3 still pending; DX13 approvals pending; migration hold intact."
   },
-  "last_full_event_path": "state/events/2026-10-30/full-20261030T120218775Z.json"
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T125819281Z.json"
 }
