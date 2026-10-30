@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T22:13:50.328Z",
-  "last_run_at": "2026-10-30T22:28:57.294Z",
+  "last_run_at": "2026-10-30T22:29:51.455Z",
   "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -2726,7 +2726,7 @@
     },
     "232": {
       "title": "chore(deps): bump anthropics/claude-code-action from 1.0.262 to 1.0.264",
-      "head_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
+      "head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
       "head_branch": "dependabot/github_actions/anthropics/claude-code-action-1.0.264",
       "base_branch": "main",
       "base_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
@@ -2737,21 +2737,21 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "in_progress",
-        "frontend": "success",
-        "exact_head_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "backend": "missing (new SHA; under 10 min since push)",
+        "frontend": "missing (new SHA; under 10 min since push)",
+        "exact_head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+        "checked_at": "2026-10-30T22:29:51.455Z"
       },
-      "optional_ci": "Deployment tooling regressions FAIL: 3/779 tests; real pin-coupling regression",
-      "merge_state": "BLOCKED (backend required check pending; independent review missing)",
+      "optional_ci": "Deployment tooling regressions and disposable combined-stack checks in progress on new SHA; prior SHA failed 3/779",
+      "merge_state": "BLOCKED: new-head required checks missing, independent Tier2 Codex/Jules acceptance missing",
       "merge_state_status": "blocked",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "checked_at": "2026-10-30T22:29:51.455Z"
       },
-      "tier": 0,
-      "tier_reason": "patch Action bump; no trigger, permission or secret usage diff; annotated v1.0.264 tag commit d70510b... verified; code fix may require reclassification",
+      "tier": 2,
+      "tier_reason": "workflow trust/security-control scope: .github/acceptance/policy.json review_action binding, .github/scripts/orchestration_claude_adapter.py trusted action pin, and 4 secret-bearing workflow pins; reclassified after Claude fix",
       "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
@@ -2761,43 +2761,51 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41136855675/job/124341320541",
           "severity": "P2",
           "required_change": "Acceptance gate workflow pin trust test must accept verified new action SHA without weakening checkout/token isolation assertions",
-          "status": "Open",
-          "evidence": "test_acceptance_gate.ApiAndSchemaTests.test_workflows_never_check_out_candidate_or_expose_write_token_to_model: fail (+ anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13)"
+          "status": "Fixed at 2cd4380b930e601716dbd685a57a02ebff74c97f (code verified; CI pending)",
+          "evidence": "test_acceptance_gate.ApiAndSchemaTests.test_workflows_never_check_out_candidate_or_expose_write_token_to_model: fail (+ anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13) | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927"
         },
         {
           "id": "CI232-2",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41136855675/job/124341320541",
           "severity": "P2",
           "required_change": "Fix mutation harness regression while preserving all fail-closed mutation assertions",
-          "status": "Open",
-          "evidence": "test_acceptance_mutations.AcceptanceMutationTests.test_real_gate_mutants_are_caught_without_infrastructure_errors: AssertionError: 1 != 0"
+          "status": "Fixed at 2cd4380b930e601716dbd685a57a02ebff74c97f (code verified; CI pending)",
+          "evidence": "test_acceptance_mutations.AcceptanceMutationTests.test_real_gate_mutants_are_caught_without_infrastructure_errors: AssertionError: 1 != 0 | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927"
         },
         {
           "id": "CI232-3",
           "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41136855675/job/124341320541",
           "severity": "P2",
           "required_change": "Update hardcoded action SHA expectation in .github/scripts/orchestration_claude_adapter.py:26 to verified v1.0.264 pin, preserve tool boundary checks",
-          "status": "Open",
-          "evidence": "test_orchestration_claude_adapter.AdapterTests.test_workflow_native_action_and_tool_boundary_pins: expected old 925afb... not found in agent-claude.yml"
+          "status": "Fixed at 2cd4380b930e601716dbd685a57a02ebff74c97f (code verified; CI pending)",
+          "evidence": "test_orchestration_claude_adapter.AdapterTests.test_workflow_native_action_and_tool_boundary_pins: expected old 925afb... not found in agent-claude.yml | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927"
         }
       ],
       "last_prompt": {
         "agent": "Claude",
-        "ask": "fix all 3 optional CI pin-coupling failures without weakening security, one push, completion report",
+        "ask": "3 pin-coupling CI findings; single push and completion report",
         "at": "2026-10-30T22:28:08.902Z",
         "sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
         "comment_id": 6534832589,
-        "status": "awaiting substantive fix or capability blocker"
+        "status": "terminal: one signed commit 2cd4380, completion report #6534835930; exact diff verified #6534854927"
       },
-      "asks_per_sha": 1,
-      "fix_review_cycles": 0,
+      "asks_per_sha": 0,
+      "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "Claude active ask, 3 P2 optional CI findings open; backend required check pending; no acceptance",
+      "queued": "await exact-head backend/frontend CI; three code fixes verified but CI pending; Tier2 Codex and Jules after green",
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-30T22:28:57.294Z",
-      "last_thread_verified_at": "2026-10-30T22:28:57.294Z"
+      "last_state_verified_at": "2026-10-30T22:29:51.455Z",
+      "last_thread_verified_at": "2026-10-30T22:29:51.455Z",
+      "previous_head_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
+      "changed_files": 6,
+      "last_completion_report": {
+        "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+        "comment_id": 6534835930,
+        "at": "2026-10-30T22:29:12Z",
+        "single_push": true
+      }
     },
     "233": {
       "title": "chore(deps): bump actions/checkout from 4.4.0 to 7.0.1",
@@ -3181,6 +3189,16 @@
       "sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
       "comment_id": 6534832589,
       "at": "2026-10-30T22:28:08.902Z"
+    },
+    {
+      "item": "PR #232",
+      "agent": "Claude",
+      "action": "signed one-push pin-coupling remediation; code verified; no CI acceptance",
+      "old_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
+      "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "completion_report": 6534835930,
+      "evidence_comment": 6534854927,
+      "at": "2026-10-30T22:29:41.323Z"
     }
   ],
   "priority_snapshot": {
@@ -3221,14 +3239,14 @@
     "merged": [],
     "resolved_threads": [],
     "actions": [
-      "28 open PRs (3 new), 16 issues, 51 unresolved threads",
-      "Verified three new Action pin tag SHAs and signed commits; backend CI still running",
-      "PR #232 real optional CI failure 3/779, Claude fix requested at #6534832589",
-      "Ruleset unchanged; no new owner D/DX decisions; no merges"
+      "3 new PRs #231-233; 28 open PRs, 16 issues, 51 unresolved threads",
+      "PR #232 real optional CI failure 3/779; Claude fixed policy and adapter in signed 2cd4380, code verified",
+      "PR #232 now Tier2; required CI on new SHA not yet started; no Codex/Jules acceptance",
+      "Ruleset hash unchanged; no owner decisions; no merges"
     ],
     "production_migration_0057": "HOLD"
   },
-  "last_followup_delta": "Three new signed Dependabot PRs #231/#232/#233 since FULL. All frontend green, backend pending, zero new review threads. #232 optional Deployment tooling regressions real failure (3/779): old Claude Action pin hardcoded in adapter and gate tests; Claude requested once to fix full 3-item checklist, no workflow edits. #231 optional claude-review infra failure. #233 major checkout upgrade classified Tier 2. No merges or resolutions; 28 PRs, 16 issues, 51 unresolved threads. Ruleset hash unchanged, six bypass pull_request. No new owner decisions. Migration 0057 hold intact.",
+  "last_followup_delta": "Three new signed Dependabot PRs #231-233. #232 optional deployment regressions 3/779 failures led to one Claude request and a signed single-push fix 2cd4380 (policy.json and adapter.py). Three fixes verified in code; new-head backend/frontend checks missing under 10-minute threshold; no acceptance. #232 reclassified Tier2 due workflow trust/security control. #231/#233 backend pending. No merges, no resolved threads, 28 open PRs, 16 issues, 51 unresolved threads; ruleset unchanged, all bypass pull_request, no owner decisions, Migration 0057 hold intact.",
   "last_full_delta": {
     "run_id": "full-20261030T215847947Z",
     "at": "2026-10-30T22:07:12.387Z",
@@ -3275,7 +3293,7 @@
     "finalized_at": "2026-10-30T22:13:50.328Z",
     "event_file": "state/events/2026-10-30/full-20261030T215847947Z.json"
   },
-  "last_followup_summary": "Three new signed Dependabot PRs #231/#232/#233 since FULL. All frontend green, backend pending, zero new review threads. #232 optional Deployment tooling regressions real failure (3/779): old Claude Action pin hardcoded in adapter and gate tests; Claude requested once to fix full 3-item checklist, no workflow edits. #231 optional claude-review infra failure. #233 major checkout upgrade classified Tier 2. No merges or resolutions; 28 PRs, 16 issues, 51 unresolved threads. Ruleset hash unchanged, six bypass pull_request. No new owner decisions. Migration 0057 hold intact.",
+  "last_followup_summary": "Three new signed Dependabot PRs #231-233. #232 optional deployment regressions 3/779 failures led to one Claude request and a signed single-push fix 2cd4380 (policy.json and adapter.py). Three fixes verified in code; new-head backend/frontend checks missing under 10-minute threshold; no acceptance. #232 reclassified Tier2 due workflow trust/security control. #231/#233 backend pending. No merges, no resolved threads, 28 open PRs, 16 issues, 51 unresolved threads; ruleset unchanged, all bypass pull_request, no owner decisions, Migration 0057 hold intact.",
   "last_full_event_path": "state/events/2026-10-30/full-20261030T215847947Z.json",
   "run_notes": [
     {
@@ -3384,14 +3402,6 @@
   "last_followup_event_path": "state/events/2026-10-30/followup-20261030T222534Z.json",
   "agent_slots": {
     "codex": [],
-    "claude": [
-      {
-        "pr": 232,
-        "sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
-        "agent": "Claude",
-        "prompt_at": "2026-10-30T22:28:08.902Z",
-        "expires_at": "2026-10-31T00:28:08.902Z"
-      }
-    ]
+    "claude": []
   }
 }
