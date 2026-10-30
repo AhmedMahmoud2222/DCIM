@@ -202,7 +202,7 @@ Conventions: "POSTs" is the number of non-idempotent POSTs to the external syste
 
 ## 8. Mapping of PR #219 review findings to this specification
 
-The 12 open, unresolved review threads on PR #219 below were supplied by the owner as the verified authoritative inventory. Each is mapped once. A gap names a requirement or test the current specification does not yet state; no design decision is invented for it. Proposed tests for gaps are not yet added to section 7. Coverage has not been assessed by any reviewer, and no test or implementation result is asserted.
+The 12 open, unresolved review threads on PR #219 below were verified by the orchestrator against the live PR #219 review threads as the authoritative inventory. Each is mapped once. A gap names a requirement or test the current specification does not yet state; no design decision is invented for it. Proposed tests for gaps are not yet added to section 7. Coverage has not been assessed by any reviewer, and no test or implementation result is asserted.
 
 | # | Thread (`PRRT_kwDOUdC8Ds6...`) and finding | Invariants | Transitions / sections | FI tests | Gap |
 | --- | --- | --- | --- | --- | --- |
