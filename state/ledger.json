@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T10:03:57.938Z",
-  "last_run_at": "2026-10-30T10:03:57.938Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T10:35:50.127Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -70,18 +70,25 @@
     "DX1": "answered YES",
     "DX2": "ANSWERED and VERIFIED: all six bypass actors pull_request",
     "DX4": "answered API-signed and owner branch update",
-    "DX7": "OPEN P1 candidate; T5 verified workflow static authorization wiring",
+    "DX7": "hardening authorized through DX6; no emergency/disable; finding remains open until wired",
     "DX8": "CLOSED by T4: no agent branch exists, owner supplies branch if proceeding",
     "DX9": "CLOSED: issue #223 created by orchestrator",
-    "DX10": "CLOSED: PR #222 closed without merge at 2026-10-30T07:30:19Z"
+    "DX10": "CLOSED: PR #222 closed without merge at 2026-10-30T07:30:19Z",
+    "D5": "a — scoped independent design review only",
+    "D6": "b — Claude reassigned #184/#185, delivery blocked by branch checkout",
+    "DX3": "owner login confirmed; separate identity decision still open",
+    "DX5": "confirmed with category-based exclusions",
+    "DX6": "YES owner-applied workflow draft route",
+    "DX11": "OPEN #227 state-branch PR owner closure decision",
+    "DX12": "OPEN #184/#185 isolated-branch checkout or owner-applied patch route"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "Issue #220 re-read 2026-10-30T10:03:57.938Z: no new unmarked owner D/DX answers",
-    "T3": "D5 unanswered; #219 10 threads preserved; no fix/review cycles",
+    "T2": "Owner answers D5(a), D6(b), DX3, DX5, DX6, DX7 from #220 comment 6520508150 processed at 2026-10-30T10:35:50.127Z",
+    "T3": "D5(a) answered: ONE scoped independent design/transaction-invariant Codex review requested on #219 head ab3f9641; 10 threads preserved; no implementation or merge authorized",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "COMPLETE one-time static workflow authorization verification; DX7 report updated in #220 decision comment #6501005762"
   },
@@ -127,7 +134,8 @@
       "nonwriter_can_reach_secret": false,
       "secret": "CLAUDE_CODE_OAUTH_TOKEN"
     },
-    "T5_source_correction_at": "2026-10-30T08:00:20.821Z"
+    "T5_source_correction_at": "2026-10-30T08:00:20.821Z",
+    "DX7_owner_disposition": "hardening needed via DX6; no emergency; no disabling; unverified bot exploit, live guard not yet wired"
   },
   "prs": {
     "83": {
@@ -859,21 +867,21 @@
       ],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "Tier 0 exact-head review of action pin and flaky-test disposition",
-        "at": "2026-10-30T09:30:03Z",
+        "ask": "second exact-head native review request after generic receipt",
+        "at": "2026-10-30T10:32:45Z",
         "sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
-        "comment_id": 6519511392,
-        "status": "Codex clean exact-HEAD receipt at 09:31:19Z, no native PR review submission; independent acceptance still missing"
+        "comment_id": 6520583483,
+        "status": "terminal: generic clean receipt #6520606705, no native review submission"
       },
-      "asks_per_sha": 1,
+      "asks_per_sha": 2,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "required CI green after one rerun; #225 tracks flake; Codex clean receipt but no native review, no Codex-accepted finding disposition; do not merge",
+      "queued": "2/3 asks on current SHA returned generic clean receipts; no native independent review; wait >=60 min; no merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
       "updated_at": "2026-10-29T20:06:13Z",
-      "last_state_verified_at": "2026-10-30T10:03:57.938Z",
-      "last_thread_verified_at": "2026-10-30T10:03:57.938Z",
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_thread_verified_at": "2026-10-30T10:35:50.127Z",
       "review_carryover": {
         "old_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
         "new_sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
@@ -1181,21 +1189,21 @@
       ],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "Tier 1 exact-head review of major Action bump and flaky PostgreSQL deadlock disposition",
-        "at": "2026-10-30T09:32:45Z",
+        "ask": "second exact-head native review request after generic receipt",
+        "at": "2026-10-30T10:32:45Z",
         "sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
-        "comment_id": 6519543422,
-        "status": "awaiting native review submission"
+        "comment_id": 6520584322,
+        "status": "terminal: generic clean receipt #6520607584, no native review submission"
       },
-      "asks_per_sha": 1,
+      "asks_per_sha": 2,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "required CI green after one rerun; flaky PostgreSQL deadlock issue #226 created; native Codex Tier 1 review and finding disposition pending; no merge",
+      "queued": "2/3 asks on current SHA returned generic clean receipts; no native independent review; wait >=60 min; no merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T10:03:57.938Z",
-      "last_thread_verified_at": "2026-10-30T10:03:57.938Z",
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_thread_verified_at": "2026-10-30T10:35:50.127Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
         "old_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
@@ -1706,15 +1714,17 @@
         }
       ],
       "last_prompt": {
-        "agent": "Claude",
-        "at": "2026-10-30T02:35:00Z",
-        "sha": "8f388a9bdc",
-        "status": "answered before current HEAD"
+        "agent": "Codex",
+        "ask": "D5(a) independent design/transaction-invariant review only, 10 threads",
+        "at": "2026-10-30T10:32:00Z",
+        "sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+        "comment_id": 6520575937,
+        "status": "awaiting substantive review; no implementation authorized"
       },
-      "asks_per_sha": 0,
+      "asks_per_sha": 1,
       "fix_review_cycles": 4,
       "stale_level": null,
-      "queued": "D5 hold: >3 fix/review cycles; no more prompts until owner decision",
+      "queued": "D5(a) design review pending; 10 open threads; >3 fix/review cycles stopped",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
       "updated_at": "2026-10-30T02:47:28Z",
@@ -1734,8 +1744,8 @@
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
       },
-      "last_state_verified_at": "2026-10-30T10:03:57.938Z",
-      "last_thread_verified_at": "2026-10-30T10:03:57.938Z",
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_thread_verified_at": "2026-10-30T10:35:50.127Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
     "222": {
@@ -1781,7 +1791,7 @@
     },
     "224": {
       "title": "Add workflow to refresh PR branch via comment",
-      "head_sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "head_sha": "3a218da4b4148b61df6b6bc7b9ba63de1ba18756",
       "head_branch": "chore/refresh-branch-workflow",
       "base_branch": "main",
       "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
@@ -1789,19 +1799,21 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "success",
-        "frontend": "success",
-        "exact_head_sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
-        "checked_at": "2026-10-30T10:03:57.938Z"
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": "3a218da4b4148b61df6b6bc7b9ba63de1ba18756",
+        "checked_at": "2026-10-30T10:35:50.127Z",
+        "diagnostic": "14 check runs initiated; backend/frontend aggregators not yet complete; optional claude-review bot actor failure"
       },
-      "optional_ci": "Copilot quota failure, nonrequired",
+      "optional_ci": "multiple in progress; optional claude-review failure",
       "merge_state": "blocked",
       "head_verification": {
         "verified": true,
-        "reason": "valid"
+        "reason": "valid",
+        "author": "claude[bot] API GitHub-signed"
       },
       "tier": 2,
-      "tier_reason": "new issue_comment workflow with REFRESH_PAT secret and branch-update capability; workflow permissions/triggers/production-safety class",
+      "tier_reason": "diff contains live .github/workflows/refresh-branch.yml and draft workflow files",
       "tier_verified_by_diff": true,
       "open_thread_count": 3,
       "open_threads": [
@@ -1848,6 +1860,23 @@
         }
       ],
       "last_prompt": {
+        "agent": "Claude",
+        "ask": "DX6 approved inactive proposed-workflows drafts, whole 3-P2 checklist",
+        "at": "2026-10-30T10:32:00Z",
+        "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+        "comment_id": 6520578111,
+        "status": "terminal: one signed push 3a218da4, 4 proposed-workflows files; live workflow untouched, 3 P2 open"
+      },
+      "asks_per_sha": 0,
+      "fix_review_cycles": 0,
+      "stale_level": 0,
+      "queued": "3 live workflow P2 OPEN; draft-only remediation at 3a218da4, exact-head CI pending, no Codex/Jules acceptance; owner must apply accepted live workflow via DX6; no REFRESH_PAT",
+      "last_qualifying_review_sha": null,
+      "last_ci_sha": null,
+      "updated_at": "2026-10-30T10:34:36Z",
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_thread_verified_at": "2026-10-30T10:35:50.127Z",
+      "previous_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
         "at": "2026-10-30T08:59:39Z",
@@ -1855,15 +1884,57 @@
         "comment_id": 6518989718,
         "status": "Codex published 3 P2 findings at exact head; result received, agent slot released; Claude workflow-write capability blocked, DX6 owner route"
       },
-      "asks_per_sha": 1,
+      "draft_files": [
+        "proposed-workflows/README.md",
+        "proposed-workflows/claude.yml",
+        "proposed-workflows/claude-code-review.yml",
+        "proposed-workflows/refresh-branch.yml"
+      ],
+      "missing_drafts": [
+        "review-gate.yml",
+        "agent-claude.yml",
+        "PR #207 workflow"
+      ]
+    },
+    "227": {
+      "title": "Orchestrator state",
+      "head_sha": "bf94fe34e8c287b5deaea4d2b37108dbcbc44aa4",
+      "head_branch": "orchestrator-state",
+      "base_branch": "main",
+      "base_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+      "draft": false,
+      "labels": [],
+      "behind_main": 0,
+      "required_ci": {
+        "backend": "pending",
+        "frontend": "pending",
+        "exact_head_sha": null,
+        "checked_at": "2026-10-30T10:35:50.127Z",
+        "diagnostic": "self-updating branch; exact HEAD changes with ledger/event/lease writes"
+      },
+      "optional_ci": "pending",
+      "merge_state": "blocked",
+      "head_verification": {
+        "verified": null,
+        "reason": "not a merge candidate; self-updating branch"
+      },
+      "tier": 1,
+      "tier_reason": "operational JSON machine state; not docs-only; no product change; owner must close without merge",
+      "tier_verified_by_diff": true,
+      "open_thread_count": 0,
+      "open_threads": [],
+      "findings_checklist": [],
+      "last_prompt": null,
+      "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "3 open P2 security/workflow findings; DX6 owner workflow-write route required; no Claude re-ask for known denied capability; Tier 2 Jules only after fixes, green CI and Codex acceptance",
+      "queued": "DX11 owner closure without merge; A2 NO; NEVER merge orchestrator-state",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
-      "updated_at": "2026-10-30T08:01:54Z",
-      "last_state_verified_at": "2026-10-30T10:03:57.938Z",
-      "last_thread_verified_at": "2026-10-30T10:03:57.938Z"
+      "last_ci_sha": null,
+      "updated_at": "2026-10-30T10:30:06Z",
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_thread_verified_at": "2026-10-30T10:35:50.127Z",
+      "self_referential_head": true
     }
   },
   "issues": {
@@ -1950,26 +2021,38 @@
       "labels": [
         "stalled"
       ],
-      "last_activity_at": "2026-10-30T05:08:17.787Z",
-      "owner": "OpenCode",
+      "last_activity_at": "2026-10-30T10:35:50.127Z",
+      "owner": "Claude (D6(b) owner-authorized)",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "D6 owner decision; OpenCode inactive; A1 NO",
-      "stale_level": "stalled",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
+      "queued": "DX12 capability blocker: issue workflow checks out main, Claude cannot create/switch branch or run tests; no PR/commit",
+      "stale_level": 0,
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_prompt": {
+        "agent": "Claude",
+        "at": "2026-10-30T10:32:00Z",
+        "comment_id": 6520576734,
+        "status": "terminal: no branch, no commit; issue #185 runner-local uncommitted tests only"
+      }
     },
     "185": {
       "title": "SEC-175-02: Restore portable preflight cleanup negative regression coverage (LOW)",
       "labels": [
         "stalled"
       ],
-      "last_activity_at": "2026-10-30T05:08:17.787Z",
-      "owner": "OpenCode",
+      "last_activity_at": "2026-10-30T10:35:50.127Z",
+      "owner": "Claude (D6(b) owner-authorized)",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "D6 owner decision; OpenCode inactive; A1 NO",
-      "stale_level": "stalled",
-      "last_state_verified_at": "2026-10-30T07:08:46.559Z"
+      "queued": "DX12 capability blocker: issue workflow checks out main, Claude cannot create/switch branch or run tests; no PR/commit",
+      "stale_level": 0,
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z",
+      "last_prompt": {
+        "agent": "Claude",
+        "at": "2026-10-30T10:32:00Z",
+        "comment_id": 6520577423,
+        "status": "terminal: no branch, no commit; issue #185 runner-local uncommitted tests only"
+      }
     },
     "195": {
       "title": "Updated Architecture proposal",
@@ -2010,12 +2093,12 @@
       "labels": [
         "orchestrator"
       ],
-      "last_activity_at": "2026-10-30T09:32:11.622Z",
+      "last_activity_at": "2026-10-30T10:35:50.127Z",
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "DX3, DX5, DX6, DX7; DX6 includes #224 three new P2 findings, D4 #83 new P2",
-      "last_state_verified_at": "2026-10-30T09:31:01.216Z"
+      "queued": "D5(a), D6(b), DX3 confirmed, DX5 confirmed, DX6 YES, DX7 harden; DX11 state PR, DX12 issue checkout; D4/D13 remain",
+      "last_state_verified_at": "2026-10-30T10:35:50.127Z"
     },
     "223": {
       "title": "test(ci): investigate intermittent authority-lock serialization timeout (Python 3.13)",
@@ -2121,43 +2204,62 @@
   ],
   "last_actions": [
     {
-      "item": "#173",
+      "item": "#219",
       "agent": "Codex",
-      "action": "Posted exact-head native-review follow-up 2/3 after generic receipt; upstream v7.1.0 SHA pin verified",
-      "sha": "cf37a7c0ff2a17067b8e6ec44b9f4fcb0ee8bbc9",
-      "comment_id": 6520062881
+      "action": "D5(a) scoped independent design review requested; 10 threads remain",
+      "sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "comment_id": 6520575937
     },
     {
-      "item": "#201",
+      "item": "#184",
+      "agent": "Claude",
+      "action": "D6(b) reassignment brief; blocked main checkout, no branch/commit",
+      "comment_id": 6520576734
+    },
+    {
+      "item": "#185",
+      "agent": "Claude",
+      "action": "D6(b) reassignment brief; uncommitted runner-local tests, no branch/CI",
+      "comment_id": 6520577423
+    },
+    {
+      "item": "#224",
+      "agent": "Claude",
+      "action": "DX6 inactive workflow drafts signed push; 4 files under proposed-workflows; 3 P2 remain OPEN",
+      "sha": "3a218da4b4148b61df6b6bc7b9ba63de1ba18756",
+      "comment_id": 6520578111
+    },
+    {
+      "item": "#172",
       "agent": "Codex",
-      "action": "Posted exact-head native-review follow-up 2/3 after generic receipt; upstream v3.3.0 SHA pin verified",
-      "sha": "3dc8fe6942ebf60f13cc478278d9c0c38f77266d",
-      "comment_id": 6520063505
+      "action": "second native-review ask; generic receipt only",
+      "sha": "0b8280f52f9d05adb875e42eb99eb5f245b5966d",
+      "comment_id": 6520583483
     },
     {
-      "item": "T1 #218",
-      "action": "Re-verified main CI run 40991452249: all 12 jobs passed; prior code/test evidence remains complete"
-    },
-    {
-      "item": "T2 #220",
-      "action": "No new unmarked owner D/DX answers"
-    },
-    {
-      "item": "T5 DX7",
-      "action": "One-time check already completed; not repeated"
-    },
-    {
-      "item": "ruleset",
-      "action": "unchanged fnv1a64:246f1cc05c72e8a4; six actors pull_request"
-    },
-    {
-      "item": "inventory",
-      "action": "25 open PRs, 16 open issues, 38 unresolved threads; zero merges/resolutions"
-    },
-    {
-      "item": "#173/#201",
+      "item": "#200",
       "agent": "Codex",
-      "action": "Second exact-head requests returned generic clean receipts (#6520084424, #6520086439); no native review submissions; no merge"
+      "action": "second native-review ask; generic receipt only",
+      "sha": "15fb3a12d0750eb79fbecb817c804a586e24618e",
+      "comment_id": 6520584322
+    },
+    {
+      "item": "#227",
+      "action": "New orchestrator-state PR found; safety notice, owner closure DX11",
+      "comment_id": 6520578813
+    },
+    {
+      "item": "#220",
+      "action": "Owner answers processed and decision queue edited; DX12 capability blocker queued",
+      "comment_id": 6501005762
+    },
+    {
+      "item": "threads",
+      "action": "All 26 open PR review-thread counts checked; 38 unresolved, zero resolved"
+    },
+    {
+      "item": "production",
+      "action": "Migration 0057 hold intact; no deployment or production migration"
     }
   ],
   "priority_snapshot": {
@@ -2177,23 +2279,43 @@
       "#83/#87 D4 supersession needs independent evidence; third Codex ask exhausted"
     ]
   },
-  "last_run_summary": "FULL: 25 open PRs, 16 open issues, 38 open threads; no merges/resolutions. #173/#201 second exact-head Codex asks each returned clean generic receipt, no native review. All four Dependabot action pins match upstream tags. 22/25 required CI green, 3 backend failing (#146/#171/#181). DX6/DX7/D5 open; Migration 0057 hold intact.",
+  "last_run_summary": "FOLLOW-UP: 26 open PRs (new #227 machine-state PR), 16 issues, 38 unresolved threads; zero merges/resolutions. D5(a) design review requested #219; D6(b) Claude issues #184/#185 blocked by main checkout (DX12). DX6 YES produced signed draft-only #224 head 3a218da4, 3 live P2 remain open, new CI pending. #172/#200 second Codex asks yielded generic receipts, no native review. DX11 owner close #227 without merge. Migration 0057 hold intact.",
   "last_followup_delta": {
-    "at": "2026-10-30T09:32:11.622Z",
-    "prs_open": 25,
+    "at": "2026-10-30T10:35:50.127Z",
+    "prs_open": 26,
     "issues_open": 16,
     "threads_open": 38,
-    "required_ci_new_green": [
-      172,
-      200
+    "new_prs": [
+      227
     ],
+    "new_owner_decisions": [
+      "D5(a)",
+      "D6(b)",
+      "DX3",
+      "DX5",
+      "DX6 YES",
+      "DX7"
+    ],
+    "new_agent_draft_sha": {
+      "pr224": "3a218da4b4148b61df6b6bc7b9ba63de1ba18756"
+    },
     "codex_prompted": [
+      219,
       172,
       200
     ],
-    "new_issues": [
-      225,
-      226
+    "claude_prompted": [
+      184,
+      185,
+      224
+    ],
+    "capability_blocked": [
+      184,
+      185
+    ],
+    "new_decisions": [
+      "DX11",
+      "DX12"
     ],
     "merged": [],
     "threads_resolved": [],
