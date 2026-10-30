@@ -78,13 +78,33 @@ async def test_authority_changing_mutations_are_serialised(client, admin, world,
         await begin_authority_change(s1, ctx, "user:manage")  # s1 holds the lock
 
         waiter = asyncio.create_task(begin_authority_change(s2, ctx, "user:manage"))
-        await _wait_until_authority_waiter_queued(s1, waiter)
-        assert not waiter.done(), "second mutation entered the authority section while the first held the lock"
+        try:
+            await _wait_until_authority_waiter_queued(s1, waiter)
+            assert not waiter.done(), "second mutation entered the authority section while the first held the lock"
 
-        member = await s1.get(UserGroupMember, (uuid.UUID(a["group"]), uuid.UUID(a["id"])))
-        await s1.delete(member)
-        await s1.commit()  # releases the lock
+            member = await s1.get(UserGroupMember, (uuid.UUID(a["group"]), uuid.UUID(a["id"])))
+            await s1.delete(member)
+            await s1.commit()  # releases the lock
 
-        with pytest.raises(ForbiddenError):
-            await asyncio.wait_for(waiter, timeout=5)
+            with pytest.raises(ForbiddenError):
+                await asyncio.wait_for(waiter, timeout=5)
+        finally:
+            # On any failure path the waiter may still be acquiring s2's connection or queued on the lock;
+            # settle it before the sessions close so the original error is not masked by IllegalStateChangeError.
+            if not waiter.done():
+                waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
         await s2.rollback()
+
+
+async def test_waiter_queue_helper_reports_a_waiter_that_never_queues(db_engine):
+    """No lock is held, so no backend can queue: the helper must fail with its lock dump (not hang)."""
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    stand_in = asyncio.create_task(asyncio.sleep(3600))
+    try:
+        async with factory() as session:
+            with pytest.raises(AssertionError, match="never queued on the authority lock"):
+                await _wait_until_authority_waiter_queued(session, stand_in, timeout=0.2)
+    finally:
+        stand_in.cancel()
+        await asyncio.gather(stand_in, return_exceptions=True)
