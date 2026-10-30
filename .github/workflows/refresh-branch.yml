@@ -1,28 +1,29 @@
-# .github/workflows/refresh-branch.yml  (DRAFT v1, not reviewed, not tested)
+# .github/workflows/refresh-branch.yml
+# Live copy of draft v2 from PR #224 (proposed-workflows/refresh-branch.yml, written by Claude).
+# Only this header comment differs from that draft. Needs a Codex review and an owner-run Jules review on the exact SHA before merge.
 #
-# Purpose: let the orchestrator refresh a PR branch with main through a comment.
-#   Comment format: /refresh-branch <full 40-character head SHA>
+# Purpose: refresh a same-repo PR branch that targets main, via a comment:
+#   /refresh-branch <full 40-character lowercase head SHA>
 #
-# One-time setup by the repository owner (no one else can do these):
-#   1. Create a fine-grained personal access token limited to this repository:
-#        Contents: Read and write
-#        Pull requests: Read and write
-#        Workflows: Read and write   (needed when main contains workflow-file changes)
-#      Use a short expiry (for example 90 days).
-#      The default GITHUB_TOKEN will not do: a push made with it does not start CI.
-#   2. Save it as the repository secret REFRESH_PAT.
-#   3. Create the repository variable REFRESH_ALLOWED_ACTORS with a JSON array of the
-#      logins whose comments may trigger this job, for example ["AhmedMahmoud2222"].
-#      If the orchestrator comments under a different login, add that login.
-#   4. Add this file through a pull request (it is a workflow change, so treat it as
-#      Tier 2 and run the Jules review first).
+# Owner-only prerequisites (this draft configures none of them):
+#   1. Repository variable REFRESH_ALLOWED_ACTORS: a JSON array of login strings,
+#      for example ["AhmedMahmoud2222"]. Anything else (unset, empty, string,
+#      object, empty array, non-login entries) makes the gate deny. It never grants.
+#   2. Repository secret REFRESH_PAT (fine-grained, this repo only, Contents RW,
+#      Pull requests RW, Workflows RW only if main carries workflow-file changes,
+#      short expiry). Only the `refresh` job can read it, and only after `gate` passes.
+#   3. Recommended: put REFRESH_PAT in an environment (for example `branch-refresh`)
+#      with a deployment-branch rule limited to main, and set `environment:` on the
+#      refresh job. Left out here so the draft does not assume it exists.
+#   4. The workflow file must be on main before issue_comment triggers it.
 #
-# Safety notes:
-#   - issue_comment workflows run from the default branch, so a PR cannot edit this job.
-#   - Comment text goes through environment variables, never into the shell script.
-#   - The job refuses to run when the PR head differs from the SHA in the comment.
-#   - The job calls only the update-branch API. It does not check out or run PR code.
-#   - The token holds workflow-write power. Keep the job this small.
+# Remedies for the OPEN Codex findings on 480bb19 (live file is unmodified):
+#   P2-1 non-array allowlist substring bypass -> gate job: jq requires an array of
+#        login-shaped strings, exact element match; no contains() on a string.
+#   P2-2 workflow-level concurrency            -> concurrency only on the `refresh` job,
+#        which runs only when the gate passed, so rejected comments never enter the group.
+#   P2-3 arbitrary PR base                     -> refresh step requires open PR,
+#        base.repo == this repo, base.ref == main, head.repo == this repo.
 
 name: Refresh PR branch
 
@@ -30,21 +31,52 @@ on:
   issue_comment:
     types: [created]
 
-permissions:
-  contents: read
-
-concurrency:
-  group: refresh-branch-${{ github.event.issue.number }}
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
-  refresh:
+  gate:
+    # No secrets in this job. Cheap pre-filter first; exact checks in the step.
     if: >-
       github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/refresh-branch') &&
-      contains(fromJSON(vars.REFRESH_ALLOWED_ACTORS), github.event.comment.user.login)
+      startsWith(github.event.comment.body, '/refresh-branch ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - id: check
+        env:
+          ALLOWED: ${{ vars.REFRESH_ALLOWED_ACTORS }}
+          ACTOR: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          allowed=false
+          if printf '%s' "${ALLOWED:-}" | jq -e --arg a "$ACTOR" '
+              type == "array"
+              and length > 0
+              and all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$"))
+              and (map(select(. == $a)) | length) == 1
+            ' >/dev/null 2>&1; then
+            allowed=true
+          fi
+          echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" != true ]; then
+            echo "Actor not authorized, or REFRESH_ALLOWED_ACTORS is unset or malformed. Denied."
+          fi
+
+  refresh:
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
+    # Job-level: only authorized requests enter the group. A pending authorized run
+    # can still be replaced by a newer authorized one; the SHA compare-and-swap below
+    # makes the surviving request safe.
+    concurrency:
+      group: refresh-branch-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions: {}
     steps:
       - name: Update the PR branch from main
         env:
@@ -55,20 +87,45 @@ jobs:
         run: |
           set -euo pipefail
 
-          WANT_SHA="$(printf '%s\n' "$COMMENT_BODY" \
-            | sed -n 's|^/refresh-branch[[:space:]]\{1,\}\([0-9a-f]\{40\}\)[[:space:]]*$|\1|p' \
-            | head -n 1)"
-          if [ -z "$WANT_SHA" ]; then
-            echo "Usage: /refresh-branch <full 40-character head SHA>"
+          # Whole comment must be exactly one command line (CR tolerated).
+          BODY="${COMMENT_BODY%$'\r'}"
+          BODY="${BODY%$'\n'}"
+          BODY="${BODY%$'\r'}"
+          if [[ ! "$BODY" =~ ^/refresh-branch\ ([0-9a-f]{40})[[:space:]]*$ ]]; then
+            echo "Usage: /refresh-branch <full 40-character lowercase head SHA> (single line)"
             exit 1
           fi
+          WANT_SHA="${BASH_REMATCH[1]}"
 
-          HEAD_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          PR_JSON="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}")"
+          read -r STATE BASE_REPO BASE_REF HEAD_REPO HEAD_SHA < <(
+            jq -r '[.state, (.base.repo.full_name // "-"), .base.ref,
+                    (.head.repo.full_name // "-"), .head.sha] | @tsv' <<<"$PR_JSON")
+
+          if [ "$STATE" != "open" ] || [ "$BASE_REPO" != "$REPO" ] \
+             || [ "$BASE_REF" != "main" ] || [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "Unsupported PR: need open, same-repo, base main (state=${STATE} base=${BASE_REPO}:${BASE_REF} head=${HEAD_REPO})."
+            exit 1
+          fi
           if [ "$HEAD_SHA" != "$WANT_SHA" ]; then
             echo "Head moved: PR head is ${HEAD_SHA}, comment named ${WANT_SHA}. Not refreshing."
             exit 1
           fi
 
+          # Server-side compare-and-swap: GitHub rejects with 422 if head != expected.
           gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/update-branch" \
             -f expected_head_sha="${WANT_SHA}"
-          echo "Refresh requested for PR ${PR_NUMBER} at ${WANT_SHA}."
+
+          # update-branch is asynchronous (202). Poll for the new head; report only.
+          NEW_SHA="$WANT_SHA"
+          for _ in $(seq 1 12); do
+            sleep 5
+            NEW_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+            [ "$NEW_SHA" != "$WANT_SHA" ] && break
+          done
+          if [ "$NEW_SHA" = "$WANT_SHA" ]; then
+            echo "Update accepted but head unchanged after 60s (already current, or still merging)."
+          else
+            echo "PR ${PR_NUMBER} head moved ${WANT_SHA} -> ${NEW_SHA}."
+            echo "Verify backend/frontend started on ${NEW_SHA}; a PAT push should trigger CI, unproven until run."
+          fi
