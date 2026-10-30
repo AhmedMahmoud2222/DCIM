@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T22:13:50.328Z",
-  "last_run_at": "2026-10-30T22:29:51.455Z",
-  "last_run_mode": "FOLLOW-UP",
+  "last_full_run_at": "2026-10-30T23:00:39.477Z",
+  "last_run_at": "2026-10-30T23:00:39.477Z",
+  "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-30T22:28:57.294Z",
+    "last_verified_at": "2026-10-30T23:00:39.477Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -100,11 +100,11 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FOLLOW-UP 2026-10-30T22:28:57.294Z: #220 owner D/DX comments re-read; no new unmarked owner decisions since #6526791660; DX18 and DX19 open.",
-    "T3": "D5 #219 frozen; #228 final Codex review on 7b2eb31 added two P2, total 11 unresolved, DX17 3/3 cap STOP; root cause #6531389782; owner DX19 pending; no Claude/Codex further, Jules ineligible.",
+    "T2": "FULL 2026-10-30T23:00:39.477Z: issue #220 comments re-read, latest unmarked owner answer #6526791660 unchanged; DX18 and DX19 open.",
+    "T3": "D5 #219 frozen; #228 final Codex review on 7b2eb31 added two P2, total 11 unresolved, DX17 3/3 cap STOP; owner DX19 pending.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "DONE: workflow actor hardening remains pending DX6, exploitability unproven; main workflow SHA unchanged since last targeted review.",
-    "T6": "FOLLOW-UP 2026-10-30T22:28:57.294Z: #224 unchanged e8892327, four P2 threads, green required checks, Codex 3/3 generic receipts, owner DX13 and qualifying Jules pending; workflow still not active on main."
+    "T6": "FULL 2026-10-30T23:00:39.477Z: PR #224 unchanged e8892327, 4 P2 open, 3/3 Codex receipts, DX13 owner review and Jules still pending; refresh workflow absent from main."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -2548,16 +2548,16 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
-      "merge_state": "draft, current, required CI green; independent review pending",
+      "merge_state": "BLOCKED: required backend pending; exact-head independent acceptance missing, Draft and one P2 thread open",
       "head_verification": {
         "verified": false,
         "reason": "unsigned",
-        "checked_at": "2026-10-30T22:12:45.336Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
       "tier": 1,
-      "tier_reason": "tests-only, DX12 Claude-authored patch applied verbatim",
+      "tier_reason": "Tests-only authority-lock regression patch, no production-code changes",
       "tier_verified_by_diff": true,
       "open_thread_count": 1,
       "open_threads": [
@@ -2569,8 +2569,8 @@
           "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/229#discussion_r4428900802",
           "severity": "P2",
           "required_change": "Cancel and await still-running waiter on _wait_until_authority_waiter_queued polling failure/timeout before async session cleanup; retain original timeout diagnostic and deterministic test semantics.",
-          "status": "Fixed at b6975308e0f8777f11fd9dac70209b19c6873944 (candidate; pending Codex confirmation)",
-          "evidence": "Verified exact Claude patch applied verbatim, lines 81-97 cancel/await waiter before session close; thread evidence #4428924258; new test line 100; CI queued; no Codex confirmation",
+          "status": "Fixed at b6975308e0f8777f11fd9dac70209b19c6873944 (candidate; Codex P2 confirmation and backend CI pending)",
+          "evidence": "Verified exact Claude patch applied verbatim, lines 81-97 cancel/await waiter before session close; thread evidence #4428924258; new test line 100; CI queued; no Codex confirmation; new-head frontend green, backend in progress at 2026-10-30T23:00:39.477Z",
           "path": "backend/tests/integration/test_pr67_authority_lock_protocol.py",
           "line": 66,
           "author": "chatgpt-codex-connector",
@@ -2590,14 +2590,14 @@
       "stale_level": 0,
       "queued": "CI in progress on b6975308; wait backend/frontend exact-head success, then scoped Codex re-review P2; 1 thread open; Draft",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
-      "last_state_verified_at": "2026-10-30T22:28:57.294Z",
-      "last_thread_verified_at": "2026-10-30T22:12:45.336Z",
+      "last_ci_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "last_state_verified_at": "2026-10-30T23:00:39.477Z",
+      "last_thread_verified_at": "2026-10-30T23:00:39.477Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
       "patch_commit": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
       "verbatim_patch_verified": true,
-      "merge_state_status": "clean",
+      "merge_state_status": "BLOCKED",
       "previous_prompt": {
         "agent": "Codex",
         "ask": "THIRD AND FINAL (3/3) native Tier 1 exact-head review request",
@@ -2630,7 +2630,10 @@
           "positive pg_locks predicate not established",
           "original flake root cause unproven"
         ]
-      }
+      },
+      "last_ci_verified_at": "2026-10-30T23:00:39.477Z",
+      "optional_ci": "New exact-head backend still running",
+      "review_focus": "P2 waiter-cancellation fix candidate verified, Codex confirmation required."
     },
     "230": {
       "title": "test(ci): wait for migration advisory-lock session release (#225)",
@@ -2697,18 +2700,18 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
-      "optional_ci": "claude-review failure: known bot actor infrastructure, not product",
-      "merge_state": "BLOCKED (backend required check pending; independent review missing)",
-      "merge_state_status": "blocked",
+      "optional_ci": "claude-review failure: known bot-actor infrastructure; not required",
+      "merge_state": "BLOCKED: required backend pending; exact-head independent acceptance missing",
+      "merge_state_status": "BLOCKED",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
       "tier": 0,
-      "tier_reason": "minor Action bump; workflow files only; no trigger, permission or secrets changes; tag SHA matches 6d4fd22...",
+      "tier_reason": "Minor pinned Action bump setup-python v7.0.0 to v7.1.0; no workflow permissions, triggers, secrets changed; tag v7.1.0 resolves to 6d4fd22b20465ccc0f7354476588e8df7c9ca0e0.",
       "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
@@ -2717,12 +2720,14 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "backend required check in progress; then native exact-head Codex review",
+      "queued": false,
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-30T22:28:57.294Z",
-      "last_thread_verified_at": "2026-10-30T22:28:57.294Z"
+      "last_state_verified_at": "2026-10-30T23:00:39.477Z",
+      "last_thread_verified_at": "2026-10-30T23:00:39.477Z",
+      "last_ci_verified_at": "2026-10-30T23:00:39.477Z",
+      "review_focus": "Stale inline v5/v6 comments, review for pin/comment consistency."
     },
     "232": {
       "title": "chore(deps): bump anthropics/claude-code-action from 1.0.262 to 1.0.264",
@@ -2737,21 +2742,21 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "missing (new SHA; under 10 min since push)",
-        "frontend": "missing (new SHA; under 10 min since push)",
+        "backend": "in_progress",
+        "frontend": "success",
         "exact_head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
-        "checked_at": "2026-10-30T22:29:51.455Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
-      "optional_ci": "Deployment tooling regressions and disposable combined-stack checks in progress on new SHA; prior SHA failed 3/779",
-      "merge_state": "BLOCKED: new-head required checks missing, independent Tier2 Codex/Jules acceptance missing",
-      "merge_state_status": "blocked",
+      "optional_ci": "Prior real optional deployment-tooling test failures 3/779; three checklist fixes code-verified at exact head; new CI running",
+      "merge_state": "BLOCKED: required backend pending; exact-head independent acceptance missing",
+      "merge_state_status": "BLOCKED",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T22:29:51.455Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
-      "tier": 2,
-      "tier_reason": "workflow trust/security-control scope: .github/acceptance/policy.json review_action binding, .github/scripts/orchestration_claude_adapter.py trusted action pin, and 4 secret-bearing workflow pins; reclassified after Claude fix",
+      "tier": 0,
+      "tier_reason": "Patch pinned Action bump claude-code-action v1.0.262 to v1.0.264, with only coupled policy/adapter pin strings; no workflow permission, trigger, or secret usage change. Annotated tag resolves to d70510b174a1244958df0b03166a54912811f3e6; no Tier2 solely by dependency bump.",
       "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
@@ -2762,7 +2767,7 @@
           "severity": "P2",
           "required_change": "Acceptance gate workflow pin trust test must accept verified new action SHA without weakening checkout/token isolation assertions",
           "status": "Fixed at 2cd4380b930e601716dbd685a57a02ebff74c97f (code verified; CI pending)",
-          "evidence": "test_acceptance_gate.ApiAndSchemaTests.test_workflows_never_check_out_candidate_or_expose_write_token_to_model: fail (+ anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13) | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927"
+          "evidence": "test_acceptance_gate.ApiAndSchemaTests.test_workflows_never_check_out_candidate_or_expose_write_token_to_model: fail (+ anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13) | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927; exact-head frontend passed, backend in progress 2026-10-30T23:00:39.477Z"
         },
         {
           "id": "CI232-2",
@@ -2770,7 +2775,7 @@
           "severity": "P2",
           "required_change": "Fix mutation harness regression while preserving all fail-closed mutation assertions",
           "status": "Fixed at 2cd4380b930e601716dbd685a57a02ebff74c97f (code verified; CI pending)",
-          "evidence": "test_acceptance_mutations.AcceptanceMutationTests.test_real_gate_mutants_are_caught_without_infrastructure_errors: AssertionError: 1 != 0 | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927"
+          "evidence": "test_acceptance_mutations.AcceptanceMutationTests.test_real_gate_mutants_are_caught_without_infrastructure_errors: AssertionError: 1 != 0 | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927; exact-head frontend passed, backend in progress 2026-10-30T23:00:39.477Z"
         },
         {
           "id": "CI232-3",
@@ -2778,7 +2783,7 @@
           "severity": "P2",
           "required_change": "Update hardcoded action SHA expectation in .github/scripts/orchestration_claude_adapter.py:26 to verified v1.0.264 pin, preserve tool boundary checks",
           "status": "Fixed at 2cd4380b930e601716dbd685a57a02ebff74c97f (code verified; CI pending)",
-          "evidence": "test_orchestration_claude_adapter.AdapterTests.test_workflow_native_action_and_tool_boundary_pins: expected old 925afb... not found in agent-claude.yml | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927"
+          "evidence": "test_orchestration_claude_adapter.AdapterTests.test_workflow_native_action_and_tool_boundary_pins: expected old 925afb... not found in agent-claude.yml | independently checked exact-head diff and relevant tests; https://github.com/AhmedMahmoud2222/DCIM/pull/232#issuecomment-6534854927; exact-head frontend passed, backend in progress 2026-10-30T23:00:39.477Z"
         }
       ],
       "last_prompt": {
@@ -2792,12 +2797,12 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "await exact-head backend/frontend CI; three code fixes verified but CI pending; Tier2 Codex and Jules after green",
+      "queued": false,
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-30T22:29:51.455Z",
-      "last_thread_verified_at": "2026-10-30T22:29:51.455Z",
+      "last_state_verified_at": "2026-10-30T23:00:39.477Z",
+      "last_thread_verified_at": "2026-10-30T23:00:39.477Z",
       "previous_head_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
       "changed_files": 6,
       "last_completion_report": {
@@ -2805,7 +2810,9 @@
         "comment_id": 6534835930,
         "at": "2026-10-30T22:29:12Z",
         "single_push": true
-      }
+      },
+      "last_ci_verified_at": "2026-10-30T23:00:39.477Z",
+      "review_focus": "Check action's trust boundary and token exposure in focused Codex review; T5 recheck if main workflows change."
     },
     "233": {
       "title": "chore(deps): bump actions/checkout from 4.4.0 to 7.0.1",
@@ -2823,18 +2830,18 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
-      "optional_ci": "none failed on latest head at 22:27 UTC",
-      "merge_state": "BLOCKED (backend required check pending; independent review missing)",
-      "merge_state_status": "blocked",
+      "optional_ci": "No real optional product failures observed",
+      "merge_state": "BLOCKED: required backend pending; exact-head independent acceptance missing",
+      "merge_state_status": "BLOCKED",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T22:28:57.294Z"
+        "checked_at": "2026-10-30T23:00:39.477Z"
       },
-      "tier": 2,
-      "tier_reason": "major Action version change in security-sensitive workflow checkout runtime; not Tier0 patch/minor exception; tag SHA matches 3d3c42e...",
+      "tier": 1,
+      "tier_reason": "Major pinned Action bump checkout v4.4.0 to v7.0.1; no permission/trigger/secret diff; dependency bump alone is not Tier2. Tag v7.0.1 resolves to 3d3c42e5aac5ba805825da76410c181273ba90b1.",
       "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
@@ -2843,12 +2850,14 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "backend required check in progress; exact-head Codex then Jules Tier2 after all prerequisites",
+      "queued": false,
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-30T22:28:57.294Z",
-      "last_thread_verified_at": "2026-10-30T22:28:57.294Z"
+      "last_state_verified_at": "2026-10-30T23:00:39.477Z",
+      "last_thread_verified_at": "2026-10-30T23:00:39.477Z",
+      "last_ci_verified_at": "2026-10-30T23:00:39.477Z",
+      "review_focus": "Node 24 runner compatibility, credential persistence, token trust boundary."
     }
   },
   "issues": {
@@ -3234,67 +3243,49 @@
     "open_issues": 16,
     "open_threads": 51
   },
-  "last_run_summary": {
-    "run_id": "followup-20261030T222534Z",
-    "merged": [],
-    "resolved_threads": [],
-    "actions": [
-      "3 new PRs #231-233; 28 open PRs, 16 issues, 51 unresolved threads",
-      "PR #232 real optional CI failure 3/779; Claude fixed policy and adapter in signed 2cd4380, code verified",
-      "PR #232 now Tier2; required CI on new SHA not yet started; no Codex/Jules acceptance",
-      "Ruleset hash unchanged; no owner decisions; no merges"
-    ],
-    "production_migration_0057": "HOLD"
-  },
+  "last_run_summary": "FULL: no merges or thread resolutions; three Action pins independently matched official tags; #232 Tier0 and #233 Tier1 reclassified under dependency-bump exception; four PRs await exact-head backend; no new owner answers.",
   "last_followup_delta": "Three new signed Dependabot PRs #231-233. #232 optional deployment regressions 3/779 failures led to one Claude request and a signed single-push fix 2cd4380 (policy.json and adapter.py). Three fixes verified in code; new-head backend/frontend checks missing under 10-minute threshold; no acceptance. #232 reclassified Tier2 due workflow trust/security control. #231/#233 backend pending. No merges, no resolved threads, 28 open PRs, 16 issues, 51 unresolved threads; ruleset unchanged, all bypass pull_request, no owner decisions, Migration 0057 hold intact.",
   "last_full_delta": {
-    "run_id": "full-20261030T215847947Z",
-    "at": "2026-10-30T22:07:12.387Z",
+    "at": "2026-10-30T23:00:39.477Z",
+    "mode": "FULL",
+    "main_unchanged": true,
+    "open_prs": 28,
+    "open_issues": 16,
+    "open_threads": 51,
     "merged": [],
-    "resolved": [],
-    "new_heads": [
+    "resolved_threads": [],
+    "agent_prompts": [],
+    "new_owner_decisions": [],
+    "tier_reclassifications": [
       {
-        "pr": 229,
-        "old": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "new": "b6975308e0f8777f11fd9dac70209b19c6873944",
-        "source": "Claude DX12 patch",
-        "ci": "queued"
+        "pr": 232,
+        "from": 2,
+        "to": 0,
+        "reason": "patch Action bump and coupled SHA pins, no permission change"
+      },
+      {
+        "pr": 233,
+        "from": 2,
+        "to": 1,
+        "reason": "major Action bump, dependency-only no permission change"
       }
     ],
-    "new_owner_answers": [],
-    "agent_asks": [
-      200,
+    "pin_integrity_verified": [
+      231,
+      232,
+      233
+    ],
+    "ci_pending": [
       229,
-      230,
-      223
+      231,
+      232,
+      233
     ],
-    "new_native_reviews": [],
-    "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
-    "new_findings": [
-      {
-        "pr": 229,
-        "id": "PRRT_kwDOUdC8Ds6yKJnR",
-        "severity": "P2"
-      }
-    ],
-    "codex_terminal_receipts": [
-      200,
-      230
-    ],
-    "actions": [
-      {
-        "pr": 229,
-        "action": "DX12 patch applied, one file, exact hunk context verified",
-        "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-        "thread_reply": 4428924258,
-        "comment": 6534596044
-      }
-    ],
-    "finalized_at": "2026-10-30T22:13:50.328Z",
-    "event_file": "state/events/2026-10-30/full-20261030T215847947Z.json"
+    "ruleset_hash_unchanged": true,
+    "production_migration_hold_intact": true
   },
   "last_followup_summary": "Three new signed Dependabot PRs #231-233. #232 optional deployment regressions 3/779 failures led to one Claude request and a signed single-push fix 2cd4380 (policy.json and adapter.py). Three fixes verified in code; new-head backend/frontend checks missing under 10-minute threshold; no acceptance. #232 reclassified Tier2 due workflow trust/security control. #231/#233 backend pending. No merges, no resolved threads, 28 open PRs, 16 issues, 51 unresolved threads; ruleset unchanged, all bypass pull_request, no owner decisions, Migration 0057 hold intact.",
-  "last_full_event_path": "state/events/2026-10-30/full-20261030T215847947Z.json",
+  "last_full_event_path": "state/events/2026-10-30/full-20261030T225629Z.json",
   "run_notes": [
     {
       "run_id": "followup-20261030T162527080Z",
@@ -3369,7 +3360,7 @@
     "state/events/2026-10-30/full-20261030T165859172Z-supplement.json",
     "state/events/2026-10-30/full-20261030T195557Z-late.json"
   ],
-  "last_run_id": "followup-20261030T222534Z",
+  "last_run_id": "full-20261030T225629Z",
   "signature_summary": {
     "checked_at": "2026-10-30T19:09:55.766Z",
     "open_prs": 25,
@@ -3397,7 +3388,7 @@
   "schedule_health": {
     "full_enabled": true,
     "followup_enabled": true,
-    "verified_at": "2026-10-30T22:28:57.294Z"
+    "checked_at": "2026-10-30T23:00:39.477Z"
   },
   "last_followup_event_path": "state/events/2026-10-30/followup-20261030T222534Z.json",
   "agent_slots": {
