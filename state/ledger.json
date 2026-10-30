@@ -154,21 +154,36 @@
       "tier": 1,
       "tier_reason": "tests-only RBAC regression",
       "tier_verified_by_diff": true,
-      "open_thread_count": 0,
-      "open_threads": [],
-      "findings_checklist": [],
+      "open_thread_count": 1,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6x53k4"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6x53k4",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/83#discussion_r4422013000",
+          "severity": "P2",
+          "required_change": "Distinguish valid 401 after concurrent deactivation from invalid credentials; do not reject all 401s in concurrent administrator regression test.",
+          "status": "Open",
+          "evidence": "Verified at 30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584, backend/tests/api/test_pr59_composition_and_lifecycle.py:162",
+          "path": "backend/tests/api/test_pr59_composition_and_lifecycle.py",
+          "line": 162,
+          "author": "chatgpt-codex-connector",
+          "comment_id": 4422013000
+        }
+      ],
       "last_prompt": {
         "agent": "Codex",
         "ask": "one-hour re-prompt for evidence-backed independent supersession comparison",
         "at": "2026-10-30T09:00:47Z",
         "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
         "comment_id": 6519008326,
-        "status": "await native evidence; no more than 3 asks per SHA"
+        "status": "Codex published P2 concurrency-test finding; no substantive supersession report; third ask used"
       },
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": 1,
-      "queued": "third and final Codex supersession ask on this SHA; if no native evidence, owner alternate-reviewer decision; no closure/merge",
+      "queued": "1 open P2 thread; historical supersession evidence incomplete; D4 owner decision and unique-work audit; do not merge/close",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
       "updated_at": "2026-10-30T07:19:50.424Z",
@@ -216,12 +231,12 @@
         "at": "2026-10-30T09:00:50Z",
         "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
         "comment_id": 6519009035,
-        "status": "await native evidence; no more than 3 asks per SHA"
+        "status": "Codex clean exact-head generic receipt; no native substantive supersession review; third ask used"
       },
       "asks_per_sha": 3,
       "fix_review_cycles": null,
       "stale_level": 1,
-      "queued": "third and final Codex supersession ask on this SHA; if no native evidence, owner alternate-reviewer decision; no closure/merge",
+      "queued": "3/3 Codex asks on this SHA yielded generic receipts; queue alternate-reviewer decision under D4; do not merge/close",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
       "updated_at": "2026-10-30T07:19:50.424Z",
@@ -1788,21 +1803,62 @@
       "tier": 2,
       "tier_reason": "new issue_comment workflow with REFRESH_PAT secret and branch-update capability; workflow permissions/triggers/production-safety class",
       "tier_verified_by_diff": true,
-      "open_thread_count": 0,
-      "open_threads": [],
-      "findings_checklist": [],
+      "open_thread_count": 3,
+      "open_threads": [
+        "PRRT_kwDOUdC8Ds6x53x2",
+        "PRRT_kwDOUdC8Ds6x53x5",
+        "PRRT_kwDOUdC8Ds6x53x_"
+      ],
+      "findings_checklist": [
+        {
+          "id": "PRRT_kwDOUdC8Ds6x53x2",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014259",
+          "severity": "P2",
+          "required_change": "Validate REFRESH_ALLOWED_ACTORS as a JSON array of exact login strings in a secret-free gate before exposing REFRESH_PAT; prevent substring match when variable is a JSON string.",
+          "status": "Open",
+          "evidence": "Verified at 480bb1947cc48b06caa0f44a76a609bd7670d714, .github/workflows/refresh-branch.yml:45",
+          "path": ".github/workflows/refresh-branch.yml",
+          "line": 45,
+          "author": "chatgpt-codex-connector",
+          "comment_id": 4422014259
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6x53x5",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014265",
+          "severity": "P2",
+          "required_change": "Move concurrency from workflow scope to authorized refresh job so unauthorized comments cannot replace a pending authorized refresh.",
+          "status": "Open",
+          "evidence": "Verified at 480bb1947cc48b06caa0f44a76a609bd7670d714, .github/workflows/refresh-branch.yml:38",
+          "path": ".github/workflows/refresh-branch.yml",
+          "line": 38,
+          "author": "chatgpt-codex-connector",
+          "comment_id": 4422014265
+        },
+        {
+          "id": "PRRT_kwDOUdC8Ds6x53x_",
+          "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014275",
+          "severity": "P2",
+          "required_change": "Verify PR base repo and base.ref == main before calling update-branch; API merges the PR base, not necessarily main.",
+          "status": "Open",
+          "evidence": "Verified at 480bb1947cc48b06caa0f44a76a609bd7670d714, .github/workflows/refresh-branch.yml:66",
+          "path": ".github/workflows/refresh-branch.yml",
+          "line": 66,
+          "author": "chatgpt-codex-connector",
+          "comment_id": 4422014275
+        }
+      ],
       "last_prompt": {
         "agent": "Codex",
         "ask": "Tier 2 exact-head workflow security review: actor guard, REFRESH_PAT, CAS, fork, input, CI",
         "at": "2026-10-30T08:59:39Z",
         "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
         "comment_id": 6518989718,
-        "status": "native review running at 08:59:55Z"
+        "status": "Codex published 3 P2 findings at exact head; result received, agent slot released; Claude workflow-write capability blocked, DX6 owner route"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Codex native review running; Tier 2 Jules after Codex acceptance; DX6 owner route open; do not use refresh command",
+      "queued": "3 open P2 security/workflow findings; DX6 owner workflow-write route required; no Claude re-ask for known denied capability; Tier 2 Jules only after fixes, green CI and Codex acceptance",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
       "updated_at": "2026-10-30T08:01:54Z",
@@ -1958,8 +2014,8 @@
       "owner": "Orchestrator",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "DX3, DX5, DX6, DX7 owner decisions; DX6 updated for new Tier 2 PR #224",
-      "last_state_verified_at": "2026-10-30T08:37:16.500Z"
+      "queued": "DX3, DX5, DX6, DX7; DX6 includes #224 three new P2 findings, D4 #83 new P2",
+      "last_state_verified_at": "2026-10-30T09:03:50.672Z"
     },
     "223": {
       "title": "test(ci): investigate intermittent authority-lock serialization timeout (Python 3.13)",
@@ -1997,6 +2053,42 @@
       "evidence": "attempt 1 TimeoutError in test_authority_changing_mutations_are_serialised, attempt 2 3646 passed, 6 skipped; main last 3 CI runs succeeded",
       "run": 40993725164,
       "issue": 223
+    },
+    {
+      "id": "PRRT_kwDOUdC8Ds6x53x2",
+      "pr": 224,
+      "severity": "P2",
+      "status": "Open",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014259",
+      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "owner_decision": "DX6"
+    },
+    {
+      "id": "PRRT_kwDOUdC8Ds6x53x5",
+      "pr": 224,
+      "severity": "P2",
+      "status": "Open",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014265",
+      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "owner_decision": "DX6"
+    },
+    {
+      "id": "PRRT_kwDOUdC8Ds6x53x_",
+      "pr": 224,
+      "severity": "P2",
+      "status": "Open",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#discussion_r4422014275",
+      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "owner_decision": "DX6"
+    },
+    {
+      "id": "PRRT_kwDOUdC8Ds6x53k4",
+      "pr": 83,
+      "severity": "P2",
+      "status": "Open",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/83#discussion_r4422013000",
+      "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+      "owner_decision": "D4"
     }
   ],
   "last_actions": [
@@ -2028,13 +2120,31 @@
     {
       "item": "#172/#200",
       "action": "verified failed-job reruns still running Python 3.14"
+    },
+    {
+      "item": "#224",
+      "action": "Codex native review produced three P2 findings; recorded in cumulative checklist; workflow-write capability blocker DX6",
+      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "threads": [
+        "PRRT_kwDOUdC8Ds6x53x2",
+        "PRRT_kwDOUdC8Ds6x53x5",
+        "PRRT_kwDOUdC8Ds6x53x_"
+      ]
+    },
+    {
+      "item": "#83",
+      "action": "Codex native review produced one P2 test finding; recorded in cumulative checklist; historical D4 hold",
+      "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+      "threads": [
+        "PRRT_kwDOUdC8Ds6x53k4"
+      ]
     }
   ],
   "priority_snapshot": {
     "at": "2026-10-30T09:02:22.628Z",
     "highest": [
       "#219 P1 controller reliability held by D5; 10 unresolved threads",
-      "#224 Tier 2 workflow refresh PR now required CI green; Codex running, Jules not yet eligible",
+      "#224 Tier 2 workflow refresh: 3 new P2 findings on actor allowlist, concurrency, non-main base; DX6 owner route required",
       "#216 P1 production migration gate behind main; Tier 2 acceptance missing",
       "#207 security workflow trust fixes blocked by D2(a)/DX6",
       "#201/#173 green required CI, native Codex review absent; #200/#172 Python 3.14 reruns pending"
@@ -2046,7 +2156,7 @@
       "#83/#87 historical supersession needs independent evidence"
     ]
   },
-  "last_run_summary": "FULL: 25 open PRs, 14 open issues, 34 unresolved threads; #224 backend/frontend green, Tier 2 Codex review requested; #83/#87 stale Codex re-prompts; #172/#200 Python 3.14 reruns pending; #173/#201 green but no native Codex review; no merges or thread resolutions; all bypass actors pull_request; production hold intact.",
+  "last_run_summary": "FULL: 25 open PRs, 14 issues, 38 unresolved threads. #224 exact-head CI green but Codex published 3 P2 workflow findings; #83 Codex published P2 concurrency-test finding; #87 clean generic receipt only. DX6/D4 owner routes; no merges/resolutions. #172/#200 Python 3.14 reruns pending; #173/#201 native reviews missing; all six ruleset bypass actors pull_request; Migration 0057 hold intact.",
   "last_followup_delta": {
     "at": "2026-10-30T08:37:16.500Z",
     "prs_open": 25,
