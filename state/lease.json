@@ -1,8 +1,7 @@
 {
-  "run_id": "full-20261030T145921048Z",
-  "mode": "FULL",
-  "started_at": "2026-10-30T14:59:21.048Z",
-  "expires_at": "2026-10-30T15:24:21.048Z",
-  "status": "released",
-  "released_at": "2026-10-30T15:13:39.501Z"
+  "run_id": "followup-20261030T153012684Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T15:30:12.684Z",
+  "expires_at": "2026-10-30T15:55:12.684Z",
+  "status": "active"
 }
