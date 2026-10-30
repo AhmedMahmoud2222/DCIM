@@ -45,6 +45,14 @@ BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
     'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'presence_penalty',
     'frequency_penalty', 'seed', 'n', 'response_format', 'reasoning_effort', 'user'})
+# Maximum JSON container nesting accepted in a request body (the top-level object is depth 1). Real OpenCode
+# envelopes (messages, tool schemas) nest well under 20; anything deeper is rejected before json.loads runs, so the
+# outcome never depends on the Python version or recursion limit.
+MAX_JSON_DEPTH = 64
+# Single-character classes only (no variable-length alternatives), so every search resumes where the previous one
+# ended and the depth scan never revisits a byte, even on unterminated strings full of escaped quotes.
+_JSON_STRUCT = re.compile(rb'["\[\]{}]')
+_JSON_STRING_STOP = re.compile(rb'["\\]')
 FORWARD_HEADERS = ('content-type', 'accept', 'user-agent')
 # Identity headers the genuine OpenCode v2 CLI attaches to every inference request (captured from the pinned
 # binary). They are relayed unchanged, only when their value has the exact shape the real client produces;
@@ -138,6 +146,37 @@ def _reject_constant(_name):
     raise PolicyError('non_standard_json')
 
 
+def check_json_depth(body: bytes) -> None:
+    """Raise PolicyError('json_depth_exceeded') if containers nest deeper than MAX_JSON_DEPTH.
+
+    Single linear byte scan with O(1) state, run before json.loads. Strings are skipped whole (braces and escaped
+    quotes inside them are never counted). Malformed input, including an unterminated string, is left to json.loads.
+    """
+    depth = 0
+    pos = 0
+    while True:
+        match = _JSON_STRUCT.search(body, pos)
+        if match is None:
+            return
+        char = body[match.start()]
+        pos = match.end()
+        if char == 0x22:                        # '"': skip to the closing quote, honouring backslash escapes
+            while True:
+                stop = _JSON_STRING_STOP.search(body, pos)
+                if stop is None:                # unterminated: stop scanning, json.loads rejects it
+                    return
+                pos = stop.end()
+                if body[stop.start()] == 0x22:
+                    break
+                pos += 1                        # backslash: the next byte is escaped, never a terminator
+        elif char in (0x7B, 0x5B):              # '{' '['
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise PolicyError('json_depth_exceeded')
+        else:
+            depth -= 1
+
+
 def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str) -> None:
     """Raise PolicyError(code) unless the request may be forwarded with the real credential."""
     if '?' in raw_path or '#' in raw_path or '%' in raw_path or '\\' in raw_path or '//' in raw_path \
@@ -162,6 +201,7 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
         raise PolicyError('content_type_not_json')
     if not body:
         raise PolicyError('empty_body')
+    check_json_depth(body)
     try:
         data = json.loads(body.decode('utf-8'), object_pairs_hook=_no_duplicate_keys,
                           parse_constant=_reject_constant)
