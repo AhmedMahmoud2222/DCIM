@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T04:04:47.075Z",
-  "last_run_at": "2026-10-30T04:34:48.034Z",
-  "last_run_mode": "FOLLOW-UP",
+  "last_full_run_at": "2026-10-30T05:08:17.787Z",
+  "last_run_at": "2026-10-30T05:08:17.787Z",
+  "last_run_mode": "FULL",
   "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -75,10 +75,10 @@
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
   },
   "standing_tasks": {
-    "T1": "main #221 evidence documented on #218; post-merge main CI green; no issue closure",
-    "T2": "no new owner D/DX answers since last ledger",
-    "T3": "D5 stop #219",
-    "T4": "ONE @claude ask posted #6515039876; Claude capability denial #6515042979 (no branch, no Draft PR tool, AGENTS.md absent); clarified #6515060340; DX8 owner branch/PR decision queued; no repeat"
+    "T1": "COMPLETE evidence on #218 comment 6515440013: main code/tests + post-merge 12/12 green CI 40991452249; no issue closure/activation",
+    "T2": "No new unmarked owner D/DX answers on #220",
+    "T3": "D5 hold #219; single CI rerun passed; no fix/review prompts",
+    "T4": "Capability blocked, DX8 queued; no repeat ask"
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -96,19 +96,20 @@
       "labels": [],
       "behind_main": 164,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "clean",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
       "tier": 1,
-      "tier_reason": "tests-only",
-      "tier_verified_by_diff": false,
+      "tier_reason": "tests-only RBAC regression",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -131,19 +132,20 @@
       "labels": [],
       "behind_main": 154,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
       "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier_reason": "empty current patch; historical review PR",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -168,19 +170,20 @@
       ],
       "behind_main": 140,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "de47fbd4f5f362435da5f5f6b6bc7991e15a71df",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "dirty",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
-      "tier": null,
-      "tier_reason": "classify by exact diff on next FULL",
-      "tier_verified_by_diff": false,
+      "tier": 0,
+      "tier_reason": "docs-only spatial architecture",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -205,19 +208,20 @@
       ],
       "behind_main": 80,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
-      "tier": 2,
-      "tier_reason": "concurrency/security architecture changes; verify diff",
-      "tier_verified_by_diff": false,
+      "tier": 0,
+      "tier_reason": "docs-only CFD architecture; findings still open",
+      "tier_verified_by_diff": true,
       "open_thread_count": 8,
       "open_threads": [
         "PRRT_kwDOUdC8Ds6ulIgx",
@@ -348,19 +352,20 @@
       ],
       "behind_main": 139,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "d05ab33aca5893e19b99d809f2922922da180440"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "d05ab33aca5893e19b99d809f2922922da180440",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
       "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier_reason": "docs-only AI architecture",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -383,19 +388,20 @@
       "labels": [],
       "behind_main": 139,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "dirty",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
-      "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier": 2,
+      "tier_reason": "workflow file changes (even if comments only)",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -418,19 +424,20 @@
       "labels": [],
       "behind_main": 137,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "04ba67f8e9496f2b39c41fb7252b30002e25c13d",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
-      "tier": null,
-      "tier_reason": "classify by exact diff on next FULL",
-      "tier_verified_by_diff": false,
+      "tier": 0,
+      "tier_reason": "empty current patch; historical review PR",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -453,19 +460,20 @@
       "labels": [],
       "behind_main": 131,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "531b931eba269938d4be795fa298cc15cf7820a3"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "531b931eba269938d4be795fa298cc15cf7820a3",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
-      "tier": null,
-      "tier_reason": "classify by exact diff on next FULL",
-      "tier_verified_by_diff": false,
+      "tier": 0,
+      "tier_reason": "empty current patch; historical review PR",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -490,19 +498,20 @@
       ],
       "behind_main": 107,
       "required_ci": {
-        "backend": "fail historical",
-        "frontend": "fail historical",
-        "exact_head_sha": "431846d64e374b2af5b0470972012c6e25b881ad"
+        "backend": "failure",
+        "frontend": "success",
+        "exact_head_sha": "431846d64e374b2af5b0470972012c6e25b881ad",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "dirty",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
       "tier": 2,
-      "tier_reason": "migration",
-      "tier_verified_by_diff": false,
+      "tier_reason": "database migration and telemetry retention",
+      "tier_verified_by_diff": true,
       "open_thread_count": 4,
       "open_threads": [
         "PRRT_kwDOUdC8Ds6vrCAT",
@@ -579,19 +588,20 @@
       "labels": [],
       "behind_main": 105,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "509139550e18346b2b3e20ee0bf25e4a56ef98f8",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "dirty",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
       "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier_reason": "docs-only security verification",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -614,19 +624,20 @@
       "labels": [],
       "behind_main": 105,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "09130572bded5f9728cac6849a243f15508f5e7e"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "09130572bded5f9728cac6849a243f15508f5e7e",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
       "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier_reason": "empty current patch; historical review PR",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -649,19 +660,20 @@
       "labels": [],
       "behind_main": 96,
       "required_ci": {
-        "backend": "fail historical",
-        "frontend": "fail historical",
-        "exact_head_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f"
+        "backend": "failure",
+        "frontend": "success",
+        "exact_head_sha": "d599269bc9296fd1de99f7d686ecf414c0bee08f",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "dirty",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
-      "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier": 2,
+      "tier_reason": "RBAC/security permissions and access controls",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -687,19 +699,20 @@
       ],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "6569ac358b1df8be222385321e4dc576b65ae985"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "6569ac358b1df8be222385321e4dc576b65ae985",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 0,
-      "tier_reason": "patch pinned Action bump",
-      "tier_verified_by_diff": false,
+      "tier_reason": "patch/minor pinned Action bump, no permissions change",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -725,19 +738,20 @@
       ],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "2ca3ccad2954d23abfe6bd054243dd10f1e21a9e",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 0,
-      "tier_reason": "minor pinned Action bump",
-      "tier_verified_by_diff": false,
+      "tier_reason": "minor pinned Action bump, no permissions change",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -762,19 +776,20 @@
       ],
       "behind_main": 10,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "1b243908d3321ebe5a538dd92b4c7c1c59c935a9",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 1,
-      "tier_reason": "tests-only",
-      "tier_verified_by_diff": false,
+      "tier_reason": "tests-only JWT test-clock",
+      "tier_verified_by_diff": true,
       "open_thread_count": 1,
       "open_threads": [
         "PRRT_kwDOUdC8Ds6wNSLk"
@@ -814,19 +829,20 @@
       ],
       "behind_main": 83,
       "required_ci": {
-        "backend": "fail historical",
-        "frontend": "fail historical",
-        "exact_head_sha": "b17c37a270d57d60962d2261271666aa934c805b"
+        "backend": "failure",
+        "frontend": "success",
+        "exact_head_sha": "b17c37a270d57d60962d2261271666aa934c805b",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "dirty",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 2,
-      "tier_reason": "workflow file",
-      "tier_verified_by_diff": false,
+      "tier_reason": "workflow, migration, concurrency and alarm service",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -851,19 +867,20 @@
       ],
       "behind_main": 81,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "2506b84893f7d3ad5992c455423544a23e1a369b"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "2506b84893f7d3ad5992c455423544a23e1a369b",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": false,
-        "reason": "legacy snapshot; no new head"
+        "reason": "unsigned"
       },
-      "tier": null,
-      "tier_reason": "classify by exact diff on next FULL",
-      "tier_verified_by_diff": false,
+      "tier": 1,
+      "tier_reason": "tests-only",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -886,19 +903,20 @@
       "labels": [],
       "behind_main": 28,
       "required_ci": {
-        "backend": "pass historical",
-        "frontend": "pass historical",
-        "exact_head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "2e17256b278ddec08e119135d6ce41a65c72b8ad",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 0,
-      "tier_reason": "docs only; verify diff",
-      "tier_verified_by_diff": false,
+      "tier_reason": "docs-only",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -924,19 +942,20 @@
       ],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass at head before main advance",
-        "frontend": "pass at head before main advance",
-        "exact_head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "35e5023447a8d703e3f1703da9a09f79affdb54b",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 1,
-      "tier_reason": "major Action bump without permission changes",
-      "tier_verified_by_diff": false,
+      "tier_reason": "major pinned GitHub Action bump, no permissions change",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -962,19 +981,20 @@
       ],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass at head before main advance",
-        "frontend": "pass at head before main advance",
-        "exact_head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "b7368e2bf95b775387c93b2b10d611f8c5f70159",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 0,
-      "tier_reason": "minor pinned Action bump",
-      "tier_verified_by_diff": false,
+      "tier_reason": "minor pinned GitHub Action bump, no permissions change",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -997,19 +1017,20 @@
       "labels": [],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass at head before main advance",
-        "frontend": "pass at head before main advance",
-        "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "46fe09ea8ae12c10a7b356add5f6202633aedf2f",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 2,
-      "tier_reason": "workflow permissions/secrets",
-      "tier_verified_by_diff": false,
+      "tier_reason": "workflow, credentials, auth and publishing guards",
+      "tier_verified_by_diff": true,
       "open_thread_count": 6,
       "open_threads": [
         "PRRT_kwDOUdC8Ds6xX8Of",
@@ -1112,19 +1133,20 @@
       "labels": [],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass at head before main advance",
-        "frontend": "pass at head before main advance",
-        "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 2,
-      "tier_reason": "migration release gate",
-      "tier_verified_by_diff": false,
+      "tier_reason": "migration 0057 release gate and production Compose",
+      "tier_verified_by_diff": true,
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
@@ -1147,19 +1169,20 @@
       "labels": [],
       "behind_main": 1,
       "required_ci": {
-        "backend": "pass at head before main advance",
-        "frontend": "pass at head before main advance",
-        "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
+        "checked_at": "2026-10-30T05:08:17.787Z"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "behind",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 1,
-      "tier_reason": "tests-only",
-      "tier_verified_by_diff": false,
+      "tier_reason": "tests-only PDU concurrency/migration acceptance",
+      "tier_verified_by_diff": true,
       "open_thread_count": 5,
       "open_threads": [
         "PRRT_kwDOUdC8Ds6xTtsC",
@@ -1249,19 +1272,21 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "failed attempt 1; rerun attempt 2 in progress",
-        "frontend": "passed",
-        "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc"
+        "backend": "success",
+        "frontend": "success",
+        "exact_head_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+        "checked_at": "2026-10-30T05:08:17.787Z",
+        "diagnostic": "attempt 1 Python 3.13 TimeoutError; single attempt 2 passed, all required checks green"
       },
       "optional_ci": "not rechecked this follow-up",
-      "merge_state": "not merge-ready",
+      "merge_state": "blocked",
       "head_verification": {
         "verified": true,
-        "reason": "legacy snapshot; no new head"
+        "reason": "valid"
       },
       "tier": 2,
-      "tier_reason": "concurrency/journal/state machine",
-      "tier_verified_by_diff": false,
+      "tier_reason": "concurrency/journal/retry state-machine code",
+      "tier_verified_by_diff": true,
       "open_thread_count": 10,
       "open_threads": [
         "PRRT_kwDOUdC8Ds6xg8Vi",
@@ -1406,10 +1431,26 @@
       "asks_per_sha": 0,
       "fix_review_cycles": 4,
       "stale_level": null,
-      "queued": null,
+      "queued": "D5 hold: >3 fix/review cycles; no more prompts until owner decision",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
-      "updated_at": "2026-10-30T02:47:28Z"
+      "updated_at": "2026-10-30T02:47:28Z",
+      "ci_failure_class": "verification failure / suspected intermittent test; root cause not established",
+      "flaky_test": {
+        "test": "tests/integration/test_pr67_authority_lock_protocol.py::test_authority_changing_mutations_are_serialised",
+        "failed_run": 40993725164,
+        "failed_job": 123862160477,
+        "successful_attempt": 2,
+        "successful_job": 123884125761,
+        "main_baselines": [
+          40991452249,
+          40840924932,
+          40678479286
+        ],
+        "issue": "owner tracking issue needed (DX9); no issue creation under guardrails",
+        "status": "suspected intermittent, not proven",
+        "updated_at": "2026-10-30T05:08:17.787Z"
+      }
     }
   },
   "issues": {
@@ -1486,21 +1527,27 @@
     },
     "184": {
       "title": "SEC-175-01: Document and verify Windows NTFS ACLs for preflight report directories (LOW)",
-      "labels": [],
-      "last_activity_at": "2026-10-23T15:47:40Z",
+      "labels": [
+        "stalled"
+      ],
+      "last_activity_at": "2026-10-30T05:08:17.787Z",
       "owner": "OpenCode",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "D6 OpenCode inactivity"
+      "queued": "D6 owner decision; OpenCode inactive; A1 NO",
+      "stale_level": "stalled"
     },
     "185": {
       "title": "SEC-175-02: Restore portable preflight cleanup negative regression coverage (LOW)",
-      "labels": [],
-      "last_activity_at": "2026-10-23T15:47:43Z",
+      "labels": [
+        "stalled"
+      ],
+      "last_activity_at": "2026-10-30T05:08:17.787Z",
       "owner": "OpenCode",
       "linked_prs": [],
       "acceptance_on_main": null,
-      "queued": "D6 OpenCode inactivity"
+      "queued": "D6 owner decision; OpenCode inactive; A1 NO",
+      "stale_level": "stalled"
     },
     "195": {
       "title": "Updated Architecture proposal",
@@ -1525,12 +1572,12 @@
     "218": {
       "title": "P1 security: bound OpenCode proxy JSON depth across Python versions (follow-up in PR #215)",
       "labels": [],
-      "last_activity_at": "2026-10-30T02:35:12Z",
+      "last_activity_at": "2026-10-30T05:08:17.787Z",
       "owner": "Claude (D1(b), formerly OpenCode)",
       "linked_prs": [
         221
       ],
-      "acceptance_on_main": "implementation merged #221; post-merge evidence exists; issue remains open",
+      "acceptance_on_main": "Verified pre-json.loads depth guard (64), linear scan, adversarial tests on main@731c2084; post-merge CI run 40991452249 12/12 success; T1 evidence comment #6515440013; issue OPEN pending owner closure; activation prohibited",
       "queued": null
     },
     "220": {
@@ -1556,41 +1603,41 @@
       "description": "Public issue_comment @claude trigger lacks workflow-level trusted-actor check before secret-bearing job",
       "owner_decision": "DX7",
       "exploitation_proven": false
+    },
+    {
+      "id": "CI-219-20261030-3.13",
+      "type": "suspected_flaky_test",
+      "pr": 219,
+      "sha": "ab3f9641d379bfe52eaaaf8bc55c3fb49c897acc",
+      "status": "tracking issue required from owner DX9",
+      "evidence": "attempt 1 TimeoutError in test_authority_changing_mutations_are_serialised, attempt 2 3646 passed, 6 skipped; main last 3 CI runs succeeded",
+      "run": 40993725164
     }
   ],
   "last_actions": [
     {
-      "type": "branch",
-      "path": "orchestrator-state",
-      "result": "created"
-    },
-    {
-      "type": "lease",
-      "result": "acquired"
-    },
-    {
-      "type": "ledger",
-      "result": "initialized"
-    },
-    {
-      "type": "decision_comment",
-      "result": "edited DX1-DX8"
-    },
-    {
-      "type": "T4",
-      "result": "asked once, agent denied capability, DX8 queued"
-    },
-    {
-      "type": "security",
-      "result": "P1 candidate DX7 queued"
+      "type": "T1",
+      "result": "commented #218 evidence #6515440013"
     },
     {
       "type": "CI",
-      "result": "PR #219 diagnostic attempt 2 still in progress"
+      "result": "#219 exact head rerun attempt 2 success; suspected flaky authority-lock test, DX9"
+    },
+    {
+      "type": "stale",
+      "result": "labeled #184 and #185 stalled; D6 queued"
+    },
+    {
+      "type": "ruleset",
+      "result": "hash unchanged; 6 bypass actors still always"
+    },
+    {
+      "type": "threads",
+      "result": "34 unresolved; 0 resolved"
     },
     {
       "type": "merge",
-      "result": "none"
+      "result": "0; no gate-complete PR"
     }
   ]
 }
