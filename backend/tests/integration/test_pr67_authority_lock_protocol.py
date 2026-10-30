@@ -8,9 +8,10 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.application.authority_lock import AUTHORITY_LOCK_NAME
 from app.application.rbac import get_auth_context
 from app.application.user_admin_service import begin_authority_change
 from app.core.errors import ForbiddenError
@@ -43,6 +44,29 @@ async def test_authority_is_reevaluated_after_the_serialising_lock(client, admin
     await db_session.rollback()
 
 
+async def _wait_until_authority_waiter_queued(session, waiter, timeout: float = 5.0) -> None:
+    """Poll pg_locks until a backend is queued (not granted) on the exclusive authority lock.
+
+    `pg_advisory_xact_lock(bigint)` records the key as classid = high 32 bits, objid = low 32 bits,
+    objsubid = 1. `hashtext` returns int4, widened to bigint (sign-extended), so the key is recomposed
+    from both halves instead of comparing objid alone."""
+    queued = text(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1"
+        " AND mode = 'ExclusiveLock'"
+        " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+        " AND ((classid::bigint << 32) | objid::bigint) = hashtext(:name)::bigint"
+    )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while (await session.execute(queued, {"name": AUTHORITY_LOCK_NAME})).scalar_one() < 1:
+        assert not waiter.done(), "second mutation entered the authority section while the first held the lock"
+        if loop.time() >= deadline:
+            sql = "SELECT pid, mode, granted, classid, objid FROM pg_locks WHERE locktype = 'advisory'"
+            rows = (await session.execute(text(sql))).all()
+            raise AssertionError(f"second mutation never queued on the authority lock; advisory locks: {rows}")
+        await asyncio.sleep(0.01)
+
+
 async def test_authority_changing_mutations_are_serialised(client, admin, world, db_engine):
     """Two transactions cannot both be inside the authority-change section: the second blocks
     until the first commits and then sees its committed effects (here, the actor losing rights)."""
@@ -54,7 +78,7 @@ async def test_authority_changing_mutations_are_serialised(client, admin, world,
         await begin_authority_change(s1, ctx, "user:manage")  # s1 holds the lock
 
         waiter = asyncio.create_task(begin_authority_change(s2, ctx, "user:manage"))
-        await asyncio.sleep(0.5)
+        await _wait_until_authority_waiter_queued(s1, waiter)
         assert not waiter.done(), "second mutation entered the authority section while the first held the lock"
 
         member = await s1.get(UserGroupMember, (uuid.UUID(a["group"]), uuid.UUID(a["id"])))
