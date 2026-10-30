@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T160040941Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T16:00:40.941Z",
+  "event_written_at": "2026-10-30T16:08:54.054Z",
+  "main_before": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+  "main_after": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "changed": false,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "bypass_mode": "pull_request"
+      }
+    ]
+  },
+  "inventory": {
+    "open_product_prs": 23,
+    "open_issues": 16,
+    "unresolved_threads": 48,
+    "open_state_branch_prs": 0
+  },
+  "external_merges": [
+    {
+      "pr": 172,
+      "at": "2026-10-30T15:46:00Z",
+      "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+      "actor": "owner or external; not orchestrator"
+    }
+  ],
+  "merged_by_orchestrator": [],
+  "conversations_resolved": [],
+  "actions": [
+    {
+      "type": "lease_acquire",
+      "path": "state/lease.json",
+      "commit": "00196e465bebef3607da71a3835acaafc3e47d61"
+    },
+    {
+      "type": "claude_patch_verbatim",
+      "pr": 228,
+      "from": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
+      "to": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6526611421",
+      "file": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+      "hunks": 15,
+      "old_lines": 257,
+      "new_lines": 276,
+      "verified": "15/15 exact-context hunks; all 12 #219 thread suffix IDs preserved; orchestrator attribution preserved; seven candidate remedies checked",
+      "prewrite_validation_note": "First read-only validation checked incorrect 6x... IDs; original uses x... suffix, corrected without any write"
+    },
+    {
+      "type": "thread_evidence_replies",
+      "pr": 228,
+      "head": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+      "reply_ids": [
+        4425691195,
+        4425691665,
+        4425692156,
+        4425692632,
+        4425693135,
+        4425693647,
+        4425694145
+      ],
+      "threads_left_open": 7
+    },
+    {
+      "type": "pr_comment",
+      "pr": 228,
+      "id": 6527338334
+    },
+    {
+      "type": "issue_comment",
+      "issue": 184,
+      "id": 6527318422,
+      "agent": "OpenCode",
+      "reason": "2h stale follow-up; owner 72h deadline preserved"
+    },
+    {
+      "type": "issue_comment",
+      "issue": 185,
+      "id": 6527319920,
+      "agent": "OpenCode",
+      "reason": "2h stale follow-up; owner 72h deadline preserved"
+    },
+    {
+      "type": "issue_comment_update",
+      "issue": 220,
+      "id": 6501005762,
+      "kind": "decision queue",
+      "historical_D1_D15_preserved": true
+    },
+    {
+      "type": "issue_comment_update",
+      "issue": 220,
+      "id": 6500987889,
+      "kind": "human ledger",
+      "characters": 5046
+    },
+    {
+      "type": "machine_ledger_update",
+      "path": "state/ledger.json",
+      "commit": "3d19bf854401985527f512f0712d52ef61ceba93"
+    }
+  ],
+  "owner_answers": [
+    {
+      "id": "DX13 amendment2",
+      "comment_id": 6526791660
+    },
+    {
+      "id": "DX17",
+      "comment_id": 6526791660
+    }
+  ],
+  "important_state": {
+    "pr224": {
+      "head": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
+      "current_with_main": true,
+      "active_draft_identical": true,
+      "required": {
+        "frontend": "success",
+        "backend": "in_progress"
+      },
+      "open_threads": 4,
+      "review": "Codex/Jules missing"
+    },
+    "pr228": {
+      "head": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
+      "required": {
+        "backend": "success",
+        "frontend": "success"
+      },
+      "behind_main": 1,
+      "open_threads": 7,
+      "fix_cycle": 1,
+      "max_cycles": 3,
+      "review": "Codex/Jules missing"
+    },
+    "pr200": {
+      "head": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
+      "patch_identical_four_files": true,
+      "required": {
+        "frontend": "success",
+        "backend": "in_progress"
+      },
+      "owner_DX13": "missing",
+      "optional_claude_review": "bot actor failure"
+    }
+  },
+  "blocked": [
+    {
+      "pr": 228,
+      "first_gate": "behind main; owner Update branch required for exact-head Codex re-review"
+    },
+    {
+      "pr": 224,
+      "first_gate": "backend CI pending"
+    },
+    {
+      "pr": 200,
+      "first_gate": "backend CI pending; DX13 owner approval missing"
+    },
+    {
+      "pr": 217,
+      "first_gate": "five unresolved threads and behind main; owner DX13 pending"
+    },
+    {
+      "pr": 216,
+      "first_gate": "behind main; Codex/Jules acceptance missing"
+    }
+  ],
+  "stale": {
+    "issues": [
+      184,
+      185
+    ],
+    "level": 2,
+    "owner_deadline": "2026-11-02T11:45:39Z"
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "failed_write_calls": [],
+  "production_safety": {
+    "migration_0057_hold_intact": true,
+    "production_execution_requested": false,
+    "production_execution_scheduled": false,
+    "production_execution_approved": false,
+    "deployments_triggered": false
+  },
+  "release_lease_planned": true
+}
