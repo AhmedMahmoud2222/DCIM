@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
-  "last_full_run_at": "2026-10-30T19:59:22.784Z",
-  "last_run_at": "2026-10-30T19:59:22.784Z",
+  "last_full_run_at": "2026-10-30T20:01:05.104Z",
+  "last_run_at": "2026-10-30T20:01:05.104Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -1323,12 +1323,12 @@
         "at": "2026-10-30T19:58:06.342Z",
         "sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
         "comment_id": 6532274260,
-        "status": "awaiting native review; first ask on new SHA"
+        "status": "generic receipt #6532298906, no native review submission; first ask used (1/3), wait 60 min"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": null,
       "stale_level": 0,
-      "queued": "Codex native exact-head review requested #6532274260 (1/3); owner DX13 fallback only if native review cannot be obtained. Required backend/frontend green, 0 behind, zero threads; optional claude-review bot-actor failure nonblocking.",
+      "queued": "Codex returned generic clean exact-SHA issue-comment receipt #6532298906, not native review; 1/3 asks used, no new ask before 20:58 UTC. Required checks green, zero threads; owner DX13 fallback after cap.",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
       "updated_at": "2026-10-29T19:30:39Z",
@@ -2519,12 +2519,12 @@
       "labels": [],
       "behind_main": 0,
       "required_ci": {
-        "backend": "pending (Python 3.12 and 3.14 suites in progress; aggregate backend missing)",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
-        "checked_at": "2026-10-30T19:59:22.784Z"
+        "checked_at": "2026-10-30T20:01:05.104Z"
       },
-      "merge_state": "draft: backend in progress; exact-head independent review absent",
+      "merge_state": "draft, current, required CI green; independent review pending",
       "head_verification": {
         "verified": false,
         "reason": "unsigned",
@@ -2536,13 +2536,20 @@
       "open_thread_count": 0,
       "open_threads": [],
       "findings_checklist": [],
-      "last_prompt": null,
-      "asks_per_sha": 0,
+      "last_prompt": {
+        "agent": "Codex",
+        "ask": "first exact-head native Tier 1 review of test-only pg_locks waiter synchronization, signed hash key and timeout behavior",
+        "at": "2026-10-30T20:00:43.550Z",
+        "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+        "comment_id": 6532320140,
+        "status": "awaiting native review, first ask on SHA"
+      },
+      "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Draft, current with main, exact-head backend suites still in progress at 19:59 UTC; independent review not yet requested; pg_locks SQL semantics/root cause unproven.",
+      "queued": "Draft, current, required backend/frontend GREEN; first native Codex review requested #6532320140; readiness and independent acceptance missing; SQL semantics/root cause under review",
       "last_qualifying_review_sha": null,
-      "last_ci_sha": null,
+      "last_ci_sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
       "last_state_verified_at": "2026-10-30T19:59:22.784Z",
       "last_thread_verified_at": "2026-10-30T19:05:59.964Z",
       "source_patch_comment_id": 6528574316,
@@ -2583,12 +2590,12 @@
         "at": "2026-10-30T19:58:08.955Z",
         "sha": "8669217825beaf09451e22644336258747f20c16",
         "comment_id": 6532275138,
-        "status": "awaiting native review; first ask on SHA"
+        "status": "generic receipt #6532293789 plus automated summary #6532279019, neither native review; first ask used (1/3), wait 60 min"
       },
       "asks_per_sha": 1,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Draft, current with main and exact-head backend/frontend GREEN; native Codex review requested #6532275138 (1/3), readiness and merge gates pending; no production migration change.",
+      "queued": "Draft, exact-head required CI GREEN; Codex generic receipt #6532293789 (1/3) and summary, no native review. Do not request again before 20:58 UTC, do not mark ready or merge.",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "8669217825beaf09451e22644336258747f20c16",
       "last_state_verified_at": "2026-10-30T19:59:22.784Z",
@@ -2785,7 +2792,7 @@
         229
       ],
       "acceptance_on_main": "main@613cb935 CI run 41083732966 attempt 1 failed Python3.13 authority-lock test; attempt 2 Python3.13 and aggregate backend plus frontend SUCCESS on same SHA; intermittent failure remains open #223, no root cause proven",
-      "queued": "Draft #229 exact-head backend suites in progress, no acceptance; SQL semantics/root cause unproven",
+      "queued": "Draft #229 exact-head backend/frontend now GREEN; first Codex native review requested; PostgreSQL lock query semantics/root cause still unproven.",
       "last_state_verified_at": "2026-10-30T19:05:59.964Z",
       "last_prompt": {
         "agent": "Claude",
@@ -2837,7 +2844,7 @@
         230
       ],
       "acceptance_on_main": "not established; same-head rerun green on #172, intermittent test defect unresolved",
-      "queued": "Draft #230 exact-head backend/frontend SUCCESS, first Codex review requested; lock-release test regression root cause still not independently accepted; no production migration changes",
+      "queued": "Draft #230 exact-head backend/frontend GREEN; Codex returned generic receipt, no native review; test root cause unaccepted.",
       "last_state_verified_at": "2026-10-30T19:05:59.964Z",
       "last_prompt": {
         "agent": "Claude",
@@ -2939,6 +2946,24 @@
       "type": "schedule_health",
       "full_enabled": true,
       "followup_enabled": true
+    },
+    {
+      "type": "pr_comment",
+      "pr": 229,
+      "comment_id": 6532320140,
+      "summary": "first current-SHA native Codex review request after required CI green"
+    },
+    {
+      "type": "review_receipt",
+      "pr": 200,
+      "comment_id": 6532298906,
+      "summary": "generic clean issue comment only, no native review"
+    },
+    {
+      "type": "review_receipt",
+      "pr": 230,
+      "comment_id": 6532293789,
+      "summary": "generic clean issue comment only, no native review"
     }
   ],
   "priority_snapshot": {
@@ -2984,7 +3009,9 @@
       "verified PR #230 exact-head backend/frontend turned green",
       "verified PR #229 backend still running; frontend green",
       "verified upstream actions/download-artifact v8.0.2 pinned SHA for PR #200",
-      "posted native Codex review requests on #200 and #230; both first on exact SHA"
+      "posted native Codex review requests on #200 and #230; both first on exact SHA",
+      "PR #229 exact-head backend/frontend became green and first native Codex review requested #6532320140",
+      "Codex returned generic receipts on #200/#230, not qualifying native reviews"
     ],
     "production_migration_0057": "HOLD"
   },
@@ -3006,6 +3033,12 @@
         "agent": "Codex",
         "comment_id": 6532275138,
         "sha": "8669217825beaf09451e22644336258747f20c16"
+      },
+      {
+        "pr": 229,
+        "agent": "Codex",
+        "comment_id": 6532320140,
+        "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8"
       }
     ],
     "new_ci": [
@@ -3018,6 +3051,11 @@
         "pr": 229,
         "backend": "in_progress",
         "frontend": "success"
+      },
+      {
+        "pr": 229,
+        "backend": "success",
+        "frontend": "success"
       }
     ],
     "decisions_pending": [
@@ -3025,7 +3063,19 @@
       "DX13 #224",
       "DX18"
     ],
-    "state_branch_pr_open": false
+    "state_branch_pr_open": false,
+    "receipts": [
+      {
+        "pr": 200,
+        "id": 6532298906,
+        "type": "issue comment, not native review"
+      },
+      {
+        "pr": 230,
+        "id": 6532293789,
+        "type": "issue comment, not native review"
+      }
+    ]
   },
   "last_followup_summary": {
     "run_id": "followup-20261030T183243883Z",
@@ -3077,7 +3127,8 @@
   "last_full_event_supplements": [
     "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
     "state/events/2026-10-30/full-20261030T145921048Z-review-ready.json",
-    "state/events/2026-10-30/full-20261030T165859172Z-supplement.json"
+    "state/events/2026-10-30/full-20261030T165859172Z-supplement.json",
+    "state/events/2026-10-30/full-20261030T195557Z-late.json"
   ],
   "last_run_id": "full-20261030T195557Z",
   "signature_summary": {
