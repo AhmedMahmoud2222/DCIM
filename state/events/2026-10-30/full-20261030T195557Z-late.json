@@ -1,0 +1,43 @@
+{
+  "run_id": "full-20261030T195557Z",
+  "supplement": true,
+  "at": "2026-10-30T20:01:13.537Z",
+  "observations": [
+    {
+      "pr": 229,
+      "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "backend": "success",
+      "frontend": "success",
+      "draft": true
+    },
+    {
+      "pr": 200,
+      "sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
+      "codex_comment_id": 6532298906,
+      "result": "generic receipt, not native review",
+      "ask_count": 1
+    },
+    {
+      "pr": 230,
+      "sha": "8669217825beaf09451e22644336258747f20c16",
+      "codex_comment_id": 6532293789,
+      "summary_comment_id": 6532279019,
+      "result": "generic receipt plus automated summary, not native review",
+      "ask_count": 1
+    }
+  ],
+  "actions": [
+    {
+      "type": "pr_comment",
+      "pr": 229,
+      "comment_id": 6532320140,
+      "at": "2026-10-30T20:00:43.550Z",
+      "agent": "Codex",
+      "sha": "cab2ac65fc57eca914ab5a1be3595bba9b8023e8",
+      "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/229#issuecomment-6532320140"
+    }
+  ],
+  "merges": [],
+  "resolved_threads": [],
+  "production_migration_0057": "HOLD"
+}
