@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T16:08:27.777Z",
-  "last_run_at": "2026-10-30T16:08:27.777Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-30T16:28:13.831Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -1273,7 +1273,7 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
-        "checked_at": "2026-10-30T16:08:27.777Z"
+        "checked_at": "2026-10-30T16:28:13.831Z"
       },
       "optional_ci": "claude-review failure: bot-actor rejection (optional; not product defect)",
       "merge_state": "BLOCKED: backend pending, owner DX13 exact-head approval absent",
@@ -1313,7 +1313,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-29T19:30:39Z",
-      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
+      "last_state_verified_at": "2026-10-30T16:28:13.831Z",
       "last_thread_verified_at": "2026-10-30T15:06:05.111Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "review_carryover": {
@@ -2003,7 +2003,7 @@
         "backend": "in_progress",
         "frontend": "success",
         "exact_head_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
-        "checked_at": "2026-10-30T16:08:27.777Z"
+        "checked_at": "2026-10-30T16:28:13.831Z"
       },
       "optional_ci": "multiple in progress; optional claude-review failure",
       "merge_state": "BLOCKED: exact-head backend pending, 4 open P2 threads, Codex and Jules acceptance missing",
@@ -2086,7 +2086,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": null,
       "updated_at": "2026-10-30T10:34:36Z",
-      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
+      "last_state_verified_at": "2026-10-30T16:28:13.831Z",
       "last_thread_verified_at": "2026-10-30T16:08:27.777Z",
       "previous_prompt": {
         "agent": "Codex",
@@ -2198,13 +2198,13 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
-        "checked_at": "2026-10-30T16:08:27.777Z",
+        "checked_at": "2026-10-30T16:28:13.831Z",
         "run_id": 41086174575
       },
       "open_thread_count": 7,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-30T16:08:27.777Z",
+      "last_state_verified_at": "2026-10-30T16:28:13.831Z",
       "last_thread_verified_at": "2026-10-30T16:08:27.777Z",
       "last_ci_sha": "b0601b3020cc5fcd8a390633cbd3d5fc6571d527",
       "merge_state": "BEHIND main after #172 owner merge; 7 Codex threads unresolved, exact-head Codex and Jules acceptance missing",
@@ -2693,98 +2693,36 @@
   },
   "last_run_summary": "FULL: 23 open PRs, 16 issues, 48 open threads; #172 owner merged, #228 first D5 remediation patch applied and verified, #224 and #200 exact-head backend pending; no orchestrator merge; Migration 0057 hold intact.",
   "last_followup_delta": {
-    "at": "2026-10-30T15:32:21.019Z",
-    "from": "2026-10-30T15:13:29.366Z",
-    "prs_open": 24,
-    "issues_open": 16,
-    "threads_open": 48,
-    "merged": [],
-    "threads_resolved": [],
-    "owner_decisions": [],
-    "new_commits": [],
-    "new_agent_results": [
-      {
-        "pr": 228,
-        "sha": "9c9ac7a8fd4b6341e173f4d807edff18d0e4c0e2",
-        "agent": "Codex",
-        "result": "native COMMENTED review, 4 P1 and 3 P2"
-      }
-    ],
-    "ci_progress": [
-      {
-        "pr": 172,
-        "backend": "in_progress",
-        "frontend": "success"
-      },
-      {
-        "pr": 200,
-        "backend": "in_progress",
-        "frontend": "success"
-      }
-    ],
-    "actions": [
-      {
-        "issue": 220,
-        "comment_id": 6526604184,
-        "agent": "Claude",
-        "purpose": "DX12 spec remediation patch"
-      }
-    ],
-    "production_hold": "intact"
+    "run_id": "followup-20261030T162527080Z",
+    "at": "2026-10-30T16:28:13.831Z",
+    "changed_pr_heads": [],
+    "new_owner_decisions": [],
+    "new_findings": [],
+    "merges": [],
+    "resolved_threads": [],
+    "pending": "#200/#224 required backend; #228 owner branch update and Codex/Jules; #184/#185 OpenCode D6"
   },
   "last_full_delta": "Owner-merged #172 at main 613cb935; #224 merge-main refresh e889 current with main and backend pending; #200 Dependabot rebase 2a83 identical four-file patch, backend pending and DX13 owner approval needed; #228 Claude complete 15-hunk DX12 patch applied verbatim b060, seven evidence replies, 7 open Codex threads, backend/frontend green but behind; owner DX17 max 3 cycles; OpenCode #184/#185 two-hour prompts; no orchestrator merge/resolution.",
   "last_followup_summary": {
-    "run_id": "followup-20261030T153012684Z",
+    "run_id": "followup-20261030T162527080Z",
     "no_merges": true,
     "threads_resolved": 0,
     "open_threads": 48,
     "actions": [
-      "#228 Codex exact-head review 7 open findings; Claude DX12 patch-only asked in #220 comment 6526604184",
-      "No merges; #172/#200 backend still running; #224 behind main with 4 open threads"
+      "Compacted #220 decision comment to 7212 chars; full previous text archived in append-only event"
     ],
-    "production_hold": "intact"
+    "production_hold": "intact",
+    "checks": "#200/#224 backend running; #228 backend/frontend passed, one behind"
   },
   "last_full_event_path": "state/events/2026-10-30/full-20261030T160040941Z.json",
-  "run_notes": {
-    "run_id": "full-20261030T160040941Z",
-    "mode": "FULL",
-    "merged_this_run": [],
-    "merged_externally": [
-      172
-    ],
-    "threads_resolved": [],
-    "thread_evidence_replies": 7,
-    "open_threads": 48,
-    "agent_asks": [
-      {
-        "item": 184,
-        "agent": "OpenCode",
-        "comment_id": 6527318422
-      },
-      {
-        "item": 185,
-        "agent": "OpenCode",
-        "comment_id": 6527319920
-      }
-    ],
-    "owner_answers": [
-      {
-        "id": "DX13 amendment2",
-        "comment_id": 6526791660
-      },
-      {
-        "id": "DX17",
-        "comment_id": 6526791660
-      }
-    ],
-    "required_ci_pending": [
-      224,
-      200
-    ],
-    "new_findings": [],
-    "failed_writes": [],
-    "production_hold": "intact"
-  },
+  "run_notes": [
+    {
+      "run_id": "followup-20261030T162527080Z",
+      "at": "2026-10-30T16:28:13.831Z",
+      "mode": "FOLLOW-UP",
+      "summary": "No material PR/issue delta; checks pending; decision summary compacted and historical body archived; production hold intact"
+    }
+  ],
   "last_full_event_supplements": [
     "state/events/2026-10-30/full-20261030T145921048Z-supplement.json",
     "state/events/2026-10-30/full-20261030T145921048Z-review-ready.json"
