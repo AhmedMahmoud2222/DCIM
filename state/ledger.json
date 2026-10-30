@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-30T17:58:22.258Z",
-  "last_run_at": "2026-10-30T18:34:18.869Z",
+  "last_run_at": "2026-10-30T18:35:09.091Z",
   "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -98,7 +98,7 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-30T17:58:22.258Z: owner Issue #220 comments re-read; no new unmarked D/DX answers after #6526791660.",
+    "T2": "FOLLOW-UP 2026-10-30T18:35Z: #220 comments re-read; no new unmarked owner D/DX answers since #6526791660.",
     "T3": "D5 spec-first #219 frozen with 12 threads; #228 b0601b30 1 behind, backend/frontend green, seven open Codex threads with candidate fixes; owner refresh then Codex+Jules; DX17 1/3.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "No main SHA change since targeted recheck; T5 workflow auth finding remains open pending DX6; exploitability unproven.",
@@ -2666,6 +2666,22 @@
       "type": "schedule_health",
       "full_enabled": true,
       "followup_enabled": true
+    },
+    {
+      "type": "update_issue_comment",
+      "issue": 220,
+      "comment_id": 6500987889,
+      "summary": "human ledger summary updated for main CI rerun success and #224 Codex second ask"
+    },
+    {
+      "type": "update_issue_comment",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "summary": "decision queue updated without changing owner decision IDs or answers"
+    },
+    {
+      "type": "append_event",
+      "path": "state/events/2026-10-30/followup-20261030T183243883Z.json"
     }
   ],
   "priority_snapshot": {
@@ -2727,7 +2743,9 @@
     "open_threads": 48,
     "actions": [
       "#224 second Codex review ask #6530592913",
-      "#223 CI rerun-success evidence #6530593813"
+      "#223 CI rerun-success evidence #6530593813",
+      "#220 human ledger and decisions comments edited",
+      "append-only event written"
     ],
     "blocked": [
       "#200 DX13 owner exact-head approval",
