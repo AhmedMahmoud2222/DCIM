@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T145921048Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T14:59:21.048Z",
+  "recorded_at": "2026-10-30T15:06:21.988Z",
+  "main_sha": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "bypass_modes": [
+      "pull_request",
+      "pull_request",
+      "pull_request",
+      "pull_request",
+      "pull_request",
+      "pull_request"
+    ]
+  },
+  "inventory": {
+    "open_prs": 24,
+    "open_issues": 16,
+    "open_threads": 41,
+    "orchestrator_state_prs": 0
+  },
+  "owner_decisions": [
+    {
+      "id": "DX15",
+      "comment": 6525448788,
+      "action": "Investigations #225/#226 nonblocking for unrelated #172/#200; tests unchanged"
+    },
+    {
+      "id": "DX16",
+      "comment": 6525448788,
+      "action": "Claude authorized #226 then #225 via DX12, deferred until #224 and Dependabot priorities"
+    }
+  ],
+  "external_merge": {
+    "pr": 201,
+    "merged_at": "2026-10-30T14:41:21Z",
+    "main_commit": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8",
+    "verified_files": [
+      ".github/workflows/agent-collaboration.yml",
+      ".github/workflows/opencode.yml"
+    ],
+    "main_ci": "in_progress at run 41073838767"
+  },
+  "actions": [
+    {
+      "kind": "create_branch",
+      "branch": "docs/d5-controller-reliability-spec-20261030",
+      "base": "7e93a7bd85fffecb8e882fedbe6bcc84ed1eadd8"
+    },
+    {
+      "kind": "create_file",
+      "branch": "docs/d5-controller-reliability-spec-20261030",
+      "file": "docs/architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md",
+      "lines": 246,
+      "source_comment": 6525183319,
+      "verbatim": true,
+      "commit": "6d505459381920ad9e3c178d3539c0dd366e8a88"
+    },
+    {
+      "kind": "create_draft_pr",
+      "pr": 228,
+      "head": "6d505459381920ad9e3c178d3539c0dd366e8a88",
+      "required_ci": "backend/frontend success",
+      "signature": "unsigned, nonblocking under ruleset",
+      "review": "not requested; 12-thread mapping needs correction"
+    },
+    {
+      "kind": "agent_request",
+      "agent": "Claude",
+      "issue": 220,
+      "comment_id": 6525942724,
+      "scope": "verbatim correction patch to spec section 8 and D-1, exact 12 review threads; no code or PR changes"
+    },
+    {
+      "kind": "update_decisions",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "decisions": [
+        "DX13 #172 exact-head owner review after merge refresh",
+        "DX13 #200 owner review",
+        "DX13 #217 owner review"
+      ]
+    },
+    {
+      "kind": "update_ledger",
+      "file": "state/ledger.json",
+      "commit": "ffd6229993f0d70825eed6f08d7513ca71685d95"
+    }
+  ],
+  "carry_over": [
+    {
+      "pr": 172,
+      "old": "879d081db1ae36d589fcd9e889b5349c9c5a07a1",
+      "new": "8b9ecb0f93fa61fc712f0d90ab0b0436bf3a0f1a",
+      "type": "merge main",
+      "patch_identical_files": 11,
+      "backend": "pending",
+      "frontend": "success",
+      "owner_dx13": "rebase-only amendment does not explicitly cover merge; queued"
+    },
+    {
+      "pr": 200,
+      "old": "fa2182adbace2ff59c5d42e8bfb6d792c9e8619c",
+      "new": "409750b715f677d2f4f673ce456329d3ba1e3444",
+      "type": "Dependabot rebase",
+      "patch_identical_files": 4,
+      "backend": "pending",
+      "frontend": "success",
+      "owner_dx13": "no earlier owner approval; queued"
+    }
+  ],
+  "pr224": {
+    "head": "6d14f19e7c8e3002eacee9a4493784002f15bba7",
+    "behind_main": 2,
+    "open_p2_threads": 4,
+    "ci": "backend/frontend success",
+    "codex_current": false,
+    "jules_current": false,
+    "main_workflow_exists": false
+  },
+  "other": {
+    "pr219": "frozen pending #228 corrected spec + Codex and Jules",
+    "opencode_184_185": "D6 owner 72-hour deadline retained",
+    "historical": "D4 evidence only, no closures"
+  },
+  "merged_this_run": [],
+  "threads_resolved": [],
+  "production_safety": {
+    "migration_0057_hold": "intact",
+    "production_migration_or_deployment_requested": false,
+    "scheduled": false,
+    "approved": false
+  },
+  "notes": "No bypass, no auto-merge, no production activation. Both orchestrator schedules enabled. No workflow actor gate claimed fixed until live wiring verified."
+}
