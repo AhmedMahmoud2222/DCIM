@@ -1,0 +1,98 @@
+{
+  "run_id": "followup-20261030T172620128Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-30T17:26:20.128Z",
+  "recorded_at": "2026-10-30T17:28:10.027Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "inventory": {
+    "open_product_prs": 23,
+    "open_issues": 16,
+    "unresolved_threads": 48,
+    "state_branch_prs": 0
+  },
+  "ruleset": {
+    "id": 23651422,
+    "bypass_modes": {
+      "842251": "pull_request",
+      "946600": "pull_request",
+      "1144995": "pull_request",
+      "1236702": "pull_request",
+      "4229212": "pull_request",
+      "285010264": "pull_request"
+    }
+  },
+  "delta": {
+    "new_pr_heads": 0,
+    "owner_decisions": 0,
+    "merges": 0,
+    "threads_resolved": 0,
+    "issue223": "complete numbered DX12 patch textually applicable but not executed; main rerun attempt 2 in progress",
+    "p200": "backend/frontend green; DX13 owner review missing",
+    "p224": "backend/frontend green; 4 P2 threads and native Codex/Jules acceptance missing",
+    "p228": "1 behind main; 7 open Codex threads, no acceptance",
+    "open_code_184_185": "stalled; retain ownership until 2026-11-02T11:45:39Z"
+  },
+  "actions": [
+    {
+      "type": "lease_acquired",
+      "commit_sha": "36ca4e60b9b233cefc8bc5cf8827dc116e1a6a81"
+    },
+    {
+      "type": "issue_comment",
+      "issue": 223,
+      "id": 6529064024,
+      "summary": "verified both unified patch hunks against exact main blob; no code write"
+    },
+    {
+      "type": "ledger_updated",
+      "commit_sha": "f021e67a073337eb2bf4dc8832b96f4dd1c7edbf"
+    }
+  ],
+  "waiting": [
+    {
+      "item": "main run 41083732966",
+      "owner": "CI",
+      "status": "attempt 2 Python 3.13 in progress"
+    },
+    {
+      "item": "PR #224",
+      "owner": "Codex",
+      "status": "first generic receipt; 1/3 asks on exact SHA, 60-minute duplicate guard"
+    },
+    {
+      "item": "issues #184/#185",
+      "owner": "OpenCode",
+      "status": "stalled, owner 72h deadline"
+    },
+    {
+      "item": "PR #228",
+      "owner": "Ahmed",
+      "status": "Update branch; review threads"
+    }
+  ],
+  "blocked": [
+    {
+      "pr": 200,
+      "reason": "owner DX13 exact-head approval absent"
+    },
+    {
+      "pr": 224,
+      "reason": "4 P2 threads; Codex/Jules acceptance absent"
+    },
+    {
+      "pr": 228,
+      "reason": "BEHIND, 7 threads, Codex/Jules acceptance absent"
+    },
+    {
+      "issue": 223,
+      "reason": "main Python3.13 rerun pending, root cause not established"
+    }
+  ],
+  "production_safety": {
+    "migration_0057_hold": "intact",
+    "production_executions": 0,
+    "production_deployments": 0,
+    "approvals": 0
+  },
+  "failed_write_calls": []
+}
