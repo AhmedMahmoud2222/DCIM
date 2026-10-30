@@ -1,0 +1,88 @@
+{
+  "run_id": "full-20261030-0555Z-turn3",
+  "mode": "FULL",
+  "started_at": "2026-10-30T05:55:54.435Z",
+  "state_at": "2026-10-30T05:59:03.006Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:5e05ac30729a2ad2",
+    "bypass_always": [
+      842251,
+      946600,
+      1144995,
+      1236702,
+      4229212,
+      285010264
+    ]
+  },
+  "counts": {
+    "open_prs": 24,
+    "open_issues": 13,
+    "unresolved_threads": 34,
+    "merges": 0,
+    "thread_resolutions": 0,
+    "agent_prompts": 0
+  },
+  "checks": {
+    "priority_prs_exact_head_required_green": [
+      219,
+      217,
+      216,
+      207,
+      172,
+      173,
+      200,
+      201,
+      188
+    ],
+    "historical_required_failures": [
+      {
+        "pr": 146,
+        "job": 115744861964,
+        "failed_tests": 11
+      },
+      {
+        "pr": 171,
+        "job": 116901503471,
+        "failed_tests": 1
+      },
+      {
+        "pr": 181,
+        "job": 118522327705,
+        "failed_tests": 1
+      }
+    ],
+    "main_postmerge_run_40991452249": "12/12 success"
+  },
+  "standing_tasks": {
+    "T1": "reconfirmed completed",
+    "T2": "no new owner decisions",
+    "T3": "D5 hold #219",
+    "T4": "DX8 capability blocked"
+  },
+  "actions": [
+    {
+      "type": "read",
+      "detail": "24 PRs, all 34 review threads, review submissions, issue #220, main and ruleset"
+    },
+    {
+      "type": "verification",
+      "detail": "Read historical CI logs for #146/#171/#181 and added cumulative CI findings"
+    },
+    {
+      "type": "state_write",
+      "detail": "Updated state/ledger.json; no code/workflow/settings change"
+    }
+  ],
+  "blocked": {
+    "hold_219": "D5 unanswered",
+    "migration_0057": "production prohibited",
+    "bypass": "six actors always",
+    "workflow_security": "DX7 pending",
+    "workflow_draft": "DX6 pending",
+    "docs_guidelines": "DX8 pending"
+  },
+  "merge_gate_result": "No PR meets all gates; no merge or thread resolution attempted",
+  "production_actions": []
+}
