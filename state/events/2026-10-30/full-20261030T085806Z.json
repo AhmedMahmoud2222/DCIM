@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "run_id": "full-20261030T085806Z",
+  "mode": "FULL",
+  "started_at": "2026-10-30T08:58:06.000Z",
+  "completed_at": "2026-10-30T09:02:47.749Z",
+  "main_sha": "731c2084e60c51ad825effcf699e4c429be44675",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_modes": "all six pull_request",
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true
+  },
+  "inventory": {
+    "open_prs": 25,
+    "open_issues": 14,
+    "unresolved_threads": 34
+  },
+  "actions": [
+    {
+      "type": "comment",
+      "pr": 224,
+      "comment_id": 6518989718,
+      "agent": "Codex",
+      "sha": "480bb1947cc48b06caa0f44a76a609bd7670d714",
+      "reason": "Tier 2 exact-head security review; required CI passed"
+    },
+    {
+      "type": "comment",
+      "pr": 83,
+      "comment_id": 6519008326,
+      "agent": "Codex",
+      "sha": "30d38dbf47a804e4ac8a97ca5b77dd6e5fd86584",
+      "reason": "1-hour stale follow-up for independent supersession evidence; ask 3/3"
+    },
+    {
+      "type": "comment",
+      "pr": 87,
+      "comment_id": 6519009035,
+      "agent": "Codex",
+      "sha": "24c6566885e0f2b89ce28698621a0fa501196dbd",
+      "reason": "1-hour stale follow-up for independent supersession evidence; ask 3/3"
+    },
+    {
+      "type": "update_file",
+      "path": "state/ledger.json",
+      "commit": "cd489f631d9cc892bd56515874423da13b42476d"
+    },
+    {
+      "type": "update_comment",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "reason": "DX6 #224 CI green and Codex running; historical D1-D15 preserved"
+    }
+  ],
+  "verified": {
+    "pr224": {
+      "required_ci": {
+        "backend": "success",
+        "frontend": "success"
+      },
+      "branch_current": true,
+      "threads": 0,
+      "review": "Codex running, Jules missing",
+      "tier": 2,
+      "merge": false
+    },
+    "pr173": {
+      "required_ci": "green",
+      "native_codex_review": "missing",
+      "optional_failure": "claude-review bot-actor rejection"
+    },
+    "pr201": {
+      "required_ci": "green",
+      "native_codex_review": "missing",
+      "optional_failure": "claude-review bot-actor rejection"
+    },
+    "pr172": {
+      "required_ci": "backend pending rerun attempt 2",
+      "python": "3.14"
+    },
+    "pr200": {
+      "required_ci": "backend pending rerun attempt 2",
+      "python": "3.14"
+    },
+    "pr219": {
+      "threads": 10,
+      "hold": "D5 unanswered"
+    },
+    "signatures": {
+      "unverified_heads": [
+        183,
+        171,
+        161,
+        158,
+        146,
+        125,
+        118,
+        117,
+        116,
+        113,
+        87,
+        83
+      ],
+      "policy_requires_signatures": false
+    }
+  },
+  "outcome": {
+    "merged": [],
+    "resolved_threads": [],
+    "production_migration_0057": "hold intact; no execution, scheduling or approval",
+    "new_owner_answers": [],
+    "decision_queue": [
+      "DX7",
+      "DX6",
+      "D5",
+      "DX3",
+      "DX5",
+      "D6"
+    ],
+    "workflow_refresh_on_main": false
+  },
+  "links": {
+    "pr224_review": "https://github.com/AhmedMahmoud2222/DCIM/pull/224#issuecomment-6518989718",
+    "pr83_review": "https://github.com/AhmedMahmoud2222/DCIM/pull/83#issuecomment-6519008326",
+    "pr87_review": "https://github.com/AhmedMahmoud2222/DCIM/pull/87#issuecomment-6519009035",
+    "pr224_ci": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41023730190"
+  }
+}
