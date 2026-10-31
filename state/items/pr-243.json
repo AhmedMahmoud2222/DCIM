@@ -2,12 +2,12 @@
   "schema_version": 16,
   "type": "pr",
   "number": 243,
-  "head_sha": "4d9836b5455c45669b423f914d108be71c349190",
+  "head_sha": "813e4baf0d37d47e36a5ce0bdb9d48492a37fd7d",
   "tier": 0,
   "tier_reason": "one new docs-only architecture specification, no code/config/workflow/permission changes",
   "state": "draft",
-  "updated_at": "2026-10-31T06:07:26.018Z",
-  "ci": "backend/frontend SUCCESS exact 4d9836b5; docs-only routing, optional Compose smoke SUCCESS; claude-review optional bot rejection",
+  "updated_at": "2026-10-31T06:09:16.290Z",
+  "ci": "backend/frontend SUCCESS exact 813e4baf on verified run 41175330241; docs-only CI; optional claude-review bot rejection",
   "open_threads": 3,
   "findings": [
     {
@@ -15,7 +15,7 @@
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/243#discussion_r4430659024",
       "severity": "P2",
       "required": "Reconcile unconditional INV-N2 rollback refusal with N+1 written but checkpoint N crash window; add exact crash-and-restore FA test",
-      "status": "Open - candidate fixed at 4d9836b5; independent Codex re-review pending",
+      "status": "Open - candidate fixed at 813e4baf; third-cycle independent Codex confirmation pending",
       "evidence": "INV-S5/S6/N2 explicit checkpoint-lag boundary and FA-28b at 4d9836b5; thread reply 4430763053"
     },
     {
@@ -23,7 +23,7 @@
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/243#discussion_r4430659026",
       "severity": "P2",
       "required": "Define restart recovery after ambiguous PUT without guaranteed pre-write journal/mutation_id; update FA-04a/b and T4 recovery",
-      "status": "Open - candidate fixed at 4d9836b5; independent Codex re-review pending",
+      "status": "Open - candidate fixed at 813e4baf; third-cycle independent Codex confirmation pending",
       "evidence": "INV-A2/A3/D1/T4r state-based restart recovery, FA-04c at 4d9836b5; thread reply 4430763182"
     },
     {
@@ -31,16 +31,17 @@
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/243#discussion_r4430764870",
       "severity": "P2",
       "required": "Qualify normative T4r matrix invariant to allow restored checkpointed reserved after successful uncheckpointed T4 is lost (FA-28b(ii)), while preserving at-most-once POST",
-      "status": "Open",
-      "evidence": "At 4d9836b5 matrix says T4r only if no successful T4 ever replaced reserved, contradicting FA-28b(ii) rollback to signed N reserved"
+      "status": "Open - candidate fixed at 813e4baf; third-cycle independent Codex confirmation pending",
+      "evidence": "matrix line 92 and FA-28b(ii) line 137 fixed in 813e4baf; evidence reply 4430772170"
     }
   ],
-  "qualifying_review": "Codex exact-head 4d9836b5 published one new P2-243-3; prior two candidate fixes not explicitly accepted; no qualifying review",
+  "qualifying_review": "Codex review at 4d9836b5 raised new P2-243-3; exact-head 813e4baf re-review requested, pending",
   "asks_per_sha": {
     "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa": 1,
-    "4d9836b5455c45669b423f914d108be71c349190": 1
+    "4d9836b5455c45669b423f914d108be71c349190": 1,
+    "813e4baf0d37d47e36a5ce0bdb9d48492a37fd7d": 1
   },
-  "fix_review_cycles": 2,
+  "fix_review_cycles": 3,
   "stale_level": 0,
   "queued": false,
   "signature": {
@@ -48,13 +49,13 @@
     "reason": "valid",
     "required": false
   },
-  "next_gate": "Claude one-push correction P2-243-3 preserving earlier 2 candidates; exact new-head CI, Codex re-review, 3 thread dispositions, ready",
+  "next_gate": "Codex third-cycle review 813e4baf, evidence-based resolution of 3 threads; if new P1/P2 switch method A7, else ready for review; no activation",
   "last_prompt": {
-    "agent": "Claude",
-    "sha": "4d9836b5455c45669b423f914d108be71c349190",
-    "comment_id": 6539900318,
-    "time": "2026-10-31T06:07:26.018Z",
-    "ask": "three cumulative P2 findings, fix matrix contradiction in one docs-only push, completion report"
+    "agent": "Codex",
+    "sha": "813e4baf0d37d47e36a5ce0bdb9d48492a37fd7d",
+    "comment_id": 6539915302,
+    "time": "2026-10-31T06:09:16.290Z",
+    "ask": "third-cycle exact-head independent review all three P2 threads"
   },
-  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held. 09:30 GST FOLLOW-UP: two new P2 threads from Codex verified in file and sent in full to Claude; no thread resolved.; FULL 10:05 GST: Claude one docs-only signed fix push 4d9836b5, exact-head CI green, two evidence replies posted, Codex re-review requested; D-8/D-11 unresolved.; FULL ~10:07 GST: Codex new exact-head P2-243-3 on matrix T4r vs FA-28b(ii); full 3-item checklist to Claude comment 6539900318, threads now 3."
+  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held. 09:30 GST FOLLOW-UP: two new P2 threads from Codex verified in file and sent in full to Claude; no thread resolved.; FULL 10:05 GST: Claude one docs-only signed fix push 4d9836b5, exact-head CI green, two evidence replies posted, Codex re-review requested; D-8/D-11 unresolved.; FULL ~10:07 GST: Codex new exact-head P2-243-3 on matrix T4r vs FA-28b(ii); full 3-item checklist to Claude comment 6539900318, threads now 3.; FULL 10:09 GST: Claude second signed docs-only fix 813e4baf verified, exact-head CI green, thread evidence reply 4430772170, Codex ask 6539915302."
 }
