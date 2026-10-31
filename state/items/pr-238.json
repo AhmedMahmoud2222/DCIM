@@ -1,0 +1,34 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 238,
+  "head_sha": "51c28dff891ea0d9adaf6a65e9f2ccaa3ec37b0f",
+  "tier": 1,
+  "tier_reason": "tests-only CI regression fix",
+  "updated_at": "2026-10-31T05:08:27.288Z",
+  "ci": "backend FAILURE on exact head (backend-suite FK-index test KeyError); frontend SUCCESS; failed-jobs rerun 41164734412 attempt 2 in progress; now 1 behind main",
+  "open_threads": 0,
+  "findings": [
+    {
+      "id": "CI238-1",
+      "severity": "required CI",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/actions/runs/41164734412/job/124432112416",
+      "required": "Investigate unrelated FK index test KeyError and establish flaky baseline",
+      "status": "Open - diagnostic rerun in progress",
+      "evidence": "test_invalid_index_of_an_active_concurrent_build_is_not_dropped_or_rebuilt: KeyError ix_telemetry_reading_mapping_id; main prior 3 backend suites 3652 passed"
+    }
+  ],
+  "asks_per_sha": {},
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "next_gate": "rerun failed jobs once, classify flaky if passes and open issue, required checks green, refresh, Codex review, mark ready",
+  "last_prompt": {
+    "agent": "CI",
+    "sha": "51c28dff891ea0d9adaf6a65e9f2ccaa3ec37b0f",
+    "comment_id": 6539318201,
+    "time": "2026-10-31T05:01:00Z",
+    "ask": "one failed-jobs rerun requested"
+  },
+  "notes": "One-file tests/deployment/test_opencode_sandbox.py patch cannot touch failing FK migration test. No test skipped or weakened."
+}
