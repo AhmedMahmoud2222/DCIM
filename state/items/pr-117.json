@@ -6,7 +6,7 @@
   "tier": 2,
   "tier_reason": "Diff changes two live .github/workflows files (ci.yml and deploy-tools-test.yml), even though changes are version comments; workflow-file path is Tier 2",
   "state": "open",
-  "updated_at": "2026-10-31T21:00:00Z",
+  "updated_at": "2026-10-31T21:02:00Z",
   "ci": "backend/frontend SUCCESS on historical head; 148 commits behind main; DIRTY; last three main CI runs green",
   "open_threads": 0,
   "findings": [
@@ -28,7 +28,7 @@
   "stale_level": 0,
   "queued": false,
   "blocker_class": "supersession / verification",
-  "next_gate": "Codex independent supersession verification of main pin/tag comments; correction issue #250 for setup-python, #240 for upload-artifact; A2 closure only after evidence, keep branch",
+  "next_gate": "Preserve PR and branch; issue #250 + #240 track unique main corrections. Await explicit independent supersession evidence before A2 closure; DX6 one workflow PR at a time after #224 tests.",
   "notes": "FULL 1 Nov 2026 GST: independently verified PR changes only version comments on obsolete pins (setup-python 5fda...=v7.0.0, upload-artifact 043f...=v7.0.1); current main uses setup-python 6d4...=v7.1.0 but comments v5/v6, upload-artifact cf43...=v7.0.2 but comments v4. Claude recommended supersession before upstream verification; corrected evidence and asked Codex. Created issue #250 for setup-python; issue #240 already tracks upload. No merge/closure.",
   "last_prompt": {
     "agent": "Codex",
@@ -36,5 +36,11 @@
     "time": "2026-10-31T20:59:54Z",
     "sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
     "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6549061322"
+  },
+  "last_codex_response": {
+    "sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
+    "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6549074689",
+    "kind": "generic clean old-PR-head response; no main pin/tag supersession analysis",
+    "status": "not qualifying for independent main comparison"
   }
 }
