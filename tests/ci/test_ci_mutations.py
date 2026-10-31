@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from ci_support import (
+    pin_mismatches,
     SCRIPTS,
     gate_mismatches,
     load_module,
@@ -45,8 +46,45 @@ POLICY_MUTANTS = (
     ('"jobs": {job: True for job in WORKERS}', '"jobs": {job: False for job in WORKERS}'),
 )
 
+PIN_MUTANTS = (
+    ('if change.get("status") != "M" or change.get("old_mode")', 'if change.get("old_mode")'),
+    ('len(old) > PIN_MAX_BYTES or len(new) > PIN_MAX_BYTES or old == new', 'len(old) > PIN_MAX_BYTES'),
+    ('    ".github/workflows/ci.yml",\n    ".github/workflows/deploy.yml",\n    ".github/workflows/refresh-branch.yml",\n', ""),
+    ('    ".github/workflows/refresh-branch.yml",\n', ""),
+    ('    ".github/workflows/deploy.yml",\n', ""),
+    ('    ".github/workflows/ci.yml",\n', ""),
+    ('_PIN = r"[0-9a-f]{40}"', '_PIN = r"[0-9a-z]{1,40}"'),
+    ("if before is None or before != after:", "if before is None:"),
+    ("if not changes or len(changes) > 20:", "if len(changes) > 20:"),
+    ("if not changes or len(changes) > 20:", "if not changes:"),
+    ('change.get("new_mode") != REGULAR_FILE_MODE', "False"),
+    ("and path not in PIN_EXCLUDED:", "and True:"),
+    ('and "/" not in path[len(WORKFLOW_DIR):]', "and True"),
+    ("if rule is None or SAFE_TEXT.fullmatch(text) is None:", "if rule is None:"),
+    ('_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"', '_VERSION = r"[^\\r\\n]*"'),
+    ('_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"', '_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+ ()$`;&|<>-]*"'),
+    ("\\xa0-\\u2027\\u202a-\\ud7ff", "\\xa0-\\ud7ff"),
+    ("\\x20-\\x7e", "\\x20-\\x7f"),
+    ("\\ue000-\\ufefe\\uff00-\\ufffd", "\\ue000-\\ufffd"),
+    ('path.endswith(".yml")', "True"),
+    ('if before_structure is None or before_structure != structure(path, new):', "if before_structure is None:"),
+    ('if before_structure is None or before_structure != structure(path, new):', "if False:"),
+    ('        if match is not None:\n            return f"{match.group(1)}@<pin>"', "        if False:\n            return 'x'"),
+    ('if len(names) != len(set(names)) or len(names) != len({name.casefold() for name in names}):', "if False:"),
+    ('if len(names) != len(set(names)) or len(names) != len({name.casefold() for name in names}):',
+     "if len(names) != len(set(names)):"),
+    ('if not isinstance(key, yaml.ScalarNode) or key.value == "<<":', "if not isinstance(key, yaml.ScalarNode):"),
+    ('raise ValueError("YAML tag")', "pass"),
+    ('raise ValueError("YAML anchor")', "pass"),
+    ('raise ValueError("duplicate JSON key")', "pass"),
+    ("return ast.dump(tree) if masked == 1 else None", "return ast.dump(tree)"),
+)
+
 ROUTER_MUTANTS = (
-    ('"--no-renames", ', ""),
+    ("decision = pinned", 'decision = {**pinned, "level": "component"}'),
+
+
+    ('output = _git("diff", "--no-renames",', 'output = _git("diff",'),
     ('merge_base = _git("merge-base", base, head).strip()', "merge_base = base"),
     ('decision = ci_policy.full([f"change detection failed: {error}"])',
      'decision = ci_policy.classify(["README.md"])'),
@@ -57,11 +95,15 @@ ROUTER_MUTANTS = (
 )
 
 SCOPE_MUTANTS = (
+    ('if pinned is not None and pinned["paths"] == sorted(paths):', "if pinned is not None:"),
+    ('pinned = ci_policy.pin_only(changes) if level == "fast" and changes else None',
+     "pinned = ci_policy.pin_only(changes) if changes else None"),
+    ('changes = pr_changes(base, head) if level == "fast" and trusted else None', "changes = None"),
     ('TRUST_PREFIXES = (".github/", "tests/ci/")', 'TRUST_PREFIXES = (".github/workflows/", "tests/ci/")'),
     ('TRUST_PREFIXES = (".github/", "tests/ci/")', 'TRUST_PREFIXES = (".github/",)'),
     ("if path.lower().startswith(TRUST_PREFIXES)", "if path.startswith(TRUST_PREFIXES)"),
     ('if level == "full":\n        return []', 'if level != "fast":\n        return []'),
-    ("errors = scope_errors(level, paths)", "errors = []"),
+    ("errors = scope_errors(level, paths, changes)", "errors = []"),
     ('"git", "diff", "--no-renames",', '"git", "diff",'),
 )
 
@@ -201,6 +243,14 @@ class MutationTests(unittest.TestCase):
                 path.write_text(_mutate_source(SCRIPTS / "ci_policy.py", old, new))
                 self.assertNotEqual(policy_mismatches(load_module("ci_policy", path)), [], "mutant survived")
 
+    def test_pin_mutants_are_killed(self):
+        self.assertEqual(pin_mismatches(load_module("ci_policy", SCRIPTS / "ci_policy.py")), [])
+        for old, new in PIN_MUTANTS:
+            with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "ci_policy.py"
+                path.write_text(_mutate_source(SCRIPTS / "ci_policy.py", old, new))
+                self.assertNotEqual(pin_mismatches(load_module("ci_policy", path)), [], "mutant survived")
+
     def test_router_mutants_are_killed(self):
         for old, new in ROUTER_MUTANTS:
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
@@ -212,6 +262,7 @@ class MutationTests(unittest.TestCase):
     def test_gate_mutants_are_killed(self):
         for old, new in GATE_MUTANTS:
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                shutil.copy(SCRIPTS / "ci_policy.py", directory)
                 path = Path(directory) / "ci_gate.py"
                 path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
                 self.assertNotEqual(gate_mismatches(load_module("ci_gate", path)), [], "mutant survived")
@@ -219,6 +270,7 @@ class MutationTests(unittest.TestCase):
     def test_scope_mutants_are_killed(self):
         for old, new in SCOPE_MUTANTS:
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                shutil.copy(SCRIPTS / "ci_policy.py", directory)
                 path = Path(directory) / "ci_gate.py"
                 path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
                 self.assertNotEqual(scope_mismatches(load_module("ci_gate", path)), [], "mutant survived")
