@@ -4,7 +4,7 @@
   "number": 228,
   "head_sha": "ad4e410788cd9d1a0df075d56dad0dd9dbcab987",
   "tier": 0,
-  "updated_at": "2026-10-31T05:08:48.154Z",
+  "updated_at": "2026-10-31T05:15:46.594Z",
   "ci": "backend and frontend SUCCESS on exact head",
   "open_threads": 12,
   "findings": [
@@ -112,8 +112,8 @@
   "fix_review_cycles": null,
   "stale_level": 0,
   "queued": true,
-  "next_gate": "A7 split plan received from Claude; validate mappings, brief separate docs-only PR A via DX12; #228 remains parked",
-  "notes": "A7 19-hunk Claude patch applied verbatim, 19/19 exact context and hunk counts; source issue #220 comment 6538594177. D5 spec-first, #219 frozen. New commit unsigned (not required).; integrated redesign failed with new P2, split-plan Claude ask issue #220 comment 6538824403; split A->C->B plan from issue #220 comment 6538827213; correct yHAJK typo to actual yHAKC and FI-09b PRRT yNm7l; no more reviews on original.",
+  "next_gate": "A7 split A Draft PR243 at 590b0fed created from Claude verbatim patch, CI and independent review pending; #228 parked; C/B not requested",
+  "notes": "A7 19-hunk Claude patch applied verbatim, 19/19 exact context and hunk counts; source issue #220 comment 6538594177. D5 spec-first, #219 frozen. New commit unsigned (not required).; integrated redesign failed with new P2, split-plan Claude ask issue #220 comment 6538824403; split A->C->B plan from issue #220 comment 6538827213; correct yHAJK typo to actual yHAKC and FI-09b PRRT yNm7l; no more reviews on original.; PR243 one-file 222-line patch verified verbatim, source issue #220 comment 6539404611, branch dx12/d5-a-journal-20261031-0514, no class I activation.",
   "legacy_source": "state/ledger.json (preserved; oversized, not re-read)",
   "last_prompt": {
     "agent": "Codex",
