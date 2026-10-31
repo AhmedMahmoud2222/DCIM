@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-31T00:05:23.920Z",
-  "last_run_at": "2026-10-31T00:38:20.849Z",
+  "last_run_at": "2026-10-31T01:37:40.511Z",
   "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -100,11 +100,11 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FOLLOW-UP 2026-10-31T00:38:20.849Z: #220 owner comments re-read; no new unmarked D/DX answers; DX18/DX19 remain open.",
+    "T2": "FOLLOW-UP 2026-10-31T01:37:40.511Z: #220 unmarked owner D/DX answers re-read; none since last run, DX18/DX19 remain open.",
     "T3": "D5 #219 frozen; #228 final Codex review on 7b2eb31 added two P2, total 11 unresolved, DX17 3/3 cap STOP; owner DX19 pending.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "DONE: workflow actor hardening remains pending DX6, exploitability unproven; main workflow SHA unchanged since last targeted review.",
-    "T6": "FOLLOW-UP 2026-10-31T00:38:20.849Z: PR #224 head e8892327 unchanged, 4 unresolved P2, 3/3 native Codex requests exhausted; owner DX13 and qualifying Jules required; refresh workflow absent on main."
+    "T6": "FOLLOW-UP 2026-10-31T01:37:40.511Z: #224 e8892327 unchanged, 4 open P2; 3/3 native Codex asks exhausted, DX13 and Jules needed; workflow absent from main."
   },
   "workflow_security": {
     "main_claude_yml": "P1 candidate: secret-bearing issue_comment job lacks explicit trusted-actor gate; DX7 owner decision required",
@@ -2700,15 +2700,15 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
-        "checked_at": "2026-10-30T23:32:50.736Z"
+        "checked_at": "2026-10-31T01:37:40.511Z"
       },
       "optional_ci": "claude-review failure: known bot-actor infrastructure; not required",
       "merge_state": "BLOCKED: exact-head backend/frontend green, first native Codex review pending; no acceptance",
-      "merge_state_status": "BLOCKED",
+      "merge_state_status": "clean",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T23:00:39.477Z"
+        "checked_at": "2026-10-31T01:37:40.511Z"
       },
       "tier": 0,
       "tier_reason": "Minor pinned Action bump setup-python v7.0.0 to v7.1.0; no workflow permissions, triggers, secrets changed; tag v7.1.0 resolves to 6d4fd22b20465ccc0f7354476588e8df7c9ca0e0.",
@@ -2718,21 +2718,21 @@
       "findings_checklist": [],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "second Tier0 native exact-head review; pin/security/version-comment check",
-        "at": "2026-10-31T00:36:10.354Z",
+        "ask": "third/final Tier0 native exact-head review; 2 prior generic receipts, no native submission",
+        "at": "2026-10-31T01:36:32.786Z",
         "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
-        "comment_id": 6536596563,
-        "status": "terminal: generic clean receipt #6536610346; zero native review submissions"
+        "comment_id": 6537261260,
+        "status": "awaiting native review or receipt"
       },
-      "asks_per_sha": 2,
+      "asks_per_sha": 3,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Native exact-head Codex review pending; no merge",
+      "queued": "Tier0 native Codex review final 3/3 pending; if no native submission owner DX13 exact-head fallback",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-31T00:38:20.849Z",
-      "last_thread_verified_at": "2026-10-31T00:38:20.849Z",
+      "last_state_verified_at": "2026-10-31T01:37:40.511Z",
+      "last_thread_verified_at": "2026-10-31T01:37:40.511Z",
       "last_ci_verified_at": "2026-10-31T00:05:23.920Z",
       "review_focus": "Stale inline v5/v6 comments, review for pin/comment consistency.",
       "pin_verification": {
@@ -2759,15 +2759,15 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
-        "checked_at": "2026-10-30T23:32:50.736Z"
+        "checked_at": "2026-10-31T01:37:40.511Z"
       },
       "optional_ci": "Prior real optional deployment-tooling test failures 3/779; three checklist fixes code-verified at exact head; new CI running",
       "merge_state": "BLOCKED: exact-head backend/frontend green, first native Codex review pending; no acceptance",
-      "merge_state_status": "BLOCKED",
+      "merge_state_status": "clean",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T23:00:39.477Z"
+        "checked_at": "2026-10-31T01:37:40.511Z"
       },
       "tier": 0,
       "tier_reason": "Patch pinned Action bump claude-code-action v1.0.262 to v1.0.264, with only coupled policy/adapter pin strings; no workflow permission, trigger, or secret usage change. Annotated tag resolves to d70510b174a1244958df0b03166a54912811f3e6; no Tier2 solely by dependency bump.",
@@ -2802,21 +2802,21 @@
       ],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "second Tier0 native exact-head review; coupled pin/CI findings check",
-        "at": "2026-10-31T00:36:12.547Z",
+        "ask": "third/final Tier0 native exact-head review; CI232 coupled pin checklist",
+        "at": "2026-10-31T01:36:35.037Z",
         "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
-        "comment_id": 6536597099,
-        "status": "terminal: generic clean receipt #6536611093; zero native review submissions"
+        "comment_id": 6537261683,
+        "status": "awaiting native review or receipt"
       },
-      "asks_per_sha": 2,
+      "asks_per_sha": 3,
       "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "Native exact-head Codex review pending; no merge",
+      "queued": "Tier0 native Codex review final 3/3 pending; if no native submission owner DX13 exact-head fallback",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-31T00:38:20.849Z",
-      "last_thread_verified_at": "2026-10-31T00:38:20.849Z",
+      "last_state_verified_at": "2026-10-31T01:37:40.511Z",
+      "last_thread_verified_at": "2026-10-31T01:37:40.511Z",
       "previous_head_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
       "changed_files": 6,
       "last_completion_report": {
@@ -2848,18 +2848,18 @@
       ],
       "behind_main": 0,
       "required_ci": {
-        "backend": "success (same-head Python 3.14 diagnostic rerun completed 2026-10-31T00:24:22Z)",
+        "backend": "success",
         "frontend": "success",
         "exact_head_sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-        "checked_at": "2026-10-31T00:38:20.849Z"
+        "checked_at": "2026-10-31T01:37:40.511Z"
       },
       "optional_ci": "No real optional product failures observed",
       "merge_state": "BLOCKED: required backend not green during Python 3.14 rerun; independent Codex and Jules missing",
-      "merge_state_status": "BLOCKED",
+      "merge_state_status": "clean",
       "head_verification": {
         "verified": true,
         "reason": "valid",
-        "checked_at": "2026-10-30T23:00:39.477Z"
+        "checked_at": "2026-10-31T01:37:40.511Z"
       },
       "tier": 2,
       "tier_reason": "Major actions/checkout v4->v7.0.1 bump modifies two workflow files; not Tier0 patch/minor exception, so workflow-file Tier2 applies; no permissions/triggers/secrets changes",
@@ -2878,21 +2878,21 @@
       ],
       "last_prompt": {
         "agent": "Codex",
-        "ask": "first Tier2 native exact-head review after green same-head Python 3.14 rerun; DX15 nonapplicability check",
-        "at": "2026-10-31T00:36:15.344Z",
+        "ask": "second Tier2 native exact-head review; same-head required CI green, #226 unrelated cooling deadlock",
+        "at": "2026-10-31T01:36:37.725Z",
         "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-        "comment_id": 6536597692,
-        "status": "terminal: generic clean receipt #6536616806; zero native review submissions"
+        "comment_id": 6537262103,
+        "status": "awaiting native review or receipt"
       },
-      "asks_per_sha": 1,
+      "asks_per_sha": 2,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "Python 3.14 same-head diagnostic rerun in progress; backend gate pending; Tier2 Codex and Jules required once green and reviewer slot free; DX18 owner decision separate",
+      "queued": "Tier2 native Codex review 2/3 pending; Jules after acceptance; CI233-1 remains independently undispositioned under #226",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
       "updated_at": "2026-10-30T22:15:09Z",
-      "last_state_verified_at": "2026-10-31T00:38:20.849Z",
-      "last_thread_verified_at": "2026-10-31T00:38:20.849Z",
+      "last_state_verified_at": "2026-10-31T01:37:40.511Z",
+      "last_thread_verified_at": "2026-10-31T01:37:40.511Z",
       "last_ci_verified_at": "2026-10-31T00:05:23.920Z",
       "review_focus": "Node 24 runner compatibility, credential persistence, token trust boundary.",
       "last_ci_failure": {
@@ -3221,70 +3221,43 @@
   ],
   "last_actions": [
     {
-      "item": "PR #233",
-      "agent": "CI",
-      "action": "same-head Python 3.14 diagnostic retry completed success; backend/frontend required green; #226 investigation remains",
-      "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-      "at": "2026-10-31T00:24:22Z",
-      "check_id": 124367878437
-    },
-    {
       "item": "PR #231",
       "agent": "Codex",
-      "action": "second Tier0 native exact-head review; pin/security/version-comment check",
+      "action": "third/final Tier0 native exact-head review; 2 prior generic receipts, no native submission",
       "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
-      "at": "2026-10-31T00:36:10.354Z",
-      "comment_id": 6536596563,
-      "status": "terminal: generic clean receipt #6536610346; zero native review submissions"
+      "at": "2026-10-31T01:36:32.786Z",
+      "comment_id": 6537261260,
+      "status": "awaiting native review"
     },
     {
       "item": "PR #232",
       "agent": "Codex",
-      "action": "second Tier0 native exact-head review; coupled pin/CI findings check",
+      "action": "third/final Tier0 native exact-head review; CI232 coupled pin checklist",
       "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
-      "at": "2026-10-31T00:36:12.547Z",
-      "comment_id": 6536597099,
-      "status": "terminal: generic clean receipt #6536611093; zero native review submissions"
+      "at": "2026-10-31T01:36:35.037Z",
+      "comment_id": 6537261683,
+      "status": "awaiting native review"
     },
     {
       "item": "PR #233",
       "agent": "Codex",
-      "action": "first Tier2 native exact-head review after green same-head Python 3.14 rerun; DX15 nonapplicability check",
+      "action": "second Tier2 native exact-head review; same-head required CI green, #226 unrelated cooling deadlock",
       "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-      "at": "2026-10-31T00:36:15.344Z",
-      "comment_id": 6536597692,
-      "status": "terminal: generic clean receipt #6536616806; zero native review submissions"
-    },
-    {
-      "item": "PR #229",
-      "agent": "Codex",
-      "action": "second Tier1 native exact-head scoped P2 waiter-cleanup re-review",
-      "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-      "at": "2026-10-31T00:37:29.884Z",
-      "comment_id": 6536612942,
-      "status": "awaiting native review or receipt"
-    },
-    {
-      "item": "Issue #220",
-      "agent": "Orchestrator",
-      "action": "updated decision queue comment and current-state human ledger",
-      "at": "2026-10-31T00:37:51.018Z",
-      "comment_ids": [
-        6501005762,
-        6500987889
-      ]
+      "at": "2026-10-31T01:36:37.725Z",
+      "comment_id": 6537262103,
+      "status": "awaiting native review"
     }
   ],
   "priority_snapshot": {
     "merged_since_previous_run": [],
     "merged_this_run": [],
     "highest_priority": [
+      "#231 Tier0 3/3 native Codex request pending; DX13 if no native result",
+      "#232 Tier0 3/3 native Codex request pending; DX13 if no native result",
       "#224 Tier2 DX13 + 4 P2 + Jules",
-      "#231 Tier0 2/3 native Codex asks, no submission",
-      "#232 Tier0 2/3 native Codex asks, no submission",
-      "#233 Tier2 green CI, 1/3 Codex generic receipt, Jules pending",
+      "#233 Tier2 2/3 Codex request pending, Jules after acceptance",
       "#200 Tier2 owner DX13 + Jules",
-      "#229 Tier1 P2 thread and native review pending",
+      "#229 Tier1 Draft, one P2 thread and native review pending",
       "#216/#217 behind main"
     ],
     "tier0_next": [
@@ -3313,10 +3286,10 @@
     "open_issues": 16,
     "open_threads": 51
   },
-  "last_run_summary": "FOLLOW-UP: 4 Codex asks (#231 #232 #233 #229), zero native acceptance so far. #233 same-head Python3.14 retry passed at 00:24 UTC and required backend/frontend now green; issue #226 investigation remains. #231/#232 2/3 generic receipts, #229 2/3 pending, #233 1/3 generic receipt. No merge, no thread resolution, 28 open PRs, 16 issues, 51 open threads; ruleset hash unchanged, all bypass pull_request, hold intact.",
-  "last_followup_delta": "#233 Python 3.14 same-head diagnostic retry succeeded, required backend/frontend now green; Tier2 first native Codex review requested. #231/#232 second native Codex requests yielded only generic clean receipts; #229 second scoped P2 review requested. No merges or thread resolutions; 51 open threads; no owner decisions; migration 0057 hold intact.",
+  "last_run_summary": "FOLLOW-UP: 3 Codex native review requests posted: #231/#232 third and final (3/3), #233 second (2/3). No native reviews at 01:37 UTC. 28 open PRs, 16 open issues, 51 unresolved threads, no merges or resolutions. All six ruleset bypass actors pull_request, both orchestrator schedules enabled; Migration 0057 production hold intact.",
+  "last_followup_delta": "Third/final native Codex review asks posted on #231 and #232, second Tier2 ask posted on #233. All exact-head required CI green, zero threads on these three, no native review submissions yet. #229 remains Draft with one unresolved P2. No owner answers, merges or thread resolutions.",
   "last_full_delta": "No new owner decisions, commits, native Codex reviews, merges or thread resolutions since 23:32:50Z. Pin integrity checked for #231/#232/#233; #233 backend rerun remains pending. Updated #220 human decision summary.",
-  "last_followup_summary": "FOLLOW-UP: 4 Codex asks (#231 #232 #233 #229), zero native acceptance so far. #233 same-head Python3.14 retry passed at 00:24 UTC and required backend/frontend now green; issue #226 investigation remains. #231/#232 2/3 generic receipts, #229 2/3 pending, #233 1/3 generic receipt. No merge, no thread resolution, 28 open PRs, 16 issues, 51 open threads; ruleset hash unchanged, all bypass pull_request, hold intact.",
+  "last_followup_summary": "FOLLOW-UP: 3 Codex native review requests posted: #231/#232 third and final (3/3), #233 second (2/3). No native reviews at 01:37 UTC. 28 open PRs, 16 open issues, 51 unresolved threads, no merges or resolutions. All six ruleset bypass actors pull_request, both orchestrator schedules enabled; Migration 0057 production hold intact.",
   "last_full_event_path": "state/events/2026-10-31/full-20261031T000202439Z.json",
   "run_notes": [
     {
@@ -3396,6 +3369,12 @@
       "at": "2026-10-31T00:38:20.849Z",
       "mode": "FOLLOW-UP",
       "summary": "FOLLOW-UP: 4 Codex asks (#231 #232 #233 #229), zero native acceptance so far. #233 same-head Python3.14 retry passed at 00:24 UTC and required backend/frontend now green; issue #226 investigation remains. #231/#232 2/3 generic receipts, #229 2/3 pending, #233 1/3 generic receipt. No merge, no thread resolution, 28 open PRs, 16 issues, 51 open threads; ruleset hash unchanged, all bypass pull_request, hold intact."
+    },
+    {
+      "run_id": "followup-20261031T013312041Z",
+      "at": "2026-10-31T01:37:40.511Z",
+      "mode": "FOLLOW-UP",
+      "summary": "Third/final native Codex review asks posted on #231 and #232, second Tier2 ask posted on #233. All exact-head required CI green, zero threads on these three, no native review submissions yet. #229 remains Draft with one unresolved P2. No owner answers, merges or thread resolutions."
     }
   ],
   "last_full_event_supplements": [
@@ -3404,7 +3383,7 @@
     "state/events/2026-10-30/full-20261030T165859172Z-supplement.json",
     "state/events/2026-10-30/full-20261030T195557Z-late.json"
   ],
-  "last_run_id": "full-20261031T000202439Z",
+  "last_run_id": "followup-20261031T013312041Z",
   "signature_summary": {
     "checked_at": "2026-10-30T19:09:55.766Z",
     "open_prs": 25,
@@ -3432,31 +3411,31 @@
   "schedule_health": {
     "full_enabled": true,
     "followup_enabled": true,
-    "checked_at": "2026-10-31T00:05:23.920Z"
+    "checked_at": "2026-10-31T01:37:40.511Z"
   },
-  "last_followup_event_path": "state/events/2026-10-31/followup-20261031T003405935Z.json",
+  "last_followup_event_path": "state/events/2026-10-31/followup-20261031T013312041Z.json",
   "agent_slots": {
     "codex": [
-      {
-        "pr": 229,
-        "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-        "agent": "Codex",
-        "prompt_at": "2026-10-30T23:31:50.365Z",
-        "expires_at": "2026-10-31T01:31:50.365Z"
-      },
       {
         "pr": 231,
         "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
         "agent": "Codex",
-        "prompt_at": "2026-10-30T23:31:50.365Z",
-        "expires_at": "2026-10-31T01:31:50.365Z"
+        "prompt_at": "2026-10-31T01:36:32.786Z",
+        "expires_at": "2026-10-31T03:36:32.786Z"
       },
       {
         "pr": 232,
         "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
         "agent": "Codex",
-        "prompt_at": "2026-10-30T23:31:50.365Z",
-        "expires_at": "2026-10-31T01:31:50.365Z"
+        "prompt_at": "2026-10-31T01:36:35.037Z",
+        "expires_at": "2026-10-31T03:36:35.037Z"
+      },
+      {
+        "pr": 233,
+        "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
+        "agent": "Codex",
+        "prompt_at": "2026-10-31T01:36:37.725Z",
+        "expires_at": "2026-10-31T03:36:37.725Z"
       }
     ],
     "claude": []
