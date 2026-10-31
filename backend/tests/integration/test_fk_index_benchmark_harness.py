@@ -648,6 +648,12 @@ def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(ur
             with connect(urls, clone) as conn:
                 while time.time() < deadline and conn.execute("SELECT count(*) FROM pg_stat_progress_create_index").fetchone()[0]:
                     time.sleep(0.2)
+                # An empty progress view only means the build ended. The backend drops its session-level migration lock when it
+                # exits, which it does after it notices the dead client socket. Wait for that, not just for the build.
+                while time.time() < deadline and conn.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1940057 AND objid = 1 AND pid <> pg_backend_pid()"
+                ).fetchone()[0]:
+                    time.sleep(0.2)
     finally:
         if run.poll() is None:
             run.proc.kill()
