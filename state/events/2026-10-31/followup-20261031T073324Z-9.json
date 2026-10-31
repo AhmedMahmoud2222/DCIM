@@ -1,0 +1,92 @@
+{
+  "schema_version": 16,
+  "run_id": "followup-20261031T073324Z-9",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T07:33:24Z",
+  "finished_at": "2026-10-31T07:35:24.817Z",
+  "baseline_last_full": "2026-10-31T07:18:29.789Z",
+  "main_sha": "11f46a2bd08e3c8d059497b437579440a93658d5",
+  "policy_sha256": "c6aa39185a08b907d89562bcdb825a651cf0f55065460d962cadc3fe90609079",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass_actors": "six pull_request, none always",
+    "required": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true
+  },
+  "inventory": {
+    "open_prs": 27,
+    "open_issues": 22,
+    "unresolved_threads": 56,
+    "machine_state_prs": 0
+  },
+  "steps": [
+    {
+      "step": 0,
+      "items": "lease,policy,index,ruleset,#220",
+      "result": "Acquired lease with blob-SHA guard; policy and changelog unchanged; legacy ledger >10k not read; current ruleset all six bypass actors pull_request."
+    },
+    {
+      "step": 1,
+      "items": "27 open PRs,22 issues; delta and awaiting agents",
+      "result": "No PR head or update since last FULL; #220 only edited orchestrator ledger comments, no new unmarked owner D/DX answers. #184/#185 no substantive OpenCode response."
+    },
+    {
+      "step": 2,
+      "items": "#246,#245,#224",
+      "result": "Verified #246 exact-head SC-2 and DL-1 source blob 34b684f5, #245 test blob 07427b2d, unchanged main 11f46a2b; #224 owner copy of live workflow still pending."
+    },
+    {
+      "step": 4,
+      "items": "#246 and unchanged thread inventory",
+      "result": "Four Codex P2 threads PRRT_kwDOUdC8Ds6yOoxE/J/M/Q still unresolved, evidence replies already posted at 07:16 UTC; no new thread-specific Codex confirmation, so no resolution. Other PR thread inventory unchanged."
+    },
+    {
+      "step": "4a",
+      "items": "#246 C-REV-1..4; #245 FLAKY-244-1; #233/#200 Minor",
+      "result": "Cumulative findings retained; #246 clean A4 answer names ad75c9e0 but does not explicitly disposition four earlier threads; #245 flaky-test witness remains open; #233/#200 Minor deferrals remain open."
+    },
+    {
+      "step": 5,
+      "items": "#245,#246,#224,#233,#232,#200",
+      "result": "Exact-head backend/frontend SUCCESS for #245,#246,#233; #245/#246 Draft, #246 threads; #224 owner copy; #233/#200/#232 BEHIND; no review ask eligible under 60-minute spacing and branch-current gates."
+    },
+    {
+      "step": 7,
+      "items": "#184,#185,owner waits",
+      "result": "OpenCode no substantive update; owner-set deadline 2026-11-02 11:45 UTC not reached. Owner-copy and second-review waits not stale; no repeated prompts."
+    },
+    {
+      "step": 8,
+      "items": "all merge candidates",
+      "result": "Zero merges; #245/#246 Draft, #246 4 unresolved threads and owner DX20; non-Draft candidates BEHIND or missing findings/independent acceptance; no bypass, auto-merge or merge attempts."
+    },
+    {
+      "step": 9,
+      "items": "#220 decision comment 6501005762",
+      "result": "Class I queue unchanged; no new owner decisions; PR224 token-bearing workflow not owner-ready, production hold unchanged."
+    },
+    {
+      "step": 10,
+      "items": "state/index.json and run output",
+      "result": "Compact index updated under 10k; no issue-comment churn because no material delta; event appended once and lease release next."
+    }
+  ],
+  "actions": [
+    {
+      "type": "state_index_update",
+      "path": "state/index.json",
+      "content_sha": "cb2cb1f8e50ee2e9276d19604909915cac3cb6f8"
+    }
+  ],
+  "merges": [],
+  "threads_resolved": [],
+  "new_agent_asks": [],
+  "new_codex_answers_verbatim": [],
+  "write_failures": [],
+  "production_safety": "Migration 0057 issue #214 hold intact; no production execution, deployment, token, workflow or ruleset changes.",
+  "no_merge_six_hour_report": "Not required: last merge #243 at 2026-10-31T06:12:38Z, less than six hours ago."
+}
