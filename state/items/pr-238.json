@@ -5,8 +5,8 @@
   "head_sha": "51c28dff891ea0d9adaf6a65e9f2ccaa3ec37b0f",
   "tier": 1,
   "tier_reason": "tests-only CI regression fix",
-  "updated_at": "2026-10-31T06:06:07.374Z",
-  "ci": "backend/frontend SUCCESS exact 51c28dff after failed-jobs rerun (backend 05:45:45 UTC); branch 1 behind main",
+  "updated_at": "2026-10-31T06:09:16.290Z",
+  "ci": "backend/frontend SUCCESS exact 51c28dff after same-head rerun; flaky FK-index test tracked in issue #244; branch 1 behind main",
   "open_threads": 0,
   "findings": [
     {
@@ -22,7 +22,7 @@
   "fix_review_cycles": 0,
   "stale_level": 0,
   "queued": false,
-  "next_gate": "Draft + behind main; refresh only when same-cycle merge eligible, then exact-head CI and Codex Tier1 review",
+  "next_gate": "Draft, behind main; issue #244 separate nonblocking flaky-test investigation, refresh when eligible, then CI/Codex",
   "last_prompt": {
     "agent": "CI",
     "sha": "51c28dff891ea0d9adaf6a65e9f2ccaa3ec37b0f",
@@ -30,5 +30,5 @@
     "time": "2026-10-31T05:01:00Z",
     "ask": "one failed-jobs rerun requested"
   },
-  "notes": "One-file tests/deployment/test_opencode_sandbox.py patch cannot touch failing FK migration test. No test skipped or weakened.; FULL 10:05 GST: FK-index CI KeyError cleared on permitted rerun; no code change or skipped test; no Codex review while behind."
+  "notes": "One-file tests/deployment/test_opencode_sandbox.py patch cannot touch failing FK migration test. No test skipped or weakened.; FULL 10:05 GST: FK-index CI KeyError cleared on permitted rerun; no code change or skipped test; no Codex review while behind.; FULL 10:09 GST: separate issue #244 created for intermittent FK-index KeyError; PR evidence comment 6539911684."
 }
