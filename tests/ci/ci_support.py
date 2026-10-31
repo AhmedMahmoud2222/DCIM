@@ -213,6 +213,7 @@ def pin_cases():
         ("with block added", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, extra="        with:\n          x: 1\n"))], False),
         ("crlf", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("\n", "\r\n"))], False),
         ("ci.yml is excluded", [pin_change(".github/workflows/ci.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("refresh-branch.yml is excluded", [pin_change(".github/workflows/refresh-branch.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("deploy.yml is excluded", [pin_change(".github/workflows/deploy.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("nested workflow path", [pin_change(".github/workflows/sub/x.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("non-yml workflow file", [pin_change(".github/workflows/x.txt", pin_yml(PIN_A), pin_yml(PIN_B))], False),

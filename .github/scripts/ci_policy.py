@@ -171,8 +171,13 @@ _POLICY_JSON = re.compile(rf'^([ \t]*"review_action":[ \t]*"{_ACTION})@{_PIN}"(,
 _ADAPTER = re.compile(rf"^(ACTION = '{_ACTION})@{_PIN}'$")
 
 WORKFLOW_DIR = ".github/workflows/"
-# Workflows whose pins stay full: the CI controls themselves and the deployment.
-PIN_EXCLUDED = (".github/workflows/ci.yml", ".github/workflows/deploy.yml")
+# Workflows whose pins stay full: the CI controls themselves, the deployment, and the workflow
+# that holds REFRESH_PAT, a token with write rights to PR branches.
+PIN_EXCLUDED = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/deploy.yml",
+    ".github/workflows/refresh-branch.yml",
+)
 PIN_POLICY_JSON = ".github/acceptance/policy.json"
 PIN_ADAPTER = ".github/scripts/orchestration_claude_adapter.py"
 PIN_MAX_BYTES = 512 * 1024

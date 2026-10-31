@@ -49,7 +49,10 @@ POLICY_MUTANTS = (
 PIN_MUTANTS = (
     ('if change.get("status") != "M" or change.get("old_mode")', 'if change.get("old_mode")'),
     ('len(old) > PIN_MAX_BYTES or len(new) > PIN_MAX_BYTES or old == new', 'len(old) > PIN_MAX_BYTES'),
-    ('PIN_EXCLUDED = (".github/workflows/ci.yml", ".github/workflows/deploy.yml")', "PIN_EXCLUDED = ()"),
+    ('    ".github/workflows/ci.yml",\n    ".github/workflows/deploy.yml",\n    ".github/workflows/refresh-branch.yml",\n', ""),
+    ('    ".github/workflows/refresh-branch.yml",\n', ""),
+    ('    ".github/workflows/deploy.yml",\n', ""),
+    ('    ".github/workflows/ci.yml",\n', ""),
     ('_PIN = r"[0-9a-f]{40}"', '_PIN = r"[0-9a-z]{1,40}"'),
     ("if before is None or before != after:", "if before is None:"),
     ("if not changes or len(changes) > 20:", "if len(changes) > 20:"),
