@@ -1,0 +1,41 @@
+{
+  "run_id": "full-20261031T030140Z-v15",
+  "at": "2026-10-31T03:10:01.264Z",
+  "new_main_failure": {
+    "issue": 235,
+    "url": "https://github.com/AhmedMahmoud2222/DCIM/issues/235",
+    "main_sha": "42fffb44f62c0803529e986939ecde7f00da6c80",
+    "optional_check": "Deployment tooling regressions",
+    "workflow_run": 41162751767,
+    "job": 124423680603,
+    "exact_test": "test_opencode_sandbox.ProxyBindingTests.test_uninspectable_or_malformed_bodies_are_rejected",
+    "error": "BrokenPipeError: [Errno 32] Broken pipe",
+    "traceback": "tests/deployment/test_opencode_sandbox.py:646 -> assert_blocked -> raw:480 -> http.client._send_output -> send(b'0\\r\\n\\r\\n') -> sock.sendall",
+    "prior_main_runs": [
+      {
+        "id": 41083733684,
+        "result": "success"
+      },
+      {
+        "id": 41073839143,
+        "result": "success"
+      },
+      {
+        "id": 41059584142,
+        "result": "success"
+      }
+    ],
+    "hypothesis": "server early rejection of chunked transfer races client sending terminator, unproven",
+    "claude_comment_id": 6538223733
+  },
+  "failed_write": {
+    "tool": "mcp__GitHub__rerun_workflow_job",
+    "arguments": {
+      "repo_full_name": "AhmedMahmoud2222/DCIM",
+      "job_id": 124423680603
+    },
+    "error": "FORBIDDEN: Error code: FORBIDDEN; Error: GitHub API error 403: {\"message\":\"The workflow run containing this job is already running\",\"documentation_url\":\"https://docs.github.com/rest/actions/workflow-runs#re-run-a-job-from-a-workflow-run\",\"status\":\"403\"}",
+    "utc_time": "2026-10-31T03:09:01.221Z",
+    "retry": "deferred until run completion; immediate retry would reproduce non-transient 403"
+  }
+}
