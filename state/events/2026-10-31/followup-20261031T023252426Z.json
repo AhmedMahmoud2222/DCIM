@@ -1,0 +1,139 @@
+{
+  "run_id": "followup-20261031T023252426Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T02:32:52.426Z",
+  "recorded_at": "2026-10-31T02:33:54.106Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ledger_previous_run_at": "2026-10-31T02:07:30.957Z",
+  "inventory": {
+    "open_prs": 28,
+    "open_issues_excluding_prs": 16,
+    "open_review_threads": 51,
+    "orchestrator_state_prs": 0
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "ruleset": {
+    "id": 23651422,
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "mode": "pull_request"
+      }
+    ],
+    "no_always": true
+  },
+  "delta": {
+    "new_owner_answers": [],
+    "new_head_commits": [],
+    "new_native_reviews": [],
+    "new_prs": [],
+    "merged": [],
+    "resolved_threads": [],
+    "new_agent_results": [],
+    "comments_posted": [],
+    "decision_queue_changed": false
+  },
+  "verification": {
+    "pr_review_threads": "all 28 open PRs read; 51 unresolved, unchanged",
+    "pr_231": {
+      "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
+      "backend": "success",
+      "frontend": "success",
+      "native_review": "absent",
+      "codex_asks": 3
+    },
+    "pr_232": {
+      "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "backend": "success",
+      "frontend": "success",
+      "native_review": "absent",
+      "codex_asks": 3
+    },
+    "pr_233": {
+      "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
+      "backend": "success",
+      "frontend": "success",
+      "native_review": "absent",
+      "codex_asks": 2,
+      "last_ask": "2026-10-31T01:36:39Z",
+      "next_ask_after": "2026-10-31T02:36:39Z"
+    },
+    "pr_224": {
+      "threads_open": 4,
+      "head": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005"
+    },
+    "pr_228": {
+      "threads_open": 11,
+      "owner_DX19": "pending"
+    },
+    "pr_229": {
+      "threads_open": 1,
+      "owner_DX13": "pending",
+      "draft": true
+    },
+    "pr_219": {
+      "threads_open": 12,
+      "frozen": true
+    },
+    "pr_217": {
+      "threads_open": 3
+    },
+    "issue_220": {
+      "new_unmarked_owner_D_or_DX_answers": false
+    }
+  },
+  "merge_gates": {
+    "none_qualified": true,
+    "first_blockers": {
+      "200": "DX13 owner exact-head review and Jules",
+      "224": "four unresolved P2 findings and no accepted Tier2 reviews",
+      "231": "DX13 owner exact-head review",
+      "232": "DX13 owner exact-head review",
+      "233": "missing qualifying native Codex review (2/3 asks) and Jules"
+    }
+  },
+  "production_safety": {
+    "migration_0057_hold_intact": true,
+    "production_execution_requested": false,
+    "production_execution_scheduled": false,
+    "production_execution_approved": false
+  },
+  "actions": [
+    "acquired lease",
+    "read open PR and issue inventories",
+    "read all open PR review threads",
+    "read issue #220 owner comments and decision summary",
+    "verified ruleset and required CI on #231/#232/#233",
+    "verified schedule health",
+    "recorded no change; no merge or thread resolution"
+  ],
+  "write_errors": []
+}
