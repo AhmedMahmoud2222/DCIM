@@ -824,6 +824,9 @@ def scope_mismatches(gate_module) -> list[str]:
             ("scope_errors component pin-only", gate_module.scope_errors("component", [WORKFLOW], pin_good), True),
             ("scope_errors fast, extra path", gate_module.scope_errors("fast", [WORKFLOW, "docs/a.md"], pin_good), True),
             ("scope_errors fast, no changes", gate_module.scope_errors("fast", [WORKFLOW], None), True),
+            ("scope_errors fast, heredoc comment injection",
+             gate_module.scope_errors("fast", [WORKFLOW], [pin_change(
+                 WORKFLOW, heredoc_yml(PIN_A, "# v4"), heredoc_yml(PIN_A, "# $(echo INJECTED >&2)"))]), True),
             ("scope_errors fast, wrong changes", gate_module.scope_errors("fast", [".github/workflows/other.yml"], pin_good), True),
             ("scope_errors fast, bad pin", gate_module.scope_errors("fast", [WORKFLOW], pin_bad), True),
         )
