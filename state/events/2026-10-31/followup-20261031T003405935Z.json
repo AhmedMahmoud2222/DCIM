@@ -1,0 +1,168 @@
+{
+  "run_id": "followup-20261031T003405935Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T00:34:05.935Z",
+  "recorded_at": "2026-10-31T00:38:56.362Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "ledger_previous_at": "2026-10-31T00:05:23.920Z",
+  "new_owner_decisions": [],
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "hash_changed": false,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "mode": "pull_request"
+      }
+    ],
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "threads_required": true
+  },
+  "inventory": {
+    "open_product_prs": 28,
+    "open_issues": 16,
+    "open_review_threads": 51,
+    "state_branch_open_prs": 0
+  },
+  "actions": [
+    {
+      "type": "lease_acquire",
+      "path": "state/lease.json",
+      "commit": "d7de06e9220b90e27153c7b80f9d5cf9e092afb6",
+      "at": "2026-10-31T00:34:05.935Z"
+    },
+    {
+      "type": "ci_verification",
+      "pr": 233,
+      "head": "6088cebdda47a797ac1c87744e2f3a7508419130",
+      "python314_retry_check_id": 124367878437,
+      "python314_conclusion": "success",
+      "completed_at": "2026-10-31T00:24:22Z",
+      "backend_check_id": 124383950793,
+      "backend": "success",
+      "frontend_check_id": 124367910763,
+      "frontend": "success",
+      "prior_deadlock_issue": 226
+    },
+    {
+      "type": "upstream_pin_verification",
+      "pr": 233,
+      "tag": "actions/checkout@v7.0.1",
+      "tag_sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "matches_diff": true,
+      "head_verified": true
+    },
+    {
+      "type": "issue_comment",
+      "pr": 231,
+      "id": 6536596563,
+      "at": "2026-10-31T00:36:10.354Z",
+      "agent": "Codex",
+      "ask": "second native Tier0 exact-head review",
+      "head": "f0a3f8bc1c235673094239cd0e119041b075b07d",
+      "result": "generic clean receipt 6536610346, no native review"
+    },
+    {
+      "type": "issue_comment",
+      "pr": 232,
+      "id": 6536597099,
+      "at": "2026-10-31T00:36:12.547Z",
+      "agent": "Codex",
+      "ask": "second native Tier0 exact-head review",
+      "head": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "result": "generic clean receipt 6536611093, no native review"
+    },
+    {
+      "type": "issue_comment",
+      "pr": 233,
+      "id": 6536597692,
+      "at": "2026-10-31T00:36:15.344Z",
+      "agent": "Codex",
+      "ask": "first native Tier2 exact-head review after green rerun",
+      "head": "6088cebdda47a797ac1c87744e2f3a7508419130",
+      "result": "generic clean receipt 6536616806, no native review"
+    },
+    {
+      "type": "issue_comment",
+      "pr": 229,
+      "id": 6536612942,
+      "at": "2026-10-31T00:37:29.884Z",
+      "agent": "Codex",
+      "ask": "second scoped native Tier1 exact-head P2 waiter-cleanup review",
+      "head": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "result": "awaiting native review or receipt"
+    },
+    {
+      "type": "issue_comment_update",
+      "issue": 220,
+      "id": 6501005762,
+      "at": "2026-10-31T00:38:38.617Z",
+      "purpose": "owner decision queue current summary; original D1-D15 preserved in archived event"
+    },
+    {
+      "type": "issue_comment_update",
+      "issue": 220,
+      "id": 6500987889,
+      "at": "2026-10-31T00:37:51.018Z",
+      "purpose": "human ledger current-state summary"
+    },
+    {
+      "type": "ledger_update",
+      "branch": "orchestrator-state",
+      "path": "state/ledger.json",
+      "commit": "4d8ed030dd010bc596b0699040e1a8a5164cc026",
+      "at": "2026-10-31T00:38:20.849Z"
+    }
+  ],
+  "failed_write_calls": [],
+  "merge_count": 0,
+  "resolved_thread_count": 0,
+  "review_accepted_count": 0,
+  "waiting": {
+    "Codex": "#229 second ask awaiting result; #231 and #232 second generic receipts, #233 first generic receipt; no native exact-head acceptance",
+    "OpenCode": "#184/#185 owner D6 deadline 2026-11-02T11:45:39Z",
+    "Ahmed": "DX13 #224/#200/#230; DX19 #228/#219; DX18 #226; owner-run Jules after qualifying Tier2 review"
+  },
+  "blocked": {
+    "200": "native review cap exhausted, DX13 + Jules",
+    "216": "behind main, Tier2 review missing",
+    "217": "3 open threads and behind main",
+    "219": "D5 freeze, 12 threads",
+    "224": "4 P2 threads, native review cap exhausted, DX13 + Jules",
+    "228": "11 open spec threads, DX17 cap, DX19",
+    "229": "Draft, 1 P2 thread, native acceptance missing",
+    "230": "Draft, native review cap exhausted, DX13",
+    "231": "native exact-head review missing (2/3)",
+    "232": "native exact-head review missing (2/3)",
+    "233": "native exact-head review missing (1/3), Jules later"
+  },
+  "production_migration_0057_hold_intact": true,
+  "production_actions": [],
+  "schedule_health": "FULL and FOLLOW-UP schedules previously verified enabled in last FULL; not modified this run",
+  "summary": "No merges or thread resolutions. #233 Python 3.14 same-head rerun passed, required CI green; four scoped Codex review asks posted; all but #229 returned generic receipts, no qualifying native review. No new owner decisions. All bypass actors pull_request; Migration 0057 hold intact."
+}
