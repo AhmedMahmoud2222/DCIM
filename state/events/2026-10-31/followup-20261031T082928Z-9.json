@@ -1,0 +1,34 @@
+{
+  "run_id": "followup-20261031T082928Z-9",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T08:29:28Z",
+  "completed_at": "2026-10-31T08:31:00Z",
+  "main_sha": "11f46a2bd08e3c8d059497b437579440a93658d5",
+  "steps": [
+    "0 | prior FULL lease released, FOLLOW-UP lease acquired by SHA-constrained update; operating policy and changelog read; policy hash matches index; ruleset 23651422 has six pull_request bypass actors, none always; last FULL schedules both enabled.",
+    "1 | live 27 open PRs and 22 non-PR open issues; no head/comment updates on product PRs since 08:07 FULL; new exact-head CI PR224 Python 3.12 backend suite SUCCESS at 08:28:10Z; Python 3.13/3.14 and required backend still in_progress; frontend SUCCESS.",
+    "2 | PR224 exact-head 6cf42b08, active workflow v3 vs proposed v4 remain unchanged per last FULL and no new commits; PR246 exact-head ad75c9e0 and four evidence replies; PR245 exact-head 79a8d8cc and green checks. No new fixed claims accepted.",
+    "4 | 56 unresolved threads carried from last FULL; checked PR224 four P2 and PR246 four P2 full reply chains, no new comments or independent per-thread confirmation; zero resolved.",
+    "4a | cumulative PR224 P2/F1-F8, PR246 four P2, PR245 flaky witness, PR200/233 Minor findings remain tracked; no checklist finding silently dropped.",
+    "5 | PR224 owner copy of proposed workflow still pending; new required backend not green; no eligible refresh or Codex ask. PR245 remains Draft pending reproducibility witness; PR246 remains Draft pending explicit thread dispositions and DX20 second review.",
+    "7 | OpenCode issues 184/185 retain owner 2026-11-02T11:45:39Z deadline, already stalled; no premature reassignment. No repeated agent ask within 60 minutes.",
+    "8 | no PR passes all gates; no merge. PR224 backend pending, owner copy, open P2, class I authorization; PR246 four threads/Draft; PR245 Draft/verification; other non-drafts behind or blocked. Bypass modes all pull_request.",
+    "9 | no new owner D/DX answer after prior FULL; DX20 existing, decision queue unchanged, no new class I action authorized.",
+    "10 | compact index and PR224 item updated, no new human comment required for minor CI progress; no merges/resolutions, no policy amendment, no production activity. Migration 0057 staging and written owner+DBA approval hold intact."
+  ],
+  "actions": [
+    {
+      "type": "state_update",
+      "paths": [
+        "state/items/pr-224.json",
+        "state/index.json"
+      ]
+    }
+  ],
+  "write_failures": [],
+  "limitations": [
+    "Read-only live delta scoped to changed/awaiting items; did not repeat exhaustive all-PR review-thread chains because all PR heads and conversation updated_at values were unchanged since 08:07 FULL.",
+    "Exact-head 3.12 CI success is not required backend completion; no acceptance inferred.",
+    "No new owner comment or decision was made this run."
+  ]
+}
