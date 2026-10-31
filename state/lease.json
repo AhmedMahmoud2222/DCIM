@@ -1,9 +1,7 @@
 {
-  "run_id": "full-20261031T080247204Z-11",
-  "mode": "FULL",
-  "started_at": "2026-10-31T08:02:47.204Z",
-  "expires_at": "2026-10-31T08:27:47.204Z",
-  "status": "released",
-  "event_path": "state/events/2026-10-31/full-20261031T080247204Z-11.json",
-  "released_at": "2026-10-31T08:09:42.442Z"
+  "run_id": "followup-20261031T082928Z-9",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T08:29:28Z",
+  "expires_at": "2026-10-31T08:54:28Z",
+  "status": "active"
 }
