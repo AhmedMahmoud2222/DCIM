@@ -233,9 +233,12 @@ def _mask(value):
 
 
 class _StrictLoader(yaml.SafeLoader if yaml is not None else object):
-    """SafeLoader for comparing workflows. GitHub reads every mapping key as a string, so this
-    loader does too (PyYAML would turn `on` into True and `1` into an integer, and True == 1
-    would drop a value). It rejects duplicate keys, non-scalar keys, anchors and aliases."""
+    """SafeLoader that only composes nodes. It rejects anchors, aliases and explicit tags.
+
+    Nodes are never constructed into Python objects. PyYAML resolves YAML 1.1 scalars (`on` is
+    True, `012` is 10) and lets equal keys overwrite each other; GitHub does neither. Comparing
+    the raw scalar texts, styles and order closes that parser differential.
+    """
 
     def compose_node(self, parent, index):
         if self.check_event(yaml.AliasEvent):
@@ -243,37 +246,60 @@ class _StrictLoader(yaml.SafeLoader if yaml is not None else object):
         event = self.peek_event()
         if getattr(event, "anchor", None) is not None:
             raise ValueError("YAML anchor")
+        if getattr(event, "tag", None) is not None:
+            raise ValueError("YAML tag")
         return super().compose_node(parent, index)
 
-    def construct_mapping(self, node, deep=False):
-        mapping = {}
-        for key_node, value_node in node.value:
-            if not isinstance(key_node, yaml.ScalarNode):
-                raise ValueError("YAML key is not a scalar")
-            key = key_node.value
-            if key in mapping:
-                raise ValueError("duplicate YAML key")
-            mapping[key] = self.construct_object(value_node, deep=True)
-        return mapping
+
+def _canon(node, masked=frozenset()):
+    """A tuple of every raw scalar text, style and order in a node tree. Raise on any doubt."""
+    if isinstance(node, yaml.ScalarNode):
+        value = _mask(node.value) if node in masked else node.value
+        return ("scalar", node.style, value)
+    if isinstance(node, yaml.SequenceNode):
+        return ("seq", node.flow_style, tuple(_canon(item, masked) for item in node.value))
+    if isinstance(node, yaml.MappingNode):
+        names = []
+        for key, _ in node.value:
+            if not isinstance(key, yaml.ScalarNode) or key.value == "<<":
+                raise ValueError("unsupported YAML key")
+            names.append(key.value)
+        # Raw texts, before any constructor: `on` and `1`, or `Run` and `run`, never collide silently.
+        if len(names) != len(set(names)) or len(names) != len({name.casefold() for name in names}):
+            raise ValueError("duplicate YAML key")
+        return ("map", node.flow_style, tuple((_canon(key), _canon(value, masked)) for key, value in node.value))
+    raise ValueError("unknown YAML node")
+
+
+def _mapping_items(node):
+    return node.value if isinstance(node, yaml.MappingNode) else []
+
+
+def _uses_nodes(root) -> set:
+    """The scalar nodes of every job-level and step-level `uses` value."""
+    jobs = [value for key, value in _mapping_items(root) if getattr(key, "value", None) == "jobs"]
+    if len(jobs) != 1 or not isinstance(jobs[0], yaml.MappingNode):
+        raise ValueError("no jobs mapping")
+    found = set()
+    for _, job in jobs[0].value:
+        for key, value in _mapping_items(job):
+            if key.value == "uses" and isinstance(value, yaml.ScalarNode):
+                found.add(value)
+            elif key.value == "steps" and isinstance(value, yaml.SequenceNode):
+                for step in value.value:
+                    for step_key, step_value in _mapping_items(step):
+                        if step_key.value == "uses" and isinstance(step_value, yaml.ScalarNode):
+                            found.add(step_value)
+    return found
 
 
 def _workflow_structure(text: str):
     if yaml is None:
         return None
-    data = yaml.load(text, Loader=_StrictLoader)  # noqa: S506 - the strict SafeLoader above
-    if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict):
+    root = yaml.compose(text, Loader=_StrictLoader)  # noqa: S506 - composes nodes only, constructs nothing
+    if root is None:
         return None
-    for job in data["jobs"].values():
-        if not isinstance(job, dict):
-            continue
-        if "uses" in job:
-            job["uses"] = _mask(job["uses"])
-        steps = job.get("steps")
-        if isinstance(steps, list):
-            for step in steps:
-                if isinstance(step, dict) and "uses" in step:
-                    step["uses"] = _mask(step["uses"])
-    return data
+    return _canon(root, _uses_nodes(root))
 
 
 def _no_duplicates(pairs):
