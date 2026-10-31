@@ -1,0 +1,21 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 117,
+  "head_sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
+  "tier": 2,
+  "tier_reason": "Diff changes two live .github/workflows files (ci.yml and deploy-tools-test.yml), even though changes are version comments; workflow-file path is Tier 2",
+  "state": "open",
+  "updated_at": "2026-10-31T07:13:30.328Z",
+  "ci": "backend/frontend SUCCESS at old head, but 145 commits behind current main",
+  "open_threads": 0,
+  "findings": [],
+  "qualifying_review": "not established at exact head; Tier2 second review also required",
+  "asks_per_sha": {},
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "blocker_class": "verification / supersession",
+  "next_gate": "Historical/supersession file-by-file comparison against main, verify unique version comments; Codex, second reviewer and current-branch CI before any merge; do not treat as Tier0",
+  "notes": "2026-10-31 FULL: first-pass patch inspected: only workflow pin-version comments in ci.yml and deploy-tools-test.yml; both paths exist on main with different blobs, cannot conclude superseded; no closure. 145 commits behind main."
+}
