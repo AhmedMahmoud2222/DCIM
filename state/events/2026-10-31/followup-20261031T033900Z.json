@@ -1,0 +1,19 @@
+{
+  "run_id": "followup-20261031T033900Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T03:39:00Z",
+  "result": "partial_read_only",
+  "actions": [
+    "acquired lease",
+    "read policy, changelog, ledger",
+    "listed open PRs",
+    "checked issue 220 owner comments"
+  ],
+  "merges": 0,
+  "thread_resolutions": 0,
+  "comments": 0,
+  "limitations": [
+    "full delta review and exact-head gates not completed; no merges attempted"
+  ],
+  "production_hold": "preserved"
+}
