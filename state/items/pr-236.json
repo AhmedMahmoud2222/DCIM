@@ -1,0 +1,45 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 236,
+  "head_sha": "132f29e5449cf169158f09dd73fa82fbb7b8c17e",
+  "tier": 2,
+  "tier_reason": "concurrency and transaction lock ordering in cooling.py",
+  "updated_at": "2026-10-31T05:08:27.288Z",
+  "ci": "new-head CI started; backend/frontend not yet completed; branch 1 behind new main",
+  "open_threads": 0,
+  "findings": [
+    {
+      "id": "P2-236-1",
+      "severity": "P2",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/236",
+      "required": "Correlate lock waiter to tested request and actual blocker PID",
+      "status": "Open - candidate fixed at 132f29e; independent re-review pending",
+      "evidence": "_wait_for_lock_waiter now filters datname, pg_blocking_pids, retire/relating PID"
+    },
+    {
+      "id": "P2-236-2",
+      "severity": "P2",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/236",
+      "required": "Cancel and await all request tasks on exceptional exit",
+      "status": "Open - candidate fixed at 132f29e; independent re-review pending",
+      "evidence": "_cancel_and_join in outer finally before client teardown; relationship rollback"
+    }
+  ],
+  "qualifying_review": "Codex P2 findings at c3324e4; not accepted",
+  "asks_per_sha": {
+    "c3324e4182095b6350daf5773ac48b9e00c0d226": 1
+  },
+  "fix_review_cycles": 1,
+  "stale_level": 0,
+  "queued": false,
+  "next_gate": "new-head required CI green, branch refresh when ready, scoped Codex re-review, Tier2 second review, mark ready",
+  "last_prompt": {
+    "agent": "Claude",
+    "sha": "c3324e4182095b6350daf5773ac48b9e00c0d226",
+    "comment_id": 6539366666,
+    "time": "2026-10-31T05:06:11Z",
+    "ask": "two P2 test harness findings; completion report delivered"
+  },
+  "notes": "Claude one API-signed push to 132f29e, report on PR; candidate fixes verified from patch, no tests claimed. Issue #226."
+}
