@@ -2,12 +2,12 @@
   "schema_version": 16,
   "type": "pr",
   "number": 243,
-  "head_sha": "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa",
+  "head_sha": "4d9836b5455c45669b423f914d108be71c349190",
   "tier": 0,
   "tier_reason": "one new docs-only architecture specification, no code/config/workflow/permission changes",
   "state": "draft",
-  "updated_at": "2026-10-31T05:30:00Z",
-  "ci": "backend/frontend SUCCESS on exact head (docs-only CI route); optional Compose smoke in progress",
+  "updated_at": "2026-10-31T06:06:07.374Z",
+  "ci": "backend/frontend SUCCESS exact 4d9836b5; docs-only routing, optional Compose smoke SUCCESS; claude-review optional bot rejection",
   "open_threads": 2,
   "findings": [
     {
@@ -15,37 +15,38 @@
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/243#discussion_r4430659024",
       "severity": "P2",
       "required": "Reconcile unconditional INV-N2 rollback refusal with N+1 written but checkpoint N crash window; add exact crash-and-restore FA test",
-      "status": "Open",
-      "evidence": "At 590b0fed, INV-S5 permits checkpoint lag by one; restoring signed N matches checkpoint N and INV-S4 accepts it."
+      "status": "Open - candidate fixed at 4d9836b5; independent Codex re-review pending",
+      "evidence": "INV-S5/S6/N2 explicit checkpoint-lag boundary and FA-28b at 4d9836b5; thread reply 4430763053"
     },
     {
       "id": "P2-243-2",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/243#discussion_r4430659026",
       "severity": "P2",
       "required": "Define restart recovery after ambiguous PUT without guaranteed pre-write journal/mutation_id; update FA-04a/b and T4 recovery",
-      "status": "Open",
-      "evidence": "At 590b0fed, INV-A2 requires mutation_id and pre-write journal, but INV-A3 assumes cross-run classification without persisting intent."
+      "status": "Open - candidate fixed at 4d9836b5; independent Codex re-review pending",
+      "evidence": "INV-A2/A3/D1/T4r state-based restart recovery, FA-04c at 4d9836b5; thread reply 4430763182"
     }
   ],
-  "qualifying_review": "Codex COMMENTED exact-head review 590b0fed with two P2 findings; NOT accepted",
+  "qualifying_review": "Codex first review 590b0fed with two P2; new exact-head 4d9836b5 scoped review requested 2026-10-31 06:05 UTC, pending",
   "asks_per_sha": {
-    "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa": 1
+    "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa": 1,
+    "4d9836b5455c45669b423f914d108be71c349190": 1
   },
-  "fix_review_cycles": 1,
+  "fix_review_cycles": 2,
   "stale_level": 0,
   "queued": false,
   "signature": {
-    "verified": false,
-    "reason": "unsigned",
+    "verified": true,
+    "reason": "valid",
     "required": false
   },
-  "next_gate": "Claude two-P2 fix and completion report; new SHA exact-head CI green, scoped Codex re-review, resolve threads with evidence, mark ready; no class I anchor selection",
+  "next_gate": "Codex confirm both P2 on exact head, evidence-based thread resolution, mark Draft ready; owner DX20 not needed for Tier0; no POST activation",
   "last_prompt": {
-    "agent": "Claude",
-    "sha": "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa",
-    "comment_id": 6539588691,
-    "time": "2026-10-31T05:30:00Z",
-    "ask": "two cumulative P2 contradictions, one coherent docs-only push and completion report"
+    "agent": "Codex",
+    "sha": "4d9836b5455c45669b423f914d108be71c349190",
+    "comment_id": 6539872416,
+    "time": "2026-10-31T06:06:07.374Z",
+    "ask": "exact-head scoped re-review of both cumulative P2 findings"
   },
-  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held. 09:30 GST FOLLOW-UP: two new P2 threads from Codex verified in file and sent in full to Claude; no thread resolved."
+  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held. 09:30 GST FOLLOW-UP: two new P2 threads from Codex verified in file and sent in full to Claude; no thread resolved.; FULL 10:05 GST: Claude one docs-only signed fix push 4d9836b5, exact-head CI green, two evidence replies posted, Codex re-review requested; D-8/D-11 unresolved."
 }
