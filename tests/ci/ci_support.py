@@ -748,7 +748,7 @@ def shard_errors(jobs: dict) -> list[str]:
         if step.get("continue-on-error") and "clamav-daemon" not in step.get("run", ""):
             errors.append(f"{SHARD_JOB} step {step.get('name')!r} is continue-on-error")
     unconditional = " ".join(executable(step.get("run", "")) for step in steps if "if" not in step)
-    for command in ("alembic upgrade head", 'pytest -q "${files[@]}"'):
+    for command in ("alembic upgrade head", "scripts/bootstrap_privileged_roles.sql", 'pytest -q "${files[@]}"'):
         if command not in unconditional:
             errors.append(f"{SHARD_JOB} does not run {command!r} in every shard")
     return errors

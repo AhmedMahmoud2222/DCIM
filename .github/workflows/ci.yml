@@ -679,7 +679,8 @@ jobs:
           alembic upgrade head
           test "$(alembic heads | wc -l)" -eq 1
       - name: Bootstrap privileged retention role
-        if: matrix.shard == 0
+        # Every shard needs it: tests/integration/test_db_constraints.py and others in the
+        # regression selection use the role, not only the retention hostile file.
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
       - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"

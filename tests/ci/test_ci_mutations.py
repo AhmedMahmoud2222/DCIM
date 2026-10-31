@@ -234,6 +234,8 @@ WORKFLOW_MUTANTS = {
     "shard tests replaced with echo": _edit_run("backend-runtime-shards", "ci_shard.py", 'pytest -q "${files[@]}"', "echo skipped"),
     "migrations only on shard 0": lambda doc: _step(doc, "backend-runtime-shards", "alembic upgrade head").__setitem__(
         "if", "matrix.shard == 0"),
+    "privileged role bootstrapped only on shard 0": lambda doc: _step(
+        doc, "backend-runtime-shards", "bootstrap_privileged_roles.sql").__setitem__("if", "matrix.shard == 0"),
     "preload dropped": _edit_run("backend-runtime-shards", "ci_shard.py", " \\\n  --preload tests/unit/test_catalog_apply_conversion.py", ""),
     "aggregate ignores the shards": _set_run("backend-runtime-matrix", 'if [ "$SHARDS_RESULT" != success ]; then', "if false; then"),
     "aggregate skips on shard failure": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__(
