@@ -1,0 +1,52 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 246,
+  "head_sha": "25b91596cf484d7302d6ab672616f4e678600841",
+  "tier": 0,
+  "tier_reason": "docs-only new specification file; no workflow, code, permission, secret or token change",
+  "state": "draft",
+  "updated_at": "2026-10-31T06:33:00Z",
+  "ci": "backend and frontend SUCCESS on exact head; full backend suite skipped for docs-only route",
+  "open_threads": 0,
+  "findings": [
+    {
+      "id": "C-PRE-2",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540045716",
+      "severity": "preflight",
+      "required": "Q3a consistent epoch/snapshot or fail closed; late insertion race",
+      "status": "Fixed at 25b91596cf484d7302d6ab672616f4e678600841 (pending independent review)",
+      "evidence": "Q3a, SC-7 and FC-59(b,b2,b3) present in 229-line exact Claude patch; no runtime verification"
+    },
+    {
+      "id": "C-PRE-3",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540045716",
+      "severity": "preflight",
+      "required": "5xx Retry-After with quota remaining classified transient not exhausted",
+      "status": "Fixed at 25b91596cf484d7302d6ab672616f4e678600841 (pending independent review)",
+      "evidence": "Section 6, ERR-4 and FC-50 distinguish 429/quota 0 from 5xx hints"
+    }
+  ],
+  "qualifying_review": "none; Codex native review running at exact SHA",
+  "asks_per_sha": {
+    "25b91596cf484d7302d6ab672616f4e678600841": 1
+  },
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "signature": {
+    "verified": false,
+    "reason": "unverified; verify next run",
+    "required": false
+  },
+  "next_gate": "Codex exact-head native acceptance; DX20 owner-run second specification review; D-3/D-4/D-5/D-7 owner values; Draft; preserve #219/#228 threads",
+  "last_prompt": {
+    "agent": "Codex",
+    "sha": "25b91596cf484d7302d6ab672616f4e678600841",
+    "comment_id": 6540122401,
+    "time": "2026-10-31T06:32:00Z",
+    "ask": "D5 Document C scoped review"
+  },
+  "linked_issue": 220,
+  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action."
+}
