@@ -84,6 +84,96 @@ async def test_retiring_a_unit_races_with_adding_a_zone_relationship(client, wor
     assert {retire.status_code, related.status_code} <= {200, 201, 409, 422}
 
 
+async def _wait_for_lock_waiter(monitor, query_like: str, timeout: float = 15.0) -> None:
+    """Poll (on an autocommit connection, so pg_stat_activity is never a stale snapshot) until some backend whose
+    current statement matches `query_like` is blocked on a heavyweight lock."""
+    sql = text("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE :q AND pid <> pg_backend_pid()")
+
+    async def _poll():
+        while (await monitor.execute(sql, {"q": query_like})).scalar_one() == 0:
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(_poll(), timeout)
+
+
+@pytest.fixture
+async def monitor():
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    engine = create_async_engine(TEST_DATABASE_URL, isolation_level="AUTOCOMMIT")
+    async with engine.connect() as conn:
+        yield conn
+    await engine.dispose()
+
+
+async def test_retire_holding_its_locks_while_a_relationship_insert_is_blocked_never_deadlocks(client, world, monitor, monkeypatch):
+    """Issue #226, forced interleaving A: the retire has taken every lock it needs before the relationship INSERT starts, and
+    the INSERT is then provably blocked on one of them. With the old order (cooling_unit before managed_asset) the INSERT
+    held a managed_asset share lock and waited on cooling_unit while the retire waited on managed_asset: 40P01."""
+    from app.api.v1 import cooling
+
+    unit = await make_unit(client, world["admin"], world["site"])
+    await activate(client, world["admin"], unit["id"])
+    zone = await make_zone(client, world["admin"], world["room"])
+    locked, proceed = asyncio.Event(), asyncio.Event()
+    real_lock = cooling.lock_versioned_row
+
+    async def gated_lock(*args, **kwargs):
+        row = await real_lock(*args, **kwargs)  # whichever lock the retire takes last is held when this fires
+        locked.set()
+        await proceed.wait()
+        return row
+
+    monkeypatch.setattr(cooling, "lock_versioned_row", gated_lock)
+    async with concurrent_client() as c:
+        retire_task = asyncio.create_task(c.post(f"{C}/units/{unit['id']}/retire", headers={**world["admin"], "If-Match": "1"}))
+        try:
+            await asyncio.wait_for(locked.wait(), 15)
+            relate_task = asyncio.create_task(
+                c.post(f"{C}/relations", json={"cooling_unit_id": unit["id"], "thermal_zone_id": zone["id"], "relation_kind": "serves"}, headers=world["admin"])
+            )
+            await _wait_for_lock_waiter(monitor, "INSERT INTO cooling_unit_zone%")
+        finally:
+            proceed.set()
+        retire, related = await asyncio.gather(retire_task, relate_task)
+    assert retire.status_code == 200, retire.text  # no deadlock victim, no 500
+    assert related.status_code == 409, related.text  # the relationship lost cleanly: a retired unit cannot gain one
+    state = (await world["db"].execute(text("SELECT a.lifecycle_status, (SELECT count(*) FROM cooling_unit_zone WHERE cooling_unit_id = a.id) AS relations FROM managed_asset a WHERE a.id = :i"), {"i": unit["id"]})).one()
+    assert state.lifecycle_status in ("decommissioned", "removed") and state.relations == 0
+
+
+async def test_retire_arriving_while_a_relationship_insert_holds_its_locks_is_refused_cleanly(client, world, monitor):
+    """Issue #226, forced interleaving B: an uncommitted relationship INSERT already holds its managed_asset share lock and
+    cooling_unit key-share lock; the retire must queue behind it (no deadlock), then see the committed relationship."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from tests.conftest import TEST_DATABASE_URL
+
+    unit = await make_unit(client, world["admin"], world["site"])
+    await activate(client, world["admin"], unit["id"])
+    zone = await make_zone(client, world["admin"], world["room"])
+    engine = create_async_engine(TEST_DATABASE_URL)
+    try:
+        async with engine.connect() as relating:
+            await relating.execute(
+                text("INSERT INTO cooling_unit_zone (cooling_unit_id, thermal_zone_id, relation_kind) VALUES (:u, :z, 'serves')"), {"u": unit["id"], "z": zone["id"]}
+            )
+            async with concurrent_client() as c:
+                retire_task = asyncio.create_task(c.post(f"{C}/units/{unit['id']}/retire", headers={**world["admin"], "If-Match": "1"}))
+                try:
+                    await _wait_for_lock_waiter(monitor, "%FOR UPDATE%")
+                finally:
+                    await relating.commit()
+                retire = await retire_task
+    finally:
+        await engine.dispose()
+    assert retire.status_code == 409, retire.text
+    state = (await world["db"].execute(text("SELECT a.lifecycle_status, (SELECT count(*) FROM cooling_unit_zone WHERE cooling_unit_id = a.id) AS relations FROM managed_asset a WHERE a.id = :i"), {"i": unit["id"]})).one()
+    assert state.lifecycle_status not in ("decommissioned", "removed") and state.relations == 1
+
+
 async def test_zone_membership_changes_race_cleanly(client, world):
     zone = await make_zone(client, world["admin"], world["room"])
     units = [await make_unit(client, world["admin"], world["site"]) for _ in range(5)]
