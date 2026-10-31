@@ -1,10 +1,18 @@
 # proposed-workflows (drafts only, inactive)
 
-Nothing here runs: GitHub only executes `.github/workflows/`. Nothing is deployed, no
-secrets or variables are configured, PR #224 is not merged. Every draft needs independent
-Codex review and an owner-run Jules Tier 2 review on its exact SHA; only the owner applies it.
+Files in this directory are inert: GitHub only executes `.github/workflows/`. Every draft
+needs independent Codex review and an owner-run Jules Tier 2 review on its exact SHA; only
+the owner applies it.
 
-## PR #224 findings (live `.github/workflows/refresh-branch.yml` @ 480bb19 is UNMODIFIED; all three remain OPEN there)
+**Current state (PR #224 head ad6cdf9):** PR #224 is not merged. `.github/workflows/refresh-branch.yml`
+exists on the PR branch (not on `main`) and contains the v3 content (P2-1..P2-4 candidate fixes),
+so merging the PR activates it. It does not run on this PR because `issue_comment` uses the
+default-branch copy. `proposed-workflows/refresh-branch.yml` is now v4 = v3 + F1 (422 handling)
+and is not yet in the live file; owner copy is pending. The live header comment still carries the
+old "NOT ACTIVE" wording (F2); the v4 header corrects it, so copying v4 fixes it. No secrets or
+variables are configured by this PR.
+
+## PR #224 findings (P2-1..P2-4: candidate fixes are present in the PR-branch workflow; threads stay open until independent confirmation. Column "Draft remedy" describes `proposed-workflows/refresh-branch.yml`)
 
 | # | Finding | Draft remedy (`refresh-branch.yml`) | Status |
 |---|---------|--------------------------------------|--------|
@@ -12,7 +20,9 @@ Codex review and an owner-run Jules Tier 2 review on its exact SHA; only the own
 | 2 | Workflow-level concurrency lets unauthorized comments displace authorized pending runs | `concurrency` moved to job `refresh`, which runs only after `gate` passes | Candidate, untested |
 | 3 | update-branch merges whatever base the PR has | Requires open PR, `base.repo == repo`, `base.ref == main`, `head.repo == repo` | Candidate, untested |
 | 4 | Live 438ed15: `jq -e` on a stream; `null ["x"]` lets the last array authorize (Codex thread r4423421202) | Draft v3 `gate`: `jq -s -e`, requires `length == 1` document, then nonempty array of login strings with exactly one exact match. Malformed, empty, multi-document, duplicate-actor entries deny | Candidate, untested; owner copy pending |
-| - | Claude (earlier comments): header says "DRAFT v1 not reviewed" | Header now says DRAFT v2, inactive | Candidate |
+| F1 | OpenCode: `gh api -X PUT` under `set -e` fails the step on benign 422 (already current / conflict) | v4 captures the PUT; "no new commits" -> exit 0, "merge conflict" -> `::error::` exit 1, other -> print and fail. `expected_head_sha` kept | Must-fix; candidate, untested; owner copy pending |
+| F2 | OpenCode: live header says "NOT ACTIVE"; README said live file unmodified | v4 header and this README describe the current state accurately | Must-fix; candidate; owner copy pending for header |
+| F3-F8 | Duplicate draft, base/state TOCTOU, duplicate-actor diagnostic, runner-minute pre-filter, PR feedback, case-insensitive match | Not changed; tracked in #242 (deferral needs Codex agreement) | Open |
 | - | Race between SHA check and update | Server-side `expected_head_sha` CAS retained; local compare is only a fast-fail | Candidate |
 | - | Noisy red runs on bare `/refresh-branch` | Pre-filter `startsWith('/refresh-branch ')` plus single-line strict regex | Candidate |
 | - | Does PAT push start required CI? | Unproven; script prints the new head to verify manually | Open, needs real run |
