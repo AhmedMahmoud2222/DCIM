@@ -4,7 +4,7 @@
   "number": 244,
   "state": "open",
   "tier": null,
-  "owner": "orchestrator",
+  "owner": "Claude (read-only investigation)",
   "created_at": "2026-10-31T06:09:27.583Z",
   "linked_prs": [
     238
@@ -20,6 +20,12 @@
   },
   "rerun": "same-head failed-jobs attempt 2 SUCCESS; backend and frontend green",
   "main_baseline": "CI 41162751661, 41083732966, 41073838767 all backend-suite SUCCESS",
-  "next_gate": "diagnose PostgreSQL catalog visibility/lock synchronization with repeated evidence, isolate fix if proven; no skipped tests",
-  "notes": "Issue created under CI failure protocol, not a product defect finding; does not block unrelated PR238 after green rerun; no production migrations."
+  "next_gate": "Claude diagnosis/evidence, then determine whether test-only DX12 patch is justified; separate PR normal gates",
+  "notes": "Issue created under CI failure protocol, not a product defect finding; does not block unrelated PR238 after green rerun; no production migrations.",
+  "last_prompt": {
+    "agent": "Claude",
+    "comment_id": 6539926322,
+    "time": "2026-10-31T06:10:20.706Z",
+    "ask": "read-only code evidence and deterministic witness plan, no repo writes"
+  }
 }
