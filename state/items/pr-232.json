@@ -1,0 +1,29 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 232,
+  "head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+  "tier": 2,
+  "tier_reason": "four active .github/workflows files and a token-bearing anthropics action changed; not A5",
+  "updated_at": "2026-10-31T05:08:27.288Z",
+  "ci": "backend/frontend SUCCESS on old exact head; branch now 2 behind main after #239 merge",
+  "open_threads": 0,
+  "findings": [],
+  "qualifying_review": "three clean Codex receipts on old head; no native PR review; A6 fallback needed, plus second Tier2 review",
+  "asks_per_sha": {
+    "2cd4380b930e601716dbd685a57a02ebff74c97f": 3
+  },
+  "fix_review_cycles": 1,
+  "stale_level": 0,
+  "queued": false,
+  "blocker_class": "infrastructure",
+  "next_gate": "Dependabot rebase refused because Claude edited branch; preserve edits, owner Update branch when otherwise ready; then exact-head CI, A6 independent fallback and Tier2 second reviewer",
+  "last_prompt": {
+    "agent": "Dependabot",
+    "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+    "comment_id": 6539326618,
+    "time": "2026-10-31T05:01:57Z",
+    "ask": "rebase; denied edited branch"
+  },
+  "notes": "Upstream annotated v1.0.264 tag dereferences to d70510b174a1244958df0b03166a54912811f3e6. Do not @dependabot recreate; overwrites accepted remediation. Owner branch update only when near merge."
+}
