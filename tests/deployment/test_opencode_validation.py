@@ -252,8 +252,21 @@ class AggregateTests(unittest.TestCase):
         self.assertFalse(broken(lambda r: r.append(copy.deepcopy(r[0])))['passed'])
         self.assertFalse(broken(lambda r: r.append({**r[0], 'id': 'EXTRA'}))['passed'])
         self.assertFalse(broken(lambda r: r.append({'malformed': 'x.json'}))['passed'])
-        self.assertFalse(broken(lambda r: r[0]['identity'].update(run_attempt='2'))['passed'])
+        self.assertFalse(broken(lambda r: r[0]['identity'].update(run_attempt=r[0]['identity']['run_attempt'] + '-other'))['passed'])
         self.assertFalse(broken(lambda r: r[0].update(verdict='MISSED'))['passed'])
+
+    def test_the_attempt_mutation_differs_under_every_runner_attempt(self):
+        for attempt in ('1', '2'):
+            with self.subTest(attempt=attempt), mock.patch.dict(os.environ, {'GITHUB_RUN_ATTEMPT': attempt}):
+                ident = mutants.identity()
+                self.assertEqual(ident['run_attempt'], attempt)
+                control = {**self.control, 'identity': ident}
+                results = [{**r, 'identity': dict(ident)} for r in self.results]
+                self.assertTrue(mutants.aggregate(control, results)['passed'])
+                mutated = copy.deepcopy(results)
+                mutated[0]['identity'].update(run_attempt=ident['run_attempt'] + '-other')
+                self.assertNotEqual(mutated[0]['identity']['run_attempt'], ident['run_attempt'])
+                self.assertFalse(mutants.aggregate(control, mutated)['passed'])
 
     def test_a_failed_or_foreign_control_invalidates_every_verdict(self):
         self.assertFalse(mutants.aggregate({**self.control, 'verdict': 'FAILED'}, self.results)['passed'])
