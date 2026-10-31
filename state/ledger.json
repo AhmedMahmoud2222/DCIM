@@ -2,8 +2,8 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-31T02:06:43.902Z",
-  "last_run_at": "2026-10-31T02:07:30.957Z",
-  "last_run_mode": "FULL",
+  "last_run_at": "2026-10-31T02:34:05.131Z",
+  "last_run_mode": "FOLLOW-UP",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
     "ruleset_id": 23651422,
@@ -50,7 +50,7 @@
       }
     ],
     "classic_protection": "branch summary absent; GET 403, per DX2 ruleset is policy",
-    "last_verified_at": "2026-10-31T02:06:43.902Z",
+    "last_verified_at": "2026-10-31T02:34:05.131Z",
     "last_change": "2026-10-30T06:48:30.897Z: six bypass actors changed from always to pull_request; other merge gates unchanged"
   },
   "agent_capabilities": {
@@ -101,7 +101,7 @@
   },
   "standing_tasks": {
     "T1": "COMPLETE: main@731c2084 64-depth pre-parse linear scanner + adversarial tests, run 40991452249 12/12 success; evidence on #218; no closure/activation",
-    "T2": "FULL 2026-10-31T02:06:43.902Z: issue #220 unmarked owner D/DX answers re-read; none newer than prior run; DX18/DX19 open.",
+    "T2": "FOLLOW-UP 2026-10-31T02:34:05.131Z: issue #220 owner D/DX answers re-read; none new; DX18/DX19 open.",
     "T3": "D5 #219 frozen; #228 3/3 Codex fix-cycle cap STOP; 11 open spec threads; owner DX19 pending.",
     "T4": "COMPLETE one-time request, Claude reported no branch and no PR capability; DX8 closed by T4 rule; AGENTS.md owner-merge-only",
     "T5": "DONE: workflow actor hardening remains pending DX6, exploitability unproven; main workflow SHA unchanged since last targeted review.",
@@ -1349,7 +1349,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2a83ed38b9d9721a633c05efb6f34fdf03e6c5ee",
       "updated_at": "2026-10-30T22:09:15Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_verified_at": "2026-10-30T17:28:01.486Z",
       "review_carryover": {
@@ -1665,7 +1665,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f82d64ecbc206261c957eb425f525bd5a8317cd8",
       "updated_at": "2026-10-29T19:01:54Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "merge_state_status": "behind"
@@ -1771,7 +1771,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "4a1dc8c13f3b6b3d2cbeb3b52f83485d58b183c2",
       "updated_at": "2026-10-30T21:07:02Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z",
       "merge_state_status": "behind"
@@ -1993,7 +1993,7 @@
         "status": "suspected intermittent, not proven",
         "updated_at": "2026-10-30T05:08:17.787Z"
       },
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_verified_at": "2026-10-30T06:27:50.177Z"
     },
@@ -2135,7 +2135,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "e8892327e7c41d8fefcea75f6f3ffd1e3f6cd005",
       "updated_at": "2026-10-30T19:22:14Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "previous_prompt": {
         "agent": "Codex",
@@ -2262,7 +2262,7 @@
       "open_thread_count": 11,
       "tier": 0,
       "tier_verified_by_diff": true,
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_sha": "7b2eb31c06d157a7c4c57c85c697f0438f4a9d12",
       "merge_state": "blocked: 11 unresolved Codex threads; DX17 cap reached; owner DX19 pending",
@@ -2593,7 +2593,7 @@
       "queued": "3/3 Codex asks exhausted; owner DX13 exact-SHA fallback required; Draft and one open P2 Codex thread remain, owner disposition needed before any resolution/merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-      "last_state_verified_at": "2026-10-31T02:07:30.957Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
@@ -2704,7 +2704,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
-        "checked_at": "2026-10-31T01:37:40.511Z"
+        "checked_at": "2026-10-31T02:34:05.131Z"
       },
       "optional_ci": "claude-review failure: known bot-actor infrastructure; not required",
       "merge_state": "BLOCKED: exact-head backend/frontend green, first native Codex review pending; no acceptance",
@@ -2735,7 +2735,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
       "updated_at": "2026-10-31T01:37:28Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_verified_at": "2026-10-31T00:05:23.920Z",
       "review_focus": "Stale inline v5/v6 comments, review for pin/comment consistency.",
@@ -2763,7 +2763,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
-        "checked_at": "2026-10-31T01:37:40.511Z"
+        "checked_at": "2026-10-31T02:34:05.131Z"
       },
       "optional_ci": "Prior real optional deployment-tooling test failures 3/779; three checklist fixes code-verified at exact head; new CI running",
       "merge_state": "BLOCKED: exact-head backend/frontend green, first native Codex review pending; no acceptance",
@@ -2819,7 +2819,7 @@
       "last_qualifying_review_sha": null,
       "last_ci_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
       "updated_at": "2026-10-31T01:38:12Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "previous_head_sha": "4101d441c05df0f15a1f51a3843ea75f2c7d1f6b",
       "changed_files": 6,
@@ -2855,7 +2855,7 @@
         "backend": "success",
         "frontend": "success",
         "exact_head_sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-        "checked_at": "2026-10-31T01:37:40.511Z"
+        "checked_at": "2026-10-31T02:34:05.131Z"
       },
       "optional_ci": "No real optional product failures observed",
       "merge_state": "BLOCKED: required backend not green during Python 3.14 rerun; independent Codex and Jules missing",
@@ -2891,11 +2891,11 @@
       "asks_per_sha": 2,
       "fix_review_cycles": 0,
       "stale_level": 0,
-      "queued": "2/3 native Codex requests yielded generic clean receipts; third allowed only after 60 minutes on same SHA; Tier2 Jules and CI233-1 disposition pending",
+      "queued": "2/3 Codex exact-head requests returned generic clean receipts; native PR review absent. Third ask allowed after 2026-10-31T02:36:39Z, not before; Tier2 Jules later.",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
       "updated_at": "2026-10-31T01:37:46Z",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:34:05.131Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "last_ci_verified_at": "2026-10-31T00:05:23.920Z",
       "review_focus": "Node 24 runner compatibility, credential persistence, token trust boundary.",
@@ -3239,35 +3239,7 @@
       "at": "2026-10-30T22:08:21Z"
     }
   ],
-  "last_actions": [
-    {
-      "item": "PR #231",
-      "agent": "Codex",
-      "action": "third/final Tier0 native exact-head review; 2 prior generic receipts, no native submission",
-      "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
-      "at": "2026-10-31T01:36:32.786Z",
-      "comment_id": 6537261260,
-      "status": "awaiting native review"
-    },
-    {
-      "item": "PR #232",
-      "agent": "Codex",
-      "action": "third/final Tier0 native exact-head review; CI232 coupled pin checklist",
-      "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
-      "at": "2026-10-31T01:36:35.037Z",
-      "comment_id": 6537261683,
-      "status": "awaiting native review"
-    },
-    {
-      "item": "PR #233",
-      "agent": "Codex",
-      "action": "second Tier2 native exact-head review; same-head required CI green, #226 unrelated cooling deadlock",
-      "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
-      "at": "2026-10-31T01:36:37.725Z",
-      "comment_id": 6537262103,
-      "status": "awaiting native review"
-    }
-  ],
+  "last_actions": [],
   "priority_snapshot": {
     "merged_since_previous_run": [],
     "merged_this_run": [],
@@ -3306,78 +3278,12 @@
     "open_issues": 16,
     "open_threads": 51
   },
-  "last_run_summary": "FOLLOW-UP: #231/#232 3/3 native Codex asks exhausted, each returned generic clean receipt but no native PR review; owner DX13 exact-head approvals now needed. #233 second Tier2 ask also generic clean receipt, 2/3. Required CI green on all three heads, no merges or thread resolutions. 28 PRs, 16 issues, 51 open threads; ruleset bypass pull_request, production hold intact.",
-  "last_followup_delta": "Third/final Codex asks #231/#232 returned clean generic issue-comment receipts, no native reviews: DX13 owner fallback queued for exact SHAs. #233 second ask likewise generic receipt; one more allowed after 60m. No merges or thread resolutions.",
+  "last_run_summary": "No new commits, native reviews, owner D/DX decisions, merges, or resolved conversations since the previous ledger timestamp. All 28 open PR review-thread lists re-read: 51 unresolved. Required backend/frontend green on exact heads #231/#232/#233; native Codex reviews still absent. #233 2/3 asks, third request permitted after 02:36:39Z. Both orchestrator schedules enabled; ruleset bypass all pull_request.",
+  "last_followup_delta": "No new commits, native reviews, owner D/DX decisions, merges, or resolved conversations since the previous ledger timestamp. All 28 open PR review-thread lists re-read: 51 unresolved. Required backend/frontend green on exact heads #231/#232/#233; native Codex reviews still absent. #233 2/3 asks, third request permitted after 02:36:39Z. Both orchestrator schedules enabled; ruleset bypass all pull_request.",
   "last_full_delta": "No new owner decisions, commits, native Codex reviews, merges or thread resolutions since 23:32:50Z. Pin integrity checked for #231/#232/#233; #233 backend rerun remains pending. Updated #220 human decision summary.",
-  "last_followup_summary": "FOLLOW-UP: #231/#232 3/3 native Codex asks exhausted, each returned generic clean receipt but no native PR review; owner DX13 exact-head approvals now needed. #233 second Tier2 ask also generic clean receipt, 2/3. Required CI green on all three heads, no merges or thread resolutions. 28 PRs, 16 issues, 51 open threads; ruleset bypass pull_request, production hold intact.",
+  "last_followup_summary": "No new commits, native reviews, owner D/DX decisions, merges, or resolved conversations since the previous ledger timestamp. All 28 open PR review-thread lists re-read: 51 unresolved. Required backend/frontend green on exact heads #231/#232/#233; native Codex reviews still absent. #233 2/3 asks, third request permitted after 02:36:39Z. Both orchestrator schedules enabled; ruleset bypass all pull_request.",
   "last_full_event_path": "state/events/2026-10-31/full-20261031T000202439Z.json",
   "run_notes": [
-    {
-      "run_id": "followup-20261030T162527080Z",
-      "at": "2026-10-30T16:28:13.831Z",
-      "mode": "FOLLOW-UP",
-      "summary": "No material PR/issue delta; checks pending; decision summary compacted and historical body archived; production hold intact"
-    },
-    {
-      "run_id": "full-20261030T165859172Z",
-      "at": "2026-10-30T17:02:20.085Z",
-      "mode": "FULL",
-      "summary": "No merges or thread resolutions. #224 exact-head backend/frontend now green; native Codex Tier 2 review requested. New main@613cb935 Python3.13 authority-lock timeout failed backend; linked #223, requested one failed-job rerun (attempt 2 in progress), asked Claude for DX12 patch-only root-cause analysis. #200 exact-head CI green but owner DX13 acceptance missing. #228 remains 1 commit behind with 7 open threads; owner refresh needed. All six ruleset bypass actors pull_request; production hold intact."
-    },
-    {
-      "run_id": "followup-20261030T172620128Z",
-      "at": "2026-10-30T17:28:01.486Z",
-      "mode": "FOLLOW-UP",
-      "summary": "No merges/new PR heads; #223 patch textual applicability verified, no implementation; main CI rerun pending; review and owner gates unchanged"
-    },
-    {
-      "run_id": "followup-20261030T183243883Z",
-      "at": "2026-10-30T18:34:18.869Z",
-      "mode": "FOLLOW-UP",
-      "summary": "Main CI rerun green; #224 Codex ask 2/3; no merges/resolutions; no owner decision change; migration hold intact"
-    },
-    {
-      "run_id": "followup-20261030T202603463Z",
-      "at": "2026-10-30T20:28:14.664Z",
-      "mode": "FOLLOW-UP",
-      "summary": "No merge, no thread resolution or new owner decision. #229 generic receipt not native; #200/#230 same. All 52 threads checked, required CI green on four tracked heads. Human #220 comments refreshed; initial long update blocked, concise retry succeeded. Production hold intact."
-    },
-    {
-      "run_id": "full-20261030T210412586Z",
-      "at": "2026-10-30T21:08:03.415Z",
-      "mode": "FULL",
-      "summary": "2 P2 threads resolved #217 with exact-head evidence; 3 Codex re-review asks, generic receipts only; #200 Tier 2 correction; ruleset and schedules stable; 0 merges; hold intact."
-    },
-    {
-      "run_id": "followup-20261030T212937879Z",
-      "at": "2026-10-30T21:32:07.749Z",
-      "mode": "FOLLOW-UP",
-      "summary": "No substantive delta; 50 threads unchanged, green required CI on seven priority PRs; corrected four branch-behind counts; hold intact."
-    },
-    {
-      "run_id": "full-20261030T215847947Z",
-      "at": "2026-10-30T22:07:12.387Z",
-      "mode": "FULL",
-      "summary": "3 final Codex review asks #200/#229/#230; 50 threads unchanged; no merges; six bypass modes pull_request; production hold intact."
-    },
-    {
-      "run_id": "full-20261030T215847947Z",
-      "at": "2026-10-30T22:10:13.105Z",
-      "mode": "FULL",
-      "summary": "Final Codex asks #200/#230 generic receipts, DX13 needed; #229 new P2 cleanup finding and Claude DX12 patch request; open threads 51."
-    },
-    {
-      "run_id": "full-20261030T215847947Z",
-      "at": "2026-10-30T22:12:45.336Z",
-      "mode": "FULL",
-      "summary": "#229 Claude DX12 P2 patch applied verbatim at b6975308, CI queued, thread remains open pending Codex; #200/#230 owner DX13."
-    },
-    {
-      "run_id": "full-20261030T215847947Z",
-      "at": "2026-10-30T22:13:50.328Z",
-      "mode": "FULL",
-      "summary": "Final: #229 new head b6975308 CI in progress; 51 threads; #200/#230 DX13 owner fallback; 0 merges, 0 resolutions, hold intact."
-    },
     {
       "run_id": "full-20261031T000202439Z",
       "at": "2026-10-31T00:05:23.920Z",
@@ -3395,6 +3301,11 @@
       "at": "2026-10-31T01:37:40.511Z",
       "mode": "FOLLOW-UP",
       "summary": "Third/final Codex asks #231/#232 returned clean generic issue-comment receipts, no native reviews: DX13 owner fallback queued for exact SHAs. #233 second ask likewise generic receipt; one more allowed after 60m. No merges or thread resolutions."
+    },
+    {
+      "at": "2026-10-31T02:34:05.131Z",
+      "run_id": "followup-20261031T023252426Z",
+      "note": "No GitHub action beyond orchestrator-state lease/event/ledger; exact-head checks verified; no eligible merge."
     }
   ],
   "last_full_event_supplements": [
@@ -3403,7 +3314,7 @@
     "state/events/2026-10-30/full-20261030T165859172Z-supplement.json",
     "state/events/2026-10-30/full-20261030T195557Z-late.json"
   ],
-  "last_run_id": "followup-20261031T013312041Z",
+  "last_run_id": "followup-20261031T023252426Z",
   "signature_summary": {
     "checked_at": "2026-10-30T19:09:55.766Z",
     "open_prs": 25,
@@ -3429,11 +3340,17 @@
     "signatures_required": false
   },
   "schedule_health": {
-    "full_enabled": true,
-    "followup_enabled": true,
-    "checked_at": "2026-10-31T01:37:40.511Z"
+    "full": {
+      "enabled": true,
+      "minute": 0
+    },
+    "followup": {
+      "enabled": true,
+      "minute": 30
+    },
+    "verified_at": "2026-10-31T02:34:05.131Z"
   },
-  "last_followup_event_path": "state/events/2026-10-31/followup-20261031T013312041Z.json",
+  "last_followup_event_path": "state/events/2026-10-31/followup-20261031T023252426Z.json",
   "agent_slots": {
     "codex": [],
     "claude": []
