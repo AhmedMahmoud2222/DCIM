@@ -1,7 +1,12 @@
-# proposed-workflows/refresh-branch.yml
-# DRAFT v3 (adds P2-4: single-document allowlist). NOT ACTIVE: lives outside .github/workflows, so GitHub does not run it.
-# Not tested. Requires independent Codex review and owner-run Jules Tier 2 review
-# on the exact SHA before the owner copies it to .github/workflows/refresh-branch.yml.
+# refresh-branch.yml
+# Candidate v4 of the refresh workflow (v3 + F1: handle benign update-branch 422s).
+# Location-neutral status: this file is inert while it lives under proposed-workflows/.
+# It is active only when present under .github/workflows/ on the default branch (main),
+# because issue_comment runs only from the default branch. Not runtime-tested.
+# Process: the owner copies it verbatim into .github/workflows/ on a PR branch first;
+# then fresh exact-head CI, an independent Codex review and a second (Jules Tier 2)
+# review of that exact SHA are required before any merge. Nothing here is activated
+# or configured by the file's presence in either location before merge.
 #
 # Purpose: refresh a same-repo PR branch that targets main, via a comment:
 #   /refresh-branch <full 40-character lowercase head SHA>
@@ -27,6 +32,9 @@
 #        one document (length == 1) that is a nonempty array of login strings.
 #   P2-3 arbitrary PR base                    -> refresh step requires open PR,
 #        base.repo == this repo, base.ref == main, head.repo == this repo.
+#   F1   benign 422 under set -e              -> the PUT is captured; "no new commits"
+#        exits 0 (already current), "merge conflict" exits 1 with a clear error, any
+#        other failure (including an expected_head_sha mismatch) is printed and fails.
 
 name: Refresh PR branch
 
@@ -121,8 +129,27 @@ jobs:
           fi
 
           # Server-side compare-and-swap: GitHub rejects with 422 if head != expected.
-          gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/update-branch" \
-            -f expected_head_sha="${WANT_SHA}"
+          # Capture the result so benign 422s are not an opaque red step (F1). The
+          # error body is an API message and never contains the token.
+          set +e
+          API_OUT="$(gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/update-branch" \
+            -f expected_head_sha="${WANT_SHA}" 2>&1)"
+          API_RC=$?
+          set -e
+          if [ "$API_RC" -ne 0 ]; then
+            case "$API_OUT" in
+              *"no new commits on the base branch"*)
+                echo "PR ${PR_NUMBER} is already up to date with main. Nothing to do."
+                exit 0 ;;
+              *"merge conflict between base and head"*)
+                echo "::error::Merge conflict between main and the PR branch; resolve it locally."
+                exit 1 ;;
+              *)
+                echo "::error::update-branch failed (exit ${API_RC}):"
+                echo "$API_OUT"
+                exit "$API_RC" ;;
+            esac
+          fi
 
           # update-branch is asynchronous (202). Poll for the new head; report only.
           NEW_SHA="$WANT_SHA"
@@ -132,7 +159,7 @@ jobs:
             [ "$NEW_SHA" != "$WANT_SHA" ] && break
           done
           if [ "$NEW_SHA" = "$WANT_SHA" ]; then
-            echo "Update accepted but head unchanged after 60s (already current, or still merging)."
+            echo "Update accepted but head unchanged after 60s (still merging; GitHub returns 422 when already current, handled above)."
           else
             echo "PR ${PR_NUMBER} head moved ${WANT_SHA} -> ${NEW_SHA}."
             echo "Verify backend/frontend started on ${NEW_SHA}; a PAT push should trigger CI, unproven until run."
