@@ -3,5 +3,7 @@
   "mode": "FOLLOW-UP",
   "started_at": "2026-10-31T08:29:28Z",
   "expires_at": "2026-10-31T08:54:28Z",
-  "status": "active"
+  "status": "released",
+  "released_at": "2026-10-31T08:31:10Z",
+  "event_path": "state/events/2026-10-31/followup-20261031T082928Z-9.json"
 }
