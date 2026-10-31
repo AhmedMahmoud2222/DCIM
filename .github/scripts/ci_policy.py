@@ -13,6 +13,11 @@ Levels:
 Fail-closed rules:
 * An empty path list, an unknown path or a high-risk path selects full.
 * A path that matches no component rule selects full.
+
+One exception lowers a CI-control change to fast: a pin-only change (see pin_only
+below). It applies only when every changed file is a modified, allowed file whose
+only differences from the base are the 40-hex commit pins on its action `uses:`
+lines (and their version comments). Nothing else about the file may differ.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 
 FAST = "fast"
 COMPONENT = "component"
@@ -134,3 +139,109 @@ def classify(paths: Iterable[str]) -> dict:
 
 def full(reasons: list[str]) -> dict:
     return {"level": FULL, "jobs": {job: True for job in WORKERS}, "reasons": reasons}
+
+
+# ---------------------------------------------------------------------------
+# Pin-only changes
+#
+# A Dependabot bump of an action pin changes one 40-hex SHA and a version comment.
+# The backend test suites cannot test that: they never run the workflow. The review
+# of the new pin against the upstream tag does. A change that is *only* a pin bump
+# may therefore route to fast. Everything else under .github/ stays full.
+#
+# The rule is per file. A line counts as a pin line only when the whole line has
+# the exact shape below. Two texts are a pin-only change when they are equal after
+# each pin line is reduced to its action reference and "@<pin>".
+# ---------------------------------------------------------------------------
+
+_ACTION = r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+"
+_PIN = r"[0-9a-f]{40}"
+_WORKFLOW_USES = re.compile(rf"^([ \t]*(?:-[ \t]+)?uses:[ \t]+{_ACTION})@{_PIN}(?:[ \t]+#[^\r\n]*)?$")
+_POLICY_JSON = re.compile(rf'^([ \t]*"review_action":[ \t]*"{_ACTION})@{_PIN}"(,?)$')
+_ADAPTER = re.compile(rf"^(ACTION = '{_ACTION})@{_PIN}'$")
+
+WORKFLOW_DIR = ".github/workflows/"
+# Workflows whose pins stay full: the CI controls themselves and the deployment.
+PIN_EXCLUDED = (".github/workflows/ci.yml", ".github/workflows/deploy.yml")
+PIN_POLICY_JSON = ".github/acceptance/policy.json"
+PIN_ADAPTER = ".github/scripts/orchestration_claude_adapter.py"
+PIN_MAX_BYTES = 512 * 1024
+REGULAR_FILE_MODE = "100644"
+
+
+def _pin_rule(path: str):
+    if path.startswith(WORKFLOW_DIR) and path.endswith(".yml") and "/" not in path[len(WORKFLOW_DIR):] \
+            and path not in PIN_EXCLUDED:
+        return _WORKFLOW_USES
+    if path == PIN_POLICY_JSON:
+        return _POLICY_JSON
+    if path == PIN_ADAPTER:
+        return _ADAPTER
+    return None
+
+
+def normalize_pins(path: str, text: str) -> str | None:
+    """Reduce every pin line of text to its action reference. None: the path is not allowed."""
+    rule = _pin_rule(path)
+    if rule is None:
+        return None
+    lines = []
+    for line in text.split("\n"):
+        match = rule.match(line)
+        if match is None:
+            lines.append(line)
+        elif rule is _POLICY_JSON:
+            lines.append(f"{match.group(1)}@<pin>\"{match.group(2)}")
+        else:
+            lines.append(f"{match.group(1)}@<pin>")
+    return "\n".join(lines)
+
+
+def parse_raw_diff(output: str) -> list[dict]:
+    """Parse `git diff --raw --no-renames -z` into [{path, status, old_mode, new_mode}].
+
+    Raise ValueError on any doubt, so a caller treats the change as not pin-only.
+    """
+    tokens = output.split("\0")
+    if tokens and tokens[-1] == "":
+        tokens.pop()
+    if len(tokens) % 2:
+        raise ValueError("raw diff has an odd token count")
+    entries = []
+    for meta, path in zip(tokens[0::2], tokens[1::2]):
+        fields = meta.split(" ")
+        if len(fields) != 5 or not fields[0].startswith(":") or not path:
+            raise ValueError(f"unparseable raw diff entry: {meta!r}")
+        entries.append({"path": path, "status": fields[4], "old_mode": fields[0][1:], "new_mode": fields[1]})
+    return entries
+
+
+def pin_only(changes: Iterable[dict]) -> dict | None:
+    """Return a fast decision when every change is a pin-only change, else None.
+
+    changes: dicts with path, status, old_mode, new_mode, old, new (the file texts).
+    """
+    changes = list(changes)
+    if not changes or len(changes) > 20:
+        return None
+    paths = []
+    for change in changes:
+        path = change.get("path")
+        old, new = change.get("old"), change.get("new")
+        if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str):
+            return None
+        if change.get("status") != "M" or change.get("old_mode") != REGULAR_FILE_MODE \
+                or change.get("new_mode") != REGULAR_FILE_MODE:
+            return None
+        if len(old) > PIN_MAX_BYTES or len(new) > PIN_MAX_BYTES or old == new:
+            return None
+        before, after = normalize_pins(path, old), normalize_pins(path, new)
+        if before is None or before != after:
+            return None
+        paths.append(path)
+    return {
+        "level": FAST,
+        "jobs": {job: False for job in WORKERS},
+        "reasons": [f"pin-only change: {path}" for path in sorted(paths)],
+        "paths": sorted(paths),
+    }

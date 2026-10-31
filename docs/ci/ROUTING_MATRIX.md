@@ -1,6 +1,6 @@
 # CI routing matrix
 
-Source: `.github/scripts/ci_policy.py` (policy version 2). The router loads the policy
+Source: `.github/scripts/ci_policy.py` (policy version 3). The router loads the policy
 from the PR base commit. `tests/ci/ci_support.py` (`POLICY_CASES`) checks each row below.
 
 ## Rules, in order
@@ -18,6 +18,26 @@ from the PR base commit. `tests/ci/ci_support.py` (`POLICY_CASES`) checks each r
 
 One full path makes the full route for the PR. Otherwise the route is the union of
 the workers of each path. A full route runs all six workers.
+
+## Pin-only exception (rule 2)
+
+A PR that changes only action pins routes to `fast` (no worker) instead of `full`.
+The backend suites never run a workflow, so they cannot test a pin. The review of the
+new pin against the upstream release tag does. The exception is narrow:
+
+* Every changed file is *modified*, mode `100644`, and one of: a workflow in
+  `.github/workflows/` (not `ci.yml`, not `deploy.yml`, no subdirectory),
+  `.github/acceptance/policy.json`, or `.github/scripts/orchestration_claude_adapter.py`.
+* Each file equals its base version once its pin lines are reduced to the action
+  reference. A pin line is a whole `uses: owner/repo@<40 hex>` line (with an optional
+  `# version` comment), the `"review_action"` line of the policy file, or the `ACTION`
+  line of the adapter. Any other difference sends the PR to `full`.
+* The router (from the base commit) and the gate (from the PR head) both read the
+  files and apply `ci_policy.pin_only`. The gate rejects `fast` for a `.github/`
+  change unless its own reading agrees.
+* The `route`, `ci-policy` and gate jobs, and the separate deployment checks, still run.
+  `tests/ci/ci_support.py` (`pin_cases`) checks 39 cases, and the mutation tests cover
+  the rule.
 
 ## Workers
 

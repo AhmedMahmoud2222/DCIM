@@ -15,6 +15,7 @@ from ci_support import (
     WORKERS,
     gate_mismatches,
     load_module,
+    pin_mismatches,
     policy_mismatches,
     route_needs,
     router_mismatches,
@@ -28,6 +29,9 @@ gate = load_module("ci_gate", SCRIPTS / "ci_gate.py")
 class PolicyTests(unittest.TestCase):
     def test_policy_routes_every_scenario(self):
         self.assertEqual(policy_mismatches(policy), [])
+
+    def test_pin_only_scenarios(self):
+        self.assertEqual(pin_mismatches(policy), [])
 
     def test_policy_workers_are_the_gate_workers(self):
         self.assertEqual(policy.WORKERS, WORKERS)
@@ -58,6 +62,25 @@ class PolicyTests(unittest.TestCase):
 class RouterTests(unittest.TestCase):
     def test_router_routes_real_git_histories(self):
         self.assertEqual(router_mismatches(SCRIPTS / "ci_router.py"), [])
+
+    def test_unreadable_pin_file_selects_full(self):
+        # A workflow that is not valid UTF-8 cannot be proven pin-only: the route stays full.
+        import tempfile
+        from pathlib import Path
+
+        from ci_support import PIN_A, WORKFLOW, commit, git, pin_yml, run_router
+
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            git(repo, "init", "-q")
+            base = commit(repo, "base", texts={WORKFLOW: pin_yml(PIN_A)})
+            (repo / WORKFLOW).write_bytes(pin_yml("b" * 40).encode() + b"\xff\xfe")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "binary")
+            head = git(repo, "rev-parse", "HEAD")
+            route, _ = run_router(SCRIPTS / "ci_router.py", repo, "pull_request", base, head)
+            self.assertEqual(route["level"], "full")
+            self.assertTrue(all(route["jobs"].values()))
 
 
 class GateTests(unittest.TestCase):

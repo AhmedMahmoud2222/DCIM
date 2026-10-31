@@ -111,6 +111,97 @@ def policy_mismatches(policy) -> list[str]:
     return mismatches
 
 
+# ---------------------------------------------------------------- pin-only changes
+
+PIN_A, PIN_B = "a" * 40, "b" * 40
+WORKFLOW = ".github/workflows/claude.yml"
+
+
+def pin_yml(sha: str, comment: str = "# v4", extra: str = "") -> str:
+    return ("name: x\njobs:\n  a:\n    steps:\n"
+            f"      - uses: actions/checkout@{sha} {comment}\n      - run: echo hi\n{extra}")
+
+
+def pin_json(sha: str) -> str:
+    return f'{{\n  "review_action": "anthropics/claude-code-action@{sha}",\n  "other": 1\n}}\n'
+
+
+def pin_adapter(sha: str) -> str:
+    return f"POLICY = 'x'\nACTION = 'anthropics/claude-code-action@{sha}'\nCLAUDE = 1\n"
+
+
+def pin_change(path, old, new, status="M", old_mode="100644", new_mode="100644"):
+    return {"path": path, "status": status, "old_mode": old_mode, "new_mode": new_mode, "old": old, "new": new}
+
+
+def pin_cases():
+    """(name, changes, is_pin_only)"""
+    y = WORKFLOW
+    good = pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v7.0.1"))
+    return (
+        ("sha and comment bump", [good], True),
+        ("sha bump, comment unchanged", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B))], True),
+        ("double-space comment", [pin_change(y, pin_yml(PIN_A, "# v4"), pin_yml(PIN_B, " # v8"))], True),
+        ("two workflow files", [good, pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A), pin_yml(PIN_B))], True),
+        ("policy json", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A), pin_json(PIN_B))], True),
+        ("adapter constant", [pin_change(".github/scripts/orchestration_claude_adapter.py",
+                                          pin_adapter(PIN_A), pin_adapter(PIN_B))], True),
+        ("no changes", [], False),
+        ("extra line added", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, extra="      - run: curl x\n"))], False),
+        ("run line edited", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("echo hi", "echo bye"))], False),
+        ("line removed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("      - run: echo hi\n", ""))], False),
+        ("tag instead of sha", [pin_change(y, pin_yml(PIN_A), pin_yml("v7"))], False),
+        ("sha of 39 hex", [pin_change(y, pin_yml(PIN_A), pin_yml("b" * 39))], False),
+        ("sha of 41 hex", [pin_change(y, pin_yml(PIN_A), pin_yml("b" * 41))], False),
+        ("uppercase sha", [pin_change(y, pin_yml(PIN_A), pin_yml("B" * 40))], False),
+        ("owner changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("actions/checkout", "evil/checkout"))], False),
+        ("action changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("checkout@", "setup-python@"))], False),
+        ("comment added to a run line", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("echo hi", "echo hi # x"))], False),
+        ("with block added", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, extra="        with:\n          x: 1\n"))], False),
+        ("crlf", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("\n", "\r\n"))], False),
+        ("ci.yml is excluded", [pin_change(".github/workflows/ci.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("deploy.yml is excluded", [pin_change(".github/workflows/deploy.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("nested workflow path", [pin_change(".github/workflows/sub/x.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("non-yml workflow file", [pin_change(".github/workflows/x.txt", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("a ci script", [pin_change(".github/scripts/ci_policy.py", pin_adapter(PIN_A), pin_adapter(PIN_B))], False),
+        ("a backend file", [pin_change("backend/app/x.py", pin_adapter(PIN_A), pin_adapter(PIN_B))], False),
+        ("added file", [pin_change(y, "", pin_yml(PIN_B), status="A")], False),
+        ("deleted file", [pin_change(y, pin_yml(PIN_A), "", status="D")], False),
+        ("renamed file", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), status="R")], False),
+        ("mode changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), new_mode="100755")], False),
+        ("symlink", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), old_mode="120000", new_mode="120000")], False),
+        ("identical text", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_A))], False),
+        ("one good, one bad", [good, pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A),
+                                                pin_yml(PIN_B, extra="      - run: x\n"))], False),
+        ("21 files", [pin_change(f".github/workflows/w{n}.yml", pin_yml(PIN_A), pin_yml(PIN_B)) for n in range(21)], False),
+        ("non-string text", [dict(good, new=None)], False),
+        ("json key renamed", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A),
+                                         pin_json(PIN_B).replace("review_action", "other_action"))], False),
+        ("json trailing comma removed", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A),
+                                                     pin_json(PIN_B).replace(f'{PIN_B}",', f'{PIN_B}"'))], False),
+        ("another json file", [pin_change(".github/acceptance/other.json", pin_json(PIN_A), pin_json(PIN_B))], False),
+        ("json other field", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A),
+                                         pin_json(PIN_B).replace('"other": 1', '"other": 2'))], False),
+        ("pin outside a uses line", [pin_change(y, pin_yml(PIN_A, extra=f"      - run: pip install git+https://x/y@{PIN_A}\n"),
+                                                pin_yml(PIN_B, extra=f"      - run: pip install git+https://x/y@{PIN_B}\n"))], False),
+    )
+
+
+def pin_mismatches(policy) -> list[str]:
+    mismatches = []
+    for name, changes, expected in pin_cases():
+        try:
+            decision = policy.pin_only(changes)
+        except Exception as error:  # noqa: BLE001 - a crash is a mismatch
+            mismatches.append(f"{name}: raised {error!r}")
+            continue
+        if (decision is not None) != expected:
+            mismatches.append(f"{name}: pin_only {'accepted' if decision else 'rejected'}")
+        elif decision is not None and (decision["level"] != "fast" or any(decision["jobs"].values())):
+            mismatches.append(f"{name}: decision is not fast with no worker: {decision}")
+    return mismatches
+
+
 # ---------------------------------------------------------------- router
 
 
@@ -123,7 +214,11 @@ def git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def commit(repo: Path, message: str, write=(), delete=(), rename=()) -> str:
+def commit(repo: Path, message: str, write=(), delete=(), rename=(), texts=None) -> str:
+    for path, text in (texts or {}).items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
     for path in write:
         target = repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -157,8 +252,28 @@ def router_mismatches(router: Path) -> list[str]:
         git(repo, "init", "-q")
         base = commit(repo, "base", write=["README.md", "backend/app/domain/auth/policy.py",
                                             "backend/app/application/alarm_service.py",
-                                            "frontend/src/App.tsx"])
+                                            "frontend/src/App.tsx"],
+                      texts={WORKFLOW: pin_yml(PIN_A), ".github/workflows/ci.yml": pin_yml(PIN_A)})
         cases = []
+
+        git(repo, "checkout", "-q", "-b", "pin-ok", base)
+        cases.append(("pin-only bump", base, commit(repo, "p", texts={WORKFLOW: pin_yml(PIN_B, "# v7")}), "fast", 1))
+        git(repo, "checkout", "-q", "-b", "pin-twice", base)
+        commit(repo, "p1", texts={WORKFLOW: pin_yml(PIN_B)})
+        cases.append(("pin-only bump over two commits", base,
+                      commit(repo, "p2", texts={WORKFLOW: pin_yml("c" * 40)}), "fast", 1))
+        git(repo, "checkout", "-q", "-b", "pin-extra", base)
+        cases.append(("pin bump with an extra line", base,
+                      commit(repo, "p", texts={WORKFLOW: pin_yml(PIN_B, extra="      - run: curl x\n")}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-ci", base)
+        cases.append(("pin bump in ci.yml", base,
+                      commit(repo, "p", texts={".github/workflows/ci.yml": pin_yml(PIN_B)}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-docs", base)
+        cases.append(("pin bump with a docs file", base,
+                      commit(repo, "p", texts={WORKFLOW: pin_yml(PIN_B), "docs/z.md": "z\n"}), "full", 2))
+        git(repo, "checkout", "-q", "-b", "pin-new", base)
+        cases.append(("new workflow file", base,
+                      commit(repo, "p", texts={".github/workflows/new.yml": pin_yml(PIN_B)}), "full", 1))
 
         git(repo, "checkout", "-q", "-b", "docs", base)
         commit(repo, "d1", write=["docs/a.md"])
@@ -607,10 +722,13 @@ def route_step_mismatches(doc: dict, gate_module) -> list[str]:
 def scope_mismatches(gate_module) -> list[str]:
     """Run the gate command in a real git repository: the gate diffs the PR itself."""
     mismatches = []
+    pin_good = [pin_change(WORKFLOW, pin_yml(PIN_A), pin_yml(PIN_B, "# v7"))]
+    pin_bad = [pin_change(WORKFLOW, pin_yml(PIN_A), pin_yml(PIN_B, extra="      - run: curl x\n"))]
     with tempfile.TemporaryDirectory() as directory:
         repo = Path(directory)
         git(repo, "init", "-q")
-        base = commit(repo, "base", write=["README.md", ".github/scripts/ci_gate.py", "tests/ci/x.py"])
+        base = commit(repo, "base", write=["README.md", ".github/scripts/ci_gate.py", "tests/ci/x.py"],
+                      texts={WORKFLOW: pin_yml(PIN_A), ".github/workflows/ci.yml": pin_yml(PIN_A)})
         heads = {}
         for name, change in (
             ("docs", {"write": ["docs/a.md"]}),
@@ -621,6 +739,10 @@ def scope_mismatches(gate_module) -> list[str]:
             ("gate rename", {"rename": [(".github/scripts/ci_gate.py", "docs/gate.py")]}),
             ("gate delete", {"delete": [".github/scripts/ci_gate.py"]}),
             ("uppercase", {"write": [".GitHub/workflows/x.yml"]}),
+            ("pin ok", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v7")}}),
+            ("pin extra", {"texts": {WORKFLOW: pin_yml(PIN_B, extra="      - run: curl x\n")}}),
+            ("pin ci", {"texts": {".github/workflows/ci.yml": pin_yml(PIN_B)}}),
+            ("pin docs", {"texts": {WORKFLOW: pin_yml(PIN_B), "docs/z.md": "z\n"}}),
         ):
             git(repo, "checkout", "-q", "-B", name.replace(" ", "-"), base)
             heads[name] = commit(repo, name, **change)
@@ -637,7 +759,25 @@ def scope_mismatches(gate_module) -> list[str]:
             ("full with gate edit", "gate edit", "full", set(WORKERS), base, True),
             ("fast with missing base", "docs", "fast", set(), "b" * 40, False),
             ("fast with empty base", "docs", "fast", set(), "", False),
+            ("fast with a pin-only bump", "pin ok", "fast", set(), base, True),
+            ("component with a pin-only bump", "pin ok", "component", {"frontend-suite"}, base, False),
+            ("fast with a pin bump and an extra line", "pin extra", "fast", set(), base, False),
+            ("fast with a ci.yml pin bump", "pin ci", "fast", set(), base, False),
+            ("fast with a pin bump and a docs file", "pin docs", "fast", set(), base, False),
+            ("fast pin-only with a missing base", "pin ok", "fast", set(), "b" * 40, False),
+            ("full with a pin-only bump", "pin ok", "full", set(WORKERS), base, True),
         )
+        direct = (
+            ("scope_errors fast pin-only", gate_module.scope_errors("fast", [WORKFLOW], pin_good), False),
+            ("scope_errors component pin-only", gate_module.scope_errors("component", [WORKFLOW], pin_good), True),
+            ("scope_errors fast, extra path", gate_module.scope_errors("fast", [WORKFLOW, "docs/a.md"], pin_good), True),
+            ("scope_errors fast, no changes", gate_module.scope_errors("fast", [WORKFLOW], None), True),
+            ("scope_errors fast, wrong changes", gate_module.scope_errors("fast", [".github/workflows/other.yml"], pin_good), True),
+            ("scope_errors fast, bad pin", gate_module.scope_errors("fast", [WORKFLOW], pin_bad), True),
+        )
+        for name, errors, expect_error in direct:
+            if bool(errors) != expect_error:
+                mismatches.append(f"{name}: errors {errors}")
         for name, branch, level, selected, case_base, expected in cases:
             head = heads[branch]
             needs = route_needs(level, selected, head=head)
