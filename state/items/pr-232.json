@@ -5,7 +5,7 @@
   "head_sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
   "tier": 2,
   "tier_reason": "four active .github/workflows files and a token-bearing anthropics action changed; not A5",
-  "updated_at": "2026-10-31T05:08:27.288Z",
+  "updated_at": "2026-10-31T05:13:49.714Z",
   "ci": "backend/frontend SUCCESS on old exact head; branch now 2 behind main after #239 merge",
   "open_threads": 0,
   "findings": [],
@@ -25,5 +25,5 @@
     "time": "2026-10-31T05:01:57Z",
     "ask": "rebase; denied edited branch"
   },
-  "notes": "Upstream annotated v1.0.264 tag dereferences to d70510b174a1244958df0b03166a54912811f3e6. Do not @dependabot recreate; overwrites accepted remediation. Owner branch update only when near merge."
+  "notes": "Upstream annotated v1.0.264 tag dereferences to d70510b174a1244958df0b03166a54912811f3e6. Do not @dependabot recreate; overwrites accepted remediation. Owner branch update only when near merge. Upstream action compare 925afb5...d70510b has 3 commits: Claude Code 2.1.310→2.1.312, Agent SDK 0.3.310→0.3.312, plugin documentation changes; no direct workflow trigger/permission/secret wiring changes in upstream diff, but transitive runtime review still required."
 }
