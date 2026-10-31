@@ -7,7 +7,7 @@
   "tier_reason": "docs-only new specification file; no workflow, code, permission, secret or token change",
   "state": "draft",
   "updated_at": "2026-10-31T06:33:00Z",
-  "ci": "backend and frontend SUCCESS on exact head; full backend suite skipped for docs-only route",
+  "ci": "backend and frontend SUCCESS on exact head; suite jobs skipped by docs-only route",
   "open_threads": 0,
   "findings": [
     {
@@ -36,7 +36,7 @@
   "queued": false,
   "signature": {
     "verified": false,
-    "reason": "unverified; verify next run",
+    "reason": "unsigned",
     "required": false
   },
   "next_gate": "Codex exact-head native acceptance; DX20 owner-run second specification review; D-3/D-4/D-5/D-7 owner values; Draft; preserve #219/#228 threads",
