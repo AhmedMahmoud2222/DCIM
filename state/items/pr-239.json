@@ -1,0 +1,24 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 239,
+  "head_sha": "d0e32cae2a3f5cc34e0b2ecb18a5b6d68eec5308",
+  "tier": 1,
+  "tier_reason": "tests-only CI identity regression",
+  "updated_at": "2026-10-31T05:08:27.288Z",
+  "state": "merged",
+  "merge_sha": "d0faef8dafa41b0ef4b7668f518efc0bd2d49786",
+  "merged_at": "2026-10-31T05:07:36Z",
+  "ci": "backend/frontend SUCCESS exact head; post-merge main CI pending",
+  "open_threads": 0,
+  "findings": [],
+  "qualifying_review": "Codex clean exact-head receipt d0e32cae2a, A4",
+  "asks_per_sha": {
+    "d0e32cae2a3f5cc34e0b2ecb18a5b6d68eec5308": 1
+  },
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "next_gate": "owner may close issue #237; post-merge main CI not yet claimed",
+  "notes": "Squash merged; main code checked lines 255-273. No branch-delete connector operation. Owner policy ruleset all bypass pull_request."
+}
