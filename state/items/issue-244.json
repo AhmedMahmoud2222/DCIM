@@ -1,0 +1,25 @@
+{
+  "schema_version": 16,
+  "type": "issue",
+  "number": 244,
+  "state": "open",
+  "tier": null,
+  "owner": "orchestrator",
+  "created_at": "2026-10-31T06:09:27.583Z",
+  "linked_prs": [
+    238
+  ],
+  "classification": "infrastructure/flaky-test investigation after same-head rerun passed",
+  "first_failure": {
+    "pr_head": "51c28dff891ea0d9adaf6a65e9f2ccaa3ec37b0f",
+    "run_id": 41164734412,
+    "job_id": 124432112416,
+    "test": "tests/integration/test_fk_indexes_migration.py::test_invalid_index_of_an_active_concurrent_build_is_not_dropped_or_rebuilt",
+    "error": "KeyError: 'ix_telemetry_reading_mapping_id'",
+    "line": 387
+  },
+  "rerun": "same-head failed-jobs attempt 2 SUCCESS; backend and frontend green",
+  "main_baseline": "CI 41162751661, 41083732966, 41073838767 all backend-suite SUCCESS",
+  "next_gate": "diagnose PostgreSQL catalog visibility/lock synchronization with repeated evidence, isolate fix if proven; no skipped tests",
+  "notes": "Issue created under CI failure protocol, not a product defect finding; does not block unrelated PR238 after green rerun; no production migrations."
+}
