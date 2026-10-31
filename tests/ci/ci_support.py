@@ -111,6 +111,168 @@ def policy_mismatches(policy) -> list[str]:
     return mismatches
 
 
+# ---------------------------------------------------------------- pin-only changes
+
+PIN_A, PIN_B = "a" * 40, "b" * 40
+WORKFLOW = ".github/workflows/claude.yml"
+
+
+def pin_yml(sha: str, comment: str = "# v4", extra: str = "") -> str:
+    return ("name: x\njobs:\n  a:\n    steps:\n"
+            f"      - uses: actions/checkout@{sha} {comment}\n      - run: echo hi\n{extra}")
+
+
+def pin_json(sha: str) -> str:
+    return f'{{\n  "review_action": "anthropics/claude-code-action@{sha}",\n  "other": 1\n}}\n'
+
+
+def pin_adapter(sha: str) -> str:
+    return f"POLICY = 'x'\nACTION = 'anthropics/claude-code-action@{sha}'\nCLAUDE = 1\n"
+
+
+def pin_change(path, old, new, status="M", old_mode="100644", new_mode="100644"):
+    return {"path": path, "status": status, "old_mode": old_mode, "new_mode": new_mode, "old": old, "new": new}
+
+
+SEPARATORS = (("NEL", "\x85"), ("line separator", "\u2028"), ("paragraph separator", "\u2029"),
+              ("vertical tab", "\x0b"), ("form feed", "\x0c"), ("file separator", "\x1c"),
+              ("NUL", "\x00"), ("SOH", "\x01"), ("DEL", "\x7f"), ("BOM", "\ufeff"),
+              ("U+FFFE", "\ufffe"), ("carriage return", "\r"))
+INJECTED = pin_yml(PIN_B, "# v4\x85      - run: echo INJECTED")
+
+
+def heredoc_yml(sha: str, comment: str) -> str:
+    return ("name: x\njobs:\n  a:\n    steps:\n      - run: |\n          cat <<EOF\n"
+            f"          uses: actions/checkout@{sha} {comment}\n          EOF\n")
+
+
+def ctx_yml(kind: str, sha: str, comment: str = "# v4") -> str:
+    """A workflow where a pin-shaped line is data, not an action reference."""
+    line = f"uses: actions/checkout@{sha} {comment}"
+    body = {
+        "env-block": f"    env:\n      {line}\n    steps:\n      - run: echo hi\n",
+        "env-flow": f"    env: {{\n      {line}\n    }}\n    steps:\n      - run: echo hi\n",
+        "env-anchor": f"    env: &e\n      {line}\n    steps:\n      - run: echo hi\n",
+        "env-quoted": f'    env:\n      X: "a\n        {line}\n        b"\n    steps:\n      - run: echo hi\n',
+        "with-block": f"    steps:\n      - uses: actions/setup-python@{PIN_A}\n        with:\n          {line}\n",
+        "heredoc": f"    steps:\n      - run: |\n          cat <<EOF\n          {line}\n          EOF\n",
+        "job-uses": f"    uses: octo/repo/.github/workflows/w.yml@{sha} {comment}\n",
+    }[kind]
+    return f"name: x\njobs:\n  a:\n{body}"
+
+
+def pin_cases():
+    """(name, changes, is_pin_only)"""
+    y = WORKFLOW
+    good = pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v7.0.1"))
+    return (
+        ("sha and comment bump", [good], True),
+        ("sha bump, comment unchanged", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B))], True),
+        ("double-space comment", [pin_change(y, pin_yml(PIN_A, "# v4"), pin_yml(PIN_B, " # v8"))], True),
+        ("two workflow files", [good, pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A), pin_yml(PIN_B))], True),
+        ("policy json", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A), pin_json(PIN_B))], True),
+        ("adapter constant", [pin_change(".github/scripts/orchestration_claude_adapter.py",
+                                          pin_adapter(PIN_A), pin_adapter(PIN_B))], True),
+        ("no changes", [], False),
+        ("extra line added", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, extra="      - run: curl x\n"))], False),
+        ("run line edited", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("echo hi", "echo bye"))], False),
+        ("line removed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("      - run: echo hi\n", ""))], False),
+        ("tag instead of sha", [pin_change(y, pin_yml(PIN_A), pin_yml("v7"))], False),
+        ("sha of 39 hex", [pin_change(y, pin_yml(PIN_A), pin_yml("b" * 39))], False),
+        ("sha of 41 hex", [pin_change(y, pin_yml(PIN_A), pin_yml("b" * 41))], False),
+        ("uppercase sha", [pin_change(y, pin_yml(PIN_A), pin_yml("B" * 40))], False),
+        ("owner changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("actions/checkout", "evil/checkout"))], False),
+        ("action changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("checkout@", "setup-python@"))], False),
+        ("comment added to a run line", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("echo hi", "echo hi # x"))], False),
+        ("with block added", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, extra="        with:\n          x: 1\n"))], False),
+        ("crlf", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B).replace("\n", "\r\n"))], False),
+        ("ci.yml is excluded", [pin_change(".github/workflows/ci.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("deploy.yml is excluded", [pin_change(".github/workflows/deploy.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("nested workflow path", [pin_change(".github/workflows/sub/x.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("non-yml workflow file", [pin_change(".github/workflows/x.txt", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("a ci script", [pin_change(".github/scripts/ci_policy.py", pin_adapter(PIN_A), pin_adapter(PIN_B))], False),
+        ("a backend file", [pin_change("backend/app/x.py", pin_adapter(PIN_A), pin_adapter(PIN_B))], False),
+        ("added file", [pin_change(y, "", pin_yml(PIN_B), status="A")], False),
+        ("deleted file", [pin_change(y, pin_yml(PIN_A), "", status="D")], False),
+        ("renamed file", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), status="R")], False),
+        ("mode changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), new_mode="100755")], False),
+        ("symlink", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), old_mode="120000", new_mode="120000")], False),
+        ("identical text", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_A))], False),
+        ("one good, one bad", [good, pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A),
+                                                pin_yml(PIN_B, extra="      - run: x\n"))], False),
+        ("21 files", [pin_change(f".github/workflows/w{n}.yml", pin_yml(PIN_A), pin_yml(PIN_B)) for n in range(21)], False),
+        ("non-string text", [dict(good, new=None)], False),
+        ("json key renamed", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A),
+                                         pin_json(PIN_B).replace("review_action", "other_action"))], False),
+        ("json trailing comma removed", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A),
+                                                     pin_json(PIN_B).replace(f'{PIN_B}",', f'{PIN_B}"'))], False),
+        ("another json file", [pin_change(".github/acceptance/other.json", pin_json(PIN_A), pin_json(PIN_B))], False),
+        ("json other field", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A),
+                                         pin_json(PIN_B).replace('"other": 1', '"other": 2'))], False),
+        *[(f"{label} hides a step in a comment",
+           [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, f"# v4{sep}      - run: echo INJECTED"))], False)
+          for label, sep in SEPARATORS],
+        ("NUL right after the comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4\x00"))], False),
+        ("non-ASCII comment goes full", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4 \u00e9\u4e2d"))], False),
+        ("prerelease version comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4.1.0-rc.1+build5"))], True),
+        ("multi-word comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4 (security fix)"))], False),
+        ("heredoc comment injection", [pin_change(y, heredoc_yml(PIN_A, "# v4"),
+                                                  heredoc_yml(PIN_A, "# $(echo INJECTED >&2)"))], False),
+        *[(f"comment with {label}", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, f"# v4{text}"))], False)
+          for label, text in (("command substitution", "$(id)"), ("backtick", "`id`"), ("semicolon", ";id"),
+                               ("ampersand", "&id"), ("redirect", ">x"), ("pipe", "|id"), ("quote", "'"),
+                               ("colon", ": x"), ("brace", "{x}"))],
+        *[(f"{label} in an unchanged line",
+           [pin_change(y, pin_yml(PIN_A, extra=f"# note{sep}x\n"), pin_yml(PIN_B, extra=f"# note{sep}x\n"))], False)
+          for label, sep in SEPARATORS],
+        *[(f"data context {kind}: sha change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_B))], False)
+          for kind in ("env-block", "env-flow", "env-anchor", "env-quoted", "with-block", "heredoc")],
+        *[(f"data context {kind}: comment change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_A, "# v5"))], False)
+          for kind in ("env-quoted", "heredoc")],
+        # A real YAML comment after a plain scalar changes nothing the workflow reads.
+        *[(f"data context {kind}: real comment change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_A, "# v5"))], True)
+          for kind in ("env-block", "env-flow")],
+        ("job-level reusable workflow bump", [pin_change(y, ctx_yml("job-uses", PIN_A), ctx_yml("job-uses", PIN_B, "# v2"))], True),
+        ("duplicate step key", [pin_change(y, pin_yml(PIN_A, extra="      - run: a\n        run: b\n"),
+                                           pin_yml(PIN_B, extra="      - run: a\n        run: b\n"))], False),
+        ("anchor in the file", [pin_change(y, pin_yml(PIN_A, extra="      - &s run: a\n"),
+                                           pin_yml(PIN_B, extra="      - &s run: a\n"))], False),
+        ("invalid yaml", [pin_change(y, pin_yml(PIN_A, extra="  : : [\n"), pin_yml(PIN_B, extra="  : : [\n"))], False),
+        ("no jobs mapping", [pin_change(y, "name: x\n", "name: x\n")], False),
+        ("adapter with a separator in a comment",
+         [pin_change(".github/scripts/orchestration_claude_adapter.py", pin_adapter(PIN_A) + "# note\u2028x\n",
+                     pin_adapter(PIN_B) + "# note\u2028x\n")], False),
+        ("adapter with DEL in a comment",
+         [pin_change(".github/scripts/orchestration_claude_adapter.py", pin_adapter(PIN_A) + "# note\x7fx\n",
+                     pin_adapter(PIN_B) + "# note\x7fx\n")], False),
+        ("adapter with a second ACTION",
+         [pin_change(".github/scripts/orchestration_claude_adapter.py", pin_adapter(PIN_A) + "ACTION = 'x/y'\n",
+                     pin_adapter(PIN_B) + "ACTION = 'x/y'\n")], False),
+        ("json duplicate key", [pin_change(".github/acceptance/policy.json",
+                                           pin_json(PIN_A).replace('"other": 1', '"other": 1, "other": 1'),
+                                           pin_json(PIN_B).replace('"other": 1', '"other": 1, "other": 1'))], False),
+        ("separator already in the base comment",
+         [pin_change(y, pin_yml(PIN_A, "# v4\u2028x"), pin_yml(PIN_B, "# v4\u2028x"))], False),
+        ("pin outside a uses line", [pin_change(y, pin_yml(PIN_A, extra=f"      - run: pip install git+https://x/y@{PIN_A}\n"),
+                                                pin_yml(PIN_B, extra=f"      - run: pip install git+https://x/y@{PIN_B}\n"))], False),
+    )
+
+
+def pin_mismatches(policy) -> list[str]:
+    mismatches = []
+    for name, changes, expected in pin_cases():
+        try:
+            decision = policy.pin_only(changes)
+        except Exception as error:  # noqa: BLE001 - a crash is a mismatch
+            mismatches.append(f"{name}: raised {error!r}")
+            continue
+        if (decision is not None) != expected:
+            mismatches.append(f"{name}: pin_only {'accepted' if decision else 'rejected'}")
+        elif decision is not None and (decision["level"] != "fast" or any(decision["jobs"].values())):
+            mismatches.append(f"{name}: decision is not fast with no worker: {decision}")
+    return mismatches
+
+
 # ---------------------------------------------------------------- router
 
 
@@ -123,7 +285,11 @@ def git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def commit(repo: Path, message: str, write=(), delete=(), rename=()) -> str:
+def commit(repo: Path, message: str, write=(), delete=(), rename=(), texts=None) -> str:
+    for path, text in (texts or {}).items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
     for path in write:
         target = repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -157,8 +323,48 @@ def router_mismatches(router: Path) -> list[str]:
         git(repo, "init", "-q")
         base = commit(repo, "base", write=["README.md", "backend/app/domain/auth/policy.py",
                                             "backend/app/application/alarm_service.py",
-                                            "frontend/src/App.tsx"])
+                                            "frontend/src/App.tsx"],
+                      texts={WORKFLOW: pin_yml(PIN_A), ".github/workflows/ci.yml": pin_yml(PIN_A)})
         cases = []
+
+        git(repo, "checkout", "-q", "-b", "pin-ok", base)
+        cases.append(("pin-only bump", base, commit(repo, "p", texts={WORKFLOW: pin_yml(PIN_B, "# v7")}), "fast", 1))
+        git(repo, "checkout", "-q", "-b", "pin-twice", base)
+        commit(repo, "p1", texts={WORKFLOW: pin_yml(PIN_B)})
+        cases.append(("pin-only bump over two commits", base,
+                      commit(repo, "p2", texts={WORKFLOW: pin_yml("c" * 40)}), "fast", 1))
+        git(repo, "checkout", "-q", "-b", "pin-extra", base)
+        cases.append(("pin bump with an extra line", base,
+                      commit(repo, "p", texts={WORKFLOW: pin_yml(PIN_B, extra="      - run: curl x\n")}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-nel", base)
+        cases.append(("pin bump with a NEL-hidden step", base,
+                      commit(repo, "p", texts={WORKFLOW: INJECTED}), "full", 1))
+        for tag, text in (("2028", pin_yml(PIN_B, "# v4\u2028      - run: echo INJECTED")),
+                          ("nul", pin_yml(PIN_B, "# v4\x00"))):
+            git(repo, "checkout", "-q", "-b", f"pin-{tag}", base)
+            cases.append((f"pin bump with U+{tag.upper()} in the comment" if tag != "nul" else "pin bump with NUL in the comment",
+                          base, commit(repo, "p", texts={WORKFLOW: text}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-heredoc-base", base)
+        heredoc_base = commit(repo, "h", texts={".github/workflows/agent-claude.yml": heredoc_yml(PIN_A, "# v4")})
+        git(repo, "checkout", "-q", "-b", "pin-heredoc", heredoc_base)
+        cases.append(("heredoc comment injection", heredoc_base,
+                      commit(repo, "p", texts={".github/workflows/agent-claude.yml":
+                                               heredoc_yml(PIN_A, "# $(echo INJECTED >&2)")}), "full", 1))
+        for kind in ("env-flow", "env-quoted", "heredoc"):
+            git(repo, "checkout", "-q", "-b", f"ctx-{kind}-base", base)
+            ctx_base = commit(repo, "c", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_A)})
+            git(repo, "checkout", "-q", "-b", f"ctx-{kind}", ctx_base)
+            cases.append((f"data context {kind}", ctx_base,
+                          commit(repo, "p", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_B)}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-ci", base)
+        cases.append(("pin bump in ci.yml", base,
+                      commit(repo, "p", texts={".github/workflows/ci.yml": pin_yml(PIN_B)}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-docs", base)
+        cases.append(("pin bump with a docs file", base,
+                      commit(repo, "p", texts={WORKFLOW: pin_yml(PIN_B), "docs/z.md": "z\n"}), "full", 2))
+        git(repo, "checkout", "-q", "-b", "pin-new", base)
+        cases.append(("new workflow file", base,
+                      commit(repo, "p", texts={".github/workflows/new.yml": pin_yml(PIN_B)}), "full", 1))
 
         git(repo, "checkout", "-q", "-b", "docs", base)
         commit(repo, "d1", write=["docs/a.md"])
@@ -607,10 +813,13 @@ def route_step_mismatches(doc: dict, gate_module) -> list[str]:
 def scope_mismatches(gate_module) -> list[str]:
     """Run the gate command in a real git repository: the gate diffs the PR itself."""
     mismatches = []
+    pin_good = [pin_change(WORKFLOW, pin_yml(PIN_A), pin_yml(PIN_B, "# v7"))]
+    pin_bad = [pin_change(WORKFLOW, pin_yml(PIN_A), pin_yml(PIN_B, extra="      - run: curl x\n"))]
     with tempfile.TemporaryDirectory() as directory:
         repo = Path(directory)
         git(repo, "init", "-q")
-        base = commit(repo, "base", write=["README.md", ".github/scripts/ci_gate.py", "tests/ci/x.py"])
+        base = commit(repo, "base", write=["README.md", ".github/scripts/ci_gate.py", "tests/ci/x.py"],
+                      texts={WORKFLOW: pin_yml(PIN_A), ".github/workflows/ci.yml": pin_yml(PIN_A)})
         heads = {}
         for name, change in (
             ("docs", {"write": ["docs/a.md"]}),
@@ -621,6 +830,14 @@ def scope_mismatches(gate_module) -> list[str]:
             ("gate rename", {"rename": [(".github/scripts/ci_gate.py", "docs/gate.py")]}),
             ("gate delete", {"delete": [".github/scripts/ci_gate.py"]}),
             ("uppercase", {"write": [".GitHub/workflows/x.yml"]}),
+            ("pin ok", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v7")}}),
+            ("pin extra", {"texts": {WORKFLOW: pin_yml(PIN_B, extra="      - run: curl x\n")}}),
+            ("pin nel", {"texts": {WORKFLOW: INJECTED}}),
+            ("pin 2028", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v4\u2028      - run: echo INJECTED")}}),
+            ("pin 2029", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v4\u2029      - run: echo INJECTED")}}),
+            ("pin nul", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v4\x00")}}),
+            ("pin ci", {"texts": {".github/workflows/ci.yml": pin_yml(PIN_B)}}),
+            ("pin docs", {"texts": {WORKFLOW: pin_yml(PIN_B), "docs/z.md": "z\n"}}),
         ):
             git(repo, "checkout", "-q", "-B", name.replace(" ", "-"), base)
             heads[name] = commit(repo, name, **change)
@@ -637,7 +854,32 @@ def scope_mismatches(gate_module) -> list[str]:
             ("full with gate edit", "gate edit", "full", set(WORKERS), base, True),
             ("fast with missing base", "docs", "fast", set(), "b" * 40, False),
             ("fast with empty base", "docs", "fast", set(), "", False),
+            ("fast with a pin-only bump", "pin ok", "fast", set(), base, True),
+            ("component with a pin-only bump", "pin ok", "component", {"frontend-suite"}, base, False),
+            ("fast with a pin bump and an extra line", "pin extra", "fast", set(), base, False),
+            ("fast with a NEL-hidden step", "pin nel", "fast", set(), base, False),
+            ("fast with a U+2028-hidden step", "pin 2028", "fast", set(), base, False),
+            ("fast with a U+2029-hidden step", "pin 2029", "fast", set(), base, False),
+            ("fast with a NUL in the comment", "pin nul", "fast", set(), base, False),
+            ("fast with a ci.yml pin bump", "pin ci", "fast", set(), base, False),
+            ("fast with a pin bump and a docs file", "pin docs", "fast", set(), base, False),
+            ("fast pin-only with a missing base", "pin ok", "fast", set(), "b" * 40, False),
+            ("full with a pin-only bump", "pin ok", "full", set(WORKERS), base, True),
         )
+        direct = (
+            ("scope_errors fast pin-only", gate_module.scope_errors("fast", [WORKFLOW], pin_good), False),
+            ("scope_errors component pin-only", gate_module.scope_errors("component", [WORKFLOW], pin_good), True),
+            ("scope_errors fast, extra path", gate_module.scope_errors("fast", [WORKFLOW, "docs/a.md"], pin_good), True),
+            ("scope_errors fast, no changes", gate_module.scope_errors("fast", [WORKFLOW], None), True),
+            ("scope_errors fast, heredoc comment injection",
+             gate_module.scope_errors("fast", [WORKFLOW], [pin_change(
+                 WORKFLOW, heredoc_yml(PIN_A, "# v4"), heredoc_yml(PIN_A, "# $(echo INJECTED >&2)"))]), True),
+            ("scope_errors fast, wrong changes", gate_module.scope_errors("fast", [".github/workflows/other.yml"], pin_good), True),
+            ("scope_errors fast, bad pin", gate_module.scope_errors("fast", [WORKFLOW], pin_bad), True),
+        )
+        for name, errors, expect_error in direct:
+            if bool(errors) != expect_error:
+                mismatches.append(f"{name}: errors {errors}")
         for name, branch, level, selected, case_base, expected in cases:
             head = heads[branch]
             needs = route_needs(level, selected, head=head)

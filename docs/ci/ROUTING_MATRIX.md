@@ -1,6 +1,6 @@
 # CI routing matrix
 
-Source: `.github/scripts/ci_policy.py` (policy version 2). The router loads the policy
+Source: `.github/scripts/ci_policy.py` (policy version 3). The router loads the policy
 from the PR base commit. `tests/ci/ci_support.py` (`POLICY_CASES`) checks each row below.
 
 ## Rules, in order
@@ -18,6 +18,36 @@ from the PR base commit. `tests/ci/ci_support.py` (`POLICY_CASES`) checks each r
 
 One full path makes the full route for the PR. Otherwise the route is the union of
 the workers of each path. A full route runs all six workers.
+
+## Pin-only exception (rule 2)
+
+A PR that changes only action pins routes to `fast` (no worker) instead of `full`.
+The backend suites never run a workflow, so they cannot test a pin. The review of the
+new pin against the upstream release tag does. The exception is narrow:
+
+* Every changed file is *modified*, mode `100644`, and one of: a workflow in
+  `.github/workflows/` (not `ci.yml`, not `deploy.yml`, no subdirectory),
+  `.github/acceptance/policy.json`, or `.github/scripts/orchestration_claude_adapter.py`.
+* Each file equals its base version once its pin lines are reduced to the action
+  reference. A pin line is a whole `uses: owner/repo@<40 hex>` line (with an optional
+  `# version` comment of letters, digits and `. _ + -` only), the `"review_action"` line of the policy file, or the `ACTION`
+  line of the adapter. Any other difference sends the PR to `full`.
+* A file with a character outside this set is never pin-only: tab, LF, printable ASCII, and
+  the printable Unicode YAML allows minus U+0085, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF.
+  Normalization drops comments, so a line separator in a comment could hide a step and a
+  forbidden character (NUL, DEL) could break the workflow. CR is outside the set too.
+* The comment limit exists because a pin-shaped line can sit inside a `run: |` block, where
+  the comment is script text. The line rules alone cannot tell such a line from an action
+  reference, so a second check reads the files as data. It parses both versions, masks the
+  40-hex pin of every `uses` value of a job or a step, and requires the two structures to be
+  equal. A pin-shaped line in an `env` value, a flow mapping, a quoted multi-line string, a
+  `with` block or a script then changes the structure and the PR goes to `full`. A workflow
+  with an anchor, an alias, a duplicate key or invalid YAML is never pin-only. The same check
+  reads `policy.json` as JSON (no duplicate keys) and the adapter as Python (`ast`, exactly one
+  `ACTION` assignment).
+* The structure check needs PyYAML. When `import yaml` fails, no workflow is pin-only and the
+  rule changes nothing; the route and gate jobs run bare `python3`, so confirm the runner has
+  PyYAML or install the pinned version in those jobs.
 
 ## Workers
 
