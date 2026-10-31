@@ -1,0 +1,36 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 245,
+  "head_sha": "79a8d8cceab3f6e5335e8c5820f59ca7a6cd7252",
+  "tier": 1,
+  "tier_reason": "tests-only change in backend/tests/integration/test_fk_indexes_migration.py, no migration or production code change",
+  "state": "draft",
+  "updated_at": "2026-10-31T06:16:57.303Z",
+  "ci": "CI route and optional checks started; backend/frontend pending",
+  "open_threads": 0,
+  "findings": [
+    {
+      "id": "FLAKY-244-1",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/244",
+      "severity": "verification",
+      "required": "Demonstrate readiness barrier is target-specific and non-weakening, with deterministic or repeated witness",
+      "status": "Open",
+      "evidence": "one observed KeyError; source unscoped progress poll; same-head rerun green; Claude read-only diagnosis is hypothesis"
+    }
+  ],
+  "qualifying_review": "none on exact head",
+  "asks_per_sha": {},
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "signature": {
+    "verified": false,
+    "reason": "unsigned",
+    "required": false
+  },
+  "next_gate": "exact-head backend/frontend, Codex Tier1 review, witness for harness race, no threads, mark ready",
+  "last_prompt": null,
+  "linked_issue": 244,
+  "notes": "Claude-authored single-hunk patch from issue #244 comment 6539928602 applied verbatim under DX12. Initial 720-line reconstruction truncated file; detected before PR, corrected with full 1082-line main file and original newline. Final cumulative diff 1 file, 9 additions/1 deletion, no unrelated changes; 3 audit commits retained, no force push. Draft PR #245."
+}
