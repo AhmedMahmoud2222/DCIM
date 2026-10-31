@@ -135,7 +135,9 @@ def pin_change(path, old, new, status="M", old_mode="100644", new_mode="100644")
 
 
 SEPARATORS = (("NEL", "\x85"), ("line separator", "\u2028"), ("paragraph separator", "\u2029"),
-              ("vertical tab", "\x0b"), ("form feed", "\x0c"), ("file separator", "\x1c"))
+              ("vertical tab", "\x0b"), ("form feed", "\x0c"), ("file separator", "\x1c"),
+              ("NUL", "\x00"), ("SOH", "\x01"), ("DEL", "\x7f"), ("BOM", "\ufeff"),
+              ("U+FFFE", "\ufffe"), ("carriage return", "\r"))
 INJECTED = pin_yml(PIN_B, "# v4\x85      - run: echo INJECTED")
 
 
@@ -190,6 +192,8 @@ def pin_cases():
         *[(f"{label} hides a step in a comment",
            [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, f"# v4{sep}      - run: echo INJECTED"))], False)
           for label, sep in SEPARATORS],
+        ("NUL right after the comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4\x00"))], False),
+        ("non-ASCII comment stays pin-only", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4 \u00e9\u4e2d"))], True),
         ("separator already in the base comment",
          [pin_change(y, pin_yml(PIN_A, "# v4\u2028x"), pin_yml(PIN_B, "# v4\u2028x"))], False),
         ("pin outside a uses line", [pin_change(y, pin_yml(PIN_A, extra=f"      - run: pip install git+https://x/y@{PIN_A}\n"),
@@ -278,6 +282,11 @@ def router_mismatches(router: Path) -> list[str]:
         git(repo, "checkout", "-q", "-b", "pin-nel", base)
         cases.append(("pin bump with a NEL-hidden step", base,
                       commit(repo, "p", texts={WORKFLOW: INJECTED}), "full", 1))
+        for tag, text in (("2028", pin_yml(PIN_B, "# v4\u2028      - run: echo INJECTED")),
+                          ("nul", pin_yml(PIN_B, "# v4\x00"))):
+            git(repo, "checkout", "-q", "-b", f"pin-{tag}", base)
+            cases.append((f"pin bump with U+{tag.upper()} in the comment" if tag != "nul" else "pin bump with NUL in the comment",
+                          base, commit(repo, "p", texts={WORKFLOW: text}), "full", 1))
         git(repo, "checkout", "-q", "-b", "pin-ci", base)
         cases.append(("pin bump in ci.yml", base,
                       commit(repo, "p", texts={".github/workflows/ci.yml": pin_yml(PIN_B)}), "full", 1))
@@ -755,6 +764,9 @@ def scope_mismatches(gate_module) -> list[str]:
             ("pin ok", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v7")}}),
             ("pin extra", {"texts": {WORKFLOW: pin_yml(PIN_B, extra="      - run: curl x\n")}}),
             ("pin nel", {"texts": {WORKFLOW: INJECTED}}),
+            ("pin 2028", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v4\u2028      - run: echo INJECTED")}}),
+            ("pin 2029", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v4\u2029      - run: echo INJECTED")}}),
+            ("pin nul", {"texts": {WORKFLOW: pin_yml(PIN_B, "# v4\x00")}}),
             ("pin ci", {"texts": {".github/workflows/ci.yml": pin_yml(PIN_B)}}),
             ("pin docs", {"texts": {WORKFLOW: pin_yml(PIN_B), "docs/z.md": "z\n"}}),
         ):
@@ -777,6 +789,9 @@ def scope_mismatches(gate_module) -> list[str]:
             ("component with a pin-only bump", "pin ok", "component", {"frontend-suite"}, base, False),
             ("fast with a pin bump and an extra line", "pin extra", "fast", set(), base, False),
             ("fast with a NEL-hidden step", "pin nel", "fast", set(), base, False),
+            ("fast with a U+2028-hidden step", "pin 2028", "fast", set(), base, False),
+            ("fast with a U+2029-hidden step", "pin 2029", "fast", set(), base, False),
+            ("fast with a NUL in the comment", "pin nul", "fast", set(), base, False),
             ("fast with a ci.yml pin bump", "pin ci", "fast", set(), base, False),
             ("fast with a pin bump and a docs file", "pin docs", "fast", set(), base, False),
             ("fast pin-only with a missing base", "pin ok", "fast", set(), "b" * 40, False),

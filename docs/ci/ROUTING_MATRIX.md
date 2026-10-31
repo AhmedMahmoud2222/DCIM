@@ -32,9 +32,10 @@ new pin against the upstream release tag does. The exception is narrow:
   reference. A pin line is a whole `uses: owner/repo@<40 hex>` line (with an optional
   `# version` comment), the `"review_action"` line of the policy file, or the `ACTION`
   line of the adapter. Any other difference sends the PR to `full`.
-* A file that contains a carriage return, vertical tab, form feed, file/group/record
-  separator, U+0085, U+2028 or U+2029 is never pin-only. YAML parsers read those as line
-  breaks, and a comment holding one could hide a new step from the line rules.
+* A file with a character outside this set is never pin-only: tab, LF, printable ASCII, and
+  the printable Unicode YAML allows minus U+0085, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF.
+  Normalization drops comments, so a line separator in a comment could hide a step and a
+  forbidden character (NUL, DEL) could break the workflow. CR is outside the set too.
 * The router (from the base commit) and the gate (from the PR head) both read the
   files and apply `ci_policy.pin_only`. The gate rejects `fast` for a `.github/`
   change unless its own reading agrees.

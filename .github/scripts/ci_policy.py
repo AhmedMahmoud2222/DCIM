@@ -166,9 +166,12 @@ PIN_EXCLUDED = (".github/workflows/ci.yml", ".github/workflows/deploy.yml")
 PIN_POLICY_JSON = ".github/acceptance/policy.json"
 PIN_ADAPTER = ".github/scripts/orchestration_claude_adapter.py"
 PIN_MAX_BYTES = 512 * 1024
-# YAML parsers read these as line breaks, but the pin rules split only on "\n". A comment
-# that contains one hides new YAML content from the rules. A file with any of them is never pin-only.
-LINE_SEPARATORS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+# A pin-only file holds only characters that are printable YAML and not line breaks beyond LF:
+# tab, LF, printable ASCII, and the Unicode ranges YAML allows minus U+0085, U+2028, U+2029,
+# the BOM U+FEFF and the noncharacters U+FFFE and U+FFFF. Normalization drops comments, so a
+# line separator in one could hide a step, and a forbidden character in one could break the
+# workflow. Anything else sends the file to full.
+SAFE_TEXT = re.compile("[\t\n\x20-\x7e\xa0-\u2027\u202a-\ud7ff\ue000-\ufefe\uff00-\ufffd\U00010000-\U0010ffff]*")
 REGULAR_FILE_MODE = "100644"
 
 
@@ -186,7 +189,7 @@ def _pin_rule(path: str):
 def normalize_pins(path: str, text: str) -> str | None:
     """Reduce every pin line of text to its action reference. None: the path is not allowed."""
     rule = _pin_rule(path)
-    if rule is None or not LINE_SEPARATORS.isdisjoint(text):
+    if rule is None or SAFE_TEXT.fullmatch(text) is None:
         return None
     lines = []
     for line in text.split("\n"):
