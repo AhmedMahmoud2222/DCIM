@@ -6,9 +6,9 @@
   "tier": 0,
   "tier_reason": "one new docs-only architecture specification, no code/config/workflow/permission changes",
   "state": "draft",
-  "updated_at": "2026-10-31T06:06:07.374Z",
+  "updated_at": "2026-10-31T06:07:26.018Z",
   "ci": "backend/frontend SUCCESS exact 4d9836b5; docs-only routing, optional Compose smoke SUCCESS; claude-review optional bot rejection",
-  "open_threads": 2,
+  "open_threads": 3,
   "findings": [
     {
       "id": "P2-243-1",
@@ -25,9 +25,17 @@
       "required": "Define restart recovery after ambiguous PUT without guaranteed pre-write journal/mutation_id; update FA-04a/b and T4 recovery",
       "status": "Open - candidate fixed at 4d9836b5; independent Codex re-review pending",
       "evidence": "INV-A2/A3/D1/T4r state-based restart recovery, FA-04c at 4d9836b5; thread reply 4430763182"
+    },
+    {
+      "id": "P2-243-3",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/243#discussion_r4430764870",
+      "severity": "P2",
+      "required": "Qualify normative T4r matrix invariant to allow restored checkpointed reserved after successful uncheckpointed T4 is lost (FA-28b(ii)), while preserving at-most-once POST",
+      "status": "Open",
+      "evidence": "At 4d9836b5 matrix says T4r only if no successful T4 ever replaced reserved, contradicting FA-28b(ii) rollback to signed N reserved"
     }
   ],
-  "qualifying_review": "Codex first review 590b0fed with two P2; new exact-head 4d9836b5 scoped review requested 2026-10-31 06:05 UTC, pending",
+  "qualifying_review": "Codex exact-head 4d9836b5 published one new P2-243-3; prior two candidate fixes not explicitly accepted; no qualifying review",
   "asks_per_sha": {
     "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa": 1,
     "4d9836b5455c45669b423f914d108be71c349190": 1
@@ -40,13 +48,13 @@
     "reason": "valid",
     "required": false
   },
-  "next_gate": "Codex confirm both P2 on exact head, evidence-based thread resolution, mark Draft ready; owner DX20 not needed for Tier0; no POST activation",
+  "next_gate": "Claude one-push correction P2-243-3 preserving earlier 2 candidates; exact new-head CI, Codex re-review, 3 thread dispositions, ready",
   "last_prompt": {
-    "agent": "Codex",
+    "agent": "Claude",
     "sha": "4d9836b5455c45669b423f914d108be71c349190",
-    "comment_id": 6539872416,
-    "time": "2026-10-31T06:06:07.374Z",
-    "ask": "exact-head scoped re-review of both cumulative P2 findings"
+    "comment_id": 6539900318,
+    "time": "2026-10-31T06:07:26.018Z",
+    "ask": "three cumulative P2 findings, fix matrix contradiction in one docs-only push, completion report"
   },
-  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held. 09:30 GST FOLLOW-UP: two new P2 threads from Codex verified in file and sent in full to Claude; no thread resolved.; FULL 10:05 GST: Claude one docs-only signed fix push 4d9836b5, exact-head CI green, two evidence replies posted, Codex re-review requested; D-8/D-11 unresolved."
+  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held. 09:30 GST FOLLOW-UP: two new P2 threads from Codex verified in file and sent in full to Claude; no thread resolved.; FULL 10:05 GST: Claude one docs-only signed fix push 4d9836b5, exact-head CI green, two evidence replies posted, Codex re-review requested; D-8/D-11 unresolved.; FULL ~10:07 GST: Codex new exact-head P2-243-3 on matrix T4r vs FA-28b(ii); full 3-item checklist to Claude comment 6539900318, threads now 3."
 }
