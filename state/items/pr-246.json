@@ -2,12 +2,12 @@
   "schema_version": 16,
   "type": "pr",
   "number": 246,
-  "head_sha": "25b91596cf484d7302d6ab672616f4e678600841",
+  "head_sha": "ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29",
   "tier": 0,
   "tier_reason": "docs-only new specification file; no workflow, code, permission, secret or token change",
   "state": "draft",
-  "updated_at": "2026-10-31T07:13:11.026Z",
-  "ci": "backend and frontend SUCCESS on exact head; suite jobs skipped by docs-only route",
+  "updated_at": "2026-10-31T07:17:04.972Z",
+  "ci": "backend and frontend SUCCESS on exact new head ad75c9e; branch 0 behind main 11f46a2b",
   "open_threads": 4,
   "findings": [
     {
@@ -31,69 +31,70 @@
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831186",
       "severity": "P2",
       "required": "Ambiguous scan-state PUT: distinguish applied-response-lost, confirmed not-applied and unknown; FC-55 variants",
-      "status": "Open",
-      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxE; current C lines 70 inspected; consolidated remediation requested"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxE; current C lines 70 inspected; consolidated remediation requested; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-REV-2",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831191",
       "severity": "P2",
       "required": "Bound reopened chunks by OPEN_UNITS_CAP, or enforce configuration compatibility; FC-54/FC-57",
-      "status": "Open",
-      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxJ; current C lines 73 inspected; consolidated remediation requested"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxJ; current C lines 73 inspected; consolidated remediation requested; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-REV-3",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831194",
       "severity": "P2",
       "required": "Recheck task deadline after external work and before retry/wait/budget exit; FC-51",
-      "status": "Open",
-      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxM; current C lines 61 inspected; consolidated remediation requested"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxM; current C lines 61 inspected; consolidated remediation requested; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-REV-4",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831197",
       "severity": "P2",
       "required": "Task-scoped 429 must not terminate independent tasks; FC-12 multi-task case",
-      "status": "Open",
-      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxQ; current C lines 103 inspected; consolidated remediation requested"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxQ; current C lines 103 inspected; consolidated remediation requested; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-PRE-4",
       "severity": "preflight",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540458794",
       "required": "SC-2 coverage/absence must account for unresolved units in reopen range",
-      "status": "Fixed in uncommitted candidate (pending patch preflight and independent review)",
-      "evidence": "Claude corrected patch #220 comment 6540461051, 9 hunks mechanically verified; SC-2 and SC-6 aligned with A"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Claude corrected patch #220 comment 6540461051, 9 hunks mechanically verified; SC-2 and SC-6 aligned with A; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-PRE-5",
       "severity": "preflight",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540458794",
       "required": "SC-6 next-run ambiguous write handling must follow A INV-A3, no lost mutation_id classification",
-      "status": "Fixed in uncommitted candidate (pending patch preflight and independent review)",
-      "evidence": "Claude corrected patch #220 comment 6540461051, 9 hunks mechanically verified; SC-2 and SC-6 aligned with A"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Claude corrected patch #220 comment 6540461051, 9 hunks mechanically verified; SC-2 and SC-6 aligned with A; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-PRE-6",
       "severity": "preflight",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540479688",
       "required": "SC-6 definite CAS conflict cannot guarantee durable positions unchanged; reread/rederive",
-      "status": "Open",
-      "evidence": "Candidate SC-6 conflates definite failure and confirmed no-change with 409 conflict"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Candidate SC-6 conflates definite failure and confirmed no-change with 409 conflict; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     },
     {
       "id": "C-PRE-7",
       "severity": "preflight",
       "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540479688",
       "required": "SC-7 widen reopen range must rewind position when earlier mismatch discovered; FC-57 variant",
-      "status": "Open",
-      "evidence": "Candidate widens range without specifying position rewind, may skip newly affected keys"
+      "status": "Candidate Fixed at ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29; pending independent Codex acceptance",
+      "evidence": "Candidate widens range without specifying position rewind, may skip newly affected keys; 9-hunk exact-context Claude DX12 patch verified and applied; GitHub file blob 34b684f521fecb70a6eadeb2df96f1657aae812e"
     }
   ],
-  "qualifying_review": "Codex native COMMENTED review at exact 25b91596cf with four P2 inline findings; NOT ACCEPTED; no verdict line",
+  "qualifying_review": "Previous Codex P2 review on old 25b91596; new exact-head scoped Codex review requested 6540514704; no acceptance yet",
   "asks_per_sha": {
-    "25b91596cf484d7302d6ab672616f4e678600841": 1
+    "25b91596cf484d7302d6ab672616f4e678600841": 1,
+    "ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29": 1
   },
   "fix_review_cycles": 0,
   "stale_level": 0,
@@ -103,14 +104,14 @@
     "reason": "unsigned",
     "required": false
   },
-  "next_gate": "Claude final SC-6 conflict and SC-7 widened-range correction; mechanically validate against unchanged 229-line original, apply only verbatim if coherent; then CI, Codex, DX20",
+  "next_gate": "Codex native exact-head review of four P2 threads and cumulative checklist; do not resolve before confirmation; then DX20 owner-run second review and D-3/D-4/D-5/D-7; Draft",
   "last_prompt": {
-    "agent": "Claude",
-    "sha": "25b91596cf484d7302d6ab672616f4e678600841",
-    "comment_id": 6540479688,
-    "time": "2026-10-31T07:13:11.026Z",
-    "ask": "final preflight correction C-PRE-6/7, complete original-head diff"
+    "agent": "Codex",
+    "sha": "ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29",
+    "comment_id": 6540514704,
+    "time": "2026-10-31T07:17:04.972Z",
+    "ask": "scoped native re-review of four cumulative P2 findings and preflight fixes"
   },
   "linked_issue": 220,
-  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action.; 2026-10-31 07:06Z: four P2 Codex findings, full checklist sent to Claude on #220 comment 6540418947. No thread resolved.; Claude candidate #220 comment 6540421093: 9 hunks exact-context/count/offset validated against 229-line blob, projects 232 lines, NOT applied due SC-2/reopen and SC-6/INV-A3 contradictions. Correction requested 6540458794.; Second candidate #220 6540461051 9 hunks exact-context valid, projects 232 lines, NOT applied. Preflight C-PRE-6/7 requested 6540479688."
+  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action.; 2026-10-31 07:06Z: four P2 Codex findings, full checklist sent to Claude on #220 comment 6540418947. No thread resolved.; Claude candidate #220 comment 6540421093: 9 hunks exact-context/count/offset validated against 229-line blob, projects 232 lines, NOT applied due SC-2/reopen and SC-6/INV-A3 contradictions. Correction requested 6540458794.; Second candidate #220 6540461051 9 hunks exact-context valid, projects 232 lines, NOT applied. Preflight C-PRE-6/7 requested 6540479688.; 07:16Z Claude final 9-hunk original-head patch #220 6540481725 mechanically and semantically preflight-verified, applied verbatim to existing PR branch in one commit ad75c9e (232 lines, +232/-0, one docs file). Four P2 threads individually replied with SHA evidence, deliberately left open. Required CI green on new SHA; Codex requested 6540514704. No production activation."
 }
