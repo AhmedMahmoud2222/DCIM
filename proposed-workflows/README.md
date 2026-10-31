@@ -4,7 +4,7 @@ Files in this directory are inert: GitHub only executes `.github/workflows/`. Ev
 needs independent Codex review and an owner-run Jules Tier 2 review on its exact SHA; only
 the owner applies it.
 
-**Current state (PR #224 head ad6cdf9):** PR #224 is not merged. `.github/workflows/refresh-branch.yml`
+**Current state (PR #224; the branch head moves, so check the PR for the exact SHA):** PR #224 is not merged. `.github/workflows/refresh-branch.yml`
 exists on the PR branch (not on `main`) and contains the v3 content (P2-1..P2-4 candidate fixes),
 so merging the PR activates it. It does not run on this PR because `issue_comment` uses the
 default-branch copy. `proposed-workflows/refresh-branch.yml` is now v4 = v3 + F1 (422 handling)

@@ -1,10 +1,12 @@
 # proposed-workflows/refresh-branch.yml
 # Candidate v4 of the refresh workflow (v3 + F1: handle benign update-branch 422s).
-# This proposed-workflows/ copy is inert. The same content, once copied to
-# .github/workflows/refresh-branch.yml and merged to main, is the ACTIVE workflow
-# (issue_comment runs only from the default branch). Not runtime-tested.
-# Needs independent Codex review and owner-run Jules Tier 2 review on the exact SHA
-# before the owner copies it to .github/workflows/refresh-branch.yml.
+# Location-neutral status: this file is inert while it lives under proposed-workflows/.
+# It is active only when present under .github/workflows/ on the default branch (main),
+# because issue_comment runs only from the default branch. Not runtime-tested.
+# Process: the owner copies it verbatim into .github/workflows/ on a PR branch first;
+# then fresh exact-head CI, an independent Codex review and a second (Jules Tier 2)
+# review of that exact SHA are required before any merge. Nothing here is activated
+# or configured by the file's presence in either location before merge.
 #
 # Purpose: refresh a same-repo PR branch that targets main, via a comment:
 #   /refresh-branch <full 40-character lowercase head SHA>
