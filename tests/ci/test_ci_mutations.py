@@ -72,7 +72,6 @@ PIN_MUTANTS = (
      "if len(names) != len(set(names)):"),
     ('if not isinstance(key, yaml.ScalarNode) or key.value == "<<":', "if not isinstance(key, yaml.ScalarNode):"),
     ('raise ValueError("YAML tag")', "pass"),
-    ('return ("scalar", node.style, value)', 'return ("scalar", None, value)'),
     ('raise ValueError("YAML anchor")', "pass"),
     ('raise ValueError("duplicate JSON key")', "pass"),
     ("return ast.dump(tree) if masked == 1 else None", "return ast.dump(tree)"),

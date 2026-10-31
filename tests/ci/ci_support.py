@@ -255,7 +255,9 @@ def pin_cases():
           for kind in COLLISIONS],
         *[(f"key collision {kind}: real pin bump beside it",
            [pin_change(y, collide_yml(kind, PIN_A).replace("run: echo hi", f"uses: actions/checkout@{PIN_A}"),
-                       collide_yml(kind, PIN_A).replace("run: echo hi", f"uses: actions/checkout@{PIN_B}"))], False)
+                       collide_yml(kind, PIN_A).replace("run: echo hi", f"uses: actions/checkout@{PIN_B}"))],
+           # `on`/`1` and `yes`/`true` are four distinct keys for GitHub and in raw text, so the bump is legitimate.
+           kind in ("on-1", "yes-true"))
           for kind in COLLISIONS],
         ("quoting change of a scalar",
          [pin_change(y, collide_yml("octal", PIN_A), collide_yml("octal", PIN_A).replace("X: 012", 'X: "012"'))], False),
