@@ -1,8 +1,7 @@
 {
-  "run_id": "followup-20261031T032538947Z-v15",
+  "run_id": "followup-20261031T033900Z",
   "mode": "FOLLOW-UP",
-  "started_at": "2026-10-31T03:25:38.947Z",
-  "expires_at": "2026-10-31T03:50:38.947Z",
-  "status": "released",
-  "released_at": "2026-10-31T03:34:11.751Z"
+  "started_at": "2026-10-31T03:39:00Z",
+  "expires_at": "2026-10-31T04:04:00Z",
+  "status": "active"
 }
