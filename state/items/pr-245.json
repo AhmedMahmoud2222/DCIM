@@ -6,8 +6,8 @@
   "tier": 1,
   "tier_reason": "tests-only change in backend/tests/integration/test_fk_indexes_migration.py, no migration or production code change",
   "state": "draft",
-  "updated_at": "2026-10-31T06:33:00Z",
-  "ci": "frontend SUCCESS exact head 79a8d8cc; backend-suite in_progress at 06:33 UTC; backend required check not yet reported",
+  "updated_at": "2026-10-31T07:08:45.352Z",
+  "ci": "exact-head backend-suite SUCCESS at 07:07:54Z; backend SUCCESS 07:08:01Z; frontend SUCCESS 06:20:21Z; branch 0 behind main",
   "open_threads": 0,
   "findings": [
     {
@@ -20,7 +20,9 @@
     }
   ],
   "qualifying_review": "none on exact head",
-  "asks_per_sha": {},
+  "asks_per_sha": {
+    "79a8d8cceab3f6e5335e8c5820f59ca7a6cd7252": 1
+  },
   "fix_review_cycles": 0,
   "stale_level": 0,
   "queued": false,
@@ -29,8 +31,14 @@
     "reason": "unsigned",
     "required": false
   },
-  "next_gate": "await exact-head backend SUCCESS, then independent Codex review and deterministic witness; Draft remains; no merge",
-  "last_prompt": null,
+  "next_gate": "Codex exact-head native review and deterministic/repeated witness of FK-index race; then evaluate Draft readiness; do not merge while finding FLAKY-244-1 open",
+  "last_prompt": {
+    "agent": "Codex",
+    "sha": "79a8d8cceab3f6e5335e8c5820f59ca7a6cd7252",
+    "comment_id": 6540437815,
+    "time": "2026-10-31T07:08:45.352Z",
+    "ask": "independent test-only review; verify readiness barrier, no weakened assertions, reproducibility witness"
+  },
   "linked_issue": 244,
-  "notes": "Claude-authored single-hunk patch from issue #244 comment 6539928602 applied verbatim under DX12. Initial 720-line reconstruction truncated file; detected before PR, corrected with full 1082-line main file and original newline. Final cumulative diff 1 file, 9 additions/1 deletion, no unrelated changes; 3 audit commits retained, no force push. Draft PR #245."
+  "notes": "Claude-authored single-hunk patch from issue #244 comment 6539928602 applied verbatim under DX12. Initial 720-line reconstruction truncated file; detected before PR, corrected with full 1082-line main file and original newline. Final cumulative diff 1 file, 9 additions/1 deletion, no unrelated changes; 3 audit commits retained, no force push. Draft PR #245.; 2026-10-31 07:08Z exact-head backend/frontend green, first Codex review requested on PR comment 6540437815."
 }
