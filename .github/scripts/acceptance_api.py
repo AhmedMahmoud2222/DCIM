@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +20,26 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+# Retryable failures are transient outages (rate limiting, server errors,
+# network and timeout failures). Anything else - authorization (401/403),
+# task-ineligibility (404/422), CAS conflicts (409) and malformed responses -
+# is definitive and fails closed without retry.
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+MAX_REQUEST_ATTEMPTS = 5
+# Per-delay and cumulative retry sleep caps (seconds).
+MAX_RETRY_DELAY_SECONDS = 60.0
+MAX_CUMULATIVE_RETRY_SECONDS = 300.0
+
+
+class TransientError(Exception):
+    """A retryable GitHub API failure exhausted its bounded backoff budget.
+
+    Callers must treat this as an outage, never as an authorization or
+    task-ineligibility decision, and preserve the existing task state so the
+    next scheduled execution can retry.
+    """
+
+
 class GitHub:
     def __init__(self, policy, root=None):
         self.policy = policy
@@ -26,7 +47,73 @@ class GitHub:
         self.api_root = 'https://api.github.com/repos/' + policy['repository']
         self.opener = urllib.request.build_opener(NoRedirect)
 
-    def request(self, path, method='GET', body=None):
+    def _is_rate_limit_response(self, exc):
+        """Determine if an HTTPError is a rate-limit response (retryable/deferrable).
+
+        GitHub signals primary rate limits via x-ratelimit-remaining: 0,
+        secondary rate limits and abuse protection via 403 with rate-limit
+        headers or body text. A genuine 403 authorization denial has none of
+        these indicators.
+        """
+        if not isinstance(exc, urllib.error.HTTPError):
+            return False
+        if exc.code == 429:
+            return True
+        if exc.code != 403:
+            return False
+        headers = exc.headers or {}
+        # Primary rate limit: remaining quota is zero.
+        if headers.get('X-RateLimit-Remaining') == '0':
+            return True
+        # Retry-After header present (GitHub secondary rate limit signal).
+        if headers.get('Retry-After') is not None:
+            return True
+        # Inspect response body for rate-limit indicators.
+        try:
+            body = exc.read().decode('utf-8', errors='replace').lower()
+        except Exception:
+            body = ''
+        if 'rate limit' in body or 'secondary rate' in body or 'abuse' in body:
+            return True
+        return False
+
+    def _retry_delay(self, attempt, exc=None, now=None):
+        """Bounded backoff honoring Retry-After (seconds) and X-RateLimit-Reset (epoch).
+
+        Retry-After is interpreted as seconds. X-RateLimit-Reset is an epoch
+        timestamp and is converted to seconds-to-wait via (reset - now).
+        Per-delay and cumulative caps are enforced; exceeding them raises
+        TransientError.
+        """
+        if now is None:
+            now = time.time()
+        delay = min(30.0, 0.5 * (2 ** attempt))
+        if isinstance(exc, urllib.error.HTTPError):
+            headers = exc.headers or {}
+            retry_after = headers.get('Retry-After')
+            if retry_after is not None:
+                try:
+                    delay = max(delay, float(retry_after))
+                except (TypeError, ValueError):
+                    pass
+            elif exc.code in (429, 403) or headers.get('X-RateLimit-Remaining') == '0':
+                # Quota reset applies only to genuine rate limiting, not ordinary 5xx.
+                reset = headers.get('X-RateLimit-Reset')
+                if reset is not None:
+                    try:
+                        reset_time = float(reset)
+                        wait = reset_time - now
+                        if wait > 0:
+                            delay = max(delay, wait)
+                    except (TypeError, ValueError):
+                        pass
+        # Per-delay cap.
+        if delay > MAX_RETRY_DELAY_SECONDS:
+            raise TransientError('retry delay exceeds per-delay cap: ' + str(delay))
+        return delay
+
+    def _raw_request(self, path, method='GET', body=None):
+        """One HTTP attempt; overridable by test stubs."""
         require(path.startswith('/') and not path.startswith('//'), 'invalid API path')
         token = os.environ.get('GITHUB_TOKEN')
         require(bool(token), 'GitHub token absent')
@@ -34,13 +121,72 @@ class GitHub:
             data=None if body is None else json.dumps(body).encode(), headers={
                 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
                 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'dcim-acceptance-gate'})
-        try:
-            with self.opener.open(request, timeout=25) as response:
-                raw = response.read(8 * 1024 * 1024 + 1)
-                require(len(raw) <= 8 * 1024 * 1024, 'API response too large')
-                return json.loads(raw)
-        except (urllib.error.URLError, ValueError, TimeoutError) as exc:
-            raise Rejected('GitHub API failed: ' + path.split('?')[0]) from exc
+        with self.opener.open(request, timeout=25) as response:
+            raw = response.read(8 * 1024 * 1024 + 1)
+            require(len(raw) <= 8 * 1024 * 1024, 'API response too large')
+            return json.loads(raw)
+
+    def request(self, path, method='GET', body=None):
+        """Bounded, backoff-aware retries over transient GitHub failures.
+
+        Retryable network, rate-limit (429), timeout and HTTP 5xx failures are
+        retried with backoff for idempotent methods (GET/HEAD). Non-idempotent
+        writes (POST/PUT/PATCH/DELETE) are never blindly retried (F2) except
+        for rate-limit responses GitHub guarantees were not processed.
+        Definitive authorization (401, genuine 403) and task-ineligibility
+        (404/422) failures fail closed immediately, as do CAS conflicts (409).
+        Rate-limit responses (429, 403 with rate-limit indicators) are retryable
+        or deferrable (F4). A persistent outage raises TransientError after
+        exhausting the bounded budget; callers treat it as an outage, never an
+        authorization decision, and preserve existing task state.
+        """
+        is_idempotent = method.upper() in {'GET', 'HEAD'}
+        cumulative_delay = 0.0
+        for attempt in range(MAX_REQUEST_ATTEMPTS):
+            try:
+                return self._raw_request(path, method, body)
+            except urllib.error.HTTPError as exc:
+                # F4: Distinguish rate-limit 403 from genuine authorization 403.
+                is_rate_limit = self._is_rate_limit_response(exc)
+                if exc.code == 403 and not is_rate_limit:
+                    raise Rejected('GitHub API failed: ' + path.split('?')[0] +
+                                   f' (HTTP {exc.code})') from exc
+                # Definitive non-retryable statuses fail closed.
+                if exc.code not in RETRYABLE_HTTP_CODES and not is_rate_limit:
+                    raise Rejected('GitHub API failed: ' + path.split('?')[0] +
+                                   f' (HTTP {exc.code})') from exc
+                # F2: No blind retries for non-idempotent writes (except rate limits).
+                if not is_idempotent and not is_rate_limit:
+                    raise TransientError('GitHub API unavailable: ' + path.split('?')[0]) from exc
+                if attempt == MAX_REQUEST_ATTEMPTS - 1:
+                    raise TransientError('GitHub API unavailable: ' + path.split('?')[0]) from exc
+                try:
+                    delay = self._retry_delay(attempt, exc)
+                except TransientError:
+                    raise
+                cumulative_delay += delay
+                if cumulative_delay > MAX_CUMULATIVE_RETRY_SECONDS:
+                    raise TransientError('cumulative retry delay exceeds cap') from exc
+                time.sleep(delay)
+                continue
+            except (urllib.error.URLError, TimeoutError) as exc:
+                # F2: No retries for non-idempotent writes on network errors.
+                if not is_idempotent:
+                    raise TransientError('GitHub API unavailable: ' + path.split('?')[0]) from exc
+                if attempt == MAX_REQUEST_ATTEMPTS - 1:
+                    raise TransientError('GitHub API unavailable: ' + path.split('?')[0]) from exc
+                try:
+                    delay = self._retry_delay(attempt, exc)
+                except TransientError:
+                    raise
+                cumulative_delay += delay
+                if cumulative_delay > MAX_CUMULATIVE_RETRY_SECONDS:
+                    raise TransientError('cumulative retry delay exceeds cap') from exc
+                time.sleep(delay)
+                continue
+            except ValueError as exc:
+                raise Rejected('GitHub API failed: ' + path.split('?')[0]) from exc
+        raise Rejected('GitHub API failed: ' + path.split('?')[0])  # unreachable
 
     def pages(self, path, key=None, total_key='total_count', limit=2000):
         values, total = [], None
@@ -120,8 +266,12 @@ class GitHub:
             self.opener.open(req, timeout=25)
             raise Rejected('artifact redirect missing')
         except urllib.error.HTTPError as exc:
+            if exc.code in RETRYABLE_HTTP_CODES:
+                raise TransientError('artifact download unavailable (HTTP %d)' % exc.code) from exc
             require(exc.code == 302, 'artifact download failed')
             location = exc.headers.get('Location', '')
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise TransientError('artifact download unavailable') from exc
         u = urllib.parse.urlsplit(location)
         require(u.scheme == 'https' and u.hostname and not u.username and not u.password
                 and u.port in (None, 443) and not u.fragment
@@ -131,8 +281,14 @@ class GitHub:
         try:
             with self.opener.open(urllib.request.Request(location), timeout=25) as response:
                 raw = response.read(1048577)
+        except urllib.error.HTTPError as exc:
+            # Throttling/outage of signed storage is temporary; anything else (expired
+            # or forbidden URL, missing blob) is definitive negative evidence.
+            if exc.code in RETRYABLE_HTTP_CODES:
+                raise TransientError('artifact storage unavailable (HTTP %d)' % exc.code) from exc
+            raise Rejected('artifact storage download failed') from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise Rejected('artifact storage unavailable') from exc
+            raise TransientError('artifact storage unavailable') from exc
         require(len(raw) <= 1048576 and artifact.get('digest') == 'sha256:' + hashlib.sha256(raw).hexdigest(),
                 'artifact integrity mismatch')
         try:
