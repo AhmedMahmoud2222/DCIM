@@ -630,14 +630,20 @@ COMMAND_INVENTORY = {
         "npm ci", "npm audit --audit-level=high", "npm test", "npm run typecheck",
         "npx eslint . --ext ts,tsx", "npm run build",
     ),
-    "backend-runtime-matrix": (
+    "backend-runtime-shards": (
         'pip install -e ".[dev]"', "tesseract-ocr", "python scripts/check_alembic_single_head.py",
         "ruff check app tests", "mypy app", "alembic upgrade head", "alembic downgrade 0010_mvp_alarms",
         "scripts/bootstrap_privileged_roles.sql",
         "pytest -q tests/integration/test_mvp_retention_hostile.py",
-        "pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py",
+        "pytest -q tests/api/test_catalog_extraction_apply.py",
+        "ci_shard.py\" --index \"$SHARD\" --count 3 --root tests",
+        "--preload tests/integration/test_mvp_retention_hostile.py",
+        "--preload tests/api/test_catalog_extraction_apply.py",
+        "--preload tests/unit/test_catalog_apply_conversion.py",
+        'pytest -q "${files[@]}"',
         "pytest -q edge_collector/tests",
     ),
+    "backend-runtime-matrix": ('[ "$SHARDS_RESULT" != success ]', "exit 1"),
     "edge-collector": ('pip install "./edge_collector[test]"', "ruff check edge_collector",
                        "pytest -q edge_collector/tests"),
     "edge-interop": ("python -m edge_collector.interop.run_interop --json interop-results.json",
@@ -695,6 +701,57 @@ def executable(script: object) -> str:
 
 def route_script(doc: dict) -> str:
     return next(step["run"] for step in doc["jobs"]["route"]["steps"] if step.get("id") == "route")
+
+
+SHARD_JOB = "backend-runtime-shards"
+AGGREGATE = "backend-runtime-matrix"
+SHARD_COUNT = 3
+
+
+def shard_errors(jobs: dict) -> list[str]:
+    """The shard job runs the tests that the aggregate check names report on."""
+    job = jobs.get(SHARD_JOB)
+    if not isinstance(job, dict):
+        return [f"{SHARD_JOB} missing"]
+    errors = []
+    base_if = jobs.get(AGGREGATE, {}).get("if", "")
+    if f"({job.get('if')})" not in base_if or job.get("needs") != "route":
+        errors.append(f"{SHARD_JOB} does not share the condition of {AGGREGATE}")
+    if job.get("continue-on-error"):
+        errors.append(f"{SHARD_JOB} is continue-on-error")
+    strategy = job.get("strategy", {})
+    matrix = strategy.get("matrix", {})
+    if strategy.get("fail-fast") is not False or "include" in matrix or "exclude" in matrix:
+        errors.append(f"{SHARD_JOB} strategy can drop a leg: {strategy}")
+    if matrix.get("shard") != list(range(SHARD_COUNT)):
+        errors.append(f"{SHARD_JOB} shards are {matrix.get('shard')}, expected 0..{SHARD_COUNT - 1}")
+    if matrix.get("python-version") != ["3.12", "3.13", "3.14"]:
+        errors.append(f"{SHARD_JOB} versions are {matrix.get('python-version')}")
+    names = [entry.get("python-version") for entry in jobs.get(AGGREGATE, {}).get("strategy", {}).get("matrix", {}).get("include", [])]
+    if names != matrix.get("python-version"):
+        errors.append(f"{AGGREGATE} versions {names} differ from the shard versions")
+    steps = job.get("steps", [])
+    text = " ".join(executable(step.get("run", "")) for step in steps)
+    if f"--count {SHARD_COUNT}" not in text or text.count("--count") != 1:
+        errors.append(f"{SHARD_JOB} shard count is not {SHARD_COUNT}")
+    for step in steps:
+        if "if" in step and step["if"] != "matrix.shard == 0":
+            errors.append(f"{SHARD_JOB} step {step.get('name')!r} has condition {step['if']!r}")
+        run = str(step.get("run", ""))
+        if "ci_shard.py" in run and "if" in step:
+            errors.append(f"{SHARD_JOB} shard selection is conditional")
+    full_text = " ".join(executable(step.get("run", "")) + " " + str(step.get("with", "")) for step in steps)
+    for command in COMMAND_INVENTORY[SHARD_JOB]:
+        if command not in full_text:
+            errors.append(f"{SHARD_JOB} no longer runs {command!r}")
+    for step in steps:
+        if step.get("continue-on-error") and "clamav-daemon" not in step.get("run", ""):
+            errors.append(f"{SHARD_JOB} step {step.get('name')!r} is continue-on-error")
+    unconditional = " ".join(executable(step.get("run", "")) for step in steps if "if" not in step)
+    for command in ("alembic upgrade head", 'pytest -q "${files[@]}"'):
+        if command not in unconditional:
+            errors.append(f"{SHARD_JOB} does not run {command!r} in every shard")
+    return errors
 
 
 def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
@@ -757,7 +814,7 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
     for key in ("level", "head-sha", "route"):
         if outputs.get(key) != "${{ steps.route.outputs." + key + " }}":
             errors.append(f"route output {key} missing")
-    actual_workers = set(jobs) - set(gates) - {"route", "ci-policy"}
+    actual_workers = set(jobs) - set(gates) - {"route", "ci-policy", SHARD_JOB}
     if actual_workers != set(workers):
         errors.append(f"worker jobs {sorted(actual_workers)} are not the policy workers {sorted(workers)}")
     for job_id in workers:
@@ -767,12 +824,17 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
         if outputs.get(f"run-{job_id}") != "${{ steps.route.outputs.run-" + job_id + " }}":
             errors.append(f"route output run-{job_id} missing")
         expected_if = f"needs.route.outputs.level == 'full' || needs.route.outputs.run-{job_id} == 'true'"
-        if job.get("needs") != "route" or job.get("if") != expected_if:
+        expected_needs = "route"
+        if job_id == AGGREGATE:
+            # The aggregate runs no tests. It must run when a shard fails, and then fail.
+            expected_if = f"always() && ({expected_if})"
+            expected_needs = ["route", SHARD_JOB]
+        if job.get("needs") != expected_needs or job.get("if") != expected_if:
             errors.append(f"worker {job_id} needs/if is {job.get('needs')!r}/{job.get('if')!r}")
         if job.get("continue-on-error") not in (None, False, "${{ matrix.experimental }}"):
             errors.append(f"worker {job_id} continue-on-error {job.get('continue-on-error')!r}")
         for entry in job.get("strategy", {}).get("matrix", {}).get("include", []):
-            if entry.get("experimental") is not False:
+            if entry.get("experimental", False) is not False:
                 errors.append(f"worker {job_id} has a non-blocking matrix entry {entry}")
         steps = job.get("steps", [])
         for step in steps:
@@ -785,6 +847,7 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
         if any(str(step.get("run", "")).strip().startswith(("echo", "true", ":")) and
                "pytest" in str(step.get("name", "")).lower() for step in steps):
             errors.append(f"worker {job_id} replaced a test step")
+    errors.extend(shard_errors(jobs))
     e2e_env = jobs.get("browser-e2e", {}).get("env", {})
     for key, value in E2E_ENV.items():
         if e2e_env.get(key) != value:

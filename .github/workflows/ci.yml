@@ -574,22 +574,20 @@ jobs:
   # and not `prefer_fwd_module`. That was a release-candidate gap rather than a property of
   # 3.14 as shipped: against the final 3.14.x actions/setup-python installs, every step of
   # this job passes, migrations, full suite and Edge Collector suite included.
-  backend-runtime-matrix:
+  backend-runtime-shards:
     needs: route
+    # Same condition as the aggregate job `backend-runtime-matrix` below. The aggregate
+    # fails unless this job succeeds, so a route that selects the matrix cannot skip a shard.
     if: needs.route.outputs.level == 'full' || needs.route.outputs.run-backend-runtime-matrix == 'true'
-    name: backend suite (Python ${{ matrix.python-version }})
+    name: backend shard (Python ${{ matrix.python-version }}, ${{ matrix.shard }} of 3)
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - python-version: "3.12"
-            experimental: false
-          - python-version: "3.13"
-            experimental: false
-          - python-version: "3.14"
-            experimental: false
+        python-version: ["3.12", "3.13", "3.14"]
+        # The shard indexes 0..2 must match --count 3 in the test step. tests/ci checks it.
+        shard: [0, 1, 2]
     services:
       postgres:
         image: postgres:16
@@ -658,6 +656,7 @@ jobs:
           PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -c \
             'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE EXTENSION IF NOT EXISTS btree_gist;'
       - name: Alembic single-head gate
+        if: matrix.shard == 0
         # Two PRs that each add a revision on the same parent merge cleanly as text but
         # leave two heads. This reads the revision files only (no database), so it fails
         # fast and names both heads, before any migration step runs.
@@ -665,30 +664,80 @@ jobs:
           ruff check scripts/check_alembic_single_head.py
           python scripts/check_alembic_single_head.py
       - name: Lint (ruff)
+        if: matrix.shard == 0
         run: ruff check app tests
       - name: Type check (mypy)
+        if: matrix.shard == 0
         run: mypy app
       - name: Run migrations
         run: alembic upgrade head
       - name: Validate retention migration round trip
+        if: matrix.shard == 0
         run: |
           test "$(alembic heads | wc -l)" -eq 1
           alembic downgrade 0010_mvp_alarms
           alembic upgrade head
           test "$(alembic heads | wc -l)" -eq 1
       - name: Bootstrap privileged retention role
+        if: matrix.shard == 0
         run: PGPASSWORD=$PGPASSWORD_SUPERUSER psql -h localhost -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
       - name: Grant CAP_NET_RAW for the ICMP driver's real raw-socket tests
         run: sudo setcap cap_net_raw+ep "$(readlink -f "$(command -v python3)")"
       - name: Run PostgreSQL retention hostile validation
+        if: matrix.shard == 0
         run: pytest -q tests/integration/test_mvp_retention_hostile.py
       - name: Validate extraction apply against PostgreSQL
+        if: matrix.shard == 0
         run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
-      - name: Run regression tests
-        run: pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py
+      - name: Run this shard of the regression tests
+        # ci_shard.py splits the test files by size into three shards. The retention hostile
+        # file and the two extraction files run in shard 0's own steps above, so they are
+        # preloaded: they count against shard 0 and no shard selects them again. An empty
+        # selection or an unknown file makes ci_shard.py exit non-zero, and the step fails
+        # before pytest runs, because pytest with no file list would collect everything.
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          selected="$(python "$GITHUB_WORKSPACE/.github/scripts/ci_shard.py" --index "$SHARD" --count 3 --root tests \
+            --preload tests/integration/test_mvp_retention_hostile.py \
+            --preload tests/api/test_catalog_extraction_apply.py \
+            --preload tests/unit/test_catalog_apply_conversion.py)"
+          readarray -t files <<< "$selected"
+          pytest -q "${files[@]}"
       - name: Run Edge Collector tests on this runtime
+        if: matrix.shard == 0
         working-directory: ${{ github.workspace }}
         run: pytest -q edge_collector/tests
+
+  # The release verifier and the branch rules know the check names `backend suite
+  # (Python X)`. These three jobs keep those names and run no tests: each one requires the
+  # whole shard job above to succeed. A failed shard fails all three, so read the shard job
+  # names to find the version. `always()` makes them fail, not skip, when a shard fails.
+  backend-runtime-matrix:
+    needs:
+      - route
+      - backend-runtime-shards
+    if: always() && (needs.route.outputs.level == 'full' || needs.route.outputs.run-backend-runtime-matrix == 'true')
+    name: backend suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.12"
+          - python-version: "3.13"
+          - python-version: "3.14"
+    steps:
+      - name: Require every shard to succeed
+        env:
+          SHARDS_RESULT: ${{ needs.backend-runtime-shards.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != success ]; then
+            echo "::error::backend-runtime-shards result is '$SHARDS_RESULT', expected 'success'"
+            exit 1
+          fi
+
 
   # The required checks. Both run with always(): a skipped required check counts as
   # passed, so a gate must never skip. Each gate fails unless every job in its `needs`

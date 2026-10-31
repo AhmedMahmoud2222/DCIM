@@ -147,6 +147,14 @@ def _set_run(job_id, needle, run):
     return lambda doc: _step(doc, job_id, needle).__setitem__("run", run)
 
 
+def _edit_run(job_id, needle, old, new):
+    def mutate(doc):
+        step = _step(doc, job_id, needle)
+        assert step["run"].count(old) == 1, old
+        step["run"] = step["run"].replace(old, new)
+    return mutate
+
+
 def _set_route_script(old, new):
     def mutate(doc):
         step = next(s for s in doc["jobs"]["route"]["steps"] if s.get("id") == "route")
@@ -170,7 +178,7 @@ WORKFLOW_MUTANTS = {
     "regression pytest behind a trailing comment": _set_run(
         "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py",
         "true # pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py"),
-    "mypy commented out": _set_run("backend-runtime-matrix", "mypy app", "# mypy app"),
+    "mypy commented out": _set_run("backend-runtime-shards", "mypy app", "# mypy app"),
     # Review re-check P1-07: the bootstrap route must not run checkout code.
     "bootstrap runs the checkout router": _set_route_script(
         'echo "Routing policy source: none (event $event selects full)"',
@@ -213,10 +221,29 @@ WORKFLOW_MUTANTS = {
         "extra", {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}),
     "matrix leg non-blocking": lambda doc: _job(doc, "backend-runtime-matrix")["strategy"]["matrix"]["include"][2]
     .__setitem__("experimental", True),
+    # Sharding: a shard that no job runs would pass without being tested.
+    "shard dropped from the matrix": lambda doc: _job(doc, "backend-runtime-shards")["strategy"]["matrix"]["shard"].pop(),
+    "shard count raised past the matrix": _edit_run("backend-runtime-shards", "ci_shard.py", "--count 3", "--count 4"),
+    "shard job continue-on-error": lambda doc: _job(doc, "backend-runtime-shards").__setitem__("continue-on-error", True),
+    "shard job condition differs": lambda doc: _job(doc, "backend-runtime-shards").__setitem__("if", "false"),
+    "shard leg excluded": lambda doc: _job(doc, "backend-runtime-shards")["strategy"]["matrix"].__setitem__(
+        "exclude", [{"shard": 2}]),
+    "shard job fail-fast": lambda doc: _job(doc, "backend-runtime-shards")["strategy"].__setitem__("fail-fast", True),
+    "shard selection made conditional": lambda doc: _step(doc, "backend-runtime-shards", "ci_shard.py").__setitem__(
+        "if", "matrix.shard == 0"),
+    "shard tests replaced with echo": _edit_run("backend-runtime-shards", "ci_shard.py", 'pytest -q "${files[@]}"', "echo skipped"),
+    "migrations only on shard 0": lambda doc: _step(doc, "backend-runtime-shards", "alembic upgrade head").__setitem__(
+        "if", "matrix.shard == 0"),
+    "preload dropped": _edit_run("backend-runtime-shards", "ci_shard.py", " \\\n  --preload tests/unit/test_catalog_apply_conversion.py", ""),
+    "aggregate ignores the shards": _set_run("backend-runtime-matrix", 'if [ "$SHARDS_RESULT" != success ]; then', "if false; then"),
+    "aggregate skips on shard failure": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__(
+        "if", _job(doc, "backend-runtime-matrix")["if"].replace("always() && ", "")),
+    "aggregate drops the shard need": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__("needs", ["route"]),
+    "aggregate version dropped": lambda doc: _job(doc, "backend-runtime-matrix")["strategy"]["matrix"]["include"].pop(),
     "worker continue-on-error": lambda doc: _job(doc, "edge-collector").__setitem__("continue-on-error", True),
     "mypy step continue-on-error": lambda doc: _step(doc, "backend-suite", "mypy app").__setitem__(
         "continue-on-error", True),
-    "mypy removed from matrix": _set_run("backend-runtime-matrix", "mypy app", "echo no mypy"),
+    "mypy removed from shards": _set_run("backend-runtime-shards", "mypy app", "echo no mypy"),
     "interop harness removed": _set_run("edge-interop", "run_interop", "echo none"),
     "playwright removed": _set_run("browser-e2e", "test:e2e", "echo none"),
     "celery readiness removed": _set_run("browser-e2e", "inspect ping", "true"),
