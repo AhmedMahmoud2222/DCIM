@@ -1,0 +1,79 @@
+{
+  "run_id": "followup-20261031T013312041Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-10-31T01:33:12.041Z",
+  "recorded_at": "2026-10-31T01:37:24.275Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "lease": {
+    "acquired": true,
+    "prior_expired": true
+  },
+  "inventory": {
+    "open_prs": 28,
+    "open_issues": 16,
+    "orchestrator_state_prs": 0,
+    "open_review_threads": 51
+  },
+  "ruleset": {
+    "id": 23651422,
+    "all_six_bypass_modes": "pull_request",
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "actions": [
+    {
+      "kind": "comment",
+      "pr": 231,
+      "comment_id": 6537261260,
+      "sha": "f0a3f8bc1c235673094239cd0e119041b075b07d",
+      "agent": "Codex",
+      "ask": "third/final native Tier0 review; zero native submissions after two clean receipts",
+      "utc": "2026-10-31T01:36:32.786Z"
+    },
+    {
+      "kind": "comment",
+      "pr": 232,
+      "comment_id": 6537261683,
+      "sha": "2cd4380b930e601716dbd685a57a02ebff74c97f",
+      "agent": "Codex",
+      "ask": "third/final native Tier0 review; coupled pin and CI232 findings",
+      "utc": "2026-10-31T01:36:35.037Z"
+    },
+    {
+      "kind": "comment",
+      "pr": 233,
+      "comment_id": 6537262103,
+      "sha": "6088cebdda47a797ac1c87744e2f3a7508419130",
+      "agent": "Codex",
+      "ask": "second native Tier2 review; CI233 deadlock diagnosis under #226",
+      "utc": "2026-10-31T01:36:37.725Z"
+    }
+  ],
+  "merges": [],
+  "resolved_threads": [],
+  "failed_writes": [],
+  "new_owner_decisions": [],
+  "review_results": "At 01:37:10Z no new native review submissions on #231/#232/#233; Codex receipt not accepted",
+  "waiting": {
+    "184": "OpenCode owner deadline 2026-11-02T11:45:39Z",
+    "185": "OpenCode same deadline",
+    "224": "DX13 owner plus Jules, four open P2",
+    "228": "DX19 owner after 3-cycle cap",
+    "229": "Codex native review 2/3, one open P2, Draft",
+    "231": "Codex native review 3/3",
+    "232": "Codex native review 3/3",
+    "233": "Codex native review 2/3"
+  },
+  "blockers": {
+    "migration_0057": "production execution prohibited; no production action",
+    "no_merge": "independent review / unresolved threads / draft or branch-current gate"
+  },
+  "summary": "Three exact-head Codex requests sent (#231/#232 final, #233 second). No merges or thread resolutions. No new owner decisions. Required CI green on those three heads; no native review yet. All six bypass actors pull_request; both schedules enabled. Production Migration 0057 hold intact."
+}
