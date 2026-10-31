@@ -1,0 +1,255 @@
+{
+  "schema_version": 16,
+  "run_id": "full-20261031T085515Z-11",
+  "mode": "FULL",
+  "started_at": "2026-10-31T08:55:15Z",
+  "completed_at": "2026-10-31T08:59:47.509Z",
+  "lease": "acquired with blob SHA 678e3cd72bd6e8fc9935fe13714919873624eba9; release pending",
+  "main_sha": "11f46a2bd08e3c8d059497b437579440a93658d5",
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "bypass": [
+      {
+        "id": 842251,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "bypass_mode": "pull_request"
+      }
+    ],
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "required_thread_resolution": true,
+    "linear_history": true,
+    "signatures_required": false
+  },
+  "policy": {
+    "blob_sha": "26f26e66b02e72b2012a50f690abb2bfe3108378",
+    "sha256": "c6aa39185a08b907d89562bcdb825a651cf0f55065460d962cadc3fe90609079",
+    "changelog_sha": "e52f4a49d23fcee012a6edb7eb1011741dd672b4",
+    "amendments_this_run": 0
+  },
+  "inventory": {
+    "open_prs": 27,
+    "open_issues": 22,
+    "unresolved_threads": 56,
+    "open_thread_counts": {
+      "83": 1,
+      "115": 8,
+      "146": 4,
+      "179": 1,
+      "207": 6,
+      "217": 3,
+      "219": 12,
+      "224": 4,
+      "228": 12,
+      "229": 1,
+      "246": 4
+    },
+    "open_pr_numbers": [
+      246,
+      245,
+      238,
+      236,
+      233,
+      232,
+      230,
+      229,
+      228,
+      224,
+      219,
+      217,
+      216,
+      207,
+      200,
+      188,
+      183,
+      181,
+      179,
+      171,
+      158,
+      146,
+      117,
+      116,
+      115,
+      113,
+      83
+    ],
+    "open_issue_numbers": [
+      244,
+      242,
+      241,
+      240,
+      237,
+      235,
+      226,
+      225,
+      223,
+      220,
+      218,
+      214,
+      195,
+      185,
+      184,
+      176,
+      150,
+      107,
+      106,
+      74,
+      72,
+      52
+    ],
+    "head_signatures": {
+      "verified": 13,
+      "unverified": 14,
+      "unverified_prs": [
+        246,
+        245,
+        238,
+        230,
+        229,
+        228,
+        183,
+        171,
+        158,
+        146,
+        117,
+        116,
+        113,
+        83
+      ]
+    }
+  },
+  "actions": [
+    {
+      "type": "comment",
+      "pr": 246,
+      "id": 6541416379,
+      "sha": "ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29",
+      "reason": "second scoped Codex request to disposition 4 P2 threads; prior clean A4 comment did not explicitly disposition them"
+    },
+    {
+      "type": "state_update",
+      "path": "state/items/pr-224.json",
+      "reason": "exact-head backend/frontend green, v4 owner copy pending"
+    },
+    {
+      "type": "state_update",
+      "path": "state/items/pr-246.json",
+      "reason": "record second Codex ask and pending four threads"
+    },
+    {
+      "type": "state_update",
+      "path": "state/index.json",
+      "reason": "full inventory and new CI evidence"
+    },
+    {
+      "type": "edit_comment",
+      "issue": 220,
+      "id": 6500987889,
+      "reason": "current human ledger"
+    },
+    {
+      "type": "edit_comment",
+      "issue": 220,
+      "id": 6501005762,
+      "reason": "current decision queue; no class I item ready"
+    }
+  ],
+  "verification": {
+    "pr224": {
+      "head": "6cf42b089bb78c66c93655dda78a8044d00b2a2a",
+      "backend": "success 2026-10-31T08:39:48Z",
+      "frontend": "success 2026-10-31T07:49:31Z",
+      "checks": "17 complete, 0 failures",
+      "active_workflow_blob": "767dcc1d3f01c8dd90ddba5b0af14793be5c8958",
+      "proposed_v4_blob": "b7359125c96fef06a3ef6e58b104cb88ad6df894",
+      "owner_copy_pending": true,
+      "main_workflow_absent": true
+    },
+    "pr246": {
+      "head": "ad75c9e068b9d5c68a9e52dd7adb1fd5e2034b29",
+      "backend": "success",
+      "frontend": "success",
+      "codex_a4": "clean 6540522976",
+      "open_p2_threads": 4,
+      "draft": true,
+      "owner_second_review_pending": true
+    },
+    "pr245": {
+      "head": "79a8d8cceab3f6e5335e8c5820f59ca7a6cd7252",
+      "backend": "success",
+      "frontend": "success",
+      "codex_a4": "clean 6540451263",
+      "draft": true,
+      "flaky_witness_missing": true
+    },
+    "historical": {
+      "pr188": "head and main blobs differ; unique unmerged status documentation, no closure",
+      "pr117": "workflow version-comment edits differ from main pins/comments; conflicts, no closure",
+      "pr83": "one open P2 401 concurrency-test finding; no merge"
+    }
+  },
+  "standing_tasks": {
+    "T1": "done previously; main run 40991452249 all jobs success",
+    "T2": "no owner D/DX answers since 08:30Z",
+    "T3": "#219 frozen, 12 threads preserved",
+    "T4": "one-time request completed, capability blocker and owner-only AGENTS.md route",
+    "T5": "done, workflow files unchanged on main",
+    "T6": "#224 tracked, v4 owner copy pending; class I merge remains owner-only"
+  },
+  "merge_result": {
+    "merged": [],
+    "resolved_threads": [],
+    "reason": "all open PRs fail at least one live Step 8 gate; #245 is clean but Draft, #83 clean but unresolved P2, #224 blocked by findings/owner copy/second review/class I, all other non-draft PRs behind, blocked or parked"
+  },
+  "production_safety": "Migration 0057 hold intact; no production execution, deployment, secret/token or ruleset change, bypass, force-push or auto-merge",
+  "step_lines": [
+    "Step 0 | lease acquired; policy/changelog full reads; SHA256 verified unchanged; two schedules enabled; no state-head PR",
+    "Step 1 | enumerated 27 open PRs, 22 open issues, 56 unresolved threads; required checks, live ruleset and signatures; main unchanged",
+    "Step 2 | verified PR224 active v3 versus proposed v4 blobs and exact-head CI; PR246 and PR245 evidence; historical PR188/117/83 comparisons",
+    "Step 3 | ranked security/release gate, workflow refresh, merge-near docs and dependency work; agent slots respected; no dependency bypass",
+    "Step 4 | inspected all 27 PR thread states; no thread resolution without independent evidence; 56 remain",
+    "Step 4a | preserved cumulative checklists; PR246 four P2 findings remain pending explicit Codex dispositions; PR224 P2/F1-F8 open",
+    "Step 5 | posted scoped Codex ask #246 (comment 6541416379); owner copy PR224 pending; no duplicate ask for #224 within 60 minutes",
+    "Step 6 | PR188 head differs from main; PR117 two workflow files differ; PR83 has unique unsafe 401 assertion; no supersession closure",
+    "Step 7 | OpenCode #184/#185 deadline Nov 2 11:45 UTC respected; #224 owner wait not stale; no duplicate stale prompt",
+    "Step 8 | live merge gate pass attempted for all open PRs; none eligible; no merge, bypass or auto-merge",
+    "Step 9 | updated owner decision queue #220 comment 6501005762; no class I item ready, no new owner decision",
+    "Step 10 | updated human ledger #220 comment 6500987889 and prepared final run report; lease release follows event creation"
+  ],
+  "tool_errors": [
+    {
+      "kind": "nonwrite orchestration script",
+      "text": "Code Mode exceeded the maximum number of tool calls.",
+      "recovered": true
+    },
+    {
+      "kind": "nonwrite hashing helper",
+      "text": "ReferenceError: TextEncoder is not defined",
+      "recovered": true
+    }
+  ],
+  "write_errors": []
+}
