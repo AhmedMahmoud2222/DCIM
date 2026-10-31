@@ -1,1 +1,1 @@
-{"run_id":"full-20261031T175711Z-11","mode":"FULL","started_at":"2026-10-31T17:57:11Z","expires_at":"2026-10-31T18:22:11Z","status":"active"}
+{"run_id":"full-20261031T175711Z-11","mode":"FULL","started_at":"2026-10-31T17:57:11Z","expires_at":"2026-10-31T18:22:11Z","status":"released","released_at":"2026-10-31T18:00:34.388Z","event_path":"state/events/2026-10-31/full-20261031T175711Z-11.json"}
