@@ -5,8 +5,8 @@
   "head_sha": "132f29e5449cf169158f09dd73fa82fbb7b8c17e",
   "tier": 2,
   "tier_reason": "concurrency and transaction lock ordering in cooling.py",
-  "updated_at": "2026-10-31T05:08:27.288Z",
-  "ci": "new-head CI started; backend/frontend not yet completed; branch 1 behind new main",
+  "updated_at": "2026-10-31T06:06:07.374Z",
+  "ci": "backend/frontend SUCCESS exact 132f29e5; backend completed 05:57:58 UTC; branch 1 behind main d0faef8",
   "open_threads": 0,
   "findings": [
     {
@@ -33,7 +33,7 @@
   "fix_review_cycles": 1,
   "stale_level": 0,
   "queued": false,
-  "next_gate": "new-head required CI green, branch refresh when ready, scoped Codex re-review, Tier2 second review, mark ready",
+  "next_gate": "Draft + behind main; after ready-to-merge priority, owner refresh, exact-head CI, Codex scoped re-review of 2 P2, DX20 OpenCode/Jules second reviewer",
   "last_prompt": {
     "agent": "Claude",
     "sha": "c3324e4182095b6350daf5773ac48b9e00c0d226",
@@ -41,5 +41,5 @@
     "time": "2026-10-31T05:06:11Z",
     "ask": "two P2 test harness findings; completion report delivered"
   },
-  "notes": "Claude one API-signed push to 132f29e, report on PR; candidate fixes verified from patch, no tests claimed. Issue #226."
+  "notes": "Claude one API-signed push to 132f29e, report on PR; candidate fixes verified from patch, no tests claimed. Issue #226.; FULL 10:05 GST: exact-head required CI green, branch 1 behind main; review not requested while behind."
 }
