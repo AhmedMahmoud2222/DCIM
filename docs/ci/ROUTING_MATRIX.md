@@ -37,15 +37,17 @@ new pin against the upstream release tag does. The exception is narrow:
   Normalization drops comments, so a line separator in a comment could hide a step and a
   forbidden character (NUL, DEL) could break the workflow. CR is outside the set too.
 * The comment limit exists because a pin-shaped line can sit inside a `run: |` block, where
-  the comment is script text. A comment such as `# $(cmd)` there would run. Residual risk:
-  the 40-hex pin of such a line is not compared, so a pin-shaped line inside a script can
-  change with the version comment alone. It is data in the script, not a step.
-* The router (from the base commit) and the gate (from the PR head) both read the
-  files and apply `ci_policy.pin_only`. The gate rejects `fast` for a `.github/`
-  change unless its own reading agrees.
-* The `route`, `ci-policy` and gate jobs, and the separate deployment checks, still run.
-  `tests/ci/ci_support.py` (`pin_cases`) checks 78 cases, and the mutation tests cover
-  the rule.
+  the comment is script text. The line rules alone cannot tell such a line from an action
+  reference, so a second check reads the files as data. It parses both versions, masks the
+  40-hex pin of every `uses` value of a job or a step, and requires the two structures to be
+  equal. A pin-shaped line in an `env` value, a flow mapping, a quoted multi-line string, a
+  `with` block or a script then changes the structure and the PR goes to `full`. A workflow
+  with an anchor, an alias, a duplicate key or invalid YAML is never pin-only. The same check
+  reads `policy.json` as JSON (no duplicate keys) and the adapter as Python (`ast`, exactly one
+  `ACTION` assignment).
+* The structure check needs PyYAML. When `import yaml` fails, no workflow is pin-only and the
+  rule changes nothing; the route and gate jobs run bare `python3`, so confirm the runner has
+  PyYAML or install the pinned version in those jobs.
 
 ## Workers
 

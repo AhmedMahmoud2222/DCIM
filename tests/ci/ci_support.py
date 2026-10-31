@@ -146,6 +146,21 @@ def heredoc_yml(sha: str, comment: str) -> str:
             f"          uses: actions/checkout@{sha} {comment}\n          EOF\n")
 
 
+def ctx_yml(kind: str, sha: str, comment: str = "# v4") -> str:
+    """A workflow where a pin-shaped line is data, not an action reference."""
+    line = f"uses: actions/checkout@{sha} {comment}"
+    body = {
+        "env-block": f"    env:\n      {line}\n    steps:\n      - run: echo hi\n",
+        "env-flow": f"    env: {{\n      {line}\n    }}\n    steps:\n      - run: echo hi\n",
+        "env-anchor": f"    env: &e\n      {line}\n    steps:\n      - run: echo hi\n",
+        "env-quoted": f'    env:\n      X: "a\n        {line}\n        b"\n    steps:\n      - run: echo hi\n',
+        "with-block": f"    steps:\n      - uses: actions/setup-python@{PIN_A}\n        with:\n          {line}\n",
+        "heredoc": f"    steps:\n      - run: |\n          cat <<EOF\n          {line}\n          EOF\n",
+        "job-uses": f"    uses: octo/repo/.github/workflows/w.yml@{sha} {comment}\n",
+    }[kind]
+    return f"name: x\njobs:\n  a:\n{body}"
+
+
 def pin_cases():
     """(name, changes, is_pin_only)"""
     y = WORKFLOW
@@ -210,6 +225,32 @@ def pin_cases():
         *[(f"{label} in an unchanged line",
            [pin_change(y, pin_yml(PIN_A, extra=f"# note{sep}x\n"), pin_yml(PIN_B, extra=f"# note{sep}x\n"))], False)
           for label, sep in SEPARATORS],
+        *[(f"data context {kind}: sha change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_B))], False)
+          for kind in ("env-block", "env-flow", "env-anchor", "env-quoted", "with-block", "heredoc")],
+        *[(f"data context {kind}: comment change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_A, "# v5"))], False)
+          for kind in ("env-quoted", "heredoc")],
+        # A real YAML comment after a plain scalar changes nothing the workflow reads.
+        *[(f"data context {kind}: real comment change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_A, "# v5"))], True)
+          for kind in ("env-block", "env-flow")],
+        ("job-level reusable workflow bump", [pin_change(y, ctx_yml("job-uses", PIN_A), ctx_yml("job-uses", PIN_B, "# v2"))], True),
+        ("duplicate step key", [pin_change(y, pin_yml(PIN_A, extra="      - run: a\n        run: b\n"),
+                                           pin_yml(PIN_B, extra="      - run: a\n        run: b\n"))], False),
+        ("anchor in the file", [pin_change(y, pin_yml(PIN_A, extra="      - &s run: a\n"),
+                                           pin_yml(PIN_B, extra="      - &s run: a\n"))], False),
+        ("invalid yaml", [pin_change(y, pin_yml(PIN_A, extra="  : : [\n"), pin_yml(PIN_B, extra="  : : [\n"))], False),
+        ("no jobs mapping", [pin_change(y, "name: x\n", "name: x\n")], False),
+        ("adapter with a separator in a comment",
+         [pin_change(".github/scripts/orchestration_claude_adapter.py", pin_adapter(PIN_A) + "# note\u2028x\n",
+                     pin_adapter(PIN_B) + "# note\u2028x\n")], False),
+        ("adapter with DEL in a comment",
+         [pin_change(".github/scripts/orchestration_claude_adapter.py", pin_adapter(PIN_A) + "# note\x7fx\n",
+                     pin_adapter(PIN_B) + "# note\x7fx\n")], False),
+        ("adapter with a second ACTION",
+         [pin_change(".github/scripts/orchestration_claude_adapter.py", pin_adapter(PIN_A) + "ACTION = 'x/y'\n",
+                     pin_adapter(PIN_B) + "ACTION = 'x/y'\n")], False),
+        ("json duplicate key", [pin_change(".github/acceptance/policy.json",
+                                           pin_json(PIN_A).replace('"other": 1', '"other": 1, "other": 1'),
+                                           pin_json(PIN_B).replace('"other": 1', '"other": 1, "other": 1'))], False),
         ("separator already in the base comment",
          [pin_change(y, pin_yml(PIN_A, "# v4\u2028x"), pin_yml(PIN_B, "# v4\u2028x"))], False),
         ("pin outside a uses line", [pin_change(y, pin_yml(PIN_A, extra=f"      - run: pip install git+https://x/y@{PIN_A}\n"),
@@ -309,6 +350,12 @@ def router_mismatches(router: Path) -> list[str]:
         cases.append(("heredoc comment injection", heredoc_base,
                       commit(repo, "p", texts={".github/workflows/agent-claude.yml":
                                                heredoc_yml(PIN_A, "# $(echo INJECTED >&2)")}), "full", 1))
+        for kind in ("env-flow", "env-quoted", "heredoc"):
+            git(repo, "checkout", "-q", "-b", f"ctx-{kind}-base", base)
+            ctx_base = commit(repo, "c", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_A)})
+            git(repo, "checkout", "-q", "-b", f"ctx-{kind}", ctx_base)
+            cases.append((f"data context {kind}", ctx_base,
+                          commit(repo, "p", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_B)}), "full", 1))
         git(repo, "checkout", "-q", "-b", "pin-ci", base)
         cases.append(("pin bump in ci.yml", base,
                       commit(repo, "p", texts={".github/workflows/ci.yml": pin_yml(PIN_B)}), "full", 1))

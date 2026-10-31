@@ -9,6 +9,7 @@ import sys
 import unittest
 
 from ci_support import (
+    pin_cases,
     HEAD,
     ROOT,
     SCRIPTS,
@@ -32,6 +33,20 @@ class PolicyTests(unittest.TestCase):
 
     def test_pin_only_scenarios(self):
         self.assertEqual(pin_mismatches(policy), [])
+
+    def test_workflow_is_never_pin_only_without_a_yaml_parser(self):
+        # The route job installs no YAML parser. Missing PyYAML must give full, never a crash.
+        from unittest import mock
+        with mock.patch.dict(sys.modules, {"yaml": None}):
+            bare = load_module("ci_policy_without_yaml", SCRIPTS / "ci_policy.py")
+        self.assertIsNone(bare.yaml)
+        for name, changes, expected in pin_cases():
+            path = changes[0]["path"] if changes else ""
+            decision = bare.pin_only(changes)
+            if path.startswith(".github/workflows/"):
+                self.assertIsNone(decision, name)
+            elif expected:
+                self.assertIsNotNone(decision, name)
 
     def test_policy_workers_are_the_gate_workers(self):
         self.assertEqual(policy.WORKERS, WORKERS)

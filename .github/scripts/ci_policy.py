@@ -22,8 +22,15 @@ lines (and their version comments). Nothing else about the file may differ.
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 from collections.abc import Iterable
+
+try:  # The route job installs no YAML parser. Without one a workflow is never pin-only.
+    import yaml
+except ImportError:  # pragma: no cover - exercised by a test that blocks the import
+    yaml = None
 
 POLICY_VERSION = 3
 
@@ -206,6 +213,101 @@ def normalize_pins(path: str, text: str) -> str | None:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Structure check. The line rules above see lines, not YAML. A pin-shaped line can be data: an
+# `env` value, a flow mapping, a quoted multi-line string, a `run: |` script. The structure
+# check parses both texts, masks the 40-hex pin of every real action reference (a `uses` value
+# of a job or of a step) and requires the two parsed structures to be equal. A change in data,
+# in a script or in any key then shows up as a difference.
+# ---------------------------------------------------------------------------
+
+_USES_VALUE = re.compile(rf"({_ACTION})@{_PIN}")
+
+
+def _mask(value):
+    if isinstance(value, str):
+        match = _USES_VALUE.fullmatch(value)
+        if match is not None:
+            return f"{match.group(1)}@<pin>"
+    return value
+
+
+class _StrictLoader(yaml.SafeLoader if yaml is not None else object):
+    """SafeLoader that rejects duplicate keys, anchors and aliases."""
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.AliasEvent):
+            raise ValueError("YAML alias")
+        event = self.peek_event()
+        if getattr(event, "anchor", None) is not None:
+            raise ValueError("YAML anchor")
+        return super().compose_node(parent, index)
+
+    def construct_mapping(self, node, deep=False):
+        keys = [self.construct_object(key, deep=True) for key, _ in node.value]
+        if len(keys) != len(set(map(repr, keys))):
+            raise ValueError("duplicate YAML key")
+        return super().construct_mapping(node, deep=deep)
+
+
+def _workflow_structure(text: str):
+    if yaml is None:
+        return None
+    data = yaml.load(text, Loader=_StrictLoader)  # noqa: S506 - the strict SafeLoader above
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict):
+        return None
+    for job in data["jobs"].values():
+        if not isinstance(job, dict):
+            continue
+        if "uses" in job:
+            job["uses"] = _mask(job["uses"])
+        steps = job.get("steps")
+        if isinstance(steps, list):
+            for step in steps:
+                if isinstance(step, dict) and "uses" in step:
+                    step["uses"] = _mask(step["uses"])
+    return data
+
+
+def _no_duplicates(pairs):
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate JSON key")
+    return dict(pairs)
+
+
+def _json_structure(text: str):
+    data = json.loads(text, object_pairs_hook=_no_duplicates)
+    if not isinstance(data, dict) or "review_action" not in data:
+        return None
+    data["review_action"] = _mask(data["review_action"])
+    return data
+
+
+def _adapter_structure(text: str):
+    tree = ast.parse(text)
+    masked = 0
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "ACTION" \
+                and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            node.value.value = _mask(node.value.value)
+            masked += 1
+    return ast.dump(tree) if masked == 1 else None
+
+
+def structure(path: str, text: str):
+    """The parsed structure of text with action pins masked, or None when it cannot be trusted."""
+    try:
+        if path == PIN_POLICY_JSON:
+            return _json_structure(text)
+        if path == PIN_ADAPTER:
+            return _adapter_structure(text)
+        return _workflow_structure(text)
+    except Exception:  # noqa: BLE001 - any doubt means the file is not pin-only
+        return None
+
+
 def parse_raw_diff(output: str) -> list[dict]:
     """Parse `git diff --raw --no-renames -z` into [{path, status, old_mode, new_mode}].
 
@@ -246,6 +348,9 @@ def pin_only(changes: Iterable[dict]) -> dict | None:
             return None
         before, after = normalize_pins(path, old), normalize_pins(path, new)
         if before is None or before != after:
+            return None
+        before_structure = structure(path, old)
+        if before_structure is None or before_structure != structure(path, new):
             return None
         paths.append(path)
     return {
