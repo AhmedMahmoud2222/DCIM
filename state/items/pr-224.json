@@ -4,8 +4,8 @@
   "number": 224,
   "head_sha": "6cf42b089bb78c66c93655dda78a8044d00b2a2a",
   "tier": 2,
-  "updated_at": "2026-10-31T08:07:20.077Z",
-  "ci": "frontend SUCCESS on exact 6cf42b08; backend not complete at 08:05 UTC; 0 behind main@11f46a2b; no failed checks observed",
+  "updated_at": "2026-10-31T08:30:00Z",
+  "ci": "Exact-head 6cf42b08 frontend SUCCESS 07:49:31Z; Python 3.12 backend suite SUCCESS 08:28:10Z; Python 3.13 and 3.14 backend suites and required backend still IN_PROGRESS at 08:30Z; branch 0 behind main@11f46a2b; no failed checks observed.",
   "open_threads": 4,
   "findings": [
     {
@@ -122,7 +122,7 @@
   "stale_level": 0,
   "queued": false,
   "next_gate": "Owner copy v4 proposed blob b7359125 into active workflow (currently v3 blob 767dcc1d); then new-head backend/frontend, Codex, DX20 second, four P2 and F1-F8 dispositions, class I merge authorization.",
-  "notes": "New active .github/workflows/refresh-branch.yml consumes REFRESH_PAT; class I merge authorization. 4 P2 threads remain. 5-file patch identical old e889 vs ad6 after main merge, no manual edits.; Claude pushed signed two-file proposed draft F1/F2 at a940d195; active workflow unchanged. F2 partial header still misleading on copy; correction requested comment 6538828058.; F2 follow-up Claude signed new head 589fac45928c5e67fdf79a4496c024831cc35fce, verified true; proposed v4 blob b7359125, README blob 6dc57aea; active v3 blob 767dcc1d; F1/F2 candidate in draft only, main workflow absent. Owner-copy evidence comment 6539068740. Owner DX20 permits unedited OpenCode second Tier2 review.; live draft verified blob b7359125, active PR workflow still old 767dcc1d, main workflow absent.; FULL 10:05 GST: required CI now green but active workflow still v3; no merge or activation.; 2026-10-31 08:07 UTC owner merge-main refresh 589fac45->6cf42b08, 0 behind, active/draft blobs unchanged, frontend green backend pending, comment 6540957397; signature verified.",
+  "notes": "New active .github/workflows/refresh-branch.yml consumes REFRESH_PAT; class I merge authorization. 4 P2 threads remain. 5-file patch identical old e889 vs ad6 after main merge, no manual edits.; Claude pushed signed two-file proposed draft F1/F2 at a940d195; active workflow unchanged. F2 partial header still misleading on copy; correction requested comment 6538828058.; F2 follow-up Claude signed new head 589fac45928c5e67fdf79a4496c024831cc35fce, verified true; proposed v4 blob b7359125, README blob 6dc57aea; active v3 blob 767dcc1d; F1/F2 candidate in draft only, main workflow absent. Owner-copy evidence comment 6539068740. Owner DX20 permits unedited OpenCode second Tier2 review.; live draft verified blob b7359125, active PR workflow still old 767dcc1d, main workflow absent.; FULL 10:05 GST: required CI now green but active workflow still v3; no merge or activation.; 2026-10-31 08:07 UTC owner merge-main refresh 589fac45->6cf42b08, 0 behind, active/draft blobs unchanged, frontend green backend pending, comment 6540957397; signature verified.; FOLLOW-UP 08:30 UTC: 3.12 suite passed at 08:28:10; backend required still in progress, 3.13/3.14 running; no owner copy or thread change.",
   "legacy_source": "state/ledger.json (preserved; oversized, not re-read)",
   "last_prompt": {
     "agent": "Claude",
