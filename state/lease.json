@@ -1,1 +1,1 @@
-{"run_id":"followup-20261031T173300Z-11","mode":"FOLLOW-UP","started_at":"2026-10-31T17:33:00Z","expires_at":"2026-10-31T17:58:00Z","status":"active"}
+{"run_id":"followup-20261031T173300Z-11","mode":"FOLLOW-UP","started_at":"2026-10-31T17:33:00Z","expires_at":"2026-10-31T17:58:00Z","status":"released","released_at":"2026-10-31T17:35:12.351Z","event_path":"state/events/2026-10-31/followup-20261031T173300Z-11.json"}
