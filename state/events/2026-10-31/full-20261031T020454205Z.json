@@ -1,0 +1,173 @@
+{
+  "run_id": "full-20261031T020454205Z",
+  "mode": "FULL",
+  "started_at": "2026-10-31T02:04:54.205Z",
+  "recorded_at": "2026-10-31T02:08:08.262Z",
+  "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
+  "lease": {
+    "acquired": true,
+    "prior_released": true,
+    "release_pending": true
+  },
+  "inventory": {
+    "open_prs": 28,
+    "open_issues": 16,
+    "orchestrator_state_prs": 0,
+    "open_review_threads": 51,
+    "open_threads_by_pr": {
+      "83": 1,
+      "115": 8,
+      "146": 4,
+      "179": 1,
+      "207": 6,
+      "217": 3,
+      "219": 12,
+      "224": 4,
+      "228": 11,
+      "229": 1
+    }
+  },
+  "ruleset": {
+    "id": 23651422,
+    "hash": "fnv1a64:246f1cc05c72e8a4",
+    "changed": false,
+    "required_checks": [
+      "backend",
+      "frontend"
+    ],
+    "strict": true,
+    "linear_history": true,
+    "thread_resolution": true,
+    "bypass_actors": [
+      {
+        "id": 842251,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 946600,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1144995,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 1236702,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 4229212,
+        "bypass_mode": "pull_request"
+      },
+      {
+        "id": 285010264,
+        "bypass_mode": "pull_request"
+      }
+    ],
+    "any_always": false
+  },
+  "schedule_health": {
+    "full_enabled": true,
+    "followup_enabled": true
+  },
+  "actions": [
+    {
+      "kind": "comment",
+      "pr": 229,
+      "comment_id": 6537569416,
+      "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "agent": "Codex",
+      "ask": "third and final native scoped review, P2 waiter cleanup",
+      "utc": "2026-10-31T02:06:01.452Z"
+    },
+    {
+      "kind": "state_write",
+      "branch": "orchestrator-state",
+      "path": "state/ledger.json",
+      "commits": [
+        "5513ca36cb11e0b8ff0d5413a61c8423e65313a0",
+        "a40a69b8d5d9e3654cb87622f41e17ddfb3b9fb4"
+      ]
+    },
+    {
+      "kind": "update_issue_comment",
+      "issue": 220,
+      "comment_id": 6500987889,
+      "description": "human current-state ledger"
+    },
+    {
+      "kind": "update_issue_comment",
+      "issue": 220,
+      "comment_id": 6501005762,
+      "description": "decision queue with #229 DX13 fallback"
+    }
+  ],
+  "merges": [],
+  "resolved_threads": [],
+  "failed_writes": [],
+  "new_owner_decisions": [],
+  "review_results": [
+    {
+      "pr": 229,
+      "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
+      "third_ask_id": 6537569416,
+      "result_comment_id": 6537582816,
+      "result": "clean generic issue-comment receipt; no native PR review on current head; 3/3 exhausted",
+      "qualifying": false,
+      "action": "owner DX13 exact-head fallback queued; Draft and one open Codex P2 remain"
+    }
+  ],
+  "standing_tasks": {
+    "T1": "previously complete, verified in issue #218; no closure",
+    "T2": "no new unmarked owner D/DX answers",
+    "T3": "#219 frozen under D5; #228 11 unresolved, DX17 cap, DX19 pending",
+    "T4": "one-time ask complete, branch capability blocker",
+    "T5": "done; no repeat, main unchanged",
+    "T6": "#224 four P2 unresolved; Codex 3/3, Jules not qualifying; workflow absent main"
+  },
+  "waiting": {
+    "184": "OpenCode stalled, D6 deadline 2026-11-02T11:45:39Z",
+    "185": "OpenCode stalled, same deadline",
+    "200": "owner DX13 plus Jules",
+    "224": "owner DX13, Jules and four P2 threads",
+    "228": "DX19 owner redesign decision, no more cycles",
+    "229": "owner DX13, P2 thread, Draft",
+    "230": "owner DX13, Draft",
+    "231": "owner DX13 exact-head review",
+    "232": "owner DX13 exact-head review",
+    "233": "Codex third ask eligible after 2026-10-31T02:36:37Z; Tier2 Jules later"
+  },
+  "blockers": {
+    "merge": "No PR passed all exact-head gates; 0 merges in >6h",
+    "branch_refresh": "workflow absent from main; no currently eligible same-cycle branch refresh",
+    "migration_0057": "production execution prohibited; no production action"
+  },
+  "top_five_first_unmet": [
+    {
+      "pr": 224,
+      "gate": "four unresolved P2 threads and no qualifying review",
+      "owner": "Ahmed/independent reviewers"
+    },
+    {
+      "pr": 216,
+      "gate": "branch behind main",
+      "owner": "Ahmed"
+    },
+    {
+      "pr": 217,
+      "gate": "three unresolved Codex threads",
+      "owner": "Codex/implementation agent"
+    },
+    {
+      "pr": 231,
+      "gate": "no native independent review after 3 asks",
+      "owner": "Ahmed DX13"
+    },
+    {
+      "pr": 232,
+      "gate": "no native independent review after 3 asks",
+      "owner": "Ahmed DX13"
+    }
+  ],
+  "summary": "FULL run verified unchanged ruleset and bypass modes, 28 open PRs, 16 issues, 51 unresolved threads, and both schedules enabled. Third/final Codex ask on #229 returned only a clean receipt; owner DX13 fallback queued. No merges or thread resolutions; Migration 0057 hold intact."
+}
