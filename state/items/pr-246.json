@@ -6,7 +6,7 @@
   "tier": 0,
   "tier_reason": "docs-only new specification file; no workflow, code, permission, secret or token change",
   "state": "draft",
-  "updated_at": "2026-10-31T07:08:39.545Z",
+  "updated_at": "2026-10-31T07:11:06.942Z",
   "ci": "backend and frontend SUCCESS on exact head; suite jobs skipped by docs-only route",
   "open_threads": 4,
   "findings": [
@@ -57,6 +57,22 @@
       "required": "Task-scoped 429 must not terminate independent tasks; FC-12 multi-task case",
       "status": "Open",
       "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxQ; current C lines 103 inspected; consolidated remediation requested"
+    },
+    {
+      "id": "C-PRE-4",
+      "severity": "preflight",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540458794",
+      "required": "SC-2 coverage/absence must account for unresolved units in reopen range",
+      "status": "Open",
+      "evidence": "Candidate SC-7 reopened units outside open_units contradict SC-2 either-open-or-resolved rule"
+    },
+    {
+      "id": "C-PRE-5",
+      "severity": "preflight",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6540458794",
+      "required": "SC-6 next-run ambiguous write handling must follow A INV-A3, no lost mutation_id classification",
+      "status": "Open",
+      "evidence": "Candidate says next run classifies; A INV-A3 forbids INV-A2 classification after run ends"
     }
   ],
   "qualifying_review": "Codex native COMMENTED review at exact 25b91596cf with four P2 inline findings; NOT ACCEPTED; no verdict line",
@@ -71,14 +87,14 @@
     "reason": "unsigned",
     "required": false
   },
-  "next_gate": "Claude complete exact-context patch for four P2 findings, verify and apply verbatim; rerun exact-head CI and Codex; Draft; owner DX20 second review; D-3/D-4/D-5/D-7; #219 frozen",
+  "next_gate": "Claude preflight correction to mechanically valid 9-hunk 232-line candidate; original PR head unchanged, 4 P2 threads open; verify and apply verbatim only after semantic checks, then CI/Codex/DX20",
   "last_prompt": {
     "agent": "Claude",
     "sha": "25b91596cf484d7302d6ab672616f4e678600841",
-    "comment_id": 6540418947,
-    "time": "2026-10-31T07:08:39.545Z",
-    "ask": "all four P2 findings; one DX12 patch from verified 229-line baseline"
+    "comment_id": 6540458794,
+    "time": "2026-10-31T07:11:06.942Z",
+    "ask": "preflight correction of SC-2 reopen coverage and SC-6 cross-run INV-A3 recovery semantics; full replacement diff"
   },
   "linked_issue": 220,
-  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action.; 2026-10-31 07:06Z: four P2 Codex findings, full checklist sent to Claude on #220 comment 6540418947. No thread resolved."
+  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action.; 2026-10-31 07:06Z: four P2 Codex findings, full checklist sent to Claude on #220 comment 6540418947. No thread resolved.; Claude candidate #220 comment 6540421093: 9 hunks exact-context/count/offset validated against 229-line blob, projects 232 lines, NOT applied due SC-2/reopen and SC-6/INV-A3 contradictions. Correction requested 6540458794."
 }
