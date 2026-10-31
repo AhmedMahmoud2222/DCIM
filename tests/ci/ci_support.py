@@ -161,6 +161,13 @@ def ctx_yml(kind: str, sha: str, comment: str = "# v4") -> str:
     return f"name: x\njobs:\n  a:\n{body}"
 
 
+def collide_yml(sha: str, comment: str = "# v4") -> str:
+    """PyYAML reads the keys `on` and `1` as True and 1, which are equal; GitHub keeps both."""
+    return ("name: x\njobs:\n  a:\n    env:\n      on: |\n"
+            f"        uses: actions/checkout@{sha} {comment}\n      1: filler\n"
+            "    steps:\n      - run: echo hi\n")
+
+
 def pin_cases():
     """(name, changes, is_pin_only)"""
     y = WORKFLOW
@@ -232,6 +239,13 @@ def pin_cases():
         # A real YAML comment after a plain scalar changes nothing the workflow reads.
         *[(f"data context {kind}: real comment change", [pin_change(y, ctx_yml(kind, PIN_A), ctx_yml(kind, PIN_A, "# v5"))], True)
           for kind in ("env-block", "env-flow")],
+        ("key collision hides an edit", [pin_change(y, collide_yml(PIN_A), collide_yml(PIN_A, "# v5"))], False),
+        ("quoted duplicate of a plain key", [pin_change(y, pin_yml(PIN_A, extra='    env:\n      on: 1\n      "on": 2\n'),
+                                                       pin_yml(PIN_B, extra='    env:\n      on: 1\n      "on": 2\n'))], False),
+        ("non-scalar key", [pin_change(y, pin_yml(PIN_A, extra="    env:\n      ? [a]\n      : b\n"),
+                                       pin_yml(PIN_B, extra="    env:\n      ? [a]\n      : b\n"))], False),
+        ("on and true as distinct keys stay pin-only", [pin_change(
+            y, pin_yml(PIN_A, extra="on: push\ntrue: x\n"), pin_yml(PIN_B, extra="on: push\ntrue: x\n"))], True),
         ("job-level reusable workflow bump", [pin_change(y, ctx_yml("job-uses", PIN_A), ctx_yml("job-uses", PIN_B, "# v2"))], True),
         ("duplicate step key", [pin_change(y, pin_yml(PIN_A, extra="      - run: a\n        run: b\n"),
                                            pin_yml(PIN_B, extra="      - run: a\n        run: b\n"))], False),
@@ -350,6 +364,11 @@ def router_mismatches(router: Path) -> list[str]:
         cases.append(("heredoc comment injection", heredoc_base,
                       commit(repo, "p", texts={".github/workflows/agent-claude.yml":
                                                heredoc_yml(PIN_A, "# $(echo INJECTED >&2)")}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "collide-base", base)
+        collide_base = commit(repo, "c", texts={".github/workflows/agent-claude.yml": collide_yml(PIN_A)})
+        git(repo, "checkout", "-q", "-b", "collide", collide_base)
+        cases.append(("key collision hides an edit", collide_base,
+                      commit(repo, "p", texts={".github/workflows/agent-claude.yml": collide_yml(PIN_A, "# v5")}), "full", 1))
         for kind in ("env-flow", "env-quoted", "heredoc"):
             git(repo, "checkout", "-q", "-b", f"ctx-{kind}-base", base)
             ctx_base = commit(repo, "c", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_A)})

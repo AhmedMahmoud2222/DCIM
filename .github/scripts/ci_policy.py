@@ -233,7 +233,9 @@ def _mask(value):
 
 
 class _StrictLoader(yaml.SafeLoader if yaml is not None else object):
-    """SafeLoader that rejects duplicate keys, anchors and aliases."""
+    """SafeLoader for comparing workflows. GitHub reads every mapping key as a string, so this
+    loader does too (PyYAML would turn `on` into True and `1` into an integer, and True == 1
+    would drop a value). It rejects duplicate keys, non-scalar keys, anchors and aliases."""
 
     def compose_node(self, parent, index):
         if self.check_event(yaml.AliasEvent):
@@ -244,10 +246,15 @@ class _StrictLoader(yaml.SafeLoader if yaml is not None else object):
         return super().compose_node(parent, index)
 
     def construct_mapping(self, node, deep=False):
-        keys = [self.construct_object(key, deep=True) for key, _ in node.value]
-        if len(keys) != len(set(map(repr, keys))):
-            raise ValueError("duplicate YAML key")
-        return super().construct_mapping(node, deep=deep)
+        mapping = {}
+        for key_node, value_node in node.value:
+            if not isinstance(key_node, yaml.ScalarNode):
+                raise ValueError("YAML key is not a scalar")
+            key = key_node.value
+            if key in mapping:
+                raise ValueError("duplicate YAML key")
+            mapping[key] = self.construct_object(value_node, deep=True)
+        return mapping
 
 
 def _workflow_structure(text: str):

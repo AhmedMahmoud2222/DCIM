@@ -41,8 +41,9 @@ new pin against the upstream release tag does. The exception is narrow:
   reference, so a second check reads the files as data. It parses both versions, masks the
   40-hex pin of every `uses` value of a job or a step, and requires the two structures to be
   equal. A pin-shaped line in an `env` value, a flow mapping, a quoted multi-line string, a
-  `with` block or a script then changes the structure and the PR goes to `full`. A workflow
-  with an anchor, an alias, a duplicate key or invalid YAML is never pin-only. The same check
+  `with` block or a script then changes the structure and the PR goes to `full`. The parser reads every mapping key as a string, as GitHub does (PyYAML would read `on` as true
+  and `1` as an integer, and those two compare equal). A workflow with an anchor, an alias,
+  a duplicate key, a non-scalar key or invalid YAML is never pin-only. The same check
   reads `policy.json` as JSON (no duplicate keys) and the adapter as Python (`ast`, exactly one
   `ACTION` assignment).
 * The structure check needs PyYAML. When `import yaml` fails, no workflow is pin-only and the
