@@ -166,6 +166,9 @@ PIN_EXCLUDED = (".github/workflows/ci.yml", ".github/workflows/deploy.yml")
 PIN_POLICY_JSON = ".github/acceptance/policy.json"
 PIN_ADAPTER = ".github/scripts/orchestration_claude_adapter.py"
 PIN_MAX_BYTES = 512 * 1024
+# YAML parsers read these as line breaks, but the pin rules split only on "\n". A comment
+# that contains one hides new YAML content from the rules. A file with any of them is never pin-only.
+LINE_SEPARATORS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 REGULAR_FILE_MODE = "100644"
 
 
@@ -183,7 +186,7 @@ def _pin_rule(path: str):
 def normalize_pins(path: str, text: str) -> str | None:
     """Reduce every pin line of text to its action reference. None: the path is not allowed."""
     rule = _pin_rule(path)
-    if rule is None:
+    if rule is None or not LINE_SEPARATORS.isdisjoint(text):
         return None
     lines = []
     for line in text.split("\n"):

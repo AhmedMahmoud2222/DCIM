@@ -58,6 +58,8 @@ PIN_MUTANTS = (
     ("elif rule is _POLICY_JSON:", "elif False:"),
     ("and path not in PIN_EXCLUDED:", "and True:"),
     ('and "/" not in path[len(WORKFLOW_DIR):]', "and True"),
+    ("if rule is None or not LINE_SEPARATORS.isdisjoint(text):", "if rule is None:"),
+    ('LINE_SEPARATORS = frozenset("\\r\\x0b\\x0c\\x1c\\x1d\\x1e\\x85\\u2028\\u2029")', 'LINE_SEPARATORS = frozenset("\\r")'),
     ('path.endswith(".yml")', "True"),
     ("if path == PIN_ADAPTER:", 'if path.endswith(".py"):'),
     ('if path == PIN_POLICY_JSON:', 'if path.endswith(".json"):'),
