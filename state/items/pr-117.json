@@ -6,16 +6,35 @@
   "tier": 2,
   "tier_reason": "Diff changes two live .github/workflows files (ci.yml and deploy-tools-test.yml), even though changes are version comments; workflow-file path is Tier 2",
   "state": "open",
-  "updated_at": "2026-10-31T07:13:30.328Z",
-  "ci": "backend/frontend SUCCESS at old head, but 145 commits behind current main",
+  "updated_at": "2026-10-31T21:00:00Z",
+  "ci": "backend/frontend SUCCESS on historical head; 148 commits behind main; DIRTY; last three main CI runs green",
   "open_threads": 0,
-  "findings": [],
+  "findings": [
+    {
+      "id": "PR117-MAIN-COMMENTS",
+      "severity": "P3",
+      "status": "Deferred to issue #250 (setup-python) and #240 (upload-artifact); independent verification pending",
+      "evidence": "https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6549061322"
+    }
+  ],
   "qualifying_review": "not established at exact head; Tier2 second review also required",
-  "asks_per_sha": {},
+  "asks_per_sha": {
+    "13f0e4407778063405149e58a8156eae6f83bf0f": {
+      "claude": 1,
+      "codex": 1
+    }
+  },
   "fix_review_cycles": 0,
   "stale_level": 0,
   "queued": false,
-  "blocker_class": "verification / supersession",
-  "next_gate": "Historical/supersession file-by-file comparison against main, verify unique version comments; Codex, second reviewer and current-branch CI before any merge; do not treat as Tier0",
-  "notes": "2026-10-31 FULL: first-pass patch inspected: only workflow pin-version comments in ci.yml and deploy-tools-test.yml; both paths exist on main with different blobs, cannot conclude superseded; no closure. 145 commits behind main."
+  "blocker_class": "supersession / verification",
+  "next_gate": "Codex independent supersession verification of main pin/tag comments; correction issue #250 for setup-python, #240 for upload-artifact; A2 closure only after evidence, keep branch",
+  "notes": "FULL 1 Nov 2026 GST: independently verified PR changes only version comments on obsolete pins (setup-python 5fda...=v7.0.0, upload-artifact 043f...=v7.0.1); current main uses setup-python 6d4...=v7.1.0 but comments v5/v6, upload-artifact cf43...=v7.0.2 but comments v4. Claude recommended supersession before upstream verification; corrected evidence and asked Codex. Created issue #250 for setup-python; issue #240 already tracks upload. No merge/closure.",
+  "last_prompt": {
+    "agent": "Codex",
+    "ask": "Verify supersession and tag/version mismatches on current main, no edits",
+    "time": "2026-10-31T20:59:54Z",
+    "sha": "13f0e4407778063405149e58a8156eae6f83bf0f",
+    "url": "https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6549061322"
+  }
 }
