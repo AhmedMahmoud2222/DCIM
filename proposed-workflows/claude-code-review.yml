@@ -1,0 +1,73 @@
+# proposed-workflows/claude-code-review.yml
+# DRAFT, NOT ACTIVE, NOT TESTED. Scoped proposal against live claude-code-review.yml.
+# Changes vs live: secret-free `prepare` job requires a same-repo PR and gates bot authors
+# on a default-empty exact allowlist (vars.CLAUDE_REVIEW_ALLOWED_BOTS, same format rules as
+# CLAUDE_ALLOWED_BOTS in claude.yml); the secret-bearing job needs it; explicit allowed_bots.
+# Same-repo only because fork PRs get no secrets under `pull_request` anyway.
+
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions: {}
+
+jobs:
+  prepare:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      allowed_bots: ${{ steps.check.outputs.allowed_bots }}
+    steps:
+      - id: check
+        env:
+          AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BOTS: ${{ vars.CLAUDE_REVIEW_ALLOWED_BOTS }}
+        run: |
+          set -euo pipefail
+          bots=""
+          if [ -n "${BOTS:-}" ]; then
+            if printf '%s' "$BOTS" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\](,[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\])*$'; then
+              bots="$BOTS"
+            else
+              echo "CLAUDE_REVIEW_ALLOWED_BOTS malformed; ignoring."
+            fi
+          fi
+          run=true
+          if [ "$AUTHOR_TYPE" = "Bot" ]; then
+            run=false
+            case ",${bots}," in *",${AUTHOR},"*) run=true ;; esac
+          fi
+          echo "run=${run}" >> "$GITHUB_OUTPUT"
+          echo "allowed_bots=${bots}" >> "$GITHUB_OUTPUT"
+
+  claude-review:
+    needs: prepare
+    if: needs.prepare.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: ${{ needs.prepare.outputs.allowed_bots }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
