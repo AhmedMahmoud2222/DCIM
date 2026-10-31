@@ -59,6 +59,8 @@ PIN_MUTANTS = (
     ("and path not in PIN_EXCLUDED:", "and True:"),
     ('and "/" not in path[len(WORKFLOW_DIR):]', "and True"),
     ("if rule is None or SAFE_TEXT.fullmatch(text) is None:", "if rule is None:"),
+    ('_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"', '_VERSION = r"[^\\r\\n]*"'),
+    ('_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"', '_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+ ()$`;&|<>-]*"'),
     ("\\xa0-\\u2027\\u202a-\\ud7ff", "\\xa0-\\ud7ff"),
     ("\\x20-\\x7e", "\\x00-\\x7e"),
     ("\\ue000-\\ufefe\\uff00-\\ufffd", "\\ue000-\\ufffd"),

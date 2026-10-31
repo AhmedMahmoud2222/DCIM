@@ -156,7 +156,10 @@ def full(reasons: list[str]) -> dict:
 
 _ACTION = r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+"
 _PIN = r"[0-9a-f]{40}"
-_WORKFLOW_USES = re.compile(rf"^([ \t]*(?:-[ \t]+)?uses:[ \t]+{_ACTION})@{_PIN}(?:[ \t]+#[^\r\n]*)?$")
+# A version comment holds only characters a shell and YAML both leave inert. A pin-shaped line can sit
+# inside a `run: |` block, where the comment is script text, so free text there could run.
+_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"
+_WORKFLOW_USES = re.compile(rf"^([ \t]*(?:-[ \t]+)?uses:[ \t]+{_ACTION})@{_PIN}(?:[ \t]+#[ \t]*{_VERSION})?$")
 _POLICY_JSON = re.compile(rf'^([ \t]*"review_action":[ \t]*"{_ACTION})@{_PIN}"(,?)$')
 _ADAPTER = re.compile(rf"^(ACTION = '{_ACTION})@{_PIN}'$")
 

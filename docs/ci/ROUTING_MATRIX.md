@@ -30,17 +30,21 @@ new pin against the upstream release tag does. The exception is narrow:
   `.github/acceptance/policy.json`, or `.github/scripts/orchestration_claude_adapter.py`.
 * Each file equals its base version once its pin lines are reduced to the action
   reference. A pin line is a whole `uses: owner/repo@<40 hex>` line (with an optional
-  `# version` comment), the `"review_action"` line of the policy file, or the `ACTION`
+  `# version` comment of letters, digits and `. _ + -` only), the `"review_action"` line of the policy file, or the `ACTION`
   line of the adapter. Any other difference sends the PR to `full`.
 * A file with a character outside this set is never pin-only: tab, LF, printable ASCII, and
   the printable Unicode YAML allows minus U+0085, U+2028, U+2029, U+FEFF, U+FFFE and U+FFFF.
   Normalization drops comments, so a line separator in a comment could hide a step and a
   forbidden character (NUL, DEL) could break the workflow. CR is outside the set too.
+* The comment limit exists because a pin-shaped line can sit inside a `run: |` block, where
+  the comment is script text. A comment such as `# $(cmd)` there would run. Residual risk:
+  the 40-hex pin of such a line is not compared, so a pin-shaped line inside a script can
+  change with the version comment alone. It is data in the script, not a step.
 * The router (from the base commit) and the gate (from the PR head) both read the
   files and apply `ci_policy.pin_only`. The gate rejects `fast` for a `.github/`
   change unless its own reading agrees.
 * The `route`, `ci-policy` and gate jobs, and the separate deployment checks, still run.
-  `tests/ci/ci_support.py` (`pin_cases`) checks 46 cases, and the mutation tests cover
+  `tests/ci/ci_support.py` (`pin_cases`) checks 78 cases, and the mutation tests cover
   the rule.
 
 ## Workers

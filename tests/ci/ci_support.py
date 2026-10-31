@@ -141,6 +141,11 @@ SEPARATORS = (("NEL", "\x85"), ("line separator", "\u2028"), ("paragraph separat
 INJECTED = pin_yml(PIN_B, "# v4\x85      - run: echo INJECTED")
 
 
+def heredoc_yml(sha: str, comment: str) -> str:
+    return ("name: x\njobs:\n  a:\n    steps:\n      - run: |\n          cat <<EOF\n"
+            f"          uses: actions/checkout@{sha} {comment}\n          EOF\n")
+
+
 def pin_cases():
     """(name, changes, is_pin_only)"""
     y = WORKFLOW
@@ -193,7 +198,18 @@ def pin_cases():
            [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, f"# v4{sep}      - run: echo INJECTED"))], False)
           for label, sep in SEPARATORS],
         ("NUL right after the comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4\x00"))], False),
-        ("non-ASCII comment stays pin-only", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4 \u00e9\u4e2d"))], True),
+        ("non-ASCII comment goes full", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4 \u00e9\u4e2d"))], False),
+        ("prerelease version comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4.1.0-rc.1+build5"))], True),
+        ("multi-word comment", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, "# v4 (security fix)"))], False),
+        ("heredoc comment injection", [pin_change(y, heredoc_yml(PIN_A, "# v4"),
+                                                  heredoc_yml(PIN_A, "# $(echo INJECTED >&2)"))], False),
+        *[(f"comment with {label}", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B, f"# v4{text}"))], False)
+          for label, text in (("command substitution", "$(id)"), ("backtick", "`id`"), ("semicolon", ";id"),
+                               ("ampersand", "&id"), ("redirect", ">x"), ("pipe", "|id"), ("quote", "'"),
+                               ("colon", ": x"), ("brace", "{x}"))],
+        *[(f"{label} in an unchanged line",
+           [pin_change(y, pin_yml(PIN_A, extra=f"# note{sep}x\n"), pin_yml(PIN_B, extra=f"# note{sep}x\n"))], False)
+          for label, sep in SEPARATORS],
         ("separator already in the base comment",
          [pin_change(y, pin_yml(PIN_A, "# v4\u2028x"), pin_yml(PIN_B, "# v4\u2028x"))], False),
         ("pin outside a uses line", [pin_change(y, pin_yml(PIN_A, extra=f"      - run: pip install git+https://x/y@{PIN_A}\n"),
@@ -287,6 +303,12 @@ def router_mismatches(router: Path) -> list[str]:
             git(repo, "checkout", "-q", "-b", f"pin-{tag}", base)
             cases.append((f"pin bump with U+{tag.upper()} in the comment" if tag != "nul" else "pin bump with NUL in the comment",
                           base, commit(repo, "p", texts={WORKFLOW: text}), "full", 1))
+        git(repo, "checkout", "-q", "-b", "pin-heredoc-base", base)
+        heredoc_base = commit(repo, "h", texts={".github/workflows/agent-claude.yml": heredoc_yml(PIN_A, "# v4")})
+        git(repo, "checkout", "-q", "-b", "pin-heredoc", heredoc_base)
+        cases.append(("heredoc comment injection", heredoc_base,
+                      commit(repo, "p", texts={".github/workflows/agent-claude.yml":
+                                               heredoc_yml(PIN_A, "# $(echo INJECTED >&2)")}), "full", 1))
         git(repo, "checkout", "-q", "-b", "pin-ci", base)
         cases.append(("pin bump in ci.yml", base,
                       commit(repo, "p", texts={".github/workflows/ci.yml": pin_yml(PIN_B)}), "full", 1))
