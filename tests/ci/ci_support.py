@@ -178,6 +178,15 @@ def ctx_yml(kind: str, sha: str, comment: str = "# v4") -> str:
     return f"name: x\njobs:\n  a:\n{body}"
 
 
+def tag_yml(tag: str, comment: str = "# v4") -> str:
+    """A collection tag: PyYAML's constructor for !!set drops the mapping values, GitHub keeps them."""
+    return ("name: x\njobs:\n  a:\n    env: " + tag + "\n      DATA: |\n"
+            f"        uses: actions/checkout@{PIN_A} {comment}\n    steps:\n      - run: echo hi\n")
+
+
+TAGS = ("!!set", "!!omap", "!!pairs", "!custom")
+
+
 def pin_cases():
     """(name, changes, is_pin_only)"""
     y = WORKFLOW
@@ -259,6 +268,8 @@ def pin_cases():
            # `on`/`1` and `yes`/`true` are four distinct keys for GitHub and in raw text, so the bump is legitimate.
            kind in ("on-1", "yes-true"))
           for kind in COLLISIONS],
+        *[(f"collection tag {tag}: comment change", [pin_change(y, tag_yml(tag), tag_yml(tag, "# v5"))], False)
+          for tag in TAGS],
         ("quoting change of a scalar",
          [pin_change(y, collide_yml("octal", PIN_A), collide_yml("octal", PIN_A).replace("X: 012", 'X: "012"'))], False),
         ("scalar edit that PyYAML resolves equally (012 to 10)",
@@ -915,6 +926,9 @@ def scope_mismatches(gate_module) -> list[str]:
             ("scope_errors fast, on/1 key collision",
              gate_module.scope_errors("fast", [WORKFLOW], [pin_change(
                  WORKFLOW, collide_yml("on-1", PIN_A), collide_yml("on-1", PIN_A, "# v5"))]), True),
+            ("scope_errors fast, !!set hides an edit",
+             gate_module.scope_errors("fast", [WORKFLOW], [pin_change(
+                 WORKFLOW, tag_yml("!!set"), tag_yml("!!set", "# v5"))]), True),
             ("scope_errors fast, wrong changes", gate_module.scope_errors("fast", [".github/workflows/other.yml"], pin_good), True),
             ("scope_errors fast, bad pin", gate_module.scope_errors("fast", [WORKFLOW], pin_bad), True),
         )
