@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": "Initial machine ledger from #220 human snapshot and live GitHub, 2026-10-30; historical prompt fields may be incomplete",
   "last_full_run_at": "2026-10-31T02:06:43.902Z",
-  "last_run_at": "2026-10-31T02:06:43.902Z",
+  "last_run_at": "2026-10-31T02:07:30.957Z",
   "last_run_mode": "FULL",
   "main_sha": "613cb935544a7b01664fe40a32e113a74c4e3ef7",
   "merge_policy": {
@@ -93,7 +93,8 @@
     "DX13_amendment2": "Owner unmarked #220 comment 6526791660: qualifying owner DX13 acceptance also carries through merge-main refresh with identical per-file patch, no conflict edits, green required CI, unchanged findings; all other gates apply",
     "DX17": "Owner unmarked #220 comment 6526791660: #228 specification max 3 Codex fix cycles; after third stop and queue remaining findings; each Claude patch addresses complete open checklist in one patch with finding-to-line table",
     "DX18": "OPEN owner decision: #226 code-derived cooling lock-order inversion; DX16 no production change; options targeted lock-order correction, 40P01/40001 mitigation, hold; queued in #220.",
-    "DX19": "OPEN owner decision: #228/#219 spec after DX17 cap; (a) explicit extra scoped patch+review, (b) integrated redesign recommended, (c) hold/closure; no action until owner unmarked answer"
+    "DX19": "OPEN owner decision: #228/#219 spec after DX17 cap; (a) explicit extra scoped patch+review, (b) integrated redesign recommended, (c) hold/closure; no action until owner unmarked answer",
+    "DX13_229": "Open: exact-head owner review fallback #229 b6975308e0f8777f11fd9dac70209b19c6873944; owner acceptance does not waive Draft or unresolved P2 thread"
   },
   "standing_holds": {
     "migration_0057": "PRODUCTION PROHIBITED until representative staging qualification and WRITTEN owner AND DBA approval"
@@ -2584,15 +2585,15 @@
         "at": "2026-10-31T02:06:01.452Z",
         "sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
         "comment_id": 6537569416,
-        "status": "awaiting native review or receipt"
+        "status": "terminal: third/final Codex ask returned generic clean issue-comment receipt #6537582816, NO native exact-head review"
       },
       "asks_per_sha": 3,
       "fix_review_cycles": 1,
       "stale_level": 0,
-      "queued": "Third/final native Codex review requested #6537569416; one P2 thread remains open, Draft; no merge. If only receipt, owner DX13 fallback.",
+      "queued": "3/3 Codex asks exhausted; owner DX13 exact-SHA fallback required; Draft and one open P2 Codex thread remain, owner disposition needed before any resolution/merge",
       "last_qualifying_review_sha": null,
       "last_ci_sha": "b6975308e0f8777f11fd9dac70209b19c6873944",
-      "last_state_verified_at": "2026-10-31T02:06:43.902Z",
+      "last_state_verified_at": "2026-10-31T02:07:30.957Z",
       "last_thread_verified_at": "2026-10-31T02:06:43.902Z",
       "source_patch_comment_id": 6528574316,
       "source_issue": 223,
