@@ -7,7 +7,8 @@
   "owner": "orchestrator (Claude read-only diagnosis completed)",
   "created_at": "2026-10-31T06:09:27.583Z",
   "linked_prs": [
-    238
+    238,
+    245
   ],
   "classification": "infrastructure/flaky-test investigation after same-head rerun passed",
   "first_failure": {
@@ -20,7 +21,7 @@
   },
   "rerun": "same-head failed-jobs attempt 2 SUCCESS; backend and frontend green",
   "main_baseline": "CI 41162751661, 41083732966, 41073838767 all backend-suite SUCCESS",
-  "next_gate": "verify harness race with independent witness/reproduction; candidate test-only patch not applied; do not weaken assertions or production migration",
+  "next_gate": "PR245 exact-head CI and independent Tier1 review; deterministic witness pending, do not merge/close",
   "notes": "Issue created under CI failure protocol, not a product defect finding; does not block unrelated PR238 after green rerun; no production migrations.; FULL: Claude read-only source diagnosis https://github.com/AhmedMahmoud2222/DCIM/issues/244#issuecomment-6539928602; no PR created.",
   "last_prompt": {
     "agent": "Claude",
@@ -35,5 +36,15 @@
     "status": "hypothesis only, no reproduced root cause",
     "patch": "one-file test-only DX12 candidate supplied but not applied",
     "next": "obtain deterministic cross-database or repeated-run witness before code change"
+  },
+  "candidate_pr": {
+    "number": 245,
+    "head": "79a8d8cceab3f6e5335e8c5820f59ca7a6cd7252",
+    "state": "draft",
+    "diff": "one file, 9 additions, 1 deletion",
+    "review": "pending",
+    "ci": "pending",
+    "source": "Claude patch comment 6539928602",
+    "evidence_comment": 6539985501
   }
 }
