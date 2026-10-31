@@ -1,0 +1,42 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 115,
+  "head_sha": "991ae4f5a302d23b4f4d0ad337be18dee7b9018c",
+  "tier": 0,
+  "tier_reason": "Five changed files all under docs/architecture and docs/implementation; docs-only Tier0 by diff, no workflow, config or executable code, no owner tier override. P1 design findings do not change Tier0 classification but block acceptance.",
+  "state": "draft; deferred",
+  "updated_at": "2026-10-31T07:13:51.750Z",
+  "ci": "backend/frontend SUCCESS on old head, branch stale",
+  "open_threads": 8,
+  "findings": [
+    {
+      "id": "P1-design-claim",
+      "severity": "P1",
+      "status": "Open",
+      "required": "Claim cfd_run before inserting attempt",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115"
+    },
+    {
+      "id": "P1-broker-loss",
+      "severity": "P1",
+      "status": "Open",
+      "required": "Re-dispatch queued runs after broker message loss",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115"
+    },
+    {
+      "id": "P1-handedness",
+      "severity": "P1",
+      "status": "Open",
+      "required": "Correct handedness assertion in proposed transform",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/115"
+    }
+  ],
+  "qualifying_review": "Codex findings P1/P2 at exact head; not accepted",
+  "asks_per_sha": {},
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "next_gate": "Deferred under owner D13 / orchestrator priority; eight open threads and 3 P1 design findings; resolve with evidence, exact-head CI and Codex before any merge",
+  "notes": "2026-10-31 FULL: tier corrected from 2 to 0 because PR diff contains only five documentation files; does not waive P1 findings, threads, or any merge gate."
+}
