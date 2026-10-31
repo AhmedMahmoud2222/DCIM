@@ -4,8 +4,8 @@
   "number": 224,
   "head_sha": "589fac45928c5e67fdf79a4496c024831cc35fce",
   "tier": 2,
-  "updated_at": "2026-10-31T05:08:45.780Z",
-  "ci": "frontend SUCCESS; backend matrix in progress on exact head; now behind main after #239; optional claude-review bot actor failure",
+  "updated_at": "2026-10-31T06:06:07.374Z",
+  "ci": "backend/frontend SUCCESS exact 589fac45; backend completed 05:50:16 UTC; branch 1 behind main; optional claude-review bot rejection",
   "open_threads": 4,
   "findings": [
     {
@@ -121,8 +121,8 @@
   "fix_review_cycles": null,
   "stale_level": 0,
   "queued": false,
-  "next_gate": "Ahmed copy verified v4 draft to active workflow; then new SHA CI, Codex, owner OpenCode/Jules, 4 P2 + F1-F8 findings, class I merge authorization",
-  "notes": "New active .github/workflows/refresh-branch.yml consumes REFRESH_PAT; class I merge authorization. 4 P2 threads remain. 5-file patch identical old e889 vs ad6 after main merge, no manual edits.; Claude pushed signed two-file proposed draft F1/F2 at a940d195; active workflow unchanged. F2 partial header still misleading on copy; correction requested comment 6538828058.; F2 follow-up Claude signed new head 589fac45928c5e67fdf79a4496c024831cc35fce, verified true; proposed v4 blob b7359125, README blob 6dc57aea; active v3 blob 767dcc1d; F1/F2 candidate in draft only, main workflow absent. Owner-copy evidence comment 6539068740. Owner DX20 permits unedited OpenCode second Tier2 review.; live draft verified blob b7359125, active PR workflow still old 767dcc1d, main workflow absent.",
+  "next_gate": "owner copy v4 draft to active workflow; then current SHA, exact-head CI, Codex, DX20 OpenCode/Jules, 4 P2 and F1-F8 dispositions, separate class I owner merge authorization",
+  "notes": "New active .github/workflows/refresh-branch.yml consumes REFRESH_PAT; class I merge authorization. 4 P2 threads remain. 5-file patch identical old e889 vs ad6 after main merge, no manual edits.; Claude pushed signed two-file proposed draft F1/F2 at a940d195; active workflow unchanged. F2 partial header still misleading on copy; correction requested comment 6538828058.; F2 follow-up Claude signed new head 589fac45928c5e67fdf79a4496c024831cc35fce, verified true; proposed v4 blob b7359125, README blob 6dc57aea; active v3 blob 767dcc1d; F1/F2 candidate in draft only, main workflow absent. Owner-copy evidence comment 6539068740. Owner DX20 permits unedited OpenCode second Tier2 review.; live draft verified blob b7359125, active PR workflow still old 767dcc1d, main workflow absent.; FULL 10:05 GST: required CI now green but active workflow still v3; no merge or activation.",
   "legacy_source": "state/ledger.json (preserved; oversized, not re-read)",
   "last_prompt": {
     "agent": "Claude",
