@@ -6,9 +6,9 @@
   "tier": 0,
   "tier_reason": "docs-only new specification file; no workflow, code, permission, secret or token change",
   "state": "draft",
-  "updated_at": "2026-10-31T06:33:00Z",
+  "updated_at": "2026-10-31T07:08:39.545Z",
   "ci": "backend and frontend SUCCESS on exact head; suite jobs skipped by docs-only route",
-  "open_threads": 0,
+  "open_threads": 4,
   "findings": [
     {
       "id": "C-PRE-2",
@@ -25,9 +25,41 @@
       "required": "5xx Retry-After with quota remaining classified transient not exhausted",
       "status": "Fixed at 25b91596cf484d7302d6ab672616f4e678600841 (pending independent review)",
       "evidence": "Section 6, ERR-4 and FC-50 distinguish 429/quota 0 from 5xx hints"
+    },
+    {
+      "id": "C-REV-1",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831186",
+      "severity": "P2",
+      "required": "Ambiguous scan-state PUT: distinguish applied-response-lost, confirmed not-applied and unknown; FC-55 variants",
+      "status": "Open",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxE; current C lines 70 inspected; consolidated remediation requested"
+    },
+    {
+      "id": "C-REV-2",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831191",
+      "severity": "P2",
+      "required": "Bound reopened chunks by OPEN_UNITS_CAP, or enforce configuration compatibility; FC-54/FC-57",
+      "status": "Open",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxJ; current C lines 73 inspected; consolidated remediation requested"
+    },
+    {
+      "id": "C-REV-3",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831194",
+      "severity": "P2",
+      "required": "Recheck task deadline after external work and before retry/wait/budget exit; FC-51",
+      "status": "Open",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxM; current C lines 61 inspected; consolidated remediation requested"
+    },
+    {
+      "id": "C-REV-4",
+      "source": "https://github.com/AhmedMahmoud2222/DCIM/pull/246#discussion_r4430831197",
+      "severity": "P2",
+      "required": "Task-scoped 429 must not terminate independent tasks; FC-12 multi-task case",
+      "status": "Open",
+      "evidence": "Codex exact-head 25b91596cf, thread PRRT_kwDOUdC8Ds6yOoxQ; current C lines 103 inspected; consolidated remediation requested"
     }
   ],
-  "qualifying_review": "none; Codex native review running at exact SHA",
+  "qualifying_review": "Codex native COMMENTED review at exact 25b91596cf with four P2 inline findings; NOT ACCEPTED; no verdict line",
   "asks_per_sha": {
     "25b91596cf484d7302d6ab672616f4e678600841": 1
   },
@@ -39,14 +71,14 @@
     "reason": "unsigned",
     "required": false
   },
-  "next_gate": "Codex exact-head native acceptance; DX20 owner-run second specification review; D-3/D-4/D-5/D-7 owner values; Draft; preserve #219/#228 threads",
+  "next_gate": "Claude complete exact-context patch for four P2 findings, verify and apply verbatim; rerun exact-head CI and Codex; Draft; owner DX20 second review; D-3/D-4/D-5/D-7; #219 frozen",
   "last_prompt": {
-    "agent": "Codex",
+    "agent": "Claude",
     "sha": "25b91596cf484d7302d6ab672616f4e678600841",
-    "comment_id": 6540122401,
-    "time": "2026-10-31T06:32:00Z",
-    "ask": "D5 Document C scoped review"
+    "comment_id": 6540418947,
+    "time": "2026-10-31T07:08:39.545Z",
+    "ask": "all four P2 findings; one DX12 patch from verified 229-line baseline"
   },
   "linked_issue": 220,
-  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action."
+  "notes": "Claude 229-line one-file new-file patch from #220 comment 6540047899 applied verbatim under owner DX12; branch created at main 11f46a2b; file verified exact, +229/-0, no other changes. PR #246 Draft. No controller activation or production action.; 2026-10-31 07:06Z: four P2 Codex findings, full checklist sent to Claude on #220 comment 6540418947. No thread resolved."
 }
