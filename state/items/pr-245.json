@@ -6,8 +6,8 @@
   "tier": 1,
   "tier_reason": "tests-only change in backend/tests/integration/test_fk_indexes_migration.py, no migration or production code change",
   "state": "draft",
-  "updated_at": "2026-10-31T06:16:57.303Z",
-  "ci": "CI route and optional checks started; backend/frontend pending",
+  "updated_at": "2026-10-31T06:33:00Z",
+  "ci": "frontend SUCCESS exact head 79a8d8cc; backend-suite in_progress at 06:33 UTC; backend required check not yet reported",
   "open_threads": 0,
   "findings": [
     {
@@ -29,7 +29,7 @@
     "reason": "unsigned",
     "required": false
   },
-  "next_gate": "exact-head backend/frontend, Codex Tier1 review, witness for harness race, no threads, mark ready",
+  "next_gate": "await exact-head backend SUCCESS, then independent Codex review and deterministic witness; Draft remains; no merge",
   "last_prompt": null,
   "linked_issue": 244,
   "notes": "Claude-authored single-hunk patch from issue #244 comment 6539928602 applied verbatim under DX12. Initial 720-line reconstruction truncated file; detected before PR, corrected with full 1082-line main file and original newline. Final cumulative diff 1 file, 9 additions/1 deletion, no unrelated changes; 3 audit commits retained, no force push. Draft PR #245."
