@@ -1,0 +1,32 @@
+{
+  "schema_version": 16,
+  "type": "pr",
+  "number": 243,
+  "head_sha": "590b0fed4b4557a6bcf19c26e3aa5ceffbb3f1aa",
+  "tier": 0,
+  "tier_reason": "one new docs-only architecture specification, no code/config/workflow/permission changes",
+  "state": "draft",
+  "updated_at": "2026-10-31T05:15:35.494Z",
+  "ci": "new-head CI started; required backend/frontend not yet present, docs-only route may skip suites",
+  "open_threads": 0,
+  "findings": [],
+  "qualifying_review": null,
+  "asks_per_sha": {},
+  "fix_review_cycles": 0,
+  "stale_level": 0,
+  "queued": false,
+  "signature": {
+    "verified": false,
+    "reason": "unsigned",
+    "required": false
+  },
+  "next_gate": "required exact-head backend/frontend checks, then Codex independent review; D8/D11 unresolved with fail-closed no-POST default; owner may choose second review",
+  "last_prompt": {
+    "agent": "Claude",
+    "sha": "d0faef8dafa41b0ef4b7668f518efc0bd2d49786",
+    "comment_id": 6539402505,
+    "time": "2026-10-31T05:09:56Z",
+    "ask": "DX12 one-file A spec patch; completed issue #220 comment 6539404611"
+  },
+  "notes": "A7 split from parked PR228. Claude authored complete 222-line patch; orchestrator applied verbatim on isolated branch and verified all 222 lines match. No code written by orchestrator; only verbatim patch. 12 PR228 and 12 PR219 threads preserved. Main baseline d0faef8. Source https://github.com/AhmedMahmoud2222/DCIM/issues/220#issuecomment-6539404611; PR https://github.com/AhmedMahmoud2222/DCIM/pull/243. D8/D11 class I anchor unresolved; activation held."
+}
