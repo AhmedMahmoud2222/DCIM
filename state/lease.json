@@ -1,1 +1,1 @@
-{"run_id":"follow-20261101T0033Z-11","mode":"FOLLOW-UP","started_at":"2026-11-01T00:33:34.848Z","expires_at":"2026-11-01T00:58:34.848Z","status":"active"}
+{"run_id":"follow-20261101T0033Z-11","mode":"FOLLOW-UP","started_at":"2026-11-01T00:33:34.848Z","expires_at":"2026-11-01T00:58:34.848Z","status":"released","released_at":"2026-11-01T00:34:45.740Z","event_path":"state/events/2026-11-01/follow-20261101T0033Z-11.json"}
