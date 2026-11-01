@@ -268,6 +268,21 @@ class AggregateTests(unittest.TestCase):
                 self.assertNotEqual(mutated[0]['identity']['run_attempt'], ident['run_attempt'])
                 self.assertFalse(mutants.aggregate(control, mutated)['passed'])
 
+    def test_a_mismatched_run_attempt_fails_on_every_real_attempt(self):
+        """The mismatch is derived from the real identity, so it cannot collide on any rerun."""
+        for attempt in ('1', '2', '3'):
+            with self.subTest(attempt=attempt), mock.patch.dict(os.environ, {'GITHUB_RUN_ATTEMPT': attempt}):
+                control = {**self.control, 'identity': mutants.identity()}
+                results = [{**r, 'identity': mutants.identity()} for r in self.results]
+                self.assertTrue(mutants.aggregate(control, results)['passed'])
+                for other in (attempt + '-other', str(int(attempt) + 1), str(int(attempt) - 1), ''):
+                    changed = copy.deepcopy(results)
+                    changed[0]['identity']['run_attempt'] = other
+                    self.assertFalse(mutants.aggregate(control, changed)['passed'], other)
+                    changed = copy.deepcopy(results)
+                    changed[0]['identity']['run_attempt'] = int(attempt)  # numeric type is not the string identity
+                    self.assertFalse(mutants.aggregate(control, changed)['passed'], 'numeric')
+
     def test_a_failed_or_foreign_control_invalidates_every_verdict(self):
         self.assertFalse(mutants.aggregate({**self.control, 'verdict': 'FAILED'}, self.results)['passed'])
         foreign = {**self.control, 'identity': {**mutants.identity(), 'head_sha': 'f' * 40}}
