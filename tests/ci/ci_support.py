@@ -114,7 +114,7 @@ def policy_mismatches(policy) -> list[str]:
 # ---------------------------------------------------------------- pin-only changes
 
 PIN_A, PIN_B = "a" * 40, "b" * 40
-WORKFLOW = ".github/workflows/claude.yml"
+WORKFLOW = ".github/workflows/deployment-validation.yml"
 
 
 def pin_yml(sha: str, comment: str = "# v4", extra: str = "") -> str:
@@ -195,7 +195,7 @@ def pin_cases():
         ("sha and comment bump", [good], True),
         ("sha bump, comment unchanged", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B))], True),
         ("double-space comment", [pin_change(y, pin_yml(PIN_A, "# v4"), pin_yml(PIN_B, " # v8"))], True),
-        ("two workflow files", [good, pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A), pin_yml(PIN_B))], True),
+        ("two workflow files", [good, pin_change(".github/workflows/g7-mutation-validation.yml", pin_yml(PIN_A), pin_yml(PIN_B))], True),
         ("policy json", [pin_change(".github/acceptance/policy.json", pin_json(PIN_A), pin_json(PIN_B))], True),
         ("adapter constant", [pin_change(".github/scripts/orchestration_claude_adapter.py",
                                           pin_adapter(PIN_A), pin_adapter(PIN_B))], True),
@@ -215,6 +215,12 @@ def pin_cases():
         ("ci.yml is excluded", [pin_change(".github/workflows/ci.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("refresh-branch.yml is excluded", [pin_change(".github/workflows/refresh-branch.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("deploy.yml is excluded", [pin_change(".github/workflows/deploy.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("opencode.yml is excluded", [pin_change(".github/workflows/opencode.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("agent-collaboration.yml is excluded", [pin_change(".github/workflows/agent-collaboration.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("acceptance-review.yml is excluded", [pin_change(".github/workflows/acceptance-review.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("agent-claude.yml is excluded", [pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("claude-code-review.yml is excluded", [pin_change(".github/workflows/claude-code-review.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("claude.yml is excluded", [pin_change(".github/workflows/claude.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("nested workflow path", [pin_change(".github/workflows/sub/x.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("non-yml workflow file", [pin_change(".github/workflows/x.txt", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("a ci script", [pin_change(".github/scripts/ci_policy.py", pin_adapter(PIN_A), pin_adapter(PIN_B))], False),
@@ -225,7 +231,7 @@ def pin_cases():
         ("mode changed", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), new_mode="100755")], False),
         ("symlink", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_B), old_mode="120000", new_mode="120000")], False),
         ("identical text", [pin_change(y, pin_yml(PIN_A), pin_yml(PIN_A))], False),
-        ("one good, one bad", [good, pin_change(".github/workflows/agent-claude.yml", pin_yml(PIN_A),
+        ("one good, one bad", [good, pin_change(".github/workflows/g7-mutation-validation.yml", pin_yml(PIN_A),
                                                 pin_yml(PIN_B, extra="      - run: x\n"))], False),
         ("21 files", [pin_change(f".github/workflows/w{n}.yml", pin_yml(PIN_A), pin_yml(PIN_B)) for n in range(21)], False),
         ("non-string text", [dict(good, new=None)], False),
@@ -388,23 +394,23 @@ def router_mismatches(router: Path) -> list[str]:
             cases.append((f"pin bump with U+{tag.upper()} in the comment" if tag != "nul" else "pin bump with NUL in the comment",
                           base, commit(repo, "p", texts={WORKFLOW: text}), "full", 1))
         git(repo, "checkout", "-q", "-b", "pin-heredoc-base", base)
-        heredoc_base = commit(repo, "h", texts={".github/workflows/agent-claude.yml": heredoc_yml(PIN_A, "# v4")})
+        heredoc_base = commit(repo, "h", texts={".github/workflows/g7-mutation-validation.yml": heredoc_yml(PIN_A, "# v4")})
         git(repo, "checkout", "-q", "-b", "pin-heredoc", heredoc_base)
         cases.append(("heredoc comment injection", heredoc_base,
-                      commit(repo, "p", texts={".github/workflows/agent-claude.yml":
+                      commit(repo, "p", texts={".github/workflows/g7-mutation-validation.yml":
                                                heredoc_yml(PIN_A, "# $(echo INJECTED >&2)")}), "full", 1))
         for kind in ("env-flow", "env-quoted", "heredoc"):
             git(repo, "checkout", "-q", "-b", f"ctx-{kind}-base", base)
-            ctx_base = commit(repo, "c", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_A)})
+            ctx_base = commit(repo, "c", texts={".github/workflows/g7-mutation-validation.yml": ctx_yml(kind, PIN_A)})
             git(repo, "checkout", "-q", "-b", f"ctx-{kind}", ctx_base)
             cases.append((f"data context {kind}", ctx_base,
-                          commit(repo, "p", texts={".github/workflows/agent-claude.yml": ctx_yml(kind, PIN_B)}), "full", 1))
+                          commit(repo, "p", texts={".github/workflows/g7-mutation-validation.yml": ctx_yml(kind, PIN_B)}), "full", 1))
         for kind in ("on-1", "yes-true"):
             git(repo, "checkout", "-q", "-b", f"collide-{kind}-base", base)
-            collide_base = commit(repo, "c", texts={".github/workflows/agent-claude.yml": collide_yml(kind, PIN_A)})
+            collide_base = commit(repo, "c", texts={".github/workflows/g7-mutation-validation.yml": collide_yml(kind, PIN_A)})
             git(repo, "checkout", "-q", "-b", f"collide-{kind}", collide_base)
             cases.append((f"key collision {kind}", collide_base,
-                          commit(repo, "p", texts={".github/workflows/agent-claude.yml":
+                          commit(repo, "p", texts={".github/workflows/g7-mutation-validation.yml":
                                                    collide_yml(kind, PIN_A, "# v5")}), "full", 1))
         git(repo, "checkout", "-q", "-b", "pin-ci", base)
         cases.append(("pin bump in ci.yml", base,
