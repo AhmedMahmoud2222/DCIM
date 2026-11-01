@@ -1,1 +1,1 @@
-{"run_id":"follow-20261101T1929Z","mode":"FOLLOW-UP","status":"released","released_at":"2026-11-01T19:32:57.835Z","event_path":"state/events/2026-11-01/follow-20261101T1929Z.json","last_result":"24 PRs, 25 issues, 58 live open threads; #259 Codex requested; #254 2h stale; 0 merges"}
+{"run_id":"full-20261101T200508Z","mode":"FULL","status":"active","started_at":"2026-11-01T20:05:08.657Z","expires_at":"2026-11-01T20:30:08.657Z"}
