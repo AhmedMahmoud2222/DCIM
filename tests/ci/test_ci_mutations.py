@@ -259,6 +259,16 @@ WORKFLOW_MUTANTS = {
         "backend-runtime-shards", "test_bulk_import_real_beat_recovery", "echo none"),
     "real Celery step removed from suite shards": _set_run(
         "backend-suite-shards", "test_bulk_import_real_beat_recovery", "echo none"),
+    "real Celery step drops the fencing file": _edit_run(
+        "backend-runtime-shards", "test_bulk_import_real_beat_recovery",
+        " tests/integration/test_bulk_import_real_two_worker_fencing.py", ""),
+    "real Celery step drops the recovery file": _edit_run(
+        "backend-suite-shards", "test_bulk_import_real_beat_recovery",
+        " tests/integration/test_bulk_import_real_worker_recovery.py", ""),
+    "real Celery step reorders the files": _edit_run(
+        "backend-runtime-shards", "test_bulk_import_real_beat_recovery",
+        "test_bulk_import_real_beat_recovery.py tests/integration/test_bulk_import_real_two_worker_fencing.py",
+        "test_bulk_import_real_two_worker_fencing.py tests/integration/test_bulk_import_real_beat_recovery.py"),
     "real Celery step runs on every shard": lambda doc: _step(
         doc, "backend-runtime-shards", "test_bulk_import_real_beat_recovery").pop("if"),
     "real Celery preload dropped from runtime shards": _edit_run(
