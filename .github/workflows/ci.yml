@@ -264,6 +264,13 @@ jobs:
       - name: Validate extraction apply against PostgreSQL
         if: matrix.shard == 0
         run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
+      - name: Run the real Celery worker tests in their own process
+        # These three files start embedded Celery workers. The shard splitter assigns files by
+        # size, so a PR that changes any test file's size can move them next to different tests
+        # (#255). They run here, first and in this order, in every run; they are preloaded
+        # below so no shard selects them again.
+        if: matrix.shard == 0
+        run: pytest -q tests/integration/test_bulk_import_real_beat_recovery.py tests/integration/test_bulk_import_real_two_worker_fencing.py tests/integration/test_bulk_import_real_worker_recovery.py
       - name: Run this shard of the regression tests
         # Same selection as backend-runtime-shards: ci_shard.py exits non-zero on an empty
         # selection, and the preloaded files run in shard 0's own steps above.
@@ -273,7 +280,10 @@ jobs:
           selected="$(python "$GITHUB_WORKSPACE/.github/scripts/ci_shard.py" --index "$SHARD" --count 3 --root tests \
             --preload tests/integration/test_mvp_retention_hostile.py \
             --preload tests/api/test_catalog_extraction_apply.py \
-            --preload tests/unit/test_catalog_apply_conversion.py)"
+            --preload tests/unit/test_catalog_apply_conversion.py \
+            --preload tests/integration/test_bulk_import_real_beat_recovery.py \
+            --preload tests/integration/test_bulk_import_real_two_worker_fencing.py \
+            --preload tests/integration/test_bulk_import_real_worker_recovery.py)"
           readarray -t files <<< "$selected"
           pytest -q "${files[@]}"
 
@@ -736,6 +746,13 @@ jobs:
       - name: Validate extraction apply against PostgreSQL
         if: matrix.shard == 0
         run: pytest -q tests/api/test_catalog_extraction_apply.py tests/unit/test_catalog_apply_conversion.py
+      - name: Run the real Celery worker tests in their own process
+        # These three files start embedded Celery workers. The shard splitter assigns files by
+        # size, so a PR that changes any test file's size can move them next to different tests
+        # (#255). They run here, first and in this order, in every run; they are preloaded
+        # below so no shard selects them again.
+        if: matrix.shard == 0
+        run: pytest -q tests/integration/test_bulk_import_real_beat_recovery.py tests/integration/test_bulk_import_real_two_worker_fencing.py tests/integration/test_bulk_import_real_worker_recovery.py
       - name: Run this shard of the regression tests
         # ci_shard.py splits the test files by size into three shards. The retention hostile
         # file and the two extraction files run in shard 0's own steps above, so they are
@@ -748,7 +765,10 @@ jobs:
           selected="$(python "$GITHUB_WORKSPACE/.github/scripts/ci_shard.py" --index "$SHARD" --count 3 --root tests \
             --preload tests/integration/test_mvp_retention_hostile.py \
             --preload tests/api/test_catalog_extraction_apply.py \
-            --preload tests/unit/test_catalog_apply_conversion.py)"
+            --preload tests/unit/test_catalog_apply_conversion.py \
+            --preload tests/integration/test_bulk_import_real_beat_recovery.py \
+            --preload tests/integration/test_bulk_import_real_two_worker_fencing.py \
+            --preload tests/integration/test_bulk_import_real_worker_recovery.py)"
           readarray -t files <<< "$selected"
           pytest -q "${files[@]}"
       - name: Run Edge Collector tests on this runtime
