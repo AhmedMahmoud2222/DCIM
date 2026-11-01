@@ -114,7 +114,7 @@ def policy_mismatches(policy) -> list[str]:
 # ---------------------------------------------------------------- pin-only changes
 
 PIN_A, PIN_B = "a" * 40, "b" * 40
-WORKFLOW = ".github/workflows/claude.yml"
+WORKFLOW = ".github/workflows/agent-claude.yml"
 
 
 def pin_yml(sha: str, comment: str = "# v4", extra: str = "") -> str:
@@ -215,6 +215,9 @@ def pin_cases():
         ("ci.yml is excluded", [pin_change(".github/workflows/ci.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("refresh-branch.yml is excluded", [pin_change(".github/workflows/refresh-branch.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("deploy.yml is excluded", [pin_change(".github/workflows/deploy.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("opencode.yml is excluded", [pin_change(".github/workflows/opencode.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("agent-collaboration.yml is excluded", [pin_change(".github/workflows/agent-collaboration.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
+        ("claude.yml is excluded", [pin_change(".github/workflows/claude.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("nested workflow path", [pin_change(".github/workflows/sub/x.yml", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("non-yml workflow file", [pin_change(".github/workflows/x.txt", pin_yml(PIN_A), pin_yml(PIN_B))], False),
         ("a ci script", [pin_change(".github/scripts/ci_policy.py", pin_adapter(PIN_A), pin_adapter(PIN_B))], False),

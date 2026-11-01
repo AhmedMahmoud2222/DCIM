@@ -171,11 +171,15 @@ _POLICY_JSON = re.compile(rf'^([ \t]*"review_action":[ \t]*"{_ACTION})@{_PIN}"(,
 _ADAPTER = re.compile(rf"^(ACTION = '{_ACTION})@{_PIN}'$")
 
 WORKFLOW_DIR = ".github/workflows/"
-# Workflows whose pins stay full: the CI controls themselves, the deployment, and the workflow
-# that holds REFRESH_PAT, a token with write rights to PR branches.
+# Workflows whose pins stay full: the CI controls themselves, the deployment, the workflow
+# that holds REFRESH_PAT (a token with write rights to PR branches), and the workflows that mint
+# or use write-capable GitHub App tokens (OpenCode, agent collaboration, Claude comment trigger).
 PIN_EXCLUDED = (
+    ".github/workflows/agent-collaboration.yml",
     ".github/workflows/ci.yml",
+    ".github/workflows/claude.yml",
     ".github/workflows/deploy.yml",
+    ".github/workflows/opencode.yml",
     ".github/workflows/refresh-branch.yml",
 )
 PIN_POLICY_JSON = ".github/acceptance/policy.json"
