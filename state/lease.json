@@ -1,1 +1,1 @@
-{"run_id":"full-20261101T1855Z","mode":"FULL","status":"active","started_at":"2026-11-01T18:55:51.093Z","expires_at":"2026-11-01T19:20:51.093Z"}
+{"run_id":"full-20261101T1855Z","mode":"FULL","status":"released","released_at":"2026-11-01T19:01:41.317Z","event_path":"state/events/2026-11-01/full-20261101T1855Z.json","supplemental_event_path":"state/events/2026-11-01/full-20261101T1855Z-late.json","last_result":"24 PRs, 25 issues, 62 threads, #258 created, #259 Draft opened, no merges"}
