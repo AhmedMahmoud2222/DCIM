@@ -26,7 +26,7 @@ The backend suites never run a workflow, so they cannot test a pin. The review o
 new pin against the upstream release tag does. The exception is narrow:
 
 * Every changed file is *modified*, mode `100644`, and one of: a workflow in
-  `.github/workflows/` (not `ci.yml`, `deploy.yml`, `refresh-branch.yml`, `opencode.yml`, `agent-collaboration.yml` or `claude.yml`, no subdirectory; the last three use write-capable GitHub App tokens),
+  `.github/workflows/` (not `ci.yml`, `deploy.yml`, `refresh-branch.yml`, `opencode.yml`, `agent-collaboration.yml`, `claude.yml`, `claude-code-review.yml`, `agent-claude.yml` or `acceptance-review.yml`, no subdirectory; the last six use write-capable GitHub App tokens),
   `.github/acceptance/policy.json`, or `.github/scripts/orchestration_claude_adapter.py`.
 * Each file equals its base version once its pin lines are reduced to the action
   reference. A pin line is a whole `uses: owner/repo@<40 hex>` line (with an optional
