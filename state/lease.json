@@ -1,1 +1,1 @@
-{"run_id":"full-20261101T200508Z","mode":"FULL","status":"released","released_at":"2026-11-01T20:08:53.863Z","event_path":"state/events/2026-11-01/full-20261101T200508Z.json","last_result":"24 PRs, 25 issues, 58 open threads; #259 Codex A4 clean, R6 Copilot missing; 0 merges"}
+{"run_id":"follow-20261101T202605Z-10","mode":"FOLLOW-UP","status":"active","started_at":"2026-11-01T20:26:05Z","expires_at":"2026-11-01T20:51:05Z"}
