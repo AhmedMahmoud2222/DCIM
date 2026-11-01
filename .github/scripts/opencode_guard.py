@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Run the sandboxed agent and decide whether generation truly succeeded (guard v3.1).
+"""Run the sandboxed agent and decide whether generation truly succeeded (guard v4.0, OpenCode v2).
 
-Uses `opencode run --format json`, which only generates in the working tree: it makes
-no commit, push, PR or comment. Generation counts as successful only when ALL hold:
+Uses `opencode run --standalone --format json`, which only generates in the working tree: it
+makes no commit, push, PR or comment. Generation counts as successful only when ALL hold:
   - the process exited 0 and did not time out
   - every stdout line parsed as a JSON event
   - no `error` event was emitted
-  - at least one `step_finish` event arrived and the last one has reason "stop"
+  - the transcript is a coherent lifecycle: strictly nested steps ending in a `step_finish` with reason
+    "stop", or ending in the bare reply text that v2 prints after its last tool-calls step (or alone)
   - no process of the agent account is left once OpenCode has exited
 Anything else (provider error, timeout, crash, truncated or tool-call-pending output, or an
 agent process that survives) is a failure, and the caller must not publish.
+
+OpenCode v2 retries a rejected provider request (HTTP 401/403/429/5xx, a cut or empty stream)
+internally and indefinitely, emitting no `error` event until it is killed, so the transcript alone
+cannot fail fast. The trusted proxy therefore appends `provider_rejection` records to the file named
+by OPENCODE_PROXY_LOG; the guard polls it while the agent runs and, once a rejection reaches its
+threshold, stops the agent and reports a sanitized category (provider_auth_rejected,
+provider_http_403, provider_http_429, provider_unavailable, ...). No response content is read.
 
 After every run, successful or not, every process of the agent account is killed and the
 guard proves none is left before it reports. A detached process started by an agent tool
@@ -49,6 +57,10 @@ REVIEW_PREFACE = (
     '"evidence": "reproduction or code evidence", "recommendation": "..."}], '
     '"verification": [{"command": "...", "result": "..."}]}. Never approve the change. Focus:\n'
 )
+PROBE_PREFACE = (
+    'You are running a bounded, nonpublishing connectivity probe. Do not use tools, inspect files, '
+    'modify a repository, review code, or publish anything. Reply exactly PROBE_OK. Task: '
+)
 AGENT_USER = 'ocagent'
 REAP_ATTEMPTS = 10
 REAP_PAUSE = 0.5
@@ -78,6 +90,11 @@ def extract_final_text(lines: list[str]) -> str:
             if isinstance(text, str):
                 texts.append(text)
     return texts[-1] if texts else ''
+
+
+def probe_acknowledged(lines: list[str]) -> bool:
+    """The fixed probe succeeds only when the final assistant text is the expected token."""
+    return extract_final_text(lines).strip() == 'PROBE_OK'
 
 
 EVENT_PART_TYPE = {'step_start': 'step-start', 'step_finish': 'step-finish', 'text': 'text',
@@ -120,6 +137,13 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
     session = events[0].get('sessionID')
     if not isinstance(session, str) or not SESSION_EVENT_RE.match(session):
         return fail('session_identity_missing')
+    # OpenCode v2 prints the closing reply of a run as bare text events, with no step_start/step_finish of their
+    # own: alone for a reply that needs no tool call, or after the last tool-calls step (measured on 2.1.4, the
+    # shape is stable). Such text is accepted only there, last, and non-empty. A truncated reply is never bare
+    # (v2 emits step_finish(length) and an `error` event) and an interrupted run fails the exit code, timeout and
+    # error checks above and below.
+    closing = False           # bare reply text has started: no step may follow
+    texts = 0
     open_step = None          # (messageID, tool_uses, saw_body)
     finished = []             # (reason, tool_uses)
     last_stamp = 0
@@ -141,10 +165,16 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
                 or not MESSAGE_RE.match(part['messageID']):
             return fail('malformed_part')
         if kind == 'step_start':
+            if closing:
+                return fail('event_ordering')
             if open_step is not None or (finished and finished[-1][0] == 'stop'):
                 return fail('event_ordering')
             open_step = [part['messageID'], 0]
         elif kind in STEP_BODY:
+            if open_step is None and kind != 'tool_use' and (not finished or finished[-1][0] == 'tool-calls'):
+                closing = True
+                texts += kind == 'text' and isinstance(part.get('text'), str) and bool(part['text'].strip())
+                continue
             if open_step is None or part['messageID'] != open_step[0]:
                 return fail('event_ordering')
             if kind == 'tool_use':
@@ -165,6 +195,8 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
             open_step = None
     if open_step is not None:
         return fail('unfinished_step')
+    if closing:
+        return ('success', '') if texts else fail('no_supported_termination')
     if not finished or finished[-1][0] != 'stop':
         return fail('no_supported_termination')
     return 'success', ''
@@ -186,20 +218,99 @@ def reap_agent_processes() -> str:
     return 'agent_processes_survived'
 
 
+POLL_SECONDS = 0.5
+STOP_GRACE_SECONDS = 30
+REJECTION_CATEGORY_RE = re.compile(r'^provider_[a-z0-9_]{1,40}$')
+
+
+def read_new_rejection(path: str, offset: int) -> tuple[str, int]:
+    """Return (category, new_offset): category is non-empty once the proxy logged a terminal rejection.
+
+    The log is written by the trusted proxy as the runner user; the agent account cannot reach it. Only the
+    fixed `provider_*` category token is taken from a record, never a message, header or body."""
+    try:
+        with open(path, 'rb') as handle:
+            handle.seek(offset)
+            data = handle.read()
+    except OSError:
+        return '', offset
+    complete = data.rfind(b'\n') + 1
+    for raw in data[:complete].splitlines():
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(record, dict) or record.get('event') != 'provider_rejection' or record.get('terminal') is not True:
+            continue
+        category = record.get('category')
+        if isinstance(category, str) and REJECTION_CATEGORY_RE.match(category):
+            return category, offset + complete
+    return '', offset + complete
+
+
+def kill_agent_account(_process=None) -> None:
+    subprocess.run(['sudo', '-n', 'pkill', '-KILL', '-u', AGENT_USER], check=False, capture_output=True)
+
+
+def run_agent(command: list[str], workdir: str, wall_timeout: int, proxy_log: str,
+              stop=kill_agent_account) -> tuple[str, str, int, str]:
+    """Run the agent; stop it as soon as the proxy reports a terminal provider rejection.
+
+    Returns (stdout, stderr, exit_code, rejection_category). `stop(process)` kills the agent's own processes (the
+    command runs through sudo, which the runner user cannot signal directly). Raises subprocess.TimeoutExpired
+    when the wall clock limit passes first, unless a rejection was already recorded: that is reported instead."""
+    try:
+        offset = os.path.getsize(proxy_log) if proxy_log else 0
+    except OSError:
+        offset = 0
+    process = subprocess.Popen(command, cwd=workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + wall_timeout
+    rejection = ''
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=POLL_SECONDS)
+            if proxy_log and not rejection:           # the agent can exit (v2 does on a 401) between two polls
+                rejection, offset = read_new_rejection(proxy_log, offset)
+            return stdout, stderr, process.returncode, rejection
+        except subprocess.TimeoutExpired:
+            pass
+        if time.monotonic() >= deadline:
+            stop(process)
+            process.kill()
+            stdout, stderr = process.communicate()
+            if rejection:
+                return stdout, stderr, process.returncode, rejection
+            raise subprocess.TimeoutExpired(command, wall_timeout)
+        if proxy_log and not rejection:
+            rejection, offset = read_new_rejection(proxy_log, offset)
+            if rejection:
+                stop(process)
+                deadline = min(deadline, time.monotonic() + STOP_GRACE_SECONDS)
+
+
 def build_command(model: str, config: str, home: str, workdir: str, timeout_min: int, task: str,
                   mode: str = 'implement') -> list[str]:
+    if mode == 'probe':
+        task = 'Reply exactly PROBE_OK.'
     env = {
         'HOME': home, 'XDG_CONFIG_HOME': f'{home}/.config', 'XDG_DATA_HOME': f'{home}/.local/share',
         'XDG_CACHE_HOME': f'{home}/.cache', 'XDG_STATE_HOME': f'{home}/.local/state',
         'PATH': '/opt/opencode/bin:/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8', 'CI': 'true',
         'OPENCODE_CONFIG_CONTENT': config, 'OPENCODE_DISABLE_PROJECT_CONFIG': '1',
-        'OPENCODE_PURE': '1', 'OPENCODE_DISABLE_MODELS_FETCH': '1', 'OPENCODE_DISABLE_AUTOUPDATE': '1',
+        'OPENCODE_CONFIG_PROJECT_DISABLE': '1', 'OPENCODE_DISABLE_CLAUDE_CODE': '1',
+        'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS': '1', 'OPENCODE_DISABLE_MODELS_FETCH': '1',
+        'OPENCODE_DISABLE_AUTOUPDATE': '1',
+        # v2 resolves relative paths against $PWD when it is set; it must be the sandbox work tree.
+        'PWD': workdir,
     }
     assignments = [f'{key}={value}' for key, value in env.items()]
-    return ['sudo', '-n', '-u', AGENT_USER, 'timeout', '--kill-after=30s', f'{timeout_min}m',
+    timeout_arg = f'{timeout_min}s' if mode == 'probe' else f'{timeout_min}m'
+    timeout_flags = ['--signal=KILL'] if mode == 'probe' else ['--kill-after=30s']
+    return ['sudo', '-n', '-u', AGENT_USER, 'timeout', *timeout_flags, timeout_arg,
             'env', '-i', *assignments,
-            'opencode', 'run', '--pure', '--format', 'json', '--model', model, '--dir', workdir, '--',
-            (REVIEW_PREFACE if mode == 'review' else PREFACE) + task]
+            'opencode', 'run', '--standalone', '--format', 'json', '--model', model, '--',
+            (REVIEW_PREFACE if mode == 'review' else PROBE_PREFACE if mode == 'probe' else PREFACE) + task]
 
 
 def main(argv: list[str]) -> int:
@@ -210,19 +321,27 @@ def main(argv: list[str]) -> int:
     with open(config_path, encoding='utf-8') as handle:
         config = handle.read().strip()
     mode = os.environ.get('GUARD_MODE', 'implement')
-    command = build_command(model, config, home, workdir, int(timeout_min), os.environ.get('TASK', ''), mode)
+    task = os.environ.get('TASK', '')
+    command = build_command(model, config, home, workdir, int(timeout_min), task, mode)
     lines: list[str] = []
     timed_out = False
+    rejection = ''
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=int(timeout_min) * 60 + 90)
-        lines, exit_code = completed.stdout.splitlines(), completed.returncode
+        wrapper_timeout = int(timeout_min) + 5 if mode == 'probe' else int(timeout_min) * 60 + 90
+        stdout, stderr, exit_code, rejection = run_agent(command, workdir, wrapper_timeout,
+                                                         os.environ.get('OPENCODE_PROXY_LOG', ''))
+        lines = stdout.splitlines()
         timed_out = exit_code in (124, 137)
-        if completed.stderr.strip():
-            print('agent stderr (first 2000 chars):', completed.stderr[:2000])
+        if mode != 'probe' and stderr.strip():
+            print('agent stderr (first 2000 chars):', stderr[:2000])
     except subprocess.TimeoutExpired:
         exit_code, timed_out = None, True
     survivor = reap_agent_processes()                  # on every path, before anything is reported or collected
     status, reason = evaluate(lines, exit_code, timed_out)
+    if rejection and status == 'failed':               # the proxy saw the provider refuse: name that, not the symptom
+        reason = rejection
+    if mode == 'probe' and status == 'success' and not probe_acknowledged(lines):
+        status, reason = 'failed', 'probe_acknowledgement_missing'
     if survivor:
         status, reason = 'failed', survivor
     session = extract_session(lines) if status == 'success' else ''

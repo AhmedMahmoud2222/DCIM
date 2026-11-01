@@ -1,0 +1,11 @@
+{
+  "exit_code": 0,
+  "timed_out": false,
+  "stderr_head": "",
+  "requests_seen": 2,
+  "agent_requests": 1,
+  "original_line_count": 3,
+  "kept_lines": 3,
+  "opencode_version": "1.19.3",
+  "capture": "pinned linux-x64 1.19.3, fresh isolated HOME, npm_config_offline=true, read:ask, loopback stub with synthetic key; no real gateway contacted"
+}

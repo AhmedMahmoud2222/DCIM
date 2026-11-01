@@ -133,10 +133,34 @@ class CiGateTests(unittest.TestCase):
             self.assertEqual(loader.loadTestsFromName(test_id).countTestCases(), 1, test_id)
 
 
+class EnvironmentTests(unittest.TestCase):
+    def test_binary_presence_follows_the_pinned_v2_layout_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            modules = root / '.github/opencode/runtime/node_modules'
+            self.assertFalse(suite.environment(root)['opencode_binary_present'])
+            old = modules / 'opencode-linux-x64/bin/opencode'          # obsolete v1 layout is not accepted
+            old.parent.mkdir(parents=True)
+            old.write_text('')
+            self.assertFalse(suite.environment(root)['opencode_binary_present'])
+            new = modules / '@opencode/cli-linux-x64/bin/opencode'
+            new.parent.mkdir(parents=True)
+            new.write_text('')
+            self.assertTrue(suite.environment(root)['opencode_binary_present'])
+            new.unlink()
+            self.assertFalse(suite.environment(root)['opencode_binary_present'])
+
+    def test_a_missing_binary_fails_the_control_verdict(self):
+        full = IDS + [i for i in suite.manifest(suite.REQUIRED) if i.startswith('test_opencode_')]
+        missing = record(full)
+        missing['environment'] = {'disposable': True, 'opencode_binary_present': False}
+        self.assertEqual(mutants.control_verdict(missing)['verdict'], 'FAILED')
+
+
 class InventoryTests(unittest.TestCase):
     def test_every_mutant_targets_production_code_and_applies_exactly_once(self):
         entries = mutants.inventory()
-        self.assertEqual(len(entries), 84)                 # changing the inventory size needs review
+        self.assertEqual(len(entries), 92)                 # changing the inventory size needs review
         for ident, (_, _, rel, old, new) in entries.items():
             self.assertTrue(rel.startswith('.github/scripts/opencode_'), ident)
             self.assertEqual((ROOT / rel).read_text().count(old), 1, ident)
@@ -217,7 +241,7 @@ class AggregateTests(unittest.TestCase):
     def test_all_caught_with_one_identity_passes(self):
         summary = mutants.aggregate(self.control, self.results)
         self.assertTrue(summary['passed'], summary['problems'])
-        self.assertEqual(summary['counts']['CAUGHT'], 84)
+        self.assertEqual(summary["counts"]["CAUGHT"], 92)
 
     def test_missing_duplicate_extra_malformed_mixed_or_uncaught_results_fail(self):
         def broken(change):
@@ -228,8 +252,36 @@ class AggregateTests(unittest.TestCase):
         self.assertFalse(broken(lambda r: r.append(copy.deepcopy(r[0])))['passed'])
         self.assertFalse(broken(lambda r: r.append({**r[0], 'id': 'EXTRA'}))['passed'])
         self.assertFalse(broken(lambda r: r.append({'malformed': 'x.json'}))['passed'])
-        self.assertFalse(broken(lambda r: r[0]['identity'].update(run_attempt='2'))['passed'])
+        self.assertFalse(broken(lambda r: r[0]['identity'].update(run_attempt=r[0]['identity']['run_attempt'] + '-other'))['passed'])
         self.assertFalse(broken(lambda r: r[0].update(verdict='MISSED'))['passed'])
+
+    def test_the_attempt_mutation_differs_under_every_runner_attempt(self):
+        for attempt in ('1', '2'):
+            with self.subTest(attempt=attempt), mock.patch.dict(os.environ, {'GITHUB_RUN_ATTEMPT': attempt}):
+                ident = mutants.identity()
+                self.assertEqual(ident['run_attempt'], attempt)
+                control = {**self.control, 'identity': ident}
+                results = [{**r, 'identity': dict(ident)} for r in self.results]
+                self.assertTrue(mutants.aggregate(control, results)['passed'])
+                mutated = copy.deepcopy(results)
+                mutated[0]['identity'].update(run_attempt=ident['run_attempt'] + '-other')
+                self.assertNotEqual(mutated[0]['identity']['run_attempt'], ident['run_attempt'])
+                self.assertFalse(mutants.aggregate(control, mutated)['passed'])
+
+    def test_a_mismatched_run_attempt_fails_on_every_real_attempt(self):
+        """The mismatch is derived from the real identity, so it cannot collide on any rerun."""
+        for attempt in ('1', '2', '3'):
+            with self.subTest(attempt=attempt), mock.patch.dict(os.environ, {'GITHUB_RUN_ATTEMPT': attempt}):
+                control = {**self.control, 'identity': mutants.identity()}
+                results = [{**r, 'identity': mutants.identity()} for r in self.results]
+                self.assertTrue(mutants.aggregate(control, results)['passed'])
+                for other in (attempt + '-other', str(int(attempt) + 1), str(int(attempt) - 1), ''):
+                    changed = copy.deepcopy(results)
+                    changed[0]['identity']['run_attempt'] = other
+                    self.assertFalse(mutants.aggregate(control, changed)['passed'], other)
+                    changed = copy.deepcopy(results)
+                    changed[0]['identity']['run_attempt'] = int(attempt)  # numeric type is not the string identity
+                    self.assertFalse(mutants.aggregate(control, changed)['passed'], 'numeric')
 
     def test_a_failed_or_foreign_control_invalidates_every_verdict(self):
         self.assertFalse(mutants.aggregate({**self.control, 'verdict': 'FAILED'}, self.results)['passed'])

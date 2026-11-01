@@ -16,7 +16,8 @@ Results `failure`, `cancelled`, a missing result and any unknown value fail.
 
 Independent of the route, the gate computes the PR diff itself. A route below
 full fails when the diff changes a trust path (TRUST_PREFIXES) or when the gate
-cannot compute the diff. A PR that changes the CI controls always needs full.
+cannot compute the diff. A PR that changes the CI controls always needs full, except a pin-only change: the
+gate reads the changed files itself and applies ci_policy.pin_only to them.
 
 Environment: NEEDS_JSON (toJSON(needs)), EXPECTED_HEAD_SHA, CI_BASE_SHA.
 Usage: ci_gate.py backend|frontend
@@ -29,6 +30,11 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import ci_policy
 
 LEVELS = ("fast", "component", "full")
 CONTROL_JOBS = ("route", "ci-policy")
@@ -119,26 +125,63 @@ def evaluate(gate: str, needs: object, expected_head: str) -> list[str]:
     return errors
 
 
-def pr_paths(base: str, head: str) -> list[str] | None:
-    """The paths of merge-base(base, head)..head, or None when git cannot tell."""
+def _merge_base(base: str, head: str) -> str | None:
     merge_base = subprocess.run(["git", "merge-base", base, head], capture_output=True, text=True, check=False)
     if merge_base.returncode != 0 or not SHA.fullmatch(merge_base.stdout.strip()):
         return None
-    diff = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", merge_base.stdout.strip(), head],
+    return merge_base.stdout.strip()
+
+
+def pr_paths(base: str, head: str) -> list[str] | None:
+    """The paths of merge-base(base, head)..head, or None when git cannot tell."""
+    merge_base = _merge_base(base, head)
+    if merge_base is None:
+        return None
+    diff = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", merge_base, head],
                           capture_output=True, text=True, check=False)
     if diff.returncode != 0:
         return None
     return [path for path in diff.stdout.split("\0") if path]
 
 
-def scope_errors(level: str, paths: list[str] | None) -> list[str]:
-    """Reject a route below full for a PR that changes the CI controls."""
+def pr_changes(base: str, head: str) -> list[dict] | None:
+    """The raw diff entries with old and new texts, or None when git cannot tell."""
+    merge_base = _merge_base(base, head)
+    if merge_base is None:
+        return None
+    raw = subprocess.run(["git", "diff", "--raw", "--no-renames", "-z", merge_base, head],
+                         capture_output=True, text=True, check=False)
+    if raw.returncode != 0:
+        return None
+    try:
+        entries = ci_policy.parse_raw_diff(raw.stdout)
+    except ValueError:
+        return None
+    for entry in entries:
+        for key, revision in (("old", merge_base), ("new", head)):
+            shown = subprocess.run(["git", "show", f"{revision}:{entry['path']}"], capture_output=True,
+                                   text=True, check=False)
+            if shown.returncode != 0:
+                return None
+            entry[key] = shown.stdout
+    return entries
+
+
+def scope_errors(level: str, paths: list[str] | None, changes: list[dict] | None = None) -> list[str]:
+    """Reject a route below full for a PR that changes the CI controls.
+
+    A pin-only change is the one exception: level fast, and the gate's own reading of
+    the changed files must satisfy ci_policy.pin_only for exactly the changed paths.
+    """
     if level == "full":
         return []
     if paths is None:
         return [f"route: level {level} but the gate cannot compute the PR diff"]
     trusted = sorted(path for path in paths if path.lower().startswith(TRUST_PREFIXES))
     if trusted:
+        pinned = ci_policy.pin_only(changes) if level == "fast" and changes else None
+        if pinned is not None and pinned["paths"] == sorted(paths):
+            return []
         return [f"route: level {level} but the PR changes CI control files: {', '.join(trusted[:5])}"]
     return []
 
@@ -155,8 +198,11 @@ def main(argv: list[str]) -> int:
     errors = evaluate(argv[1], needs, head)
     if not errors:
         level = json.loads(needs["route"]["outputs"]["route"])["level"]
-        paths = None if level == "full" else pr_paths(os.environ.get("CI_BASE_SHA", ""), head)
-        errors = scope_errors(level, paths)
+        base = os.environ.get("CI_BASE_SHA", "")
+        paths = None if level == "full" else pr_paths(base, head)
+        trusted = paths and any(path.lower().startswith(TRUST_PREFIXES) for path in paths)
+        changes = pr_changes(base, head) if level == "fast" and trusted else None
+        errors = scope_errors(level, paths, changes)
     for job, entry in sorted(needs.items()) if isinstance(needs, dict) else ():
         print(f"{job}: {entry.get('result') if isinstance(entry, dict) else entry!r}")
     if errors:

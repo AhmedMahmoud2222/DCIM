@@ -1,6 +1,7 @@
 {
   "private": true,
+  "name": "runtime",
   "dependencies": {
-    "opencode-ai": "1.19.3"
+    "@opencode/cli": "2.1.4"
   }
 }
