@@ -1,18 +1,1 @@
-{
-  "schema_version": 16,
-  "type": "issue",
-  "number": 250,
-  "state": "open",
-  "tier": null,
-  "owner": "orchestrator",
-  "created_at": "2026-10-31T21:00:00Z",
-  "linked_pr": 117,
-  "related_issue": 240,
-  "blocker_class": "main documentation correctness",
-  "next_gate": "Owner-controlled DX6 workflow comment-only correction, one workflow per PR after #224 runtime qualification; Tier2 Codex and Jules on exact head",
-  "evidence": [
-    "https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6549061322",
-    "https://github.com/AhmedMahmoud2222/DCIM/issues/240"
-  ],
-  "notes": "Main setup-python SHA 6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 matches upstream v7.1.0 but adjacent comments say v5 in ci.yml and v6 in deploy-tools-test.yml. Separate upload-artifact v7.0.2 miscomments tracked #240. No code/workflow edits."
-}
+{"schema_version":16,"type":"issue","number":250,"state":"open","tier":null,"owner":"orchestrator","created_at":"2026-10-31T21:00:00Z","linked_pr":117,"related_issue":240,"blocker_class":"main documentation correctness","next_gate":"PR #117 reopened under owner DX31; await third/final independent Codex supersession verification, then A2 closure; separate DX6 workflow correction after #224 controlled tests","evidence":["https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6549061322","https://github.com/AhmedMahmoud2222/DCIM/issues/240","https://github.com/AhmedMahmoud2222/DCIM/pull/117#issuecomment-6554732114"],"notes":"Main setup-python SHA 6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 matches upstream v7.1.0 but adjacent comments say v5 in ci.yml and v6 in deploy-tools-test.yml. Separate upload-artifact v7.0.2 miscomments tracked #240. No code/workflow edits.","last_checked_at":"2026-11-01T07:03:28.766Z"}
