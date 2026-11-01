@@ -255,6 +255,18 @@ WORKFLOW_MUTANTS = {
         "if", _job(doc, "backend-suite")["if"].replace("always() && ", "")),
     "suite aggregate drops the shard need": lambda doc: _job(doc, "backend-suite").__setitem__("needs", ["route"]),
     "preload dropped": _edit_run("backend-runtime-shards", "ci_shard.py", " \\\n  --preload tests/unit/test_catalog_apply_conversion.py", ""),
+    "real Celery step removed from runtime shards": _set_run(
+        "backend-runtime-shards", "test_bulk_import_real_beat_recovery", "echo none"),
+    "real Celery step removed from suite shards": _set_run(
+        "backend-suite-shards", "test_bulk_import_real_beat_recovery", "echo none"),
+    "real Celery step runs on every shard": lambda doc: _step(
+        doc, "backend-runtime-shards", "test_bulk_import_real_beat_recovery").pop("if"),
+    "real Celery preload dropped from runtime shards": _edit_run(
+        "backend-runtime-shards", "ci_shard.py",
+        " \\\n  --preload tests/integration/test_bulk_import_real_two_worker_fencing.py", ""),
+    "real Celery preload dropped from suite shards": _edit_run(
+        "backend-suite-shards", "ci_shard.py",
+        " \\\n  --preload tests/integration/test_bulk_import_real_two_worker_fencing.py", ""),
     "aggregate ignores the shards": _set_run("backend-runtime-matrix", 'if [ "$SHARDS_RESULT" != success ]; then', "if false; then"),
     "aggregate skips on shard failure": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__(
         "if", _job(doc, "backend-runtime-matrix")["if"].replace("always() && ", "")),

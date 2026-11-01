@@ -630,10 +630,14 @@ COMMAND_INVENTORY = {
         "scripts/bootstrap_privileged_roles.sql", "setcap cap_net_raw+ep",
         "pytest -q tests/integration/test_mvp_retention_hostile.py",
         "pytest -q tests/api/test_catalog_extraction_apply.py",
+        "pytest -q tests/integration/test_bulk_import_real_beat_recovery.py",
         "ci_shard.py\" --index \"$SHARD\" --count 3 --root tests",
         "--preload tests/integration/test_mvp_retention_hostile.py",
         "--preload tests/api/test_catalog_extraction_apply.py",
         "--preload tests/unit/test_catalog_apply_conversion.py",
+        "--preload tests/integration/test_bulk_import_real_beat_recovery.py",
+        "--preload tests/integration/test_bulk_import_real_two_worker_fencing.py",
+        "--preload tests/integration/test_bulk_import_real_worker_recovery.py",
         'pytest -q "${files[@]}"',
     ),
     "backend-suite": ('[ "$SHARDS_RESULT" != success ]', "exit 1"),
@@ -647,10 +651,14 @@ COMMAND_INVENTORY = {
         "scripts/bootstrap_privileged_roles.sql",
         "pytest -q tests/integration/test_mvp_retention_hostile.py",
         "pytest -q tests/api/test_catalog_extraction_apply.py",
+        "pytest -q tests/integration/test_bulk_import_real_beat_recovery.py",
         "ci_shard.py\" --index \"$SHARD\" --count 3 --root tests",
         "--preload tests/integration/test_mvp_retention_hostile.py",
         "--preload tests/api/test_catalog_extraction_apply.py",
         "--preload tests/unit/test_catalog_apply_conversion.py",
+        "--preload tests/integration/test_bulk_import_real_beat_recovery.py",
+        "--preload tests/integration/test_bulk_import_real_two_worker_fencing.py",
+        "--preload tests/integration/test_bulk_import_real_worker_recovery.py",
         'pytest -q "${files[@]}"',
         "pytest -q edge_collector/tests",
     ),
@@ -764,6 +772,8 @@ def _shard_job_errors(jobs: dict, SHARD_JOB: str, AGGREGATE: str, versions) -> l
         run = str(step.get("run", ""))
         if "ci_shard.py" in run and "if" in step:
             errors.append(f"{SHARD_JOB} shard selection is conditional")
+        if "pytest -q tests/integration/test_bulk_import_real_beat_recovery" in run and step.get("if") != "matrix.shard == 0":
+            errors.append(f"{SHARD_JOB} runs the real Celery worker tests outside shard 0")
     full_text = " ".join(executable(step.get("run", "")) + " " + str(step.get("with", "")) for step in steps)
     for command in COMMAND_INVENTORY[SHARD_JOB]:
         if command not in full_text:
