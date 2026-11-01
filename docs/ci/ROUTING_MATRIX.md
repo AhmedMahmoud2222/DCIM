@@ -61,6 +61,7 @@ new pin against the upstream release tag does. The exception is narrow:
 | `backend-suite` | `backend` | PostgreSQL 16 and Redis 7, least-privilege roles, Alembic single head, ruff, mypy, migrations and round trip, retention hostile tests, extraction apply, real OCR, clamd tests, full pytest |
 | `frontend-suite` | `frontend` | npm audit, Vitest, typecheck, ESLint, build |
 | `backend-runtime-matrix` | same | The backend suite and the Edge suite on Python 3.12, 3.13 and 3.14 |
+| `backend-runtime-shards` | same as `backend-runtime-matrix` | The same suites, split into three shards per Python version by `ci_shard.py`. Each shard has its own database. Shard 0 also runs lint, type check, the retention and extraction steps and the Edge suite |
 | `edge-collector` | same | Edge Collector ruff and pytest |
 | `edge-interop` | same | SNMPv3 interoperability harness and results artifact |
 | `browser-e2e` | same | Isolated PostgreSQL and Redis, backend, Celery, Vite, Playwright |
@@ -85,3 +86,9 @@ new pin against the upstream release tag does. The exception is narrow:
 | Rename `backend/app/domain/auth/x.py` to `docs/x.py` | all (full): the old path counts |
 | `Makefile` or any other unknown path | all (full) |
 | Push to `main`, `workflow_dispatch`, failed detection | all (full) |
+
+## Backend shards
+
+`backend-runtime-matrix` keeps the check names `backend suite (Python 3.12)`, `3.13` and `3.14`, which the release verifier and the branch rules name. Its three jobs run no tests. Each one fails unless every `backend-runtime-shards` job succeeded, so one failed shard turns all three red; the shard job name shows the Python version and shard. The shards run on an `ubuntu-latest` runner each, nine runners in all. `ci_shard.py` assigns test files by size and fails on an empty shard, so a missing file list never lets `pytest` collect the whole suite. `tests/ci/test_ci_workflow.py` and the mutation tests pin the shard count, the preloaded files and the aggregate wiring.
+
+`backend-suite` (the Python 3.11 job) follows the same pattern. `backend-suite-shards` runs its tests in three shards, and `backend-suite` keeps its check name (`.github/acceptance/policy.json` lists it) and fails unless every `backend-suite-shards` job succeeded. A full-route run now takes as long as its slowest shard, about 25 minutes, instead of the 49 minutes of the unsharded 3.11 job.
