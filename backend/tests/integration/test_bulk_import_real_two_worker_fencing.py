@@ -32,7 +32,6 @@ from datetime import UTC, datetime, timedelta
 
 import celery.contrib.testing.tasks  # noqa: F401  -- registers 'celery.ping' for start_worker's ping check
 import pytest
-from celery.contrib.testing.worker import start_worker
 from sqlalchemy import select, text, update
 
 from app.application.bulk_import import service as bulk_import_service
@@ -42,6 +41,7 @@ from app.infrastructure.celery_app import celery_app
 from app.infrastructure.tasks.bulk_import import commit_bulk_import_job
 from tests.api._bulk_import_helpers import build_workbook, create_room_with_codes
 from tests.api.test_bulk_import_racks import RACK_HEADERS, _create_rack_model
+from tests.integration._celery_startup_diagnostics import instrumented_start_worker
 
 pytestmark = pytest.mark.asyncio
 
@@ -90,7 +90,7 @@ async def test_two_real_concurrent_deliveries_a_stale_delivery_raising_never_cor
 
     monkeypatch.setitem(bulk_import_service._COMMIT_FUNCS, "rack", _commit_row_with_injected_stall_then_error)
 
-    with start_worker(celery_app, pool="threads", concurrency=2, perform_ping_check=True, loglevel="info"):
+    with instrumented_start_worker(celery_app, pool="threads", concurrency=2, perform_ping_check=True, loglevel="info"):
         # Started BEFORE the upload, not after: the upload endpoint issues its own real
         # `parse_and_validate_bulk_import_job.delay(...)` call (app/api/v1/racks.py), and if
         # no worker is running yet that message sits queued in the broker -- only to be
