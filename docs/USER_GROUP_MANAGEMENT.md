@@ -174,11 +174,149 @@ The CLI opens a READ ONLY, REPEATABLE READ transaction. It reports impacted user
 
 The report lists user IDs, permission codes, grant-source names/IDs and raw site/rack scopes. Treat it as confidential access-control data.
 
-- Use `--output`. The file is created owner-only (`0600`) and the command fails if the path already exists or is a symlink; it never overwrites. Without `--output` the report goes to stdout with a warning on stderr, so avoid it in shared terminals, CI logs and pipelines that are captured.
-- On Windows the POSIX mode is not enforced: write into a directory only the operator can read, or restrict the ACL (`icacls <file> /inheritance:r /grant:r "%USERNAME%:F"`).
+- Use `--output`. On POSIX the file is created with owner-only mode (`0600`); on Windows that mode is not an ACL, so the directory ACL below is the control. The command fails if the path already exists or is a symlink; it never overwrites. Without `--output` the report goes to stdout with a warning on stderr, so avoid it in shared terminals, CI logs and pipelines that are captured.
 - Never upload the report as a CI artifact, attach it to an issue or PR, or commit it (`sec-arch-02-preflight*.json` is git-ignored as a safety net). Share it only over an access-controlled channel with the owner.
 - Delete it after the rollout decision is recorded; keep only a sanitized summary (counts, no IDs).
 - On failure the command prints only the exception class name, so errors cannot leak connection details or report content. Run it with debug tooling only on an authorized host.
+
+#### Confidentiality
+
+The report is an access map: user IDs plus permission codes, grant-source names and IDs, raw site/rack scopes, latent grants and the surviving administrator set. It does not contain passwords or tokens, but it is still confidential and must not be pasted into tickets, chat, email, an AI assistant or a public review tool; those are publication channels. Do not screenshot it, redirect stdout into a shared log, enable a PowerShell transcript, or leave it open in an editor that syncs to a cloud service. Transfer it only over an owner-approved access-controlled channel, and give it only to the owner and the named reviewer. If it is exposed, stop using it, notify the owner, remove every copy you can identify and record the exposure in the rollout record.
+
+#### NTFS ACL trust boundary (Windows)
+
+On Windows the report directory is the security boundary, not the file's POSIX mode. The directory is limited to the authorized operator identity, the service identity that runs the preflight (if it is not the operator), `BUILTIN\Administrators` (`*S-1-5-32-544`) and `NT AUTHORITY\SYSTEM` (`*S-1-5-18`). No other principal may hold **any** access: not read, write, modify, delete, delete-child, change-permissions or take-ownership. That includes `Authenticated Users`, `Users`, `INTERACTIVE`, the CI runner account, a shared team account, an unrelated service account and any cloud-sync or backup agent. If the preflight runs as a built-in service account such as `LOCAL SERVICE`, that account is the service identity; do not share it with unrelated services. Administrators and SYSTEM are highly privileged and can override ACLs anyway; the rule keeps the directory from adding a wider path.
+
+Use SIDs as above when documenting or scripting the grant, because built-in account names are localized. Remove unwanted grants rather than adding a deny for a broad group: a deny for a broad group also applies to trusted members of that group and is hard to reason about alongside inherited ACEs.
+
+Inheritance is part of the boundary. An ACE inherited from a parent can grant access even when the directory has restrictive explicit ACEs, and a new report file inherits the directory's inheritable ACEs. Disable inheritance on the report directory, then grant only the trusted identities with object and container inherit flags `(OI)(CI)` so new report files receive the same boundary. A file created before remediation keeps its old inherited ACEs; reset its ACL too, or delete it and generate a new report.
+
+The procedure below is a template. Replace `<report-directory>`, `<report-file>`, `<operator-identity>`, `<reviewer-identity>`, `<service-identity>`, `<untrusted-identity>` and `<acl-backup-file>` with local values. It assumes no fixed Windows path, drive letter or user name.
+
+#### Read-only inspection
+
+These commands only read security descriptors; they do not change ACLs. During inspection use only the read-only forms shown here; do not use `icacls` with `/grant`, `/deny`, `/remove`, `/inheritance`, `/setowner` or `/reset`. Do not run inspection from a shared or untrusted account.
+
+```powershell
+$reportDir = '<report-directory>'
+$reportFile = Join-Path $reportDir '<report-file>'
+
+# ACEs on the directory and the file, including inherited entries marked (I).
+icacls $reportDir
+icacls $reportFile
+
+# Structured view: owner, inheritance state and every ACE.
+Get-Acl $reportDir | Select-Object Owner, AreAccessRulesProtected
+(Get-Acl $reportDir).Access |
+  Select-Object IdentityReference, FileSystemRights, AccessControlType,
+                IsInherited, InheritanceFlags, PropagationFlags |
+  Format-Table -AutoSize
+
+(Get-Acl $reportFile).Access |
+  Select-Object IdentityReference, FileSystemRights, AccessControlType,
+                IsInherited, InheritanceFlags, PropagationFlags |
+  Format-Table -AutoSize
+
+# Check every ancestor, because a grant can be inherited from above.
+$current = Get-Item $reportDir
+while ($null -ne $current) {
+  icacls $current.FullName
+  $current = $current.Parent
+}
+```
+
+`AreAccessRulesProtected = True` means inheritance is disabled on that object; `False` means it still inherits. `icacls` marks inherited ACEs with `(I)`; explicit ACEs have no `(I)`. To search an ACL for a known SID, use the read-only `icacls "<report-directory>" /findsid <SID> /T /C`. `Get-Acl` and `icacls` list ACEs but do not compute a single effective-rights answer. Effective access is not "allows unless any deny matches". Windows evaluates the DACL in order for the specific rights requested: it walks the ACEs that match the caller's user SID or group SIDs, a matching deny that covers a requested right not yet granted refuses the request, and a matching allow grants only the rights it names. Rights already granted by an earlier ACE are not removed by a later deny. Explicit ACEs normally precede inherited ones, but a hand-built DACL can be out of canonical order, and token privileges (for example backup, restore and take-ownership) can bypass the DACL for privileged callers. Do not hand-compute this for a principal. Instead, per principal and per right (read data, write data, add file, delete, delete child, change permissions, take ownership), use a Windows effective-access mechanism: the Effective Access tab in the folder's Advanced Security Settings, or, on an approved host with signed Sysinternals tools, `accesschk.exe -d -w "<report-directory>"` and `accesschk.exe -d -r "<report-directory>"` with an explicit account argument (`accesschk.exe <account> -d -w "<report-directory>"`), so each evaluated principal is named. Use `whoami /user` and `whoami /groups` to see a token you control. Record which principal and which rights were evaluated, and treat the output as confidential too.
+
+Review the report file separately from its directory. A parent can grant `DELETE_CHILD` (`DC`) while the file itself is read-only, and an explicit file ACE can override the directory for that file. Rights that matter in the output:
+
+| Right | Meaning |
+| --- | --- |
+| `(F)` | Full control, including change-permissions and take-ownership. |
+| `(M)` | Modify, including delete. |
+| `(W)` | Write data or add files. |
+| `(D)`, `(DE)` | Delete the object. |
+| `(DC)` | Delete child; on the directory this can allow deleting the report file. |
+| `(WDAC)` | Change permissions (write DAC). |
+| `(WO)` | Take ownership (write owner). |
+
+Any of these held by an identity outside the trust boundary is a finding. So is `(I)` on an untrusted ACE, or `AreAccessRulesProtected = False` with a permissive parent.
+
+The owner is part of the boundary. The owner of an NTFS object can rewrite its DACL (implicit `READ_CONTROL` and `WRITE_DAC`) even when no `WDAC` ACE names the owner, so an untrusted owner defeats an otherwise clean ACL. Read `Owner` for both `$reportDir` and `$reportFile` (`(Get-Acl $reportFile).Owner`) and treat any owner other than the operator identity, the service identity, `BUILTIN\Administrators` or `NT AUTHORITY\SYSTEM` as a finding. Owner changes are a privileged remediation step, not part of inspection: have an authorized administrator set the owner (`icacls "<report-directory>" /setowner "*S-1-5-32-544" /T /C`, or the operator identity) and re-inspect. If the owner cannot be corrected, delete the file and regenerate it in a directory with a trusted owner. Recheck the owner after any restore.
+
+#### Remediation
+
+Only an authorized operator changes these ACLs, and only after recording the before state and the owner's approval. Change one directory first, verify it, and only then handle existing report files. Export the current DACL to a confidential backup so the change can be reversed:
+
+```powershell
+icacls "<report-directory>" /save "<acl-backup-file>" /t /c
+```
+
+The backup contains security descriptors; protect and delete it like the report. `icacls /save` stores names relative to the directory that contains the saved item, and `/restore` requires an explicit directory operand that is that same base. Pair them with `<report-parent>`, the directory containing `<report-directory>`: save with `icacls "<report-directory>" /save "<acl-backup-file>" /t /c` (as above) and restore with `icacls "<report-parent>" /restore "<acl-backup-file>" /c`. Do not rely on the working directory. Before depending on this pair, validate it once on a throwaway directory tree on the target Windows version (save, change an ACL, restore, compare `icacls` output). `/restore` reapplies the saved descriptors, including the old broad grants and owner, so restore only to reverse a failed change, then re-run the inspection. Keep the backup outside the report directory.
+
+```powershell
+# 1. Stop inheriting permissive ACEs from the parent.
+icacls "<report-directory>" /inheritance:r
+
+# 2. Grant only the trust boundary. The operator needs modify (M) to create
+#    reports and to delete them later; the service identity needs M if it writes.
+icacls "<report-directory>" /grant:r "<operator-identity>:(OI)(CI)M"
+icacls "<report-directory>" /grant:r "<service-identity>:(OI)(CI)M"
+icacls "<report-directory>" /grant:r "*S-1-5-32-544:(OI)(CI)F"
+icacls "<report-directory>" /grant:r "*S-1-5-18:(OI)(CI)F"
+
+# 3. Remove every other explicit grant. Repeat for each identity found above.
+icacls "<report-directory>" /remove:g "<untrusted-identity>"
+```
+
+`/remove:g` removes grants and `/remove:d` removes denies. Do not remove an identity unless you have identified it; if an ACE names an unknown SID, resolve it or stop. An existing report file may carry explicit ACEs for untrusted identities, which `/inheritance:r` keeps and `/grant:r` does not touch. The safest course is to delete the file and generate a new report in the remediated directory, where it inherits only the trust boundary. Only if the file must be kept, reset it to a known state and then verify it:
+
+```powershell
+# Remove inherited ACEs, then explicitly remove every untrusted explicit grant
+# (and deny) found by the inspection. Repeat per identified identity.
+icacls "<report-file>" /inheritance:r
+icacls "<report-file>" /remove:g "<untrusted-identity>"
+icacls "<report-file>" /remove:d "<untrusted-identity>"
+
+# Grant only the trust boundary.
+icacls "<report-file>" /grant:r "<reviewer-identity>:R"
+icacls "<report-file>" /grant:r "*S-1-5-32-544:F"
+icacls "<report-file>" /grant:r "*S-1-5-18:F"
+```
+
+Re-inspect the file: its ACL must list only the identities above, with no unidentified SID, and its owner must be trusted. If any untrusted ACE or owner remains, delete the file and regenerate it rather than iterating.
+
+Deletion still works through the parent directory's `DC` right; if it does not, grant `M` to the operator on the file rather than widening the directory. Re-run the inspection after every change and confirm `AreAccessRulesProtected = True`, no untrusted ACE remains on the directory or file, the directory and file owners are trusted, and no ancestor grants an untrusted principal a right that could delete, replace, rename or control the report directory.
+
+Ancestors are judged differently from the report directory. Ordinary traverse, list and read rights on shared ancestors (for example a volume root readable by `Users`) are expected and do not expose a report in a directory whose own DACL is protected, so they are not a finding. These ancestor rights are findings for an untrusted principal: `DELETE` on the report directory, `DELETE_CHILD` on its immediate parent (this lets the principal remove or replace the directory), `WRITE_DATA`/`ADD_FILE`/`ADD_SUBDIRECTORY` on the parent (this lets the principal plant a replacement or a junction), `WRITE_DAC`, `WRITE_OWNER`, or ownership of the parent or of any ancestor that can be renamed. Also consider ancestors above the parent: rename or delete rights there can move the whole path. Prefer a dedicated report directory directly under a trusted location so the ancestor chain is short. If you cannot prove all of this, do not create the report; stop and escalate. Record the approver, timestamp and before/after ACL evidence in the rollout record, redacting account names if that record is more widely readable than the report.
+
+If the target is FAT/exFAT, a network share, a cloud-synced folder such as OneDrive or Dropbox, a mounted container or WSL path, or any non-NTFS volume, do not treat `icacls` output as authoritative and do not write the report there. Choose a local NTFS directory on an approved encrypted volume. Full-disk encryption and EFS complement ACLs but do not replace them.
+
+#### What the writer does and does not enforce
+
+`O_EXCL` only refuses to create over an existing name, including a link planted at that name; `O_NOFOLLOW` only refuses a symbolic link as the final path component on platforms that support it; the `0o600` argument is a POSIX mode request. None of them restrict which identities can open the file after creation, and on Windows none of them produce an NTFS ACL: the file receives the ACEs it inherits from its directory, subject to their inheritance flags.
+
+The Windows branch of the directory check (`os.name == "nt"` in `_validate_directory_security`, called by `write_report_file`) performs **no ACL inspection**. It does not read the DACL, owner, inherited ACEs or modify/delete rights, and it does not fail closed when the directory is broadly accessible. The POSIX branch checks owner and group/world write; the Windows branch is a deliberate no-op. Do not describe a Windows run as "owner-only" or "secure directory validated" on the strength of the writer. The operator's ACL procedure above is the only control on Windows.
+
+#### File lifecycle and retention
+
+- Use one dedicated report directory and one unique report file per run. The writer already refuses to overwrite; do not reuse a name.
+- Keep the report only until the rollout decision is recorded. Delete it then, on abort, or when it is superseded, and leave only a sanitized summary containing counts and no user IDs, source names or scopes.
+- The writer removes an incomplete file when creation or writing fails after the file exists, but verify the directory afterward and remove any leftover fragment yourself.
+- Deleting a file removes its directory entry; it is not a guarantee of physical erasure. Rely on full-disk encryption for the volume and the owner's media-sanitization procedure for retired disks.
+- If the report directory is captured by a backup or snapshot, that copy inherits the backup's retention. Exclude the directory from backups where policy allows, or protect the backup as confidential and delete both copies when retention ends.
+- Re-check the ACL after any operator, service-account or role change, and remove the operator's access when they leave the rollout.
+
+#### Keeping reports out of Git and CI artifacts
+
+`sec-arch-02-preflight*.json` in `.gitignore` is a safety net, not a control. Before staging anything, run `git status --porcelain` and confirm no report appears; never use `git add -f` for it. Do not attach a report to an issue, pull request, review comment or chat, and do not paste its content into a commit message. Those channels are retained and may be visible beyond the rollout team.
+
+CI logs, test reports, coverage files, caches and uploaded artifacts are also publication channels. Do not run the report-producing preflight in CI, do not point `--output` at a path inside a checkout or workspace, and do not add a report path to an artifact upload, cache key, test-result directory or `tee`/`Out-File` target. If a future authorized workflow needs preflight output, it needs a separate reviewed change with a runner-temp path outside the workspace, restrictive permissions and no artifact upload; this document does not authorize that change. If a report is committed or uploaded by mistake, treat it as an exposure: notify the owner, remove the artifact, and let the owner decide whether history rewriting is required. Deleting it in a later commit does not remove it from history, forks or caches.
+
+#### Residual risk: same-user directory mutation
+
+This record accepts one residual risk for the LOW follow-up. The ACL model treats the operator account as a single trust domain. Any process running as that same user — another terminal, an editor, a sync client, a compromised tool or an agent — can read the report, change it, delete it, replace the report directory, or race the path between the directory check and file creation. ACLs cannot separate processes that share a user context. Because the Windows branch performs no ACL validation, a same-user attacker can also leave the boundary looking correct.
+
+`O_EXCL`, `O_NOFOLLOW` and `0600` do not reduce this risk, and neither does this procedure. Compensating controls are a dedicated non-shared operator account, no shared service accounts, MFA and endpoint protection on the host, the shortest practical retention, and hashing the report at creation with `Get-FileHash -Algorithm SHA256` and comparing it before use. A hash detects accidental change; it cannot stop a same-user attacker who can rewrite both the report and the hash. Review the ACLs after any account or role change. This residual risk is accepted for this documentation-only follow-up and does not request or authorize a code change; if the owner requires technical ACL enforcement in the writer, that is a separate product decision and must be raised before implementation.
 
 Validate both fresh and populated PostgreSQL states, then require independent exact-HEAD Jules acceptance and all required CI before merge. Deployment and production grant changes require separate owner authorization. Reverting to the flattened evaluator reintroduces F1/F2; use a reviewed forward fix or suspend affected operations instead of silently restoring that behavior.
 
