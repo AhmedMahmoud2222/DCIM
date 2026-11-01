@@ -616,7 +616,7 @@ def gate_mismatches(gate_module) -> list[str]:
 # Commands that each worker must keep. This is the coverage inventory of the
 # original CI jobs (main before the routing change).
 COMMAND_INVENTORY = {
-    "backend-suite": (
+    "backend-suite-shards": (
         "sec-arch-02-preflight", 'pip install -e ".[dev]"', "tesseract-ocr", "clamav-daemon",
         "python scripts/check_compose_settings.py", "CREATE ROLE dcim_app",
         "python scripts/check_alembic_single_head.py", "ruff check app tests", "mypy app",
@@ -624,8 +624,13 @@ COMMAND_INVENTORY = {
         "scripts/bootstrap_privileged_roles.sql", "setcap cap_net_raw+ep",
         "pytest -q tests/integration/test_mvp_retention_hostile.py",
         "pytest -q tests/api/test_catalog_extraction_apply.py",
-        "pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py",
+        "ci_shard.py\" --index \"$SHARD\" --count 3 --root tests",
+        "--preload tests/integration/test_mvp_retention_hostile.py",
+        "--preload tests/api/test_catalog_extraction_apply.py",
+        "--preload tests/unit/test_catalog_apply_conversion.py",
+        'pytest -q "${files[@]}"',
     ),
+    "backend-suite": ('[ "$SHARDS_RESULT" != success ]', "exit 1"),
     "frontend-suite": (
         "npm ci", "npm audit --audit-level=high", "npm test", "npm run typecheck",
         "npx eslint . --ext ts,tsx", "npm run build",
@@ -703,12 +708,23 @@ def route_script(doc: dict) -> str:
     return next(step["run"] for step in doc["jobs"]["route"]["steps"] if step.get("id") == "route")
 
 
-SHARD_JOB = "backend-runtime-shards"
-AGGREGATE = "backend-runtime-matrix"
+# aggregate job id -> (shard job id, Python versions of the shard matrix; None = no version axis)
+AGGREGATES = {
+    "backend-runtime-matrix": ("backend-runtime-shards", ["3.12", "3.13", "3.14"]),
+    "backend-suite": ("backend-suite-shards", None),
+}
+SHARD_JOBS = {shard for shard, _ in AGGREGATES.values()}
 SHARD_COUNT = 3
 
 
 def shard_errors(jobs: dict) -> list[str]:
+    errors = []
+    for aggregate, (shard_job, versions) in AGGREGATES.items():
+        errors.extend(_shard_job_errors(jobs, shard_job, aggregate, versions))
+    return errors
+
+
+def _shard_job_errors(jobs: dict, SHARD_JOB: str, AGGREGATE: str, versions) -> list[str]:
     """The shard job runs the tests that the aggregate check names report on."""
     job = jobs.get(SHARD_JOB)
     if not isinstance(job, dict):
@@ -725,11 +741,13 @@ def shard_errors(jobs: dict) -> list[str]:
         errors.append(f"{SHARD_JOB} strategy can drop a leg: {strategy}")
     if matrix.get("shard") != list(range(SHARD_COUNT)):
         errors.append(f"{SHARD_JOB} shards are {matrix.get('shard')}, expected 0..{SHARD_COUNT - 1}")
-    if matrix.get("python-version") != ["3.12", "3.13", "3.14"]:
+    if matrix.get("python-version") != versions:
         errors.append(f"{SHARD_JOB} versions are {matrix.get('python-version')}")
     names = [entry.get("python-version") for entry in jobs.get(AGGREGATE, {}).get("strategy", {}).get("matrix", {}).get("include", [])]
-    if names != matrix.get("python-version"):
+    if versions is not None and names != versions:
         errors.append(f"{AGGREGATE} versions {names} differ from the shard versions")
+    if versions is None and "strategy" in jobs.get(AGGREGATE, {}):
+        errors.append(f"{AGGREGATE} has a matrix but its shard job has no version axis")
     steps = job.get("steps", [])
     text = " ".join(executable(step.get("run", "")) for step in steps)
     if f"--count {SHARD_COUNT}" not in text or text.count("--count") != 1:
@@ -814,7 +832,7 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
     for key in ("level", "head-sha", "route"):
         if outputs.get(key) != "${{ steps.route.outputs." + key + " }}":
             errors.append(f"route output {key} missing")
-    actual_workers = set(jobs) - set(gates) - {"route", "ci-policy", SHARD_JOB}
+    actual_workers = set(jobs) - set(gates) - {"route", "ci-policy"} - SHARD_JOBS
     if actual_workers != set(workers):
         errors.append(f"worker jobs {sorted(actual_workers)} are not the policy workers {sorted(workers)}")
     for job_id in workers:
@@ -825,10 +843,10 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
             errors.append(f"route output run-{job_id} missing")
         expected_if = f"needs.route.outputs.level == 'full' || needs.route.outputs.run-{job_id} == 'true'"
         expected_needs = "route"
-        if job_id == AGGREGATE:
+        if job_id in AGGREGATES:
             # The aggregate runs no tests. It must run when a shard fails, and then fail.
             expected_if = f"always() && ({expected_if})"
-            expected_needs = ["route", SHARD_JOB]
+            expected_needs = ["route", AGGREGATES[job_id][0]]
         if job.get("needs") != expected_needs or job.get("if") != expected_if:
             errors.append(f"worker {job_id} needs/if is {job.get('needs')!r}/{job.get('if')!r}")
         if job.get("continue-on-error") not in (None, False, "${{ matrix.experimental }}"):
@@ -852,9 +870,9 @@ def workflow_errors(doc: dict, gates: dict, workers=WORKERS) -> list[str]:
     for key, value in E2E_ENV.items():
         if e2e_env.get(key) != value:
             errors.append(f"browser-e2e env {key}={e2e_env.get(key)!r}")
-    if "browser-e2e" in jobs and "backend-suite" in jobs:
+    if "browser-e2e" in jobs and "backend-suite-shards" in jobs:
         ports = lambda job: sorted(str(s.get("ports")) for s in job.get("services", {}).values())
-        if set(ports(jobs["browser-e2e"])) & set(ports(jobs["backend-suite"])):
+        if set(ports(jobs["browser-e2e"])) & set(ports(jobs["backend-suite-shards"])):
             errors.append("browser-e2e shares service ports with backend-suite")
     return errors
 

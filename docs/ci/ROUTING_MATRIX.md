@@ -90,3 +90,5 @@ new pin against the upstream release tag does. The exception is narrow:
 ## Backend shards
 
 `backend-runtime-matrix` keeps the check names `backend suite (Python 3.12)`, `3.13` and `3.14`, which the release verifier and the branch rules name. Its three jobs run no tests. Each one fails unless every `backend-runtime-shards` job succeeded, so one failed shard turns all three red; the shard job name shows the Python version and shard. The shards run on an `ubuntu-latest` runner each, nine runners in all. `ci_shard.py` assigns test files by size and fails on an empty shard, so a missing file list never lets `pytest` collect the whole suite. `tests/ci/test_ci_workflow.py` and the mutation tests pin the shard count, the preloaded files and the aggregate wiring.
+
+`backend-suite` (the Python 3.11 job) follows the same pattern. `backend-suite-shards` runs its tests in three shards, and `backend-suite` keeps its check name (`.github/acceptance/policy.json` lists it) and fails unless every `backend-suite-shards` job succeeded. A full-route run now takes as long as its slowest shard, about 25 minutes, instead of the 49 minutes of the unsharded 3.11 job.
