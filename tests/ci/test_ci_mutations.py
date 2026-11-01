@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from ci_support import (
+    pin_mismatches,
     SCRIPTS,
     gate_mismatches,
     load_module,
@@ -45,8 +46,45 @@ POLICY_MUTANTS = (
     ('"jobs": {job: True for job in WORKERS}', '"jobs": {job: False for job in WORKERS}'),
 )
 
+PIN_MUTANTS = (
+    ('if change.get("status") != "M" or change.get("old_mode")', 'if change.get("old_mode")'),
+    ('len(old) > PIN_MAX_BYTES or len(new) > PIN_MAX_BYTES or old == new', 'len(old) > PIN_MAX_BYTES'),
+    ('    ".github/workflows/ci.yml",\n    ".github/workflows/deploy.yml",\n    ".github/workflows/refresh-branch.yml",\n', ""),
+    ('    ".github/workflows/refresh-branch.yml",\n', ""),
+    ('    ".github/workflows/deploy.yml",\n', ""),
+    ('    ".github/workflows/ci.yml",\n', ""),
+    ('_PIN = r"[0-9a-f]{40}"', '_PIN = r"[0-9a-z]{1,40}"'),
+    ("if before is None or before != after:", "if before is None:"),
+    ("if not changes or len(changes) > 20:", "if len(changes) > 20:"),
+    ("if not changes or len(changes) > 20:", "if not changes:"),
+    ('change.get("new_mode") != REGULAR_FILE_MODE', "False"),
+    ("and path not in PIN_EXCLUDED:", "and True:"),
+    ('and "/" not in path[len(WORKFLOW_DIR):]', "and True"),
+    ("if rule is None or SAFE_TEXT.fullmatch(text) is None:", "if rule is None:"),
+    ('_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"', '_VERSION = r"[^\\r\\n]*"'),
+    ('_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]*"', '_VERSION = r"[A-Za-z0-9][A-Za-z0-9._+ ()$`;&|<>-]*"'),
+    ("\\xa0-\\u2027\\u202a-\\ud7ff", "\\xa0-\\ud7ff"),
+    ("\\x20-\\x7e", "\\x20-\\x7f"),
+    ("\\ue000-\\ufefe\\uff00-\\ufffd", "\\ue000-\\ufffd"),
+    ('path.endswith(".yml")', "True"),
+    ('if before_structure is None or before_structure != structure(path, new):', "if before_structure is None:"),
+    ('if before_structure is None or before_structure != structure(path, new):', "if False:"),
+    ('        if match is not None:\n            return f"{match.group(1)}@<pin>"', "        if False:\n            return 'x'"),
+    ('if len(names) != len(set(names)) or len(names) != len({name.casefold() for name in names}):', "if False:"),
+    ('if len(names) != len(set(names)) or len(names) != len({name.casefold() for name in names}):',
+     "if len(names) != len(set(names)):"),
+    ('if not isinstance(key, yaml.ScalarNode) or key.value == "<<":', "if not isinstance(key, yaml.ScalarNode):"),
+    ('raise ValueError("YAML tag")', "pass"),
+    ('raise ValueError("YAML anchor")', "pass"),
+    ('raise ValueError("duplicate JSON key")', "pass"),
+    ("return ast.dump(tree) if masked == 1 else None", "return ast.dump(tree)"),
+)
+
 ROUTER_MUTANTS = (
-    ('"--no-renames", ', ""),
+    ("decision = pinned", 'decision = {**pinned, "level": "component"}'),
+
+
+    ('output = _git("diff", "--no-renames",', 'output = _git("diff",'),
     ('merge_base = _git("merge-base", base, head).strip()', "merge_base = base"),
     ('decision = ci_policy.full([f"change detection failed: {error}"])',
      'decision = ci_policy.classify(["README.md"])'),
@@ -57,11 +95,15 @@ ROUTER_MUTANTS = (
 )
 
 SCOPE_MUTANTS = (
+    ('if pinned is not None and pinned["paths"] == sorted(paths):', "if pinned is not None:"),
+    ('pinned = ci_policy.pin_only(changes) if level == "fast" and changes else None',
+     "pinned = ci_policy.pin_only(changes) if changes else None"),
+    ('changes = pr_changes(base, head) if level == "fast" and trusted else None', "changes = None"),
     ('TRUST_PREFIXES = (".github/", "tests/ci/")', 'TRUST_PREFIXES = (".github/workflows/", "tests/ci/")'),
     ('TRUST_PREFIXES = (".github/", "tests/ci/")', 'TRUST_PREFIXES = (".github/",)'),
     ("if path.lower().startswith(TRUST_PREFIXES)", "if path.startswith(TRUST_PREFIXES)"),
     ('if level == "full":\n        return []', 'if level != "fast":\n        return []'),
-    ("errors = scope_errors(level, paths)", "errors = []"),
+    ("errors = scope_errors(level, paths, changes)", "errors = []"),
     ('"git", "diff", "--no-renames",', '"git", "diff",'),
 )
 
@@ -105,6 +147,14 @@ def _set_run(job_id, needle, run):
     return lambda doc: _step(doc, job_id, needle).__setitem__("run", run)
 
 
+def _edit_run(job_id, needle, old, new):
+    def mutate(doc):
+        step = _step(doc, job_id, needle)
+        assert step["run"].count(old) == 1, old
+        step["run"] = step["run"].replace(old, new)
+    return mutate
+
+
 def _set_route_script(old, new):
     def mutate(doc):
         step = next(s for s in doc["jobs"]["route"]["steps"] if s.get("id") == "route")
@@ -119,16 +169,13 @@ WORKFLOW_MUTANTS = {
     "backend display name capitalized": lambda doc: _job(doc, "backend").__setitem__("name", "Backend"),
     "worker condition disabled with false &&": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__(
         "if", "false && " + _job(doc, "backend-runtime-matrix")["if"]),
-    "regression pytest replaced with echo": _set_run(
-        "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py", "echo removed"),
+    "regression pytest replaced with echo": _set_run("backend-suite-shards", "ci_shard.py", "echo removed"),
     # Review re-check P2: a shell comment is not an executed command.
     "regression pytest commented out": _set_run(
-        "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py",
-        "# pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py"),
+        "backend-suite-shards", "ci_shard.py", '# pytest -q "${files[@]}"'),
     "regression pytest behind a trailing comment": _set_run(
-        "backend-suite", "--ignore=tests/integration/test_mvp_retention_hostile.py",
-        "true # pytest -q --ignore=tests/integration/test_mvp_retention_hostile.py"),
-    "mypy commented out": _set_run("backend-runtime-matrix", "mypy app", "# mypy app"),
+        "backend-suite-shards", "ci_shard.py", 'true # pytest -q "${files[@]}"'),
+    "mypy commented out": _set_run("backend-runtime-shards", "mypy app", "# mypy app"),
     # Review re-check P1-07: the bootstrap route must not run checkout code.
     "bootstrap runs the checkout router": _set_route_script(
         'echo "Routing policy source: none (event $event selects full)"',
@@ -171,10 +218,46 @@ WORKFLOW_MUTANTS = {
         "extra", {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}),
     "matrix leg non-blocking": lambda doc: _job(doc, "backend-runtime-matrix")["strategy"]["matrix"]["include"][2]
     .__setitem__("experimental", True),
+    # Sharding: a shard that no job runs would pass without being tested.
+    "shard dropped from the matrix": lambda doc: _job(doc, "backend-runtime-shards")["strategy"]["matrix"]["shard"].pop(),
+    "shard count raised past the matrix": _edit_run("backend-runtime-shards", "ci_shard.py", "--count 3", "--count 4"),
+    "shard job continue-on-error": lambda doc: _job(doc, "backend-runtime-shards").__setitem__("continue-on-error", True),
+    "shard job condition differs": lambda doc: _job(doc, "backend-runtime-shards").__setitem__("if", "false"),
+    "shard leg excluded": lambda doc: _job(doc, "backend-runtime-shards")["strategy"]["matrix"].__setitem__(
+        "exclude", [{"shard": 2}]),
+    "shard job fail-fast": lambda doc: _job(doc, "backend-runtime-shards")["strategy"].__setitem__("fail-fast", True),
+    "shard selection made conditional": lambda doc: _step(doc, "backend-runtime-shards", "ci_shard.py").__setitem__(
+        "if", "matrix.shard == 0"),
+    "shard tests replaced with echo": _edit_run("backend-runtime-shards", "ci_shard.py", 'pytest -q "${files[@]}"', "echo skipped"),
+    "migrations only on shard 0": lambda doc: _step(doc, "backend-runtime-shards", "alembic upgrade head").__setitem__(
+        "if", "matrix.shard == 0"),
+    "privileged role bootstrapped only on shard 0": lambda doc: _step(
+        doc, "backend-runtime-shards", "bootstrap_privileged_roles.sql").__setitem__("if", "matrix.shard == 0"),
+    "suite shard dropped from the matrix": lambda doc: _job(doc, "backend-suite-shards")["strategy"]["matrix"]["shard"].pop(),
+    "suite shard count raised past the matrix": _edit_run("backend-suite-shards", "ci_shard.py", "--count 3", "--count 4"),
+    "suite shard job condition differs": lambda doc: _job(doc, "backend-suite-shards").__setitem__("if", "false"),
+    "suite shard job continue-on-error": lambda doc: _job(doc, "backend-suite-shards").__setitem__("continue-on-error", True),
+    "suite shard leg excluded": lambda doc: _job(doc, "backend-suite-shards")["strategy"]["matrix"].__setitem__(
+        "exclude", [{"shard": 2}]),
+    "suite shard tests replaced with echo": _edit_run(
+        "backend-suite-shards", "ci_shard.py", 'pytest -q "${files[@]}"', "echo skipped"),
+    "suite privileged role bootstrapped only on shard 0": lambda doc: _step(
+        doc, "backend-suite-shards", "bootstrap_privileged_roles.sql").__setitem__("if", "matrix.shard == 0"),
+    "suite aggregate ignores the shards": _set_run(
+        "backend-suite", 'if [ "$SHARDS_RESULT" != success ]; then', "if false; then"),
+    "suite aggregate skips on shard failure": lambda doc: _job(doc, "backend-suite").__setitem__(
+        "if", _job(doc, "backend-suite")["if"].replace("always() && ", "")),
+    "suite aggregate drops the shard need": lambda doc: _job(doc, "backend-suite").__setitem__("needs", ["route"]),
+    "preload dropped": _edit_run("backend-runtime-shards", "ci_shard.py", " \\\n  --preload tests/unit/test_catalog_apply_conversion.py", ""),
+    "aggregate ignores the shards": _set_run("backend-runtime-matrix", 'if [ "$SHARDS_RESULT" != success ]; then', "if false; then"),
+    "aggregate skips on shard failure": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__(
+        "if", _job(doc, "backend-runtime-matrix")["if"].replace("always() && ", "")),
+    "aggregate drops the shard need": lambda doc: _job(doc, "backend-runtime-matrix").__setitem__("needs", ["route"]),
+    "aggregate version dropped": lambda doc: _job(doc, "backend-runtime-matrix")["strategy"]["matrix"]["include"].pop(),
     "worker continue-on-error": lambda doc: _job(doc, "edge-collector").__setitem__("continue-on-error", True),
-    "mypy step continue-on-error": lambda doc: _step(doc, "backend-suite", "mypy app").__setitem__(
+    "mypy step continue-on-error": lambda doc: _step(doc, "backend-suite-shards", "mypy app").__setitem__(
         "continue-on-error", True),
-    "mypy removed from matrix": _set_run("backend-runtime-matrix", "mypy app", "echo no mypy"),
+    "mypy removed from shards": _set_run("backend-runtime-shards", "mypy app", "echo no mypy"),
     "interop harness removed": _set_run("edge-interop", "run_interop", "echo none"),
     "playwright removed": _set_run("browser-e2e", "test:e2e", "echo none"),
     "celery readiness removed": _set_run("browser-e2e", "inspect ping", "true"),
@@ -201,6 +284,14 @@ class MutationTests(unittest.TestCase):
                 path.write_text(_mutate_source(SCRIPTS / "ci_policy.py", old, new))
                 self.assertNotEqual(policy_mismatches(load_module("ci_policy", path)), [], "mutant survived")
 
+    def test_pin_mutants_are_killed(self):
+        self.assertEqual(pin_mismatches(load_module("ci_policy", SCRIPTS / "ci_policy.py")), [])
+        for old, new in PIN_MUTANTS:
+            with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "ci_policy.py"
+                path.write_text(_mutate_source(SCRIPTS / "ci_policy.py", old, new))
+                self.assertNotEqual(pin_mismatches(load_module("ci_policy", path)), [], "mutant survived")
+
     def test_router_mutants_are_killed(self):
         for old, new in ROUTER_MUTANTS:
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
@@ -212,6 +303,7 @@ class MutationTests(unittest.TestCase):
     def test_gate_mutants_are_killed(self):
         for old, new in GATE_MUTANTS:
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                shutil.copy(SCRIPTS / "ci_policy.py", directory)
                 path = Path(directory) / "ci_gate.py"
                 path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
                 self.assertNotEqual(gate_mismatches(load_module("ci_gate", path)), [], "mutant survived")
@@ -219,6 +311,7 @@ class MutationTests(unittest.TestCase):
     def test_scope_mutants_are_killed(self):
         for old, new in SCOPE_MUTANTS:
             with self.subTest(mutant=old), tempfile.TemporaryDirectory() as directory:
+                shutil.copy(SCRIPTS / "ci_policy.py", directory)
                 path = Path(directory) / "ci_gate.py"
                 path.write_text(_mutate_source(SCRIPTS / "ci_gate.py", old, new))
                 self.assertNotEqual(scope_mismatches(load_module("ci_gate", path)), [], "mutant survived")
