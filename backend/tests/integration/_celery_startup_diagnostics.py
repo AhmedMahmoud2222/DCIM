@@ -41,14 +41,20 @@ def broker_depths(celery_app) -> dict:
             declared = celery_app.conf.task_queues or {}
             names = {getattr(q, "name", q) for q in declared}
             names.add(celery_app.conf.task_default_queue or "celery")
-            depths = {}
-            for name in sorted(str(n) for n in names):
-                total = 0
+            sorted_names = sorted(str(n) for n in names)
+            # One pipelined round trip (non-transactional): an unresponsive Redis costs at most ~one socket timeout,
+            # not one per key, so the probe cannot materially delay start_worker.
+            pipe = client.pipeline(transaction=False)
+            for name in sorted_names:
                 for priority in _KOMBU_PRIORITIES:
-                    key = name if priority == 0 else f"{name}{_KOMBU_PRIORITY_SEP}{priority}"
-                    total += int(client.llen(key))
-                depths[name] = total
-            return {"queues": depths, "total_queued": sum(depths.values()), "unacked": int(client.hlen("unacked"))}
+                    pipe.llen(name if priority == 0 else f"{name}{_KOMBU_PRIORITY_SEP}{priority}")
+            pipe.hlen("unacked")
+            results = pipe.execute()
+            step = len(_KOMBU_PRIORITIES)
+            depths = {
+                name: sum(int(n) for n in results[i * step : (i + 1) * step]) for i, name in enumerate(sorted_names)
+            }
+            return {"queues": depths, "total_queued": sum(depths.values()), "unacked": int(results[-1])}
         finally:
             with contextlib.suppress(Exception):
                 client.close()
@@ -145,9 +151,10 @@ class _WorkerEventLog:
 @contextlib.contextmanager
 def instrumented_start_worker(celery_app, **kwargs):
     """Drop-in for `start_worker(celery_app, **kwargs)`: identical arguments, identical exceptions."""
+    depth_before = broker_depths(celery_app)
+    # Baseline taken after the probe so elapsed_ms measures start_worker, not diagnostic setup.
     t0 = time.monotonic()
     log = _WorkerEventLog(t0)
-    depth_before = broker_depths(celery_app)
     log.connect()
     _emit("before_start_worker", broker_depth_before=depth_before, start_worker_kwargs=sorted(kwargs))
     started = False
