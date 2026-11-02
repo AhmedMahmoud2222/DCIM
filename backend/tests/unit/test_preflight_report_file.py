@@ -249,6 +249,25 @@ def test_cleanup_refuses_a_symlinked_report_directory(tmp_path):
     assert sibling.read_text(encoding="utf-8") == "keep"
 
 
+def test_writer_refuses_a_symlinked_report_directory_and_creates_nothing(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    sibling = real / "unrelated.txt"
+    sibling.write_text("keep", encoding="utf-8")
+    linked = tmp_path / "linked"
+    _make_symlink_or_skip(linked, real, directory=True)
+
+    with pytest.raises(OSError):
+        write_report_file(linked / "report.json", "{}\n")
+    assert not (real / "report.json").exists(), "writer created a report through a symlinked directory"
+    assert sorted(entry.name for entry in real.iterdir()) == ["unrelated.txt"]
+    assert sibling.read_text(encoding="utf-8") == "keep"
+
+    # Positive sensitivity: the real directory is trusted and the same writer succeeds.
+    write_report_file(real / "report.json", "{}\n")
+    assert (real / "report.json").read_text(encoding="utf-8") == "{}\n"
+
+
 def test_cleanup_and_write_fail_closed_when_parent_is_missing_or_not_a_directory(tmp_path):
     missing = tmp_path / "missing" / "report.json"
     _discard_partial(missing, (0, 0))
