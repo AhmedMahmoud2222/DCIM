@@ -107,8 +107,12 @@ async def test_session_does_not_hide_a_401_for_an_unexpired_token(client, token_
     session = await token_session(clock=jwt_clock)
     headers = await session.headers()
     await client.post("/api/v1/auth/logout", headers=headers)  # no-op for access token; token stays unexpired
-    tampered = {"Authorization": f"Bearer {_tamper_signature(headers['Authorization'].removeprefix('Bearer '))}"}
-    assert (await client.get("/api/v1/auth/me", headers=tampered)).status_code == 401
+    # Put the tampered token into the session itself (its recorded exp is still in the future), so
+    # the request goes through TokenSession.headers() and a silent re-login would be observable.
+    session._token = _tamper_signature(headers["Authorization"].removeprefix("Bearer "))
+    session_headers = await session.headers()
+    assert session_headers["Authorization"] == f"Bearer {session._token}"  # not replaced by a fresh login
+    assert (await client.get("/api/v1/auth/me", headers=session_headers)).status_code == 401
     assert session.logins == 1  # an unexpired token never triggers a silent re-login
 
 
