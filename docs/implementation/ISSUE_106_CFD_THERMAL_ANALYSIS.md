@@ -1,6 +1,6 @@
 # Issue #106: validated CFD / thermal analysis
 
-Document version: 0.2.1 (M1: dependency verification and architecture handoff; documentation only; 0.2.1 records confirmed signature status)
+Document version: 0.2.2 (M1: dependency verification and architecture handoff; documentation only; 0.2.2 addresses review findings)
 Supersedes: 0.1.0 (the 15-line planning stub from commit `1b544f3`)
 Status: DRAFT for independent architecture/dependency review. Not accepted.
 
@@ -55,9 +55,13 @@ exists.
    and the M1 documentation commit `073bfec86c56e79fef54acf18b7074620e59d02e` as `verified: true`, `reason: valid`
    (checked 2026-10-20). Local `git log --format=%G?` reads `N` for every commit because the checkout has no
    `gpg.ssh.allowedSignersFile`; the local value is not evidence.
-2. If branch protection requires verified signatures on every commit of a PR branch, an unsigned `1b544f3` blocks a merge
-   commit or rebase merge. A squash merge made in the GitHub web UI carries a GitHub signature and sidesteps the rule. The
-   owner decides between that, a documented waiver, or a replacement branch. This increment does none of them.
+2. Live ruleset evidence (REST API, read 2026-10-21): ruleset "Default Policy" (id 23651422, active) targets the default
+   branch only and contains `deletion`, `non_fast_forward`, `required_linear_history`, `pull_request` and
+   `required_status_checks`. It has **no required-signatures rule**, no rule applies to `feature/r4-cfd-106`, and classic
+   branch protection on `main` returns 404. Organisation-level rules that the API did not expose could not be seen. No
+   visible signature gate exists, so no merge method, squash or waiver is proposed to satisfy one. Because linear history
+   is required, how the branch's merge commit `6667c3a` and the unsigned `1b544f3` are handled at merge time is an owner
+   decision; this document makes no recommendation.
 3. Commits added in this increment are signed by the environment's signing helper (`gpgsig` header) and show as verified on
    GitHub. The commits that follow this note are verified the same way before the PR comment reports them.
 
@@ -76,8 +80,8 @@ are not treated as CFD readiness.
 | Provenance | Readings keep `raw_value`, `raw_unit`, `source_scale`, `registry_version` (`domain/telemetry/models.py` lines 168 to 215); historical rows keep nulls |
 | Tests | `backend/tests/unit/test_physical_units.py` (16 tests), `test_registry_snapshots.py`, `test_registry_ledger.py`, `backend/tests/integration/test_units_metric_registry_migration.py` |
 | Acceptance evidence | PR #108 comment `5999496835`: Codex review "Didn't find any major issues" at `9a4ecae0ca24`, exact-head CI listed in comment `6003769295`. The external scanner failed on quota there |
-| Limits | The registry holds no length, volume or density unit for geometry: geometry is stored in integer millimetres by the spatial model, outside the registry. No metric exists for sensor accuracy or measurement uncertainty. The code contains registry version "1" while a v2 snapshot file exists; the CFD contract must pin whichever version the ingest path writes, and M2 must confirm which |
-| Verdict | READY for temperatures, airflow, pressure and power. GAP for any quantity the CFD contract needs in a unit the registry lacks (length, density, uncertainty) |
+| Limits | The registry defines the length units `mm`, `cm`, `m`, `in`, `ft` (`registry.py` lines 78 to 82), so length conversion for the CFD contract goes through it; the spatial model stores geometry as integer millimetres. The registry holds no density or specific-heat unit. No metric exists for sensor accuracy or measurement uncertainty. The code contains registry version "1" while a v2 snapshot file exists; the CFD contract must pin whichever version the ingest path writes, and M2 must confirm which |
+| Verdict | READY for temperatures, airflow, pressure and power. GAP for any quantity the CFD contract needs in a unit the registry lacks (density, specific heat, viscosity, uncertainty) |
 
 ### B.2 #104 calibrated spatial digital twin (merged PR #126, merge commit `eaf0fa01a7ea9cac263f8fce4d7311ed2ba311f6`)
 
@@ -126,7 +130,8 @@ Original planning Draft PR #113 (`feature/r4-spatial-digital-twin-104`, head `de
 
 | Item | State on live GitHub | On the CFD data path? |
 |---|---|---|
-| G1 mapping revisions (#131), G2 retention/history (#129), G3 lossless source text (#135), G4-A exact aggregate sums (#136), G4-R replay ledger (#137) | merged | Yes, for sensor readings: the validation window uses raw readings whose `mapping_revision_id`, `contract_evidence`, `raw_value_text` fix what a number means. Gate: use raw readings only |
+| G1 mapping revisions (#131), G2 retention/history (#129), G3 lossless source text (#135), G4-R replay ledger (#137) | merged | Yes, for sensor readings: the validation window uses raw readings whose `mapping_revision_id`, `contract_evidence`, `raw_value_text` fix what a number means. Gate: use raw readings only |
+| G4-A exact aggregate sums (#136) | merged | No. It changes `DailyTelemetryAggregate` arithmetic; CFD comparison windows use raw readings only and never daily aggregates |
 | G6 aggregate lineage (#143) | merged to `main` (`4ce4f64`); the G7 doc says aggregate provenance still waits on independent G6 acceptance and owner authorization | No. CFD validation uses raw readings, not daily aggregates. Aggregates must not feed comparison windows |
 | G7 readings provenance (#141, `92be692`) | merged | Yes: `reading_provenance_status` (`api/v1/telemetry.py` line 183) classifies a reading as pinned, inferred, operator_resolved, unverified_legacy or unverified_registry. Sensor eligibility policy in the V&V document consumes it. Docs: `docs/G7_READINGS_PROVENANCE.md` |
 | G8 unresolved alarm rules (#139) | merged | No |

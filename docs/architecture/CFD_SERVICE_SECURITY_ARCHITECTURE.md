@@ -24,7 +24,7 @@ All ids are UUIDs. All tables are insert-mostly with immutable columns guarded b
 |---|---|---|
 | `cfd_model_revision` | Immutable snapshot of the baseline contract inputs for a room | `room_id`, `revision_number`, `input_document_key` (storage), `content_hash`, `contract_version`, `assembled_by`, `assembled_at`, `source_snapshot` (calibration id, plan revision, placement refs) |
 | `cfd_scenario_revision` | Immutable delta set over a model revision | `model_revision_id`, `deltas` JSONB, `content_hash`, `created_by`. Contains no foreign key that lets it write inventory |
-| `cfd_run` | A requested simulation. Holds the four state machines | `model_revision_id`, `scenario_revision_id`, `requested_by`, `site_id`, `room_id`, `execution_state`, `numerical_state`, `validation_state`, `acceptance_state`, `idempotency_key`, `policy_versions`, `created_at` |
+| `cfd_run` | A requested simulation. Holds the four state machines | `model_revision_id`, `scenario_revision_id`, `requested_by`, `site_id`, `room_id`, `execution_state`, `numerical_state`, `validation_state`, `acceptance_state`, `redispatch_count`, `idempotency_key`, `policy_versions`, `created_at` |
 | `cfd_run_attempt` | One execution try | `run_id`, `attempt_number`, `lease_id`, `lease_expires_at`, `heartbeat_at`, `worker_id`, `image_digest`, `started_at`, `ended_at`, `exit_reason`, `resource_limits`, `resource_usage` |
 | `cfd_artifact` | Checksummed output or log | `run_id`, `attempt_id`, `kind`, `storage_key`, `sha256`, `size_bytes`, `created_at`, `retention_until`, `scope_site_id` |
 | `cfd_sensor_validation` | One validation assessment of a run | `run_id`, `dataset_hash`, `window`, `split`, `metrics` JSONB, `coverage`, `verdict` (`not_run`, `insufficient_data`, `passed`, `failed`), `assessed_by`, `policy_version` |
@@ -55,15 +55,24 @@ plus service checks. Every other combination is displayed as its own labelled st
    `cfd_run` (execution `queued`) and an `outbox_event` row. Either both exist or neither.
 2. The outbox dispatcher claims events with `FOR UPDATE SKIP LOCKED` as today and enqueues `run_cfd_attempt(run_id)` on queue
    `cfd` (name proposed: `cfd`). Redis messages carry the run id only; the database holds all inputs.
-3. The worker claims the run in one statement: `UPDATE cfd_run_attempt ... WHERE run_id = :id AND execution_state = 'queued'`
-   inserting an attempt row with a fresh `lease_id` and `lease_expires_at`. Zero rows updated means another worker or
-   a duplicate delivery owns it; the task exits without side effects.
+3. The worker claims the run by transitioning the `cfd_run` row, in one transaction:
+   `UPDATE cfd_run SET execution_state = 'leased' WHERE id = :id AND execution_state = 'queued' RETURNING id`. Only if exactly
+   one row is returned does the same transaction insert the `cfd_run_attempt` row (fresh `lease_id`, `lease_expires_at`,
+   `attempt_number = previous + 1`). A unique constraint on `(run_id, attempt_number)` and a partial unique index allowing at
+   most one attempt per run with `ended_at IS NULL` back this up. Zero rows updated means another worker or a duplicate
+   delivery owns the run; the task exits without side effects. The attempt table has no `execution_state`; state lives on `cfd_run`.
 4. The worker renews the lease with a heartbeat at most every 30 seconds (value to be set in M4). Each state write includes
    `WHERE lease_id = :lease_id` (fencing); a worker that lost its lease cannot write results.
 5. A sweeper (as `requeue-stuck-bulk-import-commits` does) marks attempts with an expired lease as `lost` after killing the
    container by name, and requeues up to the attempt cap; after the cap the run is `failed` with reason `worker_lost`.
-6. Duplicate delivery, redelivery after a Redis loss, and re-dispatch after an outbox reclaim all pass through step 3, so they
-   cannot run the same attempt twice. Artifacts are written to attempt-scoped keys and registered only by the lease holder.
+6. Broker-message loss. An outbox event marked `dispatched` only means the message was handed to Redis. A second sweeper
+   (`requeue-unclaimed-cfd-runs`, in the Celery beat schedule like the bulk-import sweeper) selects runs with
+   `execution_state = 'queued'` and no attempt, older than a bounded grace period (value set in M4), and re-enqueues
+   `run_cfd_attempt(run_id)` directly, incrementing `redispatch_count` (column on `cfd_run`). After a fixed cap the run becomes
+   `failed` with reason `dispatch_lost`. Re-enqueue is safe because step 3 admits only one claim.
+7. Duplicate delivery, redelivery after a Redis loss, the step 6 sweeper and re-dispatch after an outbox reclaim all pass
+   through step 3, so they cannot run the same attempt twice. Artifacts are written to attempt-scoped keys and registered only
+   by the lease holder.
 
 ## 5. Compute isolation
 

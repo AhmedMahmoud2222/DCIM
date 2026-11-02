@@ -67,7 +67,7 @@ For each eligible holdout sensor i with prediction p_i, measurement m_i: error e
 Bias = mean(e_i). MAE = mean(|e_i|). RMSE = sqrt(mean(e_i^2)). Max error = max(|e_i|). Inlet error and hotspot error are
 reported separately for sensors with role `rack_inlet` and for the sensors flagged as hotspots by the measured data.
 Coverage = eligible holdout sensors / eligible sensors in the room, plus the fraction of rack inlets within a stated distance
-of a sensor.
+of an eligible rack-inlet temperature probe (not of any sensor).
 
 ### Sensor accuracy
 
@@ -80,8 +80,12 @@ Sensors with unknown accuracy are not eligible for validation.
 ### Minimum spatial coverage and sample size (proposed)
 
 - At least 8 eligible holdout sensors, and at least 2 per cooling zone served.
-- At least 30 % of rack inlets in the modelled region have a sensor within 1 m, or the report restricts its claim to the
-  covered racks.
+- At least 30 % of rack inlets in the modelled region have an **eligible rack-inlet temperature probe** (role `rack_inlet`,
+  metric `temperature_c`, known accuracy, acceptable provenance status) within 1 m, with `elevation_mm` compatible with the
+  inlet height and a position-error bound (rack-mounted sensors flagged `position_exact=false` included) well below the 1 m
+  distance, or the report restricts its claim to the covered racks. Exhaust, return-air, supply-air, humidity, airflow and
+  ambient sensors never count towards this fraction, and a probe on the opposite face of a rack does not cover its inlet.
+  Proposed, not owner-approved.
 - At least 4 sensors in the calibration set (unless no calibration is used).
 - Fewer than that: verdict `insufficient_data`; the run may stay converged and accepted for exploration with the label
   "not measurement validated". It cannot carry the word "validated".

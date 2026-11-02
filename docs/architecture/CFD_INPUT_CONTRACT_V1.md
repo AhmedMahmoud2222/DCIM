@@ -29,7 +29,7 @@ document was produced.
 | `placement_refs[]` | `{asset_id, placement_id, placement_version}` for every rack, cooling unit and sensor included |
 | `catalog_refs[]` | `{asset_id, catalog_model_revision_id}` for racks and equipment, where one exists |
 | `registry_version` | Telemetry registry version used for every canonical metric in the document |
-| `assembled_at`, `assembled_by` | Assembly time (UTC, RFC 3339) and actor |
+| `assembled_at`, `assembled_by` | Assembly time (UTC, RFC 3339) and actor. Volatile metadata: stored on the `cfd_model_revision` row and excluded from the content hash (section 10) |
 | `source_snapshot` | `{main_sha, alembic_head}` for traceability, not for logic |
 
 `model_revision_id` and `scenario_revision_id` are the only identities the run points at. Re-running the same ids with a
@@ -49,10 +49,11 @@ Celsius where the field is documented as a reporting temperature. Every numeric 
 ```
 
 Rules: `value` is a decimal string with a stated scale, never a binary float literal. Conversions are exact decimal
-operations performed once. `unit` must exist in the registry or in the geometry unit list below. Length, density and
-uncertainty units are not in the telemetry registry today (`backend/app/domain/telemetry/registry.py`); the contract keeps its
-own closed unit list (`m`, `mm`, `K`, `degC`, `kg/s`, `m3/s`, `Pa`, `W`, `kW`) until the registry gains them, and records
-that fact in `conversion.method`.
+operations performed once. `unit` must exist in the telemetry registry (`backend/app/domain/telemetry/registry.py`), which
+already defines the lengths `mm`, `cm`, `m`, `in`, `ft` (lines 78 to 82), so length conversion and provenance go through the
+versioned registry like any other quantity. Genuine gaps are density, specific heat, viscosity and uncertainty units; the
+contract keeps a small closed list for those (`kg/m3`, `J/kg/K`, `Pa s`) until the registry gains them, and records that in
+`conversion.method`. M2 confirms against the registry which of `K`, `degC`, `kg/s`, `m3/s`, `Pa`, `W`, `kW` are defined.
 
 ## 4. Coordinate systems and transform
 
@@ -80,7 +81,7 @@ turns the left-handed DCIM triple into a right-handed solver triple. The contrac
 ```
 
 Required tests (M2): golden vectors for the four axis points and four rotations (0, 90, 180, 270) of an asymmetric L-shaped
-room; a determinant check that the assembled solver triple of the unit vectors is right-handed (`(e_x cross e_y) dot e_z > 0`);
+room; a basis check that the linear part maps the DCIM unit vectors to `e_x=(1,0,0)`, `e_y=(0,-1,0)`, `e_z=(0,0,1)` with determinant `-1`, and that the destination solver basis `(x, y, z)` satisfies `(x cross y) dot z > 0` (right-handed); the map's determinant is negative by design, so the test must not assert a positive triple product for the mapped DCIM unit vectors;
 round trip of DCIM to solver to DCIM within one millimetre; outward normals of every boundary face point away from the fluid
 for the golden room; a rack placed with rotation 90 puts its front face where the catalog `front` is after transformation.
 
@@ -220,10 +221,10 @@ The window and eligibility rules are frozen when the dataset is created. Sensors
 1. Encode as JSON with RFC 8785 canonical rules: UTF-8, sorted keys, no insignificant whitespace, decimal strings for
    numbers with a fixed scale per unit, RFC 3339 UTC timestamps with `Z`, lowercase UUIDs.
 2. Arrays that represent sets (for example `placement_refs`, patches) are sorted by their identifier.
-3. `content_hash = SHA-256(canonical bytes)` over the document with the `hashes` object removed. Sub-hashes are stored for
+3. `content_hash = SHA-256(canonical bytes)` over the document with the `hashes` object and the volatile metadata `assembled_at`, `assembled_by` removed (they live on the revision row). Sub-hashes are stored for
    `geometry`, `heat_loads`, `boundaries`, `fluid`, `sensor_validation` so a reviewer can see which section changed.
 4. `case_hash` is the hash of the generated solver case tree (sorted relative paths and file hashes) and is stored on the run.
-5. Two assemblies of the same revisions in the same database state produce identical bytes and hashes. Test in M2.
+5. Two assemblies of the same revisions in the same database state, at different times and by different actors, produce identical hashed bytes and hashes. Test in M2.
 
 ## 11. Solver, mesh and convergence-policy versions
 
