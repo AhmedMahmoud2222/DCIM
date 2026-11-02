@@ -62,3 +62,35 @@ and WAL load. A failed or cancelled build leaves an INVALID index behind. See th
    `SELECT c.relname, i.indisvalid, i.indisready FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
    WHERE c.relname = ANY(ARRAY[<the 22 ix_<table>_<column> names in FK_INDEXES>]) AND NOT (i.indisvalid AND i.indisready);`
    must return no rows.
+
+## Production release hold (issue #214)
+
+`docker-compose.production.yml` runs the `migrate` service through `backend/scripts/migration_gate_0057.py` instead of a bare
+`alembic upgrade head`. This also covers the staging runner, which uses the same Compose files. The development/CI
+`docker-compose.yml` and CI workflows are unchanged.
+
+**Behavior.** If 0057 is pending (determined from `alembic current` versus the single Alembic head) and approval is absent,
+the service exits non-zero (2) **before** running any migration. The schema is untouched (no partial upgrade to 0056), and
+`bootstrap-privileges`, `backend`, `celery-worker` and `celery-beat` do not start because they depend on
+`migrate: service_completed_successfully`. If the revision state cannot be determined (database unreachable, multiple heads,
+unknown revision) it exits 3 and also changes nothing. If 0057 is already applied or not pending, behavior equals
+`alembic upgrade head`. A brand-new empty database is also held; approve it with the same variables.
+
+**Operator steps after owner/DBA approval** (all qualification evidence in issue #214 attached):
+
+1. Take and test a backup/PITR point; confirm disk, WAL and replica headroom.
+2. In the host `.env` (never committed) set `DCIM_APPROVE_MIGRATION_0057=I_ACCEPT_PRODUCTION_INDEX_BUILD` and
+   `DCIM_MIGRATION_0057_CHANGE_ID=<approved change reference>`. The reference must match `(CHG|CR|RFC)-<4-10 digits>` exactly
+   (no whitespace); anything else is treated as unapproved. This is a format check and an operator acknowledgement only: the
+   gate cannot verify the reference against the change system, so only the owner/DBA-approved change process may write these
+   variables into the production `.env`.
+3. Run `docker compose -f docker-compose.yml -f docker-compose.production.yml up -d` in the approved window; watch the
+   `migrate` logs and the checks in step 7 above.
+4. Remove both variables afterwards. Once 0057 is applied they have no effect, but they should not outlive the change.
+
+**Recovery and rollback.** A blocked start needs no recovery: leave the variables unset (the running application, if any, is not
+touched by a failed `migrate`; do not `up` services you are not prepared to start). For an interrupted build, an INVALID index or
+rollback follow steps 5 and 6 above and decide on `alembic downgrade -1` versus PITR via the approved change plan.
+
+This hold does not validate 0057. Environment `alembic_version` evidence, representative staging benchmarks, operator thresholds
+and DBA/owner approval remain outstanding.
