@@ -553,7 +553,7 @@ class ReadOnlyAndConfidentialityTests(unittest.TestCase):
             self.assertNotIn(banned, text)
         mint = next(s for s in workflow['jobs']['review_publish']['steps'] if 'create-github-app-token' in s.get('uses', ''))
         self.assertEqual({k: v for k, v in mint['with'].items() if k.startswith('permission-')},
-                         {'permission-pull-requests': 'write'})
+                         {'permission-pull-requests': 'write', 'permission-contents': 'read'})
 
     def compare_fetch(self, diff, files, commits=None, total=None, merge_base=True):
         calls = []

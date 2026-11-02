@@ -41,3 +41,6 @@ backend/media/
 
 # Agent tooling state (oh-my-claudecode), never source - at any depth
 .omc/
+
+# Migration 0057 benchmark output (machine-specific measurements), never source
+backend/benchmark-results/

@@ -39,7 +39,8 @@ class RealTranscriptTests(unittest.TestCase):
     def test_fixtures_are_from_opencode_1_19_3(self):
         for meta_file in FIXTURES.glob('*.meta.json'):
             self.assertEqual(json.loads(meta_file.read_text())['opencode_version'], '1.19.3', meta_file.name)
-        self.assertEqual(len(list(FIXTURES.glob('*.jsonl'))), 8)
+        # 9th fixture: success_ok, a real 1.19.3 capture of the exact-OK probe.
+        self.assertEqual(len(list(FIXTURES.glob('*.jsonl'))), 9)
 
     def test_real_successful_transcripts_are_accepted(self):
         self.assertEqual(verdict('success_text'), ('success', ''))

@@ -154,7 +154,7 @@ test.describe("Issue #101: profile, discovery, reconciliation, cable and trace",
     expect(ingested.results[0].status).toBe("accepted");
 
     // 3. Reconciliation in the UI: evidence is proposed (matched by management address), not authoritative.
-    await page.getByRole("link", { name: "Neighbors" }).click();
+    await page.getByRole("link", { name: "Neighbor Review" }).click();
     await page.getByRole("button", { name: new RegExp(`Review neighbor ${remoteHost}`) }).click();
     await expect(page.getByLabel("Neighbor detail")).toContainText("proposed");
     await expect(page.getByLabel("Neighbor detail")).toContainText("Waiting for an operator");

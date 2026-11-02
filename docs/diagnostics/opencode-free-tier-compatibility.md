@@ -298,3 +298,72 @@ This note and the accompanying diagnostic change do **not** modify the
 production model registry or health flags, the reviewer capability matrix, the
 sandbox/proxy/publisher, branch protection, the direct model-health diagnostic,
 or any other workflow. No production model is activated.
+
+## 9. Runtime hardening (smoke v1.2)
+
+Remediation of the independent review (`CHANGES REQUIRED`, comment 6393504709)
+against the earlier head. Scope is the native diagnostic only.
+
+### 9.1 What changed in `opencode_native_smoke.py`
+
+- **Runtime config is sealed before any key is used.** The pinned CLI reads and
+  writes two config roots: `XDG_CONFIG_HOME/opencode` (honoured, so it is the
+  agent copy) and `~/.opencode` in the account's passwd home (**not** redirected
+  by `HOME`; observed on the pinned linux-x64 binary). The runner seals both:
+  directories become `0555`, files `0444`. The agent copy must start empty; the
+  account copy may hold only the runtime's own `bin/` and `.gitignore`.
+  `validate_runtime()` re-checks the binary SHA-256 and the seal before the
+  version probe, again before the key is placed in the environment, and after
+  the run (a change during the run is reported as `runtime_mutated_during_run`).
+- **Installation is blocked by the seal plus `npm_config_offline=true`.** No
+  install was observed on the pinned linux-x64 binary (see 9.2). This is a
+  preventive control on the config roots, not a network block; see 9.3.
+- **Exact output.** A successful run needs one `text` part whose trimmed value is
+  exactly `OK`, finished with `stop` and no `tool_use`. Anything else is
+  `output_mismatch`.
+- **Bounded execution.** The CLI runs in its own session; on timeout the whole
+  process group is killed (`killpg`, or `taskkill /T` on Windows) and reaped.
+  A descendant that outlives the CLI is killed too (test
+  `test_timeout_kills_the_whole_process_group`).
+- **No `assert` in the runner.** Security checks raise explicitly, so `python -O`
+  cannot remove them (test `test_runner_has_no_assert_statements`).
+- **Artifact.** Closed field set adds `provider`, `effective_provider`,
+  `effective_model`, `setup_ms`, `auth_ms`, `inference_ms`, `total_ms`,
+  `execution_count`, `output_tokens`. `effective_*` are the enforced selector,
+  not CLI-reported values: the CLI's JSON events do not contain provider or
+  model. Phase timings are `null` where the transcript lacks the event (a 401
+  emits no `step_start`).
+- **Vocabulary unchanged.** Existing reason classes are kept; the mismatch case
+  is the only new reason.
+
+### 9.2 Linux evidence (pinned linux-x64 1.19.3, tarball sha512 checked against the lockfile)
+
+| Probe | Result |
+|---|---|
+| Fresh isolated HOME, `npm_config_offline=true`, loopback stub | exit 0, `OK`, no npm cache entries, no `node_modules` or `package.json` written |
+| Same, inside a network namespace with only loopback up (external `1.1.1.1` unreachable) | exit 0, `OK` |
+| Agent `.config/opencode` sealed `0555` | run succeeds; direct writes as the run identity fail with `EACCES` |
+| Account `~/.opencode` sealed read-only | run succeeds; write fails with `EACCES` |
+| `runner` main, preflight mode, real gateway, synthetic key set in the environment | `ok` / `credential_rejected_as_expected` / 401; environment key ignored |
+| `runner` main, live mode, synthetic key | `failed` / `provider_error` / `auth_error` / 401; no generation |
+| Full `unittest` run of both deployment modules | 109 tests, OK, including real-binary headless read-safety |
+
+Both live-path probes took roughly 72–82 s to fail with 401; the cause of that
+delay was not investigated.
+
+### 9.3 Residual limits (not closed by this change)
+
+- **No kernel-level egress block in CI.** Unprivileged network namespaces were
+  used only for local evidence. The live step still has network access to the
+  provider, which is required. A runtime install attempt would be stopped by the
+  seal and the offline flag, not by a firewall.
+- **Root bypasses the seal.** The `0555`/`0444` bits stop the run identity, not
+  root. The workflow is expected to run as a non-root runner user (not yet
+  confirmed on CI); the diagnostic must not run as root.
+- **Account home is sealed during the run and not restored.** On a CI runner this
+  is an ephemeral VM. On a developer machine, restore the mode afterwards.
+- **Provider and model in the artifact are the enforced selector**, not
+  CLI-reported values.
+- **Live authorization is unchanged.** The `opencode-agent` environment still has
+  no required reviewers; that is a GitHub setting the owner must change.
+  No Go inference and no paid run is authorized by this change.

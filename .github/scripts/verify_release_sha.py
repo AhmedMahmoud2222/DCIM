@@ -67,6 +67,9 @@ def verify(sha):
     commit = api("/commits/" + sha)
     if commit.get("sha") != sha:
         raise VerificationError("noncanonical commit")
+    verification = commit.get('commit', {}).get('verification', {})
+    if verification.get('verified') is not True or verification.get('reason') != 'valid':
+        raise VerificationError('release commit lacks a GitHub-verified valid signature')
     compare = api("/compare/" + sha + "...main")
     if compare.get("status") not in ("ahead", "identical") or compare.get("merge_base_commit", {}).get("sha") != sha:
         raise VerificationError("release commit is not an ancestor of authorized main")

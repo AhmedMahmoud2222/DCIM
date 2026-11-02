@@ -23,7 +23,7 @@ REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://openc
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
         'opencode/minimax-m3.1-flash-free')
 SHIPPED_OWNER_APPROVED_UNHEALTHY = {'opencode/mimo-v2.6-flash-free'}
-SHIPPED_OWNER_ENABLED = {'opencode/glm-5.3-flash-free'}
+SHIPPED_OWNER_ENABLED = set()
 # One task per routing category, used to prove shipped eligibility and fail-closed routing.
 SHIPPED_TASKS = {
     'small_fix': 'fix a typo in the README',

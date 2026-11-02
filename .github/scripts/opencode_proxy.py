@@ -33,6 +33,7 @@ import os
 import re
 import sys
 import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import opencode_router as router  # noqa: E402
@@ -44,7 +45,29 @@ BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
     'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'presence_penalty',
     'frequency_penalty', 'seed', 'n', 'response_format', 'reasoning_effort', 'user'})
-FORWARD_HEADERS = ('content-type', 'accept', 'user-agent', 'x-opencode-request-id')
+# Maximum JSON container nesting accepted in a request body (the top-level object is depth 1). Real OpenCode
+# envelopes (messages, tool schemas) nest well under 20; anything deeper is rejected before json.loads runs, so the
+# outcome never depends on the Python version or recursion limit.
+MAX_JSON_DEPTH = 64
+# Single-character classes only (no variable-length alternatives), so every search resumes where the previous one
+# ended and the depth scan never revisits a byte, even on unterminated strings full of escaped quotes.
+_JSON_STRUCT = re.compile(rb'["\[\]{}]')
+_JSON_STRING_STOP = re.compile(rb'["\\]')
+FORWARD_HEADERS = ('content-type', 'accept', 'user-agent')
+# Identity headers the genuine OpenCode v2 CLI attaches to every inference request (captured from the pinned
+# binary). They are relayed unchanged, only when their value has the exact shape the real client produces;
+# anything else is dropped. The proxy never creates, completes or rewrites one: a header the client did not
+# send is not sent upstream, and `x-opencode-client` is relayed only as the literal `cli`.
+SESSION_TOKEN = re.compile(r'^ses_[A-Za-z0-9]{8,64}$')
+CLIENT_HEADER_SHAPES = {
+    'x-opencode-client': re.compile(r'^cli$'),
+    'x-opencode-project': re.compile(r'^[0-9a-f]{40}$'),
+    'x-opencode-session': SESSION_TOKEN,
+    'x-opencode-session-id': SESSION_TOKEN,
+    'x-session-id': SESSION_TOKEN,
+    'x-session-affinity': SESSION_TOKEN,
+    'x-opencode-request-id': re.compile(r'^[A-Za-z0-9_-]{1,100}$'),
+}
 HOP = {'connection', 'keep-alive', 'transfer-encoding', 'content-length', 'proxy-authenticate',
        'proxy-authorization', 'te', 'trailers', 'upgrade'}
 
@@ -72,6 +95,44 @@ def validate_bound_model(model: str, registry: dict, denied: set[str]) -> str:
     return bare(full)
 
 
+def client_identity_headers(headers) -> dict[str, str]:
+    """The v2 client identity headers present on the request and well formed (see CLIENT_HEADER_SHAPES)."""
+    relayed = {}
+    for name, shape in CLIENT_HEADER_SHAPES.items():
+        value = headers.get(name)
+        if value is not None and shape.fullmatch(value):
+            relayed[name] = value
+    return relayed
+
+
+# Provider rejections that stop the run. OpenCode v2 retries a rejected request internally and forever without
+# emitting an error event, so the guard relies on these records to stop the agent promptly. Only the HTTP status is
+# used: no response body or header content is read or logged. Categories the status alone cannot tell apart
+# (a rate limit versus an exhausted quota, an unsupported client versus another policy refusal) stay generic.
+TERMINAL_AFTER = {401: 1, 402: 1, 403: 1, 429: 2}
+UNAVAILABLE_AFTER = 3          # 5xx responses and failed upstream connections
+CATEGORY_BY_STATUS = {401: 'provider_auth_rejected', 402: 'provider_quota_exhausted'}
+
+
+def classify_provider_status(status: int | None) -> str:
+    """Sanitized category for an upstream failure; '' when the response is not a failure."""
+    if status is None:
+        return 'provider_unavailable'
+    if status in CATEGORY_BY_STATUS:
+        return CATEGORY_BY_STATUS[status]
+    if status >= 500:
+        return 'provider_unavailable'
+    if status >= 400:
+        return f'provider_http_{status}'
+    return ''
+
+
+def rejection_limit(status: int | None) -> int:
+    if status is None or status >= 500:
+        return UNAVAILABLE_AFTER
+    return TERMINAL_AFTER.get(status, 1)
+
+
 def _no_duplicate_keys(pairs):
     seen = {}
     for key, value in pairs:
@@ -83,6 +144,37 @@ def _no_duplicate_keys(pairs):
 
 def _reject_constant(_name):
     raise PolicyError('non_standard_json')
+
+
+def check_json_depth(body: bytes) -> None:
+    """Raise PolicyError('json_depth_exceeded') if containers nest deeper than MAX_JSON_DEPTH.
+
+    Single linear byte scan with O(1) state, run before json.loads. Strings are skipped whole (braces and escaped
+    quotes inside them are never counted). Malformed input, including an unterminated string, is left to json.loads.
+    """
+    depth = 0
+    pos = 0
+    while True:
+        match = _JSON_STRUCT.search(body, pos)
+        if match is None:
+            return
+        char = body[match.start()]
+        pos = match.end()
+        if char == 0x22:                        # '"': skip to the closing quote, honouring backslash escapes
+            while True:
+                stop = _JSON_STRING_STOP.search(body, pos)
+                if stop is None:                # unterminated: stop scanning, json.loads rejects it
+                    return
+                pos = stop.end()
+                if body[stop.start()] == 0x22:
+                    break
+                pos += 1                        # backslash: the next byte is escaped, never a terminator
+        elif char in (0x7B, 0x5B):              # '{' '['
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise PolicyError('json_depth_exceeded')
+        else:
+            depth -= 1
 
 
 def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str) -> None:
@@ -109,6 +201,7 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
         raise PolicyError('content_type_not_json')
     if not body:
         raise PolicyError('empty_body')
+    check_json_depth(body)
     try:
         data = json.loads(body.decode('utf-8'), object_pairs_hook=_no_duplicate_keys,
                           parse_constant=_reject_constant)
@@ -133,8 +226,30 @@ class Proxy:
     def __init__(self, key: str, upstream: str, bound: str, log_path: str | None = None):
         self.key, self.upstream, self.bound, self.log_path = key, upstream, bound, log_path
         self.rejections: list[dict] = []
+        self.failures: dict[int, int] = {}
         self.forwarded = 0
+        self.accepted = 0
         self._lock = threading.Lock()
+
+    def telemetry(self, event: str, **fields) -> None:
+        """Record only bounded counters/status/timing categories; never request data."""
+        entry = {'event': event, **fields}
+        line = json.dumps(entry, separators=(',', ':'), sort_keys=True)
+        with self._lock:
+            if self.log_path:
+                with open(self.log_path, 'a', encoding='utf-8') as handle:
+                    handle.write(line + '\n')
+        print('proxy telemetry: ' + line, file=sys.stderr, flush=True)
+
+    def provider_failure(self, status: int | None, request_count: int) -> None:
+        """Count an upstream failure and log a `provider_rejection` record, `terminal` once its limit is reached."""
+        key = status if status is not None else 0
+        with self._lock:
+            self.failures[key] = self.failures.get(key, 0) + 1
+            count = self.failures[key]
+        self.telemetry('provider_rejection', request_count=request_count, http_status=status,
+                       category=classify_provider_status(status), count=count,
+                       terminal=count >= rejection_limit(status))
 
     def record_rejection(self, code: str, method: str, path: str) -> None:
         entry = {'rejected': code, 'method': re.sub(r'[^A-Z]', '', method.upper())[:8],
@@ -177,32 +292,68 @@ def make_handler(proxy: Proxy):
             except PolicyError as error:
                 proxy.record_rejection(error.code, self.command, self.path)
                 return self._send(403, f'rejected by sandbox proxy: {error.code}')
+            with proxy._lock:
+                proxy.accepted += 1
+                request_count = proxy.accepted
+            endpoint = 'chat_completions' if self.path in POST_PATHS else 'models'
+            proxy.telemetry('accepted', request_count=request_count, endpoint=endpoint)
             headers = {k: v for k, v in ((n, self.headers.get(n)) for n in FORWARD_HEADERS) if v}
+            headers.update(client_identity_headers(self.headers))
             headers['Authorization'] = f'Bearer {proxy.key}'
             if target_scheme == 'https':
                 conn = http.client.HTTPSConnection(host, int(port or 443), timeout=300)
             else:
                 conn = http.client.HTTPConnection(host, int(port or 80), timeout=300)
+            started = time.monotonic()
+            status = None
+            first_byte_ms = None
+            streamed_bytes = 0
+            connection_result = 'failed'
+            completion = 'upstream_connection_error'
+            response_started = False
             try:
+                conn.connect()
+                connection_result = 'connected'
+                proxy.telemetry('upstream_connection', request_count=request_count, result=connection_result)
                 conn.request(self.command, self.path, body=body, headers=headers)
                 response = conn.getresponse()
+                status = response.status
+                proxy.telemetry('http_response', request_count=request_count, http_status=status)
+                if status >= 400:
+                    proxy.provider_failure(status, request_count)
                 self.send_response(response.status)
                 for name, value in response.getheaders():
                     if name.lower() not in HOP:
                         self.send_header(name, value)
                 self.send_header('Connection', 'close')
                 self.end_headers()
+                response_started = True
                 proxy.forwarded += 1
-                while chunk := response.read(8192):
+                # read() waits for the requested byte count or EOF, buffering the
+                # provider's SSE stream before OpenCode can emit generation events.
+                while chunk := response.read1(8192):
+                    if first_byte_ms is None:
+                        first_byte_ms = round((time.monotonic() - started) * 1000)
+                        proxy.telemetry('first_response_byte', request_count=request_count,
+                                        time_to_first_byte_ms=first_byte_ms)
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                    streamed_bytes += len(chunk)
+                completion = 'completed'
             except (OSError, http.client.HTTPException):
-                try:
-                    self._send(502, 'upstream unavailable')
-                except OSError:
-                    pass
+                completion = 'client_or_upstream_io_error' if connection_result == 'connected' else 'upstream_connection_error'
+                if connection_result != 'connected':
+                    proxy.provider_failure(None, request_count)
+                if not response_started:
+                    try:
+                        self._send(502, 'upstream unavailable')
+                    except OSError:
+                        pass
             finally:
                 conn.close()
+                proxy.telemetry('completion', request_count=request_count, upstream_connection=connection_result,
+                                http_status=status, time_to_first_byte_ms=first_byte_ms,
+                                streamed_bytes=streamed_bytes, category=completion)
 
         def _reject_other(self):
             proxy.record_rejection('method_not_allowed', self.command, self.path)

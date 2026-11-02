@@ -1,0 +1,30 @@
+{
+  "source": "https://api.github.com/repos/AhmedMahmoud2222/DCIM/issues/comments/6421352765",
+  "note": "Public REST metadata captured 2026-10-26. This is not a captured issue_comment webhook or proof of live cross-trigger execution. Body omitted; command bodies in tests are synthetic.",
+  "metadata": {
+    "id": 6421352765,
+    "created_at": "2026-10-26T16:29:00Z",
+    "updated_at": "2026-10-26T16:30:41Z",
+    "user": {
+      "id": 209825114,
+      "login": "claude[bot]",
+      "type": "Bot"
+    },
+    "performed_via_github_app": {
+      "id": 1236702,
+      "slug": "claude"
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/AhmedMahmoud2222/DCIM/issues/comments/6421352765/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    }
+  }
+}

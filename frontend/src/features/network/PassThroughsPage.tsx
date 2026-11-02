@@ -3,6 +3,9 @@ import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { getEquipmentPorts, listEquipment } from "@/features/equipment/api";
+import { DataTable, EmptyRow, TD, TH, TR } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { createPassThrough, deletePassThrough, listPassThroughs, PassThrough } from "@/features/network/api";
 import { ApiError } from "@/lib/apiClient";
@@ -40,29 +43,30 @@ export function PassThroughsPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Pass-throughs</h1>
-      <p className="mb-4 max-w-3xl text-sm text-slate-400">
-        How a signal continues inside a device, for example patch panel front 01 to rear 01. The trace follows these between cables to
-        build an end-to-end path. Each port belongs to at most one pass-through.
-      </p>
+      <PageHeader
+        title="Pass-throughs"
+        description="How a signal continues inside a device, for example patch panel front 01 to rear 01. The trace follows these between cables to build an end-to-end path. Each port belongs to at most one pass-through."
+      />
 
-      <div className="mb-6 overflow-x-auto rounded-sm border border-slate-800 bg-slate-900">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-slate-800 text-slate-400">
-            <tr>
-              <th className="p-2">Device</th>
-              <th className="p-2">Label</th>
-              <th className="p-2">Ports</th>
-              <th className="p-2">Actions</th>
+      <QueryStatus query={items} what="pass-throughs" permission="cable:read" columns={4} />
+
+      {items.data && (
+        <DataTable label="Pass-throughs" dense minWidthClass="min-w-[36rem]">
+          <thead>
+            <tr className="border-b border-line-subtle bg-surface-panel">
+              <th scope="col" className={TH}>Device</th>
+              <th scope="col" className={TH}>Label</th>
+              <th scope="col" className={TH}>Ports</th>
+              <th scope="col" className={TH}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {items.data?.items.map((item) => (
-              <tr key={item.id} className="border-b border-slate-800/50">
-                <td className="p-2">{item.equipment_hostname ?? item.ports[0]?.equipment_asset_tag}</td>
-                <td className="p-2 font-mono">{item.label ?? "—"}</td>
-                <td className="p-2 font-mono">{item.ports.map((p) => p.port_name).join(" ↔ ")}</td>
-                <td className="space-x-1 p-2">
+              <tr key={item.id} className={TR}>
+                <td className={TD}>{item.equipment_hostname ?? item.ports[0]?.equipment_asset_tag}</td>
+                <td className={`${TD} font-mono`}>{item.label ?? "—"}</td>
+                <td className={`${TD} font-mono`}>{item.ports.map((p) => p.port_name).join(" ↔ ")}</td>
+                <td className={`${TD} space-x-1`}>
                   {item.ports[0] && (
                     <Link
                       to={`/topology/trace?port=${item.ports[0].port_id}`}
@@ -85,12 +89,12 @@ export function PassThroughsPage() {
               </tr>
             ))}
             {items.data?.items.length === 0 && (
-              <tr><td colSpan={4} className="p-4 text-center italic text-slate-500">No pass-throughs recorded.</td></tr>
+              <EmptyRow columns={4}>No pass-throughs recorded.</EmptyRow>
             )}
           </tbody>
-        </table>
-        {remove.isError && <p role="alert" className="p-2 text-xs text-red-400">{errorText(remove.error)}</p>}
-      </div>
+        </DataTable>
+      )}
+      {remove.isError && <p role="alert" className="p-2 text-xs text-red-400">{errorText(remove.error)}</p>}
 
       {canManage && (
         <form

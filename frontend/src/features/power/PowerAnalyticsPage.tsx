@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { RequirePermission } from "@/components/feedback/AccessRestricted";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { listAllSites } from "@/features/access/api";
 import {
@@ -71,9 +72,11 @@ function errorText(e: unknown): string {
 }
 
 function ErrorLine({ error }: { error: unknown }) {
+  // A refusal is an authorization failure, not a fault: say so rather than show a bare error.
+  const restricted = error instanceof ApiError && error.status === 403;
   return (
     <p role="alert" className="text-sm text-red-400">
-      {errorText(error)}
+      {restricted ? `Access restricted: ${errorText(error)}` : errorText(error)}
     </p>
   );
 }
@@ -366,7 +369,7 @@ function ReportsTab({ siteId }: { siteId: string }) {
   );
 }
 
-export function PowerAnalyticsPage() {
+function PowerAnalyticsContent() {
   const sites = useQuery({ queryKey: ["sites", "all"], queryFn: listAllSites });
   const [siteId, setSiteId] = useState("");
   const [tab, setTab] = useState<Tab>("capacity");
@@ -412,5 +415,15 @@ export function PowerAnalyticsPage() {
           : <ReportsTab siteId={effective} />}
       </div>
     </div>
+  );
+}
+
+/** Everything on this page needs `power:read`; without it the page explains the restriction
+ * instead of issuing requests that the backend would refuse. */
+export function PowerAnalyticsPage() {
+  return (
+    <RequirePermission permission="power:read" what="power capacity and forecast">
+      <PowerAnalyticsContent />
+    </RequirePermission>
   );
 }

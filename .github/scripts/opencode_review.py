@@ -215,7 +215,8 @@ def render_review(review: dict, ctx: dict) -> str:
               'reviewer_session': ctx['reviewer_session'],
               'implementer_models': sorted({r['model'] for r in ctx['records']}),
               'implementer_sessions': sorted({r['session'] for r in ctx['records'] if r['session']}),
-              'verdict': review['verdict'], 'external_acceptance': 'REQUIRED'}
+              'verdict': review['verdict'], 'external_acceptance': 'REQUIRED',
+              'run_url': ctx.get('run_url', '')}
     lines = [f"<!-- opencode-review:{json.dumps(marker, separators=(',', ':'))} -->",
              f"## OpenCode independent review: {review['verdict']}", '',
              *(['- **STALE ON ARRIVAL**: the pull request head or base moved before this review was posted; '
@@ -508,8 +509,9 @@ def publish_main(argv: list[str]) -> int:
         'records': records, 'branch': head.get('ref', ''), 'run_url': env['RUN_URL'],
         'base_commit': base_sha, 'stale_on_arrival': stale_on_arrival})
     # COMMENT only: this publisher never submits an approving or change-requesting review and never merges.
-    api.call('POST', f'pulls/{number}/reviews', {'commit_id': sha, 'body': body, 'event': 'COMMENT'})
-    emit(review_verdict=review['verdict'], review_stale=str(stale_on_arrival).lower())
+    posted = api.call('POST', f'pulls/{number}/reviews', {'commit_id': sha, 'body': body, 'event': 'COMMENT'})
+    emit(review_verdict=review['verdict'], review_stale=str(stale_on_arrival).lower(),
+         review_id=posted.get('id', ''))
     print(f"review posted for {sha[:12]}: {review['verdict']}, {len(review['findings'])} finding(s)"
           + (' [STALE ON ARRIVAL]' if stale_on_arrival else ''))
     return 0

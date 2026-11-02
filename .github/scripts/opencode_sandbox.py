@@ -13,7 +13,7 @@ runner user, never executes repository code, and never prints file contents.
       git dir used later to diff DEST without trusting any .git inside DEST) and
       STATE_DIR/baseline.json.
   config MODEL PORT [MODE]
-      print the managed OpenCode configuration JSON (MODE implement|review).
+      print the managed OpenCode configuration JSON (MODE implement|review|probe).
 """
 from __future__ import annotations
 
@@ -167,13 +167,24 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
 
     Review mode denies every editing tool; the work tree is also made read-only at the OS level.
     """
-    if mode not in ('implement', 'review'):
+    if mode not in ('implement', 'review', 'probe'):
         raise SandboxError('unknown agent mode')
     if not re.fullmatch(r'opencode/[a-z0-9.-]+-free', model):
         raise SandboxError('model is not an approved free OpenCode model identifier')
+    permission = {
+        'read': 'deny' if mode == 'probe' else {'*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow'},
+        'edit': 'deny' if mode in ('review', 'probe') else 'allow',
+        'glob': 'deny' if mode == 'probe' else 'allow',
+        'grep': 'deny' if mode == 'probe' else 'allow',
+        'list': 'deny' if mode == 'probe' else 'allow',
+        'bash': 'deny' if mode == 'probe' else 'allow',
+        'task': 'deny', 'webfetch': 'deny', 'websearch': 'deny',
+        'external_directory': 'deny', 'doom_loop': 'deny',
+    }
     return {
         '$schema': 'https://opencode.ai/config.json',
         'autoupdate': False,
+        'update': 'disable',
         'share': 'disabled',
         'enabled_providers': ['opencode'],
         'model': model,
@@ -182,13 +193,31 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
         'small_model': model,
         'provider': {'opencode': {'options': {
             'baseURL': f'http://127.0.0.1:{int(port)}/inference/openai/v1', 'apiKey': 'sandbox-placeholder'}}},
-        'permission': {
-            'read': {'*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow'},
-            'edit': 'deny' if mode == 'review' else 'allow', 'glob': 'allow', 'grep': 'allow', 'list': 'allow', 'bash': 'allow',
-            'task': 'deny', 'webfetch': 'deny', 'websearch': 'deny',
-            'external_directory': 'deny', 'doom_loop': 'deny',
-        },
+        'permission': permission,
+        'permissions': v2_permissions(mode),
     }
+
+
+def v2_permissions(mode: str) -> list[dict]:
+    """OpenCode v2 rule list (last matching rule wins; evaluated by the real binary in the e2e tests).
+
+    v2 headless runs auto-approve any action with no matching rule, and its Code Mode `execute` tool,
+    `subagent`, `skill` and `question` actions are not covered by the v1-style `permission` keys. The list
+    therefore opens with a catch-all deny so an action added by a future release is denied until reviewed,
+    then allows only what the mode needs. `external_directory` is denied last so no allow can reopen it."""
+    def rule(action: str, resource: str, effect: str) -> dict:
+        return {'action': action, 'resource': resource, 'effect': effect}
+
+    rules = [rule('*', '*', 'deny')]
+    if mode != 'probe':
+        rules += [rule('read', '*', 'allow'), rule('read', '*.env', 'deny'), rule('read', '*.env.*', 'deny'),
+                  rule('read', '*.env.example', 'allow'), rule('glob', '*', 'allow'), rule('grep', '*', 'allow'),
+                  rule('shell', '*', 'allow')]
+    if mode == 'implement':
+        rules.append(rule('edit', '*', 'allow'))
+    rules += [rule(action, '*', 'deny') for action in
+              ('execute', 'subagent', 'skill', 'question', 'webfetch', 'websearch', 'external_directory')]
+    return rules
 
 
 def main(argv: list[str]) -> int:

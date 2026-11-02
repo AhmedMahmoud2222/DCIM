@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { DataTable, EmptyRow, TD, TH, TR } from "@/components/data/DataTable";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import {
   Cable,
@@ -73,11 +76,10 @@ export function CablesPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Cables</h1>
-      <p className="mb-4 max-w-3xl text-sm text-slate-400">
-        Physical cables with identity, two fixed endpoints and a lifecycle (planned → installed → removed). Removed cables are kept as
-        history. A cable realizes the logical port connection; it never replaces one it did not create.
-      </p>
+      <PageHeader
+        title="Cables"
+        description="Physical cables with identity, two fixed endpoints and a lifecycle (planned → installed → removed). Removed cables are kept as history. A cable realizes the logical port connection; it never replaces one it did not create."
+      />
 
       <label className="mb-3 block text-xs text-slate-400">
         Status
@@ -94,31 +96,33 @@ export function CablesPage() {
         </select>
       </label>
 
-      <div className="mb-6 overflow-x-auto rounded-sm border border-slate-800 bg-slate-900">
-        <table className="w-full text-left text-xs">
-          <thead className="border-b border-slate-800 text-slate-400">
-            <tr>
-              <th className="p-2">Label</th>
-              <th className="p-2">Type</th>
-              <th className="p-2">End A</th>
-              <th className="p-2">End B</th>
-              <th className="p-2">Status</th>
-              <th className="p-2">Source</th>
-              <th className="p-2">Installed</th>
-              <th className="p-2">Actions</th>
+      <QueryStatus query={cables} what="cables" permission="cable:read" columns={8} />
+
+      {cables.data && (
+        <DataTable label="Cables" dense minWidthClass="min-w-[56rem]">
+          <thead>
+            <tr className="border-b border-line-subtle bg-surface-panel">
+              <th scope="col" className={TH}>Label</th>
+              <th scope="col" className={TH}>Type</th>
+              <th scope="col" className={TH}>End A</th>
+              <th scope="col" className={TH}>End B</th>
+              <th scope="col" className={TH}>Status</th>
+              <th scope="col" className={TH}>Source</th>
+              <th scope="col" className={TH}>Installed</th>
+              <th scope="col" className={TH}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {cables.data?.items.map((cable) => (
-              <tr key={cable.id} className="border-b border-slate-800/50">
-                <td className="p-2 font-mono">{cable.label}</td>
-                <td className="p-2">{cable.cable_type}{cable.length_m ? ` · ${cable.length_m} m` : ""}</td>
-                <td className="p-2">{endpointText(cable, "A")}</td>
-                <td className="p-2">{endpointText(cable, "B")}</td>
-                <td className="p-2"><span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_STYLE[cable.status]}`}>{cable.status}</span></td>
-                <td className="p-2">{cable.source === "discovery_confirmed" ? "from confirmed discovery" : cable.source}</td>
-                <td className="p-2">{cable.installed_at ?? "—"}{cable.removed_at ? ` → ${cable.removed_at}` : ""}</td>
-                <td className="space-x-1 p-2">
+              <tr key={cable.id} className={TR}>
+                <td className={`${TD} font-mono`}>{cable.label}</td>
+                <td className={TD}>{cable.cable_type}{cable.length_m ? ` · ${cable.length_m} m` : ""}</td>
+                <td className={TD}>{endpointText(cable, "A")}</td>
+                <td className={TD}>{endpointText(cable, "B")}</td>
+                <td className={TD}><span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_STYLE[cable.status]}`}>{cable.status}</span></td>
+                <td className={TD}>{cable.source === "discovery_confirmed" ? "from confirmed discovery" : cable.source}</td>
+                <td className={TD}>{cable.installed_at ?? "—"}{cable.removed_at ? ` → ${cable.removed_at}` : ""}</td>
+                <td className={`${TD} space-x-1`}>
                   {cable.endpoints.find((e) => e.port)?.port && (
                     <Link
                       to={`/topology/trace?port=${cable.endpoints.find((e) => e.port)!.port!.port_id}`}
@@ -144,12 +148,12 @@ export function CablesPage() {
               </tr>
             ))}
             {cables.data?.items.length === 0 && (
-              <tr><td colSpan={8} className="p-4 text-center italic text-slate-500">No cables recorded.</td></tr>
+              <EmptyRow columns={8}>No cables recorded.</EmptyRow>
             )}
           </tbody>
-        </table>
-        {action.isError && <p role="alert" className="p-2 text-xs text-red-400">{errorText(action.error)}</p>}
-      </div>
+        </DataTable>
+      )}
+      {action.isError && <p role="alert" className="p-2 text-xs text-red-400">{errorText(action.error)}</p>}
 
       {canManage && (
         <form
