@@ -336,11 +336,19 @@ def _start_blocked_concurrent_build(db: str):
             tx = a.transaction()
             await tx.start()
             await a.execute("SELECT txid_current()")
+            b_pid = await b.fetchval("SELECT pg_backend_pid()")
+            # The progress row can exist before the invalid index's catalog entry is committed, and the view is
+            # cluster-wide: wait for THIS build's row and for the committed invalid index in this database.
+            visible = (
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_progress_create_index WHERE pid = $1) AND EXISTS ("
+                "SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                "WHERE c.relname = $2 AND c.relnamespace = 'public'::regnamespace AND NOT i.indisvalid)"
+            )
             build = asyncio.ensure_future(
                 b.execute(f"CREATE INDEX CONCURRENTLY {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
             )
             for _ in range(100):
-                n = await a.fetchval("SELECT count(*) FROM pg_stat_progress_create_index")
+                n = await a.fetchval(visible, b_pid, FIRST_NAME)
                 if n:
                     break
                 await asyncio.sleep(0.1)
