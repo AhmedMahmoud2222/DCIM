@@ -59,7 +59,10 @@ async def _wait_until_authority_waiter_queued(session, waiter, timeout: float = 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while (await session.execute(queued, {"name": AUTHORITY_LOCK_NAME})).scalar_one() < 1:
-        assert not waiter.done(), "second mutation entered the authority section while the first held the lock"
+        if waiter.done():
+            # Surface the waiter's own failure (cancellation, connection error) instead of reporting it as lock entry.
+            waiter.result()
+            raise AssertionError("second mutation entered the authority section while the first held the lock")
         if loop.time() >= deadline:
             sql = "SELECT pid, mode, granted, classid, objid FROM pg_locks WHERE locktype = 'advisory'"
             rows = (await session.execute(text(sql))).all()
