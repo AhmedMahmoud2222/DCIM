@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { FormEvent, useState } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
@@ -32,7 +34,7 @@ function GroupChecklist({
   return (
     <fieldset className="space-y-1" disabled={disabled}>
       <legend className="mb-1 text-xs text-slate-400">Groups</legend>
-      {groups.length === 0 && <p className="text-xs text-slate-500">No groups defined yet.</p>}
+      {groups.length === 0 && <p className="text-xs text-fg-secondary">No groups defined yet.</p>}
       {groups.map((g) => (
         <label key={g.id} className="flex items-center gap-2 text-sm">
           <input
@@ -63,7 +65,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
       {access.role_names.length > 0 && <p className="text-slate-400">Roles: {access.role_names.join(", ")}</p>}
       <div>
         <h3 className="mb-1 font-semibold text-slate-300">Effective permissions ({codes.length})</h3>
-        {codes.length === 0 && <p className="text-slate-500">None. Access is denied by default.</p>}
+        {codes.length === 0 && <p className="text-fg-secondary">None. Access is denied by default.</p>}
         <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
           {codes.map((code) => (
             <li key={code} className="rounded-sm bg-slate-800 px-2 py-1">
@@ -105,7 +107,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
       {!access.unrestricted && (
         <div>
           <h3 className="mb-1 font-semibold text-slate-300">Sites ({access.sites.length})</h3>
-          {access.sites.length === 0 && <p className="text-slate-500">No site access.</p>}
+          {access.sites.length === 0 && <p className="text-fg-secondary">No site access.</p>}
           <ul className="space-y-1">
             {access.sites.map((s) => (
               <li key={s.site_id} className="rounded-sm bg-slate-800 px-2 py-1">
@@ -209,11 +211,7 @@ export function UsersPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Users</h1>
-      <p className="mb-4 max-w-2xl text-sm text-slate-400">
-        Create and manage users and assign them to groups. Group membership decides which sites and racks a user can see.
-        All rules are enforced by the server.
-      </p>
+      <PageHeader title="Users" description="Create and manage users and assign them to groups. Group membership decides which sites and racks a user can see. All rules are enforced by the server." />
       {message && (
         <p role={message.kind === "error" ? "alert" : "status"} className={`mb-3 text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}>
           {message.text}
@@ -259,8 +257,7 @@ export function UsersPage() {
               </button>
             </form>
           )}
-          {usersQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-          {usersQuery.isError && <p role="alert" className="text-sm text-red-400">{errorText(usersQuery.error)}</p>}
+          <QueryStatus query={usersQuery} what="users" permission="user:read" columns={1} />
           <ul className="space-y-1" aria-label="Users">
             {usersQuery.data?.items.map((u) => (
               <li key={u.id}>

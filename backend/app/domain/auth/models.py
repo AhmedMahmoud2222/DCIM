@@ -159,3 +159,9 @@ class UserGroupRackAccess(Base):
     rack_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("managed_asset.id", ondelete="CASCADE"), primary_key=True, index=True
     )
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_role_permission_permission_id", RolePermission.permission_id)
+Index("ix_user_group_permission_permission_id", UserGroupPermission.permission_id)

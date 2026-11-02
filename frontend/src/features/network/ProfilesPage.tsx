@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import {
@@ -81,9 +82,12 @@ export function ProfilesPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Device Profiles</h1>
+      <h1 className="mb-1 text-lg font-semibold">Network Profiles</h1>
       <p className="mb-4 max-w-3xl text-sm text-slate-400">
-        Device profiles define capability specifications, sysObjectID matching, discovery OIDs, metric mappings, and network discovery parameters (LLDP/CDP table layouts). They never hold credentials. An ambiguous match selects nothing.
+        Network profiles describe SNMP-managed network devices for discovery: sysObjectID matching, discovery OIDs, metric mappings and LLDP/CDP table layouts. They never hold credentials. An ambiguous match selects nothing.
+      </p>
+      <p className="mb-4 max-w-3xl text-sm text-slate-400">
+        General equipment and PDU models live in the <Link to="/admin/catalog" className="text-sky-400 hover:underline">Asset Catalog</Link>. Nothing on this page implies that other device types support SNMP, LLDP or CDP.
       </p>
 
       <label className="mb-3 flex items-center gap-2 text-xs text-slate-400">

@@ -44,6 +44,7 @@ from app.application.catalog_designer_service import (
     ValidationSummary,
     allocate_revision_number,
     clone_revision,
+    load_pdu_outlets,
     lock_draft_revision_for_edit,
     publish_revision,
     thumbnail_storage_key,
@@ -72,7 +73,10 @@ from app.infrastructure.storage import get_storage_backend
 
 router = APIRouter(prefix="/catalog", tags=["catalog-designer"])
 
-_BRIDGED_CATEGORIES = ("rack", "equipment")
+# Categories the designer/lifecycle workflow accepts at model-creation time. `pdu`
+# joins rack/equipment here in Issue #150 M3, but only rack/equipment are *also* bridged
+# into the legacy tables at publish time (see catalog_designer_service.publish_revision).
+_DESIGNER_CATEGORIES = ("rack", "equipment", "pdu")
 
 
 def _request_ids(request: Request) -> tuple[str | None, str | None]:
@@ -266,12 +270,12 @@ async def create_catalog_model(
     db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_catalog_administrator("catalog:manage")),
 ) -> CatalogModel:
-    if body.category not in _BRIDGED_CATEGORIES:
+    if body.category not in _DESIGNER_CATEGORIES:
         raise ApiError(
             status_code=422, title="Unsupported Category",
             detail=(
-                f"category {body.category!r} is not yet supported by the designer/lifecycle/legacy-bridge "
-                f"workflow (spec §4.1) — only {_BRIDGED_CATEGORIES} in this phase."
+                f"category {body.category!r} is not yet supported by the designer/lifecycle "
+                f"workflow (spec §4.1) — only {_DESIGNER_CATEGORIES} in this phase."
             ),
         )
     if body.category not in CATEGORIES:
@@ -1558,7 +1562,8 @@ async def validate_revision_endpoint(
     assert model is not None
     ports, psus, metrics = await _load_children(db, revision_id)
     graphics = await _load_graphics(db, revision_id)
-    return validate_revision_for_publish(revision, model.category, ports, psus, metrics, graphics)
+    pdu_outlets = await load_pdu_outlets(db, revision_id=revision_id) if model.category == "pdu" else None
+    return validate_revision_for_publish(revision, model.category, ports, psus, metrics, graphics, pdu_outlets=pdu_outlets)
 
 
 @router.post("/revisions/{revision_id}/publish")

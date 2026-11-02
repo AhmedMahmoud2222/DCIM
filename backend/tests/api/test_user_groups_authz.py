@@ -456,6 +456,8 @@ def test_dynamic_permission_checks_are_confined_to_reviewed_modules():
     }
     # bulk_import: jobs are restricted to their uploader (_assert_job_visible).
     # catalog_designer: conditional catalog:* codes, which restricted users never hold.
+    # pdu_catalog: conditional catalog:* codes for the PDU draft sub-resource (Issue #150 R1/R6),
+    #   which restricted users never hold (catalog:* codes are not scope-aware).
     # thermal: `_holds` applies a granted-but-scope-inactive spatial/telemetry/power/alarm code only because every query
     # behind the thermal views is filtered by the caller's site/rack scope before interpolation or aggregation.
-    assert dynamic <= {"bulk_import.py", "catalog_designer.py", "thermal.py"}, dynamic
+    assert dynamic <= {"bulk_import.py", "catalog_designer.py", "pdu_catalog.py", "thermal.py"}, dynamic

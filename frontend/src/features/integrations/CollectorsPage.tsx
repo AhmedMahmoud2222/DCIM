@@ -10,17 +10,9 @@ import {
   registerCollector,
   triggerPollNow,
 } from "@/features/integrations/api";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { CollectorConnectivity } from "@/features/status/StatusBadges";
 import { ApiError } from "@/lib/apiClient";
-
-const HEALTH_COLORS: Record<string, string> = {
-  healthy: "bg-green-900 text-green-200",
-  stale: "bg-amber-900 text-amber-200",
-  offline: "bg-red-900 text-red-200",
-};
-
-function HealthBadge({ health }: { health: string }) {
-  return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${HEALTH_COLORS[health] ?? "bg-slate-700"}`}>{health}</span>;
-}
 
 function fmtSeconds(s: number | null): string {
   if (s === null) return "never";
@@ -154,6 +146,8 @@ export function CollectorsPage() {
             </div>
           )}
 
+          <QueryStatus query={collectorsQuery} what="collectors" permission="collector:read" columns={1} />
+
           <div className="max-h-[420px] space-y-1 overflow-y-auto">
             {collectorsQuery.data?.map((c) => (
               <button
@@ -164,18 +158,18 @@ export function CollectorsPage() {
                 }`}
               >
                 <span className="truncate">
-                  {c.name} <span className="text-slate-500">({c.collector_type})</span>
+                  {c.name} <span className="text-fg-secondary">({c.collector_type})</span>
                 </span>
-                <HealthBadge health={c.health} />
+                <CollectorConnectivity health={c.health} />
               </button>
             ))}
-            {collectorsQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">No collectors registered yet.</p>}
+            {collectorsQuery.data?.length === 0 && <p className="text-xs italic text-fg-secondary">No collectors registered yet.</p>}
           </div>
         </div>
 
         <div className="col-span-2 space-y-4">
           {!selected && (
-            <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+            <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 text-sm text-fg-secondary">
               Select a collector from the list to inspect it.
             </div>
           )}
@@ -187,7 +181,7 @@ export function CollectorsPage() {
                   <div>
                     <h2 className="text-sm font-semibold text-slate-200">{selected.name}</h2>
                     <div className="mt-1 flex gap-2">
-                      <HealthBadge health={selected.health} />
+                      <CollectorConnectivity health={selected.health} />
                       <span className="rounded-sm bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">{selected.status}</span>
                     </div>
                   </div>
@@ -202,19 +196,19 @@ export function CollectorsPage() {
 
                 <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                   <div>
-                    <dt className="text-slate-500">Type</dt>
+                    <dt className="text-fg-secondary">Type</dt>
                     <dd>{selected.collector_type}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500">Site</dt>
+                    <dt className="text-fg-secondary">Site</dt>
                     <dd>{selected.site_id ?? "—"}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500">Version</dt>
+                    <dt className="text-fg-secondary">Version</dt>
                     <dd>{selected.version_string ?? "—"}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500">Last heartbeat</dt>
+                    <dt className="text-fg-secondary">Last heartbeat</dt>
                     <dd>{fmtSeconds(selected.seconds_since_heartbeat)}</dd>
                   </div>
                 </dl>
@@ -226,7 +220,7 @@ export function CollectorsPage() {
                         {o.integration_id}: {o.succeeded ? `ok (${o.external_identifier ?? "—"})` : o.error}
                       </div>
                     ))}
-                    {pollMutation.data.length === 0 && <p className="italic text-slate-500">No integrations assigned to poll.</p>}
+                    {pollMutation.data.length === 0 && <p className="italic text-fg-secondary">No integrations assigned to poll.</p>}
                   </div>
                 )}
               </div>
@@ -240,7 +234,7 @@ export function CollectorsPage() {
                         {c.protocol_code}
                       </span>
                     ))}
-                    {capabilitiesQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">None declared.</p>}
+                    {capabilitiesQuery.data?.length === 0 && <p className="text-xs italic text-fg-secondary">None declared.</p>}
                   </div>
                   <form
                     onSubmit={(e: FormEvent) => {
@@ -273,10 +267,10 @@ export function CollectorsPage() {
                   <div className="mb-2 space-y-1">
                     {assignedIntegrations.map((i) => (
                       <div key={i.id} className="rounded-sm bg-slate-800/60 px-2 py-1 text-xs">
-                        {i.name} <span className="text-slate-500">({i.integration_type})</span>
+                        {i.name} <span className="text-fg-secondary">({i.integration_type})</span>
                       </div>
                     ))}
-                    {assignedIntegrations.length === 0 && <p className="text-xs italic text-slate-500">None assigned.</p>}
+                    {assignedIntegrations.length === 0 && <p className="text-xs italic text-fg-secondary">None assigned.</p>}
                   </div>
                   <form
                     onSubmit={(e: FormEvent) => {

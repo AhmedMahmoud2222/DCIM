@@ -10,18 +10,35 @@ edits, via the shared `parse_if_match` helper (F-M1 correction)."""
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import check_version_match, lock_versioned_row, parse_if_match, require_if_match
+from app.application.idempotency import (
+    ClaimRef,
+    IdempotencyConflict,
+    IdempotencyStillProcessing,
+    complete_claim,
+    get_or_claim,
+    hash_request_body,
+    release_claim,
+)
 from app.application.outbox_service import write_outbox_event
+from app.application.pdu_instantiation_service import PDUInstantiationRejected, instantiate_pdu
+from app.application.placement_service import (
+    PlacementConflict,
+    get_current_equipment_placement,
+    move_equipment,
+    retire_equipment_placement,
+)
 from app.application.power_capacity import (
     derive_node_capacity_exceptions,
     equipment_power_summary,
@@ -38,11 +55,19 @@ from app.application.power_graph import (
     with_connection_mutation_lock,
 )
 from app.application.power_protection import assert_link_allowed
-from app.application.rbac import require_permission
+from app.application.rbac import AuthContext, require_permission
+from app.application.spatial_validation import (
+    validate_rotation_degrees,
+    validate_u_range_against_rack_capacity,
+)
+from app.application.thermal.capacity import room_site_id
+from app.application.thermal.environment import scope_sees_site_assets
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.core.logging import get_logger
+from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
-from app.domain.physical.models import Equipment
+from app.domain.physical.models import Equipment, Rack
+from app.domain.placement.models import PLACEMENT_TYPES, EquipmentPlacement, RackPlacement
 from app.domain.power.models import (
     PDU,
     UPS,
@@ -74,6 +99,10 @@ class PowerNodeOut(BaseModel):
     label: str
     retired_at: datetime | None
     created_at: datetime
+    # R6b: outlet_number is populated for `pdu_outlet` nodes (read from PDUOutlet), so
+    # inventory/topology surfaces can identify an outlet by its stable number as well as
+    # its PowerNode identity. NULL for every other node type.
+    outlet_number: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -148,6 +177,384 @@ async def create_pdu(
     )
     await db.commit()
     return PowerNodeOut.model_validate(node)
+
+
+class PDUInstantiateIn(BaseModel):
+    asset_tag: str = Field(max_length=64)
+    name: str = Field(max_length=128)
+    catalog_model_revision_id: uuid.UUID
+    ip_address: str | None = Field(default=None, max_length=45)
+    protocol: Literal["snmp", "rest", "none"] = "none"
+
+
+class PDUInstantiateOut(PowerNodeOut):
+    catalog_model_revision_id: uuid.UUID
+    outlet_count: int
+    outlets: list[PowerNodeOut]
+
+
+@router.post("/pdus/instantiate", response_model=PDUInstantiateOut, status_code=201)
+async def instantiate_pdu_endpoint(
+    body: PDUInstantiateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ctx=Depends(require_permission("power:manage")),
+) -> PDUInstantiateOut:
+    """Issue #150 M4: create a physical PDU — `ManagedAsset(asset_type='pdu')` + the `pdu`
+    graph `PowerNode` + the `PDU` subtype + one `pdu_outlet` node/`PDUOutlet` pair per
+    published outlet template — in one transaction; see
+    app/application/pdu_instantiation_service.py for the full contract. Draft/retired/
+    non-pdu revisions are rejected with 409, matching catalog_designer_service.py's
+    ConflictError convention and POST /equipment/instantiate's own mapping.
+    `input_voltage`/`rated_current_a`/`outlet_count` come from the published revision,
+    never from the request body."""
+    request_hash = hash_request_body(body.model_dump(mode="json"))
+    claim = None
+    if idempotency_key is not None:
+        try:
+            outcome = await get_or_claim(
+                db, key=idempotency_key, endpoint="POST:/power/pdus/instantiate", request_hash=request_hash
+            )
+        except IdempotencyConflict as exc:
+            raise ApiError(
+                status_code=422, title="Idempotency Key Reused",
+                detail="This Idempotency-Key was already used with a different request body.",
+            ) from exc
+        except IdempotencyStillProcessing as exc:
+            raise ApiError(
+                status_code=503, title="Request Still Processing",
+                detail="An identical request with this Idempotency-Key is still being processed. Retry shortly.",
+            ) from exc
+        if outcome.cached is not None:
+            assert outcome.cached.response_body is not None
+            return PDUInstantiateOut(**outcome.cached.response_body)
+        claim = outcome.claim
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
+
+    try:
+        try:
+            node, pdu, outlet_nodes, outlet_numbers = await instantiate_pdu(
+                db,
+                asset_tag=body.asset_tag,
+                catalog_model_revision_id=body.catalog_model_revision_id,
+                name=body.name,
+                ip_address=body.ip_address,
+                protocol=body.protocol,
+            )
+        except PDUInstantiationRejected as exc:
+            raise ApiError(
+                status_code=409, title="Instantiation Rejected", detail=exc.detail,
+                type_="https://dcim.internal/errors/conflict",
+            ) from exc
+
+        request_id, correlation_id = _request_ids(request)
+        await write_audit_log(
+            db, actor_user_id=ctx.user.id, action="power.pdu.instantiate", entity_type="pdu", entity_id=pdu.id,
+            request_id=request_id, correlation_id=correlation_id,
+            after={"asset_tag": body.asset_tag, "catalog_model_revision_id": str(body.catalog_model_revision_id)},
+        )
+        await write_outbox_event(
+            db, event_type="PDUInstantiated", aggregate_type="pdu", aggregate_id=pdu.id,
+            payload={"catalog_model_revision_id": str(body.catalog_model_revision_id), "outlet_count": len(outlet_nodes)},
+            correlation_id=correlation_id,
+        )
+        out = PDUInstantiateOut(
+            **PowerNodeOut.model_validate(node).model_dump(),
+            catalog_model_revision_id=body.catalog_model_revision_id,
+            outlet_count=len(outlet_nodes),
+            outlets=[
+                PowerNodeOut(
+                    **{k: v for k, v in PowerNodeOut.model_validate(n).model_dump(mode="python").items() if k != "outlet_number"},
+                    outlet_number=num,
+                )
+                for n, num in zip(outlet_nodes, outlet_numbers, strict=True)
+            ],
+        )
+        if claim is not None:
+            await complete_claim(db, claim, response_status=201, response_body=out.model_dump(mode="json"))
+        await db.commit()
+        return out
+    except Exception:
+        await db.rollback()
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
+        raise
+
+
+# ------------------------------------------------------------------------- PDU physical placement (Issue #150 R5)
+
+
+class PDUPlacementIn(BaseModel):
+    room_id: uuid.UUID
+    placement_type: str
+    rack_id: uuid.UUID | None = None
+    u_start: int | None = None
+    u_end: int | None = None
+    side: Literal["front", "rear", "both"] | None = None
+    position: str | None = Field(default=None, max_length=64)
+    rotation_deg: int | None = None
+
+
+class PDUPlacementOut(BaseModel):
+    id: uuid.UUID
+    room_id: uuid.UUID
+    placement_type: str
+    rack_id: uuid.UUID | None = None
+    u_start: int | None = None
+    u_end: int | None = None
+    side: str | None = None
+    position: str | None = None
+    version: int
+    effective_from: datetime
+
+
+def _pdu_placement_out(p: EquipmentPlacement) -> PDUPlacementOut:
+    u_range = p.u_range
+    return PDUPlacementOut(
+        id=p.id,
+        room_id=p.room_id,
+        placement_type=p.placement_type,
+        rack_id=p.rack_id,
+        u_start=u_range.lower if u_range is not None else None,
+        u_end=u_range.upper if u_range is not None else None,
+        side=p.side,
+        position=p.mounting_method,
+        version=p.version,
+        effective_from=p.effective_from,
+    )
+
+
+async def _visible_room_site(db: AsyncSession, ctx: AuthContext, room_id: uuid.UUID) -> uuid.UUID:
+    """The room must exist and be inside a site the caller's scope can see — the
+    cross-site restriction for PDU placement (a PDU ManagedAsset carries no site_id of
+    its own, so the caller's data scope is the authorization boundary)."""
+
+    site_id = await room_site_id(db, room_id)
+    if site_id is None or not scope_sees_site_assets(ctx.scope, site_id):
+        raise NotFoundError(f"Room {room_id} not found.")
+    return site_id
+
+
+@router.post("/pdus/{pdu_id}/placement", response_model=PDUPlacementOut, status_code=201)
+async def place_pdu(
+    pdu_id: uuid.UUID,
+    body: PDUPlacementIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    ctx=Depends(require_permission("power:manage")),
+) -> PDUPlacementOut:
+    """Place or move a PDU in the datacenter.
+
+    Reuses the locked close-then-open `move_equipment` transaction (per-asset advisory
+    lock, then row lock, then version check), so PDU placement is serialized per PDU and
+    protected by the same GiST exclusion constraints as rack-mounted equipment.
+
+    * Horizontal rack-mounted PDUs require rack_id/u_start/u_end/side and pass a
+      rack-U-capacity check; overlapping U ranges are rejected by the database's
+      exclusion constraints.
+    * Vertical 0U PDUs use placement_type='other' with rack_id and side but no U range
+      and no U-capacity check — a 0U PDU consumes no rack units. Its mounting position
+      is recorded as `position` (exposed on the placement read surface).
+    """
+
+    pdu = await db.get(PDU, pdu_id)
+    if pdu is None:
+        raise NotFoundError(f"PDU {pdu_id} not found.")
+    if body.placement_type not in PLACEMENT_TYPES:
+        raise ApiError(
+            status_code=422, title="Validation Error",
+            detail=f"placement_type must be one of {PLACEMENT_TYPES}",
+        )
+    validate_rotation_degrees(body.rotation_deg)
+    # Destination-scope check: the room the PDU is being placed into must be visible to
+    # the caller's scope.
+    await _visible_room_site(db, ctx, body.room_id)
+    # Source-scope check: a move must not take an asset out of a room/site the caller
+    # cannot see. The current placement (if any) must also be within the caller's scope.
+    current_placement = await get_current_equipment_placement(db, pdu_id)
+    if current_placement is not None:
+        await _visible_room_site(db, ctx, current_placement.room_id)
+
+    mounting_method: str | None = None
+    orientation: str | None = None
+    if body.placement_type == "rack_mounted":
+        if None in (body.rack_id, body.u_start, body.u_end, body.side):
+            raise ApiError(
+                status_code=422, title="Validation Error",
+                detail="rack_mounted placement requires rack_id, u_start, u_end and side.",
+            )
+        rack = await db.get(Rack, body.rack_id)
+        if rack is None or rack.model_revision_id is None:
+            raise NotFoundError(f"Rack {body.rack_id} not found.")
+        rack_placement = (
+            await db.execute(
+                select(RackPlacement)
+                .where(RackPlacement.rack_id == body.rack_id, RackPlacement.effective_to.is_(None))
+            )
+        ).scalar_one_or_none()
+        if rack_placement is None or rack_placement.room_id != body.room_id:
+            raise ApiError(
+                status_code=422, title="Validation Error", detail="The rack is not currently placed in this room."
+            )
+        model_revision = await db.get(RackModelRevision, rack.model_revision_id)
+        assert model_revision is not None
+        assert body.u_start is not None and body.u_end is not None
+        validate_u_range_against_rack_capacity(
+            u_start=body.u_start, u_end=body.u_end, rack_height_u=model_revision.height_u
+        )
+    elif body.placement_type == "other":
+        # Vertical 0U: a rack and a side are required, but no U range is allocated and no
+        # U-capacity check applies — a 0U PDU consumes no rack units.
+        if None in (body.rack_id, body.side):
+            raise ApiError(
+                status_code=422, title="Validation Error",
+                detail="A vertical (0U) placement requires rack_id and side.",
+            )
+        if body.u_start is not None or body.u_end is not None:
+            raise ApiError(
+                status_code=422, title="Validation Error",
+                detail="u_start/u_end apply to rack-mounted placements only.",
+            )
+        rack = await db.get(Rack, body.rack_id)
+        if rack is None:
+            raise NotFoundError(f"Rack {body.rack_id} not found.")
+        rack_placement = (
+            await db.execute(
+                select(RackPlacement)
+                .where(RackPlacement.rack_id == body.rack_id, RackPlacement.effective_to.is_(None))
+            )
+        ).scalar_one_or_none()
+        if rack_placement is None or rack_placement.room_id != body.room_id:
+            raise ApiError(
+                status_code=422, title="Validation Error", detail="The rack is not currently placed in this room."
+            )
+        # Vertical 0U discriminator: `orientation` marks this row as a vertical PDU so the
+        # partial unique index (0056) can enforce at most one current vertical placement per
+        # rack + side. The human-readable mounting position rides on `mounting_method`.
+        orientation = "pdu_vertical_0u"
+        mounting_method = body.position
+    else:
+        if body.rack_id is not None or body.u_start is not None or body.u_end is not None:
+            raise ApiError(
+                status_code=422, title="Validation Error",
+                detail="rack_id/u_start/u_end apply to rack-mounted placements only.",
+            )
+
+    if_match_version = int(if_match.strip().strip('"')) if if_match else None
+    try:
+        placement = await move_equipment(
+            db,
+            equipment_id=pdu_id,
+            placement_type=body.placement_type,
+            room_id=body.room_id,
+            rack_id=body.rack_id,
+            u_start=body.u_start,
+            u_end=body.u_end,
+            side=body.side,
+            rotation_deg=body.rotation_deg,
+            mounting_method=mounting_method,
+            orientation=orientation,
+            if_match_version=if_match_version,
+        )
+    except PlacementConflict as exc:
+        current = exc.current
+        await db.rollback()
+        detail = (
+            f"PDU placement was changed by another request; current version={current.version}."
+            if current is not None
+            else "PDU placement was changed by another request and is no longer where expected."
+        )
+        raise ConflictError(detail=detail) from exc
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError(
+            detail="That placement conflicts with an existing placement: either the rack units "
+            "overlap (horizontal) or another vertical (0U) PDU already occupies that rack side."
+        ) from exc
+
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="power.pdu.placement.set",
+        entity_type="pdu",
+        entity_id=pdu_id,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        after={
+            "room_id": str(body.room_id),
+            "placement_type": body.placement_type,
+            "rack_id": str(body.rack_id) if body.rack_id else None,
+        },
+    )
+    await write_outbox_event(
+        db,
+        event_type="PDUPlaced",
+        aggregate_type="pdu",
+        aggregate_id=pdu_id,
+        payload={"room_id": str(body.room_id), "placement_type": body.placement_type},
+        correlation_id=correlation_id,
+    )
+    await db.commit()
+    return _pdu_placement_out(placement)
+
+
+@router.get("/pdus/{pdu_id}/placement", response_model=PDUPlacementOut)
+async def get_pdu_placement(
+    pdu_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("power:read")),
+) -> PDUPlacementOut:
+    """Read a PDU's current placement (404 if the PDU or its placement does not exist)."""
+    pdu = await db.get(PDU, pdu_id)
+    if pdu is None:
+        raise NotFoundError(f"PDU {pdu_id} not found.")
+    placement = await get_current_equipment_placement(db, pdu_id)
+    if placement is None:
+        raise NotFoundError(f"PDU {pdu_id} is not placed.")
+    return _pdu_placement_out(placement)
+
+
+@router.delete("/pdus/{pdu_id}/placement", status_code=204)
+async def retire_pdu_placement(
+    pdu_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    ctx=Depends(require_permission("power:manage")),
+) -> None:
+    """Remove a PDU's placement (close the current placement row, no replacement).
+    Idempotent: unplacing an already-unplaced PDU is a success, not a 409."""
+    pdu = await db.get(PDU, pdu_id)
+    if pdu is None:
+        raise NotFoundError(f"PDU {pdu_id} not found.")
+    if_match_version = int(if_match.strip().strip('"')) if if_match else None
+    retired = await retire_equipment_placement(db, equipment_id=pdu_id, if_match_version=if_match_version)
+    if retired is None:
+        await db.commit()
+        return
+    request_id, correlation_id = _request_ids(request)
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="power.pdu.placement.remove",
+        entity_type="pdu",
+        entity_id=pdu_id,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        before={"room_id": str(retired.room_id)},
+    )
+    await write_outbox_event(
+        db,
+        event_type="PDUUnplaced",
+        aggregate_type="pdu",
+        aggregate_id=pdu_id,
+        payload={},
+        correlation_id=correlation_id,
+    )
+    await db.commit()
 
 
 @router.post("/upses", response_model=PowerNodeOut, status_code=201)
@@ -302,15 +709,26 @@ async def list_power_nodes(
     db: AsyncSession = Depends(get_db), pagination: Pagination = Depends(pagination_params),
     node_type: str | None = None, ctx=Depends(require_permission("power:read")),
 ) -> Page:
-    stmt = select(PowerNode)
+    stmt = (
+        select(PowerNode, PDUOutlet.outlet_number)
+        .outerjoin(PDUOutlet, PDUOutlet.power_node_id == PowerNode.id)
+    )
     if node_type is not None:
         stmt = stmt.where(PowerNode.node_type == node_type)
     total_stmt = select(PowerNode.id)
     if node_type is not None:
         total_stmt = total_stmt.where(PowerNode.node_type == node_type)
     total = len((await db.execute(total_stmt)).all())
-    rows = (await db.execute(stmt.order_by(PowerNode.label).offset(pagination.offset).limit(pagination.limit))).scalars().all()
-    items = [PowerNodeOut.model_validate(r) for r in rows]
+    rows = (
+        await db.execute(stmt.order_by(PowerNode.label).offset(pagination.offset).limit(pagination.limit))
+    ).all()
+    items = [
+        PowerNodeOut(
+            **PowerNodeOut.model_validate(node).model_dump(mode="python", exclude={"outlet_number"}),
+            outlet_number=outlet_number,
+        )
+        for node, outlet_number in rows
+    ]
     return Page(items=items, total=total, limit=pagination.limit, offset=pagination.offset)
 
 
@@ -321,7 +739,11 @@ async def get_power_node(
     node = await db.get(PowerNode, node_id)
     if node is None:
         raise NotFoundError(f"PowerNode {node_id} not found.")
-    return PowerNodeOut.model_validate(node)
+    outlet_number = (
+        await db.execute(select(PDUOutlet.outlet_number).where(PDUOutlet.power_node_id == node_id))
+    ).scalar_one_or_none()
+    node_dump = PowerNodeOut.model_validate(node).model_dump(mode="python", exclude={"outlet_number"})
+    return PowerNodeOut(**node_dump, outlet_number=outlet_number)
 
 
 @router.post("/nodes/{node_id}/retire", response_model=PowerNodeOut)

@@ -61,3 +61,8 @@ class Alarm(Base, UUIDPkMixin):
     cleared_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     last_value: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_alarm_telemetry_reading_id", Alarm.telemetry_reading_id)

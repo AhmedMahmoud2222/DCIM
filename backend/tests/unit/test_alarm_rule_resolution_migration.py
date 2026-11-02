@@ -22,8 +22,14 @@ def test_resolution_migration_follows_aggregate_lineage_as_single_head():
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[2] / "migrations"))
     directory = ScriptDirectory.from_config(config)
-    assert directory.get_heads() == ["0055_alarm_rule_resolution"]
+    # Issue #150 B7: 0055_pdu_catalog_outlet_template follows 0055_alarm_rule_resolution;
+    # the vertical-placement uniqueness migration (0056) follows the PDU migration,
+    # and the FK-index migration (0057) follows 0056, so 0057 is the single head.
+    assert directory.get_heads() == ["0057_fk_indexes"]
     assert directory.get_revision("0055_alarm_rule_resolution").down_revision == "0051_aggregate_lineage"
+    assert directory.get_revision("0055_pdu_catalog_outlet_template").down_revision == "0055_alarm_rule_resolution"
+    assert directory.get_revision("0056_pdu_vertical_placement").down_revision == "0055_pdu_catalog_outlet_template"
+    assert directory.get_revision("0057_fk_indexes").down_revision == "0056_pdu_vertical_placement"
 
 
 def test_upgrade_is_nullable_without_backfill():

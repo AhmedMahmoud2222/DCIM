@@ -94,7 +94,7 @@ behind a hidden one.
 ## 5. Interfaces
 
 Cables: `/api/v1/cables`. Pass-throughs: `/api/v1/pass-throughs` (`cable:read`, `cable:manage`; scope-aware; 404 for anything
-outside the caller's scope). Frontend: Cables, Pass-throughs, Trace, Neighbors and Network Profiles pages.
+outside the caller's scope). Frontend: Cables, Pass-throughs, Trace, Neighbors and Network Profiles pages (UI label; the route, API and permissions keep the network_profile name).
 
 Migration chain: 0035 units and metric registry, 0036 catalog extraction apply, 0037 network profiles, 0038 discovered
 neighbors, 0039 cables, 0040 port pass-through. One Alembic head. Downgrades refuse to discard recorded profiles, decided

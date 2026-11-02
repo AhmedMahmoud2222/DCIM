@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { useHasPermission, useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
 import { GraphicsEditorPage } from "@/features/catalog-designer/GraphicsEditorPage";
 import {
   createNetworkPort,
@@ -12,6 +12,8 @@ import {
   deleteMonitoringMetric,
   deleteNetworkPort,
   deletePowerSupply,
+  getCatalogModel,
+  getPduDraft,
   getRevision,
   publishRevision,
   retireRevision,
@@ -19,6 +21,8 @@ import {
   updateRevision,
   validateRevision,
 } from "@/features/catalog-designer/api";
+import { PduInstantiatePanel } from "@/features/catalog-designer/PduInstantiatePanel";
+import { PduSpecPanel } from "@/features/catalog-designer/PduSpecPanel";
 import { ApiError } from "@/lib/apiClient";
 import { CatalogModelRevisionDetail, ValidationSummary } from "@/types";
 
@@ -35,11 +39,34 @@ export function RevisionEditorPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isCatalogAdministrator = useIsCatalogAdministrator();
+  const hasPowerManage = useHasPermission("power:manage");
 
   const revisionQuery = useQuery({
     queryKey: ["catalog", "revisions", revisionId],
     queryFn: () => getRevision(revisionId!),
     enabled: !!revisionId,
+  });
+
+  // Category gating for the PDU panels (Issue #150 M5): the revision payload doesn't
+  // carry `category`, so the owning model is fetched under a dedicated key — deliberately
+  // NOT ["catalog","models",id], whose invalidation behaviour ModelDetailPage and this
+  // page's own cache-invalidation tests depend on (an active observer on that key would
+  // refetch it on every invalidate and defeat those assertions). Category never changes,
+  // so this key needs no invalidation.
+  const modelQuery = useQuery({
+    queryKey: ["catalog", "model-category", revisionQuery.data?.catalog_model_id],
+    queryFn: () => getCatalogModel(revisionQuery.data!.catalog_model_id),
+    enabled: !!revisionQuery.data?.catalog_model_id,
+  });
+  const isPduCategory = modelQuery.data?.category === "pdu";
+
+  // The M2 PDU sub-resource only exists for pdu-category revisions (404 otherwise) and
+  // is immutable once published (409), so the query is gated to exactly the one state
+  // where reading it is part of the contract: a pdu draft.
+  const pduDraftQuery = useQuery({
+    queryKey: ["catalog", "pdu", revisionId],
+    queryFn: () => getPduDraft(revisionId!),
+    enabled: !!revisionId && isPduCategory && revisionQuery.data?.lifecycle_status === "draft",
   });
 
   // Every mutation below changes fields that are also cached under the parent model's own
@@ -50,6 +77,7 @@ export function RevisionEditorPage() {
   // which is exactly the source of an avoidable If-Match 409 this invalidation prevents.
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ["catalog", "revisions", revisionId] });
+    queryClient.invalidateQueries({ queryKey: ["catalog", "pdu", revisionId] });
     if (revisionQuery.data) {
       queryClient.invalidateQueries({ queryKey: ["catalog", "models", revisionQuery.data.catalog_model_id] });
     }
@@ -103,12 +131,49 @@ export function RevisionEditorPage() {
 
       <TemplateEditors revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
 
-      <GraphicsEditorPage revision={revision} readOnly={!canEditDraft} onChanged={invalidate} />
+      {isPduCategory && revision.lifecycle_status === "draft" && (
+        <>
+          {pduDraftQuery.isLoading && <p className="mb-6 text-sm text-slate-400">Loading PDU specification…</p>}
+          {pduDraftQuery.isError && (
+            <p className="mb-6 text-sm text-red-400">
+              {pduDraftQuery.error instanceof ApiError ? pduDraftQuery.error.detail : (pduDraftQuery.error as Error).message}
+            </p>
+          )}
+          {pduDraftQuery.data && (
+            <PduSpecPanel
+              key={`${revision.id}:${pduDraftQuery.data.version}`}
+              revision={revision}
+              draft={pduDraftQuery.data}
+              readOnly={!canEditDraft}
+              onSaved={invalidate}
+            />
+          )}
+        </>
+      )}
+
+      <GraphicsEditorPage
+        revision={revision}
+        readOnly={!canEditDraft}
+        onChanged={invalidate}
+        markerLabelSuggestions={pduDraftQuery.data?.outlets.map((o) => o.label) ?? []}
+      />
 
       {canEditDraft && <PublishPanel revision={revision} onPublished={invalidate} />}
       {revision.lifecycle_status === "published" && isCatalogAdministrator && <RetirePanel revision={revision} onRetired={invalidate} />}
       {revision.lifecycle_status === "retired" && isCatalogAdministrator && (
         <RetireOverridePanel revision={revision} onChanged={invalidate} />
+      )}
+
+      {isPduCategory && hasPowerManage &&
+        (revision.lifecycle_status === "published" ||
+          (revision.lifecycle_status === "retired" && revision.allow_installation_when_retired)) && (
+          <PduInstantiatePanel revisionId={revision.id} />
+        )}
+      {isPduCategory && revision.lifecycle_status === "retired" && !revision.allow_installation_when_retired && (
+        <p className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-3 text-xs text-amber-400">
+          Retired — new PDU installations from this revision are blocked by the backend until a retirement override
+          allows them.
+        </p>
       )}
     </div>
   );

@@ -1,0 +1,1 @@
+"""PDU catalog validation and integration (modular)."""

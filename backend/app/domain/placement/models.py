@@ -76,6 +76,16 @@ class EquipmentPlacement(Base, UUIDPkMixin):
             "room_id",
             postgresql_where="effective_to IS NULL",
         ),
+        # Migration 0056 (Issue #150 R5 follow-up): a vertical (0U) PDU occupies the full
+        # rack height on one side, so at most one current vertical placement per rack + side.
+        # The discriminator is the `orientation` value 'pdu_vertical_0u'.
+        Index(
+            "uq_equipment_placement_pdu_vertical_0u",
+            "rack_id",
+            "side",
+            unique=True,
+            postgresql_where="placement_type = 'other' AND orientation = 'pdu_vertical_0u' AND effective_to IS NULL",
+        ),
     )
 
     equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_asset.id", ondelete="RESTRICT"), nullable=False)
@@ -122,3 +132,8 @@ class EquipmentPlacement(Base, UUIDPkMixin):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     effective_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     effective_to: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_rack_placement_room_id", RackPlacement.room_id)

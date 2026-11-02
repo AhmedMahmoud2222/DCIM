@@ -67,10 +67,14 @@ services:
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY}
       CREDENTIAL_ENCRYPTION_KEYS: ${CREDENTIAL_ENCRYPTION_KEYS:-}
       ENVIRONMENT: production
+      # Release hold (issue #214): migration 0057 is blocked unless BOTH are set by an
+      # approved change. Defaults are empty so `compose up` fails closed.
+      DCIM_APPROVE_MIGRATION_0057: ${DCIM_APPROVE_MIGRATION_0057:-}
+      DCIM_MIGRATION_0057_CHANGE_ID: ${DCIM_MIGRATION_0057_CHANGE_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "scripts/migration_gate_0057.py"]
     restart: "no"
     networks:
       - dcim-internal

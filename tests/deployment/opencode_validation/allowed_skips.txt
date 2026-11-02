@@ -1,0 +1,2 @@
+# Test IDs that CI may skip, one per line, each with '# reason'. Any other skip fails the job.
+# Empty on purpose: every deployment test runs on the GitHub-hosted runner.

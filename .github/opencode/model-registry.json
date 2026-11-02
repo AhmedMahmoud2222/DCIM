@@ -1,0 +1,98 @@
+{
+  "registry_version": "3.0",
+  "provider": "opencode",
+  "catalog_reference": "anomalyco/opencode packages/core/src/models-dev/snapshot.txt @ 50c5fce (2026-10-20): all six ids present under provider 'opencode' with cost 0",
+  "models": {
+    "opencode/glm-5.3-flash-free": {
+      "label": "GLM-5.3-Flash Free",
+      "terms_verified": false,
+      "terms_review": null,
+      "repo_code_approved": false,
+      "operational_status": "unknown"
+    },
+    "opencode/deepseek-v4.1-flash-free": {
+      "label": "DeepSeek V4.1 Flash Free",
+      "terms_verified": false,
+      "terms_review": null,
+      "repo_code_approved": false,
+      "operational_status": "unknown"
+    },
+    "opencode/mimo-v2.6-flash-free": {
+      "label": "MiMo-V2.6-Flash Free",
+      "terms_verified": true,
+      "terms_review": {
+        "reviewed_by": "AhmedMahmoud2222",
+        "date": "2026-10-22",
+        "source": "https://opencode.ai/v2/docs/console/models/"
+      },
+      "repo_code_approved": true,
+      "operational_status": "unknown"
+    },
+    "opencode/minimax-m3.1-flash-free": {
+      "label": "MiniMax M3.1 Flash Free",
+      "terms_verified": false,
+      "terms_review": null,
+      "repo_code_approved": false,
+      "operational_status": "unknown"
+    },
+    "opencode/nemotron-3-ultra-free": {
+      "label": "Nemotron 3 Ultra Free",
+      "terms_verified": false,
+      "terms_review": null,
+      "repo_code_approved": false,
+      "operational_status": "unknown"
+    },
+    "opencode/nemotron-3.5-lightning-free": {
+      "label": "Nemotron 3.5 Lightning Free",
+      "terms_verified": false,
+      "terms_review": null,
+      "repo_code_approved": false,
+      "operational_status": "unknown"
+    }
+  },
+  "default_category": "general",
+  "max_candidates": 3,
+  "routes": {
+    "small_fix": [
+      "opencode/glm-5.3-flash-free",
+      "opencode/deepseek-v4.1-flash-free",
+      "opencode/mimo-v2.6-flash-free"
+    ],
+    "general": [
+      "opencode/deepseek-v4.1-flash-free",
+      "opencode/glm-5.3-flash-free",
+      "opencode/mimo-v2.6-flash-free"
+    ],
+    "backend": [
+      "opencode/mimo-v2.6-flash-free",
+      "opencode/deepseek-v4.1-flash-free",
+      "opencode/glm-5.3-flash-free"
+    ],
+    "frontend": [
+      "opencode/minimax-m3.1-flash-free",
+      "opencode/deepseek-v4.1-flash-free",
+      "opencode/glm-5.3-flash-free"
+    ],
+    "analysis_large": [
+      "opencode/nemotron-3-ultra-free",
+      "opencode/minimax-m3.1-flash-free",
+      "opencode/deepseek-v4.1-flash-free"
+    ],
+    "triage": [
+      "opencode/nemotron-3.5-lightning-free",
+      "opencode/glm-5.3-flash-free",
+      "opencode/deepseek-v4.1-flash-free"
+    ]
+  },
+  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. Registry presence never enables a model; every requirement must be recorded explicitly.",
+  "agent_separation": {
+    "enabled": true,
+    "scope": "same_branch_or_pr",
+    "require_distinct_models": true,
+    "require_distinct_sessions": true,
+    "review_read_only": true,
+    "reviewer_selection": "best_verified_capability",
+    "block_if_no_eligible_reviewer": true,
+    "external_acceptance_required": true
+  }
+}

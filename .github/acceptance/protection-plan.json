@@ -1,0 +1,33 @@
+{
+  "apply": false,
+  "ruleset_id": 23651422,
+  "observed_required_approvals": 0,
+  "observed_required_signatures": false,
+  "observed_always_bypass": [
+    {"actor_id": 842251, "actor_type": "Integration", "identity_verified": false},
+    {"actor_id": 946600, "actor_type": "Integration", "identity_verified": false},
+    {"actor_id": 1144995, "actor_type": "Integration", "identity_verified": true, "identity": "chatgpt-codex-connector"},
+    {"actor_id": 1236702, "actor_type": "Integration", "identity_verified": true, "identity": "claude"},
+    {"actor_id": 4229212, "actor_type": "Integration", "identity_verified": false},
+    {"actor_id": 285010264, "actor_type": "User", "identity_verified": true, "identity": "AhmedMahmoud2222"}
+  ],
+  "proposed_required_status_checks": [
+    {"context": "backend", "integration_id": 15368},
+    {"context": "frontend", "integration_id": 15368},
+    {"context": "Aggregate verdicts", "integration_id": 15368},
+    {"context": "DCIM independent acceptance", "integration_id": 15368}
+  ],
+  "proposed_required_signatures": true,
+  "proposed_required_approvals": 1,
+  "proposed_dismiss_stale_reviews_on_push": true,
+  "proposed_require_last_push_approval": true,
+  "preserve_all_existing_rules": true,
+  "automatic_merge_enabled": false,
+  "blockers": [
+    "Owner must individually justify or remove each bypass; no bypass change is applied here.",
+    "Shared GitHub Actions App/name binding alone does not enforce workflow provenance. Use required-workflow enforcement where available, or a separately scoped issuer before relying on native status-only merging.",
+    "Every automated consumer must execute acceptance_gate.py verify-check from trusted main; never trust a same-named green check alone.",
+    "A non-author formal approver is required to satisfy the proposed approval count. The author's separate owner attestation never counts as independent approval.",
+    "Initial PR 211 cannot certify its own new workflows from its feature branch. Independent acceptance and explicit owner bootstrap authorization remain required."
+  ]
+}

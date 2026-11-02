@@ -214,6 +214,13 @@ async def create_cable_from_neighbor(
     ).scalar_one_or_none()
     if neighbor is None:
         raise NotFoundError(f"DiscoveredNeighbor {neighbor_id} not found.")
+    # A resolved neighbor belongs to the sites of its ports. Check visibility BEFORE any state check, so a neighbor with a port
+    # outside the caller's scope is indistinguishable from a missing one and its state (unconfirmed, stale, already cabled)
+    # is never observable; the 404 names only the identifier the caller supplied, never a neighbor-derived port id.
+    for linked_port_id in (neighbor.local_port_id, neighbor.remote_port_id):
+        linked_port = await db.get(EquipmentPort, linked_port_id) if linked_port_id is not None else None
+        if linked_port is not None:
+            await ensure_port_visible(db, scope, linked_port, what="DiscoveredNeighbor", ref=neighbor_id)
     if neighbor.reconciliation_state != "confirmed" or neighbor.local_port_id is None or neighbor.remote_port_id is None:
         raise ConflictError("Only an operator-confirmed neighbor can be turned into a cable.")
     integration = await db.get(Integration, neighbor.integration_id)

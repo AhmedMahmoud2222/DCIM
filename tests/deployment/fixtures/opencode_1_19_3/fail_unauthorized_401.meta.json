@@ -1,0 +1,10 @@
+{
+  "exit_code": 1,
+  "timed_out": false,
+  "stderr_head": "",
+  "requests_seen": 7,
+  "agent_requests": 6,
+  "original_line_count": 1,
+  "kept_lines": 1,
+  "opencode_version": "1.19.3"
+}

@@ -89,6 +89,10 @@ REVIEWED_REACHABLE = {
     ("GET", "/api/v1/buildings"),
     ("GET", "/api/v1/catalog/revisions/compare"),
     ("GET", "/api/v1/catalog/revisions/{revision_id}"),
+    # Issue #150 R6: PDU spec read surface — conditional-permission read
+    # (catalog:read_draft for drafts, catalog:read otherwise). Reviewed for scope handling:
+    # catalog:* codes are not scope-aware (restricted users never hold them).
+    ("GET", "/api/v1/catalog/revisions/{revision_id}/pdu"),
     # PR-A (re-landed): lists the datasheets linked to a revision. Same global-catalog read dependency as the
     # revision GET above; downloading the file needs catalog:document_download and is not in this set.
     ("GET", "/api/v1/catalog/revisions/{revision_id}/documents"),
@@ -198,7 +202,7 @@ async def test_the_reachable_set_is_exactly_the_reviewed_set(client, auth_header
     admin = await auth_headers("Administrator")
     _, observed = await _sweep(client, admin)
     reachable = {op for op, (r, _) in observed.items() if r != 403}
-    assert len(REVIEWED_REACHABLE) == 107, "the reviewed reachable set is pinned at exactly 107 operations"
+    assert len(REVIEWED_REACHABLE) == 108, "the reviewed reachable set is pinned at exactly 108 operations"
     assert reachable == REVIEWED_REACHABLE, (
         f"new reachable: {sorted(reachable - REVIEWED_REACHABLE)}; no longer reachable: {sorted(REVIEWED_REACHABLE - reachable)}"
     )

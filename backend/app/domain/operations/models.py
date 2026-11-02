@@ -302,3 +302,9 @@ class ItsmTicket(Base, UUIDPkMixin, TimestampMixin):
     last_http_status: Mapped[int | None] = mapped_column(Integer)
     last_synced_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     last_payload_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_notification_delivery_policy_id", NotificationDelivery.policy_id)
+Index("ix_notification_delivery_channel_id", NotificationDelivery.channel_id)

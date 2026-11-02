@@ -80,7 +80,7 @@ test.describe("Issue #101 B5: multi-hop trace through a patch panel", () => {
   }
 
   async function trace(page: import("@playwright/test").Page, from: typeof swA, port: string) {
-    await page.getByRole("link", { name: "Trace", exact: true }).click();
+    await page.getByRole("link", { name: "Path Trace", exact: true }).click();
     await page.getByLabel("Start port equipment").selectOption({ label: option(from) });
     await page.getByLabel("Start port port").selectOption({ label: port });
     await page.getByRole("button", { name: "Trace", exact: true }).click();
