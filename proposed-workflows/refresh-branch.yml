@@ -1,0 +1,166 @@
+# proposed-workflows/refresh-branch.yml
+# Candidate v4 of the refresh workflow (v3 + F1: handle benign update-branch 422s).
+# Location-neutral status: this file is inert while it lives under proposed-workflows/.
+# It is active only when present under .github/workflows/ on the default branch (main),
+# because issue_comment runs only from the default branch. Not runtime-tested.
+# Process: the owner copies it verbatim into .github/workflows/ on a PR branch first;
+# then fresh exact-head CI, an independent Codex review and a second (Jules Tier 2)
+# review of that exact SHA are required before any merge. Nothing here is activated
+# or configured by the file's presence in either location before merge.
+#
+# Purpose: refresh a same-repo PR branch that targets main, via a comment:
+#   /refresh-branch <full 40-character lowercase head SHA>
+#
+# Owner-only prerequisites (this draft configures none of them):
+#   1. Repository variable REFRESH_ALLOWED_ACTORS: a JSON array of login strings,
+#      for example ["AhmedMahmoud2222"]. Anything else (unset, empty, string,
+#      object, empty array, non-login entries) makes the gate deny. It never grants.
+#   2. Repository secret REFRESH_PAT (fine-grained, this repo only, Contents RW,
+#      Pull requests RW, Workflows RW only if main carries workflow-file changes,
+#      short expiry). Only the `refresh` job can read it, and only after `gate` passes.
+#   3. Recommended: put REFRESH_PAT in an environment (for example `branch-refresh`)
+#      with a deployment-branch rule limited to main, and set `environment:` on the
+#      refresh job. Left out here so the draft does not assume it exists.
+#   4. The workflow file must be on main before issue_comment triggers it.
+#
+# Remedies for the OPEN Codex findings on 480bb19 (live file is unmodified):
+#   P2-1 non-array allowlist substring bypass -> gate job: jq requires an array of
+#        login-shaped strings, exact element match; no contains() on a string.
+#   P2-2 workflow-level concurrency            -> concurrency only on the `refresh` job,
+#        which runs only when the gate passed, so rejected comments never enter the group.
+#   P2-4 concatenated JSON documents          -> gate uses jq -s -e and requires exactly
+#        one document (length == 1) that is a nonempty array of login strings.
+#   P2-3 arbitrary PR base                    -> refresh step requires open PR,
+#        base.repo == this repo, base.ref == main, head.repo == this repo.
+#   F1   benign 422 under set -e              -> the PUT is captured; "no new commits"
+#        exits 0 (already current), "merge conflict" exits 1 with a clear error, any
+#        other failure (including an expected_head_sha mismatch) is printed and fails.
+
+name: Refresh PR branch
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  gate:
+    # No secrets in this job. Cheap pre-filter first; exact checks in the step.
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/refresh-branch ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - id: check
+        env:
+          ALLOWED: ${{ vars.REFRESH_ALLOWED_ACTORS }}
+          ACTOR: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          allowed=false
+          # -s slurps every JSON document into one array, so `null ["x"]` has length 2
+          # and is denied. Exactly one document is required (P2-4); jq -e then exits
+          # nonzero on false, null, malformed input (parse error) and empty input.
+          if printf '%s' "${ALLOWED:-}" | jq -s -e --arg a "$ACTOR" '
+              length == 1
+              and (.[0]
+                | type == "array"
+                  and length > 0
+                  and all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$"))
+                  and (map(select(. == $a)) | length) == 1)
+            ' >/dev/null 2>&1; then
+            allowed=true
+          fi
+          echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" != true ]; then
+            echo "Actor not authorized, or REFRESH_ALLOWED_ACTORS is unset or malformed. Denied."
+          fi
+
+  refresh:
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
+    # Job-level: only authorized requests enter the group. A pending authorized run
+    # can still be replaced by a newer authorized one; the SHA compare-and-swap below
+    # makes the surviving request safe.
+    concurrency:
+      group: refresh-branch-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Update the PR branch from main
+        env:
+          GH_TOKEN: ${{ secrets.REFRESH_PAT }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+
+          # Whole comment must be exactly one command line (CR tolerated).
+          BODY="${COMMENT_BODY%$'\r'}"
+          BODY="${BODY%$'\n'}"
+          BODY="${BODY%$'\r'}"
+          if [[ ! "$BODY" =~ ^/refresh-branch\ ([0-9a-f]{40})[[:space:]]*$ ]]; then
+            echo "Usage: /refresh-branch <full 40-character lowercase head SHA> (single line)"
+            exit 1
+          fi
+          WANT_SHA="${BASH_REMATCH[1]}"
+
+          PR_JSON="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}")"
+          read -r STATE BASE_REPO BASE_REF HEAD_REPO HEAD_SHA < <(
+            jq -r '[.state, (.base.repo.full_name // "-"), .base.ref,
+                    (.head.repo.full_name // "-"), .head.sha] | @tsv' <<<"$PR_JSON")
+
+          if [ "$STATE" != "open" ] || [ "$BASE_REPO" != "$REPO" ] \
+             || [ "$BASE_REF" != "main" ] || [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "Unsupported PR: need open, same-repo, base main (state=${STATE} base=${BASE_REPO}:${BASE_REF} head=${HEAD_REPO})."
+            exit 1
+          fi
+          if [ "$HEAD_SHA" != "$WANT_SHA" ]; then
+            echo "Head moved: PR head is ${HEAD_SHA}, comment named ${WANT_SHA}. Not refreshing."
+            exit 1
+          fi
+
+          # Server-side compare-and-swap: GitHub rejects with 422 if head != expected.
+          # Capture the result so benign 422s are not an opaque red step (F1). The
+          # error body is an API message and never contains the token.
+          set +e
+          API_OUT="$(gh api -X PUT "repos/${REPO}/pulls/${PR_NUMBER}/update-branch" \
+            -f expected_head_sha="${WANT_SHA}" 2>&1)"
+          API_RC=$?
+          set -e
+          if [ "$API_RC" -ne 0 ]; then
+            case "$API_OUT" in
+              *"no new commits on the base branch"*)
+                echo "PR ${PR_NUMBER} is already up to date with main. Nothing to do."
+                exit 0 ;;
+              *"merge conflict between base and head"*)
+                echo "::error::Merge conflict between main and the PR branch; resolve it locally."
+                exit 1 ;;
+              *)
+                echo "::error::update-branch failed (exit ${API_RC}):"
+                echo "$API_OUT"
+                exit "$API_RC" ;;
+            esac
+          fi
+
+          # update-branch is asynchronous (202). Poll for the new head; report only.
+          NEW_SHA="$WANT_SHA"
+          for _ in $(seq 1 12); do
+            sleep 5
+            NEW_SHA="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+            [ "$NEW_SHA" != "$WANT_SHA" ] && break
+          done
+          if [ "$NEW_SHA" = "$WANT_SHA" ]; then
+            echo "Update accepted but head unchanged after 60s (still merging; GitHub returns 422 when already current, handled above)."
+          else
+            echo "PR ${PR_NUMBER} head moved ${WANT_SHA} -> ${NEW_SHA}."
+            echo "Verify backend/frontend started on ${NEW_SHA}; a PAT push should trigger CI, unproven until run."
+          fi
