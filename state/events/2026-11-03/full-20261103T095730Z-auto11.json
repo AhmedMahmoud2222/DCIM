@@ -1,0 +1,61 @@
+{
+  "run_id": "full-20261103T095730Z-auto11",
+  "mode": "FULL",
+  "started_at": "2026-11-03T09:57:30Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy/changelog read; ruleset six pull_request bypass actors"
+    },
+    {
+      "step": 1,
+      "result": "14 open PRs, 26 open issues; inventory and issue #220 refreshed"
+    },
+    {
+      "step": 2,
+      "result": "PR263 exact head b6e22897; Copilot inline clean comments but formal Copilot review on older SHA"
+    },
+    {
+      "step": 3,
+      "result": "Priority PR263, PR264; other work draft/frozen/behind"
+    },
+    {
+      "step": 4,
+      "result": "No thread resolution; PR263 inline dispositions exist but formal acceptance unverified"
+    },
+    {
+      "step": "4a",
+      "result": "No new finding dispositions asserted"
+    },
+    {
+      "step": 5,
+      "result": "No agent prompts: recent Codex response and active review; PR264 draft"
+    },
+    {
+      "step": 6,
+      "result": "Historical candidates remain; no supersession closure without comparison"
+    },
+    {
+      "step": 7,
+      "result": "No duplicate requests"
+    },
+    {
+      "step": 8,
+      "result": "No merge: PR263 exact-head Copilot formal review absent; PR264 Draft; other gates unverified"
+    },
+    {
+      "step": 9,
+      "result": "Owner DX53 observed; DX54-56 not approved; no new decision"
+    },
+    {
+      "step": 10,
+      "result": "Partial evidence report prepared; safety hold maintained"
+    }
+  ],
+  "writes": [
+    "lease acquire",
+    "event create",
+    "lease release"
+  ],
+  "main": "e1028b5e4a92321029a511ea1357a13e83a07053"
+}
