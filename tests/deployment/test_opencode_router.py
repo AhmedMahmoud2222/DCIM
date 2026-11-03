@@ -22,8 +22,8 @@ ALL = set(EXPECTED)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
         'opencode/minimax-m3.1-flash-free')
-SHIPPED_OWNER_APPROVED_UNHEALTHY = {'opencode/mimo-v2.6-flash-free'}
-SHIPPED_OWNER_ENABLED = set()
+SHIPPED_OWNER_APPROVED_UNHEALTHY = set()
+SHIPPED_OWNER_ENABLED = {'opencode/mimo-v2.6-flash-free'}
 # One task per routing category, used to prove shipped eligibility and fail-closed routing.
 SHIPPED_TASKS = {
     'small_fix': 'fix a typo in the README',
@@ -75,8 +75,9 @@ class RegistryTests(unittest.TestCase):
             router.load_registry(registry)
 
     def test_shipped_registry_keeps_owner_approved_unhealthy_models_disabled(self):
-        # The owner-approved GLM record is eligible in the shipped registry. MiMo has terms
-        # evidence and repository-code approval but remains blocked until health is recorded.
+        # The owner-approved MiMo record is the only model eligible in the shipped registry: terms
+        # evidence, repository-code approval and a healthy status are all recorded. Every other model
+        # stays blocked until the owner records the same three facts for it.
         for model_id, meta in REGISTRY['models'].items():
             if model_id in SHIPPED_OWNER_APPROVED_UNHEALTHY:
                 self.assertIs(meta['terms_verified'], True, model_id)
@@ -99,14 +100,14 @@ class RegistryTests(unittest.TestCase):
                 self.assertTrue(router.blockers(meta), model_id)
         self.assertEqual(
             [model_id for model_id, meta in REGISTRY['models'].items() if not router.blockers(meta)],
-            sorted(SHIPPED_OWNER_ENABLED), 'only the owner-enabled GLM model is eligible')
+            sorted(SHIPPED_OWNER_ENABLED), 'only the owner-enabled MiMo model is eligible')
         self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
         for category, task in SHIPPED_TASKS.items():
             self.assertEqual(router.classify(task)[0], category, task)
             eligible = [model for model in REGISTRY['routes'][category]
                         if not router.blockers(REGISTRY['models'][model])]
             if eligible:
-                self.assertEqual(eligible, ['opencode/glm-5.3-flash-free'], category)
+                self.assertEqual(eligible, ['opencode/mimo-v2.6-flash-free'], category)
                 self.assertEqual(router.route(task, REGISTRY, ALL)['model'], eligible[0], task)
             else:
                 with self.assertRaises(router.RoutingError, msg=task):
@@ -271,7 +272,7 @@ class RoutingTests(unittest.TestCase):
                 reg_path.write_text(json.dumps(ENABLED))
                 reg = str(reg_path)
                 ineligible = copy.deepcopy(REGISTRY)
-                ineligible['models']['opencode/glm-5.3-flash-free']['terms_verified'] = False
+                ineligible['models']['opencode/mimo-v2.6-flash-free']['terms_verified'] = False
                 ineligible_path = Path(tmp, 'ineligible-registry.json')
                 ineligible_path.write_text(json.dumps(ineligible))
                 self.assertEqual(router.main(['--registry', str(ineligible_path), '--available', str(avail)]), 1)
