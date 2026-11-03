@@ -1,1 +1,1 @@
-{"run_id":"full-20261103T155824Z-auto11","mode":"FULL","status":"active","started_at":"2026-11-03T15:58:24Z","expires_at":"2026-11-03T16:23:24Z"}
+{"run_id":"full-20261103T155824Z-auto11","mode":"FULL","status":"released","started_at":"2026-11-03T15:58:24Z","expires_at":"2026-11-03T16:23:24Z","released_at":"2026-11-03T16:00:00Z","result":"partial: inspected live PR inventory, issue inventory, ruleset, PR246 CI and Codex; steps 4-10 not fully executed; no merges"}
