@@ -143,8 +143,12 @@ def valid_review_source(value: str) -> bool:
         for label in labels)
 
 
-def blockers(meta: dict) -> list[str]:
-    """Static (owner-controlled) requirements a model must meet before repository code may reach it."""
+def blockers(meta: dict, probe: bool = False) -> list[str]:
+    """Static (owner-controlled) requirements a model must meet before repository code may reach it.
+
+    `probe=True` is for the owner-only text-only connectivity probe and waives only the health
+    requirement, because the probe is what produces the evidence for it. Terms evidence and
+    repository-code approval stay mandatory. Only the probe job passes it."""
     found = []
     review = meta.get('terms_review')
     valid_review = False
@@ -161,12 +165,13 @@ def blockers(meta: dict) -> list[str]:
         found.append('terms not verified with recorded evidence')
     if meta.get('repo_code_approved') is not True:
         found.append('repository-code use not approved by owner')
-    if meta.get('operational_status') != 'healthy':
+    if not probe and meta.get('operational_status') != 'healthy':
         found.append('not marked operationally healthy')
     return found
 
 
-def select(registry: dict, category: str, available: set[str]) -> tuple[str, list[str], str]:
+def select(registry: dict, category: str, available: set[str],
+           probe: bool = False) -> tuple[str, list[str], str]:
     """Return (model, ordered_candidates, reason). Raise RoutingError when none qualify.
 
     A model needs every requirement: terms verified (with evidence), owner approval for
@@ -175,7 +180,7 @@ def select(registry: dict, category: str, available: set[str]) -> tuple[str, lis
     registry = load_registry(registry)
     chain = registry['routes'][category]
     limit = int(registry.get('max_candidates', 3))
-    eligible = [m for m in chain if not blockers(registry['models'][m])]
+    eligible = [m for m in chain if not blockers(registry['models'][m], probe)]
     skipped = [m for m in chain if m not in eligible]
     candidates = eligible[:limit]
     if not candidates:
@@ -194,12 +199,12 @@ def select(registry: dict, category: str, available: set[str]) -> tuple[str, lis
 
 
 def route(task: str, registry: dict, available: set[str],
-          hint_paths: list[str] | None = None) -> dict:
+          hint_paths: list[str] | None = None, probe: bool = False) -> dict:
     if SENSITIVE_RE.search(task or ''):
         raise RoutingError('task text looks like secret or confidential material; '
                            'free third-party models are not permitted for it')
     category, why = classify(task, hint_paths)
-    model, candidates, reason = select(registry, category, available)
+    model, candidates, reason = select(registry, category, available, probe)
     return {'model': model, 'category': category, 'candidates': candidates,
             'reason': f'{reason}; {why}'}
 
@@ -219,13 +224,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument('--registry', required=True)
     parser.add_argument('--available', required=True)
     parser.add_argument('--hint-path', action='append', default=[])
+    parser.add_argument('--probe', action='store_true',
+                        help='owner-only text-only probe: waive the health requirement only')
     args = parser.parse_args(argv)
     try:
         with open(args.registry, encoding='utf-8') as handle:
             registry = json.load(handle)
         with open(args.available, encoding='utf-8') as handle:
             available = parse_available(json.load(handle))
-        result = route(os.environ.get('TASK', ''), registry, available, args.hint_path)
+        result = route(os.environ.get('TASK', ''), registry, available, args.hint_path, args.probe)
     except (OSError, ValueError, RoutingError) as error:
         print(f'::error::OpenCode routing stopped safely: {error}')
         return 1

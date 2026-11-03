@@ -82,7 +82,7 @@ def bare(model: str) -> str:
     return model.split('/', 1)[1] if model.startswith('opencode/') else model
 
 
-def validate_bound_model(model: str, registry: dict, denied: set[str]) -> str:
+def validate_bound_model(model: str, registry: dict, denied: set[str], probe: bool = False) -> str:
     """Return the bare provider model id, or raise PolicyError for any ineligible model."""
     full = router.normalize(model)
     router.load_registry(registry)
@@ -90,7 +90,7 @@ def validate_bound_model(model: str, registry: dict, denied: set[str]) -> str:
         raise PolicyError('model_not_approved_free')
     if full in {router.normalize(m) for m in denied}:
         raise PolicyError('model_denied_for_this_role')
-    if router.blockers(registry['models'][full]):
+    if router.blockers(registry['models'][full], probe):
         raise PolicyError('model_disabled_or_unhealthy')
     return bare(full)
 
@@ -378,6 +378,8 @@ def serve(key: str, upstream: str, bound: str, port_file: str | None = None,
 
 def main(argv: list[str]) -> int:
     api_key = os.environ.pop('OPENCODE_API_KEY', '')
+    probe = '--probe' in argv
+    argv = [a for a in argv if a != '--probe']
     if not api_key or len(argv) not in (4, 5):
         print('::error::proxy needs OPENCODE_API_KEY, PORT_FILE, MODEL and REGISTRY_JSON')
         return 1
@@ -388,7 +390,7 @@ def main(argv: list[str]) -> int:
         if len(argv) == 5:
             with open(argv[4], encoding='utf-8') as handle:
                 denied = {r['model'] for r in json.load(handle)}
-        bound = validate_bound_model(argv[2], registry, denied)
+        bound = validate_bound_model(argv[2], registry, denied, probe)
     except (PolicyError, router.RoutingError, OSError, ValueError, KeyError, TypeError) as error:
         code = error.code if isinstance(error, PolicyError) else type(error).__name__
         print(f'::error::proxy refused to start: {code}')

@@ -224,7 +224,7 @@ jobs:
         id: route
         env:
           TASK: Reply exactly PROBE_OK
-        run: python3 trusted/.github/scripts/opencode_router.py --registry trusted/.github/opencode/model-registry.json --available "${RUNNER_TEMP}/available.json"
+        run: python3 trusted/.github/scripts/opencode_router.py --registry trusted/.github/opencode/model-registry.json --available "${RUNNER_TEMP}/available.json" --probe
       - name: Build sanitized sandbox copy
         env:
           AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
@@ -263,7 +263,7 @@ jobs:
           if sudo -n -u ocagent curl -sS --max-time 5 -o /dev/null https://api.github.com 2>/dev/null; then
             echo "::error::agent user still has network egress; refusing probe"; exit 1
           fi
-          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json &
+          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json --probe &
           proxy_pid=$!
           trap 'kill "${proxy_pid}" 2>/dev/null || true' EXIT
           for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
