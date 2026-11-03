@@ -56,6 +56,16 @@ class RegistryTests(unittest.TestCase):
             self.assertTrue(model_id.endswith('-free'))
         router.load_registry(REGISTRY)
 
+    def test_mimo_is_the_fallback_in_every_category_when_it_is_the_only_eligible_model(self):
+        mimo = 'opencode/mimo-v2.6-flash-free'
+        registry = enable(REGISTRY, mimo)
+        self.assertEqual([m for m, meta in registry['models'].items() if not router.blockers(meta)], [mimo])
+        for category, task in SHIPPED_TASKS.items():
+            with self.subTest(category=category):
+                result = router.route(task, registry, ALL)
+                self.assertEqual(result['category'], category)
+                self.assertEqual(result['model'], mimo)
+
     def test_unapproved_or_paid_model_in_registry_is_rejected(self):
         for bad in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3', 'anthropic/claude-opus-5',
                     'opencode/invented-free'):
