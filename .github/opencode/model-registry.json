@@ -7,6 +7,7 @@
       "label": "GLM-5.3-Flash Free",
       "terms_verified": false,
       "terms_review": null,
+      "owner_acknowledgements": {},
       "repo_code_approved": false,
       "operational_status": "unknown"
     },
@@ -14,6 +15,7 @@
       "label": "DeepSeek V4.1 Flash Free",
       "terms_verified": false,
       "terms_review": null,
+      "owner_acknowledgements": {},
       "repo_code_approved": false,
       "operational_status": "unknown"
     },
@@ -25,6 +27,7 @@
         "date": "2026-10-22",
         "source": "https://opencode.ai/v2/docs/console/models/"
       },
+      "owner_acknowledgements": {},
       "repo_code_approved": true,
       "operational_status": "unknown"
     },
@@ -32,6 +35,7 @@
       "label": "MiniMax M3.1 Flash Free",
       "terms_verified": false,
       "terms_review": null,
+      "owner_acknowledgements": {},
       "repo_code_approved": false,
       "operational_status": "unknown"
     },
@@ -39,6 +43,7 @@
       "label": "Nemotron 3 Ultra Free",
       "terms_verified": false,
       "terms_review": null,
+      "owner_acknowledgements": {},
       "repo_code_approved": false,
       "operational_status": "unknown"
     },
@@ -46,6 +51,7 @@
       "label": "Nemotron 3.5 Lightning Free",
       "terms_verified": false,
       "terms_review": null,
+      "owner_acknowledgements": {},
       "repo_code_approved": false,
       "operational_status": "unknown"
     }
@@ -70,18 +76,18 @@
     ],
     "frontend": [
       "opencode/minimax-m3.1-flash-free",
-      "opencode/deepseek-v4.1-flash-free",
-      "opencode/glm-5.3-flash-free"
+      "opencode/glm-5.3-flash-free",
+      "opencode/mimo-v2.6-flash-free"
     ],
     "analysis_large": [
       "opencode/nemotron-3-ultra-free",
       "opencode/minimax-m3.1-flash-free",
-      "opencode/deepseek-v4.1-flash-free"
+      "opencode/mimo-v2.6-flash-free"
     ],
     "triage": [
       "opencode/nemotron-3.5-lightning-free",
       "opencode/glm-5.3-flash-free",
-      "opencode/deepseek-v4.1-flash-free"
+      "opencode/mimo-v2.6-flash-free"
     ]
   },
   "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. Registry presence never enables a model; every requirement must be recorded explicitly.",

@@ -16,6 +16,8 @@ Fail-closed rules:
   selects full. The router never falls back to a smaller diff.
 * git diff runs with --no-renames, so a rename reports the old path and the new
   path. A rename out of a high-risk path therefore still selects full.
+* A change under .github/ routes to fast only when ci_policy.pin_only accepts every
+  changed file. Any doubt while reading the files selects full.
 """
 
 from __future__ import annotations
@@ -59,6 +61,19 @@ def changed_paths(base: str, head: str) -> tuple[str, list[str]]:
     return merge_base, [path for path in output.split("\0") if path]
 
 
+def read_changes(merge_base: str, head: str) -> list[dict]:
+    """The raw diff entries with the old and new file texts. Raise DetectionError on any doubt."""
+    raw = _git("diff", "--raw", "--no-renames", "-z", merge_base, head)
+    try:
+        entries = ci_policy.parse_raw_diff(raw)
+    except ValueError as error:
+        raise DetectionError(str(error)) from error
+    for entry in entries:
+        entry["old"] = _git("show", f"{merge_base}:{entry['path']}")
+        entry["new"] = _git("show", f"{head}:{entry['path']}")
+    return entries
+
+
 def build_route(event: str, base: str, head: str) -> dict:
     route = {
         "policy_version": ci_policy.POLICY_VERSION,
@@ -81,6 +96,14 @@ def build_route(event: str, base: str, head: str) -> dict:
             route["merge_base"] = merge_base
             route["changed_count"] = len(paths)
             decision = ci_policy.classify(paths)
+            if decision["level"] == "full" and 0 < len(paths) <= 20 \
+                    and all(path.startswith(".github/") for path in paths):
+                try:
+                    pinned = ci_policy.pin_only(read_changes(merge_base, head))
+                except (DetectionError, UnicodeDecodeError):
+                    pinned = None
+                if pinned is not None and pinned["paths"] == sorted(paths):
+                    decision = pinned
     route["level"] = decision["level"]
     route["jobs"] = decision["jobs"]
     route["reasons"] = decision["reasons"][:50]

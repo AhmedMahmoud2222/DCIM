@@ -322,6 +322,14 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertLess(order.index('Build sanitized sandbox copy'), order.index(run_name))
         self.assertLess(order.index('Create isolated agent user and verify its filesystem view'), order.index(run_name))
 
+    def test_probe_flag_is_passed_only_by_the_probe_job(self):
+        for job in ('opencode', 'review', 'review_publish', 'publish', 'report'):
+            for step in self.steps_of(job):
+                self.assertNotIn('--probe', step.get('run', ''), f'{job}: {step.get("name")}')
+        flagged = [s.get('name') for s in self.steps_of('probe') if '--probe' in s.get('run', '')]
+        self.assertEqual(flagged, ['Select an approved model for the fixed probe',
+                                   'Run 120-second text-only probe through model-bound proxy'])
+
     def test_probe_sandbox_restores_root_ownership_and_uses_readonly_validator(self):
         probe = self.jobs['probe']
         steps = {step.get('name'): step for step in probe['steps']}
