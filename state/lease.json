@@ -1,1 +1,1 @@
-{"run_id":"full-20261103T185855Z-auto11","mode":"FULL","status":"released","started_at":"2026-11-03T18:58:55Z","expires_at":"2026-11-03T19:23:55Z","result":"partial evidence audit; no merges; event recorded"}
+{"run_id":"manual-20261103T1912Z-review-threads","mode":"FOCUSED","status":"active","started_at":"2026-11-03T19:11:10.336Z","expires_at":"2026-11-03T19:36:10.336Z","event_path":"state/events/2026-11-03/manual-20261103T1912Z-review-threads.json","purpose":"verify and individually resolve accepted threads; request nonduplicate reviews/corrections on currently open PRs"}
