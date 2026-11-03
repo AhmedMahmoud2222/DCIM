@@ -1,1 +1,1 @@
-{"run_id":"followup-20261103T1929Z","mode":"FOLLOW-UP","status":"released","started_at":"2026-11-03T19:29:39Z","expires_at":"2026-11-03T19:54:39Z","released_at":"2026-11-03T19:32:00Z","event_path":"state/events/2026-11-03/followup-20261103T1929Z.json","last_result":"New Copilot P1/P2 #246 and two Codex P2 #115; 11 PRs; no merges; requests deferred by 60m guard"}
+{"run_id":"full-20261103T1957Z","mode":"FULL","status":"active","started_at":"2026-11-03T19:57:00Z","expires_at":"2026-11-03T20:22:00Z"}
