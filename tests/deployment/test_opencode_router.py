@@ -153,7 +153,9 @@ class RegistryTests(unittest.TestCase):
         mimo = 'opencode/mimo-v2.6-flash-free'
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp, 'registry.json')
-            registry.write_text(json.dumps(REGISTRY))
+            registry.write_text(json.dumps(acknowledge(REGISTRY, mimo)))
+            unacknowledged = Path(tmp, 'unacknowledged.json')
+            unacknowledged.write_text(json.dumps(REGISTRY))
             argv = ['opencode_proxy.py', str(Path(tmp, 'port')), mimo, str(registry)]
             started = []
 
@@ -169,6 +171,10 @@ class RegistryTests(unittest.TestCase):
                     self.assertEqual(started, [])
                     os.environ['OPENCODE_API_KEY'] = 'k'
                     self.assertEqual(proxy.main(argv + ['--probe']), 0)
+                    self.assertEqual(started, [True])
+                    os.environ['OPENCODE_API_KEY'] = 'k'
+                    refused = argv[:3] + [str(unacknowledged), '--probe']
+                    self.assertEqual(proxy.main(refused), 1)   # the probe never waives the acknowledgement
                     self.assertEqual(started, [True])
             finally:
                 os.environ.clear()
