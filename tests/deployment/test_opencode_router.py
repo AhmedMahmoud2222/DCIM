@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import tempfile
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -117,6 +118,31 @@ class RegistryTests(unittest.TestCase):
         unreviewed['models'][mimo]['repo_code_approved'] = False
         with self.assertRaises(proxy.PolicyError):
             proxy.validate_bound_model(mimo, unreviewed, set(), probe=True)
+
+    def test_proxy_cli_accepts_probe_flag_only_when_given(self):
+        mimo = 'opencode/mimo-v2.6-flash-free'
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp, 'registry.json')
+            registry.write_text(json.dumps(REGISTRY))
+            argv = ['opencode_proxy.py', str(Path(tmp, 'port')), mimo, str(registry)]
+            started = []
+
+            class Server:
+                def serve_forever(self):
+                    started.append(True)
+
+            old = dict(os.environ)
+            try:
+                os.environ['OPENCODE_API_KEY'] = 'k'
+                with mock.patch.object(proxy, 'serve', return_value=(Server(), None)):
+                    self.assertEqual(proxy.main(argv), 1)
+                    self.assertEqual(started, [])
+                    os.environ['OPENCODE_API_KEY'] = 'k'
+                    self.assertEqual(proxy.main(argv + ['--probe']), 0)
+                    self.assertEqual(started, [True])
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
 
     def test_unapproved_or_paid_model_in_registry_is_rejected(self):
         for bad in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3', 'anthropic/claude-opus-5',

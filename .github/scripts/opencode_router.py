@@ -175,7 +175,9 @@ def select(registry: dict, category: str, available: set[str],
     """Return (model, ordered_candidates, reason). Raise RoutingError when none qualify.
 
     A model needs every requirement: terms verified (with evidence), owner approval for
-    repository code, operational status healthy, and presence in the live catalog.
+    repository code, operational status healthy, and presence in the live catalog. With
+    `probe=True` (owner-only `/oc probe` job) the health requirement is the one waived;
+    every other requirement still applies.
     """
     registry = load_registry(registry)
     chain = registry['routes'][category]
