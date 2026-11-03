@@ -1,1 +1,1 @@
-{"run_id":"full-20261103T000435Z-automation11","mode":"FULL","status":"active","started_at":"2026-11-03T00:04:35Z","expires_at":"2026-11-03T00:29:35Z","event_path":"state/events/2026-11-03/full-20261103T000435Z-automation11.json"}
+{"run_id":"full-20261103T000435Z-automation11","mode":"FULL","status":"released","started_at":"2026-11-03T00:04:35Z","expires_at":"2026-11-03T00:29:35Z","event_path":"state/events/2026-11-03/full-20261103T000435Z-automation11.json","released_at":"2026-11-03T00:15:36.118Z"}
