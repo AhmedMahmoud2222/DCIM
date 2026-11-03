@@ -26,7 +26,7 @@
         "source": "https://opencode.ai/v2/docs/console/models/"
       },
       "repo_code_approved": true,
-      "operational_status": "healthy"
+      "operational_status": "unknown"
     },
     "opencode/minimax-m3.1-flash-free": {
       "label": "MiniMax M3.1 Flash Free",
