@@ -194,6 +194,10 @@ class CoalescingSocket:
         return getattr(self._sock, name)
 
 
+@pytest.fixture(autouse=True)
+def _clean_tables():
+    yield
+
 @pytest.fixture
 def _clean_tables():
     """Socket-only tests do not use a database; shadow the repository-wide autouse cleanup fixture."""
