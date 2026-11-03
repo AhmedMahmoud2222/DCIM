@@ -39,11 +39,23 @@ SHIPPED_TASKS = {
 }
 
 
+ACK = {'free_period_data_use': {'acknowledged_by': 'owner', 'date': '2026-10-21',
+                           'term': 'During its free period, collected data may be used to improve the model'}}
+
+
+def acknowledge(registry, *model_ids):
+    registry = copy.deepcopy(registry)
+    for model_id in model_ids:
+        registry['models'][model_id]['owner_acknowledgements'] = copy.deepcopy(ACK)
+    return registry
+
+
 def enable(registry, *model_ids):
     registry = copy.deepcopy(registry)
     for model_id in model_ids:
         registry['models'][model_id].update(terms_verified=True, terms_review=dict(REVIEW),
-                                            repo_code_approved=True, operational_status='healthy')
+                                            repo_code_approved=True, operational_status='healthy',
+                                            owner_acknowledgements=copy.deepcopy(ACK))
     return registry
 
 
@@ -74,9 +86,15 @@ class RegistryTests(unittest.TestCase):
     def test_probe_waives_only_the_health_requirement(self):
         meta = REGISTRY['models']['opencode/mimo-v2.6-flash-free']
         self.assertEqual(meta['operational_status'], 'unknown')
+        self.assertEqual(router.blockers(meta), ['owner has not acknowledged the data-use term',
+                                                 'not marked operationally healthy'])
+        # Without the owner's acknowledgement even the probe stays blocked.
+        self.assertEqual(router.blockers(meta, probe=True), ['owner has not acknowledged the data-use term'])
+        meta = dict(meta, owner_acknowledgements=copy.deepcopy(ACK))
         self.assertEqual(router.blockers(meta), ['not marked operationally healthy'])
         self.assertEqual(router.blockers(meta, probe=True), [])
-        for field, broken in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False)):
+        for field, broken in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False),
+                              ('owner_acknowledgements', {})):
             with self.subTest(field=field):
                 changed = dict(meta, **{field: broken})
                 self.assertTrue(router.blockers(changed, probe=True))
@@ -88,22 +106,31 @@ class RegistryTests(unittest.TestCase):
         mimo = 'opencode/mimo-v2.6-flash-free'
         with self.assertRaises(router.RoutingError):
             router.route('Reply exactly PROBE_OK', REGISTRY, ALL)
-        result = router.route('Reply exactly PROBE_OK', REGISTRY, ALL, probe=True)
+        with self.assertRaises(router.RoutingError):      # shipped registry: no acknowledgement yet
+            router.route('Reply exactly PROBE_OK', REGISTRY, ALL, probe=True)
+        acknowledged = acknowledge(REGISTRY, mimo)
+        with self.assertRaises(router.RoutingError):
+            router.route('Reply exactly PROBE_OK', acknowledged, ALL)
+        result = router.route('Reply exactly PROBE_OK', acknowledged, ALL, probe=True)
         self.assertEqual(result['model'], mimo)
         with self.assertRaises(router.RoutingError):      # still needs the live catalog
-            router.route('Reply exactly PROBE_OK', REGISTRY, set(), probe=True)
+            router.route('Reply exactly PROBE_OK', acknowledged, set(), probe=True)
 
     def test_probe_cli_flag_is_opt_in(self):
         with tempfile.TemporaryDirectory() as tmp:
             avail = Path(tmp, 'a.json')
             avail.write_text(json.dumps({'data': [{'id': i.split('/')[1]} for i in ALL]}))
             reg = str(ROOT / '.github/opencode/model-registry.json')
+            ack_reg = Path(tmp, 'r.json')
+            ack_reg.write_text(json.dumps(acknowledge(REGISTRY, 'opencode/mimo-v2.6-flash-free')))
             old = dict(os.environ)
             try:
                 os.environ['TASK'] = 'Reply exactly PROBE_OK'
                 os.environ.pop('GITHUB_OUTPUT', None)
                 self.assertEqual(router.main(['--registry', reg, '--available', str(avail)]), 1)
-                self.assertEqual(router.main(['--registry', reg, '--available', str(avail), '--probe']), 0)
+                self.assertEqual(router.main(['--registry', reg, '--available', str(avail), '--probe']), 1)
+                self.assertEqual(router.main(['--registry', str(ack_reg), '--available', str(avail)]), 1)
+                self.assertEqual(router.main(['--registry', str(ack_reg), '--available', str(avail), '--probe']), 0)
             finally:
                 os.environ.clear()
                 os.environ.update(old)
@@ -113,8 +140,11 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(proxy.PolicyError) as caught:
             proxy.validate_bound_model(mimo, REGISTRY, set())
         self.assertEqual(caught.exception.code, 'model_disabled_or_unhealthy')
-        self.assertEqual(proxy.validate_bound_model(mimo, REGISTRY, set(), probe=True), 'mimo-v2.6-flash-free')
-        unreviewed = copy.deepcopy(REGISTRY)
+        with self.assertRaises(proxy.PolicyError):        # shipped registry: no acknowledgement yet
+            proxy.validate_bound_model(mimo, REGISTRY, set(), probe=True)
+        acknowledged = acknowledge(REGISTRY, mimo)
+        self.assertEqual(proxy.validate_bound_model(mimo, acknowledged, set(), probe=True), 'mimo-v2.6-flash-free')
+        unreviewed = copy.deepcopy(acknowledged)
         unreviewed['models'][mimo]['repo_code_approved'] = False
         with self.assertRaises(proxy.PolicyError):
             proxy.validate_bound_model(mimo, unreviewed, set(), probe=True)
@@ -174,7 +204,8 @@ class RegistryTests(unittest.TestCase):
                 self.assertTrue(all(isinstance(value, str) and value.strip()
                                     for value in review.values()), model_id)
                 self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
-                self.assertEqual(router.blockers(meta), ['not marked operationally healthy'], model_id)
+                self.assertEqual(router.blockers(meta), ['owner has not acknowledged the data-use term',
+                                                         'not marked operationally healthy'], model_id)
             elif model_id in SHIPPED_OWNER_ENABLED:
                 self.assertIs(meta['terms_verified'], True, model_id)
                 self.assertIs(meta['repo_code_approved'], True, model_id)
@@ -224,6 +255,11 @@ class RegistryTests(unittest.TestCase):
             'terms_review_bad_source': lambda m: m.update(terms_review={'reviewed_by': 'owner', 'date': '2026-10-21',
                                                                         'source': 'javascript:bad'}),
             'repo_code_approved': lambda m: m.update(repo_code_approved=False),
+            'acknowledgement_missing': lambda m: m.update(owner_acknowledgements={}),
+            'acknowledgement_reworded_term': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(term='old term'),
+            'acknowledgement_blank_owner': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(acknowledged_by=' '),
+            'acknowledgement_bad_date': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(date='2026-99-99'),
+            'acknowledgement_extra_key': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(extra='x'),
             'operational_status': lambda m: m.update(operational_status='degraded'),
         }
         for name, breaker in breakers.items():

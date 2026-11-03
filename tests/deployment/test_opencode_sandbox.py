@@ -211,6 +211,7 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         enabled = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
         for m in enabled['models'].values():
             m.update(terms_verified=True, repo_code_approved=True, operational_status='healthy',
+                     owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
                      terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
                                    'source': 'https://opencode.ai/docs/zen'})
         for task in (f'use {FAKE_TOKEN}', 'summarize customer data', 'fix credentials handling'):
@@ -421,6 +422,7 @@ for _model in ('opencode/glm-5.3-flash-free', 'opencode/mimo-v2.6-flash-free', '
         terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
                       'source': 'https://opencode.ai/docs/zen'},
         repo_code_approved=True,
+        owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
         operational_status='healthy')
 BOUND = 'glm-5.3-flash-free'
 CHAT = '/inference/openai/v1/chat/completions'
@@ -826,6 +828,7 @@ class ProxyStartupPolicyTests(unittest.TestCase):
             self.bind('opencode/glm-5.3-flash-free', ineligible)
         self.assertEqual(raised.exception.code, 'model_disabled_or_unhealthy')
         for field, value in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False),
+                             ('owner_acknowledgements', {}),
                              ('operational_status', 'degraded'), ('operational_status', 'unknown')):
             registry = copy.deepcopy(ENABLED_REGISTRY)
             registry['models']['opencode/glm-5.3-flash-free'][field] = value
