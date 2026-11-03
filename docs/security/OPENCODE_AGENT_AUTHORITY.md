@@ -129,6 +129,7 @@ Registry: `.github/opencode/model-registry.json`. The router hard-codes the six 
 | --- | --- |
 | Available | listed by the live catalog at run time |
 | Terms verified | `terms_verified: true` and a complete `terms_review` record (reviewer, date, source) |
+| Data-use term acknowledged | `owner_acknowledgements.free_period_data_use` holds `acknowledged_by`, `date` and the exact term text recorded in the router (`DATA_USE_TERM`); an empty object blocks the model |
 | Approved for repository code | `repo_code_approved: true`, set by the owner |
 | Operationally healthy | `operational_status: "healthy"`, set by the owner; no automated health probe exists |
 
@@ -139,7 +140,7 @@ Terms evidence for MiMo-V2.6-Flash Free, read from the recorded source `https://
 - Free models: "MiMo-V2.6-Flash Free is available on OpenCode for a limited time. The team is using this time to collect feedback and improve the model."
 - Privacy: "MiMo-V2.6-Flash Free: During its free period, collected data may be used to improve the model."
 
-That establishes that free-period inputs may be used to improve the model. The page names no upstream provider and states no retention period for this model, so both remain unknown. No owner acknowledgement of the improvement-use term is recorded, so it stays an open blocker for activation even though the registry records terms verification and repository-code approval. Operational health is a separate, still unproven blocker.
+That establishes that free-period inputs may be used to improve the model. The page names no upstream provider and states no retention period for this model, so both remain unknown. No owner acknowledgement of the improvement-use term is recorded (`owner_acknowledgements` is empty), and the router and proxy enforce that: MiMo stays ineligible, including for the probe, until the owner records it. Operational health is a separate, still unproven blocker. Since PR #205 reverted the earlier GLM approval, no model is eligible, so `/oc` implementation runs stop at model selection until the owner records the acknowledgement and sets MiMo `healthy`. The owner-only `/oc probe` can run before `healthy`: its job passes `--probe` to the router and to the proxy, which waives only the health requirement, so a model with verified terms, a recorded acknowledgement and repository-code approval can be probed. The probe sends the fixed prompt `Reply exactly PROBE_OK` with every tool denied, so no repository content reaches the provider. The activation order is therefore: the owner's recorded acknowledgement, a passing probe, then the owner sets `healthy`. Implementation runs, reviews and the proxy in every other job still require `healthy`; a test pins `--probe` to the probe job. The independent diagnostic and native smoke workflows are pinned to other models and do not cover MiMo. The `frontend`, `analysis_large` and `triage` routes end with MiMo so that every category resolves to it once it is enabled.
 
 Catalog: all six IDs appear under provider `opencode` at zero cost in OpenCode's bundled model snapshot (anomalyco/opencode `50c5fce`, 2026-10-20), served from `https://opencode.ai/inference/openai/v1`. The workflow lists models from `.../inference/openai/v1/models` first and falls back to `/zen/v1/models`, which OpenCode's gateway still routes (`inference-proxy.ts`). With the real key, run 39764161946 on 2026-10-22 got 43 models from the fallback `/zen/v1/models`; the script tries the primary endpoint first, so the primary did not return a usable list in that run.
 
@@ -187,7 +188,7 @@ Rotation: replace `OPENCODE_APP_PRIVATE_KEY` and delete the old App key; rotate 
 ## Setup the owner performs
 
 1. Environment `opencode-agent` holds only `OPENCODE_API_KEY`. Environment `opencode-publish` holds `OPENCODE_APP_PRIVATE_KEY` and is used by `publish` and `report`. Restrict both to the default branch.
-2. Read the OpenCode data terms for each model you want and edit the registry through a normal PR: set `terms_verified`, fill `terms_review`, set `repo_code_approved` and `operational_status`. Review the registry diff like a security change.
+2. Read the OpenCode data terms for each model you want and edit the registry through a normal PR: set `terms_verified`, fill `terms_review`, fill `owner_acknowledgements`, set `repo_code_approved` and `operational_status`. Review the registry diff like a security change.
 3. Variables: `OPENCODE_APP_CLIENT_ID`, `OPENCODE_APP_SLUG`, `OPENCODE_ALLOWED_ACTOR_IDS` (last).
 4. Confirm the ruleset requires PRs, status checks and verified signatures, and that the App is not a bypass actor. Put `.github/` and `docs/security/` under CODEOWNERS.
 

@@ -56,6 +56,12 @@ SENSITIVE_RE = re.compile(
 )
 
 
+# Data-use terms the owner must acknowledge per model before repository code may reach it.
+# The recorded text must equal this constant, so a stale or reworded acknowledgement fails.
+DATA_USE_TERM = 'During its free period, collected data may be used to improve the model'
+ACKNOWLEDGEMENT_KEY = 'free_period_data_use'
+
+
 class RoutingError(Exception):
     pass
 
@@ -143,8 +149,31 @@ def valid_review_source(value: str) -> bool:
         for label in labels)
 
 
-def blockers(meta: dict) -> list[str]:
-    """Static (owner-controlled) requirements a model must meet before repository code may reach it."""
+def valid_acknowledgement(meta: dict) -> bool:
+    """True when the owner recorded an acknowledgement of the exact data-use term."""
+    acknowledgements = meta.get('owner_acknowledgements')
+    if not isinstance(acknowledgements, dict):
+        return False
+    entry = acknowledgements.get(ACKNOWLEDGEMENT_KEY)
+    if not isinstance(entry, dict) or set(entry) != {'acknowledged_by', 'date', 'term'}:
+        return False
+    if not all(isinstance(entry[key], str) and entry[key].strip() for key in entry):
+        return False
+    if entry['term'] != DATA_USE_TERM or re.fullmatch(r'\d{4}-\d{2}-\d{2}', entry['date']) is None:
+        return False
+    try:
+        datetime.date.fromisoformat(entry['date'])
+    except ValueError:
+        return False
+    return True
+
+
+def blockers(meta: dict, probe: bool = False) -> list[str]:
+    """Static (owner-controlled) requirements a model must meet before repository code may reach it.
+
+    `probe=True` is for the owner-only text-only connectivity probe and waives only the health
+    requirement, because the probe is what produces the evidence for it. Terms evidence, the
+    owner's data-use acknowledgement and repository-code approval stay mandatory. Only the probe job passes it."""
     found = []
     review = meta.get('terms_review')
     valid_review = False
@@ -159,23 +188,28 @@ def blockers(meta: dict) -> list[str]:
     if meta.get('terms_verified') is not True or not (
             valid_review):
         found.append('terms not verified with recorded evidence')
+    if not valid_acknowledgement(meta):
+        found.append('owner has not acknowledged the data-use term')
     if meta.get('repo_code_approved') is not True:
         found.append('repository-code use not approved by owner')
-    if meta.get('operational_status') != 'healthy':
+    if not probe and meta.get('operational_status') != 'healthy':
         found.append('not marked operationally healthy')
     return found
 
 
-def select(registry: dict, category: str, available: set[str]) -> tuple[str, list[str], str]:
+def select(registry: dict, category: str, available: set[str],
+           probe: bool = False) -> tuple[str, list[str], str]:
     """Return (model, ordered_candidates, reason). Raise RoutingError when none qualify.
 
     A model needs every requirement: terms verified (with evidence), owner approval for
-    repository code, operational status healthy, and presence in the live catalog.
+    repository code, operational status healthy, and presence in the live catalog. With
+    `probe=True` (owner-only `/oc probe` job) the health requirement is the one waived;
+    every other requirement still applies.
     """
     registry = load_registry(registry)
     chain = registry['routes'][category]
     limit = int(registry.get('max_candidates', 3))
-    eligible = [m for m in chain if not blockers(registry['models'][m])]
+    eligible = [m for m in chain if not blockers(registry['models'][m], probe)]
     skipped = [m for m in chain if m not in eligible]
     candidates = eligible[:limit]
     if not candidates:
@@ -194,12 +228,12 @@ def select(registry: dict, category: str, available: set[str]) -> tuple[str, lis
 
 
 def route(task: str, registry: dict, available: set[str],
-          hint_paths: list[str] | None = None) -> dict:
+          hint_paths: list[str] | None = None, probe: bool = False) -> dict:
     if SENSITIVE_RE.search(task or ''):
         raise RoutingError('task text looks like secret or confidential material; '
                            'free third-party models are not permitted for it')
     category, why = classify(task, hint_paths)
-    model, candidates, reason = select(registry, category, available)
+    model, candidates, reason = select(registry, category, available, probe)
     return {'model': model, 'category': category, 'candidates': candidates,
             'reason': f'{reason}; {why}'}
 
@@ -219,13 +253,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument('--registry', required=True)
     parser.add_argument('--available', required=True)
     parser.add_argument('--hint-path', action='append', default=[])
+    parser.add_argument('--probe', action='store_true',
+                        help='owner-only text-only probe: waive the health requirement only')
     args = parser.parse_args(argv)
     try:
         with open(args.registry, encoding='utf-8') as handle:
             registry = json.load(handle)
         with open(args.available, encoding='utf-8') as handle:
             available = parse_available(json.load(handle))
-        result = route(os.environ.get('TASK', ''), registry, available, args.hint_path)
+        result = route(os.environ.get('TASK', ''), registry, available, args.hint_path, args.probe)
     except (OSError, ValueError, RoutingError) as error:
         print(f'::error::OpenCode routing stopped safely: {error}')
         return 1
