@@ -1,0 +1,57 @@
+{
+  "run_id": "full-20261103T165937Z-auto11",
+  "mode": "FULL",
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired; policy/changelog read; ruleset bypass all pull_request"
+    },
+    {
+      "step": 1,
+      "result": "11 open PRs, 25 open issues inventoried; live heads read"
+    },
+    {
+      "step": 2,
+      "result": "partial: exact-head review metadata #246 inspected; full code verification not completed"
+    },
+    {
+      "step": 3,
+      "result": "prioritized #246, #228, #219; historical drafts deferred"
+    },
+    {
+      "step": 4,
+      "result": "not completed: review-thread chains not exhaustively fetched; no resolutions"
+    },
+    {
+      "step": "4a",
+      "result": "not completed: findings checklist not updated"
+    },
+    {
+      "step": 5,
+      "result": "#246 blocked; no agent prompts without verified full checklist"
+    },
+    {
+      "step": 6,
+      "result": "historical candidates identified; no closure without comparison"
+    },
+    {
+      "step": 7,
+      "result": "stale handling deferred pending thread/ask timestamps"
+    },
+    {
+      "step": 8,
+      "result": "no merge: #246 blocked, all other open PRs lack verified gates"
+    },
+    {
+      "step": 9,
+      "result": "DX54, DX56, DX57 owner comments discovered; no decision write"
+    },
+    {
+      "step": 10,
+      "result": "partial execution documented; production hold preserved"
+    }
+  ],
+  "merges": [],
+  "resolutions": [],
+  "errors": []
+}
