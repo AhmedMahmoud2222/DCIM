@@ -92,6 +92,7 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
             terms_review={'reviewed_by': 't', 'date': '2026-10-21',
                           'source': 'https://opencode.ai/v2/docs/console/models/'},
             repo_code_approved=True,
+            owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
             operational_status='healthy')
         cls.registry = registry
 

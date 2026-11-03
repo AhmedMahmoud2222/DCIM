@@ -56,6 +56,12 @@ SENSITIVE_RE = re.compile(
 )
 
 
+# Data-use terms the owner must acknowledge per model before repository code may reach it.
+# The recorded text must equal this constant, so a stale or reworded acknowledgement fails.
+DATA_USE_TERM = 'During its free period, collected data may be used to improve the model'
+ACKNOWLEDGEMENT_KEY = 'free_period_data_use'
+
+
 class RoutingError(Exception):
     pass
 
@@ -143,12 +149,31 @@ def valid_review_source(value: str) -> bool:
         for label in labels)
 
 
+def valid_acknowledgement(meta: dict) -> bool:
+    """True when the owner recorded an acknowledgement of the exact data-use term."""
+    acknowledgements = meta.get('owner_acknowledgements')
+    if not isinstance(acknowledgements, dict):
+        return False
+    entry = acknowledgements.get(ACKNOWLEDGEMENT_KEY)
+    if not isinstance(entry, dict) or set(entry) != {'acknowledged_by', 'date', 'term'}:
+        return False
+    if not all(isinstance(entry[key], str) and entry[key].strip() for key in entry):
+        return False
+    if entry['term'] != DATA_USE_TERM or re.fullmatch(r'\d{4}-\d{2}-\d{2}', entry['date']) is None:
+        return False
+    try:
+        datetime.date.fromisoformat(entry['date'])
+    except ValueError:
+        return False
+    return True
+
+
 def blockers(meta: dict, probe: bool = False) -> list[str]:
     """Static (owner-controlled) requirements a model must meet before repository code may reach it.
 
     `probe=True` is for the owner-only text-only connectivity probe and waives only the health
-    requirement, because the probe is what produces the evidence for it. Terms evidence and
-    repository-code approval stay mandatory. Only the probe job passes it."""
+    requirement, because the probe is what produces the evidence for it. Terms evidence, the
+    owner's data-use acknowledgement and repository-code approval stay mandatory. Only the probe job passes it."""
     found = []
     review = meta.get('terms_review')
     valid_review = False
@@ -163,6 +188,8 @@ def blockers(meta: dict, probe: bool = False) -> list[str]:
     if meta.get('terms_verified') is not True or not (
             valid_review):
         found.append('terms not verified with recorded evidence')
+    if not valid_acknowledgement(meta):
+        found.append('owner has not acknowledged the data-use term')
     if meta.get('repo_code_approved') is not True:
         found.append('repository-code use not approved by owner')
     if not probe and meta.get('operational_status') != 'healthy':
