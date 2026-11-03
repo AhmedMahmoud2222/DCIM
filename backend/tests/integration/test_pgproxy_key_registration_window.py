@@ -14,6 +14,7 @@ not registered yet. This module pins that window with a gated lock instead of ti
 
 from __future__ import annotations
 
+import contextlib
 import socket
 import struct
 import sys
@@ -28,6 +29,7 @@ from scripts.fk_index_benchmark.cancel import BackendKey, NoBackendKey, PgProxy
 STARTUP = struct.pack("!ii", 8, 196608)
 READY_FOR_QUERY = b"Z" + struct.pack("!i", 5) + b"I"
 WAIT = 5.0
+JOIN = 5.0
 
 
 class FakeUpstream:
@@ -43,7 +45,10 @@ class FakeUpstream:
         self.port = self._listener.getsockname()[1]
         self._conns: list[socket.socket] = []
         self._count = 0
-        threading.Thread(target=self._accept, daemon=True).start()
+        self._closed = False
+        self._serve_threads: list[threading.Thread] = []
+        self._accept_thread = threading.Thread(target=self._accept, daemon=True)
+        self._accept_thread.start()
 
     def _accept(self) -> None:
         while True:
@@ -54,7 +59,9 @@ class FakeUpstream:
             n = self._count
             self._count += 1
             self._conns.append(conn)
-            threading.Thread(target=self._serve, args=(conn, n), daemon=True).start()
+            thread = threading.Thread(target=self._serve, args=(conn, n), daemon=True)
+            self._serve_threads.append(thread)
+            thread.start()
 
     def consumed_event(self, addr: tuple) -> threading.Event:
         with self._guard:
@@ -85,11 +92,55 @@ class FakeUpstream:
             pass
 
     def close(self) -> None:
-        for sock in [self._listener, *self._conns]:
+        """Unblock and join every fake thread, then prove the listener port refuses new connections."""
+        if self._closed:
+            return
+        self._closed = True
+        _shutdown_close(self._listener)  # shutdown wakes the blocked accept(); close alone does not
+        self._accept_thread.join(JOIN)  # after this no new connection can be tracked
+        for conn in self._conns:
+            _shutdown_close(conn)  # wakes serve threads blocked in recv()
+        with self._guard:
+            for event in self._consumed.values():
+                event.set()  # wakes serve threads waiting for the relay's first read
+        for thread in self._serve_threads:
+            thread.join(JOIN)
+        alive = [t for t in [self._accept_thread, *self._serve_threads] if t.is_alive()]
+        assert not alive, f"{len(alive)} fake upstream thread(s) still alive after close()"
+        try:
+            socket.create_connection(("127.0.0.1", self.port), timeout=1).close()
+        except OSError:
+            return
+        raise AssertionError("fake upstream listener still accepts connections after close()")
+
+
+def _shutdown_close(sock: socket.socket) -> None:
+    for action in (lambda: sock.shutdown(socket.SHUT_RDWR), sock.close):
+        try:
+            action()
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def running_proxy(upstream_port: int):
+    """A PgProxy whose teardown wakes every relay thread (shutdown, then close) and fails if any is still alive afterwards.
+
+    PgProxy.close() only close()s sockets, which does not interrupt a recv()/accept() blocked in another thread, so without the
+    shutdown first its join() would run into its timeout. Callers must close their clients and release any gate before leaving.
+    """
+    proxy = PgProxy("127.0.0.1", upstream_port)
+    try:
+        yield proxy
+    finally:
+        for sock in [proxy._listener, *list(proxy._sockets)]:
             try:
-                sock.close()
+                sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+        proxy.close()
+        alive = [t for t in list(proxy._threads) if t.is_alive()]
+        assert not alive, f"{len(alive)} proxy relay thread(s) still alive after close()"
 
 
 class GatedLock:
@@ -209,8 +260,8 @@ def test_witness_only_key_returns_one_key_while_second_connection_is_established
     hook, wrappers = coalesce_upstream_reads
     hook.upstream = upstream
     clients: list[socket.socket] = []
-    with PgProxy("127.0.0.1", upstream.port) as proxy:
-        gate = GatedLock(proxy._lock)
+    with running_proxy(upstream.port) as proxy:
+        gate =GatedLock(proxy._lock)
         proxy._lock = gate
         try:
             clients.append(_connect_and_read_ready(proxy))
@@ -243,7 +294,7 @@ def test_witness_only_key_returns_one_key_while_second_connection_is_established
 def test_safety_only_key_refuses_once_both_connections_are_registered(upstream):
     """SAFETY regression: with two registered keys, only_key must refuse to pick one."""
     clients: list[socket.socket] = []
-    with PgProxy("127.0.0.1", upstream.port) as proxy:
+    with running_proxy(upstream.port) as proxy:
         try:
             clients.append(_connect_and_read_ready(proxy))
             clients.append(_connect_and_read_ready(proxy))
