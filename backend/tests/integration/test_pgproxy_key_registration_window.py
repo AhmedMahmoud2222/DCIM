@@ -195,6 +195,12 @@ class CoalescingSocket:
 
 
 @pytest.fixture
+def _clean_tables():
+    """Socket-only tests do not use a database; shadow the repository-wide autouse cleanup fixture."""
+    yield
+
+
+@pytest.fixture
 def coalesce_upstream_reads(monkeypatch):
     """Make PgProxy's connections to the fake upstream CoalescingSockets. Returns (hook, wrappers); set hook.upstream first."""
     wrappers: list[CoalescingSocket] = []
@@ -261,7 +267,7 @@ def test_witness_only_key_returns_one_key_while_second_connection_is_established
     hook.upstream = upstream
     clients: list[socket.socket] = []
     with running_proxy(upstream.port) as proxy:
-        gate =GatedLock(proxy._lock)
+        gate = GatedLock(proxy._lock)
         proxy._lock = gate
         try:
             clients.append(_connect_and_read_ready(proxy))
