@@ -181,7 +181,7 @@ class CoalescingSocket:
         if self._complete or not data:
             return data
         while READY_FOR_QUERY not in data:
-            self._on_partial(self._sock.getpeername())
+            self._on_partial(self._sock.getsockname())  # proxy-side local address == the fake server's conn.getpeername()
             more = self._sock.recv(bufsize)
             self.reads += 1
             if not more:
@@ -193,10 +193,6 @@ class CoalescingSocket:
     def __getattr__(self, name):
         return getattr(self._sock, name)
 
-
-@pytest.fixture(autouse=True)
-def _clean_tables():
-    yield
 
 @pytest.fixture
 def _clean_tables():
