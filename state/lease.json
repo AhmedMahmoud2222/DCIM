@@ -1,1 +1,1 @@
-{"run_id":"full-20261103T165937Z-auto11","mode":"FULL","status":"active","started_at":"2026-11-03T17:00:00.708Z","expires_at":"2026-11-03T17:25:00.708Z"}
+{"run_id":"full-20261103T165937Z-auto11","mode":"FULL","status":"released","started_at":"2026-11-03T17:00:00.708Z","expires_at":"2026-11-03T17:25:00.708Z","released_at":"2026-11-03T17:00:22.526Z","result":"partial FULL: inventory and gate screening; no merges"}
