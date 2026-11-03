@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import tempfile
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('opencode_router', ROOT / '.github/scripts/opencode_router.py')
 router = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(router)
+import sys
+sys.path.insert(0, str(ROOT / '.github/scripts'))
+import opencode_proxy as proxy  # noqa: E402  (shares the router module through sys.path)
 
 REGISTRY = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
 EXPECTED = {
@@ -65,6 +69,80 @@ class RegistryTests(unittest.TestCase):
                 result = router.route(task, registry, ALL)
                 self.assertEqual(result['category'], category)
                 self.assertEqual(result['model'], mimo)
+
+    # ---- owner-only text-only probe: waives the health requirement and nothing else.
+    def test_probe_waives_only_the_health_requirement(self):
+        meta = REGISTRY['models']['opencode/mimo-v2.6-flash-free']
+        self.assertEqual(meta['operational_status'], 'unknown')
+        self.assertEqual(router.blockers(meta), ['not marked operationally healthy'])
+        self.assertEqual(router.blockers(meta, probe=True), [])
+        for field, broken in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False)):
+            with self.subTest(field=field):
+                changed = dict(meta, **{field: broken})
+                self.assertTrue(router.blockers(changed, probe=True))
+        # A model with no recorded terms or approval stays blocked even for the probe.
+        unreviewed = REGISTRY['models']['opencode/glm-5.3-flash-free']
+        self.assertTrue(router.blockers(unreviewed, probe=True))
+
+    def test_probe_selects_an_unhealthy_reviewed_model_but_normal_routing_does_not(self):
+        mimo = 'opencode/mimo-v2.6-flash-free'
+        with self.assertRaises(router.RoutingError):
+            router.route('Reply exactly PROBE_OK', REGISTRY, ALL)
+        result = router.route('Reply exactly PROBE_OK', REGISTRY, ALL, probe=True)
+        self.assertEqual(result['model'], mimo)
+        with self.assertRaises(router.RoutingError):      # still needs the live catalog
+            router.route('Reply exactly PROBE_OK', REGISTRY, set(), probe=True)
+
+    def test_probe_cli_flag_is_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            avail = Path(tmp, 'a.json')
+            avail.write_text(json.dumps({'data': [{'id': i.split('/')[1]} for i in ALL]}))
+            reg = str(ROOT / '.github/opencode/model-registry.json')
+            old = dict(os.environ)
+            try:
+                os.environ['TASK'] = 'Reply exactly PROBE_OK'
+                os.environ.pop('GITHUB_OUTPUT', None)
+                self.assertEqual(router.main(['--registry', reg, '--available', str(avail)]), 1)
+                self.assertEqual(router.main(['--registry', reg, '--available', str(avail), '--probe']), 0)
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
+
+    def test_proxy_binds_an_unhealthy_reviewed_model_only_in_probe_mode(self):
+        mimo = 'opencode/mimo-v2.6-flash-free'
+        with self.assertRaises(proxy.PolicyError) as caught:
+            proxy.validate_bound_model(mimo, REGISTRY, set())
+        self.assertEqual(caught.exception.code, 'model_disabled_or_unhealthy')
+        self.assertEqual(proxy.validate_bound_model(mimo, REGISTRY, set(), probe=True), 'mimo-v2.6-flash-free')
+        unreviewed = copy.deepcopy(REGISTRY)
+        unreviewed['models'][mimo]['repo_code_approved'] = False
+        with self.assertRaises(proxy.PolicyError):
+            proxy.validate_bound_model(mimo, unreviewed, set(), probe=True)
+
+    def test_proxy_cli_accepts_probe_flag_only_when_given(self):
+        mimo = 'opencode/mimo-v2.6-flash-free'
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp, 'registry.json')
+            registry.write_text(json.dumps(REGISTRY))
+            argv = ['opencode_proxy.py', str(Path(tmp, 'port')), mimo, str(registry)]
+            started = []
+
+            class Server:
+                def serve_forever(self):
+                    started.append(True)
+
+            old = dict(os.environ)
+            try:
+                os.environ['OPENCODE_API_KEY'] = 'k'
+                with mock.patch.object(proxy, 'serve', return_value=(Server(), None)):
+                    self.assertEqual(proxy.main(argv), 1)
+                    self.assertEqual(started, [])
+                    os.environ['OPENCODE_API_KEY'] = 'k'
+                    self.assertEqual(proxy.main(argv + ['--probe']), 0)
+                    self.assertEqual(started, [True])
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
 
     def test_unapproved_or_paid_model_in_registry_is_rejected(self):
         for bad in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3', 'anthropic/claude-opus-5',
