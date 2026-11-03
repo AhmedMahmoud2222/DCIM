@@ -168,9 +168,15 @@ Normals are checked against the transform: they point out of the fluid domain.
 
 ## 7. Compatibility and over-constraint rules (assembly refuses on violation)
 
-1. Mass conservation: every connected fluid domain needs at least one pressure-type boundary (return, leakage or
-   opening) so the pressure level is defined. If every boundary of a domain prescribes `flow_rate`, the contract is
-   over-constrained and rejected, even when the prescribed flows happen to sum to zero.
+1. Mass conservation and pressure level. A **ventilated** domain (any supply, return, leakage or opening patch) needs at
+   least one pressure-type boundary (return, leakage or opening) so the pressure level is defined. If every boundary of a
+   ventilated domain prescribes `flow_rate`, the contract is over-constrained and rejected, even when the prescribed flows
+   happen to sum to zero. A **sealed** domain (declared `"domain_class": "sealed"`: every patch is a wall with `no_slip` and
+   zero through-flow) is allowed only for verification fixtures and declares exactly one internal pressure reference
+   (`pressure_reference`: a cell or point location in the fluid and a value, with no boundary patch and no through-flow). A
+   sealed domain without exactly one reference, or with any non-wall patch, is rejected. The reference never adds a
+   mass flux; it only fixes the pressure level. Real-room runs are never `sealed`. Section 7 rule 7 applies to ventilated
+   domains.
 2. A patch has exactly one momentum and one thermal type. Temperature on an outflow face is zero-gradient or inflow-only
    (back-flow temperature), never a fixed value.
 3. A supply surface with `flow_rate` needs a temperature. A return surface with a fixed temperature is rejected.
@@ -180,8 +186,8 @@ Normals are checked against the transform: they point out of the fluid domain.
 5. Rack inlet and exhaust faces use the rack's porous or fan model; a rack with `airflow.kind = unknown` is refused.
 6. Heat removed by return surface enthalpy flux must be computable from the output patches; the contract requires all
    boundary patches to exist in the field output.
-7. Closed domain: net flux of all patches is closed by pressure patches or leakage patches; a sealed room with only
-   prescribed flow patches is rejected.
+7. Ventilated domain: net flux of all patches is closed by pressure patches or leakage patches; a ventilated room with only
+   prescribed flow patches is rejected. (A sealed verification fixture is governed by rule 1, not by this rule.)
 8. Scenario deltas can change load, airflow, unit state, rack position and supply setpoint within declared ranges. They
    cannot introduce a geometry object that violates the calibrated room boundary or collides with another object. Collision
    is checked in solver frame with the geometry error bound added.

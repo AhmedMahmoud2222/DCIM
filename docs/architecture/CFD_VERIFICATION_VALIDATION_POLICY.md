@@ -38,9 +38,27 @@ a numerical discretization uncertainty indicator, not a probabilistic confidence
 
 Definitions. All fluxes are summed over contract patches from the field output.
 
-- Mass imbalance = |sum of signed mass flow over all patches| / sum of absolute inflow over all patches. If the sum of
-  absolute inflow is below 1e-3 kg/s the case is `not_evaluable` and the run is rejected, because a ratio over a near-zero
-  denominator gives no information.
+- The mass criterion is chosen by the boundary topology declared in the contract, never by the case label or by the
+  computed result. A domain is **ventilated** if any patch has role `supply`, `return`, `leakage` or `opening`, or any
+  `flow_rate`/`pressure` momentum type. Otherwise it is **sealed** (all patches are walls, `no_slip`, no through-flow).
+  A domain classed as sealed that has a non-wall patch with non-zero flux is rejected as `rejected_balance`.
+- Ventilated mass imbalance = |sum of signed mass flow over all patches| / sum of absolute inflow over all patches. If the
+  sum of absolute inflow is below 1e-3 kg/s the case is `not_evaluable` and the run is rejected, because a ratio over a
+  near-zero denominator gives no information. This rejection applies to ventilated domains only.
+- Sealed mass criterion. Boundary through-flow is zero by construction, so the ratio above is not defined. Instead:
+  (a) the absolute net boundary mass flow, summed over all patches, is at most 1e-9 kg/s (numerical zero) and no patch
+  carries flux above that magnitude; (b) the total fluid mass in the domain (volume integral of density) drifts by at most
+  0.1 % over the averaging window relative to its initial value (a variable-density formulation is not allowed to create or
+  lose mass); (c) the internal continuity residual, the volume-integrated absolute divergence of the mass flux normalised
+  by the total fluid mass per second of the characteristic buoyancy time scale, is below the stated floor. A correct
+  sealed solution passes. Non-conservation is still detected: any leak flux, mass drift or continuity residual above these
+  bounds fails with `rejected_balance`. The sealed pressure level is fixed by an internal pressure reference (input
+  contract section 7, rule 1).
+- Benchmark mapping. Sealed (sealed criterion): V3 and V4. V1 is solid conduction with no fluid domain: the mass criterion
+  is not applicable and only the energy criterion (wall heat flux balance) is applied. Ventilated (ventilated criterion):
+  V2 when run with inlet and outlet patches (a periodic channel is treated as sealed in the flow direction and uses the
+  sealed criterion plus the prescribed mass flux), V5, V6, V7 and V8, and V9 for real rooms. The M3 report states which
+  criterion each case used.
 - Energy imbalance = |Q_sources + H_in - H_out - Q_walls| / max(Q_sources, Q_floor), with H the enthalpy flux referenced
   to the same datum on all patches and Q_floor a fixed small power (default 100 W) that prevents division by near zero.
   With Q_sources below Q_floor the absolute residual in watts must be below 1 W instead.
@@ -50,7 +68,7 @@ Definitions. All fluxes are summed over contract patches from the field output.
 
 | Gate | Proposed start | Assessment |
 |---|---|---|
-| Mass imbalance | at most 0.5 % | Keep for steady runs with converged pressure. It is a numerical check, not a measurement claim. Tighten to 0.1 % for V1 to V6 |
+| Mass imbalance | at most 0.5 % (ventilated cases); sealed cases use the sealed criterion in section 4 | Keep for steady ventilated runs with converged pressure. It is a numerical check, not a measurement claim. Tighten to 0.1 % for ventilated V2, V5 and V6. Sealed V3 and V4 are judged by the sealed criterion, not by this ratio |
 | Energy imbalance | at most 1 % | Keep. Wall and leakage paths must be counted. With a dominant sensible load a 1 % error on heat is a small number of watts, so the absolute floor in section 4 applies at low load |
 | Mesh sensitivity at critical inlet probes | at most 0.5 degC between the two finest meshes | Keep as the primary gate for inlet probes. Add: at most 1.0 degC at hotspot and exhaust probes, and at most 2 % on total heat removed. The 0.5 degC value is close to common air-temperature sensor accuracy, so it is a strict numerical requirement |
 | Holdout MAE | at most 2 degC | Keep as a project gate only after the sensor-accuracy rule below. If combined measurement uncertainty exceeds 1 degC, the comparison cannot discriminate and the verdict is `insufficient_data` |
