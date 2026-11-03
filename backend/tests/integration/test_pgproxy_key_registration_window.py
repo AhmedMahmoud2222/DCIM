@@ -181,7 +181,7 @@ class CoalescingSocket:
         if self._complete or not data:
             return data
         while READY_FOR_QUERY not in data:
-            self._on_partial(self._sock.getpeername())
+            self._on_partial(self._sock.getsockname())
             more = self._sock.recv(bufsize)
             self.reads += 1
             if not more:
