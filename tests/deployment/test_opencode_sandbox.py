@@ -211,6 +211,7 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         enabled = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
         for m in enabled['models'].values():
             m.update(terms_verified=True, repo_code_approved=True, operational_status='healthy',
+                     owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
                      terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
                                    'source': 'https://opencode.ai/docs/zen'})
         for task in (f'use {FAKE_TOKEN}', 'summarize customer data', 'fix credentials handling'):
@@ -421,6 +422,7 @@ for _model in ('opencode/glm-5.3-flash-free', 'opencode/mimo-v2.6-flash-free', '
         terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
                       'source': 'https://opencode.ai/docs/zen'},
         repo_code_approved=True,
+        owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
         operational_status='healthy')
 BOUND = 'glm-5.3-flash-free'
 CHAT = '/inference/openai/v1/chat/completions'
@@ -490,6 +492,52 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertIn(status, (400, 403, 405, 413), text)
         self.assertEqual(len(_Upstream.seen), before, 'request reached the provider')
         self.assertEqual(self.proxy.rejections[-1]['rejected'], code, self.proxy.rejections)
+
+    def raw_chunked_post(self, *, send_body_after_response):
+        """POST with Transfer-Encoding: chunked over a raw socket; returns the parsed status or None if reset.
+
+        The proxy rejects on the header alone, never reads the body, and closes (HTTP/1.0). A client that keeps
+        uploading can therefore see EPIPE/ECONNRESET. Early-close mode makes that deterministic: the response is read
+        to EOF first, so only a send *after* a verified rejection may fail, and only with a peer-closed error.
+        """
+        payload = body()
+        head = (f'POST {CHAT} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n'
+                'Transfer-Encoding: chunked\r\n\r\n').encode()
+        chunks = b'%x\r\n' % len(payload) + payload + b'\r\n0\r\n\r\n'
+        peer_closed = (BrokenPipeError, ConnectionResetError)
+        received = b''
+        with socket.create_connection(('127.0.0.1', self.port), timeout=10) as sock:
+            try:
+                sock.sendall(head if send_body_after_response else head + chunks)
+                if not send_body_after_response:
+                    chunks = b''
+                while True:
+                    data = sock.recv(65536)
+                    if not data:
+                        break
+                    received += data
+                if chunks:
+                    sock.sendall(chunks)        # server already closed: only a peer-closed error is acceptable
+            except peer_closed:
+                if send_body_after_response and not received:
+                    raise                       # early-close mode must have read the 403 before any failure
+        if not received:
+            return None, b''                    # reset discarded the response; rely on server-side evidence
+        status = int(received.split(b' ', 2)[1])
+        return status, received.partition(b'\r\n\r\n')[2]
+
+    def assert_chunked_blocked(self, *, send_body_after_response):
+        before = len(_Upstream.seen)
+        status, text = self.raw_chunked_post(send_body_after_response=send_body_after_response)
+        if status is not None:
+            self.assertEqual(status, 403, text)
+            self.assertIn(b'transfer_encoding_not_supported', text)
+        elif send_body_after_response:
+            self.fail('early-close mode must receive the 403 response')
+        self.assertEqual(len(_Upstream.seen), before, 'request reached the provider')
+        # The audit entry is written before the 403 and before the close, so it exists once any reply or reset is seen.
+        self.assertEqual(self.proxy.rejections[-1]['rejected'], 'transfer_encoding_not_supported',
+                         self.proxy.rejections)
 
     # ---- allowed
     def test_bound_model_request_is_forwarded_with_the_real_credential(self):
@@ -643,8 +691,8 @@ class ProxyBindingTests(unittest.TestCase):
     def test_uninspectable_or_malformed_bodies_are_rejected(self):
         self.assert_blocked('content_encoding_not_supported', 'POST', CHAT, gzip.compress(body()),
                             {'Content-Type': 'application/json', 'Content-Encoding': 'gzip'})
-        self.assert_blocked('transfer_encoding_not_supported', 'POST', CHAT, [body()],
-                            {'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked'}, encode_chunked=True)
+        self.assert_chunked_blocked(send_body_after_response=True)    # early close: deterministic
+        self.assert_chunked_blocked(send_body_after_response=False)   # complete send: reply or reset both accepted
         self.assert_blocked('content_type_not_json', 'POST', CHAT, body(), {'Content-Type': 'text/plain'})
         self.assert_blocked('content_type_not_json', 'POST', CHAT, body(), {})
         self.assert_blocked('malformed_json', 'POST', CHAT, b'{"model": "glm-5.3-flash-free", ')
@@ -780,6 +828,7 @@ class ProxyStartupPolicyTests(unittest.TestCase):
             self.bind('opencode/glm-5.3-flash-free', ineligible)
         self.assertEqual(raised.exception.code, 'model_disabled_or_unhealthy')
         for field, value in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False),
+                             ('owner_acknowledgements', {}),
                              ('operational_status', 'degraded'), ('operational_status', 'unknown')):
             registry = copy.deepcopy(ENABLED_REGISTRY)
             registry['models']['opencode/glm-5.3-flash-free'][field] = value

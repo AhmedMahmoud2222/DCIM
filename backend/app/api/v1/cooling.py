@@ -610,14 +610,18 @@ async def retire_unit(
     unit_id: uuid.UUID, request: Request, if_match: int = Depends(require_if_match), db: AsyncSession = Depends(get_db),
     ctx: AuthContext = Depends(require_permission("cooling:manage")),
 ) -> CoolingUnitOut:
-    _, asset = await _visible_unit(db, ctx, unit_id)
+    await _visible_unit(db, ctx, unit_id)  # 404 for an unknown / out-of-scope unit before any lock is taken
+    # Canonical lock order: managed_asset, then cooling_unit. The relationship-insert trigger (fn_cooling_unit_zone_same_site)
+    # share-locks managed_asset and only afterwards the FK check key-share-locks cooling_unit; taking cooling_unit first here
+    # formed a lock cycle with it (PostgreSQL 40P01, issue #226).
+    locked_asset = (
+        await db.execute(select(ManagedAsset).where(ManagedAsset.id == unit_id).with_for_update().execution_options(populate_existing=True))
+    ).scalar_one()
     unit = await lock_versioned_row(db, CoolingUnit, unit_id, expected_version=if_match, label="Cooling unit")
+    # Counted only after both locks: a relationship insert that won the asset lock has committed by now and is seen here.
     related = (await db.execute(select(func.count()).select_from(CoolingUnitZone).where(CoolingUnitZone.cooling_unit_id == unit.id))).scalar_one()
     if related:
         raise ConflictError(detail=f"The unit is still related to {related} thermal zone(s); remove the relationships before retiring it.")
-    locked_asset = (
-        await db.execute(select(ManagedAsset).where(ManagedAsset.id == unit.id).with_for_update().execution_options(populate_existing=True))
-    ).scalar_one()
     target = "decommissioned" if "decommissioned" in ALLOWED_LIFECYCLE_TRANSITIONS.get(locked_asset.lifecycle_status, set()) else "removed"
     if target not in ALLOWED_LIFECYCLE_TRANSITIONS.get(locked_asset.lifecycle_status, set()):
         raise ConflictError(detail=f"A unit in state {locked_asset.lifecycle_status!r} cannot be retired.")

@@ -168,3 +168,26 @@ PYTHONPATH=. python -m edge_collector.interop.run_interop
 See `edge_collector/interop/README.md` and `docs/implementation/ISSUE_101_SUPPORTED_PROFILES.md` for scope and results.
 
 For Edge BER regression coverage, use `edge_collector/tests/test_snmp.py`. The test responder decodes the request structurally and tests variable-length IDs, community bytes, malformed packets and trailing data; the production collector also validates `datagram.exhausted`.
+
+## JWT expiry, clock steps and authenticated test clients (issue #176)
+
+Access tokens live 15 minutes (`ACCESS_TOKEN_EXPIRE_MINUTES`) and PyJWT validates `exp`/`iat` with **zero leeway** against the host wall clock. This is deliberate and unchanged: an expired token must yield 401. Tests must not weaken it (no leeway, no longer lifetime, no disabled `verify_exp`).
+
+**Why a test can see an intermittent 401.** A long-running test session can hold a token while the wall clock steps forward. Confirmed in #163/#170: a ~3 h 20 m step coinciding with the host leaving Modern Standby expired a 15-minute token. Likely sources of such steps:
+
+| Environment | Source of a clock step |
+|---|---|
+| Windows host | Modern Standby / sleep-resume, w32time correction |
+| WSL2 | VM clock lags the host after host sleep until Hyper-V time sync catches up (`sudo hwclock -s` forces it) |
+| Docker Desktop | Container clock follows the WSL2/VM clock, so it inherits both of the above |
+| Native Linux / CI runners | NTP/chrony step corrections; paused or migrated VMs |
+
+A step backwards is rejected too (a token whose `iat` is ahead of the clock fails validation).
+
+**What to use in tests (never `time.sleep`):**
+
+- `jwt_clock` (tests/jwt_clock.py): frozen, movable clock for token issuance **and** validation. `jwt_clock.advance(timedelta(...))` simulates elapsed time or a step; it is scoped to one test and touches no production code.
+- `token_session`: holds a login and re-logs-in only when that token's own `exp` has passed, so long fixtures survive real expiry but a 401 for an *unexpired* token still fails the test. Assert `session.logins` where the count matters.
+- `tests/api/test_jwt_clock_reliability.py` pins the policy: expiry at exactly `exp`, a forward step, a backward step, forged signatures, refresh-token-as-access-token rejection, permission denial (403) staying distinct from expiry (401), async-task clock isolation with full restoration of the production clock, and repeated authenticated requests across the expiry boundary.
+
+If an unexpected 401 appears in a run, compare host and container time (`date -u` in both) and check the OS power/NTP event log before suspecting authentication code.
