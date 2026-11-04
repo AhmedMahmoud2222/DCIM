@@ -1,0 +1,65 @@
+{
+  "run_id": "full-20261104T0600Z",
+  "mode": "FULL",
+  "started_at": "2026-11-04T06:00:43Z",
+  "main_sha": "b681a43ed28f0b6aa2b7c3defb9b6e088884d7c8",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy and changelog read; ruleset checked, six pull_request bypass actors."
+    },
+    {
+      "step": 1,
+      "result": "7 open PRs, 26 open issues; previous index stale (9 PRs), main moved."
+    },
+    {
+      "step": 2,
+      "result": "Checked #115 exact head and reviews; outstanding P2 findings; no unverified fixed claims accepted."
+    },
+    {
+      "step": 3,
+      "result": "Security/CI first; #219 frozen; six other PRs Draft."
+    },
+    {
+      "step": 4,
+      "result": "No thread resolved: evidence and current-head dispositions incomplete."
+    },
+    {
+      "step": "4a",
+      "result": "#115 P2 sealed benchmark and retry redispatch remain; no completion credit."
+    },
+    {
+      "step": 5,
+      "result": "No refresh or review request: #115 behind; #219 frozen; other PRs Draft."
+    },
+    {
+      "step": 6,
+      "result": "Historical PRs remain candidates; file-by-file evidence not completed, no closure."
+    },
+    {
+      "step": 7,
+      "result": "No stale reprompt sent; avoid duplicate requests without full activity evidence."
+    },
+    {
+      "step": 8,
+      "result": "No merge: #115 Draft/behind/open findings, #219 frozen/behind, others Draft."
+    },
+    {
+      "step": 9,
+      "result": "Owner DX54/DX56/DX57 observed; no new owner decision posted."
+    },
+    {
+      "step": 10,
+      "result": "Report prepared; safety hold intact."
+    }
+  ],
+  "writes": [],
+  "limitations": [
+    "GitHub REST does not expose resolved state for review threads in fetched comments; no resolution claimed.",
+    "Full per-PR CI, review-thread and historical patch audits incomplete in this run.",
+    "Previous machine index stale; no unsafe merges or agent prompts performed."
+  ],
+  "merged": [],
+  "threads_resolved": [],
+  "production_migration_0057": "held"
+}
