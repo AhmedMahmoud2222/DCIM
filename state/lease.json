@@ -1,1 +1,1 @@
-{"run_id":"full-20261104T0955Z","mode":"FULL","status":"active","started_at":"2026-11-04T09:55:19Z","expires_at":"2026-11-04T10:20:19Z"}
+{"run_id":"full-20261104T0955Z","mode":"FULL","status":"released","started_at":"2026-11-04T09:55:19Z","released_at":"2026-11-04T09:58:00Z","result":"partial; Step 10 reported; no PR writes/merges"}
