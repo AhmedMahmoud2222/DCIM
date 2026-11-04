@@ -1,1 +1,1 @@
-{"run_id":"full-20261104T0102Z","mode":"FULL","status":"active","started_at":"2026-11-04T01:02:23Z","expires_at":"2026-11-04T01:27:23Z"}
+{"run_id":"full-20261104T0102Z","mode":"FULL","status":"released","started_at":"2026-11-04T01:02:23Z","released_at":"2026-11-04T01:08:00Z","note":"Partial inventory and gate verification; Step 10 report; no PR actions or merges"}
