@@ -23,7 +23,7 @@ import urllib.parse
 
 # The only models this router can ever emit. Changing this set needs a code
 # change, a test change and owner review (CODEOWNERS), not just a registry edit.
-APPROVED_MODELS = (
+FREE_MODELS = (
     'opencode/minimax-m3.1-flash-free',
     'opencode/mimo-v2.6-flash-free',
     'opencode/deepseek-v4.1-flash-free',
@@ -31,6 +31,12 @@ APPROVED_MODELS = (
     'opencode/nemotron-3.5-lightning-free',
     'opencode/nemotron-3-ultra-free',
 )
+# OpenCode Go (flat monthly subscription with per-model usage caps). Ids carry an explicit `opencode-go/` prefix so
+# a bare catalog id can never be mistaken for a free model. Go models pass the same registry gates as free ones.
+GO_MODELS = (
+    'opencode-go/qwen3.8-max',
+)
+APPROVED_MODELS = FREE_MODELS + GO_MODELS
 CATEGORIES = ('small_fix', 'general', 'backend', 'frontend', 'analysis_large', 'triage')
 # Tie-break order when two categories score equally.
 PRIORITY = ('analysis_large', 'backend', 'frontend', 'small_fix', 'triage', 'general')
@@ -60,6 +66,20 @@ SENSITIVE_RE = re.compile(
 # The recorded text must equal this constant, so a stale or reworded acknowledgement fails.
 DATA_USE_TERM = 'During its free period, collected data may be used to improve the model'
 ACKNOWLEDGEMENT_KEY = 'free_period_data_use'
+GO_DATA_TERM = ('Repository code sent to this model through OpenCode Go is handled under the OpenCode Go '
+                'data policy listed for the model')
+GO_ACKNOWLEDGEMENT_KEY = 'go_data_policy'
+
+
+def is_go(model_id: str) -> bool:
+    return model_id in GO_MODELS
+
+
+def acknowledgement_terms(model_id: str | None) -> tuple[str, str]:
+    """(registry key, exact term) the owner must record for this model."""
+    if model_id is not None and is_go(model_id):
+        return GO_ACKNOWLEDGEMENT_KEY, GO_DATA_TERM
+    return ACKNOWLEDGEMENT_KEY, DATA_USE_TERM
 
 
 class RoutingError(Exception):
@@ -102,14 +122,16 @@ def classify(task: str, hint_paths: list[str] | None = None) -> tuple[str, str]:
 
 
 def normalize(model_id: str) -> str:
-    return model_id if model_id.startswith('opencode/') else f'opencode/{model_id}'
+    if model_id.startswith(('opencode/', 'opencode-go/')):
+        return model_id
+    return f'opencode/{model_id}'
 
 
 def load_registry(registry: dict) -> dict:
     models = registry.get('models') or {}
     for model_id in models:
-        if model_id not in APPROVED_MODELS or not model_id.endswith('-free'):
-            raise RoutingError(f'registry lists a model outside the approved free allowlist: {model_id}')
+        if model_id not in APPROVED_MODELS or not (is_go(model_id) or model_id.endswith('-free')):
+            raise RoutingError(f'registry lists a model outside the approved allowlist: {model_id}')
     separation_policy(registry)
     routes = registry.get('routes') or {}
     if set(routes) != set(CATEGORIES):
@@ -149,17 +171,18 @@ def valid_review_source(value: str) -> bool:
         for label in labels)
 
 
-def valid_acknowledgement(meta: dict) -> bool:
-    """True when the owner recorded an acknowledgement of the exact data-use term."""
+def valid_acknowledgement(meta: dict, model_id: str | None = None) -> bool:
+    """True when the owner recorded an acknowledgement of the exact data-use term for this model."""
+    key, term = acknowledgement_terms(model_id)
     acknowledgements = meta.get('owner_acknowledgements')
     if not isinstance(acknowledgements, dict):
         return False
-    entry = acknowledgements.get(ACKNOWLEDGEMENT_KEY)
+    entry = acknowledgements.get(key)
     if not isinstance(entry, dict) or set(entry) != {'acknowledged_by', 'date', 'term'}:
         return False
     if not all(isinstance(entry[key], str) and entry[key].strip() for key in entry):
         return False
-    if entry['term'] != DATA_USE_TERM or re.fullmatch(r'\d{4}-\d{2}-\d{2}', entry['date']) is None:
+    if entry['term'] != term or re.fullmatch(r'\d{4}-\d{2}-\d{2}', entry['date']) is None:
         return False
     try:
         datetime.date.fromisoformat(entry['date'])
@@ -168,7 +191,7 @@ def valid_acknowledgement(meta: dict) -> bool:
     return True
 
 
-def blockers(meta: dict, probe: bool = False) -> list[str]:
+def blockers(meta: dict, probe: bool = False, model_id: str | None = None) -> list[str]:
     """Static (owner-controlled) requirements a model must meet before repository code may reach it.
 
     `probe=True` is for the owner-only text-only connectivity probe and waives only the health
@@ -188,7 +211,7 @@ def blockers(meta: dict, probe: bool = False) -> list[str]:
     if meta.get('terms_verified') is not True or not (
             valid_review):
         found.append('terms not verified with recorded evidence')
-    if not valid_acknowledgement(meta):
+    if not valid_acknowledgement(meta, model_id):
         found.append('owner has not acknowledged the data-use term')
     if meta.get('repo_code_approved') is not True:
         found.append('repository-code use not approved by owner')
@@ -209,7 +232,7 @@ def select(registry: dict, category: str, available: set[str],
     registry = load_registry(registry)
     chain = registry['routes'][category]
     limit = int(registry.get('max_candidates', 3))
-    eligible = [m for m in chain if not blockers(registry['models'][m], probe)]
+    eligible = [m for m in chain if not blockers(registry['models'][m], probe, m)]
     skipped = [m for m in chain if m not in eligible]
     candidates = eligible[:limit]
     if not candidates:

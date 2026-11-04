@@ -60,40 +60,54 @@
       "owner_acknowledgements": {},
       "repo_code_approved": false,
       "operational_status": "unknown"
+    },
+    "opencode-go/qwen3.8-max": {
+      "label": "Qwen3.8 Max (OpenCode Go)",
+      "terms_verified": false,
+      "terms_review": null,
+      "owner_acknowledgements": {},
+      "repo_code_approved": false,
+      "operational_status": "unknown"
     }
   },
   "default_category": "general",
-  "max_candidates": 3,
+  "max_candidates": 4,
   "routes": {
     "small_fix": [
       "opencode/glm-5.3-flash-free",
       "opencode/deepseek-v4.1-flash-free",
-      "opencode/mimo-v2.6-flash-free"
+      "opencode/mimo-v2.6-flash-free",
+      "opencode-go/qwen3.8-max"
     ],
     "general": [
       "opencode/deepseek-v4.1-flash-free",
       "opencode/glm-5.3-flash-free",
-      "opencode/mimo-v2.6-flash-free"
+      "opencode/mimo-v2.6-flash-free",
+      "opencode-go/qwen3.8-max"
     ],
     "backend": [
       "opencode/mimo-v2.6-flash-free",
       "opencode/deepseek-v4.1-flash-free",
-      "opencode/glm-5.3-flash-free"
+      "opencode/glm-5.3-flash-free",
+      "opencode-go/qwen3.8-max"
     ],
     "frontend": [
       "opencode/minimax-m3.1-flash-free",
       "opencode/glm-5.3-flash-free",
-      "opencode/mimo-v2.6-flash-free"
+      "opencode/mimo-v2.6-flash-free",
+      "opencode-go/qwen3.8-max"
     ],
     "analysis_large": [
       "opencode/nemotron-3-ultra-free",
       "opencode/minimax-m3.1-flash-free",
-      "opencode/mimo-v2.6-flash-free"
+      "opencode/mimo-v2.6-flash-free",
+      "opencode-go/qwen3.8-max"
     ],
     "triage": [
       "opencode/nemotron-3.5-lightning-free",
       "opencode/glm-5.3-flash-free",
-      "opencode/mimo-v2.6-flash-free"
+      "opencode/mimo-v2.6-flash-free",
+      "opencode-go/qwen3.8-max"
     ]
   },
   "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. Registry presence never enables a model; every requirement must be recorded explicitly.",

@@ -162,6 +162,10 @@ def prepare(src: str, dest: str, state: str, authorized_sha: str, allowlist: set
     return meta
 
 
+# Must equal opencode_router.GO_MODELS (a test enforces it); the sandbox does not import the router.
+GO_MODEL_IDS = ('opencode-go/qwen3.8-max',)
+
+
 def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
     """Managed configuration. Written to /etc/opencode so project config cannot override it.
 
@@ -169,8 +173,9 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
     """
     if mode not in ('implement', 'review', 'probe'):
         raise SandboxError('unknown agent mode')
-    if not re.fullmatch(r'opencode/[a-z0-9.-]+-free', model):
-        raise SandboxError('model is not an approved free OpenCode model identifier')
+    go = re.fullmatch(r'opencode-go/([a-z0-9.-]+)', model) if model in GO_MODEL_IDS else None
+    if go is None and not re.fullmatch(r'opencode/[a-z0-9.-]+-free', model):
+        raise SandboxError('model is not an approved OpenCode model identifier')
     permission = {
         'read': 'deny' if mode == 'probe' else {'*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.env.example': 'allow'},
         'edit': 'deny' if mode in ('review', 'probe') else 'allow',
@@ -186,16 +191,27 @@ def agent_config(model: str, port: int, mode: str = 'implement') -> dict:
         'autoupdate': False,
         'update': 'disable',
         'share': 'disabled',
-        'enabled_providers': ['opencode'],
+        'enabled_providers': ['opencode-go' if go else 'opencode'],
         'model': model,
         # OpenCode makes side requests (session titles) with its `small_model`. Without this it picks a
         # different model on a different API, which the model-bound proxy would have to refuse.
         'small_model': model,
-        'provider': {'opencode': {'options': {
-            'baseURL': f'http://127.0.0.1:{int(port)}/inference/openai/v1', 'apiKey': 'sandbox-placeholder'}}},
+        'provider': provider_config(go.group(1) if go else None, int(port)),
         'permission': permission,
         'permissions': v2_permissions(mode),
     }
+
+
+def provider_config(go_model: str | None, port: int) -> dict:
+    """Provider block pointing at the loopback proxy; Go models use the OpenAI-compatible Go endpoint."""
+    if go_model is None:
+        return {'opencode': {'options': {
+            'baseURL': f'http://127.0.0.1:{port}/inference/openai/v1', 'apiKey': 'sandbox-placeholder'}}}
+    return {'opencode-go': {
+        'npm': '@ai-sdk/openai-compatible',
+        'name': 'OpenCode Go',
+        'options': {'baseURL': f'http://127.0.0.1:{port}/inference/go/openai/v1', 'apiKey': 'sandbox-placeholder'},
+        'models': {go_model: {'name': go_model}}}}
 
 
 def v2_permissions(mode: str) -> list[dict]:
