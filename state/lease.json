@@ -1,1 +1,1 @@
-{"run_id":"followup-20261104T0928Z","mode":"FOLLOW-UP","status":"released","started_at":"2026-11-04T09:28:30Z","released_at":"2026-11-04T09:35:00Z","result":"partial verification; event written; no PR writes, merges, or resolutions"}
+{"run_id":"full-20261104T0955Z","mode":"FULL","status":"active","started_at":"2026-11-04T09:55:19Z","expires_at":"2026-11-04T10:20:19Z"}
