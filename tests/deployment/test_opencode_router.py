@@ -17,18 +17,13 @@ sys.path.insert(0, str(ROOT / '.github/scripts'))
 import opencode_proxy as proxy  # noqa: E402  (shares the router module through sys.path)
 
 REGISTRY = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
-EXPECTED = {
-    'opencode/minimax-m3.1-flash-free', 'opencode/mimo-v2.6-flash-free',
-    'opencode/deepseek-v4.1-flash-free', 'opencode/glm-5.3-flash-free',
-    'opencode/nemotron-3.5-lightning-free', 'opencode/nemotron-3-ultra-free',
-}
 GO = 'opencode-go/qwen3.8-max'
 ALL_GO = set(router.GO_MODELS)
-ALL = set(EXPECTED)
+EXPECTED = ALL_GO
+ALL = set(router.GO_MODELS)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
-FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
-        'opencode/minimax-m3.1-flash-free')
-SHIPPED_OWNER_APPROVED_UNHEALTHY = {'opencode/mimo-v2.6-flash-free'}
+FOUR = ('opencode-go/glm-5.3-flash', 'opencode-go/glm-5.2', 'opencode-go/kimi-k2.7-code',
+        'opencode-go/kimi-k3.1-pro')
 SHIPPED_OWNER_ENABLED = set()
 # Go models whose terms, data-policy acknowledgement and repository-code approval the owner recorded on 2026-11-04.
 SHIPPED_GO_APPROVED_UNHEALTHY = {'opencode-go/glm-5.3-flash', 'opencode-go/glm-5.2',
@@ -44,13 +39,11 @@ SHIPPED_TASKS = {
 }
 
 
-ACK = {'free_period_data_use': {'acknowledged_by': 'owner', 'date': '2026-10-21',
-                           'term': 'During its free period, collected data may be used to improve the model'}}
+ACK = {'go_data_policy': {'acknowledged_by': 'owner', 'date': '2026-10-21', 'term': router.DATA_USE_TERM}}
 
 
 def ack_for(model_id):
-    key, term = router.acknowledgement_terms(model_id)
-    return {key: {'acknowledged_by': 'owner', 'date': '2026-10-21', 'term': term}}
+    return copy.deepcopy(ACK)
 
 
 def unacknowledge(registry, *model_ids):
@@ -82,27 +75,32 @@ ENABLED = enable(REGISTRY, *FOUR)
 
 
 class RegistryTests(unittest.TestCase):
-    def test_registry_is_exactly_the_six_approved_free_models_and_one_go_model(self):
-        self.assertEqual(set(REGISTRY['models']), EXPECTED | ALL_GO)
-        self.assertEqual(set(router.APPROVED_MODELS), EXPECTED | ALL_GO)
+    def test_registry_lists_exactly_the_approved_go_models_and_no_free_model(self):
+        self.assertEqual(set(REGISTRY['models']), ALL_GO)
+        self.assertEqual(set(router.APPROVED_MODELS), ALL_GO)
+        self.assertEqual(len(ALL_GO), 16)
         self.assertIn(GO, ALL_GO)
         for model_id in REGISTRY['models']:
-            self.assertTrue(model_id.endswith('-free') or model_id in ALL_GO)
+            self.assertTrue(model_id.startswith('opencode-go/'), model_id)
+            self.assertFalse(model_id.endswith('-free'), model_id)
         router.load_registry(REGISTRY)
 
-    def test_mimo_is_the_fallback_in_every_category_when_it_is_the_only_eligible_model(self):
-        mimo = 'opencode/mimo-v2.6-flash-free'
-        registry = enable(REGISTRY, mimo)
-        self.assertEqual([m for m, meta in registry['models'].items() if not router.blockers(meta)], [mimo])
+    def test_an_enabled_go_model_is_chosen_only_in_categories_whose_chain_lists_it(self):
+        model = 'opencode-go/kimi-k2.7-code'
+        registry = enable(REGISTRY, model)
+        self.assertEqual([m for m, meta in registry['models'].items() if not router.blockers(meta)], [model])
         for category, task in SHIPPED_TASKS.items():
             with self.subTest(category=category):
-                result = router.route(task, registry, ALL)
-                self.assertEqual(result['category'], category)
-                self.assertEqual(result['model'], mimo)
+                if model in registry['routes'][category]:
+                    result = router.route(task, registry, ALL)
+                    self.assertEqual((result['category'], result['model']), (category, model))
+                else:
+                    with self.assertRaises(router.RoutingError):
+                        router.route(task, registry, ALL)
 
     # ---- owner-only text-only probe: waives the health requirement and nothing else.
     def test_probe_waives_only_the_health_requirement(self):
-        meta = REGISTRY['models']['opencode/mimo-v2.6-flash-free']
+        meta = REGISTRY['models']['opencode-go/glm-5.2']
         self.assertEqual(meta['operational_status'], 'unknown')
         self.assertEqual(router.blockers(meta), ['not marked operationally healthy'])
         self.assertEqual(router.blockers(meta, probe=True), [])
@@ -117,11 +115,11 @@ class RegistryTests(unittest.TestCase):
                 changed = dict(meta, **{field: broken})
                 self.assertTrue(router.blockers(changed, probe=True))
         # A model with no recorded terms or approval stays blocked even for the probe.
-        unreviewed = REGISTRY['models']['opencode/glm-5.3-flash-free']
+        unreviewed = REGISTRY['models'][GO]
         self.assertTrue(router.blockers(unreviewed, probe=True))
 
     def test_probe_selects_an_unhealthy_reviewed_model_but_normal_routing_does_not(self):
-        mimo = 'opencode/mimo-v2.6-flash-free'
+        mimo = 'opencode-go/glm-5.2'
         with self.assertRaises(router.RoutingError):
             router.route('Reply exactly PROBE_OK', REGISTRY, ALL)
         result = router.route('Reply exactly PROBE_OK', REGISTRY, ALL, probe=True)
@@ -137,7 +135,7 @@ class RegistryTests(unittest.TestCase):
             avail.write_text(json.dumps({'data': [{'id': i.split('/')[1]} for i in ALL]}))
             reg = str(ROOT / '.github/opencode/model-registry.json')
             bare_reg = Path(tmp, 'r.json')
-            bare_reg.write_text(json.dumps(unacknowledge(REGISTRY, 'opencode/mimo-v2.6-flash-free')))
+            bare_reg.write_text(json.dumps(unacknowledge(REGISTRY, 'opencode-go/glm-5.2')))
             old = dict(os.environ)
             try:
                 os.environ['TASK'] = 'Reply exactly PROBE_OK'
@@ -150,11 +148,11 @@ class RegistryTests(unittest.TestCase):
                 os.environ.update(old)
 
     def test_proxy_binds_an_unhealthy_reviewed_model_only_in_probe_mode(self):
-        mimo = 'opencode/mimo-v2.6-flash-free'
+        mimo = 'opencode-go/glm-5.2'
         with self.assertRaises(proxy.PolicyError) as caught:
             proxy.validate_bound_model(mimo, REGISTRY, set())
         self.assertEqual(caught.exception.code, 'model_disabled_or_unhealthy')
-        self.assertEqual(proxy.validate_bound_model(mimo, REGISTRY, set(), probe=True), 'mimo-v2.6-flash-free')
+        self.assertEqual(proxy.validate_bound_model(mimo, REGISTRY, set(), probe=True), 'glm-5.2')
         with self.assertRaises(proxy.PolicyError):        # no acknowledgement recorded
             proxy.validate_bound_model(mimo, unacknowledge(REGISTRY, mimo), set(), probe=True)
         unreviewed = copy.deepcopy(REGISTRY)
@@ -163,7 +161,7 @@ class RegistryTests(unittest.TestCase):
             proxy.validate_bound_model(mimo, unreviewed, set(), probe=True)
 
     def test_proxy_cli_accepts_probe_flag_only_when_given(self):
-        mimo = 'opencode/mimo-v2.6-flash-free'
+        mimo = 'opencode-go/glm-5.2'
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp, 'registry.json')
             registry.write_text(json.dumps(REGISTRY))
@@ -215,19 +213,7 @@ class RegistryTests(unittest.TestCase):
         # The owner-approved GLM record is eligible in the shipped registry. MiMo has terms
         # evidence and repository-code approval but remains blocked until health is recorded.
         for model_id, meta in REGISTRY['models'].items():
-            if model_id in SHIPPED_OWNER_APPROVED_UNHEALTHY:
-                self.assertIs(meta['terms_verified'], True, model_id)
-                self.assertIs(meta['repo_code_approved'], True, model_id)
-                review = meta['terms_review']
-                self.assertEqual(set(review), {'reviewed_by', 'date', 'source'}, model_id)
-                self.assertTrue(all(isinstance(value, str) and value.strip()
-                                    for value in review.values()), model_id)
-                self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
-                self.assertEqual(router.blockers(meta), ['not marked operationally healthy'], model_id)
-                self.assertEqual(meta['owner_acknowledgements'], {'free_period_data_use': {
-                    'acknowledged_by': 'AhmedMahmoud2222', 'date': '2026-11-04',
-                    'term': router.DATA_USE_TERM}}, model_id)
-            elif model_id in SHIPPED_GO_APPROVED_UNHEALTHY:
+            if model_id in SHIPPED_GO_APPROVED_UNHEALTHY:
                 self.assertIs(meta['terms_verified'], True, model_id)
                 self.assertIs(meta['repo_code_approved'], True, model_id)
                 self.assertEqual(meta['terms_review'], {
@@ -235,9 +221,9 @@ class RegistryTests(unittest.TestCase):
                     'source': 'https://opencode.ai/v2/docs/console/go/'}, model_id)
                 self.assertEqual(meta['owner_acknowledgements'], {'go_data_policy': {
                     'acknowledged_by': 'AhmedMahmoud2222', 'date': '2026-11-04',
-                    'term': router.GO_DATA_TERM}}, model_id)
+                    'term': router.DATA_USE_TERM}}, model_id)
                 self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
-                self.assertEqual(router.blockers(meta, model_id=model_id),
+                self.assertEqual(router.blockers(meta),
                                  ['not marked operationally healthy'], model_id)
             elif model_id in SHIPPED_OWNER_ENABLED:
                 self.assertIs(meta['terms_verified'], True, model_id)
@@ -251,7 +237,7 @@ class RegistryTests(unittest.TestCase):
                 self.assertTrue(router.blockers(meta), model_id)
         self.assertEqual(
             [model_id for model_id, meta in REGISTRY['models'].items()
-             if not router.blockers(meta, model_id=model_id)],
+             if not router.blockers(meta)],
             sorted(SHIPPED_OWNER_ENABLED), 'only the owner-enabled GLM model is eligible')
         self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
         for category, task in SHIPPED_TASKS.items():
@@ -259,7 +245,7 @@ class RegistryTests(unittest.TestCase):
             eligible = [model for model in REGISTRY['routes'][category]
                         if not router.blockers(REGISTRY['models'][model])]
             if eligible:
-                self.assertEqual(eligible, ['opencode/glm-5.3-flash-free'], category)
+                self.assertEqual(eligible, ['opencode-go/glm-5.3-flash'], category)
                 self.assertEqual(router.route(task, REGISTRY, ALL)['model'], eligible[0], task)
             else:
                 with self.assertRaises(router.RoutingError, msg=task):
@@ -267,7 +253,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_registry_presence_never_authorizes_a_model(self):
         registry = copy.deepcopy(REGISTRY)
-        model = 'opencode/nemotron-3-ultra-free'
+        model = 'opencode-go/longcat-2.0'
         registry['models'][model] = {'label': 'Nemotron 3 Ultra Free'}
         router.load_registry(registry)
         self.assertTrue(router.blockers(registry['models'][model]))
@@ -276,7 +262,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_every_requirement_is_individually_mandatory(self):
         base = enable(REGISTRY, *FOUR)
-        model = 'opencode/mimo-v2.6-flash-free'
+        model = 'opencode-go/kimi-k2.7-code'
         self.assertEqual(self.route_backend(base)['model'], model)
         breakers = {
             'terms_verified': lambda m: m.update(terms_verified=False),
@@ -290,10 +276,10 @@ class RegistryTests(unittest.TestCase):
                                                                         'source': 'javascript:bad'}),
             'repo_code_approved': lambda m: m.update(repo_code_approved=False),
             'acknowledgement_missing': lambda m: m.update(owner_acknowledgements={}),
-            'acknowledgement_reworded_term': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(term='old term'),
-            'acknowledgement_blank_owner': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(acknowledged_by=' '),
-            'acknowledgement_bad_date': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(date='2026-99-99'),
-            'acknowledgement_extra_key': lambda m: m['owner_acknowledgements']['free_period_data_use'].update(extra='x'),
+            'acknowledgement_reworded_term': lambda m: m['owner_acknowledgements']['go_data_policy'].update(term='old term'),
+            'acknowledgement_blank_owner': lambda m: m['owner_acknowledgements']['go_data_policy'].update(acknowledged_by=' '),
+            'acknowledgement_bad_date': lambda m: m['owner_acknowledgements']['go_data_policy'].update(date='2026-99-99'),
+            'acknowledgement_extra_key': lambda m: m['owner_acknowledgements']['go_data_policy'].update(extra='x'),
             'operational_status': lambda m: m.update(operational_status='degraded'),
         }
         for name, breaker in breakers.items():
@@ -303,7 +289,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotEqual(self.route_backend(base, available=ALL - {model})['model'], model)
 
     def test_malformed_review_sources_are_rejected_without_parser_errors(self):
-        model = 'opencode/mimo-v2.6-flash-free'
+        model = 'opencode-go/kimi-k2.7-code'
         for source in ('javascript:bad', 'https:// example.com', 'https://.',
                        'https://example.com:bad', 'https://[', 'https://user@example.com',
                        'https://example.com./terms', 'https://example..com/terms',
@@ -320,19 +306,19 @@ class RegistryTests(unittest.TestCase):
     def route_backend(self, registry, available=ALL):
         return router.route('new api endpoint', registry, set(available))
 
-    def test_mimo_with_unverified_terms_is_never_selected(self):
+    def test_a_model_with_unverified_terms_is_never_selected(self):
         registry = enable(REGISTRY, *FOUR)
-        registry['models']['opencode/mimo-v2.6-flash-free']['terms_verified'] = False
+        registry['models']['opencode-go/kimi-k2.7-code']['terms_verified'] = False
         for task in ('new api endpoint', 'add database migration', 'backend schema change'):
             result = router.route(task, registry, ALL)
-            self.assertNotEqual(result['model'], 'opencode/mimo-v2.6-flash-free')
+            self.assertNotEqual(result['model'], 'opencode-go/kimi-k2.7-code')
             self.assertIn('ineligible', result['reason'])
 
-    def test_free_does_not_mean_enabled_nemotron_stays_off(self):
-        for model_id in ('opencode/nemotron-3-ultra-free', 'opencode/nemotron-3.5-lightning-free'):
-            self.assertTrue(router.blockers(ENABLED['models'][model_id]))
+    def test_registry_presence_does_not_enable_the_models_the_owner_has_not_approved(self):
+        for model_id in ALL_GO - set(FOUR):
+            self.assertTrue(router.blockers(ENABLED['models'][model_id]), model_id)
         for task in ('audit the architecture across modules', 'explain what does this do'):
-            self.assertNotIn('nemotron', router.route(task, ENABLED, ALL)['model'])
+            self.assertIn(router.route(task, ENABLED, ALL)['model'], FOUR)
         for chain in REGISTRY['routes'].values():
             self.assertLessEqual(len(chain), REGISTRY['max_candidates'])
 
@@ -352,14 +338,15 @@ class RoutingTests(unittest.TestCase):
         for category, task in samples.items():
             result = self.pick(task)
             self.assertEqual(result['category'], category, task)
-            self.assertIn(result['model'], EXPECTED)
+            self.assertIn(result['model'], FOUR)
             self.assertEqual(router.blockers(ENABLED['models'][result['model']]), [])
 
     def test_preferred_models_for_repo_approved_categories(self):
-        self.assertEqual(self.pick('fix a typo')['model'], 'opencode/glm-5.3-flash-free')
-        self.assertEqual(self.pick('refactor the thing')['model'], 'opencode/deepseek-v4.1-flash-free')
-        self.assertEqual(self.pick('new api endpoint')['model'], 'opencode/mimo-v2.6-flash-free')
-        self.assertEqual(self.pick('update the react component')['model'], 'opencode/minimax-m3.1-flash-free')
+        self.assertEqual(self.pick('fix a typo')['model'], 'opencode-go/glm-5.3-flash')
+        self.assertEqual(self.pick('refactor the thing')['model'], 'opencode-go/glm-5.2')
+        self.assertEqual(self.pick('new api endpoint')['model'], 'opencode-go/kimi-k2.7-code')
+        self.assertEqual(self.pick('update the react component')['model'], 'opencode-go/kimi-k2.7-code')
+        self.assertEqual(self.pick('audit the architecture across modules')['model'], 'opencode-go/kimi-k3.1-pro')
 
     def test_unknown_task_uses_documented_default(self):
         result = self.pick('do the needful')
@@ -372,25 +359,23 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(len(runs), 1)
 
     def test_unavailable_model_follows_fallback_order(self):
-        result = self.pick('new api endpoint', available=ALL - {'opencode/mimo-v2.6-flash-free'})
-        self.assertEqual(result['model'], 'opencode/deepseek-v4.1-flash-free')
+        result = self.pick('new api endpoint', available=ALL - {'opencode-go/kimi-k2.7-code'})
+        self.assertEqual(result['model'], 'opencode-go/glm-5.2')
         self.assertIn('fell back', result['reason'])
-        result = self.pick('new api endpoint', available={'opencode/glm-5.3-flash-free'})
-        self.assertEqual(result['model'], 'opencode/glm-5.3-flash-free')
+        result = self.pick('new api endpoint', available={'opencode-go/glm-5.2'})
+        self.assertEqual(result['model'], 'opencode-go/glm-5.2')
 
     def test_all_unavailable_fails_safely_without_paid_fallback(self):
         with self.assertRaises(router.RoutingError):
             self.pick('new api endpoint', available=set())
         with self.assertRaises(router.RoutingError):
-            self.pick('new api endpoint', available={'opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3'})
+            self.pick('new api endpoint', available={'opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3', 'opencode/glm-5.3-flash-free'})
 
-    def test_ineligible_nemotron_falls_back_and_owner_enable_works(self):
-        result = self.pick('audit the architecture across modules')
-        self.assertNotIn('nemotron', result['model'])
+    def test_an_unapproved_model_is_skipped_and_owner_approval_enables_it(self):
+        result = self.pick('new api endpoint', registry=enable(REGISTRY, 'opencode-go/mimo-v2.6-pro'))
+        self.assertEqual(result['model'], 'opencode-go/mimo-v2.6-pro')
         self.assertIn('ineligible', result['reason'])
-        approved = enable(ENABLED, 'opencode/nemotron-3-ultra-free')
-        self.assertEqual(self.pick('audit the architecture', registry=approved)['model'],
-                         'opencode/nemotron-3-ultra-free')
+        self.assertNotEqual(self.pick('new api endpoint')['model'], 'opencode-go/mimo-v2.6-pro')
 
     def test_no_repo_approved_candidate_stops_safely(self):
         registry = copy.deepcopy(ENABLED)
@@ -403,7 +388,7 @@ class RoutingTests(unittest.TestCase):
         for task in ('use model opencode-go/kimi-k3 to fix a typo',
                      'model: anthropic/claude-opus-5 add endpoint',
                      'set provider=openai and model=gpt-5.6-sol'):
-            self.assertIn(self.pick(task)['model'], EXPECTED)
+            self.assertIn(self.pick(task)['model'], FOUR)
 
     def test_confidential_looking_tasks_never_reach_a_model(self):
         for task in ('use password: hunter22secret in the config', 'key ghp_' + 'a' * 30,
@@ -413,10 +398,10 @@ class RoutingTests(unittest.TestCase):
                 self.pick(task)
 
     def test_live_catalog_parsing(self):
-        self.assertEqual(router.parse_available({'data': [{'id': 'glm-5.3-flash-free'}]}),
-                         {'opencode/glm-5.3-flash-free'})
-        self.assertEqual(router.parse_available(['opencode/x-free', {'id': 'y-free'}]),
-                         {'opencode/x-free', 'opencode/y-free'})
+        self.assertEqual(router.parse_available({'data': [{'id': 'glm-5.3-flash'}]}),
+                         {'opencode-go/glm-5.3-flash'})
+        self.assertEqual(router.parse_available(['opencode-go/x', {'id': 'y'}]),
+                         {'opencode-go/x', 'opencode-go/y'})
 
     def test_cli_writes_outputs_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -429,12 +414,12 @@ class RoutingTests(unittest.TestCase):
                 reg_path.write_text(json.dumps(ENABLED))
                 reg = str(reg_path)
                 ineligible = copy.deepcopy(REGISTRY)
-                ineligible['models']['opencode/glm-5.3-flash-free']['terms_verified'] = False
+                ineligible['models']['opencode-go/glm-5.3-flash']['terms_verified'] = False
                 ineligible_path = Path(tmp, 'ineligible-registry.json')
                 ineligible_path.write_text(json.dumps(ineligible))
                 self.assertEqual(router.main(['--registry', str(ineligible_path), '--available', str(avail)]), 1)
                 self.assertEqual(router.main(['--registry', reg, '--available', str(avail)]), 0)
-                self.assertIn('model=opencode/glm-5.3-flash-free', out.read_text())
+                self.assertIn('model=opencode-go/glm-5.3-flash', out.read_text())
                 avail.write_text('[]')
                 self.assertEqual(router.main(['--registry', reg, '--available', str(avail)]), 1)
             finally:
@@ -464,99 +449,73 @@ class GoRotationTests(unittest.TestCase):
             self.assertFalse([m for m in ALL_GO if banned in m], banned)
 
 
-class GoTierTests(unittest.TestCase):
-    """OpenCode Go (Qwen3.8 Max): same gates as free models, a Go-specific acknowledgement, Go-only endpoints."""
+class GoGateTests(unittest.TestCase):
+    """OpenCode Go only: the acknowledgement is exact, normalization stays inside the Go namespace, and the
+    proxy reaches only the Go endpoints."""
     BODY = json.dumps({'model': 'qwen3.8-max', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
     JSON = {'Content-Type': 'application/json'}
 
-    def test_shipped_go_entry_is_disabled_and_chained_last(self):
+    def test_unapproved_go_entries_are_fully_blocked_and_chains_hold_only_go_models(self):
         for model_id in ALL_GO - SHIPPED_GO_APPROVED_UNHEALTHY:
             meta = REGISTRY['models'][model_id]
             self.assertIs(meta['terms_verified'], False, model_id)
             self.assertIs(meta['repo_code_approved'], False, model_id)
             self.assertEqual(meta['owner_acknowledgements'], {}, model_id)
-            self.assertEqual(len(router.blockers(meta, model_id=model_id)), 4, model_id)
+            self.assertEqual(len(router.blockers(meta)), 4, model_id)
         for chain in REGISTRY['routes'].values():
             self.assertEqual(len(chain), len(set(chain)))
-            tail = [m for m in chain if m in ALL_GO]
-            self.assertEqual(chain[-len(tail):], tail, 'Go models follow the free ones')
+            self.assertTrue(all(m in ALL_GO for m in chain))
             self.assertLessEqual(len(chain), REGISTRY['max_candidates'])
 
-    def test_approved_go_models_stay_blocked_until_healthy_and_probe_waives_only_health(self):
-        for model_id in SHIPPED_GO_APPROVED_UNHEALTHY:
-            category = next(c for c, chain in REGISTRY['routes'].items() if model_id in chain)
-            with self.assertRaises(router.RoutingError, msg=model_id):
-                router.select(REGISTRY, category, {model_id})
-            self.assertEqual(router.select(REGISTRY, category, {model_id}, probe=True)[0], model_id)
-            with self.assertRaises(router.RoutingError, msg=model_id):   # probe never waives the acknowledgement
-                router.select(unacknowledge(REGISTRY, model_id), category, {model_id}, probe=True)
-            self.assertEqual(proxy.validate_bound_model(model_id, REGISTRY, set(), probe=True),
-                             model_id.split('/', 1)[1])
-
-    def test_go_needs_its_own_acknowledgement_term(self):
+    def test_the_acknowledgement_must_carry_the_exact_go_term(self):
         registry = enable(REGISTRY, GO)
-        self.assertEqual(router.blockers(registry['models'][GO], model_id=GO), [])
-        free_ack = copy.deepcopy(registry)
-        free_ack['models'][GO]['owner_acknowledgements'] = copy.deepcopy(ACK)
-        self.assertIn('owner has not acknowledged the data-use term',
-                      router.blockers(free_ack['models'][GO], model_id=GO))
+        self.assertEqual(router.blockers(registry['models'][GO]), [])
+        old_term = copy.deepcopy(registry)
+        old_term['models'][GO]['owner_acknowledgements'] = {'free_period_data_use': {
+            'acknowledged_by': 'owner', 'date': '2026-10-21',
+            'term': 'During its free period, collected data may be used to improve the model'}}
+        self.assertIn('owner has not acknowledged the data-use term', router.blockers(old_term['models'][GO]))
         reworded = copy.deepcopy(registry)
-        reworded['models'][GO]['owner_acknowledgements'][router.GO_ACKNOWLEDGEMENT_KEY]['term'] = 'ok'
-        self.assertTrue(router.blockers(reworded['models'][GO], model_id=GO))
-        # A free model must not accept the Go acknowledgement either.
-        mimo = 'opencode/mimo-v2.6-flash-free'
-        cross = enable(REGISTRY, mimo)
-        cross['models'][mimo]['owner_acknowledgements'] = ack_for(GO)
-        self.assertTrue(router.blockers(cross['models'][mimo], model_id=mimo))
+        reworded['models'][GO]['owner_acknowledgements']['go_data_policy']['term'] = 'ok'
+        self.assertTrue(router.blockers(reworded['models'][GO]))
 
-    def test_enabled_go_model_is_selected_only_when_in_the_live_catalog_and_after_free_ones(self):
+    def test_an_enabled_go_model_is_selected_only_when_it_is_in_the_live_catalog(self):
         registry = enable(REGISTRY, GO)
         self.assertEqual(router.route('new api endpoint', registry, {GO})['model'], GO)
         with self.assertRaises(router.RoutingError):
-            router.route('new api endpoint', registry, set(ALL))
-        both = enable(REGISTRY, GO, 'opencode/glm-5.3-flash-free')
-        self.assertEqual(router.route('fix a typo in the README', both, ALL | {GO})['model'],
-                         'opencode/glm-5.3-flash-free')
+            router.route('new api endpoint', registry, set(ALL) - {GO})
 
-    def test_go_ids_normalize_and_unknown_go_ids_are_rejected(self):
+    def test_ids_normalize_into_the_go_namespace_and_free_or_unknown_ids_are_rejected(self):
+        self.assertEqual(router.normalize('qwen3.8-max'), GO)
         self.assertEqual(router.normalize(GO), GO)
-        self.assertEqual(router.normalize('opencode-go/qwen3.8-max'), GO)
-        bad = copy.deepcopy(REGISTRY)
-        bad['models']['opencode-go/kimi-k4'] = copy.deepcopy(bad['models'][GO])
-        with self.assertRaises(router.RoutingError):
-            router.load_registry(bad)
+        for bad in ('opencode-go/kimi-k4', 'opencode/glm-5.3-flash-free', 'opencode/qwen3.8-max'):
+            registry = copy.deepcopy(REGISTRY)
+            registry['models'][bad] = copy.deepcopy(registry['models'][GO])
+            with self.assertRaises(router.RoutingError, msg=bad):
+                router.load_registry(registry)
 
-    def test_proxy_binds_go_with_go_paths_only(self):
+    def test_proxy_binds_go_models_with_go_paths_only(self):
         registry = enable(REGISTRY, GO)
         self.assertEqual(proxy.validate_bound_model(GO, registry, set()), 'qwen3.8-max')
-        self.assertEqual(proxy.tier_of(GO), 'go')
         with self.assertRaises(proxy.PolicyError):
             proxy.validate_bound_model(GO, REGISTRY, set())
         with self.assertRaises(proxy.PolicyError):
             proxy.validate_bound_model(GO, unacknowledge(registry, GO), set())
-        proxy.check_request('POST', '/inference/go/openai/v1/chat/completions', self.JSON, self.BODY,
-                            'qwen3.8-max', 'go')
-        proxy.check_request('GET', '/inference/go/v1/models', {}, None, 'qwen3.8-max', 'go')
-        for method, path in (('POST', '/inference/openai/v1/chat/completions'), ('GET', '/zen/v1/models'),
-                             ('POST', '/inference/go/v1/chat/completions')):
-            with self.assertRaises(proxy.PolicyError, msg=path) as caught:
-                proxy.check_request(method, path, self.JSON, self.BODY if method == 'POST' else None,
-                                    'qwen3.8-max', 'go')
-            self.assertEqual(caught.exception.code, 'endpoint_not_allowed')
-
-    def test_free_bound_proxy_never_reaches_go_endpoints(self):
-        body = json.dumps({'model': 'glm-5.3-flash-free', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
-        for method, path in (('POST', '/inference/go/openai/v1/chat/completions'), ('GET', '/inference/go/v1/models')):
-            with self.assertRaises(proxy.PolicyError, msg=path) as caught:
-                proxy.check_request(method, path, self.JSON, body if method == 'POST' else None,
-                                    'glm-5.3-flash-free')
-            self.assertEqual(caught.exception.code, 'endpoint_not_allowed')
-
-    def test_go_bound_proxy_rejects_a_different_model(self):
-        other = json.dumps({'model': 'glm-5.3-flash-free', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
         with self.assertRaises(proxy.PolicyError) as caught:
-            proxy.check_request('POST', '/inference/go/openai/v1/chat/completions', self.JSON, other,
-                                'qwen3.8-max', 'go')
+            proxy.validate_bound_model('opencode/glm-5.3-flash-free', registry, set())
+        self.assertEqual(caught.exception.code, 'model_not_approved')
+        proxy.check_request('POST', '/inference/go/openai/v1/chat/completions', self.JSON, self.BODY, 'qwen3.8-max')
+        proxy.check_request('GET', '/inference/go/v1/models', {}, None, 'qwen3.8-max')
+        for method, path in (('POST', '/inference/openai/v1/chat/completions'), ('GET', '/zen/v1/models'),
+                             ('GET', '/inference/openai/v1/models'), ('POST', '/inference/go/v1/chat/completions')):
+            with self.assertRaises(proxy.PolicyError, msg=path) as caught:
+                proxy.check_request(method, path, self.JSON, self.BODY if method == 'POST' else None, 'qwen3.8-max')
+            self.assertEqual(caught.exception.code, 'endpoint_not_allowed')
+
+    def test_a_bound_proxy_rejects_a_different_model(self):
+        other = json.dumps({'model': 'glm-5.2', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
+        with self.assertRaises(proxy.PolicyError) as caught:
+            proxy.check_request('POST', '/inference/go/openai/v1/chat/completions', self.JSON, other, 'qwen3.8-max')
         self.assertEqual(caught.exception.code, 'model_mismatch')
 
 

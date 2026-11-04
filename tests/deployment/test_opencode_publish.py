@@ -37,7 +37,7 @@ ENV = {
     'TARGET_NUMBER': '7', 'AUTHORIZED_SHA': BASE, 'GENERATION_STATUS': 'success',
     'RUN_URL': 'https://github.com/x/y/actions/runs/1', 'RUN_ID': '1', 'RUN_ATTEMPT': '1',
     'ACTOR_LOGIN': 'AhmedMahmoud2222', 'EXPECT_BOT_LOGIN': BOT,
-    'TASK': 'fix the alarm bug\nsecond line', 'MODEL': 'opencode/deepseek-v4.1-flash-free',
+    'TASK': 'fix the alarm bug\nsecond line', 'MODEL': 'opencode-go/hy3',
     'CATEGORY': 'general', 'ROUTE_REASON': 'category general', 'PR_HEAD_REF': '',
     'SESSION_ID': 'ses_impl000111',
 }
@@ -381,7 +381,7 @@ class PublishFlowTests(unittest.TestCase):
         graphql = next(c for c in api.calls if c[0] == 'GRAPHQL')[2]['input']
         self.assertEqual(graphql['expectedHeadOid'], BASE)
         self.assertNotIn('\n', graphql['message']['headline'])
-        self.assertIn('OpenCode-Model: opencode/deepseek-v4.1-flash-free', graphql['message']['body'])
+        self.assertIn('OpenCode-Model: opencode-go/hy3', graphql['message']['body'])
         self.assertNotIn(('DELETE', 'git/refs/heads/opencode/issue7-1-1'), api.methods())
 
     def test_new_branch_requires_open_non_pr_issue_and_reachable_base(self):

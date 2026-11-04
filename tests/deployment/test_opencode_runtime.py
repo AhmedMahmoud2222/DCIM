@@ -910,7 +910,7 @@ class RealGitApi:
 
 PR_ENV = {'GITHUB_REPOSITORY': 'o/r', 'DEFAULT_BRANCH': 'main', 'EVENT_KIND': 'pr', 'TARGET_NUMBER': '9',
           'GENERATION_STATUS': 'success', 'RUN_URL': 'https://x', 'RUN_ID': '1', 'RUN_ATTEMPT': '1',
-          'ACTOR_LOGIN': 'me', 'EXPECT_BOT_LOGIN': 'bot[bot]', 'TASK': 't', 'MODEL': 'opencode/glm-5.3-flash-free',
+          'ACTOR_LOGIN': 'me', 'EXPECT_BOT_LOGIN': 'bot[bot]', 'TASK': 't', 'MODEL': 'opencode-go/glm-5.3-flash',
           'CATEGORY': 'general', 'ROUTE_REASON': 'r', 'PR_HEAD_REF': 'feature', 'SESSION_ID': 'ses_impl000111'}
 
 

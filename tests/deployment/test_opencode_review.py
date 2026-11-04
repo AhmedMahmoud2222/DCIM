@@ -35,9 +35,9 @@ SHIPPED_MATRIX = json.loads((ROOT / '.github/opencode/reviewer-capability-matrix
 BOT = 'dcim-opencode-agent[bot]'
 SHA = 'a' * 40
 NEWSHA = 'b' * 40
-M = {name: f'opencode/{name}-free' for name in (
-    'glm-5.3-flash', 'deepseek-v4.1-flash', 'mimo-v2.6-flash', 'minimax-m3.1-flash',
-    'nemotron-3-ultra', 'nemotron-3.5-lightning')}
+M = {name: f'opencode-go/{name}' for name in (
+    'glm-5.3-flash', 'hy3', 'mimo-v2.6-flash', 'minimax-m3.1-flash',
+    'longcat-2.0', 'step-5-preview')}
 ALL = set(M.values())
 REVIEW_META = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs'}
 
@@ -46,7 +46,7 @@ def enabled_registry():
     registry = copy.deepcopy(SHIPPED_REGISTRY)
     for meta in registry['models'].values():
         meta.update(terms_verified=True, terms_review=dict(REVIEW_META), repo_code_approved=True,
-                    owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
+                    owner_acknowledgements={'go_data_policy': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': review.router.DATA_USE_TERM}},
                     operational_status='healthy')
     return registry
 
@@ -66,7 +66,7 @@ def matrix_with(**scores):
     return matrix
 
 
-def impl_record(model='deepseek-v4.1-flash', session='ses_impl000111', commit=SHA):
+def impl_record(model='hy3', session='ses_impl000111', commit=SHA):
     return {'commit': commit, 'model': M[model], 'session': session, 'run': '1'}
 
 
@@ -85,9 +85,9 @@ class ReviewerSelectionTests(unittest.TestCase):
 
     def test_different_models_for_implementation_and_review_allowed(self):
         matrix = matrix_with(**{'glm-5.3-flash': 0.7, 'minimax-m3.1-flash': 0.9})
-        chosen = self.pick(matrix, [impl_record('deepseek-v4.1-flash')])
+        chosen = self.pick(matrix, [impl_record('hy3')])
         self.assertEqual(chosen['model'], M['minimax-m3.1-flash'])
-        review.check_separation(self.registry, [impl_record('deepseek-v4.1-flash')], chosen['model'], 'ses_review999')
+        review.check_separation(self.registry, [impl_record('hy3')], chosen['model'], 'ses_review999')
 
     def test_strongest_verified_reviewer_wins_not_the_fastest(self):
         matrix = matrix_with(**{'glm-5.3-flash': 0.7, 'minimax-m3.1-flash': 0.9, 'mimo-v2.6-flash': 0.8})
@@ -109,20 +109,20 @@ class ReviewerSelectionTests(unittest.TestCase):
         self.assertEqual(self.pick(matrix)['model'], M['glm-5.3-flash'])  # security weighs 0.25 vs 0.10
 
     def test_same_model_cannot_review_its_own_implementation(self):
-        matrix = matrix_with(**{'deepseek-v4.1-flash': 0.99, 'glm-5.3-flash': 0.6})
-        chosen = self.pick(matrix, [impl_record('deepseek-v4.1-flash')])
+        matrix = matrix_with(**{'hy3': 0.99, 'glm-5.3-flash': 0.6})
+        chosen = self.pick(matrix, [impl_record('hy3')])
         self.assertEqual(chosen['model'], M['glm-5.3-flash'])
-        self.assertIn('implemented this branch or PR', chosen['excluded'][M['deepseek-v4.1-flash']])
+        self.assertIn('implemented this branch or PR', chosen['excluded'][M['hy3']])
         with self.assertRaises(review.SeparationError):
-            review.check_separation(self.registry, [impl_record('deepseek-v4.1-flash')],
-                                    M['deepseek-v4.1-flash'], 'ses_review999')
+            review.check_separation(self.registry, [impl_record('hy3')],
+                                    M['hy3'], 'ses_review999')
         with self.assertRaises(review.SeparationError):  # also without the opencode/ prefix
-            review.check_separation(self.registry, [impl_record('deepseek-v4.1-flash')],
-                                    'deepseek-v4.1-flash-free', 'ses_review999')
+            review.check_separation(self.registry, [impl_record('hy3')],
+                                    'hy3', 'ses_review999')
 
     def test_every_prior_implementer_on_the_pr_is_excluded(self):
-        matrix = matrix_with(**{'deepseek-v4.1-flash': 0.9, 'glm-5.3-flash': 0.8, 'mimo-v2.6-flash': 0.7})
-        records = [impl_record('deepseek-v4.1-flash'), impl_record('glm-5.3-flash', 'ses_other00001', NEWSHA)]
+        matrix = matrix_with(**{'hy3': 0.9, 'glm-5.3-flash': 0.8, 'mimo-v2.6-flash': 0.7})
+        records = [impl_record('hy3'), impl_record('glm-5.3-flash', 'ses_other00001', NEWSHA)]
         self.assertEqual(self.pick(matrix, records)['model'], M['mimo-v2.6-flash'])
 
     def test_different_models_with_the_same_session_rejected(self):
@@ -139,8 +139,8 @@ class ReviewerSelectionTests(unittest.TestCase):
     def test_no_eligible_reviewer_is_review_blocked(self):
         cases = {
             'no evidence anywhere': (SHIPPED_MATRIX, [], ALL),
-            'only the implementer is evaluated': (matrix_with(**{'deepseek-v4.1-flash': 0.9}),
-                                                  [impl_record('deepseek-v4.1-flash')], ALL),
+            'only the implementer is evaluated': (matrix_with(**{'hy3': 0.9}),
+                                                  [impl_record('hy3')], ALL),
             'evaluated model unavailable': (matrix_with(**{'glm-5.3-flash': 0.9}), [], ALL - {M['glm-5.3-flash']}),
             'below the per-dimension floor': (matrix_with(**{'glm-5.3-flash': 0.4}), [], ALL),
         }
@@ -154,10 +154,10 @@ class ReviewerSelectionTests(unittest.TestCase):
         registry['models'][M['minimax-m3.1-flash']]['operational_status'] = 'degraded'
         registry['models'][M['mimo-v2.6-flash']]['repo_code_approved'] = False
         matrix = matrix_with(**{'glm-5.3-flash': 0.99, 'minimax-m3.1-flash': 0.98, 'mimo-v2.6-flash': 0.97,
-                                'nemotron-3-ultra': 0.5})
+                                'longcat-2.0': 0.5})
         chosen = review.select_reviewer(registry, matrix, [], ALL)
-        self.assertEqual(chosen['model'], M['nemotron-3-ultra'])
-        registry['models'][M['nemotron-3-ultra']]['repo_code_approved'] = False
+        self.assertEqual(chosen['model'], M['longcat-2.0'])
+        registry['models'][M['longcat-2.0']]['repo_code_approved'] = False
         with self.assertRaises(review.ReviewBlocked):
             review.select_reviewer(registry, matrix, [], ALL)
 
@@ -223,7 +223,7 @@ class ImplementerRecordTests(unittest.TestCase):
         commits = [bot_commit('glm-5.3-flash', 'ses_aaa111'),
                    bot_commit('mimo-v2.6-flash', 'ses_bbb222', verified=False, reason='unsigned'),
                    bot_commit('minimax-m3.1-flash', 'ses_ccc333', login='someone'),
-                   bot_commit('deepseek-v4.1-flash', 'ses_ddd444', mode='review')]
+                   bot_commit('hy3', 'ses_ddd444', mode='review')]
         records = review.implementer_records(commits, BOT)
         self.assertEqual([r['model'] for r in records], [M['glm-5.3-flash']])
         self.assertEqual(records[0]['session'], 'ses_aaa111')
@@ -287,7 +287,7 @@ class ReviewOutputTests(unittest.TestCase):
                                              'reviewer_session': 'ses_review999', 'records': [impl_record()],
                                              'branch': 'feature/x', 'run_url': 'https://x'})
         for expected in ('[HIGH]', 'backend/app/db.py', 'Evidence:', 'Recommendation:', SHA, 'ses_review999',
-                         'ses_impl000111', M['deepseek-v4.1-flash'], 'feature/x', 'Verification evidence',
+                         'ses_impl000111', M['hy3'], 'feature/x', 'Verification evidence',
                          'External acceptance by Codex or Jules is still required', 'not an approval'):
             self.assertIn(expected, body)
 
@@ -334,7 +334,7 @@ BASE_C = '9' * 40
 class FakeReviewApi:
     def __init__(self, head=SHA, base=BASE_C, state='open', commits=None, repo='o/r', merged=False):
         self.head, self.base, self.state, self.repo, self.merged = head, base, state, repo, merged
-        self.commits = commits if commits is not None else [bot_commit('deepseek-v4.1-flash', 'ses_impl000111')]
+        self.commits = commits if commits is not None else [bot_commit('hy3', 'ses_impl000111')]
         self.calls = []
 
     def call(self, method, path, body=None):
@@ -385,7 +385,7 @@ class PublishReviewTests(unittest.TestCase):
         self.assertEqual(marker['base_commit'], BASE_C)
         self.assertIs(marker['stale_on_arrival'], False)
         self.assertEqual(marker['external_acceptance'], 'REQUIRED')
-        self.assertEqual(marker['implementer_models'], [M['deepseek-v4.1-flash']])
+        self.assertEqual(marker['implementer_models'], [M['hy3']])
         self.assertEqual(marker['reviewer_model'], M['glm-5.3-flash'])
         self.assertNotIn('STALE ON ARRIVAL', posted[2]['body'])
 
@@ -400,7 +400,7 @@ class PublishReviewTests(unittest.TestCase):
         self.assertNotRegex(workflow, r'gh pr merge|auto-merge|/merge|enable_pr_auto_merge')
 
     def test_same_model_and_session_blocked_at_publication_time(self):
-        for env in ({'REVIEWER_MODEL': M['deepseek-v4.1-flash']}, {'REVIEWER_SESSION': 'ses_impl000111'},
+        for env in ({'REVIEWER_MODEL': M['hy3']}, {'REVIEWER_SESSION': 'ses_impl000111'},
                     {'REVIEWER_SESSION': ''}):
             api = FakeReviewApi()
             with self.assertRaises(review.SeparationError):
