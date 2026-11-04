@@ -243,7 +243,7 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         self.assertEqual(sandbox.GO_MODEL_IDS, tuple(router.GO_MODELS))
 
     def test_agent_config_rejects_paid_or_invented_models(self):
-        for model in ('opencode-go/kimi-k3', 'opencode/deepseek-v4.1-flash', 'anthropic/claude-opus-5',
+        for model in ('opencode-go/kimi-k4', 'opencode-go/muse-spark-1.3-contributor', 'opencode/deepseek-v4.1-flash', 'anthropic/claude-opus-5',
                       'opencode/x-free; rm -rf /', ''):
             with self.assertRaises(sandbox.SandboxError, msg=model):
                 sandbox.agent_config(model, 1)
