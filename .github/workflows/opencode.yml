@@ -203,6 +203,7 @@ jobs:
     environment: opencode-agent
     permissions:
       contents: read
+      id-token: write   # probe only: exchanged for a short-lived OpenCode token, see the sign-in step
     steps:
       - name: Checkout trusted scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -216,9 +217,25 @@ jobs:
           ref: ${{ needs.gate.outputs.authorized_sha }}
           path: target
           persist-credentials: false
+      - name: Sign in to OpenCode with the workflow identity (short-lived token)
+        id: oidc
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_c483bf13-599b-47b1-a060-54f58e89fa69
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
+          echo "::add-mask::${oidc}"
+          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="${CLIENT_ID}" \
+            --data-urlencode subject_token="${oidc}" | jq -er .access_token)"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc.outputs.token }}
         run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
       - name: Select an approved model for the fixed probe
         id: route
@@ -251,7 +268,7 @@ jobs:
           sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
       - name: Run 120-second text-only probe through model-bound proxy
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc.outputs.token }}
           MODEL: ${{ steps.route.outputs.model }}
           OPENCODE_PROXY_LOG: ${{ runner.temp }}/proxy-progress.log
         run: |
