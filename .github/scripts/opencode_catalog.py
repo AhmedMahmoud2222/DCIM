@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import time
 import urllib.error
@@ -21,8 +22,12 @@ ATTEMPTS = 2
 
 
 def http_get(url: str, key: str) -> object:
+    # The Go endpoint rejects requests without a session header; one random id per request, same shape the
+    # proxy accepts (`ses_` plus alphanumerics). The catalog call is read-only and sends no repository content.
+    session = 'ses_' + secrets.token_hex(12)
     request = urllib.request.Request(url, headers={'Authorization': f'Bearer {key}',
-                                                   'User-Agent': 'dcim-opencode-catalog'})
+                                                   'User-Agent': 'dcim-opencode-catalog',
+                                                   'x-opencode-session': session})
     with urllib.request.urlopen(request, timeout=20) as response:
         return json.loads(response.read(2_000_000))
 

@@ -910,6 +910,22 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(catalog.ENDPOINTS, ('https://opencode.ai/inference/go/v1/models',))
         self.assertEqual((endpoint, calls), (catalog.ENDPOINTS[0], [catalog.ENDPOINTS[0]]))
 
+    def test_catalog_request_carries_a_well_formed_session_header(self):
+        seen = {}
+
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, _n): return b'{"data": []}'
+
+        def fake_urlopen(request, timeout):
+            seen.update({k.lower(): v for k, v in request.header_items()})
+            return Resp()
+        with mock.patch.object(catalog.urllib.request, 'urlopen', fake_urlopen):
+            catalog.http_get('https://opencode.ai/inference/go/v1/models', 'k')
+        self.assertRegex(seen['x-opencode-session'], r'^ses_[A-Za-z0-9]{8,64}$')
+        self.assertEqual(seen['authorization'], 'Bearer k')
+
     def test_no_models_anywhere_fails_safely(self):
         for payload in ({'data': []}, [], {}, 'x', None):
             with self.assertRaises(RuntimeError):
