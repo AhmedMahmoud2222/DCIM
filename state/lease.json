@@ -1,1 +1,1 @@
-{"run_id":"full-20261104T0858Z","mode":"FULL","status":"released","started_at":"2026-11-04T08:58:27Z","released_at":"2026-11-04T09:02:00Z","result":"partial: lease, policy, ruleset, open inventory, nine PR metadata, owner DX59-DX63; no merges or PR writes; steps 2-10 not fully executed"}
+{"run_id":"followup-20261104T0928Z","mode":"FOLLOW-UP","status":"active","started_at":"2026-11-04T09:28:30Z","expires_at":"2026-11-04T09:53:30Z"}
