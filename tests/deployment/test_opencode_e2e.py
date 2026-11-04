@@ -205,7 +205,7 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
         # The firewall in the workflow stops direct egress; here we show that pointing the provider at
         # a different port than the proxy simply fails, it cannot reach upstream with the real key.
         def redirect(config):
-            config['provider']['opencode']['options']['baseURL'] = 'http://127.0.0.1:9/inference/go/openai/v1'
+            config['provider']['opencode-go']['options']['baseURL'] = 'http://127.0.0.1:9/inference/go/openai/v1'
         out, _px, seen = self.run_agent(mutate=redirect, timeout=25)
         self.assertEqual(seen, [])
         self.assertEqual(self.verdict(out)[0], 'failed')
