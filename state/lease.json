@@ -1,1 +1,1 @@
-{"run_id":"followup-20261104T1129Z","mode":"FOLLOW-UP","status":"active","started_at":"2026-11-04T11:29:12Z","expires_at":"2026-11-04T11:54:12Z"}
+{"run_id":"followup-20261104T1129Z","mode":"FOLLOW-UP","status":"released","started_at":"2026-11-04T11:29:12Z","released_at":"2026-11-04T11:34:00Z","result":"partial; Step 10 reported; no PR writes or merges","event":"state/events/2026-11-04/followup-20261104T1129Z.json"}
