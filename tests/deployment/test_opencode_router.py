@@ -23,6 +23,7 @@ EXPECTED = {
     'opencode/nemotron-3.5-lightning-free', 'opencode/nemotron-3-ultra-free',
 }
 GO = 'opencode-go/qwen3.8-max'
+ALL_GO = set(router.GO_MODELS)
 ALL = set(EXPECTED)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
@@ -79,11 +80,11 @@ ENABLED = enable(REGISTRY, *FOUR)
 
 class RegistryTests(unittest.TestCase):
     def test_registry_is_exactly_the_six_approved_free_models_and_one_go_model(self):
-        self.assertEqual(set(REGISTRY['models']), EXPECTED | {GO})
-        self.assertEqual(set(router.APPROVED_MODELS), EXPECTED | {GO})
-        self.assertEqual(set(router.GO_MODELS), {GO})
+        self.assertEqual(set(REGISTRY['models']), EXPECTED | ALL_GO)
+        self.assertEqual(set(router.APPROVED_MODELS), EXPECTED | ALL_GO)
+        self.assertIn(GO, ALL_GO)
         for model_id in REGISTRY['models']:
-            self.assertTrue(model_id.endswith('-free') or model_id == GO)
+            self.assertTrue(model_id.endswith('-free') or model_id in ALL_GO)
         router.load_registry(REGISTRY)
 
     def test_mimo_is_the_fallback_in_every_category_when_it_is_the_only_eligible_model(self):
@@ -190,7 +191,7 @@ class RegistryTests(unittest.TestCase):
                 os.environ.update(old)
 
     def test_unapproved_or_paid_model_in_registry_is_rejected(self):
-        for bad in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3', 'anthropic/claude-opus-5',
+        for bad in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k4', 'opencode-go/muse-spark-1.3-contributor', 'anthropic/claude-opus-5',
                     'opencode/invented-free'):
             registry = copy.deepcopy(REGISTRY)
             registry['models'][bad] = {'repo_code_approved': True}
@@ -425,19 +426,44 @@ class RoutingTests(unittest.TestCase):
                 os.environ.update(old)
 
 
+class GoRotationTests(unittest.TestCase):
+    def test_every_go_model_serves_at_least_one_category_and_no_category_depends_on_one_model(self):
+        used = {m for chain in REGISTRY['routes'].values() for m in chain if m in ALL_GO}
+        self.assertEqual(used, ALL_GO)
+        for category, chain in REGISTRY['routes'].items():
+            self.assertGreaterEqual(len([m for m in chain if m in ALL_GO]), 3, category)
+
+    def test_each_category_rotates_to_the_next_go_model_when_the_first_is_unavailable(self):
+        registry = enable(REGISTRY, *ALL_GO)
+        tasks = {'small_fix': 'fix a typo in the README', 'backend': 'add an API endpoint with an alembic migration',
+                 'frontend': 'adjust the React component css', 'analysis_large': 'audit the architecture across modules',
+                 'triage': 'explain what does this do', 'general': 'make the dashboard smarter'}
+        for category, task in tasks.items():
+            go_chain = [m for m in registry['routes'][category] if m in ALL_GO]
+            self.assertEqual(router.route(task, registry, set(go_chain))['model'], go_chain[0], category)
+            self.assertEqual(router.route(task, registry, set(go_chain[1:]))['model'], go_chain[1], category)
+
+    def test_no_go_model_trains_on_data_or_needs_a_non_chat_endpoint(self):
+        for banned in ('iceman', 'muse-spark', 'beam-free', 'gpt-', 'grok', 'claude-', 'gemini', 'deepseek'):
+            self.assertFalse([m for m in ALL_GO if banned in m], banned)
+
+
 class GoTierTests(unittest.TestCase):
     """OpenCode Go (Qwen3.8 Max): same gates as free models, a Go-specific acknowledgement, Go-only endpoints."""
     BODY = json.dumps({'model': 'qwen3.8-max', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
     JSON = {'Content-Type': 'application/json'}
 
     def test_shipped_go_entry_is_disabled_and_chained_last(self):
-        meta = REGISTRY['models'][GO]
-        self.assertIs(meta['terms_verified'], False)
-        self.assertIs(meta['repo_code_approved'], False)
-        self.assertEqual(meta['owner_acknowledgements'], {})
-        self.assertEqual(len(router.blockers(meta, model_id=GO)), 4)
+        for model_id in ALL_GO:
+            meta = REGISTRY['models'][model_id]
+            self.assertIs(meta['terms_verified'], False, model_id)
+            self.assertIs(meta['repo_code_approved'], False, model_id)
+            self.assertEqual(meta['owner_acknowledgements'], {}, model_id)
+            self.assertEqual(len(router.blockers(meta, model_id=model_id)), 4, model_id)
         for chain in REGISTRY['routes'].values():
-            self.assertEqual(chain[-1], GO)
+            self.assertEqual(len(chain), len(set(chain)))
+            tail = [m for m in chain if m in ALL_GO]
+            self.assertEqual(chain[-len(tail):], tail, 'Go models follow the free ones')
             self.assertLessEqual(len(chain), REGISTRY['max_candidates'])
 
     def test_go_needs_its_own_acknowledgement_term(self):
@@ -469,7 +495,7 @@ class GoTierTests(unittest.TestCase):
         self.assertEqual(router.normalize(GO), GO)
         self.assertEqual(router.normalize('opencode-go/qwen3.8-max'), GO)
         bad = copy.deepcopy(REGISTRY)
-        bad['models']['opencode-go/kimi-k3'] = copy.deepcopy(bad['models'][GO])
+        bad['models']['opencode-go/kimi-k4'] = copy.deepcopy(bad['models'][GO])
         with self.assertRaises(router.RoutingError):
             router.load_registry(bad)
 

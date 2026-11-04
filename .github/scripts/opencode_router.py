@@ -34,6 +34,21 @@ FREE_MODELS = (
 # OpenCode Go (flat monthly subscription with per-model usage caps). Ids carry an explicit `opencode-go/` prefix so
 # a bare catalog id can never be mistaken for a free model. Go models pass the same registry gates as free ones.
 GO_MODELS = (
+    'opencode-go/glm-5.3-flash',
+    'opencode-go/glm-5.3',
+    'opencode-go/glm-5.2',
+    'opencode-go/kimi-k3.1-pro',
+    'opencode-go/kimi-k3',
+    'opencode-go/kimi-k2.7-code',
+    'opencode-go/longcat-2.0',
+    'opencode-go/step-5-preview',
+    'opencode-go/mimo-v2.6-flash',
+    'opencode-go/mimo-v2.6-pro',
+    'opencode-go/mimo-v2.5',
+    'opencode-go/mimo-v2.5-pro',
+    'opencode-go/minimax-m3.1-flash',
+    'opencode-go/hy4-preview',
+    'opencode-go/hy3',
     'opencode-go/qwen3.8-max',
 )
 APPROVED_MODELS = FREE_MODELS + GO_MODELS
