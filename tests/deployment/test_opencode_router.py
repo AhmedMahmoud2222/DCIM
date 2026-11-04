@@ -30,6 +30,9 @@ FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'ope
         'opencode/minimax-m3.1-flash-free')
 SHIPPED_OWNER_APPROVED_UNHEALTHY = {'opencode/mimo-v2.6-flash-free'}
 SHIPPED_OWNER_ENABLED = set()
+# Go models whose terms, data-policy acknowledgement and repository-code approval the owner recorded on 2026-11-04.
+SHIPPED_GO_APPROVED_UNHEALTHY = {'opencode-go/glm-5.3-flash', 'opencode-go/glm-5.2',
+                                 'opencode-go/kimi-k2.7-code', 'opencode-go/kimi-k3.1-pro'}
 # One task per routing category, used to prove shipped eligibility and fail-closed routing.
 SHIPPED_TASKS = {
     'small_fix': 'fix a typo in the README',
@@ -224,6 +227,18 @@ class RegistryTests(unittest.TestCase):
                 self.assertEqual(meta['owner_acknowledgements'], {'free_period_data_use': {
                     'acknowledged_by': 'AhmedMahmoud2222', 'date': '2026-11-04',
                     'term': router.DATA_USE_TERM}}, model_id)
+            elif model_id in SHIPPED_GO_APPROVED_UNHEALTHY:
+                self.assertIs(meta['terms_verified'], True, model_id)
+                self.assertIs(meta['repo_code_approved'], True, model_id)
+                self.assertEqual(meta['terms_review'], {
+                    'reviewed_by': 'AhmedMahmoud2222', 'date': '2026-11-04',
+                    'source': 'https://opencode.ai/v2/docs/console/go/'}, model_id)
+                self.assertEqual(meta['owner_acknowledgements'], {'go_data_policy': {
+                    'acknowledged_by': 'AhmedMahmoud2222', 'date': '2026-11-04',
+                    'term': router.GO_DATA_TERM}}, model_id)
+                self.assertNotEqual(meta['operational_status'], 'healthy', model_id)
+                self.assertEqual(router.blockers(meta, model_id=model_id),
+                                 ['not marked operationally healthy'], model_id)
             elif model_id in SHIPPED_OWNER_ENABLED:
                 self.assertIs(meta['terms_verified'], True, model_id)
                 self.assertIs(meta['repo_code_approved'], True, model_id)
@@ -235,7 +250,8 @@ class RegistryTests(unittest.TestCase):
                 self.assertIs(meta['repo_code_approved'], False, model_id)
                 self.assertTrue(router.blockers(meta), model_id)
         self.assertEqual(
-            [model_id for model_id, meta in REGISTRY['models'].items() if not router.blockers(meta)],
+            [model_id for model_id, meta in REGISTRY['models'].items()
+             if not router.blockers(meta, model_id=model_id)],
             sorted(SHIPPED_OWNER_ENABLED), 'only the owner-enabled GLM model is eligible')
         self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
         for category, task in SHIPPED_TASKS.items():
@@ -454,7 +470,7 @@ class GoTierTests(unittest.TestCase):
     JSON = {'Content-Type': 'application/json'}
 
     def test_shipped_go_entry_is_disabled_and_chained_last(self):
-        for model_id in ALL_GO:
+        for model_id in ALL_GO - SHIPPED_GO_APPROVED_UNHEALTHY:
             meta = REGISTRY['models'][model_id]
             self.assertIs(meta['terms_verified'], False, model_id)
             self.assertIs(meta['repo_code_approved'], False, model_id)
@@ -465,6 +481,17 @@ class GoTierTests(unittest.TestCase):
             tail = [m for m in chain if m in ALL_GO]
             self.assertEqual(chain[-len(tail):], tail, 'Go models follow the free ones')
             self.assertLessEqual(len(chain), REGISTRY['max_candidates'])
+
+    def test_approved_go_models_stay_blocked_until_healthy_and_probe_waives_only_health(self):
+        for model_id in SHIPPED_GO_APPROVED_UNHEALTHY:
+            category = next(c for c, chain in REGISTRY['routes'].items() if model_id in chain)
+            with self.assertRaises(router.RoutingError, msg=model_id):
+                router.select(REGISTRY, category, {model_id})
+            self.assertEqual(router.select(REGISTRY, category, {model_id}, probe=True)[0], model_id)
+            with self.assertRaises(router.RoutingError, msg=model_id):   # probe never waives the acknowledgement
+                router.select(unacknowledge(REGISTRY, model_id), category, {model_id}, probe=True)
+            self.assertEqual(proxy.validate_bound_model(model_id, REGISTRY, set(), probe=True),
+                             model_id.split('/', 1)[1])
 
     def test_go_needs_its_own_acknowledgement_term(self):
         registry = enable(REGISTRY, GO)
