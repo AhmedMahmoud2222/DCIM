@@ -265,6 +265,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         run = steps[sign_in]['run']
         self.assertIn('set -euo pipefail', run)
         self.assertEqual(steps[sign_in]['env']['AUDIENCE'], 'https://opencode.ai/console')
+        for pinned in ('https://opencode.ai/console/auth/oauth/token',
+                       'grant_type=urn:ietf:params:oauth:grant-type:token-exchange',
+                       'subject_token_type=urn:ietf:params:oauth:token-type:jwt',
+                       'client_id="${CLIENT_ID}"', '--data-urlencode subject_token="${oidc}"'):
+            self.assertIn(pinned, run)
+        self.assertEqual(steps[sign_in]['env']['CLIENT_ID'], 'sk_c483bf13-599b-47b1-a060-54f58e89fa69')
         self.assertIn('jq -er .access_token', run)          # a missing token fails the step, never an empty key
         self.assertLess(run.index('::add-mask::${token}'), run.index('GITHUB_OUTPUT'))
         self.assertNotIn('GITHUB_ENV', run)                 # the token reaches only the steps that name it
