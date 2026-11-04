@@ -71,10 +71,20 @@
     },
     "opencode-go/glm-5.3-flash": {
       "label": "GLM-5.3-Flash (OpenCode Go)",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
+      "terms_verified": true,
+      "terms_review": {
+        "reviewed_by": "AhmedMahmoud2222",
+        "date": "2026-11-04",
+        "source": "https://opencode.ai/v2/docs/console/go/"
+      },
+      "owner_acknowledgements": {
+        "go_data_policy": {
+          "acknowledged_by": "AhmedMahmoud2222",
+          "date": "2026-11-04",
+          "term": "Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model"
+        }
+      },
+      "repo_code_approved": true,
       "operational_status": "unknown"
     },
     "opencode-go/glm-5.3": {
@@ -87,18 +97,38 @@
     },
     "opencode-go/glm-5.2": {
       "label": "GLM-5.2 (OpenCode Go)",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
+      "terms_verified": true,
+      "terms_review": {
+        "reviewed_by": "AhmedMahmoud2222",
+        "date": "2026-11-04",
+        "source": "https://opencode.ai/v2/docs/console/go/"
+      },
+      "owner_acknowledgements": {
+        "go_data_policy": {
+          "acknowledged_by": "AhmedMahmoud2222",
+          "date": "2026-11-04",
+          "term": "Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model"
+        }
+      },
+      "repo_code_approved": true,
       "operational_status": "unknown"
     },
     "opencode-go/kimi-k3.1-pro": {
       "label": "Kimi K3.1 Pro (OpenCode Go)",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
+      "terms_verified": true,
+      "terms_review": {
+        "reviewed_by": "AhmedMahmoud2222",
+        "date": "2026-11-04",
+        "source": "https://opencode.ai/v2/docs/console/go/"
+      },
+      "owner_acknowledgements": {
+        "go_data_policy": {
+          "acknowledged_by": "AhmedMahmoud2222",
+          "date": "2026-11-04",
+          "term": "Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model"
+        }
+      },
+      "repo_code_approved": true,
       "operational_status": "unknown"
     },
     "opencode-go/kimi-k3": {
@@ -111,10 +141,20 @@
     },
     "opencode-go/kimi-k2.7-code": {
       "label": "Kimi K2.7 Code (OpenCode Go)",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
+      "terms_verified": true,
+      "terms_review": {
+        "reviewed_by": "AhmedMahmoud2222",
+        "date": "2026-11-04",
+        "source": "https://opencode.ai/v2/docs/console/go/"
+      },
+      "owner_acknowledgements": {
+        "go_data_policy": {
+          "acknowledged_by": "AhmedMahmoud2222",
+          "date": "2026-11-04",
+          "term": "Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model"
+        }
+      },
+      "repo_code_approved": true,
       "operational_status": "unknown"
     },
     "opencode-go/longcat-2.0": {
