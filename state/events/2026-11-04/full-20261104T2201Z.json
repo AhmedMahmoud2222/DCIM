@@ -1,0 +1,72 @@
+{
+  "run_id": "full-20261104T2201Z",
+  "mode": "FULL",
+  "started_at": "2026-11-04T22:01:32Z",
+  "main_sha": "ec7a9a34c6c085de99eef32be54f8f3a403fb482",
+  "open_prs": [
+    219,
+    207,
+    181,
+    171,
+    146,
+    116,
+    115
+  ],
+  "open_issue_count": 16,
+  "steps": [
+    {
+      "step": "0",
+      "result": "Lease acquired; policy/changelog and ruleset read; six bypass actors pull_request"
+    },
+    {
+      "step": "1",
+      "result": "7 open PRs, 16 open non-PR issues; live main ec7a9a34; owner ledger comments read"
+    },
+    {
+      "step": "2",
+      "result": "No fix claims accepted without exact-head verification; no code dispositions certified"
+    },
+    {
+      "step": "3",
+      "result": "Prioritized #219 reliability, #115 CFD, #207 workflow; historical drafts deferred"
+    },
+    {
+      "step": "4",
+      "result": "No thread resolution without complete reply-chain evidence"
+    },
+    {
+      "step": "4a",
+      "result": "Existing Codex findings on #115 and #219 remain; no checklist closures"
+    },
+    {
+      "step": "5",
+      "result": "#219 frozen specification-first; #115 Draft/behind; #207 Draft/behind; refresh workflow exists but not eligible"
+    },
+    {
+      "step": "6",
+      "result": "Historical PRs #181 #171 #146 #116 remain unmerged; no closure without file-by-file proof"
+    },
+    {
+      "step": "7",
+      "result": "Staleness noted; no duplicate prompts sent without full guard verification"
+    },
+    {
+      "step": "8",
+      "result": "No merge: all seven PRs fail Draft, behind, review or unresolved-thread gates"
+    },
+    {
+      "step": "9",
+      "result": "No new class I decision queued; owner answers through 2026-11-04 reviewed"
+    },
+    {
+      "step": "10",
+      "result": "Report generated; lease release follows"
+    }
+  ],
+  "merges": [],
+  "thread_resolutions": [],
+  "agent_requests": [],
+  "policy_changes": [],
+  "safety": "Migration 0057 production hold maintained",
+  "limitations": "Full per-thread graph and exact-head CI for all seven PRs not exhaustively verified; no merge attempted"
+}
