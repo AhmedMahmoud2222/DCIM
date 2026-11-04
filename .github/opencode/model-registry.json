@@ -1,66 +1,8 @@
 {
   "registry_version": "3.0",
-  "provider": "opencode",
-  "catalog_reference": "anomalyco/opencode packages/core/src/models-dev/snapshot.txt @ 50c5fce (2026-10-20): all six ids present under provider 'opencode' with cost 0",
+  "provider": "opencode-go",
+  "catalog_reference": "OpenCode Go page https://opencode.ai/v2/docs/console/go/ (model ids and usage caps), live catalog GET /inference/go/v1/models",
   "models": {
-    "opencode/glm-5.3-flash-free": {
-      "label": "GLM-5.3-Flash Free",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
-      "operational_status": "unknown"
-    },
-    "opencode/deepseek-v4.1-flash-free": {
-      "label": "DeepSeek V4.1 Flash Free",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
-      "operational_status": "unknown"
-    },
-    "opencode/mimo-v2.6-flash-free": {
-      "label": "MiMo-V2.6-Flash Free",
-      "terms_verified": true,
-      "terms_review": {
-        "reviewed_by": "AhmedMahmoud2222",
-        "date": "2026-10-22",
-        "source": "https://opencode.ai/v2/docs/console/models/"
-      },
-      "owner_acknowledgements": {
-        "free_period_data_use": {
-          "acknowledged_by": "AhmedMahmoud2222",
-          "date": "2026-11-04",
-          "term": "During its free period, collected data may be used to improve the model"
-        }
-      },
-      "repo_code_approved": true,
-      "operational_status": "unknown"
-    },
-    "opencode/minimax-m3.1-flash-free": {
-      "label": "MiniMax M3.1 Flash Free",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
-      "operational_status": "unknown"
-    },
-    "opencode/nemotron-3-ultra-free": {
-      "label": "Nemotron 3 Ultra Free",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
-      "operational_status": "unknown"
-    },
-    "opencode/nemotron-3.5-lightning-free": {
-      "label": "Nemotron 3.5 Lightning Free",
-      "terms_verified": false,
-      "terms_review": null,
-      "owner_acknowledgements": {},
-      "repo_code_approved": false,
-      "operational_status": "unknown"
-    },
     "opencode-go/qwen3.8-max": {
       "label": "Qwen3.8 Max (OpenCode Go)",
       "terms_verified": false,
@@ -231,64 +173,46 @@
     }
   },
   "default_category": "general",
-  "max_candidates": 7,
+  "max_candidates": 4,
   "routes": {
     "small_fix": [
-      "opencode/glm-5.3-flash-free",
-      "opencode/deepseek-v4.1-flash-free",
-      "opencode/mimo-v2.6-flash-free",
       "opencode-go/glm-5.3-flash",
       "opencode-go/mimo-v2.6-flash",
       "opencode-go/minimax-m3.1-flash",
       "opencode-go/hy4-preview"
     ],
     "general": [
-      "opencode/deepseek-v4.1-flash-free",
-      "opencode/glm-5.3-flash-free",
-      "opencode/mimo-v2.6-flash-free",
       "opencode-go/glm-5.2",
       "opencode-go/mimo-v2.5",
       "opencode-go/hy3",
       "opencode-go/qwen3.8-max"
     ],
     "backend": [
-      "opencode/mimo-v2.6-flash-free",
-      "opencode/deepseek-v4.1-flash-free",
-      "opencode/glm-5.3-flash-free",
       "opencode-go/kimi-k2.7-code",
       "opencode-go/glm-5.2",
       "opencode-go/mimo-v2.6-pro",
       "opencode-go/qwen3.8-max"
     ],
     "frontend": [
-      "opencode/minimax-m3.1-flash-free",
-      "opencode/glm-5.3-flash-free",
-      "opencode/mimo-v2.6-flash-free",
       "opencode-go/kimi-k2.7-code",
       "opencode-go/minimax-m3.1-flash",
       "opencode-go/glm-5.2",
       "opencode-go/kimi-k3"
     ],
     "analysis_large": [
-      "opencode/nemotron-3-ultra-free",
-      "opencode/minimax-m3.1-flash-free",
-      "opencode/mimo-v2.6-flash-free",
       "opencode-go/kimi-k3.1-pro",
       "opencode-go/glm-5.3",
       "opencode-go/mimo-v2.5-pro",
       "opencode-go/qwen3.8-max"
     ],
     "triage": [
-      "opencode/nemotron-3.5-lightning-free",
-      "opencode/glm-5.3-flash-free",
-      "opencode/mimo-v2.6-flash-free",
       "opencode-go/glm-5.3-flash",
       "opencode-go/mimo-v2.6-flash",
       "opencode-go/step-5-preview",
       "opencode-go/longcat-2.0"
     ]
   },
-  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND repo_code_approved AND operational_status == healthy. Registry presence never enables a model; every requirement must be recorded explicitly.",
+  "eligibility": "A model is selectable only if: listed in the live catalog AND terms_verified with a complete terms_review record AND the owner's go_data_policy acknowledgement is recorded AND repo_code_approved AND operational_status == healthy. Registry presence never enables a model; every requirement must be recorded explicitly.",
   "agent_separation": {
     "enabled": true,
     "scope": "same_branch_or_pr",

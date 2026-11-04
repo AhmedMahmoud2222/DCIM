@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Read the live OpenCode model catalog (catalog reader v1.0).
 
-Tries the current inference endpoint first, then the legacy /zen route, which
-OpenCode's own gateway still proxies (console app inference-proxy.ts maps
-GET /zen/v1/models to the same service). Writes {"endpoint", "data": [{"id"}]}.
+Reads the OpenCode Go model list and writes {"endpoint", "data": [{"id"}]} with each id
+prefixed `opencode-go/`, the form the router and registry use.
 The key comes from OPENCODE_API_KEY and is never printed.
 
 Usage: opencode_catalog.py OUT_JSON
@@ -17,8 +16,7 @@ import time
 import urllib.error
 import urllib.request
 
-ENDPOINTS = ('https://opencode.ai/inference/openai/v1/models', 'https://opencode.ai/zen/v1/models')
-GO_ENDPOINTS = ('https://opencode.ai/inference/go/v1/models',)
+ENDPOINTS = ('https://opencode.ai/inference/go/v1/models',)
 ATTEMPTS = 2
 
 
@@ -68,14 +66,10 @@ def main(argv: list[str]) -> int:
     except RuntimeError as error:
         print(f'::error::{error}; stopping before any model call')
         return 1
-    try:  # The Go catalog is optional: a failure only makes Go models unavailable, never the free ones.
-        _, go_ids = fetch(lambda url: http_get(url, key), GO_ENDPOINTS)
-    except RuntimeError:
-        go_ids = []
-    ids = ids + [f'opencode-go/{i}' for i in go_ids]
+    ids = [f'opencode-go/{i}' for i in ids]
     with open(argv[1], 'w', encoding='utf-8') as handle:
         json.dump({'endpoint': endpoint, 'data': [{'id': i} for i in ids]}, handle)
-    print(f'catalog: {len(ids)} models from {endpoint} ({len(go_ids)} Go)')
+    print(f'catalog: {len(ids)} models from {endpoint}')
     return 0
 
 

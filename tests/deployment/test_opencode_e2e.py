@@ -27,7 +27,7 @@ guard = importlib.import_module('opencode_guard')
 
 DEFAULT_BIN = ROOT / '.github/opencode/runtime/node_modules/@opencode/cli-linux-x64/bin/opencode'
 BIN = os.environ.get('OPENCODE_BIN') or (str(DEFAULT_BIN) if DEFAULT_BIN.exists() else '')
-MODEL = 'opencode/glm-5.3-flash-free'
+MODEL = 'opencode-go/glm-5.3-flash'
 PINNED_VERSION = '2.1.4'
 
 
@@ -92,7 +92,7 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
             terms_review={'reviewed_by': 't', 'date': '2026-10-21',
                           'source': 'https://opencode.ai/v2/docs/console/models/'},
             repo_code_approved=True,
-            owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
+            owner_acknowledgements={'go_data_policy': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model'}},
             operational_status='healthy')
         cls.registry = registry
 
@@ -154,9 +154,9 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
         out, px, seen = self.run_agent()
         self.assertEqual(self.verdict(out), ('success', ''))
         self.assertTrue(seen)
-        self.assertEqual({s['model'] for s in seen}, {'glm-5.3-flash-free'})
+        self.assertEqual({s['model'] for s in seen}, {'glm-5.3-flash'})
         self.assertEqual({s['auth'] for s in seen}, {'Bearer REAL-KEY'})   # placeholder never reaches upstream
-        self.assertEqual({s['path'] for s in seen}, {'/inference/openai/v1/chat/completions'})
+        self.assertEqual({s['path'] for s in seen}, {'/inference/go/openai/v1/chat/completions'})
         self.assertEqual(px.rejections, [])
 
     def test_streaming_reply_is_a_text_only_lifecycle_the_guard_accepts(self):
@@ -176,19 +176,19 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
         self.assertEqual(headers['authorization'], 'Bearer REAL-KEY')
 
     def test_cli_model_substitution_is_stopped_at_the_proxy(self):
-        out, px, seen = self.run_agent(cli_model='opencode/deepseek-v4.1-flash-free', timeout=40)
+        out, px, seen = self.run_agent(cli_model='opencode-go/hy3', timeout=40)
         # The substituted model never reached the provider. (The session-title side request still
         # uses the bound model through small_model, which is allowed.)
-        self.assertNotIn('deepseek-v4.1-flash-free', {s['model'] for s in seen})
-        self.assertLessEqual({s['model'] for s in seen}, {'glm-5.3-flash-free'})
+        self.assertNotIn('hy3', {s['model'] for s in seen})
+        self.assertLessEqual({s['model'] for s in seen}, {'glm-5.3-flash'})
         self.assertTrue(any(r['rejected'] == 'model_mismatch' for r in px.rejections), px.rejections)
         self.assertEqual(self.verdict(out)[0], 'failed')
 
     def test_config_override_naming_another_model_is_stopped_at_the_proxy(self):
         def swap(config):
-            config['model'] = 'opencode/mimo-v2.6-flash-free'
-            config['small_model'] = 'opencode/mimo-v2.6-flash-free'
-        out, px, seen = self.run_agent(cli_model='opencode/mimo-v2.6-flash-free', mutate=swap, timeout=40)
+            config['model'] = 'opencode-go/mimo-v2.6-flash'
+            config['small_model'] = 'opencode-go/mimo-v2.6-flash'
+        out, px, seen = self.run_agent(cli_model='opencode-go/mimo-v2.6-flash', mutate=swap, timeout=40)
         self.assertEqual(seen, [])
         self.assertTrue(px.rejections)
         self.assertEqual(self.verdict(out)[0], 'failed')
@@ -197,7 +197,7 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
         # Without small_model OpenCode asks a different model, over a different API, to title the
         # session. That is model substitution; the proxy refuses it and the main run is unaffected.
         out, px, seen = self.run_agent(mutate=lambda config: config.pop('small_model'))
-        self.assertEqual({s['model'] for s in seen}, {'glm-5.3-flash-free'})
+        self.assertEqual({s['model'] for s in seen}, {'glm-5.3-flash'})
         self.assertTrue(any(r['rejected'] == 'endpoint_not_allowed' for r in px.rejections), px.rejections)
         self.assertEqual(self.verdict(out), ('success', ''))
 
@@ -205,7 +205,7 @@ class RealOpenCodeThroughProxyTests(unittest.TestCase):
         # The firewall in the workflow stops direct egress; here we show that pointing the provider at
         # a different port than the proxy simply fails, it cannot reach upstream with the real key.
         def redirect(config):
-            config['provider']['opencode']['options']['baseURL'] = 'http://127.0.0.1:9/inference/openai/v1'
+            config['provider']['opencode']['options']['baseURL'] = 'http://127.0.0.1:9/inference/go/openai/v1'
         out, _px, seen = self.run_agent(mutate=redirect, timeout=25)
         self.assertEqual(seen, [])
         self.assertEqual(self.verdict(out)[0], 'failed')
