@@ -27,7 +27,13 @@
         "date": "2026-10-22",
         "source": "https://opencode.ai/v2/docs/console/models/"
       },
-      "owner_acknowledgements": {},
+      "owner_acknowledgements": {
+        "free_period_data_use": {
+          "acknowledged_by": "AhmedMahmoud2222",
+          "date": "2026-11-04",
+          "term": "During its free period, collected data may be used to improve the model"
+        }
+      },
       "repo_code_approved": true,
       "operational_status": "unknown"
     },
