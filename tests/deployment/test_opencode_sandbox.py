@@ -231,6 +231,17 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         self.assertEqual(permission['read']['*.env'], 'deny')
         self.assertNotIn('ghp_', json.dumps(config))
 
+    def test_agent_config_for_the_go_model_uses_the_go_provider_through_the_proxy(self):
+        config = sandbox.agent_config('opencode-go/qwen3.8-max', 4321, 'probe')
+        self.assertEqual(config['enabled_providers'], ['opencode-go'])
+        self.assertEqual(config['model'], 'opencode-go/qwen3.8-max')
+        self.assertEqual(config['small_model'], 'opencode-go/qwen3.8-max')
+        provider = config['provider']['opencode-go']
+        self.assertEqual(provider['options']['baseURL'], 'http://127.0.0.1:4321/inference/go/openai/v1')
+        self.assertEqual(provider['options']['apiKey'], 'sandbox-placeholder')
+        self.assertEqual(set(provider['models']), {'qwen3.8-max'})
+        self.assertEqual(sandbox.GO_MODEL_IDS, tuple(router.GO_MODELS))
+
     def test_agent_config_rejects_paid_or_invented_models(self):
         for model in ('opencode-go/kimi-k3', 'opencode/deepseek-v4.1-flash', 'anthropic/claude-opus-5',
                       'opencode/x-free; rm -rf /', ''):
@@ -904,6 +915,27 @@ class CatalogTests(unittest.TestCase):
         for payload in ({'data': []}, [], {}, 'x', None):
             with self.assertRaises(RuntimeError):
                 catalog.fetch(lambda u, p=payload: p, sleep=lambda _s: None)
+
+    def run_main(self, get):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'OPENCODE_API_KEY': 'k'}), \
+                mock.patch.object(catalog, 'http_get', lambda url, key: get(url)), \
+                mock.patch.object(catalog.time, 'sleep', lambda _s: None):
+            out = Path(tmp, 'out.json')
+            code = catalog.main(['c', str(out)])
+            return code, [item['id'] for item in json.loads(out.read_text())['data']]
+
+    def test_go_catalog_ids_are_prefixed_and_a_go_failure_keeps_the_free_models(self):
+        def get(url):
+            if '/inference/go/' in url:
+                return {'data': [{'id': 'qwen3.8-max'}]}
+            return {'data': [{'id': 'glm-5.3-flash-free'}]}
+        self.assertEqual(self.run_main(get), (0, ['glm-5.3-flash-free', 'opencode-go/qwen3.8-max']))
+
+        def go_down(url):
+            if '/inference/go/' in url:
+                raise urllib.error.URLError('down')
+            return {'data': [{'id': 'glm-5.3-flash-free'}]}
+        self.assertEqual(self.run_main(go_down), (0, ['glm-5.3-flash-free']))
 
     def test_missing_key_gives_actionable_error_without_leaking(self):
         old = dict(os.environ)

@@ -129,7 +129,7 @@ def select_reviewer(registry: dict, matrix: dict, records: list[dict], available
         reasons = []
         if model in implementers:
             reasons.append('implemented this branch or PR')
-        reasons += router.blockers(registry['models'][model])
+        reasons += router.blockers(registry['models'][model], model_id=model)
         if model not in available:
             reasons.append('not in live catalog')
         score, weakest, why = capability(matrix, model)

@@ -22,6 +22,7 @@ EXPECTED = {
     'opencode/deepseek-v4.1-flash-free', 'opencode/glm-5.3-flash-free',
     'opencode/nemotron-3.5-lightning-free', 'opencode/nemotron-3-ultra-free',
 }
+GO = 'opencode-go/qwen3.8-max'
 ALL = set(EXPECTED)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode/glm-5.3-flash-free', 'opencode/deepseek-v4.1-flash-free', 'opencode/mimo-v2.6-flash-free',
@@ -43,6 +44,11 @@ ACK = {'free_period_data_use': {'acknowledged_by': 'owner', 'date': '2026-10-21'
                            'term': 'During its free period, collected data may be used to improve the model'}}
 
 
+def ack_for(model_id):
+    key, term = router.acknowledgement_terms(model_id)
+    return {key: {'acknowledged_by': 'owner', 'date': '2026-10-21', 'term': term}}
+
+
 def unacknowledge(registry, *model_ids):
     registry = copy.deepcopy(registry)
     for model_id in model_ids:
@@ -53,7 +59,7 @@ def unacknowledge(registry, *model_ids):
 def acknowledge(registry, *model_ids):
     registry = copy.deepcopy(registry)
     for model_id in model_ids:
-        registry['models'][model_id]['owner_acknowledgements'] = copy.deepcopy(ACK)
+        registry['models'][model_id]['owner_acknowledgements'] = ack_for(model_id)
     return registry
 
 
@@ -62,7 +68,7 @@ def enable(registry, *model_ids):
     for model_id in model_ids:
         registry['models'][model_id].update(terms_verified=True, terms_review=dict(REVIEW),
                                             repo_code_approved=True, operational_status='healthy',
-                                            owner_acknowledgements=copy.deepcopy(ACK))
+                                            owner_acknowledgements=ack_for(model_id))
     return registry
 
 
@@ -72,11 +78,12 @@ ENABLED = enable(REGISTRY, *FOUR)
 
 
 class RegistryTests(unittest.TestCase):
-    def test_registry_is_exactly_the_six_approved_free_models(self):
-        self.assertEqual(set(REGISTRY['models']), EXPECTED)
-        self.assertEqual(set(router.APPROVED_MODELS), EXPECTED)
+    def test_registry_is_exactly_the_six_approved_free_models_and_one_go_model(self):
+        self.assertEqual(set(REGISTRY['models']), EXPECTED | {GO})
+        self.assertEqual(set(router.APPROVED_MODELS), EXPECTED | {GO})
+        self.assertEqual(set(router.GO_MODELS), {GO})
         for model_id in REGISTRY['models']:
-            self.assertTrue(model_id.endswith('-free'))
+            self.assertTrue(model_id.endswith('-free') or model_id == GO)
         router.load_registry(REGISTRY)
 
     def test_mimo_is_the_fallback_in_every_category_when_it_is_the_only_eligible_model(self):
@@ -416,6 +423,88 @@ class RoutingTests(unittest.TestCase):
             finally:
                 os.environ.clear()
                 os.environ.update(old)
+
+
+class GoTierTests(unittest.TestCase):
+    """OpenCode Go (Qwen3.8 Max): same gates as free models, a Go-specific acknowledgement, Go-only endpoints."""
+    BODY = json.dumps({'model': 'qwen3.8-max', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
+    JSON = {'Content-Type': 'application/json'}
+
+    def test_shipped_go_entry_is_disabled_and_chained_last(self):
+        meta = REGISTRY['models'][GO]
+        self.assertIs(meta['terms_verified'], False)
+        self.assertIs(meta['repo_code_approved'], False)
+        self.assertEqual(meta['owner_acknowledgements'], {})
+        self.assertEqual(len(router.blockers(meta, model_id=GO)), 4)
+        for chain in REGISTRY['routes'].values():
+            self.assertEqual(chain[-1], GO)
+            self.assertLessEqual(len(chain), REGISTRY['max_candidates'])
+
+    def test_go_needs_its_own_acknowledgement_term(self):
+        registry = enable(REGISTRY, GO)
+        self.assertEqual(router.blockers(registry['models'][GO], model_id=GO), [])
+        free_ack = copy.deepcopy(registry)
+        free_ack['models'][GO]['owner_acknowledgements'] = copy.deepcopy(ACK)
+        self.assertIn('owner has not acknowledged the data-use term',
+                      router.blockers(free_ack['models'][GO], model_id=GO))
+        reworded = copy.deepcopy(registry)
+        reworded['models'][GO]['owner_acknowledgements'][router.GO_ACKNOWLEDGEMENT_KEY]['term'] = 'ok'
+        self.assertTrue(router.blockers(reworded['models'][GO], model_id=GO))
+        # A free model must not accept the Go acknowledgement either.
+        mimo = 'opencode/mimo-v2.6-flash-free'
+        cross = enable(REGISTRY, mimo)
+        cross['models'][mimo]['owner_acknowledgements'] = ack_for(GO)
+        self.assertTrue(router.blockers(cross['models'][mimo], model_id=mimo))
+
+    def test_enabled_go_model_is_selected_only_when_in_the_live_catalog_and_after_free_ones(self):
+        registry = enable(REGISTRY, GO)
+        self.assertEqual(router.route('new api endpoint', registry, {GO})['model'], GO)
+        with self.assertRaises(router.RoutingError):
+            router.route('new api endpoint', registry, set(ALL))
+        both = enable(REGISTRY, GO, 'opencode/glm-5.3-flash-free')
+        self.assertEqual(router.route('fix a typo in the README', both, ALL | {GO})['model'],
+                         'opencode/glm-5.3-flash-free')
+
+    def test_go_ids_normalize_and_unknown_go_ids_are_rejected(self):
+        self.assertEqual(router.normalize(GO), GO)
+        self.assertEqual(router.normalize('opencode-go/qwen3.8-max'), GO)
+        bad = copy.deepcopy(REGISTRY)
+        bad['models']['opencode-go/kimi-k3'] = copy.deepcopy(bad['models'][GO])
+        with self.assertRaises(router.RoutingError):
+            router.load_registry(bad)
+
+    def test_proxy_binds_go_with_go_paths_only(self):
+        registry = enable(REGISTRY, GO)
+        self.assertEqual(proxy.validate_bound_model(GO, registry, set()), 'qwen3.8-max')
+        self.assertEqual(proxy.tier_of(GO), 'go')
+        with self.assertRaises(proxy.PolicyError):
+            proxy.validate_bound_model(GO, REGISTRY, set())
+        with self.assertRaises(proxy.PolicyError):
+            proxy.validate_bound_model(GO, unacknowledge(registry, GO), set())
+        proxy.check_request('POST', '/inference/go/openai/v1/chat/completions', self.JSON, self.BODY,
+                            'qwen3.8-max', 'go')
+        proxy.check_request('GET', '/inference/go/v1/models', {}, None, 'qwen3.8-max', 'go')
+        for method, path in (('POST', '/inference/openai/v1/chat/completions'), ('GET', '/zen/v1/models'),
+                             ('POST', '/inference/go/v1/chat/completions')):
+            with self.assertRaises(proxy.PolicyError, msg=path) as caught:
+                proxy.check_request(method, path, self.JSON, self.BODY if method == 'POST' else None,
+                                    'qwen3.8-max', 'go')
+            self.assertEqual(caught.exception.code, 'endpoint_not_allowed')
+
+    def test_free_bound_proxy_never_reaches_go_endpoints(self):
+        body = json.dumps({'model': 'glm-5.3-flash-free', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
+        for method, path in (('POST', '/inference/go/openai/v1/chat/completions'), ('GET', '/inference/go/v1/models')):
+            with self.assertRaises(proxy.PolicyError, msg=path) as caught:
+                proxy.check_request(method, path, self.JSON, body if method == 'POST' else None,
+                                    'glm-5.3-flash-free')
+            self.assertEqual(caught.exception.code, 'endpoint_not_allowed')
+
+    def test_go_bound_proxy_rejects_a_different_model(self):
+        other = json.dumps({'model': 'glm-5.3-flash-free', 'messages': [{'role': 'user', 'content': 'x'}]}).encode()
+        with self.assertRaises(proxy.PolicyError) as caught:
+            proxy.check_request('POST', '/inference/go/openai/v1/chat/completions', self.JSON, other,
+                                'qwen3.8-max', 'go')
+        self.assertEqual(caught.exception.code, 'model_mismatch')
 
 
 if __name__ == '__main__':

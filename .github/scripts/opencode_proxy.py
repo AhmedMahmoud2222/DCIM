@@ -40,6 +40,13 @@ import opencode_router as router  # noqa: E402
 
 POST_PATHS = ('/inference/openai/v1/chat/completions',)
 GET_PATHS = ('/inference/openai/v1/models', '/zen/v1/models')
+# OpenCode Go endpoints. A proxy bound to a Go model reaches only these; a proxy bound to a free model never does.
+GO_POST_PATHS = ('/inference/go/openai/v1/chat/completions',)
+GO_GET_PATHS = ('/inference/go/v1/models',)
+
+
+def tier_paths(tier: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return (GO_POST_PATHS, GO_GET_PATHS) if tier == 'go' else (POST_PATHS, GET_PATHS)
 MAX_BODY = 20 * 1024 * 1024
 BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
@@ -79,18 +86,22 @@ class PolicyError(Exception):
 
 
 def bare(model: str) -> str:
-    return model.split('/', 1)[1] if model.startswith('opencode/') else model
+    return model.split('/', 1)[1] if model.startswith(('opencode/', 'opencode-go/')) else model
+
+
+def tier_of(model: str) -> str:
+    return 'go' if router.is_go(router.normalize(model)) else 'free'
 
 
 def validate_bound_model(model: str, registry: dict, denied: set[str], probe: bool = False) -> str:
     """Return the bare provider model id, or raise PolicyError for any ineligible model."""
     full = router.normalize(model)
     router.load_registry(registry)
-    if full not in router.APPROVED_MODELS or not full.endswith('-free'):
-        raise PolicyError('model_not_approved_free')
+    if full not in router.APPROVED_MODELS or not (router.is_go(full) or full.endswith('-free')):
+        raise PolicyError('model_not_approved')
     if full in {router.normalize(m) for m in denied}:
         raise PolicyError('model_denied_for_this_role')
-    if router.blockers(registry['models'][full], probe):
+    if router.blockers(registry['models'][full], probe, full):
         raise PolicyError('model_disabled_or_unhealthy')
     return bare(full)
 
@@ -177,7 +188,8 @@ def check_json_depth(body: bytes) -> None:
             depth -= 1
 
 
-def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str) -> None:
+def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str,
+                  tier: str = 'free') -> None:
     """Raise PolicyError(code) unless the request may be forwarded with the real credential."""
     if '?' in raw_path or '#' in raw_path or '%' in raw_path or '\\' in raw_path or '//' in raw_path \
             or '..' in raw_path:
@@ -187,15 +199,16 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
     encoding = (headers.get('Content-Encoding') or 'identity').strip().lower()
     if encoding != 'identity':
         raise PolicyError('content_encoding_not_supported')
+    post_paths, get_paths = tier_paths(tier)
     if method == 'GET':
-        if raw_path not in GET_PATHS:
+        if raw_path not in get_paths:
             raise PolicyError('endpoint_not_allowed')
         if body:
             raise PolicyError('unexpected_body')
         return
     if method != 'POST':
         raise PolicyError('method_not_allowed')
-    if raw_path not in POST_PATHS:
+    if raw_path not in post_paths:
         raise PolicyError('endpoint_not_allowed')
     if not (headers.get('Content-Type') or '').lower().startswith('application/json'):
         raise PolicyError('content_type_not_json')
@@ -223,8 +236,8 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
 
 
 class Proxy:
-    def __init__(self, key: str, upstream: str, bound: str, log_path: str | None = None):
-        self.key, self.upstream, self.bound, self.log_path = key, upstream, bound, log_path
+    def __init__(self, key: str, upstream: str, bound: str, log_path: str | None = None, tier: str = 'free'):
+        self.key, self.upstream, self.bound, self.log_path, self.tier = key, upstream, bound, log_path, tier
         self.rejections: list[dict] = []
         self.failures: dict[int, int] = {}
         self.forwarded = 0
@@ -288,14 +301,14 @@ def make_handler(proxy: Proxy):
                 return self._send(413, 'rejected by sandbox proxy')
             body = self.rfile.read(length) if length else None
             try:
-                check_request(self.command, self.path, self.headers, body, proxy.bound)
+                check_request(self.command, self.path, self.headers, body, proxy.bound, proxy.tier)
             except PolicyError as error:
                 proxy.record_rejection(error.code, self.command, self.path)
                 return self._send(403, f'rejected by sandbox proxy: {error.code}')
             with proxy._lock:
                 proxy.accepted += 1
                 request_count = proxy.accepted
-            endpoint = 'chat_completions' if self.path in POST_PATHS else 'models'
+            endpoint = 'chat_completions' if self.path in tier_paths(proxy.tier)[0] else 'models'
             proxy.telemetry('accepted', request_count=request_count, endpoint=endpoint)
             headers = {k: v for k, v in ((n, self.headers.get(n)) for n in FORWARD_HEADERS) if v}
             headers.update(client_identity_headers(self.headers))
@@ -367,8 +380,8 @@ def make_handler(proxy: Proxy):
 
 
 def serve(key: str, upstream: str, bound: str, port_file: str | None = None,
-          log_path: str | None = None) -> tuple[http.server.ThreadingHTTPServer, Proxy]:
-    proxy = Proxy(key, upstream, bound, log_path)
+          log_path: str | None = None, tier: str = 'free') -> tuple[http.server.ThreadingHTTPServer, Proxy]:
+    proxy = Proxy(key, upstream, bound, log_path, tier)
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), make_handler(proxy))
     if port_file:
         with open(port_file, 'w', encoding='utf-8') as handle:
@@ -396,7 +409,7 @@ def main(argv: list[str]) -> int:
         print(f'::error::proxy refused to start: {code}')
         return 1
     server, _proxy = serve(api_key, os.environ.get('OPENCODE_PROXY_UPSTREAM', 'https://opencode.ai'), bound,
-                           argv[1], os.environ.get('OPENCODE_PROXY_LOG'))
+                           argv[1], os.environ.get('OPENCODE_PROXY_LOG'), tier_of(argv[2]))
     server.serve_forever()
     return 0
 

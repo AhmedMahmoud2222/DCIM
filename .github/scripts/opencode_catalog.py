@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 
 ENDPOINTS = ('https://opencode.ai/inference/openai/v1/models', 'https://opencode.ai/zen/v1/models')
+GO_ENDPOINTS = ('https://opencode.ai/inference/go/v1/models',)
 ATTEMPTS = 2
 
 
@@ -67,9 +68,14 @@ def main(argv: list[str]) -> int:
     except RuntimeError as error:
         print(f'::error::{error}; stopping before any model call')
         return 1
+    try:  # The Go catalog is optional: a failure only makes Go models unavailable, never the free ones.
+        _, go_ids = fetch(lambda url: http_get(url, key), GO_ENDPOINTS)
+    except RuntimeError:
+        go_ids = []
+    ids = ids + [f'opencode-go/{i}' for i in go_ids]
     with open(argv[1], 'w', encoding='utf-8') as handle:
         json.dump({'endpoint': endpoint, 'data': [{'id': i} for i in ids]}, handle)
-    print(f'catalog: {len(ids)} models from {endpoint}')
+    print(f'catalog: {len(ids)} models from {endpoint} ({len(go_ids)} Go)')
     return 0
 
 
