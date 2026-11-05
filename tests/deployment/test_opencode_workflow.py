@@ -466,7 +466,7 @@ class ReportMessageTests(unittest.TestCase):
             base = {'PATH': f'{tmp}:/usr/bin:/bin', 'GH_BODY': str(body), 'NUMBER': '5', 'MODE': 'implement',
                     'GITHUB_REPOSITORY': REPO, 'RUN_URL': 'https://run', 'GENERATION': '', 'GENERATION_REASON': '',
                     'HAS_CHANGES': '', 'PUBLISH_RESULT': '', 'PUBLISHED_BRANCH': '', 'REVIEW_BLOCKED': '',
-                    'BLOCK_REASON': '', 'REVIEW_PUBLISH_RESULT': ''}
+                    'BLOCK_REASON': '', 'REVIEW_PUBLISH_RESULT': '', 'PROBE_RESULT': '', 'PROBE_MODEL': ''}
             import subprocess
             done = subprocess.run(['bash', '-c', self.script], env={**base, **env}, capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
@@ -481,6 +481,12 @@ class ReportMessageTests(unittest.TestCase):
             self.assertNotIn('no file changes', text, has_changes)
             self.assertIn('collecting or uploading the change failed before publication', text)
             self.assertIn('Nothing was published', text)
+
+    def test_probe_outcome_is_commented_on_the_pull_request(self):
+        self.assertIn('probe passed: opencode-go/glm-5.2', self.message(MODE='probe', PROBE_RESULT='success', PROBE_MODEL='opencode-go/glm-5.2'))
+        failed = self.message(MODE='probe', PROBE_RESULT='failure')
+        self.assertIn('probe failed (job result: failure)', failed)
+        self.assertIn('Nothing was published', failed)
 
     def test_other_outcomes_keep_their_messages(self):
         self.assertIn('publication stopped', self.message(GENERATION='success', HAS_CHANGES='true', PUBLISH_RESULT='failure'))
