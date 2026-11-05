@@ -569,6 +569,17 @@ class WorkflowBoundaryTests(unittest.TestCase):
         self.assertNotRegex(args, r'mcp__|Bash\(')
         self.assertIn('"Bash,WebFetch,WebSearch"', args)
 
+    def test_file_guard_hook_is_trusted_and_wired_before_claude_runs(self):
+        install = next(s for s in self.claude['steps'] if 'install -m 0444 trusted-guard' in s.get('run', ''))
+        self.assertIn('claude_file_guard.py "${RUNNER_TEMP}/claude_file_guard.py"', install['run'])
+        trusted = next(s for s in self.claude['steps'] if s.get('with', {}).get('path') == 'trusted-guard')
+        self.assertEqual(trusted['with']['ref'], '${{ github.sha }}')
+        self.assertIn('.github/scripts/claude_file_guard.py', trusted['with']['sparse-checkout'])
+        self.assertIn('"matcher":".*"', install['run'])
+        self.assertIn('claude_file_guard.py"}]}]}}', install['run'])
+        self.assertIn('--settings "${{ runner.temp }}/claude_settings.json"', self.action['with']['claude_args'])
+        self.assertNotIn('settings', self.action['with'])
+
     def test_trusted_script_comes_from_the_workflow_commit_and_runs_outside_the_pr_checkout(self):
         steps = self.claude['steps']
         trusted = self.index(self.claude, lambda s: s.get('with', {}).get('path') == 'trusted-guard')
@@ -578,7 +589,8 @@ class WorkflowBoundaryTests(unittest.TestCase):
         self.assertTrue(trusted < install < pr_head)
         self.assertIn('rm -rf trusted-guard', steps[install]['run'])
         for step in steps:
-            run = step.get('run', '').replace('trusted-guard/.github/scripts/claude_publish.py', '')
+            run = step.get('run', '').replace('trusted-guard/.github/scripts/claude_publish.py', '').replace(
+                'trusted-guard/.github/scripts/claude_file_guard.py', '')
             self.assertNotIn('.github/scripts/', run)
             self.assertNotIn('pr/', run)
 
@@ -611,7 +623,7 @@ class WorkflowBoundaryTests(unittest.TestCase):
 
     def test_gate_and_opencode_isolation_unchanged(self):
         self.assertEqual(self.wf['permissions'], {})
-        self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'write'})
+        self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'read'.replace('read', 'write')})
         self.assertEqual(self.action['with']['allowed_bots'], '')
         self.assertNotIn('OPENCODE', self.text)
         self.assertNotIn('opencode_gate', self.text)
