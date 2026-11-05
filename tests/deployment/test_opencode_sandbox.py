@@ -486,6 +486,16 @@ class StreamShapeTests(unittest.TestCase):
         self.assertFalse(summary['error_object'])
         self.assertNotIn(self.SECRET, json.dumps(summary))
         self.assertNotIn('PROBE_OK', json.dumps(summary))
+        self.assertEqual((summary['finish_count'], summary['events_after_done']), (1, 0))
+
+    def test_repeated_finish_chunks_and_data_after_done_are_counted(self):
+        stop = {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}
+        twice = proxy.StreamShape()
+        twice.feed(self.sse(stop, stop) + b'data: [DONE]\n\n')
+        self.assertEqual((twice.summary()['finish_reasons'], twice.summary()['finish_count']), (['stop'], 2))
+        late = proxy.StreamShape()
+        late.feed(self.sse(stop) + b'data: [DONE]\n\n' + self.sse({'choices': [{'delta': {'content': 'x'}}]}))
+        self.assertEqual((late.summary()['finish_count'], late.summary()['events_after_done']), (1, 1))
 
     def test_missing_finish_error_object_and_garbage_are_visible(self):
         shape = proxy.StreamShape()
@@ -548,6 +558,85 @@ class GuardOutlineTests(unittest.TestCase):
         outline = guard.event_outline(lines)
         self.assertTrue(outline.startswith('... '))
         self.assertTrue(outline.endswith('step_start text step_finish:stop'))
+
+
+class ProviderConfirmedFinalStepTests(unittest.TestCase):
+    """OpenCode 2.1.4 sometimes exits 0 without the last step_finish after a clean `stop` response (PR 219)."""
+    SES = 'ses_abcdefgh1234'
+
+    def rows(self, *steps):
+        rows, stamp = [], 0
+        for kind, extra in steps:
+            stamp += 1
+            part = {'type': guard.EVENT_PART_TYPE[kind], 'sessionID': self.SES, 'messageID': 'msg_aaaaaaaa1', **extra}
+            rows.append(json.dumps({'type': kind, 'sessionID': self.SES, 'timestamp': stamp, 'part': part}))
+        return rows
+
+    def tool_step(self):
+        return [('step_start', {}), ('tool_use', {'state': {'status': 'completed'}}),
+                ('step_finish', {'reason': 'tool-calls'})]
+
+    def test_a_trailing_text_step_counts_only_with_the_providers_clean_stop(self):
+        rows = self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'the review'}))
+        self.assertEqual(guard.evaluate(rows, 0, False), ('failed', 'unfinished_step'))
+        self.assertEqual(guard.evaluate(rows, 0, False, provider_stopped=False), ('failed', 'unfinished_step'))
+        self.assertEqual(guard.evaluate(rows, 0, False, provider_stopped=True), ('success', ''))
+
+    def test_the_confirmation_never_rescues_other_open_steps_or_failed_runs(self):
+        cases = {
+            'no text at all': self.rows(*self.tool_step(), ('step_start', {})),
+            'blank text': self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': '  '})),
+            'reasoning only': self.rows(*self.tool_step(), ('step_start', {}), ('reasoning', {'text': 'x'})),
+            'blank text after real text': self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'review'}),
+                                                    ('text', {'text': '  '})),
+            'tool in the open step': self.rows(('step_start', {}), ('text', {'text': 'a'}),
+                                               ('tool_use', {'state': {'status': 'completed'}})),
+            'text, then reasoning last': self.rows(('step_start', {}), ('text', {'text': 'a'}), ('reasoning', {'text': 'x'})),
+            'pending tool': self.rows(('step_start', {}), ('text', {'text': 'a'}), ('tool_use', {'state': {'status': 'running'}})),
+        }
+        for name, rows in cases.items():
+            with self.subTest(name):
+                self.assertEqual(guard.evaluate(rows, 0, False, provider_stopped=True)[0], 'failed')
+        rows = self.rows(('step_start', {}), ('text', {'text': 'a'}))
+        self.assertEqual(guard.evaluate(rows, 1, False, provider_stopped=True), ('failed', 'nonzero_exit:1'))
+        self.assertEqual(guard.evaluate(rows, 124, True, provider_stopped=True), ('failed', 'timeout'))
+        errored = rows + [json.dumps({'type': 'error', 'sessionID': self.SES, 'timestamp': 9, 'part': {}})]
+        self.assertEqual(guard.evaluate(errored, 0, False, provider_stopped=True), ('failed', 'agent_reported_error'))
+
+    def test_a_closed_run_is_unchanged_by_the_confirmation(self):
+        closed = self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'done'}),
+                           ('step_finish', {'reason': 'stop'}))
+        self.assertEqual(guard.evaluate(closed, 0, False), ('success', ''))
+        self.assertEqual(guard.evaluate(closed, 0, False, provider_stopped=True), ('success', ''))
+
+    def completion(self, **stream):
+        base = {'done': True, 'error_object': False, 'finish_reasons': ['stop'], 'finish_count': 1,
+                'events_after_done': 0, 'unparsed': 0}
+        return {'event': 'completion', 'http_status': 200, 'category': 'completed', 'stream': {**base, **stream}}
+
+    def log(self, *records):
+        handle = tempfile.NamedTemporaryFile('w', delete=False, suffix='.log')
+        self.addCleanup(os.unlink, handle.name)
+        handle.write('\n'.join(r if isinstance(r, str) else json.dumps(r) for r in records) + '\n')
+        handle.close()
+        return handle.name
+
+    def test_provider_stopped_reads_the_last_chat_completion_only(self):
+        self.assertTrue(guard.provider_stopped(self.log(self.completion())))
+        self.assertFalse(guard.provider_stopped('/nonexistent/proxy.log'))
+        self.assertFalse(guard.provider_stopped(self.log({'event': 'accepted'})))
+        self.assertFalse(guard.provider_stopped(self.log(self.completion(), self.completion(finish_reasons=['tool_calls']))))
+        self.assertTrue(guard.provider_stopped(self.log(self.completion(finish_reasons=['length']), self.completion())))
+        for bad in ({'done': False}, {'error_object': True}, {'finish_reasons': ['length']},
+                    {'finish_reasons': ['stop', 'stop']}, {'finish_count': 2}, {'events_after_done': 1},
+                    {'finish_count': None}, {'unparsed': 1}):
+            with self.subTest(bad=bad):
+                self.assertFalse(guard.provider_stopped(self.log(self.completion(**bad))))
+        record = self.completion()
+        self.assertFalse(guard.provider_stopped(self.log({**record, 'http_status': 502})))
+        self.assertFalse(guard.provider_stopped(self.log({**record, 'category': 'failed'})))
+        self.assertFalse(guard.provider_stopped(self.log({'event': 'completion', 'http_status': 200, 'stream': None})))
+        self.assertTrue(guard.provider_stopped(self.log('not json', self.completion())))
 
 
 class ProxyBindingTests(unittest.TestCase):

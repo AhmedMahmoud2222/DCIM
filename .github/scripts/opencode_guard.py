@@ -138,7 +138,8 @@ def fail(code: str) -> tuple[str, str]:
     return 'failed', code
 
 
-def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[str, str]:
+def evaluate(lines: list[str], exit_code: int | None, timed_out: bool,
+             provider_stopped: bool = False) -> tuple[str, str]:
     """Return ('success', '') or ('failed', code). Pure and exhaustively testable.
 
     The event format below was captured from the real OpenCode 1.19.3 binary
@@ -146,6 +147,11 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
     just a terminal event: one session, strictly nested steps, a supported termination,
     and no contradictory failure signal. A valid transcript proves the run ended normally;
     it says nothing about whether the change is correct.
+
+    `provider_stopped` is the trusted proxy's record that the last model response ended with finish reason
+    `stop` and a clean `[DONE]`. OpenCode 2.1.4 sometimes exits 0 without printing the last step_finish after
+    such a response (PR 219 reviews, 10 minutes into the run). With that record, a final step that holds
+    non-empty text and no tool use counts as the closing reply; without it, an open step still fails.
     """
     if timed_out:
         return fail('timeout')
@@ -174,9 +180,11 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
     # error checks above and below.
     closing = False           # bare reply text has started: no step may follow
     texts = 0
-    open_step = None          # (messageID, tool_uses, saw_body)
+    open_step = None          # [messageID, tool_uses, texts]
     finished = []             # (reason, tool_uses)
     last_stamp = 0
+    last_kind = ''
+    last_text_ok = False
     for event in events:
         kind = event['type']
         if kind == 'error':
@@ -194,12 +202,13 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
                 or part.get('sessionID') != session or not isinstance(part.get('messageID'), str) \
                 or not MESSAGE_RE.match(part['messageID']):
             return fail('malformed_part')
+        last_kind = kind
         if kind == 'step_start':
             if closing:
                 return fail('event_ordering')
             if open_step is not None or (finished and finished[-1][0] == 'stop'):
                 return fail('event_ordering')
-            open_step = [part['messageID'], 0]
+            open_step = [part['messageID'], 0, 0]
         elif kind in STEP_BODY:
             if open_step is None and kind != 'tool_use' and (not finished or finished[-1][0] == 'tool-calls'):
                 closing = True
@@ -211,6 +220,9 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
                 if (part.get('state') or {}).get('status') not in ('completed', 'error'):
                     return fail('tool_state_unfinished')
                 open_step[1] += 1
+            elif kind == 'text':
+                last_text_ok = isinstance(part.get('text'), str) and bool(part['text'].strip())
+                open_step[2] += last_text_ok
         else:  # step_finish
             if open_step is None or part['messageID'] != open_step[0]:
                 return fail('unmatched_step_finish')
@@ -224,6 +236,9 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool) -> tuple[
             finished.append((reason, open_step[1]))
             open_step = None
     if open_step is not None:
+        if provider_stopped and open_step[1] == 0 and open_step[2] and last_kind == 'text' and last_text_ok \
+                and not (finished and finished[-1][0] == 'stop'):
+            return 'success', ''
         return fail('unfinished_step')
     if closing:
         return ('success', '') if texts else fail('no_supported_termination')
@@ -276,6 +291,33 @@ def read_new_rejection(path: str, offset: int) -> tuple[str, int]:
         if isinstance(category, str) and REJECTION_CATEGORY_RE.match(category):
             return category, offset + complete
     return '', offset + complete
+
+
+def provider_stopped(path: str) -> bool:
+    """True when the proxy's last chat completion ended cleanly with finish reason `stop`.
+
+    Read from the proxy log, which the runner user writes and the agent account cannot reach. Only the
+    structural fields of the last `completion` record are used, never content."""
+    try:
+        with open(path, 'rb') as handle:
+            data = handle.read()
+    except OSError:
+        return False
+    last = None
+    for raw in data.splitlines():
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get('event') == 'completion' and isinstance(record.get('stream'), dict):
+            last = record
+    if last is None:
+        return False
+    stream = last['stream']
+    return (last.get('http_status') == 200 and last.get('category') == 'completed' and stream.get('done') is True
+            and stream.get('finish_reasons') == ['stop'] and stream.get('finish_count') == 1
+            and stream.get('events_after_done') == 0 and stream.get('error_object') is False
+            and stream.get('unparsed') == 0)
 
 
 def kill_agent_account(_process=None) -> None:
@@ -367,7 +409,8 @@ def main(argv: list[str]) -> int:
     except subprocess.TimeoutExpired:
         exit_code, timed_out = None, True
     survivor = reap_agent_processes()                  # on every path, before anything is reported or collected
-    status, reason = evaluate(lines, exit_code, timed_out)
+    status, reason = evaluate(lines, exit_code, timed_out,
+                              provider_stopped(os.environ.get('OPENCODE_PROXY_LOG', '')))
     if rejection and status == 'failed':               # the proxy saw the provider refuse: name that, not the symptom
         reason = rejection
     if mode == 'probe' and status == 'success' and not probe_acknowledged(lines):
