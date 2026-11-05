@@ -419,8 +419,11 @@ def verify_check(api, number):
     spec = api.policy['workflows']['gate']
     candidates = api.pages('/actions/workflows/' + str(api.workflow(spec['path']))
                           + '/runs?head_sha=' + b['base'] + '&branch=' + api.policy['default_branch'], 'workflow_runs')
-    require(bool(candidates) and max(candidates, key=lambda r: (r['run_number'], r['id']))['id'] == run['id'],
-            'newer gate execution supersedes this check')
+    require(bool(candidates), 'newer gate execution supersedes this check')
+    if max(candidates, key=lambda r: (r['run_number'], r['id']))['id'] != run['id']:
+        # A newer gate run exists but published nothing newer for this PR (a published BLOCK or a different
+        # head would already have failed above). The next scheduled run republishes: wait, do not block.
+        raise TransientError('newer gate execution has not published a decision yet')
     require(run.get('workflow_id') == api.workflow(spec['path']) and run.get('path') == spec['path']
             and run.get('head_sha') == b['base'] and run.get('head_branch') == api.policy['default_branch']
             and run.get('event') in {'workflow_dispatch', 'workflow_run', 'schedule'}

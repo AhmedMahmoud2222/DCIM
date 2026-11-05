@@ -1085,6 +1085,33 @@ class ControllerTests(unittest.TestCase):
                     c.execution_result(self.api, self.policy, task, 110)
                 self.assertEqual(bool(seen), expected_seen)
 
+    def test_slow_pass_stops_at_the_wall_clock_limit_and_keeps_its_progress(self):
+        runs = self._scan_runs(150)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        clock = {'now': 0.0}
+        calls = []
+        def fake_auth(api, proof, *a, **k):
+            calls.append(proof['run_id'])
+            clock['now'] += 100.0               # a throttled API: 100 s per authentication
+            if proof['run_id'] == 1:
+                return self._run_result(1)      # the genuine run is the oldest, beyond the first pass
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.object(c.time, 'monotonic', side_effect=lambda: clock['now']), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            first = len(calls)
+            self.assertLess(first, c.SCAN_BUDGET)         # ended on time, not by exhausting the budget
+            scan = task['deliveries'][-1]['scan']
+            self.assertEqual((scan['high'], scan['low']), (150, 150 - first + 1))   # progress was kept
+            for _ in range(80):                           # later passes continue where this one stopped
+                clock['now'] = 0.0
+                result = c.execution_result(self.api, self.policy, task, 110)
+                if result:
+                    break
+        self.assertEqual((result[0], result[1]), ('SUCCESS', 1))
+
     def test_malformed_run_timestamps_do_not_escape_the_prefilter(self):
         runs = self._scan_runs(3)
         for value in (12345, ['x'], {'a': 1}, 'not-a-date'):

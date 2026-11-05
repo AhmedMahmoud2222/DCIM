@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 from acceptance_api import ArtifactUnavailable, GitHub, TransientError
 from acceptance_core import Rejected, require, decode, digest, binding, provider_identity, same_binding, jobs_and_checks
@@ -249,6 +250,7 @@ CLOCK_SKEW_SECONDS = 120  # Runner clock versus GitHub's clock when filtering ru
 RETRY_LIMIT = 3  # Examinations of a run whose artifact could not be fetched before it counts as rejected.
 MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-limited).
 SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
+SCAN_SECONDS = 240  # Wall clock per reconciliation, so a slow API ends the pass (and saves progress) before the 8 minute job kill.
 
 
 def result_key(result):
@@ -307,9 +309,10 @@ def execution_result(api, policy, task, now):
         stale = [i for i in reversed(ids) if low <= i <= high and scan['attempts'].get(str(i), 1) != attempt_of[i]]
         retry = [i for i in reversed(ids) if low <= i <= high and str(i) in scan['retry'] and i not in stale]
         order = stale + retry + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
-    examined = 0
+    examined, cut_short, started = 0, False, time.monotonic()
     for rid in order:
-        if examined >= SCAN_BUDGET:
+        if examined >= SCAN_BUDGET or time.monotonic() - started > SCAN_SECONDS:
+            cut_short = True
             break
         lo, hi = (rid, rid) if low is None else (min(low, rid), max(high, rid))
         if not (low is not None and low <= rid <= high) and any(lo < p < hi for p in pending):
@@ -355,7 +358,7 @@ def execution_result(api, policy, task, now):
                 scan['match'] = dict(run_id=rid, key=result_key(result), result=result['result'],
                                      summary=execution_summary(result))
     scan['low'], scan['high'] = low, high
-    complete = not pending and len(order) <= SCAN_BUDGET
+    complete = not pending and len(order) <= SCAN_BUDGET and not cut_short
     if complete and scan['match']:
         # A retained match is only a lead: mutable witnesses (provider comment/review,
         # enrollment, policy, run attempt) are re-authenticated live before acceptance.

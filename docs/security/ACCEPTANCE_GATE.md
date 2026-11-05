@@ -161,3 +161,20 @@ separate publisher/sandbox remain in force. No action merges, approves a formal
 PR review, creates another PR, deploys, provisions credentials or operates live
 power/cooling equipment. Live provider proofs remain required before activation;
 the collaboration controller is documented in `AGENT_COLLABORATION.md`.
+
+## Outages, retries and known limits
+
+Temporary GitHub trouble defers a task and never blocks it: throttles, 5xx answers, timeouts, review-thread
+API failures, pagination that changes while it is read, an acceptance check that is not published yet, and a
+newer gate run that has not published a decision all raise `TransientError`. The task keeps its state until
+its persisted deadline, then escalates. Back-off across all requests of one job shares a 240 second budget,
+and one reconciliation stops scanning after 240 seconds and keeps its progress. A run whose evidence artifact
+could not be fetched is examined up to three times before it counts as negative evidence.
+
+Decisions kept as they are, fail-closed:
+
+- A rerun of a provider run that produces a different witness comment or review id counts as contradictory
+  evidence and escalates the task. Escalation is safe; accepting one of two different witnesses is not.
+- More than about 2,100 workflow runs in the provider workflow's listing breaks result discovery and escalates
+  the delivery. The owner archives or prunes old runs.
+- A full journal refuses every save, including terminal escalation, until the owner archives tasks.

@@ -298,7 +298,9 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(c.Rejected, 'duplicate'): g.verify_check(self.api, 211)
     def test_newer_gate_execution_invalidates_old_accept(self):
         self.api.publish_fixture(); newer = self.api.make_run(31, 'gate'); newer['conclusion'] = 'failure'
-        with self.assertRaisesRegex(c.Rejected, 'supersedes'): g.verify_check(self.api, 211)
+        # The newer run published nothing for this PR yet: the consumer waits for the next decision.
+        with self.assertRaises(a.TransientError): g.verify_check(self.api, 211)
+        self.assertFalse(issubclass(a.TransientError, c.Rejected))
 
 
 class ApiAndSchemaTests(unittest.TestCase):
