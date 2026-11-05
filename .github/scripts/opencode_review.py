@@ -150,7 +150,8 @@ def select_reviewer(registry: dict, matrix: dict, records: list[dict], available
         if model not in available:
             reasons.append('not in live catalog')
         score, weakest, why = capability(matrix, model)
-        if why == NO_EVIDENCE and owner_waiver(matrix, model):
+        if why == NO_EVIDENCE and (matrix['models'].get(model) or {}).get('evaluation') is None \
+                and owner_waiver(matrix, model):
             why = ''
             waived.add(model)
         if why:
@@ -158,16 +159,16 @@ def select_reviewer(registry: dict, matrix: dict, records: list[dict], available
         if reasons:
             excluded[model] = reasons
         else:
-            ranked.append((-score, -weakest, model))
+            ranked.append((model in waived, -score, -weakest, model))   # real evidence always before a waiver
     if not ranked:
         raise ReviewBlocked('no eligible independent reviewer: ' + '; '.join(
             f'{m}: {", ".join(r)}' for m, r in sorted(excluded.items())))
     ranked.sort()
     best = ranked[0]
-    is_waived = best[2] in waived
+    is_waived = best[0]
     basis = ('capability evaluation waived by the owner (no evaluation record)' if is_waived
-             else f'highest verified weighted capability {-best[0]:.3f}')
-    return {'model': best[2], 'score': round(-best[0], 6), 'waived': is_waived,
+             else f'highest verified weighted capability {-best[1]:.3f}')
+    return {'model': best[3], 'score': round(-best[1], 6), 'waived': is_waived,
             'reason': f'{basis} among {len(ranked)} eligible; excluded {len(excluded)}', 'excluded': excluded}
 
 
@@ -533,7 +534,8 @@ def publish_main(argv: list[str]) -> int:
     waiver = None
     if len(argv) > 4:   # the reviewer matrix from the default branch, to disclose a waived evaluation
         matrix = validate_matrix(load_json(argv[4]))
-        if capability(matrix, env['REVIEWER_MODEL'])[2] == NO_EVIDENCE:
+        if capability(matrix, env['REVIEWER_MODEL'])[2] == NO_EVIDENCE \
+                and (matrix['models'].get(env['REVIEWER_MODEL']) or {}).get('evaluation') is None:
             waiver = owner_waiver(matrix, env['REVIEWER_MODEL'])
     body = render_review(review, {
         'capability_waiver': waiver,
