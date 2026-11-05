@@ -539,8 +539,15 @@ class GuardOutlineTests(unittest.TestCase):
 
     def test_outline_is_bounded(self):
         lines = [json.dumps({'type': 'text', 'part': {}})] * 100
-        self.assertTrue(guard.event_outline(lines).endswith('...'))
-        self.assertLessEqual(len(guard.event_outline(lines).split()), 31)
+        self.assertTrue(guard.event_outline(lines).startswith('... '))
+        self.assertLessEqual(len(guard.event_outline(lines).split()), 41)
+
+    def test_a_long_outline_keeps_the_end_of_the_run(self):
+        step = lambda kind, reason=None: json.dumps({'type': kind, 'part': {'reason': reason} if reason else {}})
+        lines = [step('text')] * 80 + [step('step_start'), step('text'), step('step_finish', 'stop')]
+        outline = guard.event_outline(lines)
+        self.assertTrue(outline.startswith('... '))
+        self.assertTrue(outline.endswith('step_start text step_finish:stop'))
 
 
 class ProxyBindingTests(unittest.TestCase):
