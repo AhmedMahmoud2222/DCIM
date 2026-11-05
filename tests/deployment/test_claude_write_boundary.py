@@ -530,6 +530,21 @@ class WorkflowBoundaryTests(unittest.TestCase):
         self.assertNotEqual(self.publish['concurrency']['group'], self.claude['concurrency']['group'])
         self.assertIs(self.publish['concurrency']['cancel-in-progress'], False)
 
+    def test_trusted_root_worktree_precedes_pr_checkout_and_action(self):
+        steps = self.claude['steps']
+        roots = [i for i, step in enumerate(steps)
+                 if 'actions/checkout@' in step.get('uses', '')
+                 and not step.get('with', {}).get('path')]
+        self.assertEqual(len(roots), 1)
+        root = roots[0]
+        checkout = steps[root]['with']
+        self.assertEqual(checkout['ref'], '${{ github.sha }}')
+        self.assertIs(checkout['persist-credentials'], False)
+        pr_head = self.index(self.claude, lambda s: s.get('with', {}).get('path') == 'pr')
+        action = self.index(self.claude, lambda s: s.get('id') == 'claude')
+        self.assertLess(root, pr_head)
+        self.assertLess(pr_head, action)
+
     def test_pr_checkout_is_outside_the_workspace_root_the_action_reads(self):
         pr_head = next(s for s in self.claude['steps']
                        if s.get('with', {}).get('ref') == '${{ needs.gate.outputs.authorized_sha }}')
