@@ -1112,6 +1112,17 @@ class ControllerTests(unittest.TestCase):
                     break
         self.assertEqual((result[0], result[1]), ('SUCCESS', 1))
 
+    def test_scan_does_not_start_once_the_job_wide_budget_is_spent(self):
+        runs = self._scan_runs(10)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        calls = []
+        with patch.object(c, 'authenticated_execution', side_effect=lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(Rejected('x'))), \
+                patch.object(c, 'JOB_STARTED', time.monotonic() - c.JOB_SECONDS - 1), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+        self.assertEqual(calls, [])
+
     def test_malformed_run_timestamps_do_not_escape_the_prefilter(self):
         runs = self._scan_runs(3)
         for value in (12345, ['x'], {'a': 1}, 'not-a-date'):

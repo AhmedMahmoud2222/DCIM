@@ -168,7 +168,9 @@ Temporary GitHub trouble defers a task and never blocks it: throttles, 5xx answe
 API failures, pagination that changes while it is read, an acceptance check that is not published yet, and a
 newer gate run that has not published a decision all raise `TransientError`. The task keeps its state until
 its persisted deadline, then escalates. Back-off across all requests of one job shares a 240 second budget,
-and one reconciliation stops scanning after 240 seconds and keeps its progress. A run whose evidence artifact
+and one reconciliation stops scanning after 240 seconds and keeps its progress. The whole run starts no new
+scan or task after 360 seconds and visits tasks nearest their persisted deadline first; tasks it cannot reach
+wait for the next scheduled run, so escalation timing is best effort and depends on getting a reconciliation slot. A run whose evidence artifact
 could not be fetched is examined up to three times before it counts as negative evidence.
 
 Decisions kept as they are, fail-closed:

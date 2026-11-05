@@ -251,6 +251,8 @@ RETRY_LIMIT = 3  # Examinations of a run whose artifact could not be fetched bef
 MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-limited).
 SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
 SCAN_SECONDS = 240  # Wall clock per reconciliation, so a slow API ends the pass (and saves progress) before the 8 minute job kill.
+JOB_SECONDS = 360  # Wall clock for the whole run: no new scan or task starts after this, well before the 8 minute job kill.
+JOB_STARTED = time.monotonic()  # Reset by main(); a process is one job.
 
 
 def result_key(result):
@@ -311,7 +313,8 @@ def execution_result(api, policy, task, now):
         order = stale + retry + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
     examined, cut_short, started = 0, False, time.monotonic()
     for rid in order:
-        if examined >= SCAN_BUDGET or time.monotonic() - started > SCAN_SECONDS:
+        if examined >= SCAN_BUDGET or time.monotonic() - started > SCAN_SECONDS \
+                or time.monotonic() - JOB_STARTED > JOB_SECONDS:
             cut_short = True
             break
         lo, hi = (rid, rid) if low is None else (min(low, rid), max(high, rid))
@@ -610,7 +613,13 @@ def main():
     # Scan even after issue_comment: a newer pending callback may have displaced
     # another root event before it ever reached the journal.
     state, blob = ingest_pending(api, store, policy, state, blob, now)
-    for task_id in sorted(state['tasks']):
+    # Tasks closest to their persisted deadline go first, so a slow API cannot starve the ones about to expire;
+    # once the job's own budget is spent the rest wait for the next scheduled run.
+    global JOB_STARTED
+    JOB_STARTED = time.monotonic()
+    for task_id in sorted(state['tasks'], key=lambda t: (state['tasks'][t]['created_at'] + policy['timeout_seconds'], t)):
+        if time.monotonic() - JOB_STARTED > JOB_SECONDS:
+            break
         state, blob = reconcile(api, store, policy, state, blob, task_id, now)
     print(json.dumps(dict(revision=state['revision'], states={k: t['state'] for k, t in state['tasks'].items()})))
 
