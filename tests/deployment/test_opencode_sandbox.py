@@ -464,6 +464,85 @@ def body(**overrides):
     return json.dumps(data).encode()
 
 
+class StreamShapeTests(unittest.TestCase):
+    SECRET = 'PRIVATE-REASONING-TEXT'
+
+    def sse(self, *chunks):
+        return b''.join(b'data: ' + json.dumps(c).encode() + b'\n\n' for c in chunks)
+
+    def test_outline_records_structure_and_never_content(self):
+        shape = proxy.StreamShape()
+        body = self.sse({'choices': [{'delta': {'role': 'assistant', 'reasoning_content': self.SECRET}}]},
+                        {'choices': [{'delta': {'content': 'PROBE_OK'}}]},
+                        {'choices': [{'delta': {}, 'finish_reason': 'stop'}], 'usage': {'total_tokens': 3}}) + b'data: [DONE]\n\n'
+        for i in range(0, len(body), 7):                 # split mid-line on purpose
+            shape.feed(body[i:i + 7])
+        summary = shape.summary()
+        self.assertEqual(summary['data_events'], 3)
+        self.assertTrue(summary['done'])
+        self.assertEqual(summary['finish_reasons'], ['stop'])
+        self.assertEqual(summary['delta_fields'], ['content', 'reasoning_content', 'role'])
+        self.assertTrue(summary['usage_block'])
+        self.assertFalse(summary['error_object'])
+        self.assertNotIn(self.SECRET, json.dumps(summary))
+        self.assertNotIn('PROBE_OK', json.dumps(summary))
+
+    def test_missing_finish_error_object_and_garbage_are_visible(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'delta': {'content': 'x'}}]}) + b'data: {not json}\n\n'
+                   + self.sse({'error': {'message': self.SECRET}}))
+        summary = shape.summary()
+        self.assertEqual((summary['finish_reasons'], summary['done'], summary['unparsed']), ([], False, 1))
+        self.assertTrue(summary['error_object'])
+        self.assertNotIn(self.SECRET, json.dumps(summary))
+
+    def test_unknown_finish_reasons_become_a_fixed_token(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'finish_reason': 'PRIVATE_REASONING_TEXT'}]},
+                            {'choices': [{'finish_reason': 'length'}]}))
+        self.assertEqual(shape.summary()['finish_reasons'], ['length', 'other'])
+        self.assertNotIn('private', json.dumps(shape.summary()).lower())
+
+    def test_empty_delta_fields_are_recorded_by_key(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'delta': {'content': '', 'reasoning_content': None, 'tool_calls': [],
+                                                    'unknown_field': 'x'}}]}))
+        self.assertEqual(shape.summary()['delta_fields'], ['content', 'reasoning_content', 'tool_calls'])
+
+    def test_malformed_events_never_raise_and_never_stop_later_events_counting(self):
+        shape = proxy.StreamShape()
+        for bad in ({'choices': 5}, {'choices': 'x'}, {'choices': [5, None, 'a']}, {'choices': [{'delta': 'x'}]},
+                    {'usage': 'x'}, [1, 2], 7):
+            shape.feed(self.sse(bad))
+        shape.feed(self.sse({'choices': [{'finish_reason': 'stop'}]}))
+        self.assertEqual(shape.summary()['finish_reasons'], ['stop'])
+        shape.feed(b'\xff\xfe data: \x00\n' * 3)
+
+
+class GuardOutlineTests(unittest.TestCase):
+    def test_outline_lists_event_types_and_reasons_only(self):
+        lines = [json.dumps({'type': 'step_start', 'part': {'type': 'step-start'}}),
+                 json.dumps({'type': 'reasoning', 'part': {'type': 'reasoning', 'text': 'SECRET THOUGHT'}}),
+                 json.dumps({'type': 'step_finish', 'part': {'type': 'step-finish', 'reason': 'length'}}),
+                 'not json']
+        outline = guard.event_outline(lines)
+        self.assertEqual(outline, 'step_start reasoning step_finish:length unparseable')
+        self.assertNotIn('SECRET', outline)
+
+    def test_unknown_types_and_reasons_become_fixed_tokens(self):
+        lines = [json.dumps({'type': 'PRIVATE_REASONING_TEXT', 'part': {}}),
+                 json.dumps({'type': 'step_finish', 'part': {'reason': 'PRIVATE_REASONING_TEXT'}}),
+                 json.dumps({'type': 7, 'part': 'x'})]
+        outline = guard.event_outline(lines)
+        self.assertEqual(outline, 'unknown_type step_finish:other unknown_type')
+        self.assertNotIn('PRIVATE', outline.upper())
+
+    def test_outline_is_bounded(self):
+        lines = [json.dumps({'type': 'text', 'part': {}})] * 100
+        self.assertTrue(guard.event_outline(lines).endswith('...'))
+        self.assertLessEqual(len(guard.event_outline(lines).split()), 31)
+
+
 class ProxyBindingTests(unittest.TestCase):
     """Direct behavioural tests: crafted raw HTTP requests against a live proxy instance."""
 
