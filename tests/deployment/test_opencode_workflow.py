@@ -307,7 +307,7 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_app_tokens_are_repo_scoped_and_least_privilege(self):
         for job, expected in (('publish', {'permission-contents', 'permission-pull-requests', 'permission-issues'}),
-                              ('report', {'permission-issues'})):
+                              ('report', {'permission-issues', 'permission-pull-requests'})):
             step = next(s for s in self.steps_of(job) if 'create-github-app-token' in s.get('uses', ''))
             with_ = step['with']
             self.assertEqual(with_['repositories'], '${{ github.event.repository.name }}')
