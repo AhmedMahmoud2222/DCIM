@@ -121,6 +121,14 @@ jobs:
           rm -rf trusted-guard
       - name: Re-verify the target PR, protected base and head branch
         run: python3 "${RUNNER_TEMP}/claude_publish.py" preflight
+      # The pinned action runs restoreConfigFromBase from the workspace root,
+      # even in agent mode. Keep that root on trusted workflow code.
+      - name: Checkout trusted workflow commit at workspace root
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
       - name: Checkout the authorized PR head into ./pr
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
