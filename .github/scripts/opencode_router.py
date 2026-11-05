@@ -21,16 +21,28 @@ import re
 import sys
 import urllib.parse
 
-# The only models this router can ever emit. Changing this set needs a code
-# change, a test change and owner review (CODEOWNERS), not just a registry edit.
-APPROVED_MODELS = (
-    'opencode/minimax-m3.1-flash-free',
-    'opencode/mimo-v2.6-flash-free',
-    'opencode/deepseek-v4.1-flash-free',
-    'opencode/glm-5.3-flash-free',
-    'opencode/nemotron-3.5-lightning-free',
-    'opencode/nemotron-3-ultra-free',
+# The only models this router can ever emit: OpenCode Go (flat monthly subscription with per-model usage caps).
+# Ids carry an explicit `opencode-go/` prefix. Changing this set needs a code change, a test change and owner
+# review (CODEOWNERS), not just a registry edit.
+GO_MODELS = (
+    'opencode-go/glm-5.3-flash',
+    'opencode-go/glm-5.3',
+    'opencode-go/glm-5.2',
+    'opencode-go/kimi-k3.1-pro',
+    'opencode-go/kimi-k3',
+    'opencode-go/kimi-k2.7-code',
+    'opencode-go/longcat-2.0',
+    'opencode-go/step-5-preview',
+    'opencode-go/mimo-v2.6-flash',
+    'opencode-go/mimo-v2.6-pro',
+    'opencode-go/mimo-v2.5',
+    'opencode-go/mimo-v2.5-pro',
+    'opencode-go/minimax-m3.1-flash',
+    'opencode-go/hy4-preview',
+    'opencode-go/hy3',
+    'opencode-go/qwen3.8-max',
 )
+APPROVED_MODELS = GO_MODELS
 CATEGORIES = ('small_fix', 'general', 'backend', 'frontend', 'analysis_large', 'triage')
 # Tie-break order when two categories score equally.
 PRIORITY = ('analysis_large', 'backend', 'frontend', 'small_fix', 'triage', 'general')
@@ -48,7 +60,7 @@ KEYWORDS = {
 }
 PATH_HINTS = (('backend/', 'backend'), ('frontend/', 'frontend'), ('docs/', 'small_fix'),
               ('edge_collector/', 'backend'), ('tests/', 'backend'))
-# Material that must never reach a free third-party endpoint.
+# Material that must never reach a third-party model endpoint.
 SENSITIVE_RE = re.compile(
     r'-----BEGIN [A-Z ]*PRIVATE KEY-----|\bgh[pousr]_[A-Za-z0-9]{20,}|\bAKIA[0-9A-Z]{16}\b|'
     r'\bsk-[A-Za-z0-9]{20,}|(?i:\b(password|passwd|secret|api[_ -]?key|token)\s*[:=]\s*\S{6,})|'
@@ -56,10 +68,11 @@ SENSITIVE_RE = re.compile(
 )
 
 
-# Data-use terms the owner must acknowledge per model before repository code may reach it.
-# The recorded text must equal this constant, so a stale or reworded acknowledgement fails.
-DATA_USE_TERM = 'During its free period, collected data may be used to improve the model'
-ACKNOWLEDGEMENT_KEY = 'free_period_data_use'
+# Data-use term the owner must acknowledge per model before repository code may reach it. The recorded text
+# must equal this constant, so a stale or reworded acknowledgement fails.
+DATA_USE_TERM = ('Repository code sent to this model through OpenCode Go is handled under the OpenCode Go '
+                 'data policy listed for the model')
+ACKNOWLEDGEMENT_KEY = 'go_data_policy'
 
 
 class RoutingError(Exception):
@@ -102,14 +115,14 @@ def classify(task: str, hint_paths: list[str] | None = None) -> tuple[str, str]:
 
 
 def normalize(model_id: str) -> str:
-    return model_id if model_id.startswith('opencode/') else f'opencode/{model_id}'
+    return model_id if model_id.startswith('opencode-go/') else f'opencode-go/{model_id}'
 
 
 def load_registry(registry: dict) -> dict:
     models = registry.get('models') or {}
     for model_id in models:
-        if model_id not in APPROVED_MODELS or not model_id.endswith('-free'):
-            raise RoutingError(f'registry lists a model outside the approved free allowlist: {model_id}')
+        if model_id not in APPROVED_MODELS:
+            raise RoutingError(f'registry lists a model outside the approved allowlist: {model_id}')
     separation_policy(registry)
     routes = registry.get('routes') or {}
     if set(routes) != set(CATEGORIES):
@@ -150,7 +163,7 @@ def valid_review_source(value: str) -> bool:
 
 
 def valid_acknowledgement(meta: dict) -> bool:
-    """True when the owner recorded an acknowledgement of the exact data-use term."""
+    """True when the owner recorded an acknowledgement of the exact data-use term for this model."""
     acknowledgements = meta.get('owner_acknowledgements')
     if not isinstance(acknowledgements, dict):
         return False
@@ -231,7 +244,7 @@ def route(task: str, registry: dict, available: set[str],
           hint_paths: list[str] | None = None, probe: bool = False) -> dict:
     if SENSITIVE_RE.search(task or ''):
         raise RoutingError('task text looks like secret or confidential material; '
-                           'free third-party models are not permitted for it')
+                           'third-party models are not permitted for it')
     category, why = classify(task, hint_paths)
     model, candidates, reason = select(registry, category, available, probe)
     return {'model': model, 'category': category, 'candidates': candidates,

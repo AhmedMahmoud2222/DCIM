@@ -198,18 +198,20 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.wf['permissions'], {})
         self.assertEqual(self.jobs['gate']['permissions'],
                          {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
-        self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read'})
+        self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read', 'id-token': 'write'})
         self.assertEqual(self.jobs['publish']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['report']['permissions'], {})
-        self.assertEqual(self.jobs['review']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(self.jobs['review']['permissions'], {'contents': 'read', 'pull-requests': 'read', 'id-token': 'write'})
         self.assertEqual(self.jobs['review_publish']['permissions'], {'contents': 'read'})
-        for job in self.jobs.values():
+        for name, job in self.jobs.items():
             for forbidden in ('id-token', 'actions', 'workflows', 'administration', 'deployments'):
+                if name in ('probe', 'opencode', 'review') and forbidden == 'id-token':
+                    continue   # the jobs that call OpenCode mint a short-lived token (see the OIDC tests)
                 self.assertNotIn(forbidden, job['permissions'])
 
     def test_untrusted_generation_job_has_no_github_write_rights(self):
         job = self.jobs['opencode']
-        self.assertEqual(job['permissions'], {'contents': 'read'})
+        self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
         text = yaml.dump(job)
         for banned in ('APP_PRIVATE_KEY', 'create-github-app-token', 'github.token', 'GITHUB_TOKEN',
                        'GH_TOKEN', 'issues: write', 'gh issue', 'gh pr'):
@@ -224,10 +226,10 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs['review_publish']['environment'], 'opencode-publish')
         def used(job):
             return sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(self.jobs[job]))))
-        self.assertEqual(used('opencode'), ['OPENCODE_API_KEY'])
+        self.assertEqual(used('opencode'), [])
         self.assertEqual(used('publish'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertEqual(used('report'), ['OPENCODE_APP_PRIVATE_KEY'])
-        self.assertEqual(used('review'), ['OPENCODE_API_KEY'])
+        self.assertEqual(used('review'), [])
         self.assertEqual(used('review_publish'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertNotIn('DCIM_GIT_SIGNING_KEY', self.text)
 
@@ -246,12 +248,55 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("needs.gate.outputs.authorized == 'true'", self.jobs['report']['if'])
         probe = self.jobs['probe']
         self.assertEqual(probe['if'], "needs.gate.outputs.authorized == 'true' && needs.gate.outputs.mode == 'probe'")
-        self.assertEqual(probe['permissions'], {'contents': 'read'})
+        self.assertEqual(probe['permissions'], {'contents': 'read', 'id-token': 'write'})
         self.assertNotIn('APP_PRIVATE_KEY', yaml.dump(probe))
         self.assertIn('GUARD_MODE=probe', yaml.dump(probe))
         probe_run = next(step['run'] for step in probe['steps'] if step.get('name', '').startswith('Run 120-second'))
         self.assertIn('/srv/ocimpl/work 120', probe_run)
         self.assertNotIn('opencode-changes', yaml.dump(probe))
+
+    def test_probe_signs_in_with_oidc_and_holds_no_static_key(self):
+        probe = self.jobs['probe']
+        self.assertEqual(sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(probe)))), [])
+        steps = probe['steps']
+        names = [step.get('name', '') for step in steps]
+        sign_in = next(i for i, n in enumerate(names) if n.startswith('Sign in to OpenCode'))
+        self.assertEqual(steps[sign_in]['id'], 'oidc')
+        run = steps[sign_in]['run']
+        self.assertIn('set -euo pipefail', run)
+        self.assertEqual(steps[sign_in]['env']['AUDIENCE'], 'https://opencode.ai/console')
+        for pinned in ('https://opencode.ai/console/auth/oauth/token',
+                       'grant_type=urn:ietf:params:oauth:grant-type:token-exchange',
+                       'subject_token_type=urn:ietf:params:oauth:token-type:jwt',
+                       'client_id="${CLIENT_ID}"', '--data-urlencode subject_token="${oidc}"'):
+            self.assertIn(pinned, run)
+        self.assertEqual(steps[sign_in]['env']['CLIENT_ID'], 'sk_c483bf13-599b-47b1-a060-54f58e89fa69')
+        self.assertIn('jq -er .access_token', run)
+        self.assertIn('expires_in', run)                    # the lifetime is logged so a short one is visible          # a missing token fails the step, never an empty key
+        self.assertLess(run.index('::add-mask::${token}'), run.index('GITHUB_OUTPUT'))
+        self.assertNotIn('GITHUB_ENV', run)                 # the token reaches only the steps that name it
+        users = [step['name'] for step in steps
+                 if step.get('env', {}).get('OPENCODE_API_KEY') == '${{ steps.oidc.outputs.token }}']
+        self.assertEqual(users, ['Read live model catalog',
+                                 'Run 120-second text-only probe through model-bound proxy'])
+        for later in names[sign_in + 1:]:
+            self.assertFalse(later.startswith('Sign in'))
+        # id-token belongs to the three jobs that call OpenCode; no job holds the static key any more
+        self.assertNotIn('secrets.OPENCODE_API_KEY', self.text)
+        for name, job in self.jobs.items():
+            if name not in ('probe', 'opencode', 'review'):
+                self.assertNotIn('id-token', job['permissions'])
+        for name in ('opencode', 'review'):
+            job_steps = self.jobs[name]['steps']
+            sign_ins = [x for x in job_steps if x.get('name', '').startswith('Sign in to OpenCode')]
+            self.assertEqual([x['id'] for x in sign_ins], ['oidc', 'oidc_agent'], name)
+            for x in sign_ins:
+                self.assertIn('jq -er .access_token', x['run'])
+                self.assertNotIn('GITHUB_ENV', x['run'])
+            holders = {x['name']: x['env']['OPENCODE_API_KEY'] for x in job_steps
+                       if 'OPENCODE_API_KEY' in x.get('env', {})}
+            self.assertEqual(sorted(holders.values()),
+                             ['${{ steps.oidc.outputs.token }}', '${{ steps.oidc_agent.outputs.token }}'], name)
 
     def test_concurrency_cannot_be_displaced_by_unauthorized_comments(self):
         self.assertNotIn('concurrency', self.wf)
@@ -262,7 +307,7 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_app_tokens_are_repo_scoped_and_least_privilege(self):
         for job, expected in (('publish', {'permission-contents', 'permission-pull-requests', 'permission-issues'}),
-                              ('report', {'permission-issues'})):
+                              ('report', {'permission-issues', 'permission-pull-requests'})):
             step = next(s for s in self.steps_of(job) if 'create-github-app-token' in s.get('uses', ''))
             with_ = step['with']
             self.assertEqual(with_['repositories'], '${{ github.event.repository.name }}')
@@ -417,12 +462,12 @@ class ReportMessageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             body = Path(tmp, 'body')
             stub = Path(tmp, 'gh')
-            stub.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = "--body" ] && printf "%s" "$2" > "$GH_BODY"; shift; done\n')
+            stub.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in body=*) printf "%s" "${1#body=}" > "$GH_BODY";; esac; shift; done\n')
             stub.chmod(0o755)
             base = {'PATH': f'{tmp}:/usr/bin:/bin', 'GH_BODY': str(body), 'NUMBER': '5', 'MODE': 'implement',
                     'GITHUB_REPOSITORY': REPO, 'RUN_URL': 'https://run', 'GENERATION': '', 'GENERATION_REASON': '',
                     'HAS_CHANGES': '', 'PUBLISH_RESULT': '', 'PUBLISHED_BRANCH': '', 'REVIEW_BLOCKED': '',
-                    'BLOCK_REASON': '', 'REVIEW_PUBLISH_RESULT': ''}
+                    'BLOCK_REASON': '', 'REVIEW_PUBLISH_RESULT': '', 'PROBE_RESULT': '', 'PROBE_MODEL': ''}
             import subprocess
             done = subprocess.run(['bash', '-c', self.script], env={**base, **env}, capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
@@ -437,6 +482,16 @@ class ReportMessageTests(unittest.TestCase):
             self.assertNotIn('no file changes', text, has_changes)
             self.assertIn('collecting or uploading the change failed before publication', text)
             self.assertIn('Nothing was published', text)
+
+    def test_report_uses_the_rest_comment_endpoint_not_graphql(self):
+        self.assertIn('gh api "repos/${GITHUB_REPOSITORY}/issues/${NUMBER}/comments" -f body=', self.script)
+        self.assertNotIn('gh issue comment', self.script)
+
+    def test_probe_outcome_is_commented_on_the_pull_request(self):
+        self.assertIn('probe passed: opencode-go/glm-5.2', self.message(MODE='probe', PROBE_RESULT='success', PROBE_MODEL='opencode-go/glm-5.2'))
+        failed = self.message(MODE='probe', PROBE_RESULT='failure')
+        self.assertIn('probe failed (job result: failure)', failed)
+        self.assertIn('Nothing was published', failed)
 
     def test_other_outcomes_keep_their_messages(self):
         self.assertIn('publication stopped', self.message(GENERATION='success', HAS_CHANGES='true', PUBLISH_RESULT='failure'))

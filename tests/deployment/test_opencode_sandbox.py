@@ -211,7 +211,7 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         enabled = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
         for m in enabled['models'].values():
             m.update(terms_verified=True, repo_code_approved=True, operational_status='healthy',
-                     owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
+                     owner_acknowledgements={'go_data_policy': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model'}},
                      terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
                                    'source': 'https://opencode.ai/docs/zen'})
         for task in (f'use {FAKE_TOKEN}', 'summarize customer data', 'fix credentials handling'):
@@ -219,11 +219,11 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
                 router.route(task, enabled, set(enabled['models']))
 
     def test_agent_config_is_managed_loopback_only_and_deny_by_default_for_risky_tools(self):
-        config = sandbox.agent_config('opencode/glm-5.3-flash-free', 4321)
-        options = config['provider']['opencode']['options']
-        self.assertEqual(options['baseURL'], 'http://127.0.0.1:4321/inference/openai/v1')
+        config = sandbox.agent_config('opencode-go/glm-5.3-flash', 4321)
+        options = config['provider']['opencode-go']['options']
+        self.assertEqual(options['baseURL'], 'http://127.0.0.1:4321/inference/go/openai/v1')
         self.assertEqual(options['apiKey'], 'sandbox-placeholder')
-        self.assertEqual(config['enabled_providers'], ['opencode'])
+        self.assertEqual(config['enabled_providers'], ['opencode-go'])
         self.assertEqual(config['share'], 'disabled')
         permission = config['permission']
         for tool in ('webfetch', 'websearch', 'external_directory', 'task'):
@@ -231,8 +231,19 @@ class ConfidentialityBoundaryTests(unittest.TestCase):
         self.assertEqual(permission['read']['*.env'], 'deny')
         self.assertNotIn('ghp_', json.dumps(config))
 
+    def test_agent_config_for_the_go_model_uses_the_go_provider_through_the_proxy(self):
+        config = sandbox.agent_config('opencode-go/qwen3.8-max', 4321, 'probe')
+        self.assertEqual(config['enabled_providers'], ['opencode-go'])
+        self.assertEqual(config['model'], 'opencode-go/qwen3.8-max')
+        self.assertEqual(config['small_model'], 'opencode-go/qwen3.8-max')
+        provider = config['provider']['opencode-go']
+        self.assertEqual(provider['options']['baseURL'], 'http://127.0.0.1:4321/inference/go/openai/v1')
+        self.assertEqual(provider['options']['apiKey'], 'sandbox-placeholder')
+        self.assertEqual(set(provider['models']), {'qwen3.8-max'})
+        self.assertEqual(sandbox.GO_MODEL_IDS, tuple(router.GO_MODELS))
+
     def test_agent_config_rejects_paid_or_invented_models(self):
-        for model in ('opencode-go/kimi-k3', 'opencode/deepseek-v4.1-flash', 'anthropic/claude-opus-5',
+        for model in ('opencode-go/kimi-k4', 'opencode-go/muse-spark-1.3-contributor', 'opencode/deepseek-v4.1-flash', 'anthropic/claude-opus-5',
                       'opencode/x-free; rm -rf /', ''):
             with self.assertRaises(sandbox.SandboxError, msg=model):
                 sandbox.agent_config(model, 1)
@@ -252,16 +263,16 @@ class AgentConfigTests(unittest.TestCase):
 
     def test_small_model_is_the_bound_model_in_both_modes(self):
         for mode in ('implement', 'review'):
-            config = sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, mode)
-            self.assertEqual(config['model'], 'opencode/glm-5.3-flash-free')
+            config = sandbox.agent_config('opencode-go/glm-5.3-flash', 4000, mode)
+            self.assertEqual(config['model'], 'opencode-go/glm-5.3-flash')
             self.assertEqual(config['small_model'], config['model'], mode)
 
     def test_review_mode_denies_editing_and_implement_mode_allows_it(self):
-        self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'review')['permission']['edit'], 'deny')
-        self.assertEqual(sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'implement')['permission']['edit'], 'allow')
+        self.assertEqual(sandbox.agent_config('opencode-go/glm-5.3-flash', 4000, 'review')['permission']['edit'], 'deny')
+        self.assertEqual(sandbox.agent_config('opencode-go/glm-5.3-flash', 4000, 'implement')['permission']['edit'], 'allow')
 
     def test_probe_mode_denies_every_repository_and_execution_tool(self):
-        permission = sandbox.agent_config('opencode/glm-5.3-flash-free', 4000, 'probe')['permission']
+        permission = sandbox.agent_config('opencode-go/glm-5.3-flash', 4000, 'probe')['permission']
         for tool in ('read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'webfetch', 'websearch'):
             self.assertEqual(permission[tool], 'deny', tool)
 
@@ -270,7 +281,7 @@ class GuardTests(unittest.TestCase):
     """Command construction and the guard entry point. Lifecycle rules: test_opencode_guard_fixtures."""
 
     def test_command_runs_as_isolated_user_with_clean_env_and_timeout(self):
-        cmd = guard.build_command('opencode/glm-5.3-flash-free', '{"a":1}', '/srv/ocagent-home', '/srv/ocimpl/work', 25, 't')
+        cmd = guard.build_command('opencode-go/glm-5.3-flash', '{"a":1}', '/srv/ocagent-home', '/srv/ocimpl/work', 25, 't')
         self.assertEqual(cmd[:4], ['sudo', '-n', '-u', 'ocagent'])
         self.assertEqual(cmd[4:6], ['timeout', '--kill-after=30s'])
         self.assertIn('25m', cmd)
@@ -286,14 +297,14 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn('OPENCODE_PURE=1', cmd)
         self.assertNotIn('OPENCODE_DISABLE_EXTERNAL_SKILLS=1', cmd)
         run = cmd[cmd.index('opencode'):]
-        self.assertEqual(run[:7], ['opencode', 'run', '--standalone', '--format', 'json', '--model', 'opencode/glm-5.3-flash-free'])
+        self.assertEqual(run[:7], ['opencode', 'run', '--standalone', '--format', 'json', '--model', 'opencode-go/glm-5.3-flash'])
         self.assertNotIn('--pure', run)
         self.assertNotIn('--dir', run)         # v2 has no --dir: the process cwd and $PWD select the work tree
         self.assertNotIn('--auto', run)
         self.assertNotIn('--dangerously-skip-permissions', run)
 
     def test_probe_command_has_fixed_task_and_hard_120_second_timeout(self):
-        cmd = guard.build_command('opencode/glm-5.3-flash-free', '{}', '/srv/ocagent-home',
+        cmd = guard.build_command('opencode-go/glm-5.3-flash', '{}', '/srv/ocagent-home',
                                   '/srv/ocimpl/work', 120, 'untrusted input ignored', 'probe')
         self.assertIn('--signal=KILL', cmd)
         self.assertIn('120s', cmd)
@@ -416,16 +427,16 @@ class GuardTests(unittest.TestCase):
 
 
 ENABLED_REGISTRY = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
-for _model in ('opencode/glm-5.3-flash-free', 'opencode/mimo-v2.6-flash-free', 'opencode/deepseek-v4.1-flash-free'):
+for _model in ('opencode-go/glm-5.3-flash', 'opencode-go/mimo-v2.6-flash', 'opencode-go/hy3'):
     ENABLED_REGISTRY['models'][_model].update(
         terms_verified=True,
         terms_review={'reviewed_by': 'o', 'date': '2026-10-21',
                       'source': 'https://opencode.ai/docs/zen'},
         repo_code_approved=True,
-        owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
+        owner_acknowledgements={'go_data_policy': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'Repository code sent to this model through OpenCode Go is handled under the OpenCode Go data policy listed for the model'}},
         operational_status='healthy')
-BOUND = 'glm-5.3-flash-free'
-CHAT = '/inference/openai/v1/chat/completions'
+BOUND = 'glm-5.3-flash'
+CHAT = '/inference/go/openai/v1/chat/completions'
 
 
 class _Upstream(http.server.BaseHTTPRequestHandler):
@@ -451,6 +462,181 @@ def body(**overrides):
     data = {'model': BOUND, 'messages': [{'role': 'user', 'content': 'hello'}], 'stream': True}
     data.update(overrides)
     return json.dumps(data).encode()
+
+
+class StreamShapeTests(unittest.TestCase):
+    SECRET = 'PRIVATE-REASONING-TEXT'
+
+    def sse(self, *chunks):
+        return b''.join(b'data: ' + json.dumps(c).encode() + b'\n\n' for c in chunks)
+
+    def test_outline_records_structure_and_never_content(self):
+        shape = proxy.StreamShape()
+        body = self.sse({'choices': [{'delta': {'role': 'assistant', 'reasoning_content': self.SECRET}}]},
+                        {'choices': [{'delta': {'content': 'PROBE_OK'}}]},
+                        {'choices': [{'delta': {}, 'finish_reason': 'stop'}], 'usage': {'total_tokens': 3}}) + b'data: [DONE]\n\n'
+        for i in range(0, len(body), 7):                 # split mid-line on purpose
+            shape.feed(body[i:i + 7])
+        summary = shape.summary()
+        self.assertEqual(summary['data_events'], 3)
+        self.assertTrue(summary['done'])
+        self.assertEqual(summary['finish_reasons'], ['stop'])
+        self.assertEqual(summary['delta_fields'], ['content', 'reasoning_content', 'role'])
+        self.assertTrue(summary['usage_block'])
+        self.assertFalse(summary['error_object'])
+        self.assertNotIn(self.SECRET, json.dumps(summary))
+        self.assertNotIn('PROBE_OK', json.dumps(summary))
+        self.assertEqual((summary['finish_count'], summary['events_after_done']), (1, 0))
+
+    def test_repeated_finish_chunks_and_data_after_done_are_counted(self):
+        stop = {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}
+        twice = proxy.StreamShape()
+        twice.feed(self.sse(stop, stop) + b'data: [DONE]\n\n')
+        self.assertEqual((twice.summary()['finish_reasons'], twice.summary()['finish_count']), (['stop'], 2))
+        late = proxy.StreamShape()
+        late.feed(self.sse(stop) + b'data: [DONE]\n\n' + self.sse({'choices': [{'delta': {'content': 'x'}}]}))
+        self.assertEqual((late.summary()['finish_count'], late.summary()['events_after_done']), (1, 1))
+
+    def test_missing_finish_error_object_and_garbage_are_visible(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'delta': {'content': 'x'}}]}) + b'data: {not json}\n\n'
+                   + self.sse({'error': {'message': self.SECRET}}))
+        summary = shape.summary()
+        self.assertEqual((summary['finish_reasons'], summary['done'], summary['unparsed']), ([], False, 1))
+        self.assertTrue(summary['error_object'])
+        self.assertNotIn(self.SECRET, json.dumps(summary))
+
+    def test_unknown_finish_reasons_become_a_fixed_token(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'finish_reason': 'PRIVATE_REASONING_TEXT'}]},
+                            {'choices': [{'finish_reason': 'length'}]}))
+        self.assertEqual(shape.summary()['finish_reasons'], ['length', 'other'])
+        self.assertNotIn('private', json.dumps(shape.summary()).lower())
+
+    def test_empty_delta_fields_are_recorded_by_key(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'delta': {'content': '', 'reasoning_content': None, 'tool_calls': [],
+                                                    'unknown_field': 'x'}}]}))
+        self.assertEqual(shape.summary()['delta_fields'], ['content', 'reasoning_content', 'tool_calls'])
+
+    def test_malformed_events_never_raise_and_never_stop_later_events_counting(self):
+        shape = proxy.StreamShape()
+        for bad in ({'choices': 5}, {'choices': 'x'}, {'choices': [5, None, 'a']}, {'choices': [{'delta': 'x'}]},
+                    {'usage': 'x'}, [1, 2], 7):
+            shape.feed(self.sse(bad))
+        shape.feed(self.sse({'choices': [{'finish_reason': 'stop'}]}))
+        self.assertEqual(shape.summary()['finish_reasons'], ['stop'])
+        shape.feed(b'\xff\xfe data: \x00\n' * 3)
+
+
+class GuardOutlineTests(unittest.TestCase):
+    def test_outline_lists_event_types_and_reasons_only(self):
+        lines = [json.dumps({'type': 'step_start', 'part': {'type': 'step-start'}}),
+                 json.dumps({'type': 'reasoning', 'part': {'type': 'reasoning', 'text': 'SECRET THOUGHT'}}),
+                 json.dumps({'type': 'step_finish', 'part': {'type': 'step-finish', 'reason': 'length'}}),
+                 'not json']
+        outline = guard.event_outline(lines)
+        self.assertEqual(outline, 'step_start reasoning step_finish:length unparseable')
+        self.assertNotIn('SECRET', outline)
+
+    def test_unknown_types_and_reasons_become_fixed_tokens(self):
+        lines = [json.dumps({'type': 'PRIVATE_REASONING_TEXT', 'part': {}}),
+                 json.dumps({'type': 'step_finish', 'part': {'reason': 'PRIVATE_REASONING_TEXT'}}),
+                 json.dumps({'type': 7, 'part': 'x'})]
+        outline = guard.event_outline(lines)
+        self.assertEqual(outline, 'unknown_type step_finish:other unknown_type')
+        self.assertNotIn('PRIVATE', outline.upper())
+
+    def test_outline_is_bounded(self):
+        lines = [json.dumps({'type': 'text', 'part': {}})] * 100
+        self.assertTrue(guard.event_outline(lines).startswith('... '))
+        self.assertLessEqual(len(guard.event_outline(lines).split()), 41)
+
+    def test_a_long_outline_keeps_the_end_of_the_run(self):
+        step = lambda kind, reason=None: json.dumps({'type': kind, 'part': {'reason': reason} if reason else {}})
+        lines = [step('text')] * 80 + [step('step_start'), step('text'), step('step_finish', 'stop')]
+        outline = guard.event_outline(lines)
+        self.assertTrue(outline.startswith('... '))
+        self.assertTrue(outline.endswith('step_start text step_finish:stop'))
+
+
+class ProviderConfirmedFinalStepTests(unittest.TestCase):
+    """OpenCode 2.1.4 sometimes exits 0 without the last step_finish after a clean `stop` response (PR 219)."""
+    SES = 'ses_abcdefgh1234'
+
+    def rows(self, *steps):
+        rows, stamp = [], 0
+        for kind, extra in steps:
+            stamp += 1
+            part = {'type': guard.EVENT_PART_TYPE[kind], 'sessionID': self.SES, 'messageID': 'msg_aaaaaaaa1', **extra}
+            rows.append(json.dumps({'type': kind, 'sessionID': self.SES, 'timestamp': stamp, 'part': part}))
+        return rows
+
+    def tool_step(self):
+        return [('step_start', {}), ('tool_use', {'state': {'status': 'completed'}}),
+                ('step_finish', {'reason': 'tool-calls'})]
+
+    def test_a_trailing_text_step_counts_only_with_the_providers_clean_stop(self):
+        rows = self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'the review'}))
+        self.assertEqual(guard.evaluate(rows, 0, False), ('failed', 'unfinished_step'))
+        self.assertEqual(guard.evaluate(rows, 0, False, provider_stopped=False), ('failed', 'unfinished_step'))
+        self.assertEqual(guard.evaluate(rows, 0, False, provider_stopped=True), ('success', ''))
+
+    def test_the_confirmation_never_rescues_other_open_steps_or_failed_runs(self):
+        cases = {
+            'no text at all': self.rows(*self.tool_step(), ('step_start', {})),
+            'blank text': self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': '  '})),
+            'reasoning only': self.rows(*self.tool_step(), ('step_start', {}), ('reasoning', {'text': 'x'})),
+            'blank text after real text': self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'review'}),
+                                                    ('text', {'text': '  '})),
+            'tool in the open step': self.rows(('step_start', {}), ('text', {'text': 'a'}),
+                                               ('tool_use', {'state': {'status': 'completed'}})),
+            'text, then reasoning last': self.rows(('step_start', {}), ('text', {'text': 'a'}), ('reasoning', {'text': 'x'})),
+            'pending tool': self.rows(('step_start', {}), ('text', {'text': 'a'}), ('tool_use', {'state': {'status': 'running'}})),
+        }
+        for name, rows in cases.items():
+            with self.subTest(name):
+                self.assertEqual(guard.evaluate(rows, 0, False, provider_stopped=True)[0], 'failed')
+        rows = self.rows(('step_start', {}), ('text', {'text': 'a'}))
+        self.assertEqual(guard.evaluate(rows, 1, False, provider_stopped=True), ('failed', 'nonzero_exit:1'))
+        self.assertEqual(guard.evaluate(rows, 124, True, provider_stopped=True), ('failed', 'timeout'))
+        errored = rows + [json.dumps({'type': 'error', 'sessionID': self.SES, 'timestamp': 9, 'part': {}})]
+        self.assertEqual(guard.evaluate(errored, 0, False, provider_stopped=True), ('failed', 'agent_reported_error'))
+
+    def test_a_closed_run_is_unchanged_by_the_confirmation(self):
+        closed = self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'done'}),
+                           ('step_finish', {'reason': 'stop'}))
+        self.assertEqual(guard.evaluate(closed, 0, False), ('success', ''))
+        self.assertEqual(guard.evaluate(closed, 0, False, provider_stopped=True), ('success', ''))
+
+    def completion(self, **stream):
+        base = {'done': True, 'error_object': False, 'finish_reasons': ['stop'], 'finish_count': 1,
+                'events_after_done': 0, 'unparsed': 0}
+        return {'event': 'completion', 'http_status': 200, 'category': 'completed', 'stream': {**base, **stream}}
+
+    def log(self, *records):
+        handle = tempfile.NamedTemporaryFile('w', delete=False, suffix='.log')
+        self.addCleanup(os.unlink, handle.name)
+        handle.write('\n'.join(r if isinstance(r, str) else json.dumps(r) for r in records) + '\n')
+        handle.close()
+        return handle.name
+
+    def test_provider_stopped_reads_the_last_chat_completion_only(self):
+        self.assertTrue(guard.provider_stopped(self.log(self.completion())))
+        self.assertFalse(guard.provider_stopped('/nonexistent/proxy.log'))
+        self.assertFalse(guard.provider_stopped(self.log({'event': 'accepted'})))
+        self.assertFalse(guard.provider_stopped(self.log(self.completion(), self.completion(finish_reasons=['tool_calls']))))
+        self.assertTrue(guard.provider_stopped(self.log(self.completion(finish_reasons=['length']), self.completion())))
+        for bad in ({'done': False}, {'error_object': True}, {'finish_reasons': ['length']},
+                    {'finish_reasons': ['stop', 'stop']}, {'finish_count': 2}, {'events_after_done': 1},
+                    {'finish_count': None}, {'unparsed': 1}):
+            with self.subTest(bad=bad):
+                self.assertFalse(guard.provider_stopped(self.log(self.completion(**bad))))
+        record = self.completion()
+        self.assertFalse(guard.provider_stopped(self.log({**record, 'http_status': 502})))
+        self.assertFalse(guard.provider_stopped(self.log({**record, 'category': 'failed'})))
+        self.assertFalse(guard.provider_stopped(self.log({'event': 'completion', 'http_status': 200, 'stream': None})))
+        self.assertTrue(guard.provider_stopped(self.log('not json', self.completion())))
 
 
 class ProxyBindingTests(unittest.TestCase):
@@ -639,26 +825,27 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertFalse(reader.is_alive(), 'proxy response reader did not finish after stream close')
 
     def test_model_listing_is_the_only_get(self):
-        self.assertEqual(self.raw('GET', '/inference/openai/v1/models')[0], 200)
-        self.assertEqual(self.raw('GET', '/zen/v1/models')[0], 200)
-        self.assert_blocked('endpoint_not_allowed', 'GET', '/inference/openai/v1/chat/completions')
+        self.assertEqual(self.raw('GET', '/inference/go/v1/models')[0], 200)
+        for legacy in ('/inference/openai/v1/models', '/zen/v1/models', '/inference/go/openai/v1/models'):
+            self.assert_blocked('endpoint_not_allowed', 'GET', legacy)
+        self.assert_blocked('endpoint_not_allowed', 'GET', '/inference/go/openai/v1/chat/completions')
 
     # ---- model substitution
     def test_every_other_model_name_is_rejected(self):
-        for model in ('deepseek-v4.1-flash-free', 'mimo-v2.6-flash-free', 'nemotron-3-ultra-free', 'deepseek-v4.1-flash',
-                      'glm-5.3', 'gpt-5.4-nano', 'claude-opus-5', 'opencode/glm-5.3-flash-free', 'opencode-go/kimi-k3',
-                      'GLM-5.3-FLASH-FREE', 'glm-5.3-flash-free ', ' glm-5.3-flash-free', 'glm-5.3-flash-free\n', '', '*'):
+        for model in ('hy3', 'mimo-v2.6-flash', 'longcat-2.0', 'deepseek-v4.1-flash',
+                      'glm-5.3', 'gpt-5.4-nano', 'claude-opus-5', 'opencode-go/glm-5.3-flash', 'opencode-go/kimi-k3',
+                      'GLM-5.3-FLASH-FREE', 'glm-5.3-flash ', ' glm-5.3-flash', 'glm-5.3-flash\n', '', '*'):
             self.assert_blocked('model_mismatch', 'POST', CHAT, body(model=model))
 
     def test_malformed_model_values_are_rejected(self):
-        for value in (None, 5, True, ['glm-5.3-flash-free'], {'id': BOUND}, [BOUND, 'gpt-5']):
+        for value in (None, 5, True, ['glm-5.3-flash'], {'id': BOUND}, [BOUND, 'gpt-5']):
             self.assert_blocked('model_mismatch', 'POST', CHAT, body(model=value))
         self.assert_blocked('model_missing', 'POST', CHAT, json.dumps({'messages': [{'role': 'user', 'content': 'x'}]}).encode())
 
     def test_duplicate_keys_cannot_smuggle_a_second_model(self):
-        for raw_body in (b'{"model": "glm-5.3-flash-free", "model": "gpt-5.4-nano", "messages": [{"role": "user", "content": "x"}]}',
-                         b'{"model": "gpt-5.4-nano", "model": "glm-5.3-flash-free", "messages": [{"role": "user", "content": "x"}]}',
-                         b'{"model": "glm-5.3-flash-free", "messages": [{"role": "user", "content": "x"}], "model": "x"}'):
+        for raw_body in (b'{"model": "glm-5.3-flash", "model": "gpt-5.4-nano", "messages": [{"role": "user", "content": "x"}]}',
+                         b'{"model": "gpt-5.4-nano", "model": "glm-5.3-flash", "messages": [{"role": "user", "content": "x"}]}',
+                         b'{"model": "glm-5.3-flash", "messages": [{"role": "user", "content": "x"}], "model": "x"}'):
             self.assert_blocked('duplicate_json_key', 'POST', CHAT, raw_body)
 
     def test_routing_and_fallback_fields_are_rejected(self):
@@ -668,11 +855,11 @@ class ProxyBindingTests(unittest.TestCase):
 
     # ---- operations and formats
     def test_other_endpoints_and_methods_are_rejected(self):
-        for path in ('/inference/openai/v1/responses', '/inference/openai/v1/completions', '/inference/openai/v1/embeddings',
-                     '/inference/openai/v1/images/generations', '/inference/anthropic/v1/messages', '/zen/v1/chat/completions',
-                     '/zen/v1/messages', '/v1/chat/completions', '/', '/inference/openai/v1/chat/completions/extra',
-                     '/inference/openai/v1/models', '/inference/openai/v1/files'):
-            if path == '/inference/openai/v1/models':   # POST to the listing endpoint
+        for path in ('/inference/go/openai/v1/responses', '/inference/go/openai/v1/completions', '/inference/go/openai/v1/embeddings',
+                     '/inference/go/openai/v1/images/generations', '/inference/anthropic/v1/messages', '/zen/v1/chat/completions',
+                     '/zen/v1/messages', '/v1/chat/completions', '/', '/inference/go/openai/v1/chat/completions/extra',
+                     '/inference/go/openai/v1/models', '/inference/go/openai/v1/files'):
+            if path == '/inference/go/openai/v1/models':   # POST to the listing endpoint
                 self.assert_blocked('endpoint_not_allowed', 'POST', path, body())
             else:
                 self.assert_blocked('endpoint_not_allowed', 'POST', path, body())
@@ -683,9 +870,9 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertEqual(_Upstream.seen, [])
 
     def test_path_tricks_are_rejected(self):
-        for path in (CHAT + '?model=gpt-5', CHAT + '?', CHAT + '#frag', '/inference/openai/v1/../v1/chat/completions',
-                     '/inference//openai/v1/chat/completions', '/inference/openai/v1%2fchat/completions',
-                     '/inference/openai/v1/chat/completions%00', '\\inference\\openai\\v1\\chat\\completions'):
+        for path in (CHAT + '?model=gpt-5', CHAT + '?', CHAT + '#frag', '/inference/go/openai/v1/../v1/chat/completions',
+                     '/inference//openai/v1/chat/completions', '/inference/go/openai/v1%2fchat/completions',
+                     '/inference/go/openai/v1/chat/completions%00', '\\inference\\openai\\v1\\chat\\completions'):
             self.assert_blocked('malformed_path', 'POST', path, body())
 
     def test_uninspectable_or_malformed_bodies_are_rejected(self):
@@ -695,12 +882,12 @@ class ProxyBindingTests(unittest.TestCase):
         self.assert_chunked_blocked(send_body_after_response=False)   # complete send: reply or reset both accepted
         self.assert_blocked('content_type_not_json', 'POST', CHAT, body(), {'Content-Type': 'text/plain'})
         self.assert_blocked('content_type_not_json', 'POST', CHAT, body(), {})
-        self.assert_blocked('malformed_json', 'POST', CHAT, b'{"model": "glm-5.3-flash-free", ')
-        self.assert_blocked('malformed_json', 'POST', CHAT, b'\xff\xfe{"model": "glm-5.3-flash-free"}')
+        self.assert_blocked('malformed_json', 'POST', CHAT, b'{"model": "glm-5.3-flash", ')
+        self.assert_blocked('malformed_json', 'POST', CHAT, b'\xff\xfe{"model": "glm-5.3-flash"}')
         self.assert_blocked('malformed_json', 'POST', CHAT, b'\xef\xbb\xbf' + body())
-        self.assert_blocked('non_standard_json', 'POST', CHAT, b'{"model": "glm-5.3-flash-free", "messages": [1], "temperature": NaN}')
+        self.assert_blocked('non_standard_json', 'POST', CHAT, b'{"model": "glm-5.3-flash", "messages": [1], "temperature": NaN}')
         self.assert_blocked('body_not_object', 'POST', CHAT, b'[]')
-        self.assert_blocked('body_not_object', 'POST', CHAT, b'"glm-5.3-flash-free"')
+        self.assert_blocked('body_not_object', 'POST', CHAT, b'"glm-5.3-flash"')
         self.assert_blocked('empty_body', 'POST', CHAT, b'')
         self.assert_blocked('messages_invalid', 'POST', CHAT, body(messages=[]))
         self.assert_blocked('messages_invalid', 'POST', CHAT, body(messages='hi'))
@@ -774,7 +961,7 @@ class ProxyBindingTests(unittest.TestCase):
         self.assertEqual(_Upstream.seen, [])
 
     def test_get_with_a_body_is_rejected(self):
-        self.assert_blocked('unexpected_body', 'GET', '/zen/v1/models', b'{"model": "x"}', {'Content-Type': 'application/json'})
+        self.assert_blocked('unexpected_body', 'GET', '/inference/go/v1/models', b'{"model": "x"}', {'Content-Type': 'application/json'})
 
     # ---- logging
     def test_rejections_are_logged_without_secrets_or_prompt_content(self):
@@ -795,7 +982,7 @@ class ProxyBindingTests(unittest.TestCase):
 
     def test_hostile_paths_are_sanitized_in_logs(self):
         sock = socket.create_connection(('127.0.0.1', self.port), timeout=10)
-        sock.sendall(b'POST /inference/openai/v1/x\x1b[31mred HTTP/1.0\r\nContent-Type: application/json\r\n'
+        sock.sendall(b'POST /inference/go/openai/v1/x\x1b[31mred HTTP/1.0\r\nContent-Type: application/json\r\n'
                      b'Content-Length: 2\r\n\r\n{}')
         sock.recv(4096)
         sock.close()
@@ -810,54 +997,54 @@ class ProxyStartupPolicyTests(unittest.TestCase):
     def bind(self, model, registry=ENABLED_REGISTRY, denied=frozenset()):
         return proxy.validate_bound_model(model, registry, set(denied))
 
-    def test_enabled_free_model_binds_to_its_bare_id(self):
-        self.assertEqual(self.bind('opencode/glm-5.3-flash-free'), 'glm-5.3-flash-free')
-        self.assertEqual(self.bind('glm-5.3-flash-free'), 'glm-5.3-flash-free')
+    def test_enabled_go_model_binds_to_its_bare_id(self):
+        self.assertEqual(self.bind('opencode-go/glm-5.3-flash'), 'glm-5.3-flash')
+        self.assertEqual(self.bind('glm-5.3-flash'), 'glm-5.3-flash')
 
     def test_paid_unlisted_and_invented_models_cannot_be_bound(self):
-        for model in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k3', 'anthropic/claude-opus-5', 'opencode/glm-5.3',
-                      'opencode/invented-free', 'gpt-5.4-nano', '', 'opencode/glm-5.3-flash-free/../x'):
+        for model in ('opencode/deepseek-v4.1-flash', 'opencode-go/kimi-k4', 'opencode/glm-5.3-flash-free', 'anthropic/claude-opus-5', 'opencode/glm-5.3',
+                      'opencode/invented-free', 'gpt-5.4-nano', '', 'opencode-go/glm-5.3-flash/../x'):
             with self.assertRaises(proxy.PolicyError, msg=model):
                 self.bind(model)
 
     def test_disabled_unapproved_unverified_or_unhealthy_models_cannot_be_bound(self):
-        self.assertEqual(self.bind('opencode/glm-5.3-flash-free'), 'glm-5.3-flash-free')
+        self.assertEqual(self.bind('opencode-go/glm-5.3-flash'), 'glm-5.3-flash')
         ineligible = copy.deepcopy(ENABLED_REGISTRY)
-        ineligible['models']['opencode/glm-5.3-flash-free']['operational_status'] = 'degraded'
+        ineligible['models']['opencode-go/glm-5.3-flash']['operational_status'] = 'degraded'
         with self.assertRaises(proxy.PolicyError) as raised:
-            self.bind('opencode/glm-5.3-flash-free', ineligible)
+            self.bind('opencode-go/glm-5.3-flash', ineligible)
         self.assertEqual(raised.exception.code, 'model_disabled_or_unhealthy')
         for field, value in (('terms_verified', False), ('terms_review', None), ('repo_code_approved', False),
                              ('owner_acknowledgements', {}),
                              ('operational_status', 'degraded'), ('operational_status', 'unknown')):
             registry = copy.deepcopy(ENABLED_REGISTRY)
-            registry['models']['opencode/glm-5.3-flash-free'][field] = value
+            registry['models']['opencode-go/glm-5.3-flash'][field] = value
             with self.assertRaises(proxy.PolicyError, msg=field):
-                self.bind('opencode/glm-5.3-flash-free', registry)
-        self.assertIsNotNone(self.bind('opencode/glm-5.3-flash-free'))   # control
+                self.bind('opencode-go/glm-5.3-flash', registry)
+        self.assertIsNotNone(self.bind('opencode-go/glm-5.3-flash'))   # control
 
     def test_nemotron_stays_unbindable_until_the_owner_enables_it(self):
         with self.assertRaises(proxy.PolicyError):
-            self.bind('opencode/nemotron-3-ultra-free')
+            self.bind('opencode-go/longcat-2.0')
 
     def test_reviewer_cannot_be_bound_to_an_implementation_model(self):
         with self.assertRaises(proxy.PolicyError) as raised:
-            self.bind('opencode/mimo-v2.6-flash-free', denied={'opencode/mimo-v2.6-flash-free'})
+            self.bind('opencode-go/mimo-v2.6-flash', denied={'opencode-go/mimo-v2.6-flash'})
         self.assertEqual(raised.exception.code, 'model_denied_for_this_role')
         with self.assertRaises(proxy.PolicyError):
-            self.bind('mimo-v2.6-flash-free', denied={'opencode/mimo-v2.6-flash-free'})   # prefix-insensitive
+            self.bind('mimo-v2.6-flash', denied={'opencode-go/mimo-v2.6-flash'})   # prefix-insensitive
 
     def test_weakened_separation_policy_refuses_to_start(self):
         weakened = copy.deepcopy(ENABLED_REGISTRY)
         weakened['agent_separation']['require_distinct_models'] = False
         with self.assertRaises(router.RoutingError):
-            self.bind('opencode/glm-5.3-flash-free', weakened)
+            self.bind('opencode-go/glm-5.3-flash', weakened)
 
     def test_cli_refuses_to_start_and_never_prints_the_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp, 'registry.json')
             ineligible = copy.deepcopy(ENABLED_REGISTRY)
-            ineligible['models']['opencode/glm-5.3-flash-free']['terms_verified'] = False
+            ineligible['models']['opencode-go/glm-5.3-flash']['terms_verified'] = False
             registry.write_text(json.dumps(ineligible))
             old = dict(os.environ)
             try:
@@ -865,7 +1052,7 @@ class ProxyStartupPolicyTests(unittest.TestCase):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out), \
                         mock.patch.object(proxy, 'serve', side_effect=AssertionError('proxy must not start')):
-                    code = proxy.main(['p', str(Path(tmp, 'port')), 'opencode/glm-5.3-flash-free', str(registry)])
+                    code = proxy.main(['p', str(Path(tmp, 'port')), 'opencode-go/glm-5.3-flash', str(registry)])
                 self.assertEqual(code, 1)
                 self.assertNotIn('SUPER-SECRET-KEY', out.getvalue())
                 self.assertIn('model_disabled_or_unhealthy', out.getvalue())
@@ -879,7 +1066,7 @@ class ProxyStartupPolicyTests(unittest.TestCase):
         server, px = proxy.serve('K', 'http://127.0.0.1:9', BOUND)
         try:
             self.assertEqual(px.bound, BOUND)
-            for model in ('mimo-v2.6-flash-free', 'deepseek-v4.1-flash-free'):
+            for model in ('mimo-v2.6-flash', 'hy3'):
                 with self.assertRaises(proxy.PolicyError):
                     proxy.check_request('POST', CHAT, {'Content-Type': 'application/json'}, body(model=model), px.bound)
         finally:
@@ -887,23 +1074,53 @@ class ProxyStartupPolicyTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
-    def test_current_endpoint_preferred_legacy_used_as_fallback(self):
+    def test_the_go_endpoint_is_the_only_catalog_source_and_ids_are_parsed(self):
         calls = []
+
         def get(url):
             calls.append(url)
-            if 'inference' in url:
-                raise urllib.error.URLError('down')
-            return {'data': [{'id': 'glm-5.3-flash-free'}]}
+            return {'data': [{'id': 'glm-5.3-flash'}]}
         endpoint, ids = catalog.fetch(get, sleep=lambda _s: None)
-        self.assertEqual(ids, ['glm-5.3-flash-free'])
-        self.assertTrue(endpoint.endswith('/zen/v1/models'))
-        self.assertTrue(calls[0].endswith('/inference/openai/v1/models'))
-        self.assertEqual(catalog.fetch(lambda u: {'data': [{'id': 'x'}]}, sleep=lambda _s: None)[0], catalog.ENDPOINTS[0])
+        self.assertEqual(ids, ['glm-5.3-flash'])
+        self.assertEqual(catalog.ENDPOINTS, ('https://opencode.ai/inference/go/v1/models',))
+        self.assertEqual((endpoint, calls), (catalog.ENDPOINTS[0], [catalog.ENDPOINTS[0]]))
+
+    def test_catalog_request_carries_a_well_formed_session_header(self):
+        seen = {}
+
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, _n): return b'{"data": []}'
+
+        def fake_urlopen(request, timeout):
+            seen.update({k.lower(): v for k, v in request.header_items()})
+            return Resp()
+        with mock.patch.object(catalog.urllib.request, 'urlopen', fake_urlopen):
+            catalog.http_get('https://opencode.ai/inference/go/v1/models', 'k')
+        self.assertRegex(seen['x-opencode-session'], r'^ses_[A-Za-z0-9]{8,64}$')
+        self.assertEqual(seen['authorization'], 'Bearer k')
 
     def test_no_models_anywhere_fails_safely(self):
         for payload in ({'data': []}, [], {}, 'x', None):
             with self.assertRaises(RuntimeError):
                 catalog.fetch(lambda u, p=payload: p, sleep=lambda _s: None)
+
+    def run_main(self, get):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'OPENCODE_API_KEY': 'k'}), \
+                mock.patch.object(catalog, 'http_get', lambda url, key: get(url)), \
+                mock.patch.object(catalog.time, 'sleep', lambda _s: None):
+            out = Path(tmp, 'out.json')
+            code = catalog.main(['c', str(out)])
+            return code, [item['id'] for item in json.loads(out.read_text())['data']]
+
+    def test_catalog_ids_are_written_with_the_go_prefix_and_an_empty_list_fails(self):
+        self.assertEqual(self.run_main(lambda url: {'data': [{'id': 'glm-5.2'}, {'id': 'qwen3.8-max'}]}),
+                         (0, ['opencode-go/glm-5.2', 'opencode-go/qwen3.8-max']))
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'OPENCODE_API_KEY': 'k'}), \
+                mock.patch.object(catalog, 'http_get', lambda url, key: {'data': []}), \
+                mock.patch.object(catalog.time, 'sleep', lambda _s: None):
+            self.assertEqual(catalog.main(['c', str(Path(tmp, 'out.json'))]), 1)
 
     def test_missing_key_gives_actionable_error_without_leaking(self):
         old = dict(os.environ)

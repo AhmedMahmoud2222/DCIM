@@ -129,7 +129,7 @@ def _sse(chunks):
 
 def _chunk(delta, finish=None):
     return {'id': 'chatcmpl-1', 'object': 'chat.completion.chunk',
-            'created': 1, 'model': 'glm-5.3-flash-free',
+            'created': 1, 'model': 'glm-5.3-flash',
             'choices': [{'index': 0, 'delta': delta,
                          'finish_reason': finish}]}
 
