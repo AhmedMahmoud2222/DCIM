@@ -104,6 +104,27 @@ SESSION_EVENT_RE = re.compile(r'^ses_[A-Za-z0-9]{8,64}$')
 MESSAGE_RE = re.compile(r'^msg_[A-Za-z0-9]{8,64}$')
 
 
+def event_outline(lines: list[str], limit: int = 30) -> str:
+    """The agent output as `type:part:reason` words only (no text, no tool arguments), for the failure log."""
+    words = []
+    for line in lines[:limit]:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            words.append('unparseable')
+            continue
+        if not isinstance(event, dict):
+            words.append('non-object')
+            continue
+        part = event.get('part') if isinstance(event.get('part'), dict) else {}
+        word = re.sub(r'[^a-z_-]', '', str(event.get('type')).lower())[:20]
+        reason = part.get('reason')
+        if isinstance(reason, str):
+            word += ':' + re.sub(r'[^a-z_-]', '', reason.lower())[:20]
+        words.append(word)
+    return ' '.join(words) + (' ...' if len(lines) > limit else '')
+
+
 def fail(code: str) -> tuple[str, str]:
     return 'failed', code
 
@@ -357,6 +378,8 @@ def main(argv: list[str]) -> int:
         with open(out, 'a', encoding='utf-8') as handle:
             handle.write(f'generation={status}\ngeneration_reason={reason}\nsession_id={session}\n')
     print(f'opencode guard: generation={status} reason={reason or "-"} events={len(lines)}')
+    if status == 'failed':
+        print(f'opencode guard: outline={event_outline(lines)} exit_code={exit_code}')
     return 0 if status == 'success' else 1
 
 

@@ -95,6 +95,65 @@ def validate_bound_model(model: str, registry: dict, denied: set[str], probe: bo
     return bare(full)
 
 
+DELTA_KEYS = ('role', 'content', 'reasoning_content', 'reasoning', 'tool_calls', 'refusal', 'function_call')
+
+
+class StreamShape:
+    """Content-free outline of an SSE chat-completions response, for the run log.
+
+    Records only structure: how many `data:` events, whether `[DONE]` arrived, which `finish_reason` values (enum
+    words, sanitized) and which delta field names were seen, and whether an `error` object or `usage` block
+    appeared. Never a value from `content`, `reasoning_content` or any other free text."""
+
+    MAX_PENDING = 65536
+
+    def __init__(self) -> None:
+        self.pending = b''
+        self.events = 0
+        self.done = False
+        self.finish: set[str] = set()
+        self.delta: set[str] = set()
+        self.error = False
+        self.usage = False
+        self.unparsed = 0
+
+    def feed(self, chunk: bytes) -> None:
+        self.pending = (self.pending + chunk)[-self.MAX_PENDING:]
+        *lines, self.pending = self.pending.split(b'\n')
+        for raw in lines:
+            line = raw.strip()
+            if not line.startswith(b'data:'):
+                continue
+            body = line[5:].strip()
+            if body == b'[DONE]':
+                self.done = True
+                continue
+            self.events += 1
+            try:
+                data = json.loads(body)
+            except ValueError:
+                self.unparsed += 1
+                continue
+            if not isinstance(data, dict):
+                continue
+            self.error = self.error or isinstance(data.get('error'), (dict, str))
+            self.usage = self.usage or isinstance(data.get('usage'), dict)
+            for choice in data.get('choices') or []:
+                if not isinstance(choice, dict):
+                    continue
+                reason = choice.get('finish_reason')
+                if isinstance(reason, str):
+                    self.finish.add(re.sub(r'[^a-z_]', '', reason.lower())[:20] or '?')
+                delta = choice.get('delta')
+                if isinstance(delta, dict):
+                    self.delta.update(key for key in DELTA_KEYS if delta.get(key) not in (None, '', []))
+
+    def summary(self) -> dict:
+        return {'data_events': self.events, 'done': self.done, 'finish_reasons': sorted(self.finish),
+                'delta_fields': sorted(self.delta), 'error_object': self.error, 'usage_block': self.usage,
+                'unparsed': self.unparsed}
+
+
 def client_identity_headers(headers) -> dict[str, str]:
     """The v2 client identity headers present on the request and well formed (see CLIENT_HEADER_SHAPES)."""
     relayed = {}
@@ -308,6 +367,7 @@ def make_handler(proxy: Proxy):
             status = None
             first_byte_ms = None
             streamed_bytes = 0
+            shape = StreamShape()
             connection_result = 'failed'
             completion = 'upstream_connection_error'
             response_started = False
@@ -336,6 +396,8 @@ def make_handler(proxy: Proxy):
                         first_byte_ms = round((time.monotonic() - started) * 1000)
                         proxy.telemetry('first_response_byte', request_count=request_count,
                                         time_to_first_byte_ms=first_byte_ms)
+                    if endpoint == 'chat_completions':
+                        shape.feed(chunk)
                     self.wfile.write(chunk)
                     self.wfile.flush()
                     streamed_bytes += len(chunk)
@@ -353,7 +415,8 @@ def make_handler(proxy: Proxy):
                 conn.close()
                 proxy.telemetry('completion', request_count=request_count, upstream_connection=connection_result,
                                 http_status=status, time_to_first_byte_ms=first_byte_ms,
-                                streamed_bytes=streamed_bytes, category=completion)
+                                streamed_bytes=streamed_bytes, category=completion,
+                                stream=shape.summary() if endpoint == 'chat_completions' else None)
 
         def _reject_other(self):
             proxy.record_rejection('method_not_allowed', self.command, self.path)
