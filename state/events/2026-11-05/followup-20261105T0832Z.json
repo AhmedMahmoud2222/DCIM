@@ -1,0 +1,64 @@
+{
+  "run_id": "followup-20261105T0832Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-11-05T08:32:08Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Acquired lease; policy and changelog read; ruleset bypass six pull_request, none always; legacy ledger left untouched."
+    },
+    {
+      "step": 1,
+      "result": "Seven open PRs and sixteen open issues; PR219 updated 07:41Z, PR146 updated 05:44Z; owner issue #220 comments checked; no newer owner decision found."
+    },
+    {
+      "step": 2,
+      "result": "PR219 12 unresolved threads; PR115 11; PR146 4. No claimed fix credited without exact-head diff verification."
+    },
+    {
+      "step": 4,
+      "result": "No threads resolved: required fix and review evidence not established."
+    },
+    {
+      "step": "4a",
+      "result": "Prior findings preserved; no checklist statuses changed."
+    },
+    {
+      "step": 5,
+      "result": "PR219 frozen by D5; PR115,146 Draft; no safe review or merge trigger established."
+    },
+    {
+      "step": 7,
+      "result": "No duplicate agent prompts; stale agents not re-prompted without current request audit."
+    },
+    {
+      "step": 8,
+      "result": "No merge: PR219 has 12 unresolved threads; all other open PRs Draft."
+    },
+    {
+      "step": 9,
+      "result": "No new class I decision; Migration 0057 hold intact."
+    },
+    {
+      "step": 10,
+      "result": "Delta report recorded; no merges, no resolutions, no production actions."
+    }
+  ],
+  "open_prs": [
+    219,
+    207,
+    181,
+    171,
+    146,
+    116,
+    115
+  ],
+  "open_issues": 16,
+  "production_hold": "intact",
+  "merged": [],
+  "resolved_threads": [],
+  "limitations": [
+    "Index last_full_run_at stale relative to observed FULL lease; avoided asserting completion",
+    "No comprehensive exact-head CI and diff audit for all seven PRs in this follow-up"
+  ]
+}
