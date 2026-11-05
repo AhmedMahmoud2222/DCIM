@@ -302,6 +302,8 @@ def execution_result(api, policy, task, now):
     scan.setdefault('retry', {})
     low, high = scan['low'], scan['high']
     ids = sorted(candidates)
+    for key in [k for k in scan['retry'] if int(k) not in candidates]:
+        del scan['retry'][key]  # A run that left the listing can no longer be retried or hold acceptance back.
     if low is None:
         order = list(reversed(ids))
     else:
@@ -500,6 +502,8 @@ def _reconcile(api, store, policy, state, task, blob, task_id, now):
                         # owner attestation, Actions provenance and unresolved findings.
                         verify_check(GitHub(load_policy(), root=api.root), current['pr'])
                         audit(task, 'ACCEPTED', 'authenticated current acceptance gate', now)
+                    except ArtifactUnavailable as exc:
+                        raise TransientError('acceptance evidence artifact unavailable') from exc  # outage: defer
                     except Rejected:
                         audit(task, 'BLOCKED', 'review completed; independent acceptance requirements unmet', now)
                 else:

@@ -1112,6 +1112,29 @@ class ControllerTests(unittest.TestCase):
                     break
         self.assertEqual((result[0], result[1]), ('SUCCESS', 1))
 
+    def test_success_with_an_unavailable_acceptance_artifact_defers_instead_of_blocking(self):
+        value, _ = self.run_task()
+        with patch.object(c, 'authenticated_execution', return_value={'result': 'SUCCESS'}), \
+                patch.object(c, 'verify_check', side_effect=c.ArtifactUnavailable('artifact download failed')):
+            after, _ = self.run_task(value)
+        task = after['tasks'][self.task['id']]
+        self.assertNotIn(task['state'], ('BLOCKED', 'ACCEPTED'))
+        self.assertEqual(task['deliveries'][-1]['status'], 'DELIVERED')
+
+    def test_retry_entries_for_runs_that_left_the_listing_do_not_hold_acceptance_back(self):
+        runs = self._scan_runs(2)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        task['deliveries'][-1]['scan'] = dict(low=None, high=None, match=None, attempts={}, retry={'9': 1})
+        def fake_auth(api, proof, *a, **k):
+            if proof['run_id'] == 1:
+                return self._run_result(1)
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            result = c.execution_result(self.api, self.policy, task, 110)
+        self.assertEqual(result[:2], ('SUCCESS', 1))
+
     def test_scan_does_not_start_once_the_job_wide_budget_is_spent(self):
         runs = self._scan_runs(10)
         self.api.pages = lambda path, key=None: deepcopy(runs)

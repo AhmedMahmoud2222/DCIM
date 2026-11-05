@@ -15,7 +15,7 @@ import re
 import shlex
 import sys
 
-from acceptance_api import GitHub, TransientError
+from acceptance_api import ArtifactUnavailable, GitHub, TransientError
 from acceptance_core import (Rejected, CHECK, require, decode, digest, binding, same_binding,
     independent, structured_review, source_run, jobs_and_checks, signed_range, owner_approval,
     provider_identity, decision)
@@ -378,6 +378,8 @@ def publish(api, number):
     require(b['base'] == run['head_sha'], 'main changed after gate execution began')
     try:
         result = evaluate(api, number)
+    except ArtifactUnavailable as exc:
+        raise TransientError('acceptance evidence artifact unavailable') from exc   # defer; publish nothing
     except (Rejected, KeyError, TypeError, AttributeError, ValueError) as exc:
         result = decision(b, 'BLOCK', [str(exc)[:500]], {})
     same_binding(binding(api.request(f'/pulls/{number}'), api.policy), b)
