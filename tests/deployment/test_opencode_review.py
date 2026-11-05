@@ -35,9 +35,9 @@ SHIPPED_MATRIX = json.loads((ROOT / '.github/opencode/reviewer-capability-matrix
 BOT = 'dcim-opencode-agent[bot]'
 SHA = 'a' * 40
 NEWSHA = 'b' * 40
-M = {name: f'opencode/{name}-free' for name in (
-    'glm-5.3-flash', 'deepseek-v4.1-flash', 'mimo-v2.6-flash', 'minimax-m3.1-flash',
-    'nemotron-3-ultra', 'nemotron-3.5-lightning')}
+M = {name: f'opencode-go/{name}' for name in (
+    'glm-5.3-flash', 'hy3', 'mimo-v2.6-flash', 'minimax-m3.1-flash',
+    'longcat-2.0', 'step-5-preview')}
 ALL = set(M.values())
 REVIEW_META = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs'}
 
@@ -46,7 +46,7 @@ def enabled_registry():
     registry = copy.deepcopy(SHIPPED_REGISTRY)
     for meta in registry['models'].values():
         meta.update(terms_verified=True, terms_review=dict(REVIEW_META), repo_code_approved=True,
-                    owner_acknowledgements={'free_period_data_use': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': 'During its free period, collected data may be used to improve the model'}},
+                    owner_acknowledgements={'go_data_policy': {'acknowledged_by': 'o', 'date': '2026-10-21', 'term': review.router.DATA_USE_TERM}},
                     operational_status='healthy')
     return registry
 
@@ -66,7 +66,7 @@ def matrix_with(**scores):
     return matrix
 
 
-def impl_record(model='deepseek-v4.1-flash', session='ses_impl000111', commit=SHA):
+def impl_record(model='hy3', session='ses_impl000111', commit=SHA):
     return {'commit': commit, 'model': M[model], 'session': session, 'run': '1'}
 
 
@@ -85,9 +85,9 @@ class ReviewerSelectionTests(unittest.TestCase):
 
     def test_different_models_for_implementation_and_review_allowed(self):
         matrix = matrix_with(**{'glm-5.3-flash': 0.7, 'minimax-m3.1-flash': 0.9})
-        chosen = self.pick(matrix, [impl_record('deepseek-v4.1-flash')])
+        chosen = self.pick(matrix, [impl_record('hy3')])
         self.assertEqual(chosen['model'], M['minimax-m3.1-flash'])
-        review.check_separation(self.registry, [impl_record('deepseek-v4.1-flash')], chosen['model'], 'ses_review999')
+        review.check_separation(self.registry, [impl_record('hy3')], chosen['model'], 'ses_review999')
 
     def test_strongest_verified_reviewer_wins_not_the_fastest(self):
         matrix = matrix_with(**{'glm-5.3-flash': 0.7, 'minimax-m3.1-flash': 0.9, 'mimo-v2.6-flash': 0.8})
@@ -109,20 +109,20 @@ class ReviewerSelectionTests(unittest.TestCase):
         self.assertEqual(self.pick(matrix)['model'], M['glm-5.3-flash'])  # security weighs 0.25 vs 0.10
 
     def test_same_model_cannot_review_its_own_implementation(self):
-        matrix = matrix_with(**{'deepseek-v4.1-flash': 0.99, 'glm-5.3-flash': 0.6})
-        chosen = self.pick(matrix, [impl_record('deepseek-v4.1-flash')])
+        matrix = matrix_with(**{'hy3': 0.99, 'glm-5.3-flash': 0.6})
+        chosen = self.pick(matrix, [impl_record('hy3')])
         self.assertEqual(chosen['model'], M['glm-5.3-flash'])
-        self.assertIn('implemented this branch or PR', chosen['excluded'][M['deepseek-v4.1-flash']])
+        self.assertIn('implemented this branch or PR', chosen['excluded'][M['hy3']])
         with self.assertRaises(review.SeparationError):
-            review.check_separation(self.registry, [impl_record('deepseek-v4.1-flash')],
-                                    M['deepseek-v4.1-flash'], 'ses_review999')
+            review.check_separation(self.registry, [impl_record('hy3')],
+                                    M['hy3'], 'ses_review999')
         with self.assertRaises(review.SeparationError):  # also without the opencode/ prefix
-            review.check_separation(self.registry, [impl_record('deepseek-v4.1-flash')],
-                                    'deepseek-v4.1-flash-free', 'ses_review999')
+            review.check_separation(self.registry, [impl_record('hy3')],
+                                    'hy3', 'ses_review999')
 
     def test_every_prior_implementer_on_the_pr_is_excluded(self):
-        matrix = matrix_with(**{'deepseek-v4.1-flash': 0.9, 'glm-5.3-flash': 0.8, 'mimo-v2.6-flash': 0.7})
-        records = [impl_record('deepseek-v4.1-flash'), impl_record('glm-5.3-flash', 'ses_other00001', NEWSHA)]
+        matrix = matrix_with(**{'hy3': 0.9, 'glm-5.3-flash': 0.8, 'mimo-v2.6-flash': 0.7})
+        records = [impl_record('hy3'), impl_record('glm-5.3-flash', 'ses_other00001', NEWSHA)]
         self.assertEqual(self.pick(matrix, records)['model'], M['mimo-v2.6-flash'])
 
     def test_different_models_with_the_same_session_rejected(self):
@@ -139,8 +139,8 @@ class ReviewerSelectionTests(unittest.TestCase):
     def test_no_eligible_reviewer_is_review_blocked(self):
         cases = {
             'no evidence anywhere': (SHIPPED_MATRIX, [], ALL),
-            'only the implementer is evaluated': (matrix_with(**{'deepseek-v4.1-flash': 0.9}),
-                                                  [impl_record('deepseek-v4.1-flash')], ALL),
+            'only the implementer is evaluated': (matrix_with(**{'hy3': 0.9}),
+                                                  [impl_record('hy3')], ALL),
             'evaluated model unavailable': (matrix_with(**{'glm-5.3-flash': 0.9}), [], ALL - {M['glm-5.3-flash']}),
             'below the per-dimension floor': (matrix_with(**{'glm-5.3-flash': 0.4}), [], ALL),
         }
@@ -154,10 +154,10 @@ class ReviewerSelectionTests(unittest.TestCase):
         registry['models'][M['minimax-m3.1-flash']]['operational_status'] = 'degraded'
         registry['models'][M['mimo-v2.6-flash']]['repo_code_approved'] = False
         matrix = matrix_with(**{'glm-5.3-flash': 0.99, 'minimax-m3.1-flash': 0.98, 'mimo-v2.6-flash': 0.97,
-                                'nemotron-3-ultra': 0.5})
+                                'longcat-2.0': 0.5})
         chosen = review.select_reviewer(registry, matrix, [], ALL)
-        self.assertEqual(chosen['model'], M['nemotron-3-ultra'])
-        registry['models'][M['nemotron-3-ultra']]['repo_code_approved'] = False
+        self.assertEqual(chosen['model'], M['longcat-2.0'])
+        registry['models'][M['longcat-2.0']]['repo_code_approved'] = False
         with self.assertRaises(review.ReviewBlocked):
             review.select_reviewer(registry, matrix, [], ALL)
 
@@ -172,6 +172,79 @@ class ReviewerSelectionTests(unittest.TestCase):
             matrix['models'][M['glm-5.3-flash']]['evaluation'] = record
             with self.assertRaises(review.ReviewBlocked, msg=str(record)[:40]):
                 self.pick(matrix)
+
+    def waived_matrix(self, key='glm-5.3-flash', **changes):
+        matrix = copy.deepcopy(SHIPPED_MATRIX)
+        waiver = {'waived_by': 'owner', 'date': '2026-11-05', 'reason': 'accepted without an evaluation'}
+        waiver.update(changes)
+        matrix['models'][M[key]]['owner_waiver'] = waiver
+        return matrix
+
+    def test_owner_waiver_stands_in_for_a_missing_evaluation_and_ranks_last(self):
+        matrix = self.waived_matrix()
+        chosen = self.pick(matrix)
+        self.assertEqual(chosen['model'], M['glm-5.3-flash'])
+        self.assertTrue(chosen['waived'])
+        self.assertIn('waived by the owner', chosen['reason'])
+        matrix['models'][M['hy3']]['evaluation'] = evidence(0.6)   # any real evidence outranks a waiver
+        chosen = self.pick(matrix)
+        self.assertEqual(chosen['model'], M['hy3'])
+        self.assertFalse(chosen['waived'])
+
+    def test_owner_waiver_never_hides_a_bad_evaluation_or_the_other_gates(self):
+        matrix = self.waived_matrix()
+        matrix['models'][M['glm-5.3-flash']]['evaluation'] = evidence(0.4)      # fails the floor: waiver ignored
+        with self.assertRaises(review.ReviewBlocked):
+            self.pick(matrix)
+        matrix = self.waived_matrix()
+        with self.assertRaises(review.ReviewBlocked):                           # the implementer is still excluded
+            review.select_reviewer(enabled_registry(), matrix, [impl_record('glm-5.3-flash')], ALL)
+        with self.assertRaises(review.ReviewBlocked):                           # and it must be in the live catalog
+            review.select_reviewer(enabled_registry(), matrix, [], ALL - {M['glm-5.3-flash']})
+
+    def test_a_malformed_evaluation_is_not_covered_by_a_waiver(self):
+        for record in ('not-a-dict', {'suite': 'x'}, {**evidence(0.9), 'latency_ms': 1}, [], 0):
+            matrix = self.waived_matrix()
+            matrix['models'][M['glm-5.3-flash']]['evaluation'] = record
+            with self.assertRaises(review.ReviewBlocked, msg=str(record)):
+                self.pick(matrix)
+
+    def test_a_valid_zero_score_evaluation_still_outranks_a_waiver(self):
+        matrix = self.waived_matrix('glm-5.3-flash')            # sorts before 'hy3' by id, so the old key chose it
+        matrix['minimum_dimension_score'] = 0
+        matrix['models'][M['hy3']]['evaluation'] = evidence(0.0)
+        chosen = self.pick(matrix)
+        self.assertEqual(chosen['model'], M['hy3'])      
+        self.assertFalse(chosen['waived'])
+
+    def test_incomplete_or_malformed_waivers_are_ignored(self):
+        for changes in ({'reason': ' '}, {'waived_by': ''}, {'date': 'yesterday'}, {'reason': 5}):
+            with self.assertRaises(review.ReviewBlocked, msg=str(changes)):
+                self.pick(self.waived_matrix(**changes))
+        matrix = self.waived_matrix()
+        matrix['models'][M['glm-5.3-flash']]['owner_waiver']['extra'] = 'x'
+        with self.assertRaises(review.ReviewBlocked):
+            self.pick(matrix)
+
+    def test_shipped_matrix_waives_only_glm_5_2(self):
+        waived = {n for n, e in SHIPPED_MATRIX['models'].items() if 'owner_waiver' in e}
+        self.assertEqual(waived, {'opencode-go/glm-5.2'})
+        waiver = review.owner_waiver(SHIPPED_MATRIX, 'opencode-go/glm-5.2')
+        self.assertEqual(waiver['waived_by'], 'AhmedMahmoud2222')
+        chosen = review.select_reviewer(enabled_registry(), SHIPPED_MATRIX, [], ALL | {'opencode-go/glm-5.2'})
+        self.assertEqual(chosen['model'], 'opencode-go/glm-5.2')
+        self.assertTrue(chosen['waived'])
+
+    def test_a_waived_review_discloses_the_waiver(self):
+        ctx = {'commit': SHA, 'base_commit': NEWSHA, 'reviewer_model': M['glm-5.3-flash'], 'reviewer_session': 'ses_x12345',
+               'records': [], 'branch': 'b', 'run_url': 'https://run',
+               'capability_waiver': self.waived_matrix()['models'][M['glm-5.3-flash']]['owner_waiver']}
+        text = review.render_review({'verdict': 'PASS', 'summary': 's', 'findings': [], 'verification': []}, ctx)
+        self.assertIn('Reviewer capability: not evaluated', text)
+        self.assertIn('accepted without an evaluation', text)
+        ctx['capability_waiver'] = None
+        self.assertNotIn('not evaluated', review.render_review(
+            {'verdict': 'PASS', 'summary': 's', 'findings': [], 'verification': []}, ctx))
 
     def test_shipped_matrix_claims_no_model_is_better(self):
         for name, entry in SHIPPED_MATRIX['models'].items():
@@ -223,7 +296,7 @@ class ImplementerRecordTests(unittest.TestCase):
         commits = [bot_commit('glm-5.3-flash', 'ses_aaa111'),
                    bot_commit('mimo-v2.6-flash', 'ses_bbb222', verified=False, reason='unsigned'),
                    bot_commit('minimax-m3.1-flash', 'ses_ccc333', login='someone'),
-                   bot_commit('deepseek-v4.1-flash', 'ses_ddd444', mode='review')]
+                   bot_commit('hy3', 'ses_ddd444', mode='review')]
         records = review.implementer_records(commits, BOT)
         self.assertEqual([r['model'] for r in records], [M['glm-5.3-flash']])
         self.assertEqual(records[0]['session'], 'ses_aaa111')
@@ -287,7 +360,7 @@ class ReviewOutputTests(unittest.TestCase):
                                              'reviewer_session': 'ses_review999', 'records': [impl_record()],
                                              'branch': 'feature/x', 'run_url': 'https://x'})
         for expected in ('[HIGH]', 'backend/app/db.py', 'Evidence:', 'Recommendation:', SHA, 'ses_review999',
-                         'ses_impl000111', M['deepseek-v4.1-flash'], 'feature/x', 'Verification evidence',
+                         'ses_impl000111', M['hy3'], 'feature/x', 'Verification evidence',
                          'External acceptance by Codex or Jules is still required', 'not an approval'):
             self.assertIn(expected, body)
 
@@ -334,7 +407,7 @@ BASE_C = '9' * 40
 class FakeReviewApi:
     def __init__(self, head=SHA, base=BASE_C, state='open', commits=None, repo='o/r', merged=False):
         self.head, self.base, self.state, self.repo, self.merged = head, base, state, repo, merged
-        self.commits = commits if commits is not None else [bot_commit('deepseek-v4.1-flash', 'ses_impl000111')]
+        self.commits = commits if commits is not None else [bot_commit('hy3', 'ses_impl000111')]
         self.calls = []
 
     def call(self, method, path, body=None):
@@ -355,7 +428,7 @@ class PublishReviewTests(unittest.TestCase):
            'EXPECT_BOT_LOGIN': BOT, 'REVIEWER_MODEL': M['glm-5.3-flash'], 'REVIEWER_SESSION': 'ses_review999',
            'RUN_URL': 'https://x', 'GH_PUBLISH_TOKEN': 'tok'}
 
-    def run_publish(self, api, text=None, env=None):
+    def run_publish(self, api, text=None, env=None, matrix=None):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, 'review-text.txt').write_text(text if text is not None else
                                                     '```json\n' + json.dumps(ReviewOutputTests.GOOD) + '\n```')
@@ -365,7 +438,12 @@ class PublishReviewTests(unittest.TestCase):
             try:
                 os.environ.update({**self.ENV, **(env or {})})
                 with mock.patch.object(publish, 'Api', lambda token, repo: api):
-                    return review.publish_main(['x', 'publish', str(registry), tmp])
+                    extra = []
+                    if matrix is not None:
+                        matrix_path = Path(tmp, 'matrix.json')
+                        matrix_path.write_text(json.dumps(matrix))
+                        extra = [str(matrix_path)]
+                    return review.publish_main(['x', 'publish', str(registry), tmp, *extra])
             finally:
                 os.environ.clear()
                 os.environ.update(old)
@@ -385,9 +463,27 @@ class PublishReviewTests(unittest.TestCase):
         self.assertEqual(marker['base_commit'], BASE_C)
         self.assertIs(marker['stale_on_arrival'], False)
         self.assertEqual(marker['external_acceptance'], 'REQUIRED')
-        self.assertEqual(marker['implementer_models'], [M['deepseek-v4.1-flash']])
+        self.assertEqual(marker['implementer_models'], [M['hy3']])
         self.assertEqual(marker['reviewer_model'], M['glm-5.3-flash'])
         self.assertNotIn('STALE ON ARRIVAL', posted[2]['body'])
+
+    def test_published_review_discloses_a_waived_evaluation_from_the_matrix_argument(self):
+        waiver = {'waived_by': 'owner-name', 'date': '2026-11-05', 'reason': 'accepted without an evaluation'}
+        matrix = copy.deepcopy(SHIPPED_MATRIX)
+        matrix['models'][M['glm-5.3-flash']]['owner_waiver'] = waiver
+        api = FakeReviewApi()
+        self.run_publish(api, matrix=matrix)
+        body = next(c for c in api.calls if c[0] == 'POST')[2]['body']
+        for part in ('Reviewer capability: not evaluated', 'owner-name', '2026-11-05', 'accepted without an evaluation'):
+            self.assertIn(part, body)
+        plain = FakeReviewApi()                                       # no matrix argument, or no waiver: no claim
+        self.run_publish(plain)
+        self.assertNotIn('not evaluated', next(c for c in plain.calls if c[0] == 'POST')[2]['body'])
+        evaluated = copy.deepcopy(matrix)
+        evaluated['models'][M['glm-5.3-flash']]['evaluation'] = evidence(0.9)
+        real = FakeReviewApi()
+        self.run_publish(real, matrix=evaluated)
+        self.assertNotIn('not evaluated', next(c for c in real.calls if c[0] == 'POST')[2]['body'])
 
     def test_review_findings_cannot_trigger_merge_or_approval(self):
         api = FakeReviewApi()
@@ -400,7 +496,7 @@ class PublishReviewTests(unittest.TestCase):
         self.assertNotRegex(workflow, r'gh pr merge|auto-merge|/merge|enable_pr_auto_merge')
 
     def test_same_model_and_session_blocked_at_publication_time(self):
-        for env in ({'REVIEWER_MODEL': M['deepseek-v4.1-flash']}, {'REVIEWER_SESSION': 'ses_impl000111'},
+        for env in ({'REVIEWER_MODEL': M['hy3']}, {'REVIEWER_SESSION': 'ses_impl000111'},
                     {'REVIEWER_SESSION': ''}):
             api = FakeReviewApi()
             with self.assertRaises(review.SeparationError):
@@ -548,7 +644,8 @@ class ReadOnlyAndConfidentialityTests(unittest.TestCase):
 
     def test_reviewer_job_has_no_write_rights_and_a_review_only_publish_token(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/opencode.yml').read_text())
-        self.assertEqual(workflow['jobs']['review']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(workflow['jobs']['review']['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'id-token': 'write'})
         text = yaml.dump(workflow['jobs']['review'])
         for banned in ('create-github-app-token', 'APP_PRIVATE_KEY', 'GH_PUBLISH_TOKEN', 'pulls/', 'git push'):
             self.assertNotIn(banned, text)

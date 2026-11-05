@@ -47,7 +47,7 @@ MUTATIONS = [
     ('P1-1f', 'chunked bodies accepted', S + 'opencode_proxy.py', "if headers.get('Transfer-Encoding') is not None:", 'if False:'),
     ('P1-1g', 'ineligible model can be bound', S + 'opencode_proxy.py', 'if router.blockers(registry', 'if False and router.blockers(registry'),
     ('P1-1h', 'reviewer may be bound to implementer model', S + 'opencode_proxy.py', 'if full in {router.normalize(m) for m in denied}:', 'if False:'),
-    ('P1-1i', 'paid/unapproved model can be bound', S + 'opencode_proxy.py', "if full not in router.APPROVED_MODELS or not full.endswith('-free'):", 'if False:'),
+    ('P1-1i', 'paid/unapproved model can be bound', S + 'opencode_proxy.py', 'if full not in router.APPROVED_MODELS:', 'if False:'),
     ('P1-1j', 'unsanitized path in rejection log', S + 'opencode_proxy.py', "re.sub(r'[^A-Za-z0-9/._-]', '?', path.split('?')[0])[:80]", 'path'),
     ('P1-1k', 'query strings accepted', S + 'opencode_proxy.py', "if '?' in raw_path or '#' in raw_path", "if '#' in raw_path"),
     ('P1-1l', 'agent config lacks small_model', S + 'opencode_sandbox.py', "        'small_model': model,\n", ''),

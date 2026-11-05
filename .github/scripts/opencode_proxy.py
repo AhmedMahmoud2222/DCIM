@@ -13,7 +13,7 @@ forwarded only if all of these hold:
   - no query string, no Transfer-Encoding, no Content-Encoding (the body must be inspectable)
   - the body is a JSON object with no duplicate keys, only allow-listed top-level fields,
     and `model` equal to the bound model
-At startup the bound model must be one of the six approved free models, must pass every
+At startup the bound model must be one of the approved OpenCode Go models, must pass every
 registry requirement (terms verified, approved for repository code, healthy), and must not
 be a model the reviewer is forbidden to use.
 
@@ -38,8 +38,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import opencode_router as router  # noqa: E402
 
-POST_PATHS = ('/inference/openai/v1/chat/completions',)
-GET_PATHS = ('/inference/openai/v1/models', '/zen/v1/models')
+POST_PATHS = ('/inference/go/openai/v1/chat/completions',)
+GET_PATHS = ('/inference/go/v1/models',)
 MAX_BODY = 20 * 1024 * 1024
 BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
@@ -79,20 +79,91 @@ class PolicyError(Exception):
 
 
 def bare(model: str) -> str:
-    return model.split('/', 1)[1] if model.startswith('opencode/') else model
+    return model.split('/', 1)[1] if model.startswith('opencode-go/') else model
 
 
 def validate_bound_model(model: str, registry: dict, denied: set[str], probe: bool = False) -> str:
     """Return the bare provider model id, or raise PolicyError for any ineligible model."""
     full = router.normalize(model)
     router.load_registry(registry)
-    if full not in router.APPROVED_MODELS or not full.endswith('-free'):
-        raise PolicyError('model_not_approved_free')
+    if full not in router.APPROVED_MODELS:
+        raise PolicyError('model_not_approved')
     if full in {router.normalize(m) for m in denied}:
         raise PolicyError('model_denied_for_this_role')
     if router.blockers(registry['models'][full], probe):
         raise PolicyError('model_disabled_or_unhealthy')
     return bare(full)
+
+
+FINISH_REASONS = frozenset({'stop', 'length', 'tool_calls', 'function_call', 'content_filter', 'end_turn', 'tool_use',
+                            'max_tokens', 'error', 'sensitive', 'insufficient_system_resource'})
+DELTA_KEYS = ('role', 'content', 'reasoning_content', 'reasoning', 'tool_calls', 'refusal', 'function_call')
+
+
+class StreamShape:
+    """Content-free outline of an SSE chat-completions response, for the run log.
+
+    Records only structure: how many `data:` events, whether `[DONE]` arrived, which `finish_reason` values (only
+    words from FINISH_REASONS; anything else is the fixed token `other`) and which known delta field names were
+    present (by key, even when empty), and whether an `error` object or `usage` block appeared. Never a value from
+    `content`, `reasoning_content` or any other free text. `feed` never raises: a malformed event only counts as
+    unparsed, so this diagnostic cannot interrupt response forwarding."""
+
+    MAX_PENDING = 65536
+
+    def __init__(self) -> None:
+        self.pending = b''
+        self.events = 0
+        self.done = False
+        self.finish: set[str] = set()
+        self.delta: set[str] = set()
+        self.error = False
+        self.usage = False
+        self.unparsed = 0
+
+    def feed(self, chunk: bytes) -> None:
+        try:
+            self._feed(chunk)
+        except Exception:                                  # diagnostics must never break the relay
+            self.unparsed += 1
+            self.pending = b''
+
+    def _feed(self, chunk: bytes) -> None:
+        self.pending = (self.pending + chunk)[-self.MAX_PENDING:]
+        *lines, self.pending = self.pending.split(b'\n')
+        for raw in lines:
+            line = raw.strip()
+            if not line.startswith(b'data:'):
+                continue
+            body = line[5:].strip()
+            if body == b'[DONE]':
+                self.done = True
+                continue
+            self.events += 1
+            try:
+                data = json.loads(body)
+            except ValueError:
+                self.unparsed += 1
+                continue
+            if not isinstance(data, dict):
+                continue
+            self.error = self.error or isinstance(data.get('error'), (dict, str))
+            self.usage = self.usage or isinstance(data.get('usage'), dict)
+            choices = data.get('choices')
+            for choice in choices if isinstance(choices, list) else []:
+                if not isinstance(choice, dict):
+                    continue
+                reason = choice.get('finish_reason')
+                if isinstance(reason, str):
+                    self.finish.add(reason if reason in FINISH_REASONS else 'other')
+                delta = choice.get('delta')
+                if isinstance(delta, dict):
+                    self.delta.update(key for key in DELTA_KEYS if key in delta)
+
+    def summary(self) -> dict:
+        return {'data_events': self.events, 'done': self.done, 'finish_reasons': sorted(self.finish),
+                'delta_fields': sorted(self.delta), 'error_object': self.error, 'usage_block': self.usage,
+                'unparsed': self.unparsed}
 
 
 def client_identity_headers(headers) -> dict[str, str]:
@@ -308,6 +379,7 @@ def make_handler(proxy: Proxy):
             status = None
             first_byte_ms = None
             streamed_bytes = 0
+            shape = StreamShape()
             connection_result = 'failed'
             completion = 'upstream_connection_error'
             response_started = False
@@ -336,6 +408,8 @@ def make_handler(proxy: Proxy):
                         first_byte_ms = round((time.monotonic() - started) * 1000)
                         proxy.telemetry('first_response_byte', request_count=request_count,
                                         time_to_first_byte_ms=first_byte_ms)
+                    if endpoint == 'chat_completions':
+                        shape.feed(chunk)
                     self.wfile.write(chunk)
                     self.wfile.flush()
                     streamed_bytes += len(chunk)
@@ -353,7 +427,8 @@ def make_handler(proxy: Proxy):
                 conn.close()
                 proxy.telemetry('completion', request_count=request_count, upstream_connection=connection_result,
                                 http_status=status, time_to_first_byte_ms=first_byte_ms,
-                                streamed_bytes=streamed_bytes, category=completion)
+                                streamed_bytes=streamed_bytes, category=completion,
+                                stream=shape.summary() if endpoint == 'chat_completions' else None)
 
         def _reject_other(self):
             proxy.record_rejection('method_not_allowed', self.command, self.path)

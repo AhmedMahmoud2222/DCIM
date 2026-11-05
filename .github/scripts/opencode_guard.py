@@ -104,6 +104,35 @@ SESSION_EVENT_RE = re.compile(r'^ses_[A-Za-z0-9]{8,64}$')
 MESSAGE_RE = re.compile(r'^msg_[A-Za-z0-9]{8,64}$')
 
 
+OUTLINE_REASONS = frozenset({'stop', 'tool-calls', 'length', 'content-filter', 'error', 'unknown', 'other'})
+
+
+def event_outline(lines: list[str], limit: int = 30) -> str:
+    """The agent output as `type:reason` words for the failure log.
+
+    Only known event types (EVENT_PART_TYPE keys and `error`) and known finish reasons appear; every other value
+    is the fixed token `unknown_type` or `other`, so untrusted agent or provider output cannot put free text in
+    the log. No text and no tool arguments are ever read."""
+    words = []
+    for line in lines[:limit]:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            words.append('unparseable')
+            continue
+        if not isinstance(event, dict):
+            words.append('non-object')
+            continue
+        part = event.get('part') if isinstance(event.get('part'), dict) else {}
+        kind = event.get('type')
+        word = kind if kind in EVENT_PART_TYPE or kind == 'error' else 'unknown_type'
+        reason = part.get('reason')
+        if isinstance(reason, str):
+            word += ':' + (reason if reason in OUTLINE_REASONS else 'other')
+        words.append(word)
+    return ' '.join(words) + (' ...' if len(lines) > limit else '')
+
+
 def fail(code: str) -> tuple[str, str]:
     return 'failed', code
 
@@ -357,6 +386,8 @@ def main(argv: list[str]) -> int:
         with open(out, 'a', encoding='utf-8') as handle:
             handle.write(f'generation={status}\ngeneration_reason={reason}\nsession_id={session}\n')
     print(f'opencode guard: generation={status} reason={reason or "-"} events={len(lines)}')
+    if status == 'failed':
+        print(f'opencode guard: outline={event_outline(lines)} exit_code={exit_code}')
     return 0 if status == 'success' else 1
 
 
