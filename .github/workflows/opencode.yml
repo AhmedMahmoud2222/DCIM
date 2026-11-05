@@ -201,6 +201,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: opencode-agent
+    outputs:
+      model: ${{ steps.route.outputs.model }}
     permissions:
       contents: read
       id-token: write   # probe only: exchanged for a short-lived OpenCode token, see the sign-in step
@@ -574,9 +576,10 @@ jobs:
 
   report:
     name: Report outcome
-    needs: [gate, opencode, publish, review, review_publish]
+    needs: [gate, opencode, publish, review, review_publish, probe]
     if: >-
       always() && needs.gate.outputs.authorized == 'true' && (
+      needs.gate.outputs.mode == 'probe' ||
       (needs.gate.outputs.mode == 'implement' &&
        (needs.opencode.result != 'success' || needs.opencode.outputs.has_changes != 'true' || needs.publish.result == 'failure')) ||
       (needs.gate.outputs.mode == 'review' &&
@@ -608,10 +611,18 @@ jobs:
           REVIEW_BLOCKED: ${{ needs.review.outputs.review_blocked }}
           BLOCK_REASON: ${{ needs.review.outputs.block_reason }}
           REVIEW_PUBLISH_RESULT: ${{ needs.review_publish.result }}
+          PROBE_RESULT: ${{ needs.probe.result }}
+          PROBE_MODEL: ${{ needs.probe.outputs.model }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [[ "${MODE}" == "review" ]]; then
+          if [[ "${MODE}" == "probe" ]]; then
+            if [[ "${PROBE_RESULT}" == "success" ]]; then
+              msg="OpenCode probe passed: ${PROBE_MODEL//[^A-Za-z0-9._\/-]/} answered through the sandbox. Nothing was published."
+            else
+              msg="OpenCode probe failed (job result: ${PROBE_RESULT//[^a-z_]/}). Nothing was published."
+            fi
+          elif [[ "${MODE}" == "review" ]]; then
             if [[ "${REVIEW_BLOCKED}" == "true" ]]; then
               msg="REVIEW_BLOCKED: no independent review was produced (${BLOCK_REASON//[^A-Za-z0-9 .,:;()\/_-]/}). External acceptance by Codex or Jules is still required."
             elif [[ "${GENERATION}" != "success" ]]; then
