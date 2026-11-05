@@ -487,6 +487,28 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(value, state)
         self.assertEqual(self.store.writes, 0)
 
+    def test_journal_full_during_admission_keeps_state_and_does_not_abort(self):
+        now, command, state = self.pending_fixture()
+        with patch.object(self.store, 'save', side_effect=c.JournalFull('full')):
+            value, blob = c.ingest_pending(self.api,self.store,self.policy,state,'0',now)
+        self.assertEqual(value, state)
+        self.assertEqual(blob, '0')
+        self.assertEqual(self.api.posts, [])
+
+    def test_ambiguous_write_during_admission_still_aborts(self):
+        now, command, state = self.pending_fixture()
+        with patch.object(self.store, 'save', side_effect=c.AmbiguousWrite('?')):
+            with self.assertRaises(c.AmbiguousWrite): c.ingest_pending(self.api,self.store,self.policy,state,'0',now)
+
+    def test_ingestion_budget_stops_before_listing_and_reserves_time_for_tasks(self):
+        now, command, state = self.pending_fixture()
+        with patch.object(c, 'JOB_STARTED', c.time.monotonic() - c.INGEST_SECONDS - 1), \
+                patch.object(self.api, 'pages', side_effect=AssertionError('listed after budget')):
+            value, blob = c.ingest_pending(self.api,self.store,self.policy,state,'0',now)
+        self.assertEqual(value, state)
+        self.assertEqual(self.store.writes, 0)
+        self.assertLess(c.INGEST_SECONDS, c.JOB_SECONDS)
+
     def test_pending_scan_cas_conflict_is_not_retried(self):
         now, command, state = self.pending_fixture()
         self.store.conflict = True

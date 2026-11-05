@@ -252,7 +252,8 @@ MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-l
 SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
 SCAN_SECONDS = 240  # Wall clock per reconciliation, so a slow API ends the pass (and saves progress) before the 8 minute job kill.
 JOB_SECONDS = 360  # Wall clock for the whole run: no new scan or task starts after this, well before the 8 minute job kill.
-JOB_STARTED = time.monotonic()  # Reset by main(); a process is one job.
+JOB_STARTED = time.monotonic()  # Reset at the start of main(); a process is one job.
+INGEST_SECONDS = 120  # Share of JOB_SECONDS ingestion may use; the rest is reserved for existing tasks.
 
 
 def result_key(result):
@@ -551,6 +552,8 @@ def ingest_pending(api, store, policy, state, blob, now):
     state = deepcopy(state)
     for number in sorted(enrolled, key=int):
         require(re.fullmatch(r'[1-9][0-9]*', number), 'invalid enrolled PR')
+        if time.monotonic() - JOB_STARTED > INGEST_SECONDS:
+            break  # Budget spent: undiscovered commands wait for the next run; existing tasks keep their time.
         try:
             comments = api.pages('/issues/' + number + '/comments')
         except TransientError:
@@ -577,7 +580,13 @@ def ingest_pending(api, store, policy, state, blob, now):
             require(len(state['tasks']) < 100, 'journal capacity; owner archival required')
             task['created_at'] = created
             state['tasks'][task_id] = task
-            state, blob = store.save(state, blob)
+            try:
+                state, blob = store.save(state, blob)
+            except JournalFull:
+                # Admission refused before any PUT: nothing was written. The command stays
+                # unjournaled and is rediscovered later; existing tasks must still reconcile.
+                # JournalConflict and AmbiguousWrite are not caught and still abort the run.
+                del state['tasks'][task_id]
     return state, blob
 
 
@@ -595,6 +604,8 @@ def main():
     for path in (POLICY, WORKFLOW, SCRIPT, '.github/scripts/orchestration_provenance.py', '.github/scripts/acceptance_api.py', '.github/scripts/acceptance_core.py', '.github/scripts/acceptance_gate.py', '.github/scripts/agent_authority.py', '.github/acceptance/policy.json'):
         api.trusted_file(path, sha)
     require(policy['issuer'] and all(p['identity'] is None or p['identity']['id'] != policy['owner']['id'] for p in policy['providers'].values()), 'issuer/provider configuration incomplete')
+    global JOB_STARTED
+    JOB_STARTED = time.monotonic()  # One budget for the whole job, ingestion included.
     now = int(datetime.now(timezone.utc).timestamp())
     event = decode(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
     store = Store(api, policy)
@@ -619,8 +630,6 @@ def main():
     state, blob = ingest_pending(api, store, policy, state, blob, now)
     # Tasks closest to their persisted deadline go first, so a slow API cannot starve the ones about to expire;
     # once the job's own budget is spent the rest wait for the next scheduled run.
-    global JOB_STARTED
-    JOB_STARTED = time.monotonic()
     for task_id in sorted(state['tasks'], key=lambda t: (state['tasks'][t]['created_at'] + policy['timeout_seconds'], t)):
         if time.monotonic() - JOB_STARTED > JOB_SECONDS:
             break
