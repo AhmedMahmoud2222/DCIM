@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import sys
 
-from acceptance_api import GitHub, TransientError
+from acceptance_api import ArtifactUnavailable, GitHub, TransientError
 from acceptance_core import Rejected, require, decode, digest, binding, provider_identity, same_binding, jobs_and_checks
 from acceptance_gate import load_policy, verify_check
 from agent_authority import parse_command, comment_binding
@@ -245,6 +245,7 @@ def choose(api, policy, task, now):
     return None
 
 
+RETRY_LIMIT = 3  # Examinations of a run whose artifact could not be fetched before it counts as rejected.
 MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-limited).
 SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
 
@@ -293,6 +294,7 @@ def execution_result(api, policy, task, now):
             attempt_of[run['id']] = run.get('run_attempt', 1)
     scan = deepcopy(delivery.get('scan') or dict(low=None, high=None, match=None))
     scan.setdefault('attempts', {})
+    scan.setdefault('retry', {})
     low, high = scan['low'], scan['high']
     ids = sorted(candidates)
     if low is None:
@@ -302,7 +304,8 @@ def execution_result(api, policy, task, now):
         # interval whose authenticated attempt differs (or that was never authenticated)
         # is stale evidence and is re-examined first.
         stale = [i for i in reversed(ids) if low <= i <= high and scan['attempts'].get(str(i), 1) != attempt_of[i]]
-        order = stale + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
+        retry = [i for i in reversed(ids) if low <= i <= high and str(i) in scan['retry'] and i not in stale]
+        order = stale + retry + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
     examined = 0
     for rid in order:
         if examined >= SCAN_BUDGET:
@@ -314,8 +317,18 @@ def execution_result(api, policy, task, now):
         try:
             result = authenticated_execution(api, dict(proof, run_id=rid), policy,
                                              delivery['provider'], now, task, delivery)
-        except Rejected:
+        except Rejected as exc:
             result = None  # Spoofed, revoked, or bound to another task/delivery.
+            # An artifact that could not be fetched may only be an outage: look again a bounded
+            # number of times before the run counts as negative evidence.
+            tries = scan['retry'].get(str(rid), 0) + 1
+            if isinstance(exc, ArtifactUnavailable) and tries < RETRY_LIMIT \
+                    and (str(rid) in scan['retry'] or len(scan['retry']) < MAX_TRACKED_RERUNS):
+                scan['retry'][str(rid)] = tries
+            else:
+                scan['retry'].pop(str(rid), None)
+        else:
+            scan['retry'].pop(str(rid), None)
         # Sparse: only reruns (attempt > 1) are recorded; absent means attempt 1. Runs
         # inside the interval are never unexamined (it never straddles unfinished runs),
         # so this loses no evidence while keeping the shared journal bounded.

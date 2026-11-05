@@ -272,6 +272,11 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(g.verify_check(self.api, 211)['verdict'], 'ACCEPT')
         self.api.ci_runs[0]['conclusion'] = 'failure'
         with self.assertRaises(c.Rejected): g.verify_check(self.api, 211)
+    def test_check_not_yet_published_is_transient_not_a_rejection(self):
+        # The gate publishes on a schedule; a consumer that asks first must defer, never fail closed.
+        with self.assertRaises(a.TransientError):
+            g.verify_check(self.api, 211)
+        self.assertFalse(issubclass(a.TransientError, c.Rejected))
     def test_forged_actions_check_with_correct_name_is_rejected(self):
         self.api.publish_fixture(); self.api.published[0]['external_id'] = 'dcim-acceptance:v1:30:1:211:' + '0'*64
         with self.assertRaisesRegex(c.Rejected, 'forged'): g.verify_check(self.api, 211)

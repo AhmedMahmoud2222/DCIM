@@ -15,7 +15,7 @@ import re
 import shlex
 import sys
 
-from acceptance_api import GitHub
+from acceptance_api import GitHub, TransientError
 from acceptance_core import (Rejected, CHECK, require, decode, digest, binding, same_binding,
     independent, structured_review, source_run, jobs_and_checks, signed_range, owner_approval,
     provider_identity, decision)
@@ -405,7 +405,9 @@ def verify_check(api, number):
     checks = api.pages('/commits/' + b['head'] + '/check-runs?filter=all', 'check_runs')
     require(len({c.get('id') for c in checks}) == len(checks), 'duplicate acceptance check identifiers')
     matches = [c for c in checks if c.get('name') == CHECK]
-    require(bool(matches), 'acceptance check absent')
+    if not matches:
+        # The gate publishes on a schedule; a consumer that asks first must wait, not fail.
+        raise TransientError('acceptance check not yet published')
     check = max(matches, key=lambda c: c['id'])
     require(check.get('app', {}).get('id') == 15368 and check['app'].get('slug') == 'github-actions'
             and check.get('head_sha') == b['head'] and check.get('status') == 'completed'
@@ -462,6 +464,9 @@ def main():
             with open(os.environ['GITHUB_OUTPUT'], 'a') as out: out.write('prs=' + json.dumps(prs) + '\n')
         elif args.mode == 'publish': publish(api, args.pr)
         else: print(json.dumps(verify_check(api, args.pr), sort_keys=True))
+    except TransientError as exc:
+        print('Acceptance deferred (transient, nothing published): ' + str(exc)[:500], file=sys.stderr)
+        return 1
     except (Rejected, KeyError, TypeError, ValueError, AttributeError, OSError) as exc:
         print('Acceptance failed closed: ' + str(exc)[:500], file=sys.stderr)
         return 1

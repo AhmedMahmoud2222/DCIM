@@ -315,6 +315,19 @@ class ControllerTests(unittest.TestCase):
             value, _ = self.run_task(value)
         self.assertEqual(value['tasks'][self.task['id']]['state'], 'BLOCKED')
 
+    def test_success_before_the_acceptance_check_is_published_defers_instead_of_blocking(self):
+        value, _ = self.run_task()
+        with patch.object(c, 'authenticated_execution', return_value={'result': 'SUCCESS'}), \
+                patch.object(c, 'verify_check', side_effect=TransientError('acceptance check not yet published')):
+            after, _ = self.run_task(value)
+        task = after['tasks'][self.task['id']]
+        self.assertNotIn(task['state'], ('BLOCKED', 'ACCEPTED'))
+        self.assertEqual(task['deliveries'][-1]['status'], 'DELIVERED')   # next scheduled run decides
+        with patch.object(c, 'authenticated_execution', return_value={'result': 'SUCCESS'}), \
+                patch.object(c, 'verify_check'):
+            after, _ = self.run_task(after)
+        self.assertEqual(after['tasks'][self.task['id']]['state'], 'ACCEPTED')
+
     def test_actual_store_rejects_unsigned_commits(self):
         class BadAPI:
             def request(self, path, method='GET', body=None):
@@ -1051,6 +1064,50 @@ class ControllerTests(unittest.TestCase):
             result = c.execution_result(self.api, self.policy, task, 110)
         self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
 
+    def test_run_whose_artifact_was_unavailable_is_examined_again_after_recovery(self):
+        runs = self._scan_runs(150)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        state = {'outage': True}
+        calls = []
+        def fake_auth(api, proof, *a, **k):
+            rid = proof['run_id']
+            calls.append(rid)
+            if rid == 150:
+                if state['outage']:
+                    raise c.ArtifactUnavailable('artifact download failed')
+                return self._run_result(150)
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            self.assertEqual(task['deliveries'][-1]['scan']['retry'], {'150': 1})
+            state['outage'] = False
+            del calls[:]
+            result = c.execution_result(self.api, self.policy, task, 110)
+            self.assertEqual(calls[0], 150)          # retried first, inside the examined interval
+        self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
+
+    def test_definitive_rejection_and_exhausted_retries_are_not_examined_again(self):
+        runs = self._scan_runs(150)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        for name, error, expected in (('definitive', Rejected('spoofed'), 1),
+                                      ('unavailable', c.ArtifactUnavailable('artifact download failed'), c.RETRY_LIMIT)):
+            with self.subTest(name):
+                task = self.delivered_task()
+                calls = []
+                def fake_auth(api, proof, *a, **k):
+                    if proof['run_id'] == 150:
+                        calls.append(150)
+                        raise error
+                    raise Rejected('other')
+                with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                        patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+                    for _ in range(c.RETRY_LIMIT + 3):
+                        c.execution_result(self.api, self.policy, task, 110)
+                self.assertEqual(len(calls), expected)
+                self.assertEqual(task['deliveries'][-1]['scan']['retry'], {})
+
     def test_transient_failure_on_later_pass_keeps_persisted_interval_and_contradiction(self):
         runs = self._scan_runs(150)
         self.api.pages = lambda path, key=None: deepcopy(runs)
@@ -1315,7 +1372,9 @@ class TransportTests(unittest.TestCase):
     def setUp(self):
         self.policy = json.loads((ROOT / c.POLICY).read_text())
         self.policy['issuer'] = dict(id=100, login='native[bot]', app_id=200, app_slug='native')
-        os.environ['GITHUB_TOKEN'] = 'test-token-123'
+        patcher = patch.dict(os.environ, {'GITHUB_TOKEN': 'test-token-123'})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _make_api(self):
         return c.GitHub(self.policy, root=ROOT)

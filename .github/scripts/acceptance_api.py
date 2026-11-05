@@ -31,6 +31,13 @@ MAX_RETRY_DELAY_SECONDS = 60.0
 MAX_CUMULATIVE_RETRY_SECONDS = 300.0
 
 
+class ArtifactUnavailable(Rejected):
+    """An artifact fetch failed in a way that looks definitive but may be infrastructure (storage 4xx/redirect).
+
+    Still a rejection, so it never authorizes anything. Callers that persist scan progress may retry such a
+    run a bounded number of times before treating it as negative evidence."""
+
+
 class TransientError(Exception):
     """A retryable GitHub API failure exhausted its bounded backoff budget.
 
@@ -268,7 +275,10 @@ class GitHub:
         except urllib.error.HTTPError as exc:
             if exc.code in RETRYABLE_HTTP_CODES:
                 raise TransientError('artifact download unavailable (HTTP %d)' % exc.code) from exc
-            require(exc.code == 302, 'artifact download failed')
+            if self._is_rate_limit_response(exc):
+                raise TransientError('artifact download rate limited (HTTP %d)' % exc.code) from exc
+            if exc.code != 302:
+                raise ArtifactUnavailable('artifact download failed') from exc
             location = exc.headers.get('Location', '')
         except (urllib.error.URLError, TimeoutError) as exc:
             raise TransientError('artifact download unavailable') from exc
@@ -286,7 +296,7 @@ class GitHub:
             # or forbidden URL, missing blob) is definitive negative evidence.
             if exc.code in RETRYABLE_HTTP_CODES:
                 raise TransientError('artifact storage unavailable (HTTP %d)' % exc.code) from exc
-            raise Rejected('artifact storage download failed') from exc
+            raise ArtifactUnavailable('artifact storage download failed') from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise TransientError('artifact storage unavailable') from exc
         require(len(raw) <= 1048576 and artifact.get('digest') == 'sha256:' + hashlib.sha256(raw).hexdigest(),

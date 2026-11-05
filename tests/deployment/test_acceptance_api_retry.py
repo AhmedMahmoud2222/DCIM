@@ -284,6 +284,22 @@ class ArtifactRetrievalTests(unittest.TestCase):
             except Rejected:
                 pass
 
+    def test_rate_limited_403_on_the_redirect_step_is_transient(self):
+        limited = email.message.Message()
+        limited['Retry-After'] = '1'
+        exhausted = email.message.Message()
+        exhausted['X-RateLimit-Remaining'] = '0'
+        for headers in (limited, exhausted):
+            exc = urllib.error.HTTPError('https://api.github.com/x', 403, 'forbidden', headers, None)
+            with self.assertRaises(a.TransientError):
+                self._fetch([exc])
+
+    def test_plain_403_and_404_are_rejected_but_marked_as_possibly_infrastructure(self):
+        for outcomes in ([http_error(403)], [http_error(404)], [self._redirect(), http_error(404)]):
+            with self.assertRaises(a.ArtifactUnavailable):
+                self._fetch(outcomes)
+        self.assertTrue(issubclass(a.ArtifactUnavailable, Rejected))
+
 
 if __name__ == '__main__':
     unittest.main()
