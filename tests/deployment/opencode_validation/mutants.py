@@ -75,7 +75,7 @@ MUTATIONS = [
     ('P1-2j', 'read-only check accepts modifications', S + 'opencode_review.py', "if not (change.get('path') == 'REVIEW/diff.patch'", "if False and not (change.get('path') == 'REVIEW/diff.patch'"),
     ('P1-2k', 'reviewer config allows edits', S + 'opencode_sandbox.py', "'edit': 'deny' if mode in ('review', 'probe') else 'allow'", "'edit': 'allow'"),
     ('P1-3a', 'sessions may differ', S + 'opencode_guard.py', "if event.get('sessionID') != session:", 'if False:'),
-    ('P1-3b', 'unfinished step accepted', S + 'opencode_guard.py', 'if open_step is not None:\n        return fail', 'if False:\n        return fail'),
+    ('P1-3b', 'unfinished step accepted', S + 'opencode_guard.py', "return fail('unfinished_step')", "return 'success', ''"),
     ('P1-3c', 'unmatched step_finish accepted', S + 'opencode_guard.py', "if open_step is None or part['messageID'] != open_step[0]:\n                return fail('unmatched_step_finish')", 'if False:\n                return fail(\'unmatched_step_finish\')'),
     ('P1-3d', 'non-stop reasons accepted', S + 'opencode_guard.py', "if reason not in ('stop', 'tool-calls'):", 'if False:'),
     ('P1-3e', 'error events tolerated', S + 'opencode_guard.py', "if kind == 'error':\n            return fail('agent_reported_error')", "if False:\n            return fail('agent_reported_error')"),
