@@ -198,20 +198,20 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.wf['permissions'], {})
         self.assertEqual(self.jobs['gate']['permissions'],
                          {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
-        self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read'})
+        self.assertEqual(self.jobs['opencode']['permissions'], {'contents': 'read', 'id-token': 'write'})
         self.assertEqual(self.jobs['publish']['permissions'], {'contents': 'read'})
         self.assertEqual(self.jobs['report']['permissions'], {})
-        self.assertEqual(self.jobs['review']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(self.jobs['review']['permissions'], {'contents': 'read', 'pull-requests': 'read', 'id-token': 'write'})
         self.assertEqual(self.jobs['review_publish']['permissions'], {'contents': 'read'})
         for name, job in self.jobs.items():
             for forbidden in ('id-token', 'actions', 'workflows', 'administration', 'deployments'):
-                if name == 'probe' and forbidden == 'id-token':
-                    continue   # the probe alone mints a short-lived OpenCode token (see test_probe_signs_in_with_oidc)
+                if name in ('probe', 'opencode', 'review') and forbidden == 'id-token':
+                    continue   # the jobs that call OpenCode mint a short-lived token (see the OIDC tests)
                 self.assertNotIn(forbidden, job['permissions'])
 
     def test_untrusted_generation_job_has_no_github_write_rights(self):
         job = self.jobs['opencode']
-        self.assertEqual(job['permissions'], {'contents': 'read'})
+        self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
         text = yaml.dump(job)
         for banned in ('APP_PRIVATE_KEY', 'create-github-app-token', 'github.token', 'GITHUB_TOKEN',
                        'GH_TOKEN', 'issues: write', 'gh issue', 'gh pr'):
@@ -226,10 +226,10 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(self.jobs['review_publish']['environment'], 'opencode-publish')
         def used(job):
             return sorted(set(re.findall(r'secrets\.([A-Z_]+)', yaml.dump(self.jobs[job]))))
-        self.assertEqual(used('opencode'), ['OPENCODE_API_KEY'])
+        self.assertEqual(used('opencode'), [])
         self.assertEqual(used('publish'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertEqual(used('report'), ['OPENCODE_APP_PRIVATE_KEY'])
-        self.assertEqual(used('review'), ['OPENCODE_API_KEY'])
+        self.assertEqual(used('review'), [])
         self.assertEqual(used('review_publish'), ['OPENCODE_APP_PRIVATE_KEY'])
         self.assertNotIn('DCIM_GIT_SIGNING_KEY', self.text)
 
@@ -271,7 +271,8 @@ class WorkflowPolicyTests(unittest.TestCase):
                        'client_id="${CLIENT_ID}"', '--data-urlencode subject_token="${oidc}"'):
             self.assertIn(pinned, run)
         self.assertEqual(steps[sign_in]['env']['CLIENT_ID'], 'sk_c483bf13-599b-47b1-a060-54f58e89fa69')
-        self.assertIn('jq -er .access_token', run)          # a missing token fails the step, never an empty key
+        self.assertIn('jq -er .access_token', run)
+        self.assertIn('expires_in', run)                    # the lifetime is logged so a short one is visible          # a missing token fails the step, never an empty key
         self.assertLess(run.index('::add-mask::${token}'), run.index('GITHUB_OUTPUT'))
         self.assertNotIn('GITHUB_ENV', run)                 # the token reaches only the steps that name it
         users = [step['name'] for step in steps
@@ -280,10 +281,22 @@ class WorkflowPolicyTests(unittest.TestCase):
                                  'Run 120-second text-only probe through model-bound proxy'])
         for later in names[sign_in + 1:]:
             self.assertFalse(later.startswith('Sign in'))
-        # id-token stays on the probe alone; every other job keeps the static secret and no OIDC rights
+        # id-token belongs to the three jobs that call OpenCode; no job holds the static key any more
+        self.assertNotIn('secrets.OPENCODE_API_KEY', self.text)
         for name, job in self.jobs.items():
-            if name != 'probe':
+            if name not in ('probe', 'opencode', 'review'):
                 self.assertNotIn('id-token', job['permissions'])
+        for name in ('opencode', 'review'):
+            job_steps = self.jobs[name]['steps']
+            sign_ins = [x for x in job_steps if x.get('name', '').startswith('Sign in to OpenCode')]
+            self.assertEqual([x['id'] for x in sign_ins], ['oidc', 'oidc_agent'], name)
+            for x in sign_ins:
+                self.assertIn('jq -er .access_token', x['run'])
+                self.assertNotIn('GITHUB_ENV', x['run'])
+            holders = {x['name']: x['env']['OPENCODE_API_KEY'] for x in job_steps
+                       if 'OPENCODE_API_KEY' in x.get('env', {})}
+            self.assertEqual(sorted(holders.values()),
+                             ['${{ steps.oidc.outputs.token }}', '${{ steps.oidc_agent.outputs.token }}'], name)
 
     def test_concurrency_cannot_be_displaced_by_unauthorized_comments(self):
         self.assertNotIn('concurrency', self.wf)

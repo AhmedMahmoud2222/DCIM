@@ -548,7 +548,8 @@ class ReadOnlyAndConfidentialityTests(unittest.TestCase):
 
     def test_reviewer_job_has_no_write_rights_and_a_review_only_publish_token(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/opencode.yml').read_text())
-        self.assertEqual(workflow['jobs']['review']['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertEqual(workflow['jobs']['review']['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'id-token': 'write'})
         text = yaml.dump(workflow['jobs']['review'])
         for banned in ('create-github-app-token', 'APP_PRIVATE_KEY', 'GH_PUBLISH_TOKEN', 'pulls/', 'git push'):
             self.assertNotIn(banned, text)

@@ -53,7 +53,7 @@
         }
       },
       "repo_code_approved": true,
-      "operational_status": "unknown"
+      "operational_status": "healthy"
     },
     "opencode-go/kimi-k3.1-pro": {
       "label": "Kimi K3.1 Pro (OpenCode Go)",
