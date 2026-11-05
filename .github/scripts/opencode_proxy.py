@@ -95,15 +95,19 @@ def validate_bound_model(model: str, registry: dict, denied: set[str], probe: bo
     return bare(full)
 
 
+FINISH_REASONS = frozenset({'stop', 'length', 'tool_calls', 'function_call', 'content_filter', 'end_turn', 'tool_use',
+                            'max_tokens', 'error', 'sensitive', 'insufficient_system_resource'})
 DELTA_KEYS = ('role', 'content', 'reasoning_content', 'reasoning', 'tool_calls', 'refusal', 'function_call')
 
 
 class StreamShape:
     """Content-free outline of an SSE chat-completions response, for the run log.
 
-    Records only structure: how many `data:` events, whether `[DONE]` arrived, which `finish_reason` values (enum
-    words, sanitized) and which delta field names were seen, and whether an `error` object or `usage` block
-    appeared. Never a value from `content`, `reasoning_content` or any other free text."""
+    Records only structure: how many `data:` events, whether `[DONE]` arrived, which `finish_reason` values (only
+    words from FINISH_REASONS; anything else is the fixed token `other`) and which known delta field names were
+    present (by key, even when empty), and whether an `error` object or `usage` block appeared. Never a value from
+    `content`, `reasoning_content` or any other free text. `feed` never raises: a malformed event only counts as
+    unparsed, so this diagnostic cannot interrupt response forwarding."""
 
     MAX_PENDING = 65536
 
@@ -118,6 +122,13 @@ class StreamShape:
         self.unparsed = 0
 
     def feed(self, chunk: bytes) -> None:
+        try:
+            self._feed(chunk)
+        except Exception:                                  # diagnostics must never break the relay
+            self.unparsed += 1
+            self.pending = b''
+
+    def _feed(self, chunk: bytes) -> None:
         self.pending = (self.pending + chunk)[-self.MAX_PENDING:]
         *lines, self.pending = self.pending.split(b'\n')
         for raw in lines:
@@ -138,15 +149,16 @@ class StreamShape:
                 continue
             self.error = self.error or isinstance(data.get('error'), (dict, str))
             self.usage = self.usage or isinstance(data.get('usage'), dict)
-            for choice in data.get('choices') or []:
+            choices = data.get('choices')
+            for choice in choices if isinstance(choices, list) else []:
                 if not isinstance(choice, dict):
                     continue
                 reason = choice.get('finish_reason')
                 if isinstance(reason, str):
-                    self.finish.add(re.sub(r'[^a-z_]', '', reason.lower())[:20] or '?')
+                    self.finish.add(reason if reason in FINISH_REASONS else 'other')
                 delta = choice.get('delta')
                 if isinstance(delta, dict):
-                    self.delta.update(key for key in DELTA_KEYS if delta.get(key) not in (None, '', []))
+                    self.delta.update(key for key in DELTA_KEYS if key in delta)
 
     def summary(self) -> dict:
         return {'data_events': self.events, 'done': self.done, 'finish_reasons': sorted(self.finish),

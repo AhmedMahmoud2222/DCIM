@@ -104,8 +104,15 @@ SESSION_EVENT_RE = re.compile(r'^ses_[A-Za-z0-9]{8,64}$')
 MESSAGE_RE = re.compile(r'^msg_[A-Za-z0-9]{8,64}$')
 
 
+OUTLINE_REASONS = frozenset({'stop', 'tool-calls', 'length', 'content-filter', 'error', 'unknown', 'other'})
+
+
 def event_outline(lines: list[str], limit: int = 30) -> str:
-    """The agent output as `type:part:reason` words only (no text, no tool arguments), for the failure log."""
+    """The agent output as `type:reason` words for the failure log.
+
+    Only known event types (EVENT_PART_TYPE keys and `error`) and known finish reasons appear; every other value
+    is the fixed token `unknown_type` or `other`, so untrusted agent or provider output cannot put free text in
+    the log. No text and no tool arguments are ever read."""
     words = []
     for line in lines[:limit]:
         try:
@@ -117,10 +124,11 @@ def event_outline(lines: list[str], limit: int = 30) -> str:
             words.append('non-object')
             continue
         part = event.get('part') if isinstance(event.get('part'), dict) else {}
-        word = re.sub(r'[^a-z_-]', '', str(event.get('type')).lower())[:20]
+        kind = event.get('type')
+        word = kind if kind in EVENT_PART_TYPE or kind == 'error' else 'unknown_type'
         reason = part.get('reason')
         if isinstance(reason, str):
-            word += ':' + re.sub(r'[^a-z_-]', '', reason.lower())[:20]
+            word += ':' + (reason if reason in OUTLINE_REASONS else 'other')
         words.append(word)
     return ' '.join(words) + (' ...' if len(lines) > limit else '')
 

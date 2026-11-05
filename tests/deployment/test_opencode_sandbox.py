@@ -496,10 +496,27 @@ class StreamShapeTests(unittest.TestCase):
         self.assertTrue(summary['error_object'])
         self.assertNotIn(self.SECRET, json.dumps(summary))
 
-    def test_a_finish_reason_with_odd_characters_is_sanitized(self):
+    def test_unknown_finish_reasons_become_a_fixed_token(self):
         shape = proxy.StreamShape()
-        shape.feed(self.sse({'choices': [{'finish_reason': 'Stop; rm -rf /' + 'x' * 50}]}))
-        self.assertTrue(all(len(r) <= 20 and r.replace('_', '').isalpha() for r in shape.summary()['finish_reasons']))
+        shape.feed(self.sse({'choices': [{'finish_reason': 'PRIVATE_REASONING_TEXT'}]},
+                            {'choices': [{'finish_reason': 'length'}]}))
+        self.assertEqual(shape.summary()['finish_reasons'], ['length', 'other'])
+        self.assertNotIn('private', json.dumps(shape.summary()).lower())
+
+    def test_empty_delta_fields_are_recorded_by_key(self):
+        shape = proxy.StreamShape()
+        shape.feed(self.sse({'choices': [{'delta': {'content': '', 'reasoning_content': None, 'tool_calls': [],
+                                                    'unknown_field': 'x'}}]}))
+        self.assertEqual(shape.summary()['delta_fields'], ['content', 'reasoning_content', 'tool_calls'])
+
+    def test_malformed_events_never_raise_and_never_stop_later_events_counting(self):
+        shape = proxy.StreamShape()
+        for bad in ({'choices': 5}, {'choices': 'x'}, {'choices': [5, None, 'a']}, {'choices': [{'delta': 'x'}]},
+                    {'usage': 'x'}, [1, 2], 7):
+            shape.feed(self.sse(bad))
+        shape.feed(self.sse({'choices': [{'finish_reason': 'stop'}]}))
+        self.assertEqual(shape.summary()['finish_reasons'], ['stop'])
+        shape.feed(b'\xff\xfe data: \x00\n' * 3)
 
 
 class GuardOutlineTests(unittest.TestCase):
@@ -511,6 +528,14 @@ class GuardOutlineTests(unittest.TestCase):
         outline = guard.event_outline(lines)
         self.assertEqual(outline, 'step_start reasoning step_finish:length unparseable')
         self.assertNotIn('SECRET', outline)
+
+    def test_unknown_types_and_reasons_become_fixed_tokens(self):
+        lines = [json.dumps({'type': 'PRIVATE_REASONING_TEXT', 'part': {}}),
+                 json.dumps({'type': 'step_finish', 'part': {'reason': 'PRIVATE_REASONING_TEXT'}}),
+                 json.dumps({'type': 7, 'part': 'x'})]
+        outline = guard.event_outline(lines)
+        self.assertEqual(outline, 'unknown_type step_finish:other unknown_type')
+        self.assertNotIn('PRIVATE', outline.upper())
 
     def test_outline_is_bounded(self):
         lines = [json.dumps({'type': 'text', 'part': {}})] * 100
