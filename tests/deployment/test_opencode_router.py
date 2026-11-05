@@ -16,7 +16,11 @@ import sys
 sys.path.insert(0, str(ROOT / '.github/scripts'))
 import opencode_proxy as proxy  # noqa: E402  (shares the router module through sys.path)
 
-REGISTRY = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
+SHIPPED = json.loads((ROOT / '.github/opencode/model-registry.json').read_text())
+# Most tests below prove fail-closed routing from a registry where no model has a recorded health status, so they
+# use the shipped records with the one healthy model reset. test_shipped_registry_* pins what the file really says.
+REGISTRY = copy.deepcopy(SHIPPED)
+REGISTRY['models']['opencode-go/glm-5.2']['operational_status'] = 'unknown'
 GO = 'opencode-go/qwen3.8-max'
 ALL_GO = set(router.GO_MODELS)
 EXPECTED = ALL_GO
@@ -24,10 +28,10 @@ ALL = set(router.GO_MODELS)
 REVIEW = {'reviewed_by': 'owner', 'date': '2026-10-21', 'source': 'https://opencode.ai/docs/zen'}
 FOUR = ('opencode-go/glm-5.3-flash', 'opencode-go/glm-5.2', 'opencode-go/kimi-k2.7-code',
         'opencode-go/kimi-k3.1-pro')
-SHIPPED_OWNER_ENABLED = set()
+# Passed the owner-run production probe on 2026-11-05 (PR 219, run 41951295355).
+SHIPPED_OWNER_ENABLED = {'opencode-go/glm-5.2'}
 # Go models whose terms, data-policy acknowledgement and repository-code approval the owner recorded on 2026-11-04.
-SHIPPED_GO_APPROVED_UNHEALTHY = {'opencode-go/glm-5.3-flash', 'opencode-go/glm-5.2',
-                                 'opencode-go/kimi-k2.7-code', 'opencode-go/kimi-k3.1-pro'}
+SHIPPED_GO_APPROVED_UNHEALTHY = {'opencode-go/glm-5.3-flash', 'opencode-go/kimi-k2.7-code', 'opencode-go/kimi-k3.1-pro'}
 # One task per routing category, used to prove shipped eligibility and fail-closed routing.
 SHIPPED_TASKS = {
     'small_fix': 'fix a typo in the README',
@@ -133,7 +137,9 @@ class RegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             avail = Path(tmp, 'a.json')
             avail.write_text(json.dumps({'data': [{'id': i.split('/')[1]} for i in ALL]}))
-            reg = str(ROOT / '.github/opencode/model-registry.json')
+            reg = Path(tmp, 'baseline.json')
+            reg.write_text(json.dumps(REGISTRY))
+            reg = str(reg)
             bare_reg = Path(tmp, 'r.json')
             bare_reg.write_text(json.dumps(unacknowledge(REGISTRY, 'opencode-go/glm-5.2')))
             old = dict(os.environ)
@@ -212,7 +218,7 @@ class RegistryTests(unittest.TestCase):
     def test_shipped_registry_keeps_owner_approved_unhealthy_models_disabled(self):
         # The owner-approved GLM record is eligible in the shipped registry. MiMo has terms
         # evidence and repository-code approval but remains blocked until health is recorded.
-        for model_id, meta in REGISTRY['models'].items():
+        for model_id, meta in SHIPPED['models'].items():
             if model_id in SHIPPED_GO_APPROVED_UNHEALTHY:
                 self.assertIs(meta['terms_verified'], True, model_id)
                 self.assertIs(meta['repo_code_approved'], True, model_id)
@@ -236,7 +242,7 @@ class RegistryTests(unittest.TestCase):
                 self.assertIs(meta['repo_code_approved'], False, model_id)
                 self.assertTrue(router.blockers(meta), model_id)
         self.assertEqual(
-            [model_id for model_id, meta in REGISTRY['models'].items()
+            [model_id for model_id, meta in SHIPPED['models'].items()
              if not router.blockers(meta)],
             sorted(SHIPPED_OWNER_ENABLED), 'only the owner-enabled GLM model is eligible')
         self.assertEqual(set(SHIPPED_TASKS), set(router.CATEGORIES))
@@ -456,7 +462,7 @@ class GoGateTests(unittest.TestCase):
     JSON = {'Content-Type': 'application/json'}
 
     def test_unapproved_go_entries_are_fully_blocked_and_chains_hold_only_go_models(self):
-        for model_id in ALL_GO - SHIPPED_GO_APPROVED_UNHEALTHY:
+        for model_id in ALL_GO - SHIPPED_GO_APPROVED_UNHEALTHY - SHIPPED_OWNER_ENABLED:
             meta = REGISTRY['models'][model_id]
             self.assertIs(meta['terms_verified'], False, model_id)
             self.assertIs(meta['repo_code_approved'], False, model_id)
