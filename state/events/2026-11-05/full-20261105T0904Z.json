@@ -1,0 +1,60 @@
+{
+  "run_id": "full-20261105T0904Z",
+  "mode": "FULL",
+  "started_at": "2026-11-05T09:04:12Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy and changelog read; ruleset read, six pull_request bypass actors."
+    },
+    {
+      "step": 1,
+      "result": "Enumerated seven open PRs and sixteen open issues; read machine index and owner comments. Full review-thread/CI matrix incomplete."
+    },
+    {
+      "step": 2,
+      "result": "No fix claims accepted without exact-head verification; detailed diff verification incomplete."
+    },
+    {
+      "step": 3,
+      "result": "Prioritized #219 security/reliability, #115 thermal, #207 workflow; no agent slots allocated."
+    },
+    {
+      "step": 4,
+      "result": "No threads resolved without verified evidence."
+    },
+    {
+      "step": "4a",
+      "result": "No findings dispositioned; existing checklists retained."
+    },
+    {
+      "step": 5,
+      "result": "No new agent requests; #219 remains specification-first, #115 and #207 remain Draft."
+    },
+    {
+      "step": 6,
+      "result": "Historical Draft PRs retained; no supersession closures without file comparisons."
+    },
+    {
+      "step": 7,
+      "result": "No stale prompts without complete comment chronology."
+    },
+    {
+      "step": 8,
+      "result": "Zero merges; none verified to satisfy all gates. Ruleset has no always bypass."
+    },
+    {
+      "step": 9,
+      "result": "Owner decisions read; no new class I request posted."
+    },
+    {
+      "step": 10,
+      "result": "Partial FULL report produced, limitations explicitly stated."
+    }
+  ],
+  "merged": [],
+  "comments": [],
+  "errors": [],
+  "production_migration_0057": "hold intact",
+  "completed_at": "2026-11-05T09:07:00Z"
+}
