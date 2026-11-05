@@ -719,4 +719,4 @@ jobs:
           else
             msg="OpenCode stopped before generation (routing, catalog, sandbox or data-policy check). Nothing was published."
           fi
-          gh issue comment "${NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${msg} Run: ${RUN_URL}"
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${NUMBER}/comments" -f body="${msg} Run: ${RUN_URL}" --silent   # REST: the issues-only App token is refused by the GraphQL addComment mutation
