@@ -1,0 +1,69 @@
+{
+  "run_id": "full-20261105T2000Z",
+  "mode": "FULL",
+  "started_at": "2026-11-05T20:00:43Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy/changelog read; ruleset six pull_request bypass actors."
+    },
+    {
+      "step": 1,
+      "result": "4 open PRs, 16 issues; exact heads and recent reviews/comments checked."
+    },
+    {
+      "step": 2,
+      "result": "Claims not independently verified in all diffs; no acceptance credited."
+    },
+    {
+      "step": 3,
+      "result": "Prioritized #219 reliability, #207 security, #115 CFD, #116 docs; dependencies and drafts block."
+    },
+    {
+      "step": 4,
+      "result": "Inline comments inspected; full GraphQL resolution state not verified; zero resolutions."
+    },
+    {
+      "step": "4a",
+      "result": "Prior findings retained; no checklist disposition without evidence."
+    },
+    {
+      "step": 5,
+      "result": "No new requests; #219 frozen, #207 owner workflow gate, #115 new head, #116 draft behind."
+    },
+    {
+      "step": 6,
+      "result": "No historical closure evidence established; no closures."
+    },
+    {
+      "step": 7,
+      "result": "No stale prompts issued without duplicate/agent-slot verification."
+    },
+    {
+      "step": 8,
+      "result": "No merge: #219 unresolved/frozen, others Draft and/or behind and review gaps."
+    },
+    {
+      "step": 9,
+      "result": "No new class I decision posted; #220 owner comments inspected."
+    },
+    {
+      "step": 10,
+      "result": "Partial FULL report produced; no production action."
+    }
+  ],
+  "prs": {
+    "115": "a24132fc3a420f065bfede61a62824c1960cd0cb",
+    "116": "d05ab33aca5893e19b99d809f2922922da180440",
+    "207": "d44a2e2e5f2289e7e4881fb0d6e90a26379e7946",
+    "219": "244253474001bfd6338b10812e44a01f4b55663a"
+  },
+  "limitations": [
+    "No complete review-thread graph",
+    "No exact-head required-check verification",
+    "No issue acceptance criteria code audit",
+    "No complete issue owner decision reconciliation"
+  ],
+  "merged": [],
+  "resolved": []
+}
