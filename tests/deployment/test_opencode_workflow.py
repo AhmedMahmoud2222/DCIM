@@ -462,7 +462,7 @@ class ReportMessageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             body = Path(tmp, 'body')
             stub = Path(tmp, 'gh')
-            stub.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = "--body" ] && printf "%s" "$2" > "$GH_BODY"; shift; done\n')
+            stub.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in body=*) printf "%s" "${1#body=}" > "$GH_BODY";; esac; shift; done\n')
             stub.chmod(0o755)
             base = {'PATH': f'{tmp}:/usr/bin:/bin', 'GH_BODY': str(body), 'NUMBER': '5', 'MODE': 'implement',
                     'GITHUB_REPOSITORY': REPO, 'RUN_URL': 'https://run', 'GENERATION': '', 'GENERATION_REASON': '',
@@ -482,6 +482,10 @@ class ReportMessageTests(unittest.TestCase):
             self.assertNotIn('no file changes', text, has_changes)
             self.assertIn('collecting or uploading the change failed before publication', text)
             self.assertIn('Nothing was published', text)
+
+    def test_report_uses_the_rest_comment_endpoint_not_graphql(self):
+        self.assertIn('gh api "repos/${GITHUB_REPOSITORY}/issues/${NUMBER}/comments" -f body=', self.script)
+        self.assertNotIn('gh issue comment', self.script)
 
     def test_probe_outcome_is_commented_on_the_pull_request(self):
         self.assertIn('probe passed: opencode-go/glm-5.2', self.message(MODE='probe', PROBE_RESULT='success', PROBE_MODEL='opencode-go/glm-5.2'))
