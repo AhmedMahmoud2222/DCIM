@@ -676,6 +676,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-issues: write
+          permission-pull-requests: write   # a comment on a pull request is refused with issues-write alone (HTTP 403)
       - name: Comment
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}

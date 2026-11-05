@@ -107,14 +107,15 @@ MESSAGE_RE = re.compile(r'^msg_[A-Za-z0-9]{8,64}$')
 OUTLINE_REASONS = frozenset({'stop', 'tool-calls', 'length', 'content-filter', 'error', 'unknown', 'other'})
 
 
-def event_outline(lines: list[str], limit: int = 30) -> str:
+def event_outline(lines: list[str], limit: int = 40) -> str:
     """The agent output as `type:reason` words for the failure log.
 
     Only known event types (EVENT_PART_TYPE keys and `error`) and known finish reasons appear; every other value
     is the fixed token `unknown_type` or `other`, so untrusted agent or provider output cannot put free text in
-    the log. No text and no tool arguments are ever read."""
+    the log. No text and no tool arguments are ever read. A long run shows its last `limit` events, because
+    the lifecycle fault is at the end: the outline starts with `...` when earlier events were left out."""
     words = []
-    for line in lines[:limit]:
+    for line in lines[-limit:]:
         try:
             event = json.loads(line)
         except ValueError:
@@ -130,7 +131,7 @@ def event_outline(lines: list[str], limit: int = 30) -> str:
         if isinstance(reason, str):
             word += ':' + (reason if reason in OUTLINE_REASONS else 'other')
         words.append(word)
-    return ' '.join(words) + (' ...' if len(lines) > limit else '')
+    return ('... ' if len(lines) > limit else '') + ' '.join(words)
 
 
 def fail(code: str) -> tuple[str, str]:
