@@ -1064,6 +1064,17 @@ class ControllerTests(unittest.TestCase):
             result = c.execution_result(self.api, self.policy, task, 110)
         self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
 
+    def test_malformed_run_timestamps_do_not_escape_the_prefilter(self):
+        runs = self._scan_runs(3)
+        for value in (12345, ['x'], {'a': 1}, 'not-a-date'):
+            with self.subTest(created_at=value):
+                runs[0]['created_at'] = value
+                self.api.pages = lambda path, key=None: deepcopy(runs)
+                task = self.delivered_task()
+                with patch.object(c, 'authenticated_execution', side_effect=Rejected('other')), \
+                        patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+                    self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+
     def test_run_whose_artifact_was_unavailable_is_examined_again_after_recovery(self):
         runs = self._scan_runs(150)
         self.api.pages = lambda path, key=None: deepcopy(runs)

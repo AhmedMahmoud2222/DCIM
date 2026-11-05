@@ -187,7 +187,7 @@ def authenticated_execution(api, proof, policy, provider, now, task=None, delive
             and run.get('conclusion') == 'success'
             and run.get('repository', {}).get('full_name') == policy['repository']
             and run.get('head_repository', {}).get('full_name') == policy['repository']
-            and 0 <= now - timestamp(run['updated_at']) <= policy['proof_max_age_seconds'], 'stale/compromised native execution')
+            and isinstance(run.get('updated_at'), str) and 0 <= now - timestamp(run['updated_at']) <= policy['proof_max_age_seconds'], 'stale/compromised native execution')
     historical_policy = execution_policy(api, policy, sha, current_sha)
     api.trusted_file(proof['workflow_path'], current_sha)
     jobs = api.pages(f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
@@ -279,11 +279,11 @@ def execution_result(api, policy, task, now):
                 or run.get('head_branch') != policy['default_branch']:
             continue
         run_created = run.get('created_at', '')
-        if run_created and delivery_created:
+        if isinstance(run_created, str) and run_created and delivery_created:
             try:
                 if timestamp(run_created) < delivery_created:
                     continue  # A run cannot predate its delivery.
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError):
                 pass
         if run.get('status') != 'completed':
             # An unfinished run may still become the result: acceptance waits for it, and
@@ -613,5 +613,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (Rejected, TransientError, AmbiguousWrite, KeyError, ValueError, TypeError, OSError):
+    except (Rejected, TransientError, AmbiguousWrite, KeyError, ValueError, TypeError, AttributeError, OSError):
         raise SystemExit('Collaboration failed closed; inspect trusted run and journal. No automatic delivery retry.') from None

@@ -203,9 +203,13 @@ class GitHub:
             require(isinstance(items, list) and len(items) <= 100, 'malformed pagination')
             if key:
                 n = data.get(total_key)
-                require(type(n) is int and 0 <= n <= limit and (total is None or n == total), 'changing/incomplete pagination')
+                require(type(n) is int and 0 <= n <= limit, 'changing/incomplete pagination')
+                if total is not None and n != total:
+                    # Runs and comments appear while we page; this is drift, not evidence of tampering.
+                    raise TransientError('pagination changed while reading')
                 total = n
-                require(len(items) == min(100, total - len(values)), 'truncated page')
+                if len(items) != min(100, total - len(values)):
+                    raise TransientError('truncated page while reading')
             values.extend(items)
             require(len(values) <= limit, 'evidence collection limit exceeded')
             if (key and len(values) == total) or (not key and len(items) < 100):
@@ -327,8 +331,16 @@ class GitHub:
                 data=json.dumps(dict(query=query, variables=dict(o=repo_owner, r=repo_name, n=number, cursor=cursor))).encode(),
                 headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'})
             try:
-                with self.opener.open(req, timeout=25) as response:
-                    data = json.load(response)
+                try:
+                    with self.opener.open(req, timeout=25) as response:
+                        data = json.load(response)
+                except urllib.error.HTTPError as exc:
+                    # The query is idempotent: an outage or throttle is temporary, anything else is not.
+                    if exc.code in RETRYABLE_HTTP_CODES or self._is_rate_limit_response(exc):
+                        raise TransientError('review thread API unavailable (HTTP %d)' % exc.code) from exc
+                    raise
+                except (urllib.error.URLError, TimeoutError) as exc:
+                    raise TransientError('review thread API unavailable') from exc
                 require(not data.get('errors'), 'review thread API error')
                 connection = data['data']['repository']['pullRequest']['reviewThreads']
                 result.extend(connection['nodes'])

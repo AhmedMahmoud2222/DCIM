@@ -277,6 +277,16 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(a.TransientError):
             g.verify_check(self.api, 211)
         self.assertFalse(issubclass(a.TransientError, c.Rejected))
+    def test_review_thread_outage_defers_acceptance_and_publishes_nothing(self):
+        self.api.publish_fixture()
+        with patch.object(self.api, 'threads', side_effect=a.TransientError('review thread API unavailable')):
+            with self.assertRaises(a.TransientError):
+                g.verify_check(self.api, 211)
+            published = len(self.api.published)
+            with patch.object(g, 'self_run', return_value=(dict(head_sha=BASE), None)), \
+                    self.assertRaises(a.TransientError):
+                g.publish(self.api, 211)       # no BLOCK decision is recorded for an outage
+            self.assertEqual(len(self.api.published), published)
     def test_forged_actions_check_with_correct_name_is_rejected(self):
         self.api.publish_fixture(); self.api.published[0]['external_id'] = 'dcim-acceptance:v1:30:1:211:' + '0'*64
         with self.assertRaisesRegex(c.Rejected, 'forged'): g.verify_check(self.api, 211)
