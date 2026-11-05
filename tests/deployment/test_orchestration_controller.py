@@ -1147,6 +1147,22 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(calls[0], 150)          # retried first, inside the examined interval
         self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
 
+    def test_match_is_not_accepted_while_another_runs_artifact_is_still_being_retried(self):
+        runs = self._scan_runs(2)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        def fake_auth(api, proof, *a, **k):
+            if proof['run_id'] == 1:
+                return self._run_result(1)
+            raise c.ArtifactUnavailable('artifact download failed')
+        outcomes = []
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            for _ in range(c.RETRY_LIMIT + 1):
+                outcomes.append(c.execution_result(self.api, self.policy, task, 110))
+        self.assertEqual([bool(o) for o in outcomes[:c.RETRY_LIMIT - 1]], [False] * (c.RETRY_LIMIT - 1))
+        self.assertEqual(outcomes[-1][:2], ('SUCCESS', 1))      # accepted only once run 2 is settled as negative
+
     def test_definitive_rejection_and_exhausted_retries_are_not_examined_again(self):
         runs = self._scan_runs(150)
         self.api.pages = lambda path, key=None: deepcopy(runs)

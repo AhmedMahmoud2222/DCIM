@@ -358,7 +358,8 @@ def execution_result(api, policy, task, now):
                 scan['match'] = dict(run_id=rid, key=result_key(result), result=result['result'],
                                      summary=execution_summary(result))
     scan['low'], scan['high'] = low, high
-    complete = not pending and len(order) <= SCAN_BUDGET and not cut_short
+    # A run whose artifact is still being retried may carry a second, different witness: not complete yet.
+    complete = not pending and len(order) <= SCAN_BUDGET and not cut_short and not scan['retry']
     if complete and scan['match']:
         # A retained match is only a lead: mutable witnesses (provider comment/review,
         # enrollment, policy, run attempt) are re-authenticated live before acceptance.
