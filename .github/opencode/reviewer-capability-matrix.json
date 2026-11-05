@@ -26,7 +26,12 @@
       "evaluation": null
     },
     "opencode-go/glm-5.2": {
-      "evaluation": null
+      "evaluation": null,
+      "owner_waiver": {
+        "waived_by": "AhmedMahmoud2222",
+        "date": "2026-11-05",
+        "reason": "Owner accepts glm-5.2 as reviewer without a seeded-defect evaluation; it is the only model that passed the production probe. Replace with a real evaluation record when one exists."
+      }
     },
     "opencode-go/kimi-k3.1-pro": {
       "evaluation": null

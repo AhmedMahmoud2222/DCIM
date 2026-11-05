@@ -556,7 +556,7 @@ jobs:
           REVIEWER_MODEL: ${{ needs.review.outputs.model }}
           REVIEWER_SESSION: ${{ needs.review.outputs.session_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out"
+        run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out" .github/opencode/reviewer-capability-matrix.json
       - name: Seal native collaboration execution result
         if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
         env:
