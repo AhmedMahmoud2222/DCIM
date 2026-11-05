@@ -46,6 +46,7 @@ The previous integration ran `dceoy/opencode-action`, which runs its own commit 
 - every line is a JSON event with a known type, one `sessionID` throughout, ordered timestamps, and a `part` whose type, session and `msg_` id match the event
 - steps nest strictly (`step_start`, body events, `step_finish` with the same message id); no event outside a step; no step after the final `stop`; no step left open
 - every `step_finish` reason is `tool-calls` (and the step ran at least one tool) or the single final `stop` (with no tool call in that step)
+- one exception for OpenCode 2.1.4, which can exit 0 without the last `step_finish`: a final step that holds non-blank text, no tool call, and ends on that text is accepted only when the proxy log (written by the trusted proxy, not the agent) shows the last chat completion ended with a single `stop`, `[DONE]`, no error object, HTTP 200 and no unparsed chunks; a nonzero exit, timeout, error event or any other open step still fails
 - no `error` event anywhere, no tool call left pending
 - the transcript ends in a supported termination (`stop`)
 - no process of the agent account survives the run (guard v3.1)
