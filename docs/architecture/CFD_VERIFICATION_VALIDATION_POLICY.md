@@ -56,9 +56,10 @@ Definitions. All fluxes are summed over contract patches from the field output.
   contract section 7, rule 1).
 - Benchmark mapping. Sealed (sealed criterion): V3 and V4. V1 is solid conduction with no fluid domain: the mass criterion
   is not applicable and only the energy criterion (wall heat flux balance) is applied. Ventilated (ventilated criterion):
-  V2 when run with inlet and outlet patches (a periodic channel is treated as sealed in the flow direction and uses the
-  sealed criterion plus the prescribed mass flux), V5, V6, V7 and V8, and V9 for real rooms. The M3 report states which
-  criterion each case used.
+  V2, V5, V6, V7 and V8, and V9 for real rooms. In this contract version V2 is an explicit inlet/outlet channel in the
+  ventilated class, with a prescribed inlet flow and a pressure outlet; periodic or cyclic V2 fixtures are excluded because
+  the contract has no `periodic` patch role. The deterministic V2 fixture must exercise the ventilated denominator and the
+  tightened gate. The M3 report states which criterion each case used.
 - Energy imbalance = |Q_sources + H_in - H_out - Q_walls| / max(Q_sources, Q_floor), with H the enthalpy flux referenced
   to the same datum on all patches and Q_floor a fixed small power (default 100 W) that prevents division by near zero.
   With Q_sources below Q_floor the absolute residual in watts must be below 1 W instead.

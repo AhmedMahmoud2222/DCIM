@@ -24,7 +24,7 @@ All ids are UUIDs. All tables are insert-mostly with immutable columns guarded b
 |---|---|---|
 | `cfd_model_revision` | Immutable snapshot of the baseline contract inputs for a room | `room_id`, `revision_number`, `input_document_key` (storage), `content_hash`, `contract_version`, `assembled_by`, `assembled_at`, `source_snapshot` (calibration id, plan revision, placement refs) |
 | `cfd_scenario_revision` | Immutable delta set over a model revision | `model_revision_id`, `deltas` JSONB, `content_hash`, `created_by`. Contains no foreign key that lets it write inventory |
-| `cfd_run` | A requested simulation. Holds the four state machines | `model_revision_id`, `scenario_revision_id`, `requested_by`, `site_id`, `room_id`, `execution_state`, `numerical_state`, `validation_state`, `acceptance_state`, `redispatch_count`, `idempotency_key`, `policy_versions`, `created_at`, `updated_at` |
+| `cfd_run` | A requested simulation. Holds the four state machines | `model_revision_id`, `scenario_revision_id`, `requested_by`, `site_id`, `room_id`, `execution_state`, `numerical_state`, `validation_state`, `acceptance_state`, `redispatch_count` (lifetime counter, never reset), `terminal_reason` (set once with the terminal transition, for example `worker_lost`, `dispatch_lost`), `idempotency_key`, `policy_versions`, `created_at`, `updated_at` (database time) |
 | `cfd_run_attempt` | One execution try | `run_id`, `attempt_number`, `lease_id`, `lease_expires_at`, `heartbeat_at`, `worker_id`, `image_digest`, `started_at`, `ended_at`, `exit_reason`, `resource_limits`, `resource_usage` |
 | `cfd_artifact` | Checksummed output or log | `run_id`, `attempt_id`, `kind`, `storage_key`, `sha256`, `size_bytes`, `created_at`, `retention_until`, `scope_site_id` |
 | `cfd_sensor_validation` | One validation assessment of a run | `run_id`, `dataset_hash`, `window`, `split`, `metrics` JSONB, `coverage`, `verdict` (`not_run`, `insufficient_data`, `passed`, `failed`), `assessed_by`, `policy_version` |
@@ -63,15 +63,35 @@ plus service checks. Every other combination is displayed as its own labelled st
    delivery owns the run; the task exits without side effects. The attempt table has no `execution_state`; state lives on `cfd_run`.
 4. The worker renews the lease with a heartbeat at most every 30 seconds (value to be set in M4). Each state write includes
    `WHERE lease_id = :lease_id` (fencing); a worker that lost its lease cannot write results.
-5. A sweeper (as `requeue-stuck-bulk-import-commits` does) marks attempts with an expired lease as `lost` after killing the
-   container by name, and requeues up to the attempt cap; after the cap the run is `failed` with reason `worker_lost`.
+5. Expired lease recovery (sweeper as `requeue-stuck-bulk-import-commits` does). The container is killed by name first and the
+   kill result is recorded. Then one fenced transaction runs: (a) `UPDATE cfd_run_attempt SET ended_at = now(), exit_reason =
+   'lost' WHERE lease_id = :lease_id AND ended_at IS NULL`; if no row is returned the transaction ends with no effect;
+   (b) if the attempt cap is not reached, `UPDATE cfd_run SET execution_state = 'queued', updated_at = now() WHERE id = :id AND
+   execution_state IN ('leased','meshing','solving','postprocessing')`; otherwise the same conditional update sets
+   `failed` with `terminal_reason = 'worker_lost'`. The enqueue happens only after commit, so a closed attempt with a run
+   still `leased` cannot persist. A run in `cancel_requested` is never requeued by this or the step 6 sweeper: it moves to
+   `cancelled`. Terminal states (`succeeded`, `failed`, `cancelled`, `timed_out`) are never requeued.
 6. Broker-message loss. An outbox event marked `dispatched` only means the message was handed to Redis. A second sweeper
-   (`requeue-unclaimed-cfd-runs`, in the Celery beat schedule like the bulk-import sweeper) selects runs with
-   `execution_state = 'queued'` and **no active attempt** (no attempt row with `ended_at IS NULL`; completed attempts do not
-   exclude the run, so a retry queued by step 5 whose message is lost is recovered too), whose `updated_at` (set on every
-   transition to `queued`, including the step 5 requeue) is older than a bounded grace period (value set in M4), and re-enqueues
-   `run_cfd_attempt(run_id)` directly, incrementing `redispatch_count` (column on `cfd_run`). After a fixed cap the run becomes
-   `failed` with reason `dispatch_lost`. Re-enqueue is safe because step 3 admits only one claim.
+   (`requeue-unclaimed-cfd-runs`, in the Celery beat schedule) selects runs with `execution_state = 'queued'` and **no active
+   attempt** (no attempt row with `ended_at IS NULL`; completed attempts do not exclude the run, so a retry queued by step 5
+   whose message is lost is recovered too). Each redispatch is one compare-and-set statement, not a read followed by a write:
+   `UPDATE cfd_run SET redispatch_count = redispatch_count + 1, updated_at = now() WHERE id = :id AND execution_state =
+   'queued' AND updated_at < now() - :grace AND redispatch_count < :cap AND NOT EXISTS (SELECT 1 FROM cfd_run_attempt WHERE
+   run_id = :id AND ended_at IS NULL) RETURNING id`. `run_cfd_attempt(run_id)` is enqueued only when a row is returned, after
+   commit. Bumping `updated_at` restarts the grace period, so concurrent sweeper ticks cannot double-increment or double-enqueue
+   and one run cannot burn the cap within seconds. The terminal transition is the equivalent conditional update: `SET
+   execution_state = 'failed', terminal_reason = 'dispatch_lost', updated_at = now() WHERE id = :id AND execution_state =
+   'queued' AND updated_at < now() - :grace AND redispatch_count >= :cap AND NOT EXISTS (open attempt)`. All times are
+   database time (`now()`), never worker clocks. Re-enqueue is safe because step 3 admits only one claim.
+   Bounds. Let Q be the maximum admitted wait from enqueue to claim (derived from the queue depth limit and worker slot
+   count in section 5), G the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message
+   is not redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
+   one budget with initial-dispatch losses; the attempt cap in step 5 is separate. A redispatch of a message that is still
+   waiting is harmless (duplicate delivery exits at step 3) but spends budget, which is why G > Q is required and Q is
+   enforced by refusing submissions beyond the queue depth limit.
+   Reason precedence. Terminal transitions are conditional on the current non-terminal state, so the first committed one wins
+   and later ones affect zero rows. `cancel_requested` takes precedence over both: neither sweeper changes a run in that state.
+   A late message for a run that is `cancelled`, `failed` or otherwise terminal exits at step 3 without effect.
 7. Duplicate delivery, redelivery after a Redis loss, the step 6 sweeper and re-dispatch after an outbox reclaim all pass
    through step 3, so they cannot run the same attempt twice. Artifacts are written to attempt-scoped keys and registered only
    by the lease holder.
@@ -164,3 +184,19 @@ Atomic dispatch under a crash between insert and enqueue; duplicate delivery; le
 worker death during each phase; cancel of a process tree; resource-cap rejections for cells, disk, memory, wall clock;
 per-user and per-site concurrency; hostile template identifiers; hidden-asset and partial-scope refusal; download after
 revocation; artifact checksum mismatch; state-machine illegal combinations rejected by the database.
+
+Dispatch-path acceptance cases (M4), each with fault injection:
+
+1. Broker loss on initial dispatch with the outbox event already `dispatched`: the step 6 sweeper recovers the run.
+2. Broker loss after a step 5 retry, when a completed attempt exists: the sweeper re-enqueues it.
+3. Two sweepers racing, and a sweeper racing a worker claim: exactly one attempt exists and `redispatch_count` advances once
+   per redispatch.
+4. Crash between the claim UPDATE and the attempt INSERT: the transaction rolls back, the run stays `queued` and is claimable.
+5. Two simultaneous claims: one row is returned and one attempt exists; a forced second open attempt is rejected by the partial
+   unique index.
+6. Cap exhaustion: the run ends `failed` with `terminal_reason = 'dispatch_lost'`, and a late delivery of the message does nothing.
+7. Late delivery after `cancelled` or `failed`; a run in `cancel_requested` is not requeued by either sweeper.
+8. Clock skew: grace and `updated_at` comparisons use database time; skewed worker clocks change nothing.
+9. Step 5 fencing: a stale `lease_id` closes no attempt and requeues nothing; a crash before commit leaves no closed attempt
+   with a `leased` run.
+10. Precedence: simultaneous `worker_lost` and `dispatch_lost` candidates yield one terminal reason.
