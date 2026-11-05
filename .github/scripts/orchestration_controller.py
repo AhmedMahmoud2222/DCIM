@@ -245,6 +245,7 @@ def choose(api, policy, task, now):
     return None
 
 
+CLOCK_SKEW_SECONDS = 120  # Runner clock versus GitHub's clock when filtering runs by delivery time.
 RETRY_LIMIT = 3  # Examinations of a run whose artifact could not be fetched before it counts as rejected.
 MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-limited).
 SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
@@ -281,7 +282,7 @@ def execution_result(api, policy, task, now):
         run_created = run.get('created_at', '')
         if isinstance(run_created, str) and run_created and delivery_created:
             try:
-                if timestamp(run_created) < delivery_created:
+                if timestamp(run_created) < delivery_created - CLOCK_SKEW_SECONDS:
                     continue  # A run cannot predate its delivery.
             except (ValueError, TypeError, AttributeError):
                 pass

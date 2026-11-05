@@ -3,6 +3,7 @@ import base64
 from copy import deepcopy
 import importlib.util
 import json
+import time
 import os
 from pathlib import Path
 import sys
@@ -1063,6 +1064,26 @@ class ControllerTests(unittest.TestCase):
             self.assertIn(150, calls)  # Same run is re-authenticated after recovery.
             result = c.execution_result(self.api, self.policy, task, 110)
         self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
+
+    def test_run_just_before_the_delivery_timestamp_is_still_a_candidate_within_clock_skew(self):
+        # delivered_task() stamps the delivery at t=100 on the runner's clock.
+        def stamp(seconds):
+            return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(seconds))
+        for offset, expected_seen in ((-60, True), (-c.CLOCK_SKEW_SECONDS - 60, False)):
+            with self.subTest(offset=offset):
+                runs = self._scan_runs(1)
+                runs[0]['created_at'] = stamp(100 + offset + 10_000)   # shift both clocks into a valid range
+                task = self.delivered_task()
+                task['deliveries'][-1]['created_at'] = 100 + 10_000
+                seen = []
+                def fake_auth(api, proof, *a, **k):
+                    seen.append(proof['run_id'])
+                    raise Rejected('other')
+                self.api.pages = lambda path, key=None: deepcopy(runs)
+                with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                        patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+                    c.execution_result(self.api, self.policy, task, 110)
+                self.assertEqual(bool(seen), expected_seen)
 
     def test_malformed_run_timestamps_do_not_escape_the_prefilter(self):
         runs = self._scan_runs(3)

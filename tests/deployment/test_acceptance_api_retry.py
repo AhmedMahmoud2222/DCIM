@@ -170,6 +170,27 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(len(sleep.call_args_list), 1)
         self.assertGreaterEqual(sleep.call_args_list[0].args[0], 0)
 
+    def test_retry_after_value_is_honored_and_capped(self):
+        for seconds, expected in ((7, 7), (60, 60)):
+            with self.subTest(retry_after=seconds):
+                api = RecordingAPI()
+                api.fail_times = {'/pulls/1': 1, '_error': headered_error(429, Retry_After=seconds)}
+                with patch.object(a.time, 'sleep') as sleep, self._with_token():
+                    api.request('/pulls/1')
+                self.assertGreaterEqual(sleep.call_args_list[0].args[0], expected)
+                self.assertLessEqual(sleep.call_args_list[0].args[0], a.MAX_RETRY_DELAY_SECONDS)
+
+    def test_backoff_across_requests_shares_one_run_budget(self):
+        api = RecordingAPI()
+        slept = []
+        with patch.object(a.time, 'sleep', side_effect=slept.append), self._with_token():
+            with self.assertRaises(a.TransientError):
+                for n in range(10):                         # each request alone stays under every per-request cap
+                    api.fail_times = {f'/pulls/{n}': 1, '_error': headered_error(429, Retry_After=60)}
+                    api.request(f'/pulls/{n}')
+        self.assertLessEqual(sum(slept), a.MAX_RUN_RETRY_SECONDS)
+        self.assertGreater(len(slept), 1)
+
 
 def headered_error(code, **headers):
     msg = email.message.Message()

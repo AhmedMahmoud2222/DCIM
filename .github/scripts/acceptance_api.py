@@ -29,6 +29,7 @@ MAX_REQUEST_ATTEMPTS = 5
 # Per-delay and cumulative retry sleep caps (seconds).
 MAX_RETRY_DELAY_SECONDS = 60.0
 MAX_CUMULATIVE_RETRY_SECONDS = 300.0
+MAX_RUN_RETRY_SECONDS = 240.0  # Across ALL requests of one client; the collaboration job is killed at 8 minutes.
 
 
 class ArtifactUnavailable(Rejected):
@@ -48,6 +49,8 @@ class TransientError(Exception):
 
 
 class GitHub:
+    _slept = 0.0  # Seconds spent backing off by this client so far (the job-wide retry budget).
+
     def __init__(self, policy, root=None):
         self.policy = policy
         self.root = Path(root or Path(__file__).resolve().parents[2])
@@ -174,6 +177,9 @@ class GitHub:
                 cumulative_delay += delay
                 if cumulative_delay > MAX_CUMULATIVE_RETRY_SECONDS:
                     raise TransientError('cumulative retry delay exceeds cap') from exc
+                if self._slept + delay > MAX_RUN_RETRY_SECONDS:
+                    raise TransientError('run retry budget exhausted') from exc
+                self._slept += delay
                 time.sleep(delay)
                 continue
             except (urllib.error.URLError, TimeoutError) as exc:
@@ -189,6 +195,9 @@ class GitHub:
                 cumulative_delay += delay
                 if cumulative_delay > MAX_CUMULATIVE_RETRY_SECONDS:
                     raise TransientError('cumulative retry delay exceeds cap') from exc
+                if self._slept + delay > MAX_RUN_RETRY_SECONDS:
+                    raise TransientError('run retry budget exhausted') from exc
+                self._slept += delay
                 time.sleep(delay)
                 continue
             except ValueError as exc:
