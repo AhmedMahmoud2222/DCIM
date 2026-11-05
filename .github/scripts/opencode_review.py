@@ -37,6 +37,8 @@ DIMENSIONS = ('code_reasoning_correctness', 'security_vulnerability_identificati
               'database_transaction_safety', 'test_quality_regression_detection',
               'cross_module_dependency_analysis', 'complex_change_inspection')
 EVALUATION_KEYS = {'suite', 'suite_version', 'date', 'run_url', 'results_sha256', 'scores'}
+WAIVER_KEYS = {'waived_by', 'date', 'reason'}
+NO_EVIDENCE = 'no verified capability evidence'
 SEVERITIES = ('critical', 'high', 'medium', 'low', 'info')
 BLOCKING = ('critical', 'high')
 MAX_DIFF_BYTES = 1_500_000
@@ -82,7 +84,7 @@ def capability(matrix: dict, model: str) -> tuple[float, float, str]:
     """Return (weighted score, weakest dimension, '') or (0, 0, reason) when evidence is unusable."""
     evaluation = (matrix['models'].get(model) or {}).get('evaluation')
     if not isinstance(evaluation, dict) or set(evaluation) != EVALUATION_KEYS:
-        return 0.0, 0.0, 'no verified capability evidence'
+        return 0.0, 0.0, NO_EVIDENCE
     for key in ('suite', 'suite_version', 'date', 'run_url'):
         if not isinstance(evaluation[key], str) or not evaluation[key].strip():
             return 0.0, 0.0, f'evaluation record incomplete ({key})'
@@ -97,6 +99,21 @@ def capability(matrix: dict, model: str) -> tuple[float, float, str]:
     if weakest < matrix['minimum_dimension_score']:
         return 0.0, weakest, f'capability not demonstrated in every dimension (weakest {weakest})'
     return sum(matrix['dimensions'][d] * scores[d] for d in DIMENSIONS), weakest, ''
+
+
+def owner_waiver(matrix: dict, model: str) -> dict | None:
+    """The owner's recorded decision to accept a model as reviewer without an evaluation record.
+
+    It only stands in for a missing record. An incomplete or failing evaluation still blocks the model, and a
+    waived model ranks below every model with real evidence."""
+    waiver = (matrix['models'].get(model) or {}).get('owner_waiver')
+    if not isinstance(waiver, dict) or set(waiver) != WAIVER_KEYS:
+        return None
+    if any(not isinstance(waiver[k], str) or not waiver[k].strip() for k in WAIVER_KEYS):
+        return None
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', waiver['date']):
+        return None
+    return waiver
 
 
 # ---------------------------------------------------------------- implementer records
@@ -124,7 +141,7 @@ def select_reviewer(registry: dict, matrix: dict, records: list[dict], available
     router.load_registry(registry)  # also enforces the agent_separation policy
     validate_matrix(matrix)
     implementers = {r['model'] for r in records}
-    ranked, excluded = [], {}
+    ranked, excluded, waived = [], {}, set()
     for model in router.APPROVED_MODELS:
         reasons = []
         if model in implementers:
@@ -133,6 +150,9 @@ def select_reviewer(registry: dict, matrix: dict, records: list[dict], available
         if model not in available:
             reasons.append('not in live catalog')
         score, weakest, why = capability(matrix, model)
+        if why == NO_EVIDENCE and owner_waiver(matrix, model):
+            why = ''
+            waived.add(model)
         if why:
             reasons.append(why)
         if reasons:
@@ -144,9 +164,11 @@ def select_reviewer(registry: dict, matrix: dict, records: list[dict], available
             f'{m}: {", ".join(r)}' for m, r in sorted(excluded.items())))
     ranked.sort()
     best = ranked[0]
-    return {'model': best[2], 'score': round(-best[0], 6),
-            'reason': f'highest verified weighted capability {-best[0]:.3f} among {len(ranked)} eligible; '
-                      f'excluded {len(excluded)}', 'excluded': excluded}
+    is_waived = best[2] in waived
+    basis = ('capability evaluation waived by the owner (no evaluation record)' if is_waived
+             else f'highest verified weighted capability {-best[0]:.3f}')
+    return {'model': best[2], 'score': round(-best[0], 6), 'waived': is_waived,
+            'reason': f'{basis} among {len(ranked)} eligible; excluded {len(excluded)}', 'excluded': excluded}
 
 
 def check_separation(registry: dict, records: list[dict], reviewer_model: str, reviewer_session: str) -> None:
@@ -224,6 +246,10 @@ def render_review(review: dict, ctx: dict) -> str:
              f"- Reviewed commits: base `{ctx['base_commit']}`, head `{ctx['commit']}` (valid for exactly these "
              'two revisions; a change to either makes it stale)',
              f"- Reviewer: `{ctx['reviewer_model']}`, session `{ctx['reviewer_session']}` (read-only sandbox)"]
+    if ctx.get('capability_waiver'):
+        waiver = ctx['capability_waiver']
+        lines.append(f"- Reviewer capability: not evaluated. The owner ({clean(waiver['waived_by'], 80)}) waived the "
+                     f"evaluation on {clean(waiver['date'], 10)}: {clean(waiver['reason'], 300)}")
     for record in ctx['records']:
         lines.append(f"- Implementer: `{record['model']}`, session `{record['session'] or 'unrecorded'}`, "
                      f"commit `{record['commit'][:12]}`, branch `{ctx['branch']}`")
@@ -504,7 +530,13 @@ def publish_main(argv: list[str]) -> int:
     records = implementer_records(commits, env['EXPECT_BOT_LOGIN'])
     check_separation(registry, records, env['REVIEWER_MODEL'], env['REVIEWER_SESSION'])
     review = parse_review(text)
+    waiver = None
+    if len(argv) > 4:   # the reviewer matrix from the default branch, to disclose a waived evaluation
+        matrix = validate_matrix(load_json(argv[4]))
+        if capability(matrix, env['REVIEWER_MODEL'])[2] == NO_EVIDENCE:
+            waiver = owner_waiver(matrix, env['REVIEWER_MODEL'])
     body = render_review(review, {
+        'capability_waiver': waiver,
         'commit': sha, 'reviewer_model': env['REVIEWER_MODEL'], 'reviewer_session': env['REVIEWER_SESSION'],
         'records': records, 'branch': head.get('ref', ''), 'run_url': env['RUN_URL'],
         'base_commit': base_sha, 'stale_on_arrival': stale_on_arrival})

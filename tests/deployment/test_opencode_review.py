@@ -173,6 +173,64 @@ class ReviewerSelectionTests(unittest.TestCase):
             with self.assertRaises(review.ReviewBlocked, msg=str(record)[:40]):
                 self.pick(matrix)
 
+    def waived_matrix(self, key='glm-5.3-flash', **changes):
+        matrix = copy.deepcopy(SHIPPED_MATRIX)
+        waiver = {'waived_by': 'owner', 'date': '2026-11-05', 'reason': 'accepted without an evaluation'}
+        waiver.update(changes)
+        matrix['models'][M[key]]['owner_waiver'] = waiver
+        return matrix
+
+    def test_owner_waiver_stands_in_for_a_missing_evaluation_and_ranks_last(self):
+        matrix = self.waived_matrix()
+        chosen = self.pick(matrix)
+        self.assertEqual(chosen['model'], M['glm-5.3-flash'])
+        self.assertTrue(chosen['waived'])
+        self.assertIn('waived by the owner', chosen['reason'])
+        matrix['models'][M['hy3']]['evaluation'] = evidence(0.6)   # any real evidence outranks a waiver
+        chosen = self.pick(matrix)
+        self.assertEqual(chosen['model'], M['hy3'])
+        self.assertFalse(chosen['waived'])
+
+    def test_owner_waiver_never_hides_a_bad_evaluation_or_the_other_gates(self):
+        matrix = self.waived_matrix()
+        matrix['models'][M['glm-5.3-flash']]['evaluation'] = evidence(0.4)      # fails the floor: waiver ignored
+        with self.assertRaises(review.ReviewBlocked):
+            self.pick(matrix)
+        matrix = self.waived_matrix()
+        with self.assertRaises(review.ReviewBlocked):                           # the implementer is still excluded
+            review.select_reviewer(enabled_registry(), matrix, [impl_record('glm-5.3-flash')], ALL)
+        with self.assertRaises(review.ReviewBlocked):                           # and it must be in the live catalog
+            review.select_reviewer(enabled_registry(), matrix, [], ALL - {M['glm-5.3-flash']})
+
+    def test_incomplete_or_malformed_waivers_are_ignored(self):
+        for changes in ({'reason': ' '}, {'waived_by': ''}, {'date': 'yesterday'}, {'reason': 5}):
+            with self.assertRaises(review.ReviewBlocked, msg=str(changes)):
+                self.pick(self.waived_matrix(**changes))
+        matrix = self.waived_matrix()
+        matrix['models'][M['glm-5.3-flash']]['owner_waiver']['extra'] = 'x'
+        with self.assertRaises(review.ReviewBlocked):
+            self.pick(matrix)
+
+    def test_shipped_matrix_waives_only_glm_5_2(self):
+        waived = {n for n, e in SHIPPED_MATRIX['models'].items() if 'owner_waiver' in e}
+        self.assertEqual(waived, {'opencode-go/glm-5.2'})
+        waiver = review.owner_waiver(SHIPPED_MATRIX, 'opencode-go/glm-5.2')
+        self.assertEqual(waiver['waived_by'], 'AhmedMahmoud2222')
+        chosen = review.select_reviewer(enabled_registry(), SHIPPED_MATRIX, [], ALL | {'opencode-go/glm-5.2'})
+        self.assertEqual(chosen['model'], 'opencode-go/glm-5.2')
+        self.assertTrue(chosen['waived'])
+
+    def test_a_waived_review_discloses_the_waiver(self):
+        ctx = {'commit': SHA, 'base_commit': NEWSHA, 'reviewer_model': M['glm-5.3-flash'], 'reviewer_session': 'ses_x12345',
+               'records': [], 'branch': 'b', 'run_url': 'https://run',
+               'capability_waiver': self.waived_matrix()['models'][M['glm-5.3-flash']]['owner_waiver']}
+        text = review.render_review({'verdict': 'PASS', 'summary': 's', 'findings': [], 'verification': []}, ctx)
+        self.assertIn('Reviewer capability: not evaluated', text)
+        self.assertIn('accepted without an evaluation', text)
+        ctx['capability_waiver'] = None
+        self.assertNotIn('not evaluated', review.render_review(
+            {'verdict': 'PASS', 'summary': 's', 'findings': [], 'verification': []}, ctx))
+
     def test_shipped_matrix_claims_no_model_is_better(self):
         for name, entry in SHIPPED_MATRIX['models'].items():
             self.assertIsNone(entry['evaluation'], name)
