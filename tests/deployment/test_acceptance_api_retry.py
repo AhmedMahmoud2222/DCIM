@@ -22,6 +22,14 @@ from acceptance_core import Rejected
 TOKEN = 'SYNTHETIC-TOKEN'
 
 
+def setUpModule():
+    a.GitHub._slept = 0.0
+
+
+def tearDownModule():
+    a.GitHub._slept = 0.0   # the budget is process-wide; do not leak it into other test modules
+
+
 def http_error(code, url='https://api.github.com/repos/o/r/pulls/1'):
     """Build a real urllib HTTPError with optional Retry-After header."""
     headers = email.message.Message()
@@ -180,12 +188,13 @@ class RequestTests(unittest.TestCase):
                 self.assertGreaterEqual(sleep.call_args_list[0].args[0], expected)
                 self.assertLessEqual(sleep.call_args_list[0].args[0], a.MAX_RETRY_DELAY_SECONDS)
 
-    def test_backoff_across_requests_shares_one_run_budget(self):
-        api = RecordingAPI()
+    def test_backoff_across_requests_and_clients_shares_one_run_budget(self):
         slept = []
-        with patch.object(a.time, 'sleep', side_effect=slept.append), self._with_token():
+        with patch.object(a.time, 'sleep', side_effect=slept.append), self._with_token(), \
+                patch.object(a.GitHub, '_slept', 0.0):
             with self.assertRaises(a.TransientError):
-                for n in range(10):                         # each request alone stays under every per-request cap
+                for n in range(10):                         # a fresh client each time, as the collaboration code builds them
+                    api = RecordingAPI()
                     api.fail_times = {f'/pulls/{n}': 1, '_error': headered_error(429, Retry_After=60)}
                     api.request(f'/pulls/{n}')
         self.assertLessEqual(sum(slept), a.MAX_RUN_RETRY_SECONDS)

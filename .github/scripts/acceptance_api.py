@@ -49,7 +49,7 @@ class TransientError(Exception):
 
 
 class GitHub:
-    _slept = 0.0  # Seconds spent backing off by this client so far (the job-wide retry budget).
+    _slept = 0.0  # Seconds spent backing off by this PROCESS so far (class-wide: one job is one process).
 
     def __init__(self, policy, root=None):
         self.policy = policy
@@ -177,9 +177,9 @@ class GitHub:
                 cumulative_delay += delay
                 if cumulative_delay > MAX_CUMULATIVE_RETRY_SECONDS:
                     raise TransientError('cumulative retry delay exceeds cap') from exc
-                if self._slept + delay > MAX_RUN_RETRY_SECONDS:
+                if GitHub._slept + delay > MAX_RUN_RETRY_SECONDS:
                     raise TransientError('run retry budget exhausted') from exc
-                self._slept += delay
+                GitHub._slept += delay
                 time.sleep(delay)
                 continue
             except (urllib.error.URLError, TimeoutError) as exc:
@@ -195,9 +195,9 @@ class GitHub:
                 cumulative_delay += delay
                 if cumulative_delay > MAX_CUMULATIVE_RETRY_SECONDS:
                     raise TransientError('cumulative retry delay exceeds cap') from exc
-                if self._slept + delay > MAX_RUN_RETRY_SECONDS:
+                if GitHub._slept + delay > MAX_RUN_RETRY_SECONDS:
                     raise TransientError('run retry budget exhausted') from exc
-                self._slept += delay
+                GitHub._slept += delay
                 time.sleep(delay)
                 continue
             except ValueError as exc:
