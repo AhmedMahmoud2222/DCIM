@@ -184,6 +184,7 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool,
     finished = []             # (reason, tool_uses)
     last_stamp = 0
     last_kind = ''
+    last_text_ok = False
     for event in events:
         kind = event['type']
         if kind == 'error':
@@ -219,8 +220,9 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool,
                 if (part.get('state') or {}).get('status') not in ('completed', 'error'):
                     return fail('tool_state_unfinished')
                 open_step[1] += 1
-            elif kind == 'text' and isinstance(part.get('text'), str) and part['text'].strip():
-                open_step[2] += 1
+            elif kind == 'text':
+                last_text_ok = isinstance(part.get('text'), str) and bool(part['text'].strip())
+                open_step[2] += last_text_ok
         else:  # step_finish
             if open_step is None or part['messageID'] != open_step[0]:
                 return fail('unmatched_step_finish')
@@ -234,7 +236,7 @@ def evaluate(lines: list[str], exit_code: int | None, timed_out: bool,
             finished.append((reason, open_step[1]))
             open_step = None
     if open_step is not None:
-        if provider_stopped and open_step[1] == 0 and open_step[2] and last_kind == 'text' \
+        if provider_stopped and open_step[1] == 0 and open_step[2] and last_kind == 'text' and last_text_ok \
                 and not (finished and finished[-1][0] == 'stop'):
             return 'success', ''
         return fail('unfinished_step')
@@ -313,7 +315,8 @@ def provider_stopped(path: str) -> bool:
         return False
     stream = last['stream']
     return (last.get('http_status') == 200 and last.get('category') == 'completed' and stream.get('done') is True
-            and stream.get('finish_reasons') == ['stop'] and stream.get('error_object') is False
+            and stream.get('finish_reasons') == ['stop'] and stream.get('finish_count') == 1
+            and stream.get('events_after_done') == 0 and stream.get('error_object') is False
             and stream.get('unparsed') == 0)
 
 

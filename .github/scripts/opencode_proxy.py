@@ -120,6 +120,8 @@ class StreamShape:
         self.error = False
         self.usage = False
         self.unparsed = 0
+        self.finish_count = 0           # chunks that carried a finish_reason
+        self.after_done = 0             # data events that arrived after [DONE]
 
     def feed(self, chunk: bytes) -> None:
         try:
@@ -140,6 +142,7 @@ class StreamShape:
                 self.done = True
                 continue
             self.events += 1
+            self.after_done += self.done
             try:
                 data = json.loads(body)
             except ValueError:
@@ -155,6 +158,7 @@ class StreamShape:
                     continue
                 reason = choice.get('finish_reason')
                 if isinstance(reason, str):
+                    self.finish_count += 1
                     self.finish.add(reason if reason in FINISH_REASONS else 'other')
                 delta = choice.get('delta')
                 if isinstance(delta, dict):
@@ -163,7 +167,7 @@ class StreamShape:
     def summary(self) -> dict:
         return {'data_events': self.events, 'done': self.done, 'finish_reasons': sorted(self.finish),
                 'delta_fields': sorted(self.delta), 'error_object': self.error, 'usage_block': self.usage,
-                'unparsed': self.unparsed}
+                'unparsed': self.unparsed, 'finish_count': self.finish_count, 'events_after_done': self.after_done}
 
 
 def client_identity_headers(headers) -> dict[str, str]:

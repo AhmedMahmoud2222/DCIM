@@ -486,6 +486,16 @@ class StreamShapeTests(unittest.TestCase):
         self.assertFalse(summary['error_object'])
         self.assertNotIn(self.SECRET, json.dumps(summary))
         self.assertNotIn('PROBE_OK', json.dumps(summary))
+        self.assertEqual((summary['finish_count'], summary['events_after_done']), (1, 0))
+
+    def test_repeated_finish_chunks_and_data_after_done_are_counted(self):
+        stop = {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}
+        twice = proxy.StreamShape()
+        twice.feed(self.sse(stop, stop) + b'data: [DONE]\n\n')
+        self.assertEqual((twice.summary()['finish_reasons'], twice.summary()['finish_count']), (['stop'], 2))
+        late = proxy.StreamShape()
+        late.feed(self.sse(stop) + b'data: [DONE]\n\n' + self.sse({'choices': [{'delta': {'content': 'x'}}]}))
+        self.assertEqual((late.summary()['finish_count'], late.summary()['events_after_done']), (1, 1))
 
     def test_missing_finish_error_object_and_garbage_are_visible(self):
         shape = proxy.StreamShape()
@@ -577,6 +587,8 @@ class ProviderConfirmedFinalStepTests(unittest.TestCase):
             'no text at all': self.rows(*self.tool_step(), ('step_start', {})),
             'blank text': self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': '  '})),
             'reasoning only': self.rows(*self.tool_step(), ('step_start', {}), ('reasoning', {'text': 'x'})),
+            'blank text after real text': self.rows(*self.tool_step(), ('step_start', {}), ('text', {'text': 'review'}),
+                                                    ('text', {'text': '  '})),
             'tool in the open step': self.rows(('step_start', {}), ('text', {'text': 'a'}),
                                                ('tool_use', {'state': {'status': 'completed'}})),
             'text, then reasoning last': self.rows(('step_start', {}), ('text', {'text': 'a'}), ('reasoning', {'text': 'x'})),
@@ -598,7 +610,8 @@ class ProviderConfirmedFinalStepTests(unittest.TestCase):
         self.assertEqual(guard.evaluate(closed, 0, False, provider_stopped=True), ('success', ''))
 
     def completion(self, **stream):
-        base = {'done': True, 'error_object': False, 'finish_reasons': ['stop'], 'unparsed': 0}
+        base = {'done': True, 'error_object': False, 'finish_reasons': ['stop'], 'finish_count': 1,
+                'events_after_done': 0, 'unparsed': 0}
         return {'event': 'completion', 'http_status': 200, 'category': 'completed', 'stream': {**base, **stream}}
 
     def log(self, *records):
@@ -615,7 +628,8 @@ class ProviderConfirmedFinalStepTests(unittest.TestCase):
         self.assertFalse(guard.provider_stopped(self.log(self.completion(), self.completion(finish_reasons=['tool_calls']))))
         self.assertTrue(guard.provider_stopped(self.log(self.completion(finish_reasons=['length']), self.completion())))
         for bad in ({'done': False}, {'error_object': True}, {'finish_reasons': ['length']},
-                    {'finish_reasons': ['stop', 'stop']}, {'unparsed': 1}):
+                    {'finish_reasons': ['stop', 'stop']}, {'finish_count': 2}, {'events_after_done': 1},
+                    {'finish_count': None}, {'unparsed': 1}):
             with self.subTest(bad=bad):
                 self.assertFalse(guard.provider_stopped(self.log(self.completion(**bad))))
         record = self.completion()
