@@ -1,0 +1,58 @@
+{
+  "run_id": "full-20261105T1002Z",
+  "mode": "FULL",
+  "started_at": "2026-11-05T10:02:21Z",
+  "status": "partial",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy/changelog and ruleset read; bypass all pull_request"
+    },
+    {
+      "step": 1,
+      "result": "7 open PRs, 16 open issues; PR metadata and required CI checked"
+    },
+    {
+      "step": 2,
+      "result": "No new implementation claim accepted; code-level verification incomplete"
+    },
+    {
+      "step": 3,
+      "result": "Priority security/controller #219; other PRs draft or behind"
+    },
+    {
+      "step": 4,
+      "result": "Review-thread audit incomplete; no threads resolved"
+    },
+    {
+      "step": "4a",
+      "result": "No checklist dispositions changed"
+    },
+    {
+      "step": 5,
+      "result": "No new agent request; all seven PRs behind main or dirty; #219 D5 hold"
+    },
+    {
+      "step": 6,
+      "result": "Three historical PRs dirty; no supersession closure without file evidence"
+    },
+    {
+      "step": 7,
+      "result": "Stale review not exhaustively audited; no prompts"
+    },
+    {
+      "step": 8,
+      "result": "Zero merge-eligible PRs; 7/7 behind or dirty, six draft or frozen"
+    },
+    {
+      "step": 9,
+      "result": "No class I decisions added"
+    },
+    {
+      "step": 10,
+      "result": "Partial FULL report produced; missing complete threads, exact-head review and issue audit"
+    }
+  ],
+  "merge_count": 0,
+  "production_hold_intact": true
+}
