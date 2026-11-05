@@ -271,7 +271,8 @@ class WorkflowPolicyTests(unittest.TestCase):
                        'client_id="${CLIENT_ID}"', '--data-urlencode subject_token="${oidc}"'):
             self.assertIn(pinned, run)
         self.assertEqual(steps[sign_in]['env']['CLIENT_ID'], 'sk_c483bf13-599b-47b1-a060-54f58e89fa69')
-        self.assertIn('jq -er .access_token', run)          # a missing token fails the step, never an empty key
+        self.assertIn('jq -er .access_token', run)
+        self.assertIn('expires_in', run)                    # the lifetime is logged so a short one is visible          # a missing token fails the step, never an empty key
         self.assertLess(run.index('::add-mask::${token}'), run.index('GITHUB_OUTPUT'))
         self.assertNotIn('GITHUB_ENV', run)                 # the token reaches only the steps that name it
         users = [step['name'] for step in steps

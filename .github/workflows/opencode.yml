@@ -119,11 +119,13 @@ jobs:
           set -euo pipefail
           oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
           echo "::add-mask::${oidc}"
-          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
             -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
             -d client_id="${CLIENT_ID}" \
-            --data-urlencode subject_token="${oidc}" | jq -er .access_token)"
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
           echo "::add-mask::${token}"
           echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
@@ -173,11 +175,13 @@ jobs:
           set -euo pipefail
           oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
           echo "::add-mask::${oidc}"
-          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
             -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
             -d client_id="${CLIENT_ID}" \
-            --data-urlencode subject_token="${oidc}" | jq -er .access_token)"
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
           echo "::add-mask::${token}"
           echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Run agent (loopback-only, model-bound proxy)
@@ -261,11 +265,13 @@ jobs:
           set -euo pipefail
           oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
           echo "::add-mask::${oidc}"
-          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
             -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
             -d client_id="${CLIENT_ID}" \
-            --data-urlencode subject_token="${oidc}" | jq -er .access_token)"
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
           echo "::add-mask::${token}"
           echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
@@ -379,11 +385,13 @@ jobs:
           set -euo pipefail
           oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
           echo "::add-mask::${oidc}"
-          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
             -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
             -d client_id="${CLIENT_ID}" \
-            --data-urlencode subject_token="${oidc}" | jq -er .access_token)"
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
           echo "::add-mask::${token}"
           echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
@@ -440,11 +448,13 @@ jobs:
           set -euo pipefail
           oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
           echo "::add-mask::${oidc}"
-          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
             -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
             -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
             -d client_id="${CLIENT_ID}" \
-            --data-urlencode subject_token="${oidc}" | jq -er .access_token)"
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
           echo "::add-mask::${token}"
           echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Run reviewer (loopback-only, read-only, model-bound proxy)
