@@ -110,7 +110,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.sha }}
-          sparse-checkout: .github/scripts/claude_publish.py
+          sparse-checkout: |
+            .github/scripts/claude_publish.py
+            .github/scripts/claude_file_guard.py
           sparse-checkout-cone-mode: false
           path: trusted-guard
           persist-credentials: false
@@ -118,6 +120,10 @@ jobs:
         run: |
           set -euo pipefail
           install -m 0444 trusted-guard/.github/scripts/claude_publish.py "${RUNNER_TEMP}/claude_publish.py"
+          install -m 0444 trusted-guard/.github/scripts/claude_file_guard.py "${RUNNER_TEMP}/claude_file_guard.py"
+          # Trusted PreToolUse hook settings. --allowedTools only auto-approves; this hook is the
+          # filesystem boundary (inside ./pr only, symlinks resolved, no .git, agent config or .github writes).
+          printf '%s' '{"hooks":{"PreToolUse":[{"matcher":".*","hooks":[{"type":"command","command":"python3 '"${RUNNER_TEMP}"'/claude_file_guard.py"}]}]}}' > "${RUNNER_TEMP}/claude_settings.json"
           rm -rf trusted-guard
       - name: Re-verify the target PR, protected base and head branch
         run: python3 "${RUNNER_TEMP}/claude_publish.py" preflight
@@ -155,6 +161,7 @@ jobs:
             ${{ needs.gate.outputs.task }}
           claude_args: |
             --max-turns 40
+            --settings "${{ runner.temp }}/claude_settings.json"
             --allowedTools "Read,Glob,Grep,Edit,Write"
             --disallowedTools "Bash,WebFetch,WebSearch"
       - name: Collect the edits into a change manifest
