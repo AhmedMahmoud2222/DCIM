@@ -87,8 +87,13 @@ plus service checks. Every other combination is displayed as its own labelled st
    'queued' AND updated_at < now() - :grace AND redispatch_count >= :cap AND NOT EXISTS (open attempt)`. All times are
    database time (`now()`), never worker clocks. Re-enqueue is safe because step 3 admits only one claim.
    Bounds. Let Q be the maximum admitted wait from run insert to claim. It is derived from the queue depth limit and worker
-   slot count in section 5, plus the outbox reclaim bound of section 1 (5 minutes per stale `processing` event times the
-   attempt limit). Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message
+   slot count in section 5, plus an explicit outbox reclaim allowance. The existing dispatcher does not bound reclaims: it
+   reclaims stale `processing` events after 5 minutes without incrementing `attempts` (that counter advances only on a caught
+   handler exception), so "5 minutes times the attempt limit" is not a guarantee today. The CFD dispatch path therefore
+   requires, as an M4 change, a bounded reclaim: each stale reclaim of a `cfd.run.queued` event increments a reclaim counter
+   (or the event carries a deadline of R x 5 minutes from insert), and an event past R reclaims or its deadline is marked
+   `failed` and its run set to `failed` with `terminal_reason = 'dispatch_lost'` by a conditional update like the one below.
+   The allowance is then R x 5 minutes, a configured bound and not a property of the current dispatcher. Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message
    is not redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
    one budget with initial-dispatch losses; the attempt cap in step 5 is separate. A redispatch of a message that is still
    waiting is harmless (duplicate delivery exits at step 3) but spends budget, which is why G > Q is required and Q is
@@ -96,6 +101,16 @@ plus service checks. Every other combination is displayed as its own labelled st
    Reason precedence. Terminal transitions are conditional on the current non-terminal state, so the first committed one wins
    and later ones affect zero rows. `cancel_requested` takes precedence over both: neither sweeper changes a run in that state.
    A late message for a run that is `cancelled`, `failed` or otherwise terminal exits at step 3 without effect.
+   Cancellation. A cancel request is one conditional statement chosen by whether an attempt is active. If the run is `queued`
+   with no open attempt (before the first claim, or while a step 5 retry or step 6 redispatch is queued): `UPDATE cfd_run SET
+   execution_state = 'cancelled', updated_at = now() WHERE id = :id AND execution_state = 'queued' AND NOT EXISTS (SELECT 1 FROM
+   cfd_run_attempt WHERE run_id = :id AND ended_at IS NULL) RETURNING id`. It targets the same row as the step 3 claim, so
+   exactly one wins: if the cancel commits first the claim affects zero rows and the late message exits; if the claim commits
+   first the cancel affects zero rows and the request falls through to the second form. For a run in `leased`, `meshing`,
+   `solving` or `postprocessing`: `UPDATE cfd_run SET execution_state = 'cancel_requested', updated_at = now() WHERE id = :id
+   AND execution_state IN ('leased','meshing','solving','postprocessing')`, which the lease holder honours and step 5(c)
+   completes if the worker dies. A run therefore enters `cancel_requested` only with an open attempt, and leaves it when that
+   attempt closes.
 7. Duplicate delivery, redelivery after a Redis loss, the step 6 sweeper and re-dispatch after an outbox reclaim all pass
    through step 3, so they cannot run the same attempt twice. Artifacts are written to attempt-scoped keys and registered only
    by the lease holder.
@@ -208,3 +223,8 @@ Dispatch-path acceptance cases (M4), each with fault injection:
     `cancelled`; it is never requeued and never left in `cancel_requested`.
 12. Outbox latency: an event still `pending` or `processing` longer than a naive G but shorter than the stated G (which includes
     the reclaim bound) causes no redispatch and spends no budget.
+13. Cancellation before claim: cancel on a `queued` run with no open attempt ends `cancelled` in one statement. A racing worker
+    claim and cancel yield exactly one winner; if the cancel wins no attempt exists and the late message does nothing. Repeat
+    for a retry queued by step 5 (a completed attempt exists) and for a redispatched run.
+14. Bounded outbox reclaim: an event whose handler is repeatedly lost is reclaimed at most R times, then the event is `failed`
+    and the run ends `failed` with `terminal_reason = 'dispatch_lost'`; G is configured above R x 5 minutes plus queue wait.
