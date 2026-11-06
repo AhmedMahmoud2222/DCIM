@@ -15,7 +15,7 @@ import re
 import shlex
 import sys
 
-from acceptance_api import GitHub
+from acceptance_api import ArtifactUnavailable, GitHub, TransientError
 from acceptance_core import (Rejected, CHECK, require, decode, digest, binding, same_binding,
     independent, structured_review, source_run, jobs_and_checks, signed_range, owner_approval,
     provider_identity, decision)
@@ -378,6 +378,8 @@ def publish(api, number):
     require(b['base'] == run['head_sha'], 'main changed after gate execution began')
     try:
         result = evaluate(api, number)
+    except ArtifactUnavailable as exc:
+        raise TransientError('acceptance evidence artifact unavailable') from exc   # defer; publish nothing
     except (Rejected, KeyError, TypeError, AttributeError, ValueError) as exc:
         result = decision(b, 'BLOCK', [str(exc)[:500]], {})
     same_binding(binding(api.request(f'/pulls/{number}'), api.policy), b)
@@ -405,7 +407,9 @@ def verify_check(api, number):
     checks = api.pages('/commits/' + b['head'] + '/check-runs?filter=all', 'check_runs')
     require(len({c.get('id') for c in checks}) == len(checks), 'duplicate acceptance check identifiers')
     matches = [c for c in checks if c.get('name') == CHECK]
-    require(bool(matches), 'acceptance check absent')
+    if not matches:
+        # The gate publishes on a schedule; a consumer that asks first must wait, not fail.
+        raise TransientError('acceptance check not yet published')
     check = max(matches, key=lambda c: c['id'])
     require(check.get('app', {}).get('id') == 15368 and check['app'].get('slug') == 'github-actions'
             and check.get('head_sha') == b['head'] and check.get('status') == 'completed'
@@ -417,8 +421,11 @@ def verify_check(api, number):
     spec = api.policy['workflows']['gate']
     candidates = api.pages('/actions/workflows/' + str(api.workflow(spec['path']))
                           + '/runs?head_sha=' + b['base'] + '&branch=' + api.policy['default_branch'], 'workflow_runs')
-    require(bool(candidates) and max(candidates, key=lambda r: (r['run_number'], r['id']))['id'] == run['id'],
-            'newer gate execution supersedes this check')
+    require(bool(candidates), 'newer gate execution supersedes this check')
+    if max(candidates, key=lambda r: (r['run_number'], r['id']))['id'] != run['id']:
+        # A newer gate run exists but published nothing newer for this PR (a published BLOCK or a different
+        # head would already have failed above). The next scheduled run republishes: wait, do not block.
+        raise TransientError('newer gate execution has not published a decision yet')
     require(run.get('workflow_id') == api.workflow(spec['path']) and run.get('path') == spec['path']
             and run.get('head_sha') == b['base'] and run.get('head_branch') == api.policy['default_branch']
             and run.get('event') in {'workflow_dispatch', 'workflow_run', 'schedule'}
@@ -462,6 +469,9 @@ def main():
             with open(os.environ['GITHUB_OUTPUT'], 'a') as out: out.write('prs=' + json.dumps(prs) + '\n')
         elif args.mode == 'publish': publish(api, args.pr)
         else: print(json.dumps(verify_check(api, args.pr), sort_keys=True))
+    except TransientError as exc:
+        print('Acceptance deferred (transient, nothing published): ' + str(exc)[:500], file=sys.stderr)
+        return 1
     except (Rejected, KeyError, TypeError, ValueError, AttributeError, OSError) as exc:
         print('Acceptance failed closed: ' + str(exc)[:500], file=sys.stderr)
         return 1
