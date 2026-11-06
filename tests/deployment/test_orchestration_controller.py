@@ -74,6 +74,11 @@ class MemoryStore:
 
 class ControllerTests(unittest.TestCase):
     def setUp(self):
+        # JOB_STARTED is set at import; in a long full-suite run it would exceed INGEST_SECONDS
+        # and make ingestion stop before listing anything. main() resets it per job.
+        job = patch.object(c, 'JOB_STARTED', time.monotonic())
+        job.start()
+        self.addCleanup(job.stop)
         self._fresh()
 
     def _fresh(self):
