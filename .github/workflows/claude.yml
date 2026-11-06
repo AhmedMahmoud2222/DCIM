@@ -10,13 +10,55 @@ on:
   pull_request_review:
     types: [submitted]
 
+permissions: {}
+
 jobs:
-  claude:
+  prepare:
+    # Secret-free gate. Only a trusted human association (or an exact, owner-configured
+    # bot login) may reach the secret-bearing `claude` job. Unset or malformed
+    # CLAUDE_ALLOWED_BOTS means no bots.
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      trusted: ${{ steps.check.outputs.trusted }}
+      allowed_bots: ${{ steps.check.outputs.allowed_bots }}
+    steps:
+      - id: check
+        env:
+          ASSOCIATION: >-
+            ${{ github.event.comment.author_association
+                || github.event.review.author_association
+                || github.event.issue.author_association }}
+          BOTS: ${{ vars.CLAUDE_ALLOWED_BOTS }}
+        run: |
+          set -euo pipefail
+          ASSOCIATION="$(printf '%s' "$ASSOCIATION" | tr -d '[:space:]')"
+          trusted=false
+          case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) trusted=true ;; esac
+
+          bots=""
+          if [ -n "${BOTS:-}" ]; then
+            if printf '%s' "$BOTS" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\](,[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\])*$'; then
+              bots="$BOTS"
+            else
+              echo "::warning::CLAUDE_ALLOWED_BOTS is malformed; ignoring it (no bots allowed)."
+            fi
+          fi
+          if [ "$trusted" != true ]; then
+            echo "::notice::Author association '${ASSOCIATION}' is not OWNER, MEMBER or COLLABORATOR. Denied."
+          fi
+          echo "trusted=${trusted}" >> "$GITHUB_OUTPUT"
+          echo "allowed_bots=${bots}" >> "$GITHUB_OUTPUT"
+
+  claude:
+    needs: prepare
+    if: needs.prepare.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,7 +80,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           use_commit_signing: true
-
+          allowed_bots: ${{ needs.prepare.outputs.allowed_bots }}
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
