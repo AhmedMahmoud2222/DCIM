@@ -92,9 +92,10 @@ plus service checks. Every other combination is displayed as its own labelled st
    handler exception), so "5 minutes times the attempt limit" is not a guarantee today. The CFD dispatch path therefore
    requires, as an M4 change, a bounded reclaim: each stale reclaim of a `cfd.run.queued` event increments a reclaim counter
    (or the event carries a deadline of R x 5 minutes from insert), and an event past R reclaims or its deadline is marked
-   `failed` and its run set to `failed` with `terminal_reason = 'dispatch_lost'` by a conditional update like the one below.
-   The allowance is then R x 5 minutes, a configured bound and not a property of the current dispatcher. Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message
-   is not redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
+   `failed` and its run set to `failed` with `terminal_reason = 'dispatch_lost'` by the conditional terminal update above.
+   The allowance is then R x 5 minutes, a configured bound and not a property of the current dispatcher.
+   Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message is not
+   redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
    one budget with initial-dispatch losses; the attempt cap in step 5 is separate. A redispatch of a message that is still
    waiting is harmless (duplicate delivery exits at step 3) but spends budget, which is why G > Q is required and Q is
    enforced by refusing submissions beyond the queue depth limit.
