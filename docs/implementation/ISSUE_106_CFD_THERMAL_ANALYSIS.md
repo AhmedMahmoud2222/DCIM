@@ -1,6 +1,6 @@
 # Issue #106: validated CFD / thermal analysis
 
-Document version: 0.2.2 (M1: dependency verification and architecture handoff; documentation only; 0.2.2 addresses review findings)
+Document version: 0.2.3 (M1: dependency verification and architecture handoff; documentation only; 0.2.3 records signing evidence for later commits)
 Supersedes: 0.1.0 (the 15-line planning stub from commit `1b544f3`)
 Status: DRAFT for independent architecture/dependency review. Not accepted.
 
@@ -62,8 +62,11 @@ exists.
    visible signature gate exists, so no merge method, squash or waiver is proposed to satisfy one. Because linear history
    is required, how the branch's merge commit `6667c3a` and the unsigned `1b544f3` are handled at merge time is an owner
    decision; this document makes no recommendation.
-3. Commits added in this increment are signed by the environment's signing helper (`gpgsig` header) and show as verified on
-   GitHub. The commits that follow this note are verified the same way before the PR comment reports them.
+3. Later commits on this branch (evidence note, not a gate failure). `ce6179f12d591f2a688bcae3ff6dc32c1e7703f5` was created
+   through the API and GitHub reports it `verified: false`, reason `unsigned`; it is an exception. `50f0887` and `8eeb49d`
+   are recorded as verified per the owner's reading of GitHub's commit endpoint; this edit did not re-query it, and a commit
+   is called verified only where GitHub reports `verified: true`. Ruleset 23651422 has no required-signatures rule on the
+   default branch, so none of this blocks a merge. How the unsigned commits are handled at merge time stays an owner decision.
 
 ## B. Dependency readiness matrix
 

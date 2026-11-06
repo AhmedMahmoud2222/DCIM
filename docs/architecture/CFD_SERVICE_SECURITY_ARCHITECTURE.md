@@ -1,6 +1,6 @@
 # CFD service, data and security architecture
 
-Document version: 0.1.1
+Document version: 0.1.2
 Status: PROPOSED design. No code, migration or API exists. CFD stays disabled behind a flag until M5 is accepted.
 
 ## 1. Fit with the existing platform
@@ -92,7 +92,15 @@ plus service checks. Every other combination is displayed as its own labelled st
    handler exception), so "5 minutes times the attempt limit" is not a guarantee today. The CFD dispatch path therefore
    requires, as an M4 change, a bounded reclaim: each stale reclaim of a `cfd.run.queued` event increments a reclaim counter
    (or the event carries a deadline of R x 5 minutes from insert), and an event past R reclaims or its deadline is marked
-   `failed` and its run set to `failed` with `terminal_reason = 'dispatch_lost'` by the conditional terminal update above.
+   `failed`. The run is then failed by a separate deadline-specific conditional update, run by the outbox dispatcher in the
+   same transaction that marks the event `failed`: `UPDATE cfd_run SET execution_state = 'failed', terminal_reason =
+   'dispatch_lost', updated_at = now() WHERE id = :id AND execution_state = 'queued' AND NOT EXISTS (SELECT 1 FROM
+   cfd_run_attempt WHERE run_id = :id AND ended_at IS NULL) AND EXISTS (SELECT 1 FROM outbox_event WHERE aggregate_type =
+   'cfd_run' AND aggregate_id = :id AND event_type = 'cfd.run.queued' AND status = 'failed') RETURNING id`. It has no grace
+   or `redispatch_count` condition, because G > Q means the budget is normally unspent when the event fails; the
+   redispatch-budget terminal update above remains the path for runs whose event was dispatched and whose message was lost.
+   It keeps the `queued` and no-open-attempt guards, so a run already claimed, cancelled or failed is untouched, and the
+   first committed terminal update wins. Zero rows returned means the run is not failed and the dispatcher only marks the event.
    The allowance is then R x 5 minutes, a configured bound and not a property of the current dispatcher.
    Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message is not
    redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
@@ -228,4 +236,11 @@ Dispatch-path acceptance cases (M4), each with fault injection:
     claim and cancel yield exactly one winner; if the cancel wins no attempt exists and the late message does nothing. Repeat
     for a retry queued by step 5 (a completed attempt exists) and for a redispatched run.
 14. Bounded outbox reclaim: an event whose handler is repeatedly lost is reclaimed at most R times, then the event is `failed`
-    and the run ends `failed` with `terminal_reason = 'dispatch_lost'`; G is configured above R x 5 minutes plus queue wait.
+    and, in the same dispatcher transaction, the deadline-specific update sets the run `failed` with
+    `terminal_reason = 'dispatch_lost'` without any `redispatch_count` or grace condition; the run does not stay `queued`.
+    G is configured above R x 5 minutes plus queue wait.
+15. Event failed while a redispatch is racing the claim: the dispatcher's deadline update, a step 6 redispatch and a worker
+    claim contend for the same `cfd_run` row. Exactly one commits first. If the claim wins, the deadline update affects zero
+    rows (open attempt or state no longer `queued`), the run proceeds, and the failed event has no effect on it. If the
+    deadline update wins, the claim and any redispatch affect zero rows, no attempt exists, and a late message exits at step 3.
+    The run never ends with both an open attempt and `failed`, and `redispatch_count` is not advanced by the losing path.
