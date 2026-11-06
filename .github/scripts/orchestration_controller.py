@@ -332,8 +332,13 @@ def execution_result(api, policy, task, now):
             # An artifact that could not be fetched may only be an outage: look again a bounded
             # number of times before the run counts as negative evidence.
             tries = scan['retry'].get(str(rid), 0) + 1
-            if isinstance(exc, ArtifactUnavailable) and tries < RETRY_LIMIT \
-                    and (str(rid) in scan['retry'] or len(scan['retry']) < MAX_TRACKED_RERUNS):
+            if isinstance(exc, ArtifactUnavailable) and tries < RETRY_LIMIT:
+                if str(rid) not in scan['retry'] and len(scan['retry']) >= MAX_TRACKED_RERUNS:
+                    # Retry tracking is full: this run cannot be remembered, so it must not be
+                    # skipped as negative evidence. Leave it outside the interval and stop; it is
+                    # examined again once tracked retries settle, and nothing is accepted meanwhile.
+                    cut_short = True
+                    break
                 scan['retry'][str(rid)] = tries
             else:
                 scan['retry'].pop(str(rid), None)

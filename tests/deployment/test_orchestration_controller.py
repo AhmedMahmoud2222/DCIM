@@ -1203,6 +1203,32 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(calls[0], 150)          # retried first, inside the examined interval
         self.assertEqual((result[0], result[1]), ('SUCCESS', 150))
 
+    def test_full_retry_tracking_does_not_skip_unavailable_runs(self):
+        n = c.MAX_TRACKED_RERUNS + 2
+        runs = self._scan_runs(n)
+        self.api.pages = lambda path, key=None: deepcopy(runs)
+        task = self.delivered_task()
+        state = {'outage': True}
+        def fake_auth(api, proof, *a, **k):
+            rid = proof['run_id']
+            if rid == n:
+                return self._run_result(n)
+            if state['outage']:
+                raise c.ArtifactUnavailable('artifact download failed')
+            if rid == 1:
+                return dict(self._run_result(1), result='FAILED')
+            raise Rejected('other')
+        with patch.object(c, 'authenticated_execution', side_effect=fake_auth), \
+                patch.dict(c.os.environ, GITHUB_WORKFLOW_SHA='m'*40):
+            self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+            scan = task['deliveries'][-1]['scan']
+            self.assertEqual(len(scan['retry']), c.MAX_TRACKED_RERUNS)
+            self.assertGreater(scan['low'], 1)        # the untrackable run was not skipped past
+            state['outage'] = False
+            with self.assertRaises(Rejected):          # run 1 is reached and contradicts SUCCESS
+                for _ in range(c.RETRY_LIMIT + 3):
+                    self.assertIsNone(c.execution_result(self.api, self.policy, task, 110))
+
     def test_match_is_not_accepted_while_another_runs_artifact_is_still_being_retried(self):
         runs = self._scan_runs(2)
         self.api.pages = lambda path, key=None: deepcopy(runs)
