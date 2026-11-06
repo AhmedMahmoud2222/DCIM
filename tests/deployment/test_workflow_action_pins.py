@@ -60,7 +60,7 @@ class WorkflowActionPinsTests(unittest.TestCase):
             path.write_text(text)
         result = self.run_check(mutate)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('artifact pin mismatch', result.stderr)
+        self.assertIn('unapproved upload-artifact pin', result.stderr)
 
     def test_unapproved_download_pin_is_rejected(self):
         def mutate(path):
@@ -68,6 +68,16 @@ class WorkflowActionPinsTests(unittest.TestCase):
                 text = workflow.read_text()
                 text = re.sub(r'actions/download-artifact@[0-9a-f]{40}', 'actions/download-artifact@' + '2' * 40, text)
                 workflow.write_text(text)
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('unapproved download-artifact pin', result.stderr)
+
+    def test_cross_generation_pair_in_one_workflow_is_rejected(self):
+        def mutate(path):
+            review = path.parent / 'acceptance-review.yml'
+            text = review.read_text()
+            text = re.sub(r'actions/upload-artifact@[0-9a-f]{40}', 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', text)
+            review.write_text(text)
         result = self.run_check(mutate)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('not an approved pair', result.stderr)

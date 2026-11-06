@@ -47,36 +47,47 @@ for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
 print('All external workflow actions use full commit SHAs')
 
 
-# Artifact action pins must be one compatible upload/download pair across every workflow.
-# A workflow that mixes pins can upload with one major version and download with another.
+# Artifact action pins: every workflow that uploads and downloads must use an approved pair.
+# An unknown pin, or a pairing outside this table, fails the check so a bump of one action
+# cannot silently leave its counterpart on an incompatible major version.
 ARTIFACT_PIN_PAIRS = {
-    # upload-artifact SHA (v7.0.2) -> download-artifact SHA (v8.0.2)
-    'cf430e030ddbb5b0abf93d22962f4752f3646cd9': '9000827ccba6bdab643e8b6fd33ac0654aef8333',
+    # (upload-artifact SHA, download-artifact SHA)
+    ('cf430e030ddbb5b0abf93d22962f4752f3646cd9', '9000827ccba6bdab643e8b6fd33ac0654aef8333'),  # v7.0.2 + v8.0.2
+    # Version comments only, not independently verified upstream. Used by claude-agent.yml.
+    ('043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', 'd3f86a106a0bac45b974a628896c90dbdf5c8093'),  # v4 + v4.3.0
 }
-artifact_pins = {'upload-artifact': set(), 'download-artifact': set()}
+APPROVED_UPLOADS = {upload for upload, _ in ARTIFACT_PIN_PAIRS}
+APPROVED_DOWNLOADS = {download for _, download in ARTIFACT_PIN_PAIRS}
 
 
-def collect_artifact_pins(node):
+def collect_artifact_pins(node, found):
     if isinstance(node, dict):
         ref = node.get('uses')
         if isinstance(ref, str):
             match = re.fullmatch(r'actions/(upload-artifact|download-artifact)@([0-9a-f]{40})', ref)
             if match:
-                artifact_pins[match.group(1)].add(match.group(2))
+                found[match.group(1)].add(match.group(2))
         for value in node.values():
-            collect_artifact_pins(value)
+            collect_artifact_pins(value, found)
     elif isinstance(node, list):
         for value in node:
-            collect_artifact_pins(value)
+            collect_artifact_pins(value, found)
 
 
 for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
-    collect_artifact_pins(yaml.safe_load(workflow.read_text()))
-for action, shas in artifact_pins.items():
-    assert len(shas) <= 1, f'artifact pin mismatch: {action} uses several pins: {sorted(shas)}'
-uploads, downloads = artifact_pins['upload-artifact'], artifact_pins['download-artifact']
-if uploads and downloads:
-    assert {ARTIFACT_PIN_PAIRS.get(sha) for sha in uploads} == downloads, (
-        'artifact pin mismatch: upload and download pins are not an approved pair'
+    found = {'upload-artifact': set(), 'download-artifact': set()}
+    collect_artifact_pins(yaml.safe_load(workflow.read_text()), found)
+    uploads, downloads = found['upload-artifact'], found['download-artifact']
+    assert uploads <= APPROVED_UPLOADS, (
+        f'artifact pin mismatch: {workflow} has an unapproved upload-artifact pin', sorted(uploads - APPROVED_UPLOADS)
     )
-print('Artifact upload and download pins form an approved pair')
+    assert downloads <= APPROVED_DOWNLOADS, (
+        f'artifact pin mismatch: {workflow} has an unapproved download-artifact pin', sorted(downloads - APPROVED_DOWNLOADS)
+    )
+    for upload in uploads:
+        for download in downloads:
+            assert (upload, download) in ARTIFACT_PIN_PAIRS, (
+                f'artifact pin mismatch: {workflow} pairs upload and download pins that are not an approved pair',
+                upload, download,
+            )
+print('Artifact upload and download pins form approved pairs in every workflow')
