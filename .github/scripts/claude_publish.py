@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only execution / trusted publication split for the Claude agent (claude publish v1.0).
+"""Read-only execution / trusted publication split for the Claude agent (claude publish v1.1).
 
 Runs only from the default-branch workflow commit, never from the PR checkout.
 Modes:
@@ -7,12 +7,15 @@ Modes:
   prepare    (read-only job, before Claude) pin the PR checkout to the authorized commit, record its
              tree and remove executable agent configuration from it.
   collect    (read-only job, after Claude) turn the working-tree edits into a bounded change manifest.
-  publish    (publisher job, no Claude, no PR code) re-validate everything the manifest says, build one
-             commit through the Git Data API and fast-forward the existing PR head branch to it.
+  publish    (publisher job, no Claude, no PR code) re-validate everything the manifest says and create one
+             GitHub-signed commit on the existing PR head branch with the GraphQL `createCommitOnBranch`
+             mutation and `expectedHeadOid` set to the authorized commit.
 
-The manifest is untrusted input to `publish`. The ref update is never forced, so GitHub itself rejects
-it if the head moved, and it can only move a ref that exists: this script never creates a branch.
-Every failure exits 1 before any write that matters.
+The manifest is untrusted input to `publish`. `expectedHeadOid` is an atomic compare-and-swap: GitHub
+rejects the write unless the branch is exactly at the authorized commit, so a head that moved, was reset to
+an ancestor or was force-pushed between the last check and the write is never overwritten. The mutation
+only targets an existing branch: this script never creates a branch. Every failure exits 1 before any
+write that matters.
 """
 from __future__ import annotations
 
@@ -141,6 +144,27 @@ def api(method: str, path: str, body: object = None) -> tuple[int, object]:
         if error.code == 404 and method == 'GET':
             return 404, None
         raise Denied(f'GitHub API returned {error.code} for {method} {path}')
+
+
+def graphql(query: str, variables: dict) -> dict:
+    """POST one GraphQL operation. Transport errors and GraphQL errors both raise Denied."""
+    base = os.environ.get('GITHUB_API_URL', 'https://api.github.com').rstrip('/')
+    path = '/api/graphql' if base.endswith('/api/v3') else '/graphql'
+    root = base[:-len('/api/v3')] if base.endswith('/api/v3') else base
+    token = os.environ.get('CLAUDE_GUARD_TOKEN', '')
+    if not token:
+        raise Denied('guard token unavailable')
+    request = urllib.request.Request(root + path, data=json.dumps({'query': query, 'variables': variables}).encode(),
+                                     method='POST', headers={'Authorization': f'Bearer {token}',
+                                                             'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        raise Denied(f'GitHub GraphQL returned {error.code}')
+    if not isinstance(payload, dict) or payload.get('errors') or not isinstance(payload.get('data'), dict):
+        raise Denied('GitHub rejected the commit (head moved, branch missing or write refused); nothing was changed')
+    return payload['data']
 
 
 def check_live(pr: object, base_branch: object, head_ref_obj: object, target: dict) -> None:
@@ -311,44 +335,38 @@ def validate_manifest(doc: object, target: dict) -> list[dict]:
     return out
 
 
+COMMIT_MUTATION = (
+    'mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) '
+    '{ commit { oid signature { isValid } } } }')
+
+
 def mode_publish() -> int:
     target = target_from_env()
     with open(runner_path('CLAUDE_PUBLISH_CHANGES', 'claude-changes/changes.json'), encoding='utf-8') as handle:
         changes = validate_manifest(json.load(handle), target)
+    # createCommitOnBranch cannot set the executable bit; refuse rather than silently drop it.
+    if any(c['op'] == 'upsert' and c['mode'] != '100644' for c in changes):
+        raise Denied('executable-mode changes cannot be published by this job')
     live_check(target)
     repo, sha = target['repository'], target['authorized_sha']
-    _s, parent = api('GET', f'/repos/{repo}/git/commits/{sha}')
-    base_tree = ((parent or {}).get('tree') or {}).get('sha', '') if isinstance(parent, dict) else ''
-    if not SHA_RE.match(base_tree):
-        raise Denied('authorized commit tree unavailable')
-    entries = []
-    for change in changes:
-        if change['op'] == 'delete':
-            entries.append({'path': change['path'], 'mode': '100644', 'type': 'blob', 'sha': None})
-            continue
-        _s, blob = api('POST', f'/repos/{repo}/git/blobs', {'content': change['content_b64'], 'encoding': 'base64'})
-        blob_id = (blob or {}).get('sha', '') if isinstance(blob, dict) else ''
-        if not SHA_RE.match(blob_id):
-            raise Denied('blob creation returned no sha')
-        entries.append({'path': change['path'], 'mode': change['mode'], 'type': 'blob', 'sha': blob_id})
-    _s, tree = api('POST', f'/repos/{repo}/git/trees', {'base_tree': base_tree, 'tree': entries})
-    tree_id = (tree or {}).get('sha', '') if isinstance(tree, dict) else ''
-    if not SHA_RE.match(tree_id):
-        raise Denied('tree creation returned no sha')
+    additions = [{'path': c['path'], 'contents': c['content_b64']} for c in changes if c['op'] == 'upsert']
+    deletions = [{'path': c['path']} for c in changes if c['op'] == 'delete']
     comment = f" from comment {target['comment_id']}" if target['comment_id'] else ''
-    message = f"claude: apply requested changes{comment}\n\nPublished by the claude-agent publisher job."
-    # No author or committer is supplied, so GitHub signs the commit for the workflow token.
-    _s, commit = api('POST', f'/repos/{repo}/git/commits', {'message': message, 'tree': tree_id, 'parents': [sha]})
-    commit_id = (commit or {}).get('sha', '') if isinstance(commit, dict) else ''
-    if not SHA_RE.match(commit_id) or ((commit or {}).get('verification') or {}).get('verified') is not True:
-        raise Denied('commit was not created as a GitHub-verified signed commit; ref not updated')
-    live_check(target)  # last read before the write; the non-forced update below is the atomic guard
-    ref_path = f"/repos/{repo}/git/refs/heads/{urllib.parse.quote(target['head_ref'], safe='/')}"
-    api('PATCH', ref_path, {'sha': commit_id, 'force': False})
-    _s, after = api('GET', ref_path.replace('/git/refs/', '/git/ref/'))
-    if (after or {}).get('object', {}).get('sha') != commit_id:
-        raise Denied('head branch is not at the published commit after update')
-    print(f'claude publish: fast-forwarded {target["head_ref"]} {sha[:10]} -> {commit_id[:10]} ({len(changes)} files)')
+    live_check(target)  # last read before the write; expectedHeadOid below is the atomic guard
+    data = graphql(COMMIT_MUTATION, {'input': {
+        'branch': {'repositoryNameWithOwner': repo, 'branchName': target['head_ref']},
+        'message': {'headline': f'claude: apply requested changes{comment}',
+                    'body': 'Published by the claude-agent publisher job.'},
+        'expectedHeadOid': sha,
+        'fileChanges': {'additions': additions, 'deletions': deletions},
+    }})
+    commit = ((data.get('createCommitOnBranch') or {}).get('commit') or {})
+    commit_id = commit.get('oid', '')
+    if not SHA_RE.match(commit_id):
+        raise Denied('commit creation returned no oid')
+    if (commit.get('signature') or {}).get('isValid') is not True:
+        raise Denied(f'commit {commit_id[:10]} was created but is not GitHub-verified; review the branch')
+    print(f'claude publish: committed {target["head_ref"]} {sha[:10]} -> {commit_id[:10]} ({len(changes)} files)')
     return 0
 
 

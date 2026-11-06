@@ -1,4 +1,4 @@
-# Claude agent authority (workflow v2.0)
+# Claude agent authority (workflow v2.1)
 
 `.github/workflows/claude-agent.yml` runs Claude on a pull request when an authorized user
 comments `@claude <task>`. It is independent of the OpenCode workflow: separate gate
@@ -11,7 +11,7 @@ a separate trusted job, which has no Claude and no PR code, validates the manife
 ```
 gate (no secrets)  ->  claude (Claude secret, READ-ONLY token)  ->  publish (write token, no Claude)
 authorizes, claims     edits ./pr, emits changes.json              re-validates, one signed commit,
-the comment                                                         fast-forward of the PR branch
+the comment                                                         compare-and-swap on the PR branch
 ```
 
 ## Authorization (job `gate`, no secrets)
@@ -41,15 +41,15 @@ The task text reaches the Claude prompt only as a job output consumed by the act
 
 - Permissions: `contents: write`, `pull-requests: read`. Holds no Claude secret and checks out no PR code: only `claude_publish.py` from the workflow commit.
 - The manifest is untrusted. The publisher re-validates it: it must be bound to this authorization (SHA, branch, PR number), every path must be safe and unprotected, modes must be `100644` or `100755`, contents must be valid base64 within the limits, and there must be no duplicates. A hostile manifest causes no API request at all.
-- It re-checks live state (open and unmerged, same repository, protected `main` base, head branch present and exactly at the authorized commit), creates blobs, a tree on the authorized commit's tree and **one commit with the authorized commit as sole parent**, and refuses to continue unless GitHub reports the commit `verified` (signed by GitHub for the workflow token).
-- It checks the live state once more and then updates the existing branch with `PATCH git/refs/heads/<head>` and `force: false`. This is NOT an exact-head compare-and-swap: an ancestor reset can still accept the stale authorized commit. This remains a blocking finding. It is a PATCH, so it can only move a ref that exists; the script never creates a branch or pull request, and never merges, closes, approves or deploys.
+- It re-checks live state (open and unmerged, same repository, protected `main` base, head branch present and exactly at the authorized commit), then writes in one step.
+- It checks the live state once more and creates one GitHub-signed commit with the GraphQL `createCommitOnBranch` mutation and `expectedHeadOid` set to the authorized commit. That is an exact-head compare-and-swap: GitHub rejects the write unless the branch is at that commit, so a head that moved or was reset to an ancestor after the last check is never overwritten. The mutation only targets an existing branch; the script never creates a branch or pull request, and never merges, closes, approves or deploys. The mutation cannot set the executable bit, so a manifest containing a `100755` change is refused. Not yet verified live: signature status is read from the mutation result after the commit exists, so an unsigned result fails the job but cannot be prevented beforehand.
 - Concurrency uses a group separate from the `claude` job, but each group still has only one pending slot; later requests can replace pending jobs. Recoverable queue handling remains a blocking finding.
 
 Residual risk: GitHub has no atomic compare across the PR API and the Git data API. If the PR closes or merges in the milliseconds between the last check and the ref update, the commit still lands on that existing branch (never on a new one). See `CLAUDE_AGENT_PROTECTIONS.md` for the ruleset that limits what such a branch can become.
 
 ## Outstanding release blockers
 
-This document is not evidence of runtime acceptance. The file guard is still unwired, publication lacks exact-head CAS, pending requests can be lost, and the PR-state/publication race remains. The trusted-root checkout has a structural regression test but has not been exercised in a live credentialed action. Do not activate or merge until substantive independent security review, verified signatures, current-main synchronization and exact-head CI are complete.
+This document is not evidence of runtime acceptance. The file guard hook and the exact-head compare-and-swap are implemented and covered by offline tests only; neither has run in a live credentialed action. Pending requests can still be lost (one pending slot per concurrency group), and the PR-state/publication race remains. The trusted-root checkout has a structural regression test but has not been exercised live. Do not activate or merge until substantive independent security review, verified signatures, current-main synchronization and exact-head CI are complete.
 
 ## Setup (owner)
 
@@ -70,4 +70,4 @@ This document is not evidence of runtime acceptance. The file guard is still unw
 
 `tests/deployment/test_claude_agent.py` covers authorization, command parsing, routing against the OpenCode gate, duplicate claims, workflow policy and isolation.
 
-`tests/deployment/test_claude_write_boundary.py` covers untrusted base configuration, the live-state check (closed and merged PRs, HEAD changes, deleted or renamed head branches), hostile manifests, a real-git `prepare`/`collect` flow, the publisher against a scripted GitHub API (including a PR closing between the last check and the ref update, a rejected non-fast-forward update, unsigned commits, and proof that no ref is ever created), and the workflow permission and ordering invariants.
+`tests/deployment/test_claude_write_boundary.py` covers untrusted base configuration, the live-state check (closed and merged PRs, HEAD changes, deleted or renamed head branches), hostile manifests, a real-git `prepare`/`collect` flow, the publisher against a scripted GitHub API (including a PR closing between the last check and the write, an ancestor reset rejected by the compare-and-swap, unsigned results, refusal of executable-mode changes, and proof that no ref is ever created), and the workflow permission and ordering invariants.
