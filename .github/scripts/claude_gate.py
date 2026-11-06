@@ -22,7 +22,7 @@ TRUSTED_ASSOCIATIONS = {'OWNER', 'MEMBER', 'COLLABORATOR'}
 COMMAND_RE = re.compile(r'\A@claude\s+(?P<task>\S[\s\S]*)\Z')
 MAX_TASK_CHARS = 8000
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
-APPROVED_BASE_REF = 'main'  # must match claude_write_guard.APPROVED_BASE_REF
+APPROVED_BASE_REF = 'main'  # must match claude_publish.APPROVED_BASE_REF
 CLAIM_REACTION = 'eyes'
 CLAIM_USER = 'github-actions[bot]'
 
