@@ -1,0 +1,64 @@
+{
+  "run_id": "full-20261106T0800Z",
+  "mode": "FULL",
+  "observed_at": "2026-11-06T08:00Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy/changelog read; ruleset six bypass actors pull_request"
+    },
+    {
+      "step": 1,
+      "result": "16 open PRs, 15 open non-PR issues; new #279-292 Draft, #207 ready, #116 Draft"
+    },
+    {
+      "step": 2,
+      "result": "#207 exact head e40ea4798d1b, previous reviews stale; Copilot quota gap"
+    },
+    {
+      "step": 3,
+      "result": "Prioritized #207 security workflow and #279 actor guard; all new PRs Draft"
+    },
+    {
+      "step": 4,
+      "result": "#207 nine review threads all resolved; no resolution writes"
+    },
+    {
+      "step": "4a",
+      "result": "No new checklist dispositions verified; current Copilot acceptance missing"
+    },
+    {
+      "step": 5,
+      "result": "#207 backend still in progress, Copilot review unavailable due quota; no review request before green CI"
+    },
+    {
+      "step": 6,
+      "result": "No supersession closure; historical #116 deferred"
+    },
+    {
+      "step": 7,
+      "result": "No duplicate agent asks issued; new Drafts queued"
+    },
+    {
+      "step": 8,
+      "result": "Zero eligible merges: #207 required backend incomplete and Copilot quota; remaining 15 Draft"
+    },
+    {
+      "step": 9,
+      "result": "No new class I decision; existing Migration 0057 hold intact"
+    },
+    {
+      "step": 10,
+      "result": "Report prepared; no production action"
+    }
+  ],
+  "ruleset": "23651422 active, backend/frontend strict, six pull_request bypass; no always",
+  "policy_amendments": [],
+  "merged": [],
+  "comments": [],
+  "limitations": [
+    "Full per-PR check/thread inventory not completed for 14 new Draft PRs",
+    "Current run event is snapshot, machine index not reconciled"
+  ],
+  "production_hold": "Migration 0057 execution prohibited"
+}
