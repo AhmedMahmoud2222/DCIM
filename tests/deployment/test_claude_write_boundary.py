@@ -1,11 +1,12 @@
-"""Adversarial regression tests for the Claude agent's read-only / publisher split (tests v2.0).
+"""Adversarial regression tests for the Claude agent's read-only / publisher split (tests v2.1).
 
 P1: executable agent configuration (.claude/, .mcp.json, bunfig.toml ...) must never come from the PR.
     Only the protected default branch may be a base, the PR checkout lives outside the workspace root
     the action and CLI read, and executable configuration inside it is removed.
 P2: the Claude job holds a read-only token. Only the publisher writes, after re-validating a hostile
-    manifest, and only by a non-forced fast-forward of the existing PR branch. A PR that closes, merges,
-    moves HEAD or loses its branch can therefore never cause a branch to be created or overwritten.
+    manifest, and only with an exact-head compare-and-swap on the existing PR branch. A PR that closes,
+    merges, moves HEAD, is reset to an ancestor or loses its branch can therefore never cause a branch to
+    be created or overwritten.
 """
 import base64
 import importlib.util
@@ -357,7 +358,7 @@ class CollectTests(ProcessCase):
 class PublishTests(ProcessCase):
     """The publisher against a scripted GitHub API; every non-GET request is a write."""
 
-    def route(self, pull=None, base_branch=PROTECTED_MAIN, ref=(200, None), commit=None, patch=None):
+    def route(self, pull=None, base_branch=PROTECTED_MAIN, ref=(200, None), graphql=None, current_head=SHA):
         counter = {'n': 0}
 
         def pulls_route(_body):
@@ -365,19 +366,19 @@ class PublishTests(ProcessCase):
             live = pull(counter['n']) if callable(pull) else (pr() if pull is None else pull)
             return 200, live
 
+        def graphql_route(body):
+            expected = body['variables']['input']['expectedHeadOid']
+            if expected != current_head:  # GitHub's atomic compare-and-swap on the branch head
+                return 200, {'errors': [{'message': 'Expected branch to point to the given oid'}], 'data': None}
+            return 200, graphql or {'data': {'createCommitOnBranch': {'commit': {
+                'oid': NEW_COMMIT, 'signature': {'isValid': True}}}}}
+
         ref_status, ref_body = ref
         FakeGitHub.routes = {
             ('GET', f'/repos/{REPO}/pulls/7'): pulls_route,
             ('GET', f'/repos/{REPO}/branches/main'): (200, base_branch),
-            ('GET', f'/repos/{REPO}/git/ref/heads/feature/x'): lambda _b: (
-                (200, live_ref(sha=NEW_COMMIT)) if any(r[0] == 'PATCH' for r in FakeGitHub.requests)
-                else (ref_status, live_ref() if ref_body is None else ref_body)),
-            ('GET', f'/repos/{REPO}/git/commits/{SHA}'): (200, {'sha': SHA, 'tree': {'sha': BASE_TREE}}),
-            ('POST', f'/repos/{REPO}/git/blobs'): (201, {'sha': NEW_BLOB}),
-            ('POST', f'/repos/{REPO}/git/trees'): (201, {'sha': NEW_TREE}),
-            ('POST', f'/repos/{REPO}/git/commits'): (201, commit or {'sha': NEW_COMMIT,
-                                                                      'verification': {'verified': True}}),
-            ('PATCH', f'/repos/{REPO}/git/refs/heads/feature/x'): patch or (200, {}),
+            ('GET', f'/repos/{REPO}/git/ref/heads/feature/x'): (ref_status, live_ref() if ref_body is None else ref_body),
+            ('POST', '/graphql'): graphql_route,
         }
 
     def publish(self, changes=None, doc=None, **extra):
@@ -388,21 +389,32 @@ class PublishTests(ProcessCase):
     def writes(self):
         return [r for r in FakeGitHub.requests if r[0] != 'GET']
 
-    def test_happy_path_is_one_signed_commit_and_a_non_forced_fast_forward(self):
+    def test_happy_path_is_one_signed_commit_with_an_exact_head_compare_and_swap(self):
         self.route()
         result = self.publish([upsert('src/a.py'), {'op': 'delete', 'path': 'old.txt'}])
         self.assertEqual(result.returncode, 0, result.stderr)
-        methods = [(m, p.split(f'/repos/{REPO}')[1]) for m, p, _b in self.writes()]
-        self.assertEqual(methods, [('POST', '/git/blobs'), ('POST', '/git/trees'), ('POST', '/git/commits'),
-                                   ('PATCH', '/git/refs/heads/feature/x')])
-        by = {(m, p.rsplit('/', 1)[-1]): b for m, p, b in self.writes()}
-        self.assertEqual(by[('POST', 'commits')]['parents'], [SHA])
-        self.assertEqual(by[('POST', 'commits')]['tree'], NEW_TREE)
-        self.assertNotIn('author', by[('POST', 'commits')])  # GitHub signs it for the workflow token
-        self.assertEqual(by[('POST', 'trees')]['base_tree'], BASE_TREE)
-        self.assertIsNone(next(e for e in by[('POST', 'trees')]['tree'] if e['path'] == 'old.txt')['sha'])
-        self.assertEqual(by[('PATCH', 'x')], {'sha': NEW_COMMIT, 'force': False})
-        self.assertFalse(any(p.endswith('/git/refs') for _m, p, _b in self.writes()))
+        self.assertEqual([(m, p) for m, p, _b in self.writes()], [('POST', '/graphql')])
+        variables = self.writes()[0][2]['variables']['input']
+        self.assertEqual(variables['expectedHeadOid'], SHA)  # compare-and-swap on the authorized head
+        self.assertEqual(variables['branch'], {'repositoryNameWithOwner': REPO, 'branchName': 'feature/x'})
+        self.assertEqual(variables['fileChanges']['additions'], [{'path': 'src/a.py', 'contents': b64('x\n')}])
+        self.assertEqual(variables['fileChanges']['deletions'], [{'path': 'old.txt'}])
+        for forbidden in ('author', 'committer', 'force'):
+            self.assertNotIn(forbidden, variables)  # GitHub signs it for the workflow token
+        self.assertFalse(any(p.endswith('/git/refs') or '/git/refs/' in p for _m, p, _b in self.writes()))
+
+    def test_branch_reset_to_an_ancestor_after_the_last_check_is_rejected_by_the_compare_and_swap(self):
+        # Every live read still says SHA, but the real head is an ancestor: GitHub must refuse the write.
+        self.route(current_head=OTHER)
+        result = self.publish()
+        self.assertEqual(result.returncode, 1)
+        sent = [b['variables']['input']['expectedHeadOid'] for m, p, b in self.writes()]
+        self.assertEqual(sent, [SHA])
+
+    def test_executable_mode_changes_are_refused_before_any_request(self):
+        self.route()
+        self.assertEqual(self.publish([upsert('run.sh', mode='100755')]).returncode, 1)
+        self.assertEqual(FakeGitHub.requests, [])
 
     def test_pr_closed_or_merged_before_any_write_means_no_write_and_no_branch(self):
         for pull in (pr(state='closed'), pr(state='closed', merged=True), pr(merged=True)):
@@ -414,19 +426,12 @@ class PublishTests(ProcessCase):
     def test_pr_closing_between_the_first_check_and_the_ref_update_blocks_the_ref_update(self):
         self.route(pull=lambda n: pr() if n == 1 else pr(state='closed', merged=True))
         self.assertEqual(self.publish().returncode, 1)
-        self.assertFalse(any(m == 'PATCH' for m, _p, _b in self.writes()))
+        self.assertEqual(self.writes(), [])
 
     def test_head_moved_before_any_write_means_no_write(self):
         self.route(pull=pr(sha=OTHER), ref=(200, live_ref(sha=OTHER)))
         self.assertEqual(self.publish().returncode, 1)
         self.assertEqual(self.writes(), [])
-
-    def test_head_moving_after_the_last_check_is_rejected_by_github_not_forced(self):
-        self.route(patch=(422, {'message': 'Update is not a fast forward'}))
-        result = self.publish()
-        self.assertEqual(result.returncode, 1)
-        patches = [b for m, _p, b in self.writes() if m == 'PATCH']
-        self.assertEqual(patches, [{'sha': NEW_COMMIT, 'force': False}])
 
     def test_deleted_head_branch_is_never_recreated(self):
         self.route(ref=(404, {'message': 'Not Found'}))
@@ -434,12 +439,13 @@ class PublishTests(ProcessCase):
         self.assertEqual(self.writes(), [])
         self.assertFalse(any(p.endswith('/git/refs') for _m, p, _b in FakeGitHub.requests))
 
-    def test_unverified_commit_is_never_published(self):
-        self.route(commit={'sha': NEW_COMMIT, 'verification': {'verified': False}})
-        self.assertEqual(self.publish().returncode, 1)
-        self.assertFalse(any(m == 'PATCH' for m, _p, _b in self.writes()))
-        self.route(commit={'sha': NEW_COMMIT})
-        self.assertEqual(self.publish().returncode, 1)
+    def test_unverified_or_malformed_commit_result_fails_the_job(self):
+        for result in ({'data': {'createCommitOnBranch': {'commit': {'oid': NEW_COMMIT, 'signature': {'isValid': False}}}}},
+                       {'data': {'createCommitOnBranch': {'commit': {'oid': NEW_COMMIT}}}},
+                       {'data': {'createCommitOnBranch': {'commit': {'oid': 'nope', 'signature': {'isValid': True}}}}},
+                       {'data': {'createCommitOnBranch': None}}):
+            self.route(graphql=result)
+            self.assertEqual(self.publish().returncode, 1, result)
 
     def test_retargeted_or_unprotected_base_blocks_all_writes(self):
         self.route(pull=pr(base_ref='attacker/hooks'))
@@ -623,7 +629,7 @@ class WorkflowBoundaryTests(unittest.TestCase):
 
     def test_gate_and_opencode_isolation_unchanged(self):
         self.assertEqual(self.wf['permissions'], {})
-        self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'read'.replace('read', 'write')})
+        self.assertEqual(self.jobs['gate']['permissions'], {'contents': 'read', 'pull-requests': 'write'})
         self.assertEqual(self.action['with']['allowed_bots'], '')
         self.assertNotIn('OPENCODE', self.text)
         self.assertNotIn('opencode_gate', self.text)
