@@ -1,0 +1,246 @@
+# CFD service, data and security architecture
+
+Document version: 0.1.2
+Status: PROPOSED design. No code, migration or API exists. CFD stays disabled behind a flag until M5 is accepted.
+
+## 1. Fit with the existing platform
+
+| Existing piece | Evidence | Reuse |
+|---|---|---|
+| FastAPI, async SQLAlchemy, PostgreSQL | `backend/app/api/v1/*`, `backend/app/db` | API and system of record |
+| Celery on Redis with named queues | `backend/app/infrastructure/celery_app.py` (queues: default, maintenance, polling, telemetry, alarms, imports, reports, notifications, high_priority, extraction) | add a `cfd` queue and routing |
+| Transactional outbox | `backend/app/domain/outbox/models.py`, `infrastructure/tasks/outbox_dispatcher.py` (SKIP LOCKED claim, stale `processing` reclaim after 5 minutes, max 5 attempts). The handler today only logs and marks `dispatched` | reuse the table and claim pattern; add a CFD handler that enqueues to the `cfd` queue |
+| Lease and attempt pattern | `bulk_import` models: `commit_lease_id`, `commit_lease_expires_at`, `commit_attempt_count`; requeue sweeper in the Celery beat schedule | copy the pattern for run attempts |
+| Parser sandbox | `application/spatial_import/runner.py`, `limits.py`, `worker.py`: scrubbed environment, rlimits, seccomp, Landlock, own process group, fail-closed | design reference only. It runs a Python parser, not a native solver. The solver runs in a container |
+| Storage abstraction | `infrastructure/storage/backend.py` (`save/read/exists/delete/iter_keys`), `local.py` | artifact bytes, content-addressed keys |
+| Audit | `application/audit_service.py`, `domain/audit` | every state change and download |
+| RBAC | `application/rbac.py`, `access_control.py`, SEC-ARCH-02 scope enforcement (#170 on `main`) | new `cfd:*` permissions |
+
+## 2. Entities (additive; to be created in M4, no migration now)
+
+All ids are UUIDs. All tables are insert-mostly with immutable columns guarded by triggers, as `floor_plan_calibration` is.
+
+| Entity | Purpose | Key columns |
+|---|---|---|
+| `cfd_model_revision` | Immutable snapshot of the baseline contract inputs for a room | `room_id`, `revision_number`, `input_document_key` (storage), `content_hash`, `contract_version`, `assembled_by`, `assembled_at`, `source_snapshot` (calibration id, plan revision, placement refs) |
+| `cfd_scenario_revision` | Immutable delta set over a model revision | `model_revision_id`, `deltas` JSONB, `content_hash`, `created_by`. Contains no foreign key that lets it write inventory |
+| `cfd_run` | A requested simulation. Holds the four state machines | `model_revision_id`, `scenario_revision_id`, `requested_by`, `site_id`, `room_id`, `execution_state`, `numerical_state`, `validation_state`, `acceptance_state`, `redispatch_count` (lifetime counter, never reset), `terminal_reason` (set once with the terminal transition, for example `worker_lost`, `dispatch_lost`), `idempotency_key`, `policy_versions`, `created_at`, `updated_at` (database time) |
+| `cfd_run_attempt` | One execution try | `run_id`, `attempt_number`, `lease_id`, `lease_expires_at`, `heartbeat_at`, `worker_id`, `image_digest`, `started_at`, `ended_at`, `exit_reason`, `resource_limits`, `resource_usage` |
+| `cfd_artifact` | Checksummed output or log | `run_id`, `attempt_id`, `kind`, `storage_key`, `sha256`, `size_bytes`, `created_at`, `retention_until`, `scope_site_id` |
+| `cfd_sensor_validation` | One validation assessment of a run | `run_id`, `dataset_hash`, `window`, `split`, `metrics` JSONB, `coverage`, `verdict` (`not_run`, `insufficient_data`, `passed`, `failed`), `assessed_by`, `policy_version` |
+| `cfd_engineering_acceptance` | Human decision | `run_id`, `decision` (`accepted`, `rejected`, `revoked`), `reason`, `decided_by`, `decided_at`, `scope_text`, `expires_at` |
+
+Reuse of the existing `outbox_event` for dispatch: `aggregate_type = "cfd_run"`, `event_type = "cfd.run.queued"`.
+
+## 3. The four independent states
+
+The values below are separate columns with separate transition rules. A change in one never implies a change in another.
+
+| State | Values | Set by |
+|---|---|---|
+| Execution | `queued`, `leased`, `meshing`, `solving`, `postprocessing`, `succeeded`, `failed`, `cancel_requested`, `cancelled`, `timed_out`, `lost` | worker, sweeper, user cancel |
+| Numerical | `not_assessed`, `converged`, `not_converged`, `diverged`, `rejected_mesh`, `rejected_balance`, `rejected_other` | postprocessing checks defined in the V&V policy |
+| Measurement validation | `not_run`, `insufficient_data`, `passed`, `failed` | validation service (`cfd_sensor_validation`) |
+| Engineering acceptance | `none`, `pending`, `accepted`, `rejected`, `revoked` | a person with `cfd:accept` |
+
+Rules: `numerical_state = converged` requires `execution_state = succeeded`. `validation_state = passed` requires
+`numerical_state = converged` and a stored assessment. `acceptance_state = accepted` requires `validation_state = passed`
+unless the acceptance carries the explicit scope "not measurement validated" and the UI repeats that text. A report may use the
+word "validated" only when `validation_state = passed` and `acceptance_state = accepted`. These rules are CHECK constraints
+plus service checks. Every other combination is displayed as its own labelled status.
+
+## 4. Atomic dispatch
+
+1. The API request validates authorization and scope, assembles or loads the contract, and in one transaction inserts
+   `cfd_run` (execution `queued`) and an `outbox_event` row. Either both exist or neither.
+2. The outbox dispatcher claims events with `FOR UPDATE SKIP LOCKED` as today and enqueues `run_cfd_attempt(run_id)` on queue
+   `cfd` (name proposed: `cfd`). Redis messages carry the run id only; the database holds all inputs.
+3. The worker claims the run by transitioning the `cfd_run` row, in one transaction:
+   `UPDATE cfd_run SET execution_state = 'leased' WHERE id = :id AND execution_state = 'queued' RETURNING id`. Only if exactly
+   one row is returned does the same transaction insert the `cfd_run_attempt` row (fresh `lease_id`, `lease_expires_at`,
+   `attempt_number = previous + 1`). A unique constraint on `(run_id, attempt_number)` and a partial unique index allowing at
+   most one attempt per run with `ended_at IS NULL` back this up. Zero rows updated means another worker or a duplicate
+   delivery owns the run; the task exits without side effects. The attempt table has no `execution_state`; state lives on `cfd_run`.
+4. The worker renews the lease with a heartbeat at most every 30 seconds (value to be set in M4). Each state write includes
+   `WHERE lease_id = :lease_id` (fencing); a worker that lost its lease cannot write results.
+5. Expired lease recovery (sweeper as `requeue-stuck-bulk-import-commits` does). The container is killed by name first and the
+   kill result is recorded. Then one fenced transaction runs: (a) `UPDATE cfd_run_attempt SET ended_at = now(), exit_reason =
+   'lost' WHERE lease_id = :lease_id AND ended_at IS NULL`; if no row is returned the transaction ends with no effect;
+   (b) if the attempt cap is not reached, `UPDATE cfd_run SET execution_state = 'queued', updated_at = now() WHERE id = :id AND
+   execution_state IN ('leased','meshing','solving','postprocessing')`; otherwise the same conditional update sets
+   `failed` with `terminal_reason = 'worker_lost'`. The enqueue happens only after commit, so a closed attempt with a run
+   still `leased` cannot persist. A run in `cancel_requested` is never requeued by this or the step 6 sweeper. When the lost
+   attempt belonged to a `cancel_requested` run, the same fenced transaction (after (a) closed an attempt) runs (c) `UPDATE
+   cfd_run SET execution_state = 'cancelled', updated_at = now() WHERE id = :id AND execution_state = 'cancel_requested'
+   RETURNING id`, so no worker is needed to finish the cancellation and the run cannot stay in `cancel_requested` with a
+   closed attempt. Terminal states (`succeeded`, `failed`, `cancelled`, `timed_out`) are never requeued.
+6. Broker-message loss. An outbox event marked `dispatched` only means the message was handed to Redis. A second sweeper
+   (`requeue-unclaimed-cfd-runs`, in the Celery beat schedule) selects runs with `execution_state = 'queued'` and **no active
+   attempt** (no attempt row with `ended_at IS NULL`; completed attempts do not exclude the run, so a retry queued by step 5
+   whose message is lost is recovered too). Each redispatch is one compare-and-set statement, not a read followed by a write:
+   `UPDATE cfd_run SET redispatch_count = redispatch_count + 1, updated_at = now() WHERE id = :id AND execution_state =
+   'queued' AND updated_at < now() - :grace AND redispatch_count < :cap AND NOT EXISTS (SELECT 1 FROM cfd_run_attempt WHERE
+   run_id = :id AND ended_at IS NULL) RETURNING id`. `run_cfd_attempt(run_id)` is enqueued only when a row is returned, after
+   commit. Bumping `updated_at` restarts the grace period, so concurrent sweeper ticks cannot double-increment or double-enqueue
+   and one run cannot burn the cap within seconds. The terminal transition is the equivalent conditional update: `SET
+   execution_state = 'failed', terminal_reason = 'dispatch_lost', updated_at = now() WHERE id = :id AND execution_state =
+   'queued' AND updated_at < now() - :grace AND redispatch_count >= :cap AND NOT EXISTS (open attempt)`. All times are
+   database time (`now()`), never worker clocks. Re-enqueue is safe because step 3 admits only one claim.
+   Bounds. Let Q be the maximum admitted wait from run insert to claim. It is derived from the queue depth limit and worker
+   slot count in section 5, plus an explicit outbox reclaim allowance. The existing dispatcher does not bound reclaims: it
+   reclaims stale `processing` events after 5 minutes without incrementing `attempts` (that counter advances only on a caught
+   handler exception), so "5 minutes times the attempt limit" is not a guarantee today. The CFD dispatch path therefore
+   requires, as an M4 change, a bounded reclaim: each stale reclaim of a `cfd.run.queued` event increments a reclaim counter
+   (or the event carries a deadline of R x 5 minutes from insert), and an event past R reclaims or its deadline is marked
+   `failed`. The run is then failed by a separate deadline-specific conditional update, run by the outbox dispatcher in the
+   same transaction that marks the event `failed`: `UPDATE cfd_run SET execution_state = 'failed', terminal_reason =
+   'dispatch_lost', updated_at = now() WHERE id = :id AND execution_state = 'queued' AND NOT EXISTS (SELECT 1 FROM
+   cfd_run_attempt WHERE run_id = :id AND ended_at IS NULL) AND EXISTS (SELECT 1 FROM outbox_event WHERE aggregate_type =
+   'cfd_run' AND aggregate_id = :id AND event_type = 'cfd.run.queued' AND status = 'failed') RETURNING id`. It has no grace
+   or `redispatch_count` condition, because G > Q means the budget is normally unspent when the event fails; the
+   redispatch-budget terminal update above remains the path for runs whose event was dispatched and whose message was lost.
+   It keeps the `queued` and no-open-attempt guards, so a run already claimed, cancelled or failed is untouched, and the
+   first committed terminal update wins. Zero rows returned means the run is not failed and the dispatcher only marks the event.
+   The allowance is then R x 5 minutes, a configured bound and not a property of the current dispatcher.
+   Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message is not
+   redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
+   one budget with initial-dispatch losses; the attempt cap in step 5 is separate. A redispatch of a message that is still
+   waiting is harmless (duplicate delivery exits at step 3) but spends budget, which is why G > Q is required and Q is
+   enforced by refusing submissions beyond the queue depth limit.
+   Reason precedence. Terminal transitions are conditional on the current non-terminal state, so the first committed one wins
+   and later ones affect zero rows. `cancel_requested` takes precedence over both: neither sweeper changes a run in that state.
+   A late message for a run that is `cancelled`, `failed` or otherwise terminal exits at step 3 without effect.
+   Cancellation. A cancel request is one conditional statement chosen by whether an attempt is active. If the run is `queued`
+   with no open attempt (before the first claim, or while a step 5 retry or step 6 redispatch is queued): `UPDATE cfd_run SET
+   execution_state = 'cancelled', updated_at = now() WHERE id = :id AND execution_state = 'queued' AND NOT EXISTS (SELECT 1 FROM
+   cfd_run_attempt WHERE run_id = :id AND ended_at IS NULL) RETURNING id`. It targets the same row as the step 3 claim, so
+   exactly one wins: if the cancel commits first the claim affects zero rows and the late message exits; if the claim commits
+   first the cancel affects zero rows and the request falls through to the second form. For a run in `leased`, `meshing`,
+   `solving` or `postprocessing`: `UPDATE cfd_run SET execution_state = 'cancel_requested', updated_at = now() WHERE id = :id
+   AND execution_state IN ('leased','meshing','solving','postprocessing')`, which the lease holder honours and step 5(c)
+   completes if the worker dies. A run therefore enters `cancel_requested` only with an open attempt, and leaves it when that
+   attempt closes.
+7. Duplicate delivery, redelivery after a Redis loss, the step 6 sweeper and re-dispatch after an outbox reclaim all pass
+   through step 3, so they cannot run the same attempt twice. Artifacts are written to attempt-scoped keys and registered only
+   by the lease holder.
+
+## 5. Compute isolation
+
+A separate queue only stops CFD tasks from sharing a worker pool. It does not stop a solver from taking memory or CPU on
+the host. The design requires all of the following.
+
+| Control | Requirement |
+|---|---|
+| Worker placement | Dedicated CFD worker nodes or a dedicated container runtime pool with its own cgroup parent; no co-location with API, database, Redis or ingest workers. If hardware is shared, hard cgroup quotas apply |
+| CPU | `--cpus` and a fixed thread count in the case; MPI rank count fixed by policy |
+| Memory | cgroup memory limit plus swap disabled (`memory-swap` equal to `memory`); OOM kill is an execution failure `resource_limit` |
+| Processes | pids limit; no process outside the container's PID namespace |
+| Disk | per-attempt writable scratch on a size-limited volume or quota; read-only root filesystem; bounded artifact total; checks during meshing and during postprocessing, not only at the end |
+| Mesh size | `max_cells` checked after mesh generation and before solving; a refinement level above the cap is rejected |
+| Wall clock | per phase caps (meshing, solving, postprocessing) and an overall cap; a watchdog outside the container enforces them |
+| Output | log size cap; field write interval and number of written time directories capped |
+| Concurrency | per-site and per-user limits on `queued + running` runs and a global CFD worker slot count; rejected submissions return 429 with the limit named |
+| Queue limits | maximum queue depth; submissions beyond it are refused, not buffered |
+| Container | non-root user with no capabilities (`--cap-drop=ALL`), `no-new-privileges`, seccomp profile, read-only root, no host mounts, no Docker socket, no devices, no privileged mode, no host PID/IPC/network |
+| Network | none (`--network none`); the worker copies the case in and the results out through the orchestrating process |
+| Filesystem paths | the case directory is created by the server under a per-attempt path; user input never selects a path; artifact names are generated |
+| Environment | scrubbed; no database, Redis, JWT or integration secrets reach the container |
+| Image | digest-pinned, from the project registry, scanned before use |
+
+Cancellation: the orchestrator holds the container id. Cancel sends a termination to the container's whole process group,
+waits a grace period, then removes the container. The same code path serves timeout, lease loss and user cancel. A test starts a
+child that forks and verifies no process survives.
+
+## 6. Case templates and unsafe directives
+
+1. Templates live in the repository and the image, versioned and hashed. Users supply values only through the validated input
+   document. No field of the input document is a string that is spliced into a dictionary without escaping against a closed
+   grammar.
+2. The generator emits only dictionary entries from an allow-list. Rejected tokens in any generated or template file:
+   `codeStream`, `#codeStream`, `#calc`, `#include` and `#includeEtc` with paths outside the image tree, `#inputMode` changes,
+   `libs` entries outside the allow-list, `functions` entries outside the allow-list, `systemCall`/`exec`/`system` function
+   objects, `sysFs`, absolute or `..` paths, symbolic links, shell metacharacters in names.
+3. The executable list is fixed (ADR-0013). The orchestrator calls each by absolute path with arguments built from constants
+   plus validated integers.
+4. A pre-flight scanner re-reads the generated case tree and refuses to run if any rejected token appears.
+5. Tests: a corpus of hostile identifiers (names containing newlines, braces, `#calc`, path traversal) must produce a refusal
+   or a safely escaped name, never a changed dictionary.
+
+## 7. Authorization and scope
+
+New permission codes (proposed): `cfd:read`, `cfd:run`, `cfd:manage_model`, `cfd:accept`, `cfd:download`.
+
+1. Every endpoint checks the code and then applies site and room scope. Existing precedents: `cooling:*` is in the scope-aware
+   set and filters in SQL; `spatial:read` is not, and a site-restricted user receives 403 (see `ISSUE_104_SPATIAL_DIGITAL_TWIN.md`
+   "Authorization"). CFD follows the stricter result.
+2. A run, model revision or scenario concerns a whole room. A caller who cannot see every rack, cooling unit and sensor in the
+   room gets a refusal (`scope_partial_visibility`), never a model built from the visible subset. The assembler runs with the
+   caller's scope and compares the count of visible placed assets with an unscoped count computed server-side without
+   returning it. If the counts differ, the response is the same 403/404 shape as an unknown room, which leaks neither the
+   existence nor the number of hidden assets.
+3. Results (fields, probes, sensor comparisons, reports) only expose ids the caller may see. Aggregates (maximum
+   temperature, heat removed) cover the whole room, which is allowed only because the caller has whole-room visibility.
+4. Download of artifacts needs `cfd:download` and whole-room visibility at download time (not only at run time). Signed URLs
+   are not used; the API streams bytes after checking authorization, verifies the SHA-256, and writes an audit record.
+5. Authorization revocation: running attempts re-check the requester's permission at phase boundaries (before meshing, before
+   solving, before artifact registration). If the permission or scope is gone, the attempt is cancelled with reason
+   `authorization_revoked`, and its artifacts are retained under the retention rule but are not downloadable by that user.
+6. Scenarios and runs never write to inventory, placement, calibration, catalog, cooling or alarm tables. The CFD service role
+   has SELECT on the source tables and INSERT/UPDATE only on `cfd_*` tables. A test enumerates foreign keys from `cfd_*` tables
+   and asserts that none point from an authoritative table to a CFD table.
+7. Audit records (existing audit service): submission, dispatch, lease acquire/loss, cancel, phase transitions, validation
+   assessment, acceptance, revocation, every artifact download, every denied request.
+
+## 8. Retention and cleanup
+
+1. Scratch directories are deleted when an attempt ends, success or not. A sweeper deletes orphan scratch older than a bound.
+2. Artifacts have `retention_until`. Defaults are policy values to be set by the owner: inputs and reports are kept with the
+   run; large field files are kept for a shorter, configurable period; logs are capped. The orphan sweep uses
+   `iter_keys` as the existing catalog document purge does.
+3. A run row is never deleted while an acceptance record references it. Deleting a site or room is refused while CFD runs
+   exist (RESTRICT foreign keys).
+4. Disk accounting per site is part of the concurrency limit.
+
+## 9. Observability
+
+Metrics: queue depth, run durations by phase, kill reasons, mesh cells, memory high-water, rejected runs by reason. Alerts for
+lost workers and for lease-expiry rates. Logs are stored as artifacts with size caps and never contain secrets.
+
+## 10. Tests required before M4 acceptance
+
+Atomic dispatch under a crash between insert and enqueue; duplicate delivery; lease expiry with a live worker (fencing);
+worker death during each phase; cancel of a process tree; resource-cap rejections for cells, disk, memory, wall clock;
+per-user and per-site concurrency; hostile template identifiers; hidden-asset and partial-scope refusal; download after
+revocation; artifact checksum mismatch; state-machine illegal combinations rejected by the database.
+
+Dispatch-path acceptance cases (M4), each with fault injection:
+
+1. Broker loss on initial dispatch with the outbox event already `dispatched`: the step 6 sweeper recovers the run.
+2. Broker loss after a step 5 retry, when a completed attempt exists: the sweeper re-enqueues it.
+3. Two sweepers racing, and a sweeper racing a worker claim: exactly one attempt exists and `redispatch_count` advances once
+   per redispatch.
+4. Crash between the claim UPDATE and the attempt INSERT: the transaction rolls back, the run stays `queued` and is claimable.
+5. Two simultaneous claims: one row is returned and one attempt exists; a forced second open attempt is rejected by the partial
+   unique index.
+6. Cap exhaustion: the run ends `failed` with `terminal_reason = 'dispatch_lost'`, and a late delivery of the message does nothing.
+7. Late delivery after `cancelled` or `failed`; a run in `cancel_requested` is not requeued by either sweeper.
+8. Clock skew: grace and `updated_at` comparisons use database time; skewed worker clocks change nothing.
+9. Step 5 fencing: a stale `lease_id` closes no attempt and requeues nothing; a crash before commit leaves no closed attempt
+   with a `leased` run.
+10. Precedence: simultaneous `worker_lost` and `dispatch_lost` candidates yield one terminal reason.
+11. Worker death while the run is `cancel_requested`: step 5 closes the attempt and the same transaction moves the run to
+    `cancelled`; it is never requeued and never left in `cancel_requested`.
+12. Outbox latency: an event still `pending` or `processing` longer than a naive G but shorter than the stated G (which includes
+    the reclaim bound) causes no redispatch and spends no budget.
+13. Cancellation before claim: cancel on a `queued` run with no open attempt ends `cancelled` in one statement. A racing worker
+    claim and cancel yield exactly one winner; if the cancel wins no attempt exists and the late message does nothing. Repeat
+    for a retry queued by step 5 (a completed attempt exists) and for a redispatched run.
+14. Bounded outbox reclaim: an event whose handler is repeatedly lost is reclaimed at most R times, then the event is `failed`
+    and, in the same dispatcher transaction, the deadline-specific update sets the run `failed` with
+    `terminal_reason = 'dispatch_lost'` without any `redispatch_count` or grace condition; the run does not stay `queued`.
+    G is configured above R x 5 minutes plus queue wait.
+15. Event failed while a redispatch is racing the claim: the dispatcher's deadline update, a step 6 redispatch and a worker
+    claim contend for the same `cfd_run` row. Exactly one commits first. If the claim wins, the deadline update affects zero
+    rows (open attempt or state no longer `queued`), the run proceeds, and the failed event has no effect on it. If the
+    deadline update wins, the claim and any redispatch affect zero rows, no attempt exists, and a late message exits at step 3.
+    The run never ends with both an open attempt and `failed`, and `redispatch_count` is not advanced by the losing path.
