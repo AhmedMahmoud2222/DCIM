@@ -42,6 +42,7 @@ from app.application.telemetry_service import (
     ingest_reading,
     list_port_telemetry_bindings,
     mark_hold_resolved_if_any,
+    project_reading_to_latest_status,
     record_latest_status,
     register_contract_hold,
 )
@@ -456,6 +457,9 @@ async def _ingest_prelocked_collector_telemetry(
                     source_unit=record.source_unit,
                     source_scale=record.source_scale,
                 )
+                if outcome.reading_id is not None:
+                    # Feed the rack overlay's cached status; history above stays the source of truth.
+                    await project_reading_to_latest_status(db, reading_id=outcome.reading_id)
             if record.dedup_key in open_holds:
                 await mark_hold_resolved_if_any(
                     db, collector_id=collector.id, dedup_key=record.dedup_key, reading_id=outcome.reading_id,

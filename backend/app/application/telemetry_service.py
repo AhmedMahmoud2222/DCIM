@@ -665,3 +665,54 @@ async def get_latest_status_for_rack(db: AsyncSession, *, rack_id: uuid.UUID) ->
         )
     ).all()
     return [LatestPortStatus(binding=binding, status=status) for binding, status in rows]
+
+
+# Issue: edge readings feed the rack overlay. Canonical metric -> (binding target_type, payload key, scale to payload unit).
+# Only metrics whose canonical unit already equals the payload's meaning are projected; link state and error rate have no
+# canonical metric yet, so network_port bindings stay fed by POST /telemetry/port-status/ingest alone.
+_LATEST_STATUS_PROJECTION: dict[str, tuple[str, str, Decimal]] = {
+    "temperature_c": ("environmental", "temperature_celsius", Decimal(1)),
+    "humidity_percent": ("environmental", "humidity_pct", Decimal(1)),
+    "power_kw": ("power_inlet", "active_power_watts", Decimal(1000)),
+}
+_LATEST_STATUS_REQUIRED_KEY = {"environmental": "temperature_celsius", "power_inlet": "active_power_watts"}
+
+
+async def project_reading_to_latest_status(db: AsyncSession, *, reading_id: uuid.UUID) -> int:
+    """Fold one stored reading into the cached `TelemetryLatestStatus` row of each matching snmp binding.
+
+    A binding matches when its protocol is `snmp`, its `external_ref` equals the reading's `external_identifier`, and
+    its `target_type` is the one the reading's metric feeds. The reading's fields are merged into the binding's current
+    payload (a humidity sample must not erase the temperature). A binding whose payload still lacks its required field,
+    or whose stored status is newer than this reading, is left alone. Returns the number of bindings updated.
+    """
+    reading = await db.get(TelemetryReading, reading_id)
+    if reading is None:
+        return 0
+    projection = _LATEST_STATUS_PROJECTION.get(reading.metric)
+    if projection is None:
+        return 0
+    target_type, key, factor = projection
+    bindings = (
+        await db.execute(
+            select(PortTelemetryBinding).where(
+                PortTelemetryBinding.protocol == "snmp",
+                PortTelemetryBinding.external_ref == reading.external_identifier,
+                PortTelemetryBinding.target_type == target_type,
+            )
+        )
+    ).scalars().all()
+    updated = 0
+    for binding in bindings:
+        current = (
+            await db.execute(select(TelemetryLatestStatus).where(TelemetryLatestStatus.binding_id == binding.id))
+        ).scalar_one_or_none()
+        if current is not None and current.sampled_at >= reading.occurred_at:
+            continue
+        payload = dict(current.payload) if current is not None else {}
+        payload[key] = float(reading.value * factor)
+        if _LATEST_STATUS_REQUIRED_KEY[target_type] not in payload:
+            continue
+        await record_latest_status(db, binding_id=binding.id, payload=payload, sampled_at=reading.occurred_at)
+        updated += 1
+    return updated
