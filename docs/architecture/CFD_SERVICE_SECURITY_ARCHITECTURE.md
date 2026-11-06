@@ -1,6 +1,6 @@
 # CFD service, data and security architecture
 
-Document version: 0.1.0
+Document version: 0.1.1
 Status: PROPOSED design. No code, migration or API exists. CFD stays disabled behind a flag until M5 is accepted.
 
 ## 1. Fit with the existing platform
@@ -69,8 +69,11 @@ plus service checks. Every other combination is displayed as its own labelled st
    (b) if the attempt cap is not reached, `UPDATE cfd_run SET execution_state = 'queued', updated_at = now() WHERE id = :id AND
    execution_state IN ('leased','meshing','solving','postprocessing')`; otherwise the same conditional update sets
    `failed` with `terminal_reason = 'worker_lost'`. The enqueue happens only after commit, so a closed attempt with a run
-   still `leased` cannot persist. A run in `cancel_requested` is never requeued by this or the step 6 sweeper: it moves to
-   `cancelled`. Terminal states (`succeeded`, `failed`, `cancelled`, `timed_out`) are never requeued.
+   still `leased` cannot persist. A run in `cancel_requested` is never requeued by this or the step 6 sweeper. When the lost
+   attempt belonged to a `cancel_requested` run, the same fenced transaction (after (a) closed an attempt) runs (c) `UPDATE
+   cfd_run SET execution_state = 'cancelled', updated_at = now() WHERE id = :id AND execution_state = 'cancel_requested'
+   RETURNING id`, so no worker is needed to finish the cancellation and the run cannot stay in `cancel_requested` with a
+   closed attempt. Terminal states (`succeeded`, `failed`, `cancelled`, `timed_out`) are never requeued.
 6. Broker-message loss. An outbox event marked `dispatched` only means the message was handed to Redis. A second sweeper
    (`requeue-unclaimed-cfd-runs`, in the Celery beat schedule) selects runs with `execution_state = 'queued'` and **no active
    attempt** (no attempt row with `ended_at IS NULL`; completed attempts do not exclude the run, so a retry queued by step 5
@@ -83,8 +86,9 @@ plus service checks. Every other combination is displayed as its own labelled st
    execution_state = 'failed', terminal_reason = 'dispatch_lost', updated_at = now() WHERE id = :id AND execution_state =
    'queued' AND updated_at < now() - :grace AND redispatch_count >= :cap AND NOT EXISTS (open attempt)`. All times are
    database time (`now()`), never worker clocks. Re-enqueue is safe because step 3 admits only one claim.
-   Bounds. Let Q be the maximum admitted wait from enqueue to claim (derived from the queue depth limit and worker slot
-   count in section 5), G the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message
+   Bounds. Let Q be the maximum admitted wait from run insert to claim. It is derived from the queue depth limit and worker
+   slot count in section 5, plus the outbox reclaim bound of section 1 (5 minutes per stale `processing` event times the
+   attempt limit). Let G be the grace period and C the redispatch cap. The design requires G > Q so a healthy queued message
    is not redispatched, and C is a lifetime budget. `redispatch_count` is never reset on claim, so retries from step 5 share
    one budget with initial-dispatch losses; the attempt cap in step 5 is separate. A redispatch of a message that is still
    waiting is harmless (duplicate delivery exits at step 3) but spends budget, which is why G > Q is required and Q is
@@ -200,3 +204,7 @@ Dispatch-path acceptance cases (M4), each with fault injection:
 9. Step 5 fencing: a stale `lease_id` closes no attempt and requeues nothing; a crash before commit leaves no closed attempt
    with a `leased` run.
 10. Precedence: simultaneous `worker_lost` and `dispatch_lost` candidates yield one terminal reason.
+11. Worker death while the run is `cancel_requested`: step 5 closes the attempt and the same transaction moves the run to
+    `cancelled`; it is never requeued and never left in `cancel_requested`.
+12. Outbox latency: an event still `pending` or `processing` longer than a naive G but shorter than the stated G (which includes
+    the reclaim bound) causes no redispatch and spends no budget.
