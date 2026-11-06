@@ -25,8 +25,28 @@ class FileGuardTests(unittest.TestCase):
         os.symlink(base / 'secret', self.root / 'src/link')
         os.symlink(base, self.root / 'src/dirlink')
 
-    def ok(self, tool, **args):
-        return guard.allowed({'tool_name': tool, 'tool_input': args}, self.root)
+    def ok(self, tool, cwd=None, **args):
+        event = {'tool_name': tool, 'tool_input': args, 'cwd': str(cwd or self.root)}
+        return guard.allowed(event, self.root)
+
+    def test_relative_paths_resolve_against_event_cwd(self):
+        # The action starts Claude at the workspace root, which contains ./pr.
+        ws = self.root.parent
+        self.assertFalse(self.ok('Grep', cwd=ws, pattern='.', path='.'))
+        self.assertFalse(self.ok('Read', cwd=ws, file_path='secret'))
+        self.assertFalse(self.ok('Read', cwd=ws, file_path='src/a.py'))
+        self.assertFalse(self.ok('Glob', cwd=ws, pattern='*', path='.'))
+        self.assertTrue(self.ok('Read', cwd=ws, file_path='pr/src/a.py'))
+        self.assertTrue(self.ok('Grep', cwd=ws, pattern='x', path='pr/src'))
+
+    def test_relative_paths_need_a_valid_cwd(self):
+        for event_cwd in (None, '', 'relative/dir', 5):
+            event = {'tool_name': 'Read', 'tool_input': {'file_path': 'src/a.py'}, 'cwd': event_cwd}
+            self.assertFalse(guard.allowed(event, self.root), event_cwd)
+        event = {'tool_name': 'Read', 'tool_input': {'file_path': 'src/a.py'}}
+        self.assertFalse(guard.allowed(event, self.root))
+        absolute = {'tool_name': 'Read', 'tool_input': {'file_path': str(self.root / 'src/a.py')}}
+        self.assertTrue(guard.allowed(absolute, self.root))
 
     def test_happy_paths(self):
         self.assertTrue(self.ok('Read', file_path=str(self.root / 'src/a.py')))

@@ -43,12 +43,16 @@ def safe_text(value: object) -> bool:
     return isinstance(value, str) and bool(value) and '\x00' not in value and len(value) < 4096
 
 
-def inside(path_value: object, root: Path, write: bool) -> bool:
+def inside(path_value: object, root: Path, write: bool, cwd: object = None) -> bool:
     if not safe_text(path_value):
         return False
     path = Path(path_value)
     if not path.is_absolute():
-        path = root / path
+        # Tools resolve relative paths against their own cwd (the hook event's `cwd`), not the
+        # guard root. Without a usable absolute cwd, relative paths are denied.
+        if not safe_text(cwd) or not os.path.isabs(cwd):
+            return False
+        path = Path(cwd) / path
     # realpath resolves symlinks in every existing component (writes may create the leaf).
     real = Path(os.path.realpath(path))
     try:
@@ -74,12 +78,13 @@ def allowed(event: object, root: Path) -> bool:
     if not isinstance(event, dict) or event.get('hook_event_name', 'PreToolUse') != 'PreToolUse':
         return False
     tool, args = event.get('tool_name'), event.get('tool_input')
+    cwd = event.get('cwd')
     if tool not in KEYS or not isinstance(args, dict) or set(args) - KEYS[tool]:
         return False
     if tool in ('Read', 'Edit', 'Write'):
-        return inside(args.get('file_path'), root, tool in WRITE_TOOLS)
+        return inside(args.get('file_path'), root, tool in WRITE_TOOLS, cwd)
     # Glob and Grep must name their directory explicitly: the default is the workspace root.
-    if not inside(args.get('path'), root, False):
+    if not inside(args.get('path'), root, False, cwd):
         return False
     if not safe_pattern(args.get('pattern')) and tool == 'Glob':
         return False
