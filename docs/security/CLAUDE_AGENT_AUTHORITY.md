@@ -1,4 +1,4 @@
-# Claude agent authority (workflow v2.1)
+# Claude agent authority (workflow v2.2)
 
 `.github/workflows/claude-agent.yml` runs Claude on a pull request when an authorized user
 comments `@claude <task>`. It is independent of the OpenCode workflow: separate gate
@@ -43,13 +43,17 @@ The task text reaches the Claude prompt only as a job output consumed by the act
 - The manifest is untrusted. The publisher re-validates it: it must be bound to this authorization (SHA, branch, PR number), every path must be safe and unprotected, modes must be `100644` or `100755`, contents must be valid base64 within the limits, and there must be no duplicates. A hostile manifest causes no API request at all.
 - It re-checks live state (open and unmerged, same repository, protected `main` base, head branch present and exactly at the authorized commit), then writes in one step.
 - It checks the live state once more and creates one GitHub-signed commit with the GraphQL `createCommitOnBranch` mutation and `expectedHeadOid` set to the authorized commit. That is an exact-head compare-and-swap: GitHub rejects the write unless the branch is at that commit, so a head that moved or was reset to an ancestor after the last check is never overwritten. The mutation only targets an existing branch; the script never creates a branch or pull request, and never merges, closes, approves or deploys. The mutation cannot set the executable bit, so a manifest containing a `100755` change is refused. Not yet verified live: signature status is read from the mutation result after the commit exists, so an unsigned result fails the job but cannot be prevented beforehand.
-- Concurrency uses a group separate from the `claude` job, but each group still has only one pending slot; later requests can replace pending jobs. Recoverable queue handling remains a blocking finding.
+- Concurrency uses a group separate from the `claude` job. Each group still has only one pending slot, so a third request cancels the second while it waits.
 
-Residual risk: GitHub has no atomic compare across the PR API and the Git data API. If the PR closes or merges in the milliseconds between the last check and the ref update, the commit still lands on that existing branch (never on a new one). See `CLAUDE_AGENT_PROTECTIONS.md` for the ruleset that limits what such a branch can become.
+## Queue recovery (job `release`)
+
+The gate claims a comment before its `claude` or `publish` job can be dropped from the queue. The `release` job runs when the `claude` or `publish` job ends `cancelled` for an authorized request. It removes the `eyes` reaction that `github-actions[bot]` added to that comment and posts one notice asking the author to send the request again. It holds only `contents: read` and `pull-requests: write`, no secret, no Claude and no PR code, validates both ids as digits, and is not in a concurrency group, so it cannot be queued or replaced. Failed runs keep their claim, so a re-delivery of a finished or failed request is still rejected as a duplicate. The dropped request itself is not replayed; the author comments again. Not yet verified in a live run: whether GitHub schedules an `always()` job after a concurrency-cancelled dependency exactly as documented.
+
+Residual risk: GitHub has no atomic compare across the PR API and the Git data API. If the PR closes or merges in the milliseconds between the last check and the write, the commit still lands on that existing branch (never on a new one). See `CLAUDE_AGENT_PROTECTIONS.md` for the ruleset that limits what such a branch can become. The `claude` job is read-only and runs in agent mode without branch setup, so the pinned action cannot create a branch or commit when a PR closes mid-run; only the publisher writes.
 
 ## Outstanding release blockers
 
-This document is not evidence of runtime acceptance. The file guard hook and the exact-head compare-and-swap are implemented and covered by offline tests only; neither has run in a live credentialed action. Pending requests can still be lost (one pending slot per concurrency group), and the PR-state/publication race remains. The trusted-root checkout has a structural regression test but has not been exercised live. Do not activate or merge until substantive independent security review, verified signatures, current-main synchronization and exact-head CI are complete.
+This document is not evidence of runtime acceptance. The file guard hook, the exact-head compare-and-swap and the claim release job are implemented and covered by offline tests only; none has run in a live credentialed action. The PR-state/publication race remains. The trusted-root checkout has a structural regression test but has not been exercised live. The protected-base check relies on `protected: true` from the branches API; the owner must confirm that the `main` ruleset gives that flag real meaning. Do not activate or merge until substantive independent security review, verified signatures, current-main synchronization and exact-head CI are complete.
 
 ## Setup (owner)
 
@@ -71,3 +75,5 @@ This document is not evidence of runtime acceptance. The file guard hook and the
 `tests/deployment/test_claude_agent.py` covers authorization, command parsing, routing against the OpenCode gate, duplicate claims, workflow policy and isolation.
 
 `tests/deployment/test_claude_write_boundary.py` covers untrusted base configuration, the live-state check (closed and merged PRs, HEAD changes, deleted or renamed head branches), hostile manifests, a real-git `prepare`/`collect` flow, the publisher against a scripted GitHub API (including a PR closing between the last check and the write, an ancestor reset rejected by the compare-and-swap, unsigned results, refusal of executable-mode changes, and proof that no ref is ever created), and the workflow permission and ordering invariants.
+
+`tests/deployment/test_claude_file_guard.py` covers the PreToolUse file boundary, and `tests/deployment/test_claude_release.py` covers the claim release job.
