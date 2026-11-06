@@ -13,7 +13,7 @@ import re
 import shlex
 import sys
 
-from acceptance_api import GitHub
+from acceptance_api import GitHub, TransientError
 from acceptance_core import Rejected, require, decode, digest, binding, same_binding, provider_identity, structured_review, jobs_and_checks
 from acceptance_gate import prepare_context, write_record, finding_comments
 from acceptance_provider_witness import clear_git_credentials
@@ -219,5 +219,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
+    except TransientError:
+        raise SystemExit('Claude collaboration adapter deferred: GitHub is temporarily unavailable; nothing was accepted or published.') from None
     except (Rejected,KeyError,ValueError,TypeError,OSError):
         raise SystemExit('Claude collaboration adapter failed closed; no acceptance or publication authorized.') from None

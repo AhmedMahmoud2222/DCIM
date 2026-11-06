@@ -272,6 +272,21 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(g.verify_check(self.api, 211)['verdict'], 'ACCEPT')
         self.api.ci_runs[0]['conclusion'] = 'failure'
         with self.assertRaises(c.Rejected): g.verify_check(self.api, 211)
+    def test_check_not_yet_published_is_transient_not_a_rejection(self):
+        # The gate publishes on a schedule; a consumer that asks first must defer, never fail closed.
+        with self.assertRaises(a.TransientError):
+            g.verify_check(self.api, 211)
+        self.assertFalse(issubclass(a.TransientError, c.Rejected))
+    def test_review_thread_outage_defers_acceptance_and_publishes_nothing(self):
+        self.api.publish_fixture()
+        with patch.object(self.api, 'threads', side_effect=a.TransientError('review thread API unavailable')):
+            with self.assertRaises(a.TransientError):
+                g.verify_check(self.api, 211)
+            published = len(self.api.published)
+            with patch.object(g, 'self_run', return_value=(dict(head_sha=BASE), None)), \
+                    self.assertRaises(a.TransientError):
+                g.publish(self.api, 211)       # no BLOCK decision is recorded for an outage
+            self.assertEqual(len(self.api.published), published)
     def test_forged_actions_check_with_correct_name_is_rejected(self):
         self.api.publish_fixture(); self.api.published[0]['external_id'] = 'dcim-acceptance:v1:30:1:211:' + '0'*64
         with self.assertRaisesRegex(c.Rejected, 'forged'): g.verify_check(self.api, 211)
@@ -283,7 +298,9 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(c.Rejected, 'duplicate'): g.verify_check(self.api, 211)
     def test_newer_gate_execution_invalidates_old_accept(self):
         self.api.publish_fixture(); newer = self.api.make_run(31, 'gate'); newer['conclusion'] = 'failure'
-        with self.assertRaisesRegex(c.Rejected, 'supersedes'): g.verify_check(self.api, 211)
+        # The newer run published nothing for this PR yet: the consumer waits for the next decision.
+        with self.assertRaises(a.TransientError): g.verify_check(self.api, 211)
+        self.assertFalse(issubclass(a.TransientError, c.Rejected))
 
 
 class ApiAndSchemaTests(unittest.TestCase):
