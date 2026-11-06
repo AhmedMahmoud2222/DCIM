@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "dataflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/candidate.json",
+    "sha256": "3a49891fd6d649aef22eff2f45e32a557a0187ddae7603daa48ca3a14bdc2ffa",
+    "bytes": 9155
+  },
+  "artifact": {
+    "path": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay.html",
+    "sha256": "b0193e32bedf8624512033112f5b34db2b8cbb72cd453c2b06a5d74670db469e",
+    "bytes": 852094
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay.finalize.json",
+    "summaryReceipt": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay.finalize-summary.json",
+    "browserCheckReceipt": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay.browser-check.json"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 13846,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}
