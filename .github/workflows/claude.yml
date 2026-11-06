@@ -36,6 +36,7 @@ jobs:
                 || github.event.review.author_association
                 || github.event.issue.author_association }}
           BOTS: ${{ vars.CLAUDE_ALLOWED_BOTS }}
+          ACTOR: ${{ github.event.sender.login }}
         run: |
           set -euo pipefail
           ASSOCIATION="$(printf '%s' "$ASSOCIATION" | tr -d '[:space:]')"
@@ -50,8 +51,13 @@ jobs:
               echo "::warning::CLAUDE_ALLOWED_BOTS is malformed; ignoring it (no bots allowed)."
             fi
           fi
+          # An exact, owner-listed bot login also passes the gate. Without this a bot
+          # (association NONE) is denied here and allowed_bots never takes effect.
+          if [ "$trusted" != true ] && [ -n "$bots" ]; then
+            case ",${bots}," in *",${ACTOR},"*) trusted=true ;; esac
+          fi
           if [ "$trusted" != true ]; then
-            echo "::notice::Author association '${ASSOCIATION}' is not OWNER, MEMBER or COLLABORATOR. Denied."
+            echo "::notice::Author association '${ASSOCIATION}' is not OWNER, MEMBER or COLLABORATOR and actor '${ACTOR}' is not an allowed bot. Denied."
           fi
           echo "trusted=${trusted}" >> "$GITHUB_OUTPUT"
           echo "allowed_bots=${bots}" >> "$GITHUB_OUTPUT"
