@@ -37,6 +37,10 @@ jobs:
                 || github.event.issue.author_association }}
           BOTS: ${{ vars.CLAUDE_ALLOWED_BOTS }}
           ACTOR: ${{ github.event.sender.login }}
+          AUTHOR: >-
+            ${{ github.event.comment.user.login
+                || github.event.review.user.login
+                || github.event.issue.user.login }}
         run: |
           set -euo pipefail
           ASSOCIATION="$(printf '%s' "$ASSOCIATION" | tr -d '[:space:]')"
@@ -51,13 +55,23 @@ jobs:
               echo "::warning::CLAUDE_ALLOWED_BOTS is malformed; ignoring it (no bots allowed)."
             fi
           fi
-          # An exact, owner-listed bot login also passes the gate. Without this a bot
-          # (association NONE) is denied here and allowed_bots never takes effect.
+          # An exact, owner-listed bot login also passes the gate, but only when the bot
+          # both triggered the event (sender) and wrote the content Claude will read
+          # (comment, review or issue author). A bot that merely assigns or comments on
+          # text an untrusted user wrote does not pass. Logins compare case-insensitively
+          # and exactly, with no glob matching.
           if [ "$trusted" != true ] && [ -n "$bots" ]; then
-            case ",${bots}," in *",${ACTOR},"*) trusted=true ;; esac
+            actor="$(printf '%s' "$ACTOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            author="$(printf '%s' "$AUTHOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            if [ -n "$actor" ] && [ "$actor" = "$author" ]; then
+              IFS=',' read -r -a allowed <<< "$(printf '%s' "$bots" | tr '[:upper:]' '[:lower:]')"
+              for b in "${allowed[@]}"; do
+                if [ "$b" = "$actor" ]; then trusted=true; break; fi
+              done
+            fi
           fi
           if [ "$trusted" != true ]; then
-            echo "::notice::Author association '${ASSOCIATION}' is not OWNER, MEMBER or COLLABORATOR and actor '${ACTOR}' is not an allowed bot. Denied."
+            echo "::notice::Author association '${ASSOCIATION}' is not OWNER, MEMBER or COLLABORATOR and actor '${ACTOR}' is not an allowed bot that authored the content (author '${AUTHOR}'). Denied."
           fi
           echo "trusted=${trusted}" >> "$GITHUB_OUTPUT"
           echo "allowed_bots=${bots}" >> "$GITHUB_OUTPUT"
