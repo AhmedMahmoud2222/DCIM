@@ -24,14 +24,14 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / '.github/scripts'))
 import opencode_sandbox as sandbox  # noqa: E402
 
-MODEL = 'opencode/glm-5.3-flash-free'
+MODEL = 'opencode-go/glm-5.3-flash'
 HANG_SECONDS = 20
 MAX_LINES = 12
 USAGE = {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}
 
 
 def chunk(delta, finish=None, usage=None):
-    body = {'id': 'chatcmpl-1', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'glm-5.3-flash-free',
+    body = {'id': 'chatcmpl-1', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'glm-5.3-flash',
             'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
     if usage:
         body['usage'] = usage

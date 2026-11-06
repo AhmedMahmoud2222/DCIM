@@ -13,7 +13,7 @@ forwarded only if all of these hold:
   - no query string, no Transfer-Encoding, no Content-Encoding (the body must be inspectable)
   - the body is a JSON object with no duplicate keys, only allow-listed top-level fields,
     and `model` equal to the bound model
-At startup the bound model must be one of the six approved free models, must pass every
+At startup the bound model must be one of the approved OpenCode Go models, must pass every
 registry requirement (terms verified, approved for repository code, healthy), and must not
 be a model the reviewer is forbidden to use.
 
@@ -38,13 +38,21 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import opencode_router as router  # noqa: E402
 
-POST_PATHS = ('/inference/openai/v1/chat/completions',)
-GET_PATHS = ('/inference/openai/v1/models', '/zen/v1/models')
+POST_PATHS = ('/inference/go/openai/v1/chat/completions',)
+GET_PATHS = ('/inference/go/v1/models',)
 MAX_BODY = 20 * 1024 * 1024
 BODY_KEYS = frozenset({
     'model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'parallel_tool_calls',
     'max_tokens', 'max_completion_tokens', 'temperature', 'top_p', 'stop', 'presence_penalty',
     'frequency_penalty', 'seed', 'n', 'response_format', 'reasoning_effort', 'user'})
+# Maximum JSON container nesting accepted in a request body (the top-level object is depth 1). Real OpenCode
+# envelopes (messages, tool schemas) nest well under 20; anything deeper is rejected before json.loads runs, so the
+# outcome never depends on the Python version or recursion limit.
+MAX_JSON_DEPTH = 64
+# Single-character classes only (no variable-length alternatives), so every search resumes where the previous one
+# ended and the depth scan never revisits a byte, even on unterminated strings full of escaped quotes.
+_JSON_STRUCT = re.compile(rb'["\[\]{}]')
+_JSON_STRING_STOP = re.compile(rb'["\\]')
 FORWARD_HEADERS = ('content-type', 'accept', 'user-agent')
 # Identity headers the genuine OpenCode v2 CLI attaches to every inference request (captured from the pinned
 # binary). They are relayed unchanged, only when their value has the exact shape the real client produces;
@@ -71,20 +79,95 @@ class PolicyError(Exception):
 
 
 def bare(model: str) -> str:
-    return model.split('/', 1)[1] if model.startswith('opencode/') else model
+    return model.split('/', 1)[1] if model.startswith('opencode-go/') else model
 
 
-def validate_bound_model(model: str, registry: dict, denied: set[str]) -> str:
+def validate_bound_model(model: str, registry: dict, denied: set[str], probe: bool = False) -> str:
     """Return the bare provider model id, or raise PolicyError for any ineligible model."""
     full = router.normalize(model)
     router.load_registry(registry)
-    if full not in router.APPROVED_MODELS or not full.endswith('-free'):
-        raise PolicyError('model_not_approved_free')
+    if full not in router.APPROVED_MODELS:
+        raise PolicyError('model_not_approved')
     if full in {router.normalize(m) for m in denied}:
         raise PolicyError('model_denied_for_this_role')
-    if router.blockers(registry['models'][full]):
+    if router.blockers(registry['models'][full], probe):
         raise PolicyError('model_disabled_or_unhealthy')
     return bare(full)
+
+
+FINISH_REASONS = frozenset({'stop', 'length', 'tool_calls', 'function_call', 'content_filter', 'end_turn', 'tool_use',
+                            'max_tokens', 'error', 'sensitive', 'insufficient_system_resource'})
+DELTA_KEYS = ('role', 'content', 'reasoning_content', 'reasoning', 'tool_calls', 'refusal', 'function_call')
+
+
+class StreamShape:
+    """Content-free outline of an SSE chat-completions response, for the run log.
+
+    Records only structure: how many `data:` events, whether `[DONE]` arrived, which `finish_reason` values (only
+    words from FINISH_REASONS; anything else is the fixed token `other`) and which known delta field names were
+    present (by key, even when empty), and whether an `error` object or `usage` block appeared. Never a value from
+    `content`, `reasoning_content` or any other free text. `feed` never raises: a malformed event only counts as
+    unparsed, so this diagnostic cannot interrupt response forwarding."""
+
+    MAX_PENDING = 65536
+
+    def __init__(self) -> None:
+        self.pending = b''
+        self.events = 0
+        self.done = False
+        self.finish: set[str] = set()
+        self.delta: set[str] = set()
+        self.error = False
+        self.usage = False
+        self.unparsed = 0
+        self.finish_count = 0           # chunks that carried a finish_reason
+        self.after_done = 0             # data events that arrived after [DONE]
+
+    def feed(self, chunk: bytes) -> None:
+        try:
+            self._feed(chunk)
+        except Exception:                                  # diagnostics must never break the relay
+            self.unparsed += 1
+            self.pending = b''
+
+    def _feed(self, chunk: bytes) -> None:
+        self.pending = (self.pending + chunk)[-self.MAX_PENDING:]
+        *lines, self.pending = self.pending.split(b'\n')
+        for raw in lines:
+            line = raw.strip()
+            if not line.startswith(b'data:'):
+                continue
+            body = line[5:].strip()
+            if body == b'[DONE]':
+                self.done = True
+                continue
+            self.events += 1
+            self.after_done += self.done
+            try:
+                data = json.loads(body)
+            except ValueError:
+                self.unparsed += 1
+                continue
+            if not isinstance(data, dict):
+                continue
+            self.error = self.error or isinstance(data.get('error'), (dict, str))
+            self.usage = self.usage or isinstance(data.get('usage'), dict)
+            choices = data.get('choices')
+            for choice in choices if isinstance(choices, list) else []:
+                if not isinstance(choice, dict):
+                    continue
+                reason = choice.get('finish_reason')
+                if isinstance(reason, str):
+                    self.finish_count += 1
+                    self.finish.add(reason if reason in FINISH_REASONS else 'other')
+                delta = choice.get('delta')
+                if isinstance(delta, dict):
+                    self.delta.update(key for key in DELTA_KEYS if key in delta)
+
+    def summary(self) -> dict:
+        return {'data_events': self.events, 'done': self.done, 'finish_reasons': sorted(self.finish),
+                'delta_fields': sorted(self.delta), 'error_object': self.error, 'usage_block': self.usage,
+                'unparsed': self.unparsed, 'finish_count': self.finish_count, 'events_after_done': self.after_done}
 
 
 def client_identity_headers(headers) -> dict[str, str]:
@@ -138,6 +221,37 @@ def _reject_constant(_name):
     raise PolicyError('non_standard_json')
 
 
+def check_json_depth(body: bytes) -> None:
+    """Raise PolicyError('json_depth_exceeded') if containers nest deeper than MAX_JSON_DEPTH.
+
+    Single linear byte scan with O(1) state, run before json.loads. Strings are skipped whole (braces and escaped
+    quotes inside them are never counted). Malformed input, including an unterminated string, is left to json.loads.
+    """
+    depth = 0
+    pos = 0
+    while True:
+        match = _JSON_STRUCT.search(body, pos)
+        if match is None:
+            return
+        char = body[match.start()]
+        pos = match.end()
+        if char == 0x22:                        # '"': skip to the closing quote, honouring backslash escapes
+            while True:
+                stop = _JSON_STRING_STOP.search(body, pos)
+                if stop is None:                # unterminated: stop scanning, json.loads rejects it
+                    return
+                pos = stop.end()
+                if body[stop.start()] == 0x22:
+                    break
+                pos += 1                        # backslash: the next byte is escaped, never a terminator
+        elif char in (0x7B, 0x5B):              # '{' '['
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise PolicyError('json_depth_exceeded')
+        else:
+            depth -= 1
+
+
 def check_request(method: str, raw_path: str, headers, body: bytes | None, bound: str) -> None:
     """Raise PolicyError(code) unless the request may be forwarded with the real credential."""
     if '?' in raw_path or '#' in raw_path or '%' in raw_path or '\\' in raw_path or '//' in raw_path \
@@ -162,6 +276,7 @@ def check_request(method: str, raw_path: str, headers, body: bytes | None, bound
         raise PolicyError('content_type_not_json')
     if not body:
         raise PolicyError('empty_body')
+    check_json_depth(body)
     try:
         data = json.loads(body.decode('utf-8'), object_pairs_hook=_no_duplicate_keys,
                           parse_constant=_reject_constant)
@@ -268,6 +383,7 @@ def make_handler(proxy: Proxy):
             status = None
             first_byte_ms = None
             streamed_bytes = 0
+            shape = StreamShape()
             connection_result = 'failed'
             completion = 'upstream_connection_error'
             response_started = False
@@ -296,6 +412,8 @@ def make_handler(proxy: Proxy):
                         first_byte_ms = round((time.monotonic() - started) * 1000)
                         proxy.telemetry('first_response_byte', request_count=request_count,
                                         time_to_first_byte_ms=first_byte_ms)
+                    if endpoint == 'chat_completions':
+                        shape.feed(chunk)
                     self.wfile.write(chunk)
                     self.wfile.flush()
                     streamed_bytes += len(chunk)
@@ -313,7 +431,8 @@ def make_handler(proxy: Proxy):
                 conn.close()
                 proxy.telemetry('completion', request_count=request_count, upstream_connection=connection_result,
                                 http_status=status, time_to_first_byte_ms=first_byte_ms,
-                                streamed_bytes=streamed_bytes, category=completion)
+                                streamed_bytes=streamed_bytes, category=completion,
+                                stream=shape.summary() if endpoint == 'chat_completions' else None)
 
         def _reject_other(self):
             proxy.record_rejection('method_not_allowed', self.command, self.path)
@@ -338,6 +457,8 @@ def serve(key: str, upstream: str, bound: str, port_file: str | None = None,
 
 def main(argv: list[str]) -> int:
     api_key = os.environ.pop('OPENCODE_API_KEY', '')
+    probe = '--probe' in argv
+    argv = [a for a in argv if a != '--probe']
     if not api_key or len(argv) not in (4, 5):
         print('::error::proxy needs OPENCODE_API_KEY, PORT_FILE, MODEL and REGISTRY_JSON')
         return 1
@@ -348,7 +469,7 @@ def main(argv: list[str]) -> int:
         if len(argv) == 5:
             with open(argv[4], encoding='utf-8') as handle:
                 denied = {r['model'] for r in json.load(handle)}
-        bound = validate_bound_model(argv[2], registry, denied)
+        bound = validate_bound_model(argv[2], registry, denied, probe)
     except (PolicyError, router.RoutingError, OSError, ValueError, KeyError, TypeError) as error:
         code = error.code if isinstance(error, PolicyError) else type(error).__name__
         print(f'::error::proxy refused to start: {code}')

@@ -19,22 +19,57 @@
     "scores": "every dimension, number in [0,1]"
   },
   "models": {
-    "opencode/glm-5.3-flash-free": {
+    "opencode-go/glm-5.3-flash": {
       "evaluation": null
     },
-    "opencode/deepseek-v4.1-flash-free": {
+    "opencode-go/glm-5.3": {
       "evaluation": null
     },
-    "opencode/mimo-v2.6-flash-free": {
+    "opencode-go/glm-5.2": {
+      "evaluation": null,
+      "owner_waiver": {
+        "waived_by": "AhmedMahmoud2222",
+        "date": "2026-11-05",
+        "reason": "Owner accepts glm-5.2 as reviewer without a seeded-defect evaluation; it is the only model that passed the production probe. Replace with a real evaluation record when one exists."
+      }
+    },
+    "opencode-go/kimi-k3.1-pro": {
       "evaluation": null
     },
-    "opencode/minimax-m3.1-flash-free": {
+    "opencode-go/kimi-k3": {
       "evaluation": null
     },
-    "opencode/nemotron-3-ultra-free": {
+    "opencode-go/kimi-k2.7-code": {
       "evaluation": null
     },
-    "opencode/nemotron-3.5-lightning-free": {
+    "opencode-go/longcat-2.0": {
+      "evaluation": null
+    },
+    "opencode-go/step-5-preview": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.6-flash": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.6-pro": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.5": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.5-pro": {
+      "evaluation": null
+    },
+    "opencode-go/minimax-m3.1-flash": {
+      "evaluation": null
+    },
+    "opencode-go/hy4-preview": {
+      "evaluation": null
+    },
+    "opencode-go/hy3": {
+      "evaluation": null
+    },
+    "opencode-go/qwen3.8-max": {
       "evaluation": null
     }
   }

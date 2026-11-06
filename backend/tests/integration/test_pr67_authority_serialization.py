@@ -13,6 +13,7 @@ Every request gets its own session/connection (shared-session `client` would hid
 """
 
 import asyncio
+import contextlib
 import uuid
 from types import SimpleNamespace
 
@@ -29,6 +30,22 @@ BASE = ["user:read", "user:manage", "group:read", "group:manage", "rack:read", "
 SENIOR = [*BASE, "equipment:read"]
 NEW_PW = "attacker-chosen-pass-1"
 WAIT = 20
+
+
+@contextlib.contextmanager
+def _get_db_override(dependency):
+    """Installs a `get_db` override and, on any exit, restores whatever was there before
+    (the `client` fixture's override), or removes it if there was none."""
+    missing = object()
+    previous = app.dependency_overrides.get(get_db, missing)
+    app.dependency_overrides[get_db] = dependency
+    try:
+        yield
+    finally:
+        if previous is missing:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = previous
 
 
 def _entry(site, scope="all", racks=()):
@@ -195,8 +212,8 @@ async def test_equal_authority_peers_attacking_each_other_concurrently_both_fail
     a, ha = await _group_user(client, admin, [ga])
     b, hb = await _group_user(client, admin, [gb])
 
-    app.dependency_overrides[get_db] = _per_request_db
-    try:
+    installed_by_client = app.dependency_overrides[get_db]
+    with _get_db_override(_per_request_db):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             for _ in range(3):
                 r = await asyncio.gather(
@@ -204,11 +221,36 @@ async def test_equal_authority_peers_attacking_each_other_concurrently_both_fail
                     c.patch(f"/api/v1/users/{a['id']}", json={"is_active": False}, headers=hb),
                 )
                 assert [x.status_code for x in r] == [403, 403], [x.text for x in r]
-    finally:
-        app.dependency_overrides.pop(get_db, None)
+    # the client fixture's shared-session override must be back, otherwise the requests below
+    # fall through to the module-level engine and its pooled connections from earlier event loops
+    assert app.dependency_overrides.get(get_db) is installed_by_client
     for u in (a, b):
         assert (await client.get(f"/api/v1/users/{u['id']}", headers=admin)).json()["is_active"] is True
         assert (await client.post("/api/v1/auth/login", json={"email": u["email"], "password": PW})).status_code == 200
+
+
+async def test_get_db_override_helper_restores_the_previous_override_on_every_exit(client):
+    """Regression for the cross-loop reuse: a temporary `get_db` override must hand back the client
+    fixture's override (not delete it) after a normal exit, after an exception, and when none existed."""
+    installed_by_client = app.dependency_overrides[get_db]
+
+    async def _other():
+        yield None
+
+    with _get_db_override(_other):
+        assert app.dependency_overrides[get_db] is _other
+    assert app.dependency_overrides[get_db] is installed_by_client
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with _get_db_override(_other):
+            raise RuntimeError("boom")
+    assert app.dependency_overrides[get_db] is installed_by_client
+
+    del app.dependency_overrides[get_db]
+    with _get_db_override(_other):
+        assert app.dependency_overrides[get_db] is _other
+    assert get_db not in app.dependency_overrides
+    app.dependency_overrides[get_db] = installed_by_client  # leave the client fixture's state intact
 
 
 async def test_many_concurrent_authority_changes_stay_consistent_and_deadlock_free(world, concurrent_client):

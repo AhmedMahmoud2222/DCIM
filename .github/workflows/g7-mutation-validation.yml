@@ -71,7 +71,7 @@ jobs:
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected SHA is not 40-hex"; exit 1; }
           [ "$actual" = "$EXPECTED_SHA" ] || { echo "checked-out SHA != expected"; exit 1; }
           git log -1 --format='%H %G? %s' | tee "$GITHUB_WORKSPACE/tested_commit.txt"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v5
         with:
           python-version: '3.12'
       - name: Install deps
@@ -133,7 +133,7 @@ jobs:
           cp mutation_results.txt pg_version.txt evidence/ 2>/dev/null || true
           cp g7_mutation_runner.py evidence/ 2>/dev/null || true
           ls -la evidence/
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         if: always()
         with:
           name: g7-mutation-evidence

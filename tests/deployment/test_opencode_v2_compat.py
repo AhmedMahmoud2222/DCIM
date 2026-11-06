@@ -23,7 +23,7 @@ guard = importlib.import_module('opencode_guard')
 proxy = importlib.import_module('opencode_proxy')
 sandbox = importlib.import_module('opencode_sandbox')
 FIXTURES = Path(__file__).resolve().parent / 'fixtures' / 'opencode_2_1_4'
-MODEL = 'opencode/glm-5.3-flash-free'
+MODEL = 'opencode-go/glm-5.3-flash'
 SESSION = 'ses_abcdefgh12345678'
 
 
@@ -288,7 +288,7 @@ class UpstreamStub:
 
 
 class ProxyRelayTests(unittest.TestCase):
-    BODY = json.dumps({'model': 'glm-5.3-flash-free', 'messages': [{'role': 'user', 'content': 'x'}], 'stream': True})
+    BODY = json.dumps({'model': 'glm-5.3-flash', 'messages': [{'role': 'user', 'content': 'x'}], 'stream': True})
 
     def start(self, status=200, upstream_url=None):
         upstream = UpstreamStub(status)
@@ -296,7 +296,7 @@ class ProxyRelayTests(unittest.TestCase):
         self.log = tempfile.NamedTemporaryFile(delete=False)
         self.log.close()
         self.addCleanup(os.unlink, self.log.name)
-        server, self.px = proxy.serve('REAL-KEY', upstream_url or upstream.url, 'glm-5.3-flash-free', log_path=self.log.name)
+        server, self.px = proxy.serve('REAL-KEY', upstream_url or upstream.url, 'glm-5.3-flash', log_path=self.log.name)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -305,7 +305,7 @@ class ProxyRelayTests(unittest.TestCase):
 
     def post(self, headers=None):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
-        connection.request('POST', '/inference/openai/v1/chat/completions', self.BODY,
+        connection.request('POST', '/inference/go/openai/v1/chat/completions', self.BODY,
                            {'Content-Type': 'application/json', 'Authorization': 'Bearer sandbox-placeholder', **(headers or {})})
         response = connection.getresponse()
         data = response.read()

@@ -88,6 +88,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+      id-token: write   # exchanged for a short-lived OpenCode token, see the sign-in steps
     outputs:
       generation: ${{ steps.agent.outputs.generation }}
       generation_reason: ${{ steps.agent.outputs.generation_reason }}
@@ -109,9 +110,27 @@ jobs:
           ref: ${{ needs.gate.outputs.authorized_sha }}
           path: target
           persist-credentials: false
+      - name: Sign in to OpenCode with the workflow identity (short-lived token)
+        id: oidc
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_c483bf13-599b-47b1-a060-54f58e89fa69
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
+          echo "::add-mask::${oidc}"
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="${CLIENT_ID}" \
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc.outputs.token }}
         run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
       - name: Select model
         id: route
@@ -147,10 +166,28 @@ jobs:
           sudo install -m 755 trusted/.github/scripts/opencode_fsisolate.py /opt/opencode/fsisolate.py
           sudo python3 -I /opt/opencode/fsisolate.py chain /srv/ocimpl/work "$(id -u ocagent)"
           sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe-parent /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
+      - name: Sign in to OpenCode with the workflow identity (short-lived token)
+        id: oidc_agent
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_c483bf13-599b-47b1-a060-54f58e89fa69
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
+          echo "::add-mask::${oidc}"
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="${CLIENT_ID}" \
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Run agent (loopback-only, model-bound proxy)
         id: agent
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc_agent.outputs.token }}
           MODEL: ${{ steps.route.outputs.model }}
           TASK: ${{ needs.gate.outputs.task }}
           OPENCODE_PROXY_LOG: ${{ runner.temp }}/proxy-rejections.log
@@ -187,7 +224,7 @@ jobs:
           fi
       - name: Upload changes
         if: steps.collect.outputs.has_changes == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v4
         with:
           name: opencode-changes
           path: ${{ runner.temp }}/changes
@@ -201,8 +238,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: opencode-agent
+    outputs:
+      model: ${{ steps.route.outputs.model }}
     permissions:
       contents: read
+      id-token: write   # probe only: exchanged for a short-lived OpenCode token, see the sign-in step
     steps:
       - name: Checkout trusted scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -216,15 +256,33 @@ jobs:
           ref: ${{ needs.gate.outputs.authorized_sha }}
           path: target
           persist-credentials: false
+      - name: Sign in to OpenCode with the workflow identity (short-lived token)
+        id: oidc
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_c483bf13-599b-47b1-a060-54f58e89fa69
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
+          echo "::add-mask::${oidc}"
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="${CLIENT_ID}" \
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc.outputs.token }}
         run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
       - name: Select an approved model for the fixed probe
         id: route
         env:
           TASK: Reply exactly PROBE_OK
-        run: python3 trusted/.github/scripts/opencode_router.py --registry trusted/.github/opencode/model-registry.json --available "${RUNNER_TEMP}/available.json"
+        run: python3 trusted/.github/scripts/opencode_router.py --registry trusted/.github/opencode/model-registry.json --available "${RUNNER_TEMP}/available.json" --probe
       - name: Build sanitized sandbox copy
         env:
           AUTHORIZED_SHA: ${{ needs.gate.outputs.authorized_sha }}
@@ -251,7 +309,7 @@ jobs:
           sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocimpl/work --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
       - name: Run 120-second text-only probe through model-bound proxy
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc.outputs.token }}
           MODEL: ${{ steps.route.outputs.model }}
           OPENCODE_PROXY_LOG: ${{ runner.temp }}/proxy-progress.log
         run: |
@@ -263,7 +321,7 @@ jobs:
           if sudo -n -u ocagent curl -sS --max-time 5 -o /dev/null https://api.github.com 2>/dev/null; then
             echo "::error::agent user still has network egress; refusing probe"; exit 1
           fi
-          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json &
+          python3 trusted/.github/scripts/opencode_proxy.py "${RUNNER_TEMP}/proxy.port" "${MODEL}" trusted/.github/opencode/model-registry.json --probe &
           proxy_pid=$!
           trap 'kill "${proxy_pid}" 2>/dev/null || true' EXIT
           for _ in $(seq 1 20); do [[ -s "${RUNNER_TEMP}/proxy.port" ]] && break; kill -0 "${proxy_pid}" 2>/dev/null || { echo "::error::proxy did not start"; exit 1; }; sleep 0.5; done
@@ -287,6 +345,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      id-token: write   # exchanged for a short-lived OpenCode token, see the sign-in steps
     outputs:
       review_blocked: ${{ steps.pick.outputs.review_blocked || steps.inputs.outputs.review_blocked }}
       block_reason: ${{ steps.pick.outputs.block_reason || steps.inputs.outputs.block_reason }}
@@ -316,10 +375,29 @@ jobs:
           BASE_SHA: ${{ needs.gate.outputs.base_sha }}
           EXPECT_BOT_LOGIN: ${{ vars.OPENCODE_APP_SLUG }}[bot]
         run: python3 trusted/.github/scripts/opencode_review.py prepare "${RUNNER_TEMP}/review"
+      - name: Sign in to OpenCode with the workflow identity (short-lived token)
+        id: oidc
+        if: steps.inputs.outputs.review_blocked == 'false'
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_c483bf13-599b-47b1-a060-54f58e89fa69
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
+          echo "::add-mask::${oidc}"
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="${CLIENT_ID}" \
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Read live model catalog
         if: steps.inputs.outputs.review_blocked == 'false'
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc.outputs.token }}
         run: python3 trusted/.github/scripts/opencode_catalog.py "${RUNNER_TEMP}/available.json"
       - name: Select independent reviewer
         id: pick
@@ -360,11 +438,30 @@ jobs:
           sudo chmod 700 "${HOME}"
           # Effective permissions are tested as the reviewer UID, not inferred from mode bits.
           sudo -u ocagent python3 -I /opt/opencode/fsisolate.py probe /srv/ocreview/src --writable /srv/ocagent-home --forbidden "${RUNNER_TEMP}" --forbidden "${HOME}"
+      - name: Sign in to OpenCode with the workflow identity (short-lived token)
+        id: oidc_agent
+        if: steps.pick.outputs.review_blocked == 'false'
+        env:
+          AUDIENCE: https://opencode.ai/console
+          CLIENT_ID: sk_c483bf13-599b-47b1-a060-54f58e89fa69
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -er .value)"
+          echo "::add-mask::${oidc}"
+          reply="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id="${CLIENT_ID}" \
+            --data-urlencode subject_token="${oidc}")"
+          token="$(jq -er .access_token <<<"${reply}")"
+          echo "OpenCode token lifetime (expires_in, seconds): $(jq -r '.expires_in // "not reported"' <<<"${reply}")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
       - name: Run reviewer (loopback-only, read-only, model-bound proxy)
         id: agent
         if: steps.pick.outputs.review_blocked == 'false'
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.oidc_agent.outputs.token }}
           MODEL: ${{ steps.pick.outputs.model }}
           TASK: ${{ needs.gate.outputs.task }}
           GUARD_MODE: review
@@ -407,7 +504,7 @@ jobs:
           install -D -m 644 "${RUNNER_TEMP}/review/review-text.txt" "${RUNNER_TEMP}/review-out/review-text.txt"
       - name: Upload review output
         if: steps.agent.outputs.generation == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v4
         with:
           name: opencode-review
           path: ${{ runner.temp }}/review-out
@@ -434,13 +531,13 @@ jobs:
             .github/agents
           persist-credentials: false
       - name: Download review output
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: opencode-review
           path: ${{ runner.temp }}/review-out
       - name: Mint review-only App token
         id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
         with:
           client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
           private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
@@ -459,7 +556,7 @@ jobs:
           REVIEWER_MODEL: ${{ needs.review.outputs.model }}
           REVIEWER_SESSION: ${{ needs.review.outputs.session_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out"
+        run: python3 .github/scripts/opencode_review.py publish .github/opencode/model-registry.json "${RUNNER_TEMP}/review-out" .github/opencode/reviewer-capability-matrix.json
       - name: Seal native collaboration execution result
         if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
         env:
@@ -470,7 +567,7 @@ jobs:
         run: python3 .github/scripts/orchestration_opencode_result.py
       - name: Retain authenticated native execution evidence
         if: github.event.comment.user.type == 'Bot' && vars.DCIM_COLLABORATION_ENABLED == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: dcim-agent-result-attempt-${{ github.run_attempt }}
           path: sealed-collaboration/evidence.json
@@ -500,13 +597,13 @@ jobs:
           sparse-checkout: .github/scripts
           persist-credentials: false
       - name: Download changes
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: opencode-changes
           path: ${{ runner.temp }}/changes
       - name: Mint short-lived App token
         id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
         with:
           client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
           private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
@@ -541,7 +638,7 @@ jobs:
         run: python3 .github/scripts/opencode_publish.py
       - name: Preserve publication evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v4
         with:
           name: opencode-publication-evidence
           path: ${{ runner.temp }}/publication-evidence.json
@@ -557,9 +654,10 @@ jobs:
 
   report:
     name: Report outcome
-    needs: [gate, opencode, publish, review, review_publish]
+    needs: [gate, opencode, publish, review, review_publish, probe]
     if: >-
       always() && needs.gate.outputs.authorized == 'true' && (
+      needs.gate.outputs.mode == 'probe' ||
       (needs.gate.outputs.mode == 'implement' &&
        (needs.opencode.result != 'success' || needs.opencode.outputs.has_changes != 'true' || needs.publish.result == 'failure')) ||
       (needs.gate.outputs.mode == 'review' &&
@@ -571,13 +669,14 @@ jobs:
     steps:
       - name: Mint comment-only App token
         id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
         with:
           client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
           private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-issues: write
+          permission-pull-requests: write   # a comment on a pull request is refused with issues-write alone (HTTP 403)
       - name: Comment
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -591,10 +690,18 @@ jobs:
           REVIEW_BLOCKED: ${{ needs.review.outputs.review_blocked }}
           BLOCK_REASON: ${{ needs.review.outputs.block_reason }}
           REVIEW_PUBLISH_RESULT: ${{ needs.review_publish.result }}
+          PROBE_RESULT: ${{ needs.probe.result }}
+          PROBE_MODEL: ${{ needs.probe.outputs.model }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [[ "${MODE}" == "review" ]]; then
+          if [[ "${MODE}" == "probe" ]]; then
+            if [[ "${PROBE_RESULT}" == "success" ]]; then
+              msg="OpenCode probe passed: ${PROBE_MODEL//[^A-Za-z0-9._\/-]/} answered through the sandbox. Nothing was published."
+            else
+              msg="OpenCode probe failed (job result: ${PROBE_RESULT//[^a-z_]/}). Nothing was published."
+            fi
+          elif [[ "${MODE}" == "review" ]]; then
             if [[ "${REVIEW_BLOCKED}" == "true" ]]; then
               msg="REVIEW_BLOCKED: no independent review was produced (${BLOCK_REASON//[^A-Za-z0-9 .,:;()\/_-]/}). External acceptance by Codex or Jules is still required."
             elif [[ "${GENERATION}" != "success" ]]; then
@@ -613,4 +720,4 @@ jobs:
           else
             msg="OpenCode stopped before generation (routing, catalog, sandbox or data-policy check). Nothing was published."
           fi
-          gh issue comment "${NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${msg} Run: ${RUN_URL}"
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${NUMBER}/comments" -f body="${msg} Run: ${RUN_URL}" --silent   # REST: the issues-only App token is refused by the GraphQL addComment mutation
