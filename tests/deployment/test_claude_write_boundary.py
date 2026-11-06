@@ -334,6 +334,21 @@ class CollectTests(ProcessCase):
         # Whatever collect emits must also pass the publisher's independent validation.
         publisher.validate_manifest(doc, {**TARGET, 'authorized_sha': self.head})
 
+    def test_tracked_files_in_directories_the_walk_skips_are_never_reported_as_deleted(self):
+        for rel in ('frontend/node_modules/vendored/index.js', 'pkg/__pycache__/x.pyc', 'a/.pytest_cache/v/cache'):
+            self.write(rel, f'tracked {rel}\n')
+        self.git('add', '-f', '-A')
+        self.git('commit', '-q', '-m', 'vendored')
+        head = self.git('rev-parse', 'HEAD').strip()
+        env = {'CLAUDE_PUBLISH_WORKDIR': str(self.pr_dir), 'CLAUDE_GUARD_AUTHORIZED_SHA': head}
+        self.assertEqual(self.run_script('prepare', **env).returncode, 0)
+        self.write('a.txt', 'changed\n')
+        (self.pr_dir / 'old.txt').unlink()
+        self.assertEqual(self.run_script('collect', **env).returncode, 0)
+        doc = json.loads((self.dir / 'changes.json').read_text())
+        self.assertEqual([(c['op'], c['path']) for c in doc['changes']],
+                         [('upsert', 'a.txt'), ('delete', 'old.txt')])
+
     def test_collect_reports_no_changes(self):
         self.assertEqual(self.run_script('prepare', **self.collect_env()).returncode, 0)
         self.write('.github/workflows/x.yml', 'evil\n')

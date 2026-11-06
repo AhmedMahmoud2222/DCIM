@@ -1,4 +1,4 @@
-# Claude agent authority (workflow v2.2)
+# Claude agent authority (workflow v2.3)
 
 `.github/workflows/claude-agent.yml` runs Claude on a pull request when an authorized user
 comments `@claude <task>`. It is independent of the OpenCode workflow: separate gate
@@ -53,7 +53,7 @@ Residual risk: GitHub has no atomic compare across the PR API and the Git data A
 
 ## Outstanding release blockers
 
-This document is not evidence of runtime acceptance. The file guard hook, the exact-head compare-and-swap and the claim release job are implemented and covered by offline tests only; none has run in a live credentialed action. The PR-state/publication race remains. The trusted-root checkout has a structural regression test but has not been exercised live. The protected-base check relies on `protected: true` from the branches API; the owner must confirm that the `main` ruleset gives that flag real meaning. Do not activate or merge until substantive independent security review, verified signatures, current-main synchronization and exact-head CI are complete.
+This document is not evidence of runtime acceptance. The file guard hook, the exact-head compare-and-swap and the claim release job are implemented and covered by offline tests only; none has run in a live credentialed action. The PR-state/publication race remains. The trusted-root checkout has a structural regression test but has not been exercised live. The protected-base check relies on `protected: true` from the branches API; the owner must confirm that the `main` ruleset gives that flag real meaning. Do not activate or merge until substantive independent security review, current-main synchronization and exact-head CI are complete. Commit signatures: the owner waived verified signatures for the six commits `fb21045`, `1fa213a`, `39dbd96`, `8c697c2`, `2ca1749` and `aa5d9a75aa9deb86304dbf63788c2a297e63e35b` on 2026-11-06 (https://github.com/AhmedMahmoud2222/DCIM/pull/207#issuecomment-6676460041). The `main` ruleset 23651422 has no required-signatures rule. `c747f51` was reported unsigned by the owner on 2026-11-05 (comment 6663463168) and is not covered by that waiver, so the owner must confirm how it is handled. The squash merge commit on `main` will be created by GitHub.
 
 ## Setup (owner)
 

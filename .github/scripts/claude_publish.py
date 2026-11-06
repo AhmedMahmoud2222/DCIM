@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only execution / trusted publication split for the Claude agent (claude publish v1.1).
+"""Read-only execution / trusted publication split for the Claude agent (claude publish v1.2).
 
 Runs only from the default-branch workflow commit, never from the PR checkout.
 Modes:
@@ -279,6 +279,8 @@ def mode_collect() -> int:
     for rel, (mode, _sha) in sorted(snapshot.items()):
         if rel in seen or is_protected(rel) or mode == '160000':
             continue
+        if SKIP_DIRS & set(rel.split('/')):
+            continue  # the walk never enters these directories, so absence proves nothing about deletion
         if mode not in FILE_MODES:
             raise Denied(f'symlink deleted: {rel}')
         changes.append({'op': 'delete', 'path': rel})
