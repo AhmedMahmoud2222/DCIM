@@ -1,4 +1,4 @@
-# Claude agent (workflow v2.0): `@claude <task>` on a pull request conversation.
+# Claude agent (workflow v2.1): `@claude <task>` on a pull request conversation.
 # Design, permissions, setup and recovery: docs/security/CLAUDE_AGENT_AUTHORITY.md
 #
 # Independent of .github/workflows/opencode.yml: separate workflow, gate, allowlist
@@ -212,3 +212,33 @@ jobs:
           path: ${{ runner.temp }}/claude-changes
       - name: Validate and publish
         run: python3 .github/scripts/claude_publish.py publish
+
+  release:
+    name: Release the comment claim when a queued job was dropped
+    # GitHub keeps one pending job per concurrency group, so a third request cancels the second while it
+    # waits. The gate has already claimed that comment, so without this job a re-run would be rejected as a
+    # duplicate although Claude never handled it. Only a cancelled claude or publish job releases the claim;
+    # failures keep it, so a finished or failed run is still not repeated by a re-delivery.
+    needs: [gate, claude, publish]
+    if: always() && needs.gate.outputs.authorized == 'true' && (needs.claude.result == 'cancelled' || needs.publish.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write   # remove our own eyes reaction and post one notice
+    steps:
+      - name: Remove the claim and tell the author to comment again
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ needs.gate.outputs.comment_id }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.number }}
+        run: |
+          set -euo pipefail
+          [[ "${COMMENT_ID}" =~ ^[0-9]+$ && "${ISSUE_NUMBER}" =~ ^[0-9]+$ ]] || { echo "::error::malformed ids; claim kept"; exit 1; }
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            --jq '.[] | select(.content == "eyes" and .user.login == "github-actions[bot]") | .id' |
+            while read -r reaction_id; do
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions/${reaction_id}"
+            done
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
+            -f body="The queued Claude request in comment ${COMMENT_ID} was cancelled before it finished because newer requests replaced it in the queue. Its claim is released: post the request again."
