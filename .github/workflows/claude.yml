@@ -61,12 +61,12 @@ jobs:
           # text an untrusted user wrote does not pass. Logins compare case-insensitively
           # and exactly, with no glob matching.
           if [ "$trusted" != true ] && [ -n "$bots" ]; then
-            actor="$(printf '%s' "$ACTOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-            author="$(printf '%s' "$AUTHOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-            if [ -n "$actor" ] && [ "$actor" = "$author" ]; then
+            actor_lc="$(printf '%s' "$ACTOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            author_lc="$(printf '%s' "$AUTHOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            if [ -n "$actor_lc" ] && [ "$actor_lc" = "$author_lc" ]; then
               IFS=',' read -r -a allowed <<< "$(printf '%s' "$bots" | tr '[:upper:]' '[:lower:]')"
               for b in "${allowed[@]}"; do
-                if [ "$b" = "$actor" ]; then trusted=true; break; fi
+                if [ "$b" = "$actor_lc" ]; then trusted=true; break; fi
               done
             fi
           fi
