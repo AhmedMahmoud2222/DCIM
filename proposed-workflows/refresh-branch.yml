@@ -1,6 +1,6 @@
 # proposed-workflows/refresh-branch.yml
-# Candidate v5 of the refresh workflow (v4 + #242 F9: accept an orchestrator-marked command,
-# plus F5 duplicate-actor diagnostic and F7 PR-visible deny annotations).
+# Candidate v6 of the refresh workflow (v5 + #242 F4 post-update recheck, F6 early actor
+# pre-filter, F8 case-insensitive actor match; v5 added F9 marked command, F5, F7).
 # Location-neutral status: this file is inert while it lives under proposed-workflows/.
 # It is active only when present under .github/workflows/ on the default branch (main),
 # because issue_comment runs only from the default branch. Not runtime-tested.
@@ -28,6 +28,17 @@
 #      refresh job. Left out here so the draft does not assume it exists.
 #   4. The workflow file must be on main before issue_comment triggers it.
 #
+# #242 follow-ups in v6 (none widens a secret, token, trigger or workflow capability):
+#   F4 state/base TOCTOU -> after update-branch the job re-reads the PR and fails loudly
+#      if it is no longer open, same-repo and based on main. The recheck only reports.
+#   F6 runner minutes   -> the gate job's `if` skips the run when the commenter is not a
+#      case-insensitive substring of vars.REFRESH_ALLOWED_ACTORS. It is a cost filter
+#      only and never grants: the exact jq check in the gate step still decides.
+#      Side effect: a denied commenter now gets no ::error:: annotation, the run is skipped.
+#   F8 login case       -> GitHub logins are case-insensitive and unique, so the exact
+#      match and the duplicate diagnostic compare lowercased logins. This admits the same
+#      identity under another casing and no other principal.
+#
 # Remedies for the OPEN Codex findings on 480bb19 (live file is unmodified):
 #   P2-1 non-array allowlist substring bypass -> gate job: jq requires an array of
 #        login-shaped strings, exact element match; no contains() on a string.
@@ -51,10 +62,13 @@ permissions: {}
 
 jobs:
   gate:
-    # No secrets in this job. Cheap pre-filter first; exact checks in the step.
+    # No secrets in this job. Cheap pre-filters first; exact checks in the step.
+    # contains() on the variable is case-insensitive and substring-only (F6): it can
+    # skip a run, never authorize one.
     if: >-
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/refresh-branch ')
+      contains(github.event.comment.body, '/refresh-branch ') &&
+      contains(vars.REFRESH_ALLOWED_ACTORS, github.event.comment.user.login)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
@@ -96,7 +110,7 @@ jobs:
                 | type == "array"
                   and length > 0
                   and all(.[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\\[bot\\])?$"))
-                  and (map(select(. == $a)) | length) == 1)
+                  and (map(select(ascii_downcase == ($a | ascii_downcase))) | length) == 1)
             ' >/dev/null 2>&1; then
             allowed=true
           fi
@@ -107,7 +121,7 @@ jobs:
             # F5 diagnostic only: name the duplicate-entry cause. Membership is unchanged,
             # a duplicated actor still fails closed.
             if printf '%s' "${ALLOWED:-}" | jq -s -e --arg a "$ACTOR" \
-                'length == 1 and (.[0] | type == "array") and ((.[0] | map(select(. == $a)) | length) > 1)' >/dev/null 2>&1; then
+                'length == 1 and (.[0] | type == "array") and ((.[0] | map(select(ascii_downcase == ($a | ascii_downcase))) | length) > 1)' >/dev/null 2>&1; then
               echo "::error::REFRESH_ALLOWED_ACTORS lists the actor more than once; remove the duplicate entry."
             fi
           fi
@@ -200,4 +214,16 @@ jobs:
           else
             echo "PR ${PR_NUMBER} head moved ${WANT_SHA} -> ${NEW_SHA}."
             echo "Verify backend/frontend started on ${NEW_SHA}; a PAT push should trigger CI, unproven until run."
+          fi
+
+          # F4: state and base can change between the first GET and the PUT, and the head
+          # compare-and-swap does not cover them. Re-read once and report. This cannot undo
+          # the update; it makes a retarget or close in the gap visible. No extra token scope.
+          read -r STATE2 BASE_REPO2 BASE_REF2 HEAD_REPO2 < <(
+            gh api "repos/${REPO}/pulls/${PR_NUMBER}" \
+              --jq '[.state, (.base.repo.full_name // "-"), .base.ref, (.head.repo.full_name // "-")] | @tsv')
+          if [ "$STATE2" != "open" ] || [ "$BASE_REPO2" != "$REPO" ] \
+             || [ "$BASE_REF2" != "main" ] || [ "$HEAD_REPO2" != "$REPO" ]; then
+            echo "::error::PR ${PR_NUMBER} changed during the update (state=${STATE2} base=${BASE_REPO2}:${BASE_REF2} head=${HEAD_REPO2}). Check the branch."
+            exit 1
           fi
