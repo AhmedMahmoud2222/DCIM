@@ -45,3 +45,38 @@ for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
     config = yaml.safe_load(workflow.read_text())
     check_action_refs(config, str(workflow))
 print('All external workflow actions use full commit SHAs')
+
+
+# Artifact action pins must be one compatible upload/download pair across every workflow.
+# A workflow that mixes pins can upload with one major version and download with another.
+ARTIFACT_PIN_PAIRS = {
+    # upload-artifact SHA (v7.0.2) -> download-artifact SHA (v8.0.2)
+    'cf430e030ddbb5b0abf93d22962f4752f3646cd9': '9000827ccba6bdab643e8b6fd33ac0654aef8333',
+}
+artifact_pins = {'upload-artifact': set(), 'download-artifact': set()}
+
+
+def collect_artifact_pins(node):
+    if isinstance(node, dict):
+        ref = node.get('uses')
+        if isinstance(ref, str):
+            match = re.fullmatch(r'actions/(upload-artifact|download-artifact)@([0-9a-f]{40})', ref)
+            if match:
+                artifact_pins[match.group(1)].add(match.group(2))
+        for value in node.values():
+            collect_artifact_pins(value)
+    elif isinstance(node, list):
+        for value in node:
+            collect_artifact_pins(value)
+
+
+for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
+    collect_artifact_pins(yaml.safe_load(workflow.read_text()))
+for action, shas in artifact_pins.items():
+    assert len(shas) <= 1, f'artifact pin mismatch: {action} uses several pins: {sorted(shas)}'
+uploads, downloads = artifact_pins['upload-artifact'], artifact_pins['download-artifact']
+if uploads and downloads:
+    assert {ARTIFACT_PIN_PAIRS.get(sha) for sha in uploads} == downloads, (
+        'artifact pin mismatch: upload and download pins are not an approved pair'
+    )
+print('Artifact upload and download pins form an approved pair')

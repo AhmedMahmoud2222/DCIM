@@ -202,6 +202,19 @@ jobs:
           pattern: result-*
           path: results
           merge-multiple: true
+      - name: Report missing validation artifacts
+        # Diagnostic only. It never exits nonzero and never changes the verdict: the
+        # aggregate step below still rejects missing or mismatched evidence.
+        run: |
+          set -uo pipefail
+          if [ ! -s control/control-verdict.json ]; then
+            echo "::error::control artifact missing or empty (download failed, expired, or the control job did not upload it)."
+          fi
+          count=$(find results -maxdepth 1 -name 'verdict-*.json' -type f 2>/dev/null | wc -l)
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::no result-* artifacts were downloaded (download failed or mutant jobs uploaded none)."
+          fi
+          echo "Artifact presence: control-verdict=$([ -s control/control-verdict.json ] && echo yes || echo no), mutant verdicts=${count}" >> "${GITHUB_STEP_SUMMARY}"
       - name: Check every verdict against the inventory and this run's identity
         run: |
           set -uo pipefail

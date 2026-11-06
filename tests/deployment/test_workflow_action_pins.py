@@ -53,6 +53,25 @@ class WorkflowActionPinsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('external action must use a full commit SHA', result.stderr)
 
+    def test_mixed_upload_artifact_pins_are_rejected(self):
+        def mutate(path):
+            text = path.read_text()
+            text = re.sub(r'actions/upload-artifact@[0-9a-f]{40}', 'actions/upload-artifact@' + '1' * 40, text, count=1)
+            path.write_text(text)
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artifact pin mismatch', result.stderr)
+
+    def test_unapproved_download_pin_is_rejected(self):
+        def mutate(path):
+            for workflow in path.parent.glob('*.yml'):
+                text = workflow.read_text()
+                text = re.sub(r'actions/download-artifact@[0-9a-f]{40}', 'actions/download-artifact@' + '2' * 40, text)
+                workflow.write_text(text)
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('not an approved pair', result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
