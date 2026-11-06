@@ -1,5 +1,6 @@
 # proposed-workflows/refresh-branch.yml
-# Candidate v4 of the refresh workflow (v3 + F1: handle benign update-branch 422s).
+# Candidate v5 of the refresh workflow (v4 + #242 F9: accept an orchestrator-marked command,
+# plus F5 duplicate-actor diagnostic and F7 PR-visible deny annotations).
 # Location-neutral status: this file is inert while it lives under proposed-workflows/.
 # It is active only when present under .github/workflows/ on the default branch (main),
 # because issue_comment runs only from the default branch. Not runtime-tested.
@@ -10,6 +11,10 @@
 #
 # Purpose: refresh a same-repo PR branch that targets main, via a comment:
 #   /refresh-branch <full 40-character lowercase head SHA>
+# or the same command preceded by one marker line, exactly `<!-- orchestrator -->`
+# (every orchestrator comment must start with that marker). The marker adds no
+# permission: the actor allowlist, SHA compare-and-swap and base/head checks apply
+# unchanged, and the run summary records whether the marker was present.
 #
 # Owner-only prerequisites (this draft configures none of them):
 #   1. Repository variable REFRESH_ALLOWED_ACTORS: a JSON array of login strings,
@@ -49,20 +54,39 @@ jobs:
     # No secrets in this job. Cheap pre-filter first; exact checks in the step.
     if: >-
       github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/refresh-branch ')
+      contains(github.event.comment.body, '/refresh-branch ')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}
     outputs:
       allowed: ${{ steps.check.outputs.allowed }}
+      marked: ${{ steps.check.outputs.marked }}
     steps:
       - id: check
         env:
           ALLOWED: ${{ vars.REFRESH_ALLOWED_ACTORS }}
           ACTOR: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           set -euo pipefail
           allowed=false
+          marked=false
+          # Command shape first. Optional first line `<!-- orchestrator -->`, then exactly
+          # one `/refresh-branch <40-hex SHA>` line. Anything else is not a command and is
+          # skipped quietly (a comment that merely mentions the text must not fail a run).
+          BODY="${COMMENT_BODY//$'\r'/}"
+          FIRST="${BODY%%$'\n'*}"
+          if [ "$FIRST" = "<!-- orchestrator -->" ] && [[ "$BODY" == *$'\n'* ]]; then
+            marked=true
+            BODY="${BODY#*$'\n'}"
+          fi
+          BODY="${BODY%$'\n'}"
+          if [[ ! "$BODY" =~ ^/refresh-branch\ [0-9a-f]{40}[[:space:]]*$ ]]; then
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            echo "marked=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Comment is not a single '/refresh-branch <40-hex SHA>' command (optionally after the orchestrator marker line). Skipped."
+            exit 0
+          fi
           # -s slurps every JSON document into one array, so `null ["x"]` has length 2
           # and is denied. Exactly one document is required (P2-4); jq -e then exits
           # nonzero on false, null, malformed input (parse error) and empty input.
@@ -77,8 +101,15 @@ jobs:
             allowed=true
           fi
           echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+          echo "marked=${marked}" >> "$GITHUB_OUTPUT"
           if [ "$allowed" != true ]; then
-            echo "Actor not authorized, or REFRESH_ALLOWED_ACTORS is unset or malformed. Denied."
+            echo "::error::Actor not authorized, or REFRESH_ALLOWED_ACTORS is unset or malformed. Denied."
+            # F5 diagnostic only: name the duplicate-entry cause. Membership is unchanged,
+            # a duplicated actor still fails closed.
+            if printf '%s' "${ALLOWED:-}" | jq -s -e --arg a "$ACTOR" \
+                'length == 1 and (.[0] | type == "array") and ((.[0] | map(select(. == $a)) | length) > 1)' >/dev/null 2>&1; then
+              echo "::error::REFRESH_ALLOWED_ACTORS lists the actor more than once; remove the duplicate entry."
+            fi
           fi
 
   refresh:
@@ -100,13 +131,19 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          MARKED: ${{ needs.gate.outputs.marked }}
         run: |
           set -euo pipefail
 
-          # Whole comment must be exactly one command line (CR tolerated).
-          BODY="${COMMENT_BODY%$'\r'}"
+          # Whole comment must be exactly one command line, optionally after the
+          # `<!-- orchestrator -->` marker line (CR tolerated). Same rule as the gate.
+          BODY="${COMMENT_BODY//$'\r'/}"
+          FIRST="${BODY%%$'\n'*}"
+          if [ "$FIRST" = "<!-- orchestrator -->" ] && [[ "$BODY" == *$'\n'* ]]; then
+            BODY="${BODY#*$'\n'}"
+          fi
           BODY="${BODY%$'\n'}"
-          BODY="${BODY%$'\r'}"
+          echo "Refresh requested with marker=${MARKED:-false}." >> "$GITHUB_STEP_SUMMARY"
           if [[ ! "$BODY" =~ ^/refresh-branch\ ([0-9a-f]{40})[[:space:]]*$ ]]; then
             echo "Usage: /refresh-branch <full 40-character lowercase head SHA> (single line)"
             exit 1
