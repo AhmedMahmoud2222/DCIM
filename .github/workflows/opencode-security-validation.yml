@@ -206,11 +206,13 @@ jobs:
         # Diagnostic only. It never exits nonzero and never changes the verdict: the
         # aggregate step below still rejects missing or mismatched evidence.
         run: |
+          # The runner shell enables -e; turn it off so a missing directory cannot end this step.
+          set +e
           set -uo pipefail
           if [ ! -s control/control-verdict.json ]; then
             echo "::error::control artifact missing or empty (download failed, expired, or the control job did not upload it)."
           fi
-          count=$(find results -maxdepth 1 -name 'verdict-*.json' -type f 2>/dev/null | wc -l)
+          count=$(find results -maxdepth 1 -name 'verdict-*.json' -type f 2>/dev/null | wc -l) || count=0
           if [ "${count}" -eq 0 ]; then
             echo "::error::no result-* artifacts were downloaded (download failed or mutant jobs uploaded none)."
           fi
