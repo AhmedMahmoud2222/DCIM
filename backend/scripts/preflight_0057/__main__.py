@@ -203,6 +203,32 @@ def render(report: dict[str, Any]) -> tuple[str, str]:
     return encoded, "\n".join(lines) + "\n"
 
 
+def _strings(value: Any) -> list[str]:
+    """Every string in a report, keys included, before any serializer can escape it."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for key, item in value.items() for text in (*_strings(key), *_strings(item))]
+    if isinstance(value, (list, tuple)):
+        return [text for item in value for text in _strings(item)]
+    return _strings(str(value)) if value is not None else []
+
+
+def _present(secret: str | None, report: dict[str, Any]) -> bool:
+    """True when the secret appears raw in any value or in any serialized form of the report."""
+    if not secret:
+        return False
+    escaped = json.dumps(secret, ensure_ascii=False)[1:-1]
+    forms = {
+        secret,
+        escaped,
+        escaped.replace("|", "&#124;").replace("<", "&lt;"),
+        secret.replace("|", "&#124;").replace("<", "&lt;"),
+    }
+    texts = [*_strings(report), *render(report)]
+    return any(form in text for form in forms for text in texts)
+
+
 def write_reports(report: dict[str, Any], dsn: str, raw_id: str | None, directory: Path) -> None:
     encoded, markdown = render(report)
     connection = conninfo_to_dict(dsn)
@@ -212,14 +238,13 @@ def write_reports(report: dict[str, Any], dsn: str, raw_id: str | None, director
     # "staging" labelled "staging"). Scan them in a render with only the label field blanked,
     # so a leak anywhere else is still caught even when it matches the label.
     soft = [str(connection[k]) for k in ("host", "hostaddr", "dbname", "user") if connection.get(k)]
-    blanked = render({**report, "environment_label": ""})
-    # Scan the actual serialized outputs before creating either artifact. Never print rejected content.
-    for content in (encoded, markdown):
-        if any(secret and secret in content for secret in hard):
-            raise Refused("Output privacy self-check failed (credential or identifier); no evidence files written")
-    for content in blanked:
-        if any(secret in content for secret in soft):
-            raise Refused("Output privacy self-check failed (connection identifier); no evidence files written")
+    blanked_report = {**report, "environment_label": ""}
+    # Check raw values and every serialized form, so quotes, backslashes, pipes or angle brackets
+    # that a serializer escapes cannot hide a secret. Never print rejected content.
+    if any(_present(secret, report) for secret in hard):
+        raise Refused("Output privacy self-check failed (credential or identifier); no evidence files written")
+    if any(_present(secret, blanked_report) for secret in soft):
+        raise Refused("Output privacy self-check failed (connection identifier); no evidence files written")
     slug = re.sub(r"[^a-zA-Z0-9_-]", "_", report["environment_label"])[:80] or "environment"
     stem = f"preflight_0057_{slug}_{report['utc_timestamp']}"
     directory.mkdir(parents=True, exist_ok=True)

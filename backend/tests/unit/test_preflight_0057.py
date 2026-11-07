@@ -119,6 +119,17 @@ def test_label_may_equal_connection_name_but_other_leaks_still_refuse(tmp_path, 
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize("password", ['sentinel"password', "sentinel\\password", "sentinel<pass|word", "sentinel%22password"])
+def test_escaped_password_in_label_is_refused(tmp_path, password):
+    from urllib.parse import quote
+
+    dsn = f"postgresql://sentinel-user:{quote(password, safe='')}@sentinel-host/sentinel-db"
+    report, raw = p.collect(EvidenceCursor(), password)
+    with pytest.raises(p.Refused, match="credential"):
+        p.write_reports(report, dsn, raw, tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
 async def test_ci_postgres_end_to_end(db_engine, monkeypatch, tmp_path):
     # Reuse the application's engine fixture/CI service URL, without invoking its write cleanup.
     dsn = db_engine.url.set(drivername="postgresql").render_as_string(hide_password=False)
