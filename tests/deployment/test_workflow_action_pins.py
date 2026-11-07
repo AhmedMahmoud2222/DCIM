@@ -53,6 +53,54 @@ class WorkflowActionPinsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('external action must use a full commit SHA', result.stderr)
 
+    def test_unapproved_upload_artifact_pin_is_rejected(self):
+        def mutate(path):
+            text = path.read_text()
+            text = re.sub(r'actions/upload-artifact@[0-9a-f]{40}', 'actions/upload-artifact@' + '1' * 40, text, count=1)
+            path.write_text(text)
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
+
+    def test_unapproved_download_artifact_pin_is_rejected(self):
+        def mutate(path):
+            for workflow in path.parent.glob('*.yml'):
+                text = workflow.read_text()
+                text = re.sub(r'actions/download-artifact@[0-9a-f]{40}', 'actions/download-artifact@' + '2' * 40, text)
+                workflow.write_text(text)
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artifact pin mismatch: download-artifact', result.stderr)
+
+    def test_older_artifact_pair_in_a_new_workflow_is_rejected(self):
+        def mutate(path):
+            (path.parent / 'new-workflow.yml').write_text(
+                'name: new\non: workflow_dispatch\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+                '    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n'
+            )
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
+
+    def test_mixed_case_artifact_action_name_is_still_checked(self):
+        def mutate(path):
+            (path.parent / 'mixed-case.yml').write_text(
+                'name: mixed\non: workflow_dispatch\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+                '    steps:\n      - uses: Actions/Upload-Artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n'
+            )
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
+
+    def test_mixed_case_artifact_action_name_with_the_approved_pin_passes(self):
+        def mutate(path):
+            (path.parent / 'mixed-case.yml').write_text(
+                'name: mixed\non: workflow_dispatch\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+                '    steps:\n      - uses: Actions/Upload-Artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n'
+            )
+        result = self.run_check(mutate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

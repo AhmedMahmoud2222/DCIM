@@ -410,6 +410,211 @@ class ApiAndSchemaTests(unittest.TestCase):
             url = subprocess.check_output(['git', '-C', tmp, 'remote', 'get-url', 'origin'], text=True).strip()
             self.assertEqual(url, 'https://github.com/AhmedMahmoud2222/DCIM.git')
             self.assertNotEqual(subprocess.run(['git', '-C', tmp, 'config', '--get', 'http.https://github.com/.extraheader'], capture_output=True).returncode, 0)
+    def git_env(self):
+        return {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+    def make_repo_with_checkout_credentials(self, base):
+        repo, runner_temp = Path(base) / 'work/DCIM', Path(base) / 'runner_temp'
+        repo.mkdir(parents=True); runner_temp.mkdir()
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=self.git_env())
+        creds = runner_temp / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+        creds.write_text('[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic SYNTHETIC-CHECKOUT\n')
+        benign = Path(base) / 'other.config'
+        benign.write_text('[core]\n\teditor = true\n[http "https://github.com/"]\n\textraheader = AUTHORIZATION: SYNTHETIC-INCLUDED\n')
+        def cfg(*args): subprocess.run(['git', '-C', str(repo), 'config', '--local', *args], check=True, env=self.git_env())
+        cfg('remote.origin.url', 'https://x-access-token:SYNTHETIC@github.com/AhmedMahmoud2222/DCIM.git')
+        cfg(f'includeIf.gitdir:{repo}/.git.path', str(creds))
+        cfg(f'includeIf.gitdir:{repo}/.git/worktrees/*.path', str(creds))
+        cfg('include.path', str(benign))
+        cfg('user.name', 'keep-me')
+        return repo, runner_temp, creds, benign
+    def list_config(self, repo):
+        return subprocess.check_output(['git', '-C', str(repo), 'config', '--list', '--show-origin'], text=True, env=self.git_env())
+    def test_startup_removes_checkout_credential_includes_and_their_files(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp, creds, benign = self.make_repo_with_checkout_credentials(base)
+            self.assertIn('SYNTHETIC-CHECKOUT', self.list_config(repo))
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+            listing = self.list_config(repo)
+            self.assertNotIn('SYNTHETIC', listing)
+            self.assertNotIn('git-credentials', listing)
+            self.assertFalse(creds.exists())
+            self.assertIn('user.name=keep-me', listing)
+            self.assertIn('core.editor=true', listing)  # a non-credential include still applies
+            self.assertIn(str(benign), listing)
+            self.assertIn('remote.origin.url=https://github.com/AhmedMahmoud2222/DCIM.git', listing)
+    def test_startup_credential_cleanup_never_deletes_files_outside_runner_temp(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp, creds, benign = self.make_repo_with_checkout_credentials(base)
+            elsewhere = Path(base) / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+            elsewhere.write_text(creds.read_text())
+            subprocess.run(['git', '-C', str(repo), 'config', '--local', '--fixed-value', '--replace-all',
+                            f'includeIf.gitdir:{repo}/.git.path', str(elsewhere), str(creds)], check=True, env=self.git_env())
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+            self.assertNotIn('git-credentials', self.list_config(repo))  # the pointer is gone
+            self.assertTrue(elsewhere.exists())  # but a file outside RUNNER_TEMP is left alone
+    def test_startup_credential_cleanup_is_idempotent_and_safe_on_a_clean_repo(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp, creds, benign = self.make_repo_with_checkout_credentials(base)
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+                first = self.list_config(repo)
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+            self.assertEqual(first, self.list_config(repo))
+            clean = Path(base) / 'clean'; clean.mkdir()
+            subprocess.run(['git', 'init', '-q', str(clean)], check=True, env=self.git_env())
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(clean, 'AhmedMahmoud2222/DCIM')
+            self.assertIn('remote.origin.url=https://github.com/AhmedMahmoud2222/DCIM.git', self.list_config(clean))
+    HEADER = '[http "https://github.com/"]\n\textraheader = AUTHORIZATION: SYNTHETIC-HDR\n'
+    def plain_repo(self, base):
+        repo, runner_temp = Path(base) / 'repo', Path(base) / 'runner_temp'
+        repo.mkdir(); runner_temp.mkdir()
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=self.git_env())
+        return repo, runner_temp
+    def include(self, repo, value):
+        subprocess.run(['git', '-C', str(repo), 'config', '--local', '--add', 'include.path', value], check=True, env=self.git_env())
+    def clean(self, repo, runner_temp, home=None):
+        env = {'RUNNER_TEMP': str(runner_temp)}
+        if home: env['HOME'] = str(home)
+        with patch.dict(os.environ, env):
+            w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+    def test_relative_include_is_resolved_against_the_git_directory_not_the_worktree(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            (repo / '.git/custom.config').write_text(self.HEADER)
+            (repo / 'custom.config').write_text('[core]\n\teditor = worktree-file\n')
+            self.include(repo, 'custom.config')  # git reads .git/custom.config
+            self.assertIn('SYNTHETIC-HDR', self.list_config(repo))
+            self.clean(repo, runner_temp)
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))
+            self.assertEqual((repo / 'custom.config').read_text(), '[core]\n\teditor = worktree-file\n')  # untouched
+    def test_home_relative_and_nested_includes_are_scrubbed(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            home = Path(base) / 'home'; home.mkdir()
+            (home / 'inner.config').write_text(self.HEADER)
+            (home / 'outer.config').write_text('[include]\n\tpath = inner.config\n[core]\n\tpager = keep\n')
+            self.include(repo, '~/outer.config')
+            with patch.dict(os.environ, {'HOME': str(home)}):
+                self.assertIn('SYNTHETIC-HDR', self.list_config(repo))
+            self.clean(repo, runner_temp, home=home)
+            with patch.dict(os.environ, {'HOME': str(home)}):
+                listing = self.list_config(repo)
+            self.assertNotIn('SYNTHETIC', listing)
+            self.assertIn('core.pager=keep', listing)
+    def include_chain(self, base, length, header_in_last=True):
+        files = [Path(base) / f'c{i}.config' for i in range(1, length + 1)]
+        for index, path in enumerate(files):
+            body = f'[include]\n\tpath = {files[index + 1]}\n' if index + 1 < length else ''
+            if index + 1 == length and header_in_last: body += self.HEADER
+            path.write_text(body)
+        return files
+    def test_a_chain_of_six_includes_is_fully_scrubbed(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            files = self.include_chain(base, 6)
+            self.include(repo, str(files[0]))
+            self.assertIn('SYNTHETIC-HDR', self.list_config(repo))
+            self.clean(repo, runner_temp)
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))
+    def test_an_include_chain_deeper_than_git_reads_fails_closed_instead_of_being_skipped(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            files = self.include_chain(base, 12)  # git refuses a chain deeper than 10, so its first config call fails
+            self.include(repo, str(files[0]))
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}), self.assertRaises(c.Rejected):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+    def test_a_header_behind_a_condition_git_does_not_evaluate_is_not_effective_and_not_an_error(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            files = self.include_chain(base, 3)
+            subprocess.run(['git', '-C', str(repo), 'config', '--local', 'includeIf.gitdir:/nonexistent/.path', str(files[0])],
+                           check=True, env=self.git_env())
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))  # git never reads it
+            self.clean(repo, runner_temp)
+    def test_include_using_git_runtime_prefix_is_found_through_git_not_literal_path_parsing(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            header = Path(base) / 'hdr.config'; header.write_text(self.HEADER)
+            probe = Path(base) / 'probe.config'; probe.write_text('[x]\n\tp = %(prefix)/x\n')
+            prefix_file = subprocess.check_output(['git', 'config', '--file', str(probe), '--type=path', '--get', 'x.p'], text=True, env=self.git_env()).strip()
+            self.include(repo, '%(prefix)/' + os.path.relpath(header, os.path.dirname(prefix_file)))
+            self.assertIn('SYNTHETIC-HDR', self.list_config(repo))
+            self.clean(repo, runner_temp)
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))
+    def test_symlinked_includes_resolve_nested_includes_per_alias_and_all_are_scrubbed(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            shared = Path(base) / 'shared'; shared.mkdir()
+            (shared / 'shared.config').write_text('[include]\n\tpath = nested.config\n')
+            for name in ('a', 'b'):
+                directory = Path(base) / name; directory.mkdir()
+                (directory / 'alias.config').symlink_to(shared / 'shared.config')
+                (directory / 'nested.config').write_text(self.HEADER)
+                self.include(repo, str(directory / 'alias.config'))
+            self.assertEqual(self.list_config(repo).count('SYNTHETIC-HDR'), 2)
+            self.clean(repo, runner_temp)
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))
+    def test_cleanup_fails_closed_when_git_still_reads_a_header_after_every_removal_attempt(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            included = Path(base) / 'custom.config'; included.write_text(self.HEADER)
+            self.include(repo, str(included))
+            real = w.git
+            def skip_header_removal(root, *args, **kwargs):
+                if '--unset-all' in args and w.EXTRAHEADER in args:
+                    return
+                return real(root, *args, **kwargs)
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}), patch.object(w, 'git', side_effect=skip_header_removal), \
+                    self.assertRaisesRegex(c.Rejected, 'still reads'):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+    def test_cleanup_stops_when_a_credential_cannot_be_removed(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            locked = Path(base) / 'custom.config'
+            locked.write_text(self.HEADER)
+            Path(str(locked) + '.lock').write_text('')  # git cannot rewrite the file
+            self.include(repo, str(locked))
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}), self.assertRaises(c.Rejected):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+    def test_cleanup_treats_an_absent_header_as_success_but_a_failed_git_call_as_failure(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            plain = Path(base) / 'plain.config'; plain.write_text('[core]\n\teditor = true\n')
+            self.include(repo, str(plain))
+            self.clean(repo, runner_temp)  # no header anywhere: not an error
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}), patch.object(w.subprocess, 'run', side_effect=FileNotFoundError('git')), self.assertRaises(FileNotFoundError):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+    def test_only_the_whole_checkout_credential_filename_is_treated_as_a_credential(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            lookalike = runner_temp / 'unrelated-git-credentials-abc.config'
+            lookalike.write_text('[core]\n\teditor = keepme\n')
+            real = runner_temp / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+            real.write_text(self.HEADER)
+            self.include(repo, str(lookalike)); self.include(repo, str(real))
+            self.clean(repo, runner_temp)
+            listing = self.list_config(repo)
+            self.assertTrue(lookalike.exists())
+            self.assertIn('core.editor=keepme', listing)  # the lookalike include still applies
+            self.assertFalse(real.exists())
+            self.assertNotIn('SYNTHETIC', listing)
+    def test_model_read_boundary_denies_runner_temp_credentials_and_read_like_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root / 'review-input').mkdir()
+            (root / 'review-input/context.json').write_text('{}')
+            temp = root / 'runner_temp'; temp.mkdir()
+            creds = temp / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+            creds.write_text('SYNTHETIC')
+            (root / 'review-input/link.json').symlink_to(creds)
+            for path in (str(creds), '/home/runner/work/_temp/git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config',
+                         '.git/modules/x/config', 'review-input/link.json', 'review-input/', 'review-input/context.json/../../runner_temp/' + creds.name):
+                self.assertFalse(guard.allowed(dict(tool_name='Read', tool_input=dict(file_path=path)), root), path)
+            self.assertFalse(guard.allowed(dict(tool_name='Read', tool_input=dict(file_path='review-input/context.json', extra='x')), root))
+            for tool in ('Grep', 'Glob', 'Edit', 'NotebookEdit', 'Task', 'WebSearch'):
+                self.assertFalse(guard.allowed(dict(tool_name=tool, tool_input=dict(path=str(creds))), root), tool)
     def test_duplicate_keys_nonfinite_json_and_extra_output_fields_reject(self):
         for raw in ('{"a":1,"a":2}', '{"a":NaN}', 'not json'):
             with self.assertRaises(c.Rejected): c.decode(raw)

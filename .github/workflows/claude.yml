@@ -10,13 +10,75 @@ on:
   pull_request_review:
     types: [submitted]
 
+permissions: {}
+
 jobs:
-  claude:
+  prepare:
+    # Secret-free gate. Only a trusted human association (or an exact, owner-configured
+    # bot login) may reach the secret-bearing `claude` job. Unset or malformed
+    # CLAUDE_ALLOWED_BOTS means no bots.
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      trusted: ${{ steps.check.outputs.trusted }}
+      allowed_bots: ${{ steps.check.outputs.allowed_bots }}
+    steps:
+      - id: check
+        env:
+          ASSOCIATION: >-
+            ${{ github.event.comment.author_association
+                || github.event.review.author_association
+                || github.event.issue.author_association }}
+          BOTS: ${{ vars.CLAUDE_ALLOWED_BOTS }}
+          ACTOR: ${{ github.event.sender.login }}
+          AUTHOR: >-
+            ${{ github.event.comment.user.login
+                || github.event.review.user.login
+                || github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          ASSOCIATION="$(printf '%s' "$ASSOCIATION" | tr -d '[:space:]')"
+          trusted=false
+          case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) trusted=true ;; esac
+
+          bots=""
+          if [ -n "${BOTS:-}" ]; then
+            if printf '%s' "$BOTS" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\](,[A-Za-z0-9][A-Za-z0-9-]{0,38}\[bot\])*$'; then
+              bots="$BOTS"
+            else
+              echo "::warning::CLAUDE_ALLOWED_BOTS is malformed; ignoring it (no bots allowed)."
+            fi
+          fi
+          # An exact, owner-listed bot login also passes the gate, but only when the bot
+          # both triggered the event (sender) and wrote the content Claude will read
+          # (comment, review or issue author). A bot that merely assigns or comments on
+          # text an untrusted user wrote does not pass. Logins compare case-insensitively
+          # and exactly, with no glob matching.
+          if [ "$trusted" != true ] && [ -n "$bots" ]; then
+            actor_lc="$(printf '%s' "$ACTOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            author_lc="$(printf '%s' "$AUTHOR" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            if [ -n "$actor_lc" ] && [ "$actor_lc" = "$author_lc" ]; then
+              IFS=',' read -r -a allowed <<< "$(printf '%s' "$bots" | tr '[:upper:]' '[:lower:]')"
+              for b in "${allowed[@]}"; do
+                if [ "$b" = "$actor_lc" ]; then trusted=true; break; fi
+              done
+            fi
+          fi
+          if [ "$trusted" != true ]; then
+            echo "::notice::Author association '${ASSOCIATION}' is not OWNER, MEMBER or COLLABORATOR and actor '${ACTOR}' is not an allowed bot that authored the content (author '${AUTHOR}'). Denied."
+          fi
+          echo "trusted=${trusted}" >> "$GITHUB_OUTPUT"
+          echo "allowed_bots=${bots}" >> "$GITHUB_OUTPUT"
+
+  claude:
+    needs: prepare
+    if: needs.prepare.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,7 +100,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           use_commit_signing: true
-
+          allowed_bots: ${{ needs.prepare.outputs.allowed_bots }}
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
