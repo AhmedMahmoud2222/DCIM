@@ -504,6 +504,38 @@ class ApiAndSchemaTests(unittest.TestCase):
                 listing = self.list_config(repo)
             self.assertNotIn('SYNTHETIC', listing)
             self.assertIn('core.pager=keep', listing)
+    def include_chain(self, base, length, header_in_last=True):
+        files = [Path(base) / f'c{i}.config' for i in range(1, length + 1)]
+        for index, path in enumerate(files):
+            body = f'[include]\n\tpath = {files[index + 1]}\n' if index + 1 < length else ''
+            if index + 1 == length and header_in_last: body += self.HEADER
+            path.write_text(body)
+        return files
+    def test_a_chain_of_six_includes_is_fully_scrubbed(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            files = self.include_chain(base, 6)
+            self.include(repo, str(files[0]))
+            self.assertIn('SYNTHETIC-HDR', self.list_config(repo))
+            self.clean(repo, runner_temp)
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))
+    def test_an_include_chain_deeper_than_git_reads_fails_closed_instead_of_being_skipped(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            files = self.include_chain(base, w.MAX_INCLUDE_DEPTH + 2)
+            self.include(repo, str(files[0]))
+            # git itself refuses a chain this deep, so the first config call fails and the hook stops.
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}), self.assertRaises(c.Rejected):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+    def test_a_deep_chain_behind_a_condition_git_does_not_evaluate_is_still_rejected_not_skipped(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp = self.plain_repo(base)
+            files = self.include_chain(base, w.MAX_INCLUDE_DEPTH + 2)
+            subprocess.run(['git', '-C', str(repo), 'config', '--local', 'includeIf.gitdir:/nonexistent/.path', str(files[0])],
+                           check=True, env=self.git_env())
+            self.assertNotIn('SYNTHETIC', self.list_config(repo))  # git never reads it, so no header is effective
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}), self.assertRaisesRegex(c.Rejected, 'include chain'):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
     def test_cleanup_stops_when_a_credential_cannot_be_removed(self):
         with tempfile.TemporaryDirectory() as base:
             repo, runner_temp = self.plain_repo(base)

@@ -25,7 +25,7 @@ def witness_body(binding, run_id, attempt):
 CREDENTIALS_CONFIG = re.compile(r'git-credentials-[0-9a-f-]+\.config', re.IGNORECASE)
 EXTRAHEADER = 'http.https://github.com/.extraheader'
 INCLUDE_KEYS = r'^(include|includeif\..*)\.path$'
-MAX_INCLUDE_DEPTH = 5
+MAX_INCLUDE_DEPTH = 10  # git refuses to read a deeper include chain (config.c MAX_INCLUDE_DEPTH)
 ABSENT = 5  # git config --unset-all exits 5 when the key is not set; any other nonzero code is a real failure
 
 
@@ -72,7 +72,8 @@ def scrub_includes(root, config_file, base_dir, runner_temp, seen, depth):
             git(root, 'config', *owner, '--fixed-value', '--unset-all', key, value, ok=(0, ABSENT))
             if runner_temp and target.is_absolute() and target.parent.resolve() == Path(runner_temp).resolve():
                 target.unlink(missing_ok=True)  # a failed delete leaves the token on disk: let it raise
-        elif target.is_file() and depth < MAX_INCLUDE_DEPTH:
+        elif target.is_file():
+            require(depth < MAX_INCLUDE_DEPTH, 'credential cleanup cannot inspect an include chain this deep')
             real = target.resolve()
             if real in seen:
                 continue
