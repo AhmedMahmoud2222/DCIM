@@ -23,6 +23,10 @@ GRANT SELECT ON TABLE public.alembic_version TO dcim_preflight_0057;
 ALTER ROLE dcim_preflight_0057 SET default_transaction_read_only = on;
 ```
 
+If the application schema is not `public`, also set the role's search path so table and
+index names resolve: `ALTER ROLE dcim_preflight_0057 IN DATABASE dcim SET search_path TO <schema>;`.
+Without it, size and index fields report `relation not found in search_path`.
+
 Audit inherited and PUBLIC privileges under local policy. If catalog function
 access is restricted locally, retain the unavailable result and ask the DBA to
 supply the missing evidence rather than granting broad application data access.

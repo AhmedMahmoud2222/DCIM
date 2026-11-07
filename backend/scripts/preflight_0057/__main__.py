@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, quote_plus, urlsplit
 
 import psycopg
 from alembic.script import ScriptDirectory
@@ -96,12 +98,12 @@ def unavailable(reason: str) -> dict[str, Any]:
 def revision_state(rows: list[str] | None, scripts: ScriptDirectory, target: str) -> str:
     try:
         heads = scripts.get_heads()
-        if rows is None or len(rows) > 1 or len(heads) != 1:
+        if not rows or len(rows) > 1 or len(heads) != 1:
             return "unknown"
         chain = [r.revision for r in scripts.walk_revisions(base="base", head=heads[0])]
-        if target not in chain or (rows and rows[0] not in chain):
+        if target not in chain or rows[0] not in chain:
             return "unknown"
-        return "applied" if rows and chain.index(rows[0]) <= chain.index(target) else "pending"
+        return "applied" if chain.index(rows[0]) <= chain.index(target) else "pending"
     except Exception:
         return "unknown"
 
@@ -221,6 +223,9 @@ def _present(secret: str | None, report: dict[str, Any]) -> bool:
     escaped = json.dumps(secret, ensure_ascii=False)[1:-1]
     forms = {
         secret,
+        quote(secret, safe=""),
+        quote(secret),
+        quote_plus(secret),
         escaped,
         escaped.replace("|", "&#124;").replace("<", "&lt;"),
         secret.replace("|", "&#124;").replace("<", "&lt;"),
@@ -234,6 +239,11 @@ def write_reports(report: dict[str, Any], dsn: str, raw_id: str | None, director
     connection = conninfo_to_dict(dsn)
     # Credentials, the DSN and the raw system identifier must never appear anywhere, label included.
     hard = [dsn, raw_id, str(connection["password"]) if connection.get("password") else None]
+    try:
+        # The password exactly as typed in a URI DSN (still percent-encoded), which libpq decodes above.
+        hard.append(urlsplit(dsn).password)
+    except ValueError:
+        pass
     # Host, database and user names may equal the operator's own label (a database called
     # "staging" labelled "staging"). Scan them in a render with only the label field blanked,
     # so a leak anywhere else is still caught even when it matches the label.
@@ -248,9 +258,17 @@ def write_reports(report: dict[str, Any], dsn: str, raw_id: str | None, director
     slug = re.sub(r"[^a-zA-Z0-9_-]", "_", report["environment_label"])[:80] or "environment"
     stem = f"preflight_0057_{slug}_{report['utc_timestamp']}"
     directory.mkdir(parents=True, exist_ok=True)
-    for suffix, content in (("json", encoded), ("md", markdown)):
-        with (directory / f"{stem}.{suffix}").open("x", encoding="utf-8") as output:
-            output.write(content)
+    written: list[Path] = []
+    try:
+        for suffix, content in (("json", encoded), ("md", markdown)):
+            target = directory / f"{stem}.{suffix}"
+            with target.open("x", encoding="utf-8") as output:
+                written.append(target)
+                output.write(content)
+    except OSError:
+        for path in written:
+            path.unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -271,7 +289,9 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     report, raw_id = collect(cursor, args.environment_label)
                 finally:
-                    execute(cursor, "ROLLBACK", phase="teardown")
+                    # A dead connection must not replace the original Refused (exit 2) with exit 3.
+                    with contextlib.suppress(psycopg.Error):
+                        execute(cursor, "ROLLBACK", phase="teardown")
         finally:
             conn.close()
         write_reports(report, dsn, raw_id, args.output_dir)

@@ -23,7 +23,7 @@ def test_revision_states(tmp_path):
         (versions / f"{revision}.py").write_text(f"revision = {revision!r}\ndown_revision = {parent!r}\n")
     scripts = ScriptDirectory(str(tmp_path))
     for rows, expected in (
-        ([], "pending"),
+        ([], "unknown"),
         (["before"], "pending"),
         (["target"], "applied"),
         (["after"], "applied"),
@@ -117,6 +117,53 @@ def test_label_may_equal_connection_name_but_other_leaks_still_refuse(tmp_path, 
     with pytest.raises(p.Refused, match="connection identifier"):
         p.write_reports(report, dsn, raw, tmp_path)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("label", ["sentinel%22password", "sentinel%20pass+word", "sentinel+pass%2Fword"])
+def test_percent_encoded_password_in_label_is_refused(tmp_path, label):
+    from urllib.parse import unquote, unquote_plus
+
+    dsn = f"postgresql://sentinel-user:{label}@sentinel-host/sentinel-db"
+    assert unquote(label) != label or unquote_plus(label) != label
+    report, raw = p.collect(EvidenceCursor(), label)
+    with pytest.raises(p.Refused, match="credential"):
+        p.write_reports(report, dsn, raw, tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_markdown_write_failure_leaves_no_orphan_json(tmp_path, monkeypatch):
+    report, raw = p.collect(EvidenceCursor(), "staging")
+    real_open = p.Path.open
+    calls = []
+
+    def flaky(self, *a, **kw):
+        calls.append(self.suffix)
+        if self.suffix == ".md":
+            raise OSError("disk full")
+        return real_open(self, *a, **kw)
+
+    monkeypatch.setattr(p.Path, "open", flaky)
+    with pytest.raises(OSError):
+        p.write_reports(report, "postgresql://sentinel-user:longpassword@sentinel-host/sentinel-db", raw, tmp_path)
+    assert calls == [".json", ".md"]
+    assert not list(tmp_path.iterdir())
+
+
+def test_dead_connection_at_teardown_keeps_refused_exit_code(monkeypatch, tmp_path):
+    cursor = SetupCursor("on", "on")
+    real_execute = cursor.execute
+
+    def execute(query, params=None):
+        if query == "ROLLBACK":
+            raise p.psycopg.OperationalError("connection lost")
+        real_execute(query, params)
+
+    cursor.execute = execute
+    connection = MagicMock()
+    connection.cursor.return_value.__enter__.return_value = cursor
+    monkeypatch.setenv("DCIM_PREFLIGHT_0057_DSN", "postgresql://sentinel-user:longpassword@sentinel-host/sentinel-db")
+    monkeypatch.setattr(p.psycopg, "connect", lambda *a, **kw: connection)
+    assert p.main(["--environment-label", "staging", "--output-dir", str(tmp_path)]) == 2
 
 
 @pytest.mark.parametrize("password", ['sentinel"password', "sentinel\\password", "sentinel<pass|word", "sentinel%22password"])
