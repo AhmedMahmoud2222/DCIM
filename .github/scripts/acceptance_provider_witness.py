@@ -21,20 +21,26 @@ def witness_body(binding, run_id, attempt):
 
 
 # actions/checkout v7 with persist-credentials writes its token to a file under RUNNER_TEMP and points at
-# it from the repo-local config (include.path / includeIf.gitdir:<dir>.path). This is the name it uses.
-CREDENTIALS_CONFIG = re.compile(r'git-credentials-[0-9a-f-]+\.config$', re.IGNORECASE)
+# it from the repo-local config (include.path / includeIf.gitdir:<dir>.path). This is the whole basename.
+CREDENTIALS_CONFIG = re.compile(r'git-credentials-[0-9a-f-]+\.config', re.IGNORECASE)
 EXTRAHEADER = 'http.https://github.com/.extraheader'
+INCLUDE_KEYS = r'^(include|includeif\..*)\.path$'
+MAX_INCLUDE_DEPTH = 5
+ABSENT = 5  # git config --unset-all exits 5 when the key is not set; any other nonzero code is a real failure
 
 
-def git(root, *args, check=False):
-    return subprocess.run(['git', '-C', str(root), *args], check=check,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def git(root, *args, ok=(0,)):
+    done = subprocess.run(['git', '-C', str(root), *args], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL, check=False)
+    require(done.returncode in ok, f'credential cleanup failed: git config exit {done.returncode}')
 
 
-def include_paths(root):
-    """(key, value) for every repo-local include.path / includeIf.*.path entry."""
-    done = subprocess.run(['git', '-C', str(root), 'config', '--local', '-z', '--get-regexp',
-                           r'^(include|includeif\..*)\.path$'], capture_output=True, text=True, check=False)
+def include_pointers(root, config_file=None):
+    """(key, value) for every include.path / includeIf.*.path entry in the repo-local config or one file."""
+    where = ['--file', str(config_file)] if config_file else ['--local']
+    done = subprocess.run(['git', '-C', str(root), 'config', *where, '-z', '--get-regexp', INCLUDE_KEYS],
+                          capture_output=True, text=True, check=False)
+    require(done.returncode in (0, 1), 'credential cleanup could not read include entries')  # 1: no match
     pairs = []
     for record in done.stdout.split('\0') if done.returncode == 0 else []:
         key, _, value = record.partition('\n')
@@ -43,24 +49,44 @@ def include_paths(root):
     return pairs
 
 
+def git_common_dir(root):
+    done = subprocess.run(['git', '-C', str(root), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                          capture_output=True, text=True, check=False)
+    require(done.returncode == 0 and done.stdout.strip(), 'credential cleanup could not locate the git directory')
+    return Path(done.stdout.strip())
+
+
+def resolve_include(value, base_dir):
+    """Git's include-path semantics: ~ expands to the home directory, a relative path is relative to the
+    directory of the config file that contains the include."""
+    path = Path(os.path.expanduser(value))
+    return path if path.is_absolute() else Path(base_dir) / path
+
+
+def scrub_includes(root, config_file, base_dir, runner_temp, seen, depth):
+    for key, value in include_pointers(root, config_file):
+        target = resolve_include(value, base_dir)
+        owner = ['--file', str(config_file)] if config_file else ['--local']
+        if CREDENTIALS_CONFIG.fullmatch(target.name):
+            # Stop git from reading the token file, then delete it when it sits directly in RUNNER_TEMP.
+            git(root, 'config', *owner, '--fixed-value', '--unset-all', key, value, ok=(0, ABSENT))
+            if runner_temp and target.is_absolute() and target.parent.resolve() == Path(runner_temp).resolve():
+                target.unlink(missing_ok=True)  # a failed delete leaves the token on disk: let it raise
+        elif target.is_file() and depth < MAX_INCLUDE_DEPTH:
+            real = target.resolve()
+            if real in seen:
+                continue
+            seen.add(real)
+            # Any other included file must not carry the checkout header either, nor may files it includes.
+            git(root, 'config', '--file', str(target), '--unset-all', EXTRAHEADER, ok=(0, ABSENT))
+            scrub_includes(root, target, target.parent, runner_temp, seen, depth + 1)
+
+
 def clear_git_credentials(root, repository):
     git(root, 'config', '--local', '--replace-all', 'remote.origin.url',
-        'https://github.com/' + repository + '.git', check=True)
-    git(root, 'config', '--local', '--unset-all', EXTRAHEADER)
-    runner_temp = os.environ.get('RUNNER_TEMP', '')
-    for key, value in include_paths(root):
-        if CREDENTIALS_CONFIG.search(value):
-            # Stop git from reading the token file, then delete it when it sits directly in RUNNER_TEMP.
-            git(root, 'config', '--local', '--fixed-value', '--unset-all', key, value)
-            target = Path(value)
-            if runner_temp and target.is_absolute() and target.parent.resolve() == Path(runner_temp).resolve():
-                try:
-                    target.unlink(missing_ok=True)
-                except OSError:
-                    pass
-        else:
-            # Any other included file must not carry the checkout header either.
-            git(root, 'config', '--file', value, '--unset-all', EXTRAHEADER)
+        'https://github.com/' + repository + '.git')
+    git(root, 'config', '--local', '--unset-all', EXTRAHEADER, ok=(0, ABSENT))
+    scrub_includes(root, None, git_common_dir(root), os.environ.get('RUNNER_TEMP', ''), set(), 0)
 
 
 def main():
