@@ -94,3 +94,4 @@ rollback follow steps 5 and 6 above and decide on `alembic downgrade -1` versus 
 
 This hold does not validate 0057. Environment `alembic_version` evidence, representative staging benchmarks, operator thresholds
 and DBA/owner approval remain outstanding.
+Collect environment evidence and complete the decision package with [the read-only preflight kit](FK_INDEX_PREFLIGHT_0057.md).
