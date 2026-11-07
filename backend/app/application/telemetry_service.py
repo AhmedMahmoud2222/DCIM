@@ -710,7 +710,7 @@ async def project_reading_to_latest_status(db: AsyncSession, *, reading_id: uuid
         if current is not None and current.sampled_at >= reading.occurred_at:
             continue
         payload = dict(current.payload) if current is not None else {}
-        payload[key] = float(reading.value * factor)
+        payload[key] = float(Decimal(str(reading.value)) * factor)
         if _LATEST_STATUS_REQUIRED_KEY[target_type] not in payload:
             continue
         await record_latest_status(db, binding_id=binding.id, payload=payload, sampled_at=reading.occurred_at)
