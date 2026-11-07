@@ -72,3 +72,31 @@ async def test_reading_without_matching_binding_stays_history_only(client, auth_
     assert resp.json()["results"][0]["status"] == "accepted"
     [item] = await _latest(client, headers, equipment)
     assert item["status_level"] is None
+
+
+async def test_projection_fault_does_not_reject_the_stored_reading_or_its_batch_peers(
+    client, auth_headers, db_session, monkeypatch
+):
+    headers = await _admin(auth_headers)
+    collector, integration = await _setup(client, auth_headers, db_session)
+    equipment, _ = await _env_binding(client, headers, "ext")
+    now = datetime.now(UTC)
+
+    async def faulty_projection(db, *, reading_id):
+        raise RuntimeError("projection fault")
+
+    monkeypatch.setattr("app.api.v1.telemetry.project_reading_to_latest_status", faulty_projection)
+    first, second = uuid.uuid4().hex, uuid.uuid4().hex
+    batch = [
+        _record(integration, first, now, 33.0),
+        _record(integration, second, now + timedelta(seconds=1), 20.0),
+    ]
+    resp = await _post(client, collector, batch)
+    assert resp.status_code == 200, resp.text
+    assert [result["status"] for result in resp.json()["results"]] == ["accepted", "accepted"]
+
+    # The overlay was not fed, but both readings were stored: redelivering one is a duplicate, not a new reading.
+    [item] = await _latest(client, headers, equipment)
+    assert item["status_level"] is None
+    again = await _post(client, collector, [_record(integration, first, now, 33.0)])
+    assert again.json()["results"][0]["status"] == "duplicate"

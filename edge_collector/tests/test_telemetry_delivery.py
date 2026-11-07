@@ -124,6 +124,13 @@ def test_raw_numeral_is_exact_and_unscaled():
     assert Decimal("21.50") == Decimal(collect_raw_numeral(Session(Varbind(OID, TAG_OCTET_STRING, b"21.50")), OID))
 
 
+def test_zero_length_integer_encoding_is_malformed_not_zero():
+    for tag in (TAG_INTEGER, 0x41, 0x42, 0x43):  # INTEGER, Counter32, Gauge32, TimeTicks
+        with pytest.raises(SNMPError):
+            collect_raw_numeral(Session(Varbind(OID, tag, b"")), OID)
+    assert collect_raw_numeral(Session(Varbind(OID, TAG_INTEGER, b"\x00")), OID) == "0"  # a real zero is still zero
+
+
 def telemetry_record(record_id="r1"):
     payload = {
         "record_type": "telemetry", "integration_id": INTEGRATION, "source_identifier": OID, "external_identifier": OID,

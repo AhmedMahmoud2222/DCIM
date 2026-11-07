@@ -112,6 +112,8 @@ def collect_raw_numeral(session: SNMPv3Session | SNMPv2cSession, oid: str) -> st
         raise SNMPUnknownOIDError("OID is not available on the agent")
     try:
         if varbind.tag in _INTEGER_TAGS:
+            if not varbind.value:
+                raise ValueError("empty integer encoding")  # a zero-length INTEGER is malformed, not the number 0
             return str(int.from_bytes(varbind.value, byteorder="big", signed=varbind.tag == 0x02))
         if varbind.tag == 0x04:
             return value_numeral(varbind.value.decode("ascii").strip())
