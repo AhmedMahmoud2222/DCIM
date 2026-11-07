@@ -7,6 +7,7 @@ identity/run evidence only and contains no review verdict or approval.
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 
 from acceptance_api import GitHub
@@ -19,13 +20,47 @@ def witness_body(binding, run_id, attempt):
         dict(version=1, binding=binding, run_id=run_id, attempt=attempt), sort_keys=True)
 
 
+# actions/checkout v7 with persist-credentials writes its token to a file under RUNNER_TEMP and points at
+# it from the repo-local config (include.path / includeIf.gitdir:<dir>.path). This is the name it uses.
+CREDENTIALS_CONFIG = re.compile(r'git-credentials-[0-9a-f-]+\.config$', re.IGNORECASE)
+EXTRAHEADER = 'http.https://github.com/.extraheader'
+
+
+def git(root, *args, check=False):
+    return subprocess.run(['git', '-C', str(root), *args], check=check,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def include_paths(root):
+    """(key, value) for every repo-local include.path / includeIf.*.path entry."""
+    done = subprocess.run(['git', '-C', str(root), 'config', '--local', '-z', '--get-regexp',
+                           r'^(include|includeif\..*)\.path$'], capture_output=True, text=True, check=False)
+    pairs = []
+    for record in done.stdout.split('\0') if done.returncode == 0 else []:
+        key, _, value = record.partition('\n')
+        if key and value:
+            pairs.append((key, value))
+    return pairs
+
+
 def clear_git_credentials(root, repository):
-    subprocess.run(['git', '-C', str(root), 'config', '--local', '--replace-all',
-                    'remote.origin.url', 'https://github.com/' + repository + '.git'],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(['git', '-C', str(root), 'config', '--local', '--unset-all',
-                    'http.https://github.com/.extraheader'], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    git(root, 'config', '--local', '--replace-all', 'remote.origin.url',
+        'https://github.com/' + repository + '.git', check=True)
+    git(root, 'config', '--local', '--unset-all', EXTRAHEADER)
+    runner_temp = os.environ.get('RUNNER_TEMP', '')
+    for key, value in include_paths(root):
+        if CREDENTIALS_CONFIG.search(value):
+            # Stop git from reading the token file, then delete it when it sits directly in RUNNER_TEMP.
+            git(root, 'config', '--local', '--fixed-value', '--unset-all', key, value)
+            target = Path(value)
+            if runner_temp and target.is_absolute() and target.parent.resolve() == Path(runner_temp).resolve():
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        else:
+            # Any other included file must not carry the checkout header either.
+            git(root, 'config', '--file', value, '--unset-all', EXTRAHEADER)
 
 
 def main():

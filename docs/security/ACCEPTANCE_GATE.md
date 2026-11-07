@@ -28,8 +28,17 @@ AI dispatcher or blanket write permissions are introduced.
    it. It posts a fixed identity/run/binding witness and validates API-returned
    user ID/login/type and App ID/slug. The witness contains **no verdict**. A local
    exclusive-create record prevents duplicate posts after ambiguous failures.
-5. Native agent mode persists its token in `.git/config`; the startup hook removes
-   it before any network work/model turn. An exclusive PreToolUse guard permits
+5. Native agent mode persists its token in the `origin` URL in `.git/config`. If a
+   checkout step persisted credentials, `actions/checkout` v7 also writes a token
+   file `git-credentials-<id>.config` under `$RUNNER_TEMP` and points at it from
+   repo-local `include.path` or `includeIf.gitdir:<dir>.path` entries. The review
+   workflows set `persist-credentials: false`, so no such file is expected, but the
+   startup hook removes every form before any network work/model turn: it resets
+   `origin`, unsets the local `extraheader`, removes include entries that point at a
+   `git-credentials-*.config` file and deletes that file when it sits directly in
+   `$RUNNER_TEMP`, and unsets the `extraheader` in any other included file. The
+   pinned Claude action clears the header from `include.path` files only, so the
+   `includeIf` form is covered here. An exclusive PreToolUse guard permits
    only Read of the prepared context file and the native StructuredOutput result
    transport. It denies git configuration, credentials, process environments,
    arbitrary files, shell, write, network and MCP tools. Static deny rules add

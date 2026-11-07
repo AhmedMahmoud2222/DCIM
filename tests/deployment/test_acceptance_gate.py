@@ -410,6 +410,77 @@ class ApiAndSchemaTests(unittest.TestCase):
             url = subprocess.check_output(['git', '-C', tmp, 'remote', 'get-url', 'origin'], text=True).strip()
             self.assertEqual(url, 'https://github.com/AhmedMahmoud2222/DCIM.git')
             self.assertNotEqual(subprocess.run(['git', '-C', tmp, 'config', '--get', 'http.https://github.com/.extraheader'], capture_output=True).returncode, 0)
+    def git_env(self):
+        return {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+    def make_repo_with_checkout_credentials(self, base):
+        repo, runner_temp = Path(base) / 'work/DCIM', Path(base) / 'runner_temp'
+        repo.mkdir(parents=True); runner_temp.mkdir()
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=self.git_env())
+        creds = runner_temp / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+        creds.write_text('[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic SYNTHETIC-CHECKOUT\n')
+        benign = Path(base) / 'other.config'
+        benign.write_text('[core]\n\teditor = true\n[http "https://github.com/"]\n\textraheader = AUTHORIZATION: SYNTHETIC-INCLUDED\n')
+        def cfg(*args): subprocess.run(['git', '-C', str(repo), 'config', '--local', *args], check=True, env=self.git_env())
+        cfg('remote.origin.url', 'https://x-access-token:SYNTHETIC@github.com/AhmedMahmoud2222/DCIM.git')
+        cfg(f'includeIf.gitdir:{repo}/.git.path', str(creds))
+        cfg(f'includeIf.gitdir:{repo}/.git/worktrees/*.path', str(creds))
+        cfg('include.path', str(benign))
+        cfg('user.name', 'keep-me')
+        return repo, runner_temp, creds, benign
+    def list_config(self, repo):
+        return subprocess.check_output(['git', '-C', str(repo), 'config', '--list', '--show-origin'], text=True, env=self.git_env())
+    def test_startup_removes_checkout_credential_includes_and_their_files(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp, creds, benign = self.make_repo_with_checkout_credentials(base)
+            self.assertIn('SYNTHETIC-CHECKOUT', self.list_config(repo))
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+            listing = self.list_config(repo)
+            self.assertNotIn('SYNTHETIC', listing)
+            self.assertNotIn('git-credentials', listing)
+            self.assertFalse(creds.exists())
+            self.assertIn('user.name=keep-me', listing)
+            self.assertIn('core.editor=true', listing)  # a non-credential include still applies
+            self.assertIn(str(benign), listing)
+            self.assertIn('remote.origin.url=https://github.com/AhmedMahmoud2222/DCIM.git', listing)
+    def test_startup_credential_cleanup_never_deletes_files_outside_runner_temp(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp, creds, benign = self.make_repo_with_checkout_credentials(base)
+            elsewhere = Path(base) / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+            elsewhere.write_text(creds.read_text())
+            subprocess.run(['git', '-C', str(repo), 'config', '--local', '--fixed-value', '--replace-all',
+                            f'includeIf.gitdir:{repo}/.git.path', str(elsewhere), str(creds)], check=True, env=self.git_env())
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+            self.assertNotIn('git-credentials', self.list_config(repo))  # the pointer is gone
+            self.assertTrue(elsewhere.exists())  # but a file outside RUNNER_TEMP is left alone
+    def test_startup_credential_cleanup_is_idempotent_and_safe_on_a_clean_repo(self):
+        with tempfile.TemporaryDirectory() as base:
+            repo, runner_temp, creds, benign = self.make_repo_with_checkout_credentials(base)
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+                first = self.list_config(repo)
+                w.clear_git_credentials(repo, 'AhmedMahmoud2222/DCIM')
+            self.assertEqual(first, self.list_config(repo))
+            clean = Path(base) / 'clean'; clean.mkdir()
+            subprocess.run(['git', 'init', '-q', str(clean)], check=True, env=self.git_env())
+            with patch.dict(os.environ, {'RUNNER_TEMP': str(runner_temp)}):
+                w.clear_git_credentials(clean, 'AhmedMahmoud2222/DCIM')
+            self.assertIn('remote.origin.url=https://github.com/AhmedMahmoud2222/DCIM.git', self.list_config(clean))
+    def test_model_read_boundary_denies_runner_temp_credentials_and_read_like_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root / 'review-input').mkdir()
+            (root / 'review-input/context.json').write_text('{}')
+            temp = root / 'runner_temp'; temp.mkdir()
+            creds = temp / 'git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config'
+            creds.write_text('SYNTHETIC')
+            (root / 'review-input/link.json').symlink_to(creds)
+            for path in (str(creds), '/home/runner/work/_temp/git-credentials-0a1b2c3d-1111-2222-3333-444455556666.config',
+                         '.git/modules/x/config', 'review-input/link.json', 'review-input/', 'review-input/context.json/../../runner_temp/' + creds.name):
+                self.assertFalse(guard.allowed(dict(tool_name='Read', tool_input=dict(file_path=path)), root), path)
+            self.assertFalse(guard.allowed(dict(tool_name='Read', tool_input=dict(file_path='review-input/context.json', extra='x')), root))
+            for tool in ('Grep', 'Glob', 'Edit', 'NotebookEdit', 'Task', 'WebSearch'):
+                self.assertFalse(guard.allowed(dict(tool_name=tool, tool_input=dict(path=str(creds))), root), tool)
     def test_duplicate_keys_nonfinite_json_and_extra_output_fields_reject(self):
         for raw in ('{"a":1,"a":2}', '{"a":NaN}', 'not json'):
             with self.assertRaises(c.Rejected): c.decode(raw)
