@@ -68,11 +68,48 @@ The executor trusts nothing from request time. Immediately before each action it
 4. Global kill switch and per-action-type switch currently allow execution. Both default to disabled.
 5. Change window is open (needs a change-window source; none exists, decision 7).
 6. Blast radius within policy: target count, dependents from `impact_service` / power graph, site and rack limits.
-7. Idempotency claim (`idempotency.get_or_claim`) for `plan_id + attempt`; a lost claim means do nothing.
+7. Execution guard of section 4a (durable intent for the stable logical action). The request-level `idempotency.get_or_claim` is **not** the execution guard: it reclaims processing claims after 30 seconds and its fencing protects only the database completion, not an external side effect. A lost or unresolved guard means do nothing.
 8. No conflicting plan on the same target (advisory lock per target, lock order by id to avoid deadlocks).
 9. Simulation result still valid for current versions; stale simulation blocks execution.
 
 A failed recheck ends in `invalidated` or `expired`, never in a best-effort run.
+
+## 4a. Durable execution intent and uncertain-outcome reconciliation (PROPOSED)
+
+Design only. This closes the review finding that request-level idempotency cannot prevent a duplicate external send after a worker crash.
+
+**Stable logical-action key.** `action_key = sha256(plan_hash || target_id || action_type || step_index)`. It contains no `attempt`, worker id or timestamp. Every retry, redelivery, reclaimed task or restarted worker for the same plan step derives the same key. A new attempt never obtains an unrelated guard.
+
+**Intent record (`execution_intent`, new table).** Unique constraint on `action_key`. Columns: `action_key`, `plan_id`, `plan_hash`, `target_id`, `state` (`intent_recorded | send_started | confirmed | failed_definite | outcome_uncertain | reconciled_applied | reconciled_not_applied | abandoned`), `adapter_correlation_id` (a value sent to the external system where it supports one), `worker_id`, `lease_expires_at`, `created_at`, `updated_at`, `reason_code`. Rows are never deleted by the executor.
+
+**Order of operations in `execute()`:**
+1. In one database transaction: recheck (section 4); consume the approval (set `used_at` with a conditional `UPDATE ... WHERE used_at IS NULL`, zero rows updated aborts); insert the `execution_intent` row in `intent_recorded`; move the plan to `executing`; write audit and outbox rows. Approval consumption, the intent insert and the state transition commit or roll back together.
+2. Commit. Only then compare-and-set the intent to `send_started` and persist it **before** the adapter performs the external call.
+3. Call the adapter. Record `confirmed` or `failed_definite` only on an unambiguous adapter result.
+4. Any state other than `intent_recorded` found by a worker means a previous worker may have sent. That worker does not send.
+
+**Crash and reclaim rules.**
+- A row in `send_started` whose lease expired, or any timeout, lost connection or ambiguous response, becomes `outcome_uncertain`. It is never reclaimed for execution, never auto-retried, and never re-sent by a Celery redelivery.
+- A row still in `intent_recorded` with an expired lease proves no send began (step 2 had not committed); a worker may take the lease by compare-and-set and continue. This is the only automatic re-entry.
+- `confirmed` and `failed_definite` are terminal for that key. Retrying after `failed_definite`, or after reconciliation as `reconciled_not_applied`, requires a **new plan** (new `plan_hash`, so a new `action_key`) and a new approval.
+
+**Approved reconciliation path.**
+1. The executor runs the plan's `verification` checks and the adapter's read-only `verify()` (and, where the external system supports it, a lookup by `adapter_correlation_id`). It records the evidence, and does not change state on its own.
+2. A human holding the action's reconcile permission, who is not the sole requester for actions above the lowest risk class, records the decision `reconciled_applied` or `reconciled_not_applied` with a reason. The decision is audited (`write_audit_log`, same transaction) and published through `write_outbox_event`.
+3. `reconciled_applied` ends the plan as succeeded-with-note. `reconciled_not_applied` allows only a new plan. `abandoned` closes it with no further action.
+4. An `outcome_uncertain` row older than the policy age raises a page; it never expires into a retry.
+
+**No-op safe actions** (idempotent notification-style actions) still record intent. Resending requires a new plan, because a duplicate notification is a visible side effect.
+
+**Acceptance tests (fail-closed, mutation-sensitive).**
+- **A1 crash after side effect:** the adapter fake records the send, then the worker process is killed before `confirmed` is written. After lease expiry, the Celery task is redelivered and the claim in `idempotency` is reclaimed after 30 s. Expected: the fake observes exactly one send; the row is `outcome_uncertain`; the plan is not `executing`; a page is raised.
+- **A2 crash before send:** kill after step 1 and before `send_started`. Expected: a second worker continues and the fake observes exactly one send.
+- **A3 stable key across attempts:** two attempts for the same plan step produce the same `action_key`; a different `plan_hash` or `target_id` produces a different one. Mutation check: adding `attempt` to the key must fail this test.
+- **A4 concurrent workers:** two workers race on one key; exactly one reaches `send_started`.
+- **A5 approval atomicity:** inject failure after approval consumption and before the intent insert; both roll back and the approval remains unused. A second consumer of the same approval updates zero rows and sends nothing.
+- **A6 reconciliation:** from `outcome_uncertain`, an unauthorized user cannot reconcile; an authorized, audited decision moves to `reconciled_applied` or `reconciled_not_applied`; neither triggers a send; a retry only via a new plan and approval.
+- **A7 ambiguous response and timeout:** both yield `outcome_uncertain`, not `failed_definite`.
+- **A8 idempotency expiry:** the request-level claim expiring or being reclaimed never causes a send when the intent row exists.
 
 ## 5. Execution adapters and recovery
 
@@ -100,7 +137,7 @@ M6 builds the gate logic and tests it with a simulated adapter. Production auton
 | T8 | Sensitive prompts and logs | Secrets, emails or topology in prompts, logs, traces | Typed redaction before provider and audit; hash-only audit default; logs carry fixed fields (pattern from `telemetry_ledger`) | Log/audit scrape test for planted secrets |
 | T9 | Unauthorized tool calls and target selection | Model picks a target outside scope; widens a selector | Explicit target UUIDs checked per caller; no selector expansion by the model | Target outside scope rejected at plan validation and at execution |
 | T10 | Approval replay, expired plans, queue delay | Reuse of old approval; plan run hours later | Approval bound to `plan_hash`, single-use, expiry rechecked at execution | Replay, expiry-in-queue, changed-version tests |
-| T11 | Provider outage, retries, uncertain outcome | Timeout after side effect; duplicate delivery | No model on the write path; evidence-only fallback; `outcome_uncertain` state; idempotency claim per attempt | Failure-injection on adapter timeout |
+| T11 | Provider outage, retries, uncertain outcome | Timeout after side effect; duplicate delivery | No model on the write path; evidence-only fallback; `outcome_uncertain` state; durable `execution_intent` keyed to a stable logical action, persisted before send (section 4a); human reconciliation, no reclaim or auto-retry | Failure-injection on adapter timeout; crash-after-side-effect tests A1-A8 (section 4a) |
 | T12 | Privilege creep through the AI permission | `assistant:use` treated as read access | Feature gate only; every tool checks its own code | User with `assistant:use` and no `alarm:read` gets `denied` for alarms |
 | T13 | Cost and denial of service | Huge windows, many questions | Bounds in the M2 document section 9; per-user quotas; dedicated queue | Bound enforcement tests |
 | T14 | Supply chain / provider change | Model version changes behavior silently | Pin provider model id in the response `versions`; evaluation rerun on change | Version recorded in every response |
