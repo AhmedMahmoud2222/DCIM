@@ -88,6 +88,52 @@ def test_one_failing_oid_does_not_block_its_sibling(tmp_path):
     assert [r.payload["source_identifier"] for r in records] == [other]
 
 
+def test_dead_device_costs_two_timeouts_not_one_per_pinned_oid(tmp_path):
+    oids = [f"1.3.6.1.4.1.9999.{n}.1.0" for n in range(1, 7)]
+    many = ContractBook({k: v for o in oids for k, v in book(o).pins.items()})
+    queue = SQLiteQueue(CollectorConfig(tmp_path / "q.db"))
+    calls = []
+
+    def reader(item, target, oid):
+        calls.append(oid)
+        raise TimeoutError
+
+    scheduler = ScheduledTelemetry(lambda: [plan_item()], lambda: many, reader, clock=lambda: 1.0, wall_clock=lambda: NOW)
+    try:
+        for _ in range(2):
+            scheduler.tick(queue); finish(scheduler)
+        scheduler.tick(queue)
+    finally:
+        scheduler.close()
+        queue.close()
+    assert len(calls) == 2
+
+
+def test_a_success_resets_the_timeout_count(tmp_path):
+    oids = [f"1.3.6.1.4.1.9999.{n}.1.0" for n in range(1, 6)]
+    many = ContractBook({k: v for o in oids for k, v in book(o).pins.items()})
+    queue = SQLiteQueue(CollectorConfig(tmp_path / "q.db"))
+    calls = []
+
+    def reader(item, target, oid):
+        calls.append(oid)
+        if len(calls) in (1, 3, 5):
+            raise TimeoutError
+        return "7"
+
+    scheduler = ScheduledTelemetry(lambda: [plan_item()], lambda: many, reader, clock=lambda: 1.0, wall_clock=lambda: NOW)
+    try:
+        for _ in range(2):
+            scheduler.tick(queue); finish(scheduler)
+        scheduler.tick(queue)
+        records = queue.list_due(NOW)
+    finally:
+        scheduler.close()
+        queue.close()
+    assert len(calls) == 5  # the count reset after each success, so the device was never abandoned
+    assert records and records[-1].payload["source_identifier"] == oids[3]
+
+
 def test_integration_without_a_pin_is_never_polled(tmp_path):
     queue = SQLiteQueue(CollectorConfig(tmp_path / "q.db"))
     calls = []

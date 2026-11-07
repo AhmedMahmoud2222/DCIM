@@ -6,6 +6,7 @@ runtime thread writes the durable queue. Central's authenticated plans decide wh
   * the discovery plan supplies each assigned integration's target and polling interval;
   * the telemetry-contracts plan supplies `(integration_id, source_identifier)` pins. `source_identifier` is the numeric
     OID to GET. A source without a pin is never polled, so an unpinned value cannot be queued.
+  * a device that times out `MAX_CONSECUTIVE_TIMEOUTS` times in a row is skipped for the rest of that cycle.
 
 `external_identifier` is the source OID. A Central `PortTelemetryBinding` with protocol `snmp` and the same `external_ref`
 receives the reading in the rack overlay when its `equipment_id` is the asset the mapping names.
@@ -20,11 +21,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .queue import QueueRecord, SQLiteQueue
-from .snmp import SNMPTarget
+from .snmp import SNMPTarget, SNMPTimeoutError
 from .telemetry_contract import ContractBook, telemetry_record_payload
 
 TELEMETRY_RECORD_TYPE = "telemetry"
 MAX_PLAN_INTEGRATIONS = 500
+# Consecutive timeouts after which the rest of a device's OIDs are skipped for this cycle, so one dead device costs
+# at most this many per-OID timeouts instead of one per pinned OID.
+MAX_CONSECUTIVE_TIMEOUTS = 2
 
 # (item, oid) -> exact numeral text; raises on any device or transport fault.
 Reader = Callable[[Mapping[str, Any], SNMPTarget, str], str]
@@ -107,15 +111,20 @@ class ScheduledTelemetry:
         integration_id = str(item["integration_id"])
         target = SNMPTarget(str(item["target_host"]), int(item.get("target_port") or 161))
         records: list[QueueRecord] = []
+        timeouts = 0
         for (pinned_integration, oid), _pin in sorted(book.pins.items()):
             if pinned_integration != str(uuid.UUID(integration_id)):
                 continue
+            if timeouts >= MAX_CONSECUTIVE_TIMEOUTS:
+                break
             try:
                 numeral = self._reader(item, target, oid)
+                timeouts = 0
                 payload = telemetry_record_payload(
                     book, integration_id=integration_id, source_identifier=oid, external_identifier=oid, value=numeral,
                 )
-            except Exception:  # noqa: BLE001, S112 - one OID's fault must not stop its siblings
+            except Exception as error:  # noqa: BLE001 - one OID's fault must not stop its siblings
+                timeouts = timeouts + 1 if isinstance(error, TimeoutError | SNMPTimeoutError) else 0
                 continue
             payload["record_type"] = TELEMETRY_RECORD_TYPE
             records.append(QueueRecord(uuid.uuid4().hex, sampled_at, payload))
