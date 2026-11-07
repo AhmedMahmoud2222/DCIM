@@ -46,7 +46,8 @@ function telemetryTooltip(telemetry: LatestPortStatus | null): string | null {
   }
   if (telemetry.target_type === "power_inlet") {
     const p = telemetry.payload as PowerInletStatusPayload;
-    return `${p.active_power_watts.toFixed(0)} W | ${p.current_amps.toFixed(1)} A (${telemetry.status_level})`;
+    const amps = p.current_amps === undefined ? "" : ` | ${p.current_amps.toFixed(1)} A`;
+    return `${p.active_power_watts.toFixed(0)} W${amps} (${telemetry.status_level})`;
   }
   const p = telemetry.payload as EnvironmentalStatusPayload;
   return `${p.temperature_celsius.toFixed(1)}°C (${telemetry.status_level})`;
