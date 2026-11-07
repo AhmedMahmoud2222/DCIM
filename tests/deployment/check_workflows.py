@@ -59,9 +59,12 @@ def collect_artifact_pins(node, workflow):
     if isinstance(node, dict):
         ref = node.get('uses')
         if isinstance(ref, str):
-            match = re.fullmatch(r'actions/(upload-artifact|download-artifact)@([0-9a-f]{40})', ref)
+            # GitHub resolves the owner and repository case-insensitively, so match the name that way.
+            # The SHA stays lowercase hex, as check_action_refs requires.
+            match = re.fullmatch(r'(?i:actions/(upload-artifact|download-artifact))@([0-9a-f]{40})', ref)
+            action = match.group(1).lower() if match else None
             if match:
-                artifact_pins[match.group(1)].setdefault(match.group(2), set()).add(str(workflow))
+                artifact_pins[action].setdefault(match.group(2), set()).add(str(workflow))
         for value in node.values():
             collect_artifact_pins(value, workflow)
     elif isinstance(node, list):

@@ -82,6 +82,25 @@ class WorkflowActionPinsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
 
+    def test_mixed_case_artifact_action_name_is_still_checked(self):
+        def mutate(path):
+            (path.parent / 'mixed-case.yml').write_text(
+                'name: mixed\non: workflow_dispatch\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+                '    steps:\n      - uses: Actions/Upload-Artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n'
+            )
+        result = self.run_check(mutate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
+
+    def test_mixed_case_artifact_action_name_with_the_approved_pin_passes(self):
+        def mutate(path):
+            (path.parent / 'mixed-case.yml').write_text(
+                'name: mixed\non: workflow_dispatch\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+                '    steps:\n      - uses: Actions/Upload-Artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n'
+            )
+        result = self.run_check(mutate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
