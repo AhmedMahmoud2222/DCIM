@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from .queue import QueueRecord
-from .telemetry_contract import ContractBook, ContractPlanError
+from .telemetry_contract import ContractBook, ContractPlanError, classify_telemetry_ack
 
 PERMANENT_REJECTION_CODES = frozenset({"INVALID_PAYLOAD"})
 PERMANENT_PAYLOAD_STATUSES = frozenset({400, 413, 422})
@@ -77,6 +77,34 @@ class CentralClient:
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise MalformedResponseError("central response was not JSON") from error
         return self._parse_ack(response_body, batch_id=batch_id, record_ids=record_ids)
+
+    def flush_telemetry(self, records: Sequence[QueueRecord]) -> AckResult:
+        """Deliver pinned telemetry records to `POST /collectors/{id}/telemetry`; Central acks each record."""
+        if not records:
+            return AckResult(frozenset(), frozenset())
+        record_ids = {record.record_id for record in records}
+        if len(record_ids) != len(records):
+            raise ValueError("batch records must have unique record IDs")
+        response = self._post(
+            f"/collectors/{self.collector_id}/telemetry", {"records": [self._telemetry_record(r) for r in records]},
+        )
+        try:
+            response_body = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise MalformedResponseError("central response was not JSON") from error
+        results = response_body.get("results") if isinstance(response_body, dict) else None
+        if not isinstance(results, list) or len(results) != len(records):
+            raise MalformedResponseError("central response did not acknowledge every record")
+        acknowledged: set[str] = set()
+        returned: set[str] = set()
+        for result in results:
+            record_id = result.get("dedup_key") if isinstance(result, dict) else None
+            if not isinstance(record_id, str) or record_id not in record_ids or record_id in returned:
+                raise MalformedResponseError("central response has invalid record identifiers")
+            returned.add(record_id)
+            if classify_telemetry_ack(result) == "acknowledge":
+                acknowledged.add(record_id)
+        return AckResult(frozenset(acknowledged), frozenset(record_ids - acknowledged))
 
     def heartbeat(self, *, queue_depth: int, status: str = "ok") -> None:
         response = self._post(
@@ -157,6 +185,25 @@ class CentralClient:
             }
         except KeyError as error:
             raise ValueError(f"queue record missing central ingest field: {error.args[0]}") from error
+
+    @staticmethod
+    def _telemetry_record(record: QueueRecord) -> dict[str, Any]:
+        payload = record.payload
+        try:
+            return {
+                "dedup_key": record.record_id,
+                "integration_id": payload["integration_id"],
+                "external_identifier": payload["external_identifier"],
+                "source_identifier": payload["source_identifier"],
+                "occurred_at": record.occurred_at.isoformat(),
+                "value": payload["value"],
+                "attributes": payload.get("attributes", {}),
+                "mapping_revision_id": payload["mapping_revision_id"],
+                "source_unit": payload["source_unit"],
+                "source_scale": payload["source_scale"],
+            }
+        except KeyError as error:
+            raise ValueError(f"queue record missing central telemetry field: {error.args[0]}") from error
 
     @staticmethod
     def _parse_ack(response_body: Any, *, batch_id: str, record_ids: set[str]) -> AckResult:

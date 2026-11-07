@@ -22,6 +22,8 @@ as before. Nothing here logs or puts a secret in an exception message.
 
 from __future__ import annotations
 
+import re
+
 from .credentials import LocalCredentialStore
 from .snmp import (
     SUPPORTED_OIDS,
@@ -37,6 +39,7 @@ from .snmp import (
 from .snmp_v2c import SNMPv2cSession
 from .snmp_v3 import SNMPv3Session
 from .snmp_wire import Varbind
+from .telemetry_contract import value_numeral
 
 LEGACY_V2C_OPT_IN_FIELD = "allow_legacy_v2c"
 
@@ -88,3 +91,30 @@ def metric_from_varbind(oid: str, varbind: Varbind) -> SNMPMetric:
     except (TypeError, ValueError) as error:
         raise SNMPMalformedValueError("SNMP response value is not numeric") from error
     return SNMPMetric(oid, mapping.canonical_metric, numeric_value * mapping.scale, mapping.unit)
+
+
+_OID = re.compile(r"[0-9]+(?:\.[0-9]+){2,}")
+_INTEGER_TAGS = {0x02, 0x41, 0x42, 0x43}
+
+
+def collect_raw_numeral(session: SNMPv3Session | SNMPv2cSession, oid: str) -> str:
+    """GET one numeric OID and return its exact, unscaled decimal text.
+
+    Central's pinned contract owns the scale, so the value is neither multiplied nor passed through a float here.
+    `oid` comes from Central's authenticated contract plan, not from the device; it must still be a numeric OID.
+    """
+    if not _OID.fullmatch(oid):
+        raise SNMPUnknownOIDError("source identifier is not a numeric OID")
+    varbind = session.get(oid)
+    if varbind.oid != oid:
+        raise SNMPError("SNMP response OID did not match request")
+    if varbind.is_exception:
+        raise SNMPUnknownOIDError("OID is not available on the agent")
+    try:
+        if varbind.tag in _INTEGER_TAGS:
+            return str(int.from_bytes(varbind.value, byteorder="big", signed=varbind.tag == 0x02))
+        if varbind.tag == 0x04:
+            return value_numeral(varbind.value.decode("ascii").strip())
+    except (UnicodeDecodeError, ValueError) as error:
+        raise SNMPMalformedValueError("SNMP response value is not numeric") from error
+    raise SNMPMalformedValueError("SNMP response value is not numeric")

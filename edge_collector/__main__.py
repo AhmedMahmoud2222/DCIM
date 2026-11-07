@@ -17,6 +17,8 @@ from .discovery_sessions import local_session_factory
 from .queue import SQLiteQueue
 from .runtime import EdgeRuntime
 from .snmp import SNMPTargetPolicy
+from .snmp_metrics import collect_raw_numeral, metric_session_for
+from .telemetry_scheduler import ScheduledTelemetry
 
 
 def main() -> int:
@@ -41,7 +43,13 @@ def main() -> int:
     client = CentralClient(args.central_url, args.collector_id, secret)
     queue = SQLiteQueue(CollectorConfig(args.database))
     discovery = ScheduledDiscovery(client.get_discovery_plan, local_session_factory(store, policy))
-    runtime = EdgeRuntime(queue, client, discovery=discovery)
+
+    def read_numeral(item, target, oid):
+        session = metric_session_for(store, str(item["integration_id"]), target, policy=policy, timeout_seconds=2.0, retries=0)
+        return collect_raw_numeral(session, oid)
+
+    telemetry = ScheduledTelemetry(client.get_discovery_plan, client.get_telemetry_contracts, read_numeral)
+    runtime = EdgeRuntime(queue, client, discovery=discovery, telemetry=telemetry)
     try:
         while True:
             runtime.run_once()
@@ -50,6 +58,7 @@ def main() -> int:
         return 0
     finally:
         discovery.close()
+        telemetry.close()
         queue.close()
         client.close()
 

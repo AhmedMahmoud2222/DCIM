@@ -23,7 +23,7 @@ collector that queues telemetry.
 | `telemetry_contract_hold`, bounded retry, expiry, operator list/resolve | Implemented, tested |
 | `GET /collectors/{id}/telemetry-contracts` (HMAC-authenticated plan) | Implemented, tested |
 | `append_mapping_revision` service | Implemented as an internal service; **no HTTP mutation surface** (deferred to a separate reviewed change) |
-| Collector helpers: `ContractBook`, `telemetry_record_payload`, `classify_telemetry_ack`, `CentralClient.get_telemetry_contracts` | Implemented and **contract-tested only**: the packaged collector has no telemetry acquisition or delivery loop and none was added. The backend API test builds a record with these helpers, queues nothing, and posts it to Central. |
+| Collector helpers: `ContractBook`, `telemetry_record_payload`, `classify_telemetry_ack`, `CentralClient.get_telemetry_contracts` | Implemented and used by the packaged collector: `ScheduledTelemetry` polls each pinned OID, queues pinned records, and `EdgeRuntime` delivers them to `POST /collectors/{id}/telemetry`. |
 
 ## Revision rules
 * A revision is never edited. `effective_from` is Central's clock at creation and never retroactive.
@@ -85,5 +85,5 @@ carrying a revision or evidence, or any hold exists. A seed-only schema downgrad
 Lock measurements: see the PR description (populated rehearsal). Constraints on `telemetry_reading` are left `NOT VALID` (enforced for new rows; existing rows are all NULL).
 
 ## Not done here
-Mapping-update endpoint; a telemetry acquisition loop in the collector; strict per-integration mode;
+Mapping-update endpoint; strict per-integration mode;
 exact-numeric (G3/G4) and registry-version immutability (G10).

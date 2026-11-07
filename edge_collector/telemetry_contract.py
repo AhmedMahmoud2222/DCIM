@@ -1,8 +1,9 @@
 """Telemetry conversion-contract pinning for the Edge Collector (Issue #128 / G1).
 
-Scope, stated precisely: the packaged collector today acquires and queues *discovery* observations only; it has no
-telemetry acquisition or telemetry delivery loop, and this module does not add one. It defines and tests the
-collector-side half of the wire contract that Central's `POST /collectors/{id}/telemetry` now enforces:
+Scope: `telemetry_scheduler.ScheduledTelemetry` polls every OID that Central pins for an assigned integration, builds
+each record with `telemetry_record_payload`, and queues it with `record_type="telemetry"`. `EdgeRuntime` delivers those
+records through `CentralClient.flush_telemetry` to `POST /collectors/{id}/telemetry`. This module holds the wire contract
+those pieces share:
 
   1. `ContractBook` parses the authenticated `GET /collectors/{id}/telemetry-contracts` plan.
   2. `telemetry_record_payload` copies the revision a value was acquired under onto the record at acquisition,
@@ -10,8 +11,9 @@ collector-side half of the wire contract that Central's `POST /collectors/{id}/t
      whatever Central's mapping looks like on delivery. It refuses to build an unpinned record.
   3. `classify_telemetry_ack` says which Central rejections are final and which must stay queued.
 
-A future telemetry acquisition loop plugs into these three functions; they are exercised end to end against Central
-in backend/tests/api/test_telemetry_mapping_revisions_api.py.
+Central folds accepted readings into the rack overlay's cached status when a `PortTelemetryBinding` with protocol `snmp`
+has `external_ref` equal to the record's `external_identifier` (the source OID). The end-to-end contract is exercised in
+backend/tests/api/test_telemetry_mapping_revisions_api.py and backend/tests/api/test_telemetry_reading_feeds_overlay.py.
 """
 
 from __future__ import annotations
