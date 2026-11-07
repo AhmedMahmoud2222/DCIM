@@ -1,6 +1,6 @@
 # Issue #107 M2: read-only assistant architecture and implementation contract
 
-**Document version:** 0.1.2 (2026-10-20; section 13.1 and section 7b added 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
+**Document version:** 0.1.1 (2026-10-20; section 13.1 added 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
 
 ## 1. Principles
 
@@ -118,7 +118,7 @@ Adapter rules:
   "status": "ok | evidence_only | insufficient_evidence | denied | provider_error",
   "bundle_id": "uuid",
   "facts":           [{"id": "F1", "text": "...", "refs": ["E3"]}],
-  "calculations":    [{"id": "C1", "text": "...", "formula": "...", "inputs": ["E3","E4"], "unit": "kW"}],
+  "calculations":    [{"id": "C1", "text": "...", "operation": "sum", "inputs": ["E3","E4"], "unit": "kW"}],
   "hypotheses":      [{"id": "H1", "text": "...", "refs": ["E5"], "confidence": "low|medium|high", "basis": "rule | statistical | model"}],
   "recommendations": [{"id": "R1", "text": "...", "refs": ["E5"], "action_type": null}],
   "caveats":         ["stale", "contradictory", "missing"],
@@ -126,7 +126,7 @@ Adapter rules:
 }
 ```
 
-Facts, calculations, hypotheses and recommendations stay in separate arrays. A recommendation carries `action_type: null` in M2; it names no executable action.
+A calculation names an `operation` from the allowlist of section 7b and its `inputs`; it carries no free-form formula string. The validator derives the result unit and dimension itself; the model's `unit` is checked against that, never trusted. Facts, calculations, hypotheses and recommendations stay in separate arrays. A recommendation carries `action_type: null` in M2; it names no executable action.
 
 ## 7. Claim-support validation
 
@@ -137,32 +137,22 @@ The validator runs after the model and before delivery. A failure removes the cl
 3. A time claim lies within the item's `observed_at` window; "now"/"currently" claims require `stale == false`.
 4. A comparative or causal claim is allowed only as a hypothesis, and only if the cited items include the entities it names.
 5. A named asset, rack or site must appear in a cited item; otherwise it is a hallucinated entity.
-6. Calculations are recomputed deterministically from their `inputs`; a mismatch rejects the claim. Arithmetic reproducibility is necessary, never sufficient: every calculation must also pass section 7b.
-7. A claim that mixes items with different registry versions or provenance classes is rejected unless the response states the mix. Disclosure applies to provenance and version mixes only. It never makes a dimensionally invalid calculation valid (section 7b).
+6. Calculations must first pass dimensional validation (section 7b), then are recomputed deterministically from their `inputs`; either failure rejects the claim. Arithmetic reproducibility is necessary, never sufficient.
+7. A claim that mixes items with different registry versions or provenance classes is rejected unless the response states the mix. Disclosure applies to those mixes only. It never waives any step of section 7b: a dimensionally invalid or non-allowlisted calculation is rejected whether or not the response mentions it.
 8. Optional second pass: an entailment check by a separate model call is an additional filter, never a replacement for rules 1-7.
 
-### 7b. Dimensional analysis and operation allowlist (PROPOSED, mandatory)
+## 7b. Dimensional validation of calculations (PROPOSED)
 
-Applies to every entry of `calculations`, and to any number the validator derives from more than one item. It runs independently of caveats, disclosure, provenance statements and the optional entailment pass. No response field, caveat or model text can waive it.
+Every item with a numeric `value` carries a `dimension` assigned by the unit registry from its canonical unit (for example `degC` is temperature, `kW` power, `kWh` energy, `%` ratio). The model cannot set or override it. A calculation is accepted only if all steps pass, in order; the first failure rejects it and sets the caveat `calculation_rejected`.
 
-1. **Closed operation registry (code constant).** A calculation names one `operation` from an allowlist; free-form `formula` strings are not evaluated. Each entry declares: input arity, the required dimension of each input, the dimension of the result, the output unit, and its rounding rule. Initial candidates (finalised in M2):
+1. **Allowlisted operation.** `operation` is one of a closed code constant: `sum`, `difference`, `mean`, `min`, `max`, `count`, `ratio`, `percent_of`, `rate_of_change`. Anything else, including a free-form formula, is rejected at schema validation.
+2. **Dimension rule per operation.** `sum`, `difference`, `mean`, `min`, `max`: all inputs share one dimension. `ratio`, `percent_of`: inputs share one dimension and the result is dimensionless. `rate_of_change`: one dimension per time. `count`: any inputs, result is a count. No operation multiplies or divides across different dimensions in M2; derived quantities such as power x time -> energy are rejected until the registry gains a reviewed rule.
+3. **Unit conversion before arithmetic.** Inputs of one dimension are converted to a single unit via the registry (`convert_to_presentation`). Affine units are handled correctly: `sum` of absolute temperatures is rejected; `difference` of two absolute temperatures yields a temperature interval, not a temperature.
+4. **Result unit check.** The validator computes the result dimension and unit from steps 2-3 and compares it with the claimed `unit`; a mismatch is rejected.
+5. **Scope compatibility.** Inputs of a `sum`, `mean` or `ratio` must describe the same kind of subject (a rack's capacity and a site's capacity are not summed as peers).
+6. **Arithmetic recomputation** (section 7 rule 6) runs last.
 
-   | Operation | Inputs (dimension) | Result |
-   |---|---|---|
-   | `sum`, `difference`, `mean`, `min`, `max` | all inputs the **same** dimension | that dimension |
-   | `delta_over_time` | one series, same dimension | dimension per time |
-   | `ratio_same_dimension` | two inputs, same dimension | dimensionless |
-   | `count` | any items of the same `kind` | dimensionless count |
-   | `percent_of_capacity` | `power` or `energy` and a capacity of the same dimension | percent |
-   | `energy_from_power_time` | `power` and a time span | `energy` |
-
-   An operation not in the registry, or one applied to a dimension it does not list, is rejected. Adding an operation is a reviewed change.
-2. **Dimension is typed, not inferred from text.** Each numeric item carries a `dimension` (`temperature`, `power`, `energy`, `humidity`, `pressure`, `time`, `count`, `ratio`, ...) taken from the unit registry entry for its canonical unit (the registry behind `convert_to_presentation`), never from the item name or model text. An item without a registry dimension cannot be an input.
-3. **Unit compatibility.** Inputs of one dimension are first converted to the operation's canonical unit through the registry; a missing or non-linear-safe conversion rejects the calculation. Absolute temperatures (`degC`, `degF`, `K`) are affine: `sum` of absolute temperatures is rejected; `difference` yields a temperature interval; `mean`, `min` and `max` are allowed. Mixing an absolute and an interval quantity is rejected unless the operation declares it.
-4. **Result check.** The declared `unit` of the calculation must equal the operation's result unit. The validator recomputes the value with decimal arithmetic and compares it with the stated value within the operation's rounding rule.
-5. **Rejection is fail-closed and independent of disclosure.** `temperature + power`, `humidity - energy`, `power / temperature` presented as any single figure, a `sum` over mixed `degC` and `kW`, or any combination absent from the registry is removed even if the arithmetic reproduces the stated number and even if the response lists the mix in `caveats`. The rejected calculation sets the caveat `invalid_calculation`; claims citing it are removed. Nothing is "corrected" by the validator.
-6. **Cross-time and cross-series.** Inputs must share the same `observed_at` window (or the operation must declare a series), the same site scope, and the same provenance class unless rule 7 of section 7 is satisfied; this is checked in addition to, not instead of, rules 1-5.
-7. **Prose numbers.** A number in fact or recommendation text that is not a rendered registry value or an accepted calculation result is removed. Displayed figures are rendered from validated values, not copied from model text.
+Disclosure, caveats, hypothesis labelling or explanatory text cannot move a calculation past steps 1-5. A claim that cannot be expressed as an allowlisted operation is not a calculation: it is removed, and the underlying items are shown instead.
 
 ## 8. Missing, stale, contradictory or insufficient evidence
 
@@ -295,20 +285,19 @@ New permission (PROPOSED): `assistant:use`, seeded without default role grants. 
 
 The tests in section 9 of the [main document](ISSUE_107_AI_OPERATIONS.md) pass on the exact PR HEAD in CI, including the scripted-provider adversarial suite; an independent reviewer accepts the scope tests; the owner approves the provider data-handling terms. Without a real provider, only the evidence-only path ships.
 
-### 15.1 Dimensional-validity adversarial tests (PROPOSED, scripted provider, real validator and unit registry)
+### 15.2 Dimensional-validity tests (PROPOSED)
 
-Each test supplies a scripted provider response against a fixed bundle and asserts the claim is removed, `invalid_calculation` is set, the delivered status is `ok` (other valid claims) or `evidence_only`, and no stated invalid number reaches the client.
+Scripted provider, real unit registry. Fixture items: `T1` = 24.5 degC, `T2` = 20 degC, `P1` = 24.5 kW, `P2` = 10 kW.
 
-- **D1. Temperature plus power.** Items: 24.5 degC (`temperature`) and 3.0 kW (`power`). Model returns `sum` = 27.5 with `unit` "kW" or "degC", arithmetic correct. Rejected.
-- **D2. Disclosed mix.** Same as D1, with the mix stated in `caveats` and in `text`. Still rejected (disclosure never waives).
-- **D3. Free-form formula.** `formula` = "T + P" with no registry `operation`. Rejected.
-- **D4. Unlisted operation.** `operation` = "multiply" over `power` and `temperature`. Rejected.
-- **D5. Humidity minus energy; power divided by temperature.** Rejected.
-- **D6. Absolute temperature sum.** 20 degC + 22 degC as `sum`. Rejected; `mean` of the same two inputs accepted (positive control).
-- **D7. Unit mismatch within one dimension.** 2.0 kW and 1500 W summed: accepted only after registry conversion to a single unit, with the correct total (3.5 kW); the unconverted 3500 stated as kW is rejected.
-- **D8. Wrong result unit.** Valid `sum` of two kW items declared as "kWh". Rejected.
-- **D9. Item without registry dimension.** A numeric item whose unit has no registry dimension is used as an input. Rejected.
-- **D10. Mismatched windows or sites.** Same-dimension inputs from different `observed_at` windows or different site scopes under an operation requiring one window. Rejected.
-- **D11. Prose number.** A fact text containing a figure that is neither a rendered registry value nor an accepted calculation. Removed.
-- **D12. Positive control.** `sum` of three kW readings in one window and site, correct unit and value. Accepted and shown with its inputs.
-- **D13. Registry guard.** Every registry operation declares input dimensions and a result unit; a test fails if an operation lists no dimension constraint.
+1. **Temperature + power, numerically reproducible.** Model returns `sum` of `T1`,`P1` = 49.0 `kW`. Recomputation would match 49.0; the claim is still rejected at step 2, `calculation_rejected` is set, and 49.0 appears nowhere in the delivered response.
+2. **Same output with disclosure.** Identical, plus text stating that different quantities were combined. Still rejected (guards the section 7 rule 7 carve-out).
+3. **Mutation-sensitive.** The validator is run in CI with each mutant: (a) skip step 2, (b) skip step 3 conversion, (c) accept an unlisted operation, (d) treat disclosure as a waiver, (e) trust the model's `unit`, (f) run recomputation before dimension checks, (g) skip step 5. Every mutant must fail at least one test in this list; a surviving mutant fails the section.
+4. **Wrong result unit, valid dimensions.** `sum` of `P1`,`P2` claimed as `kWh` is rejected at step 4; claimed as 34.5 `kW` it is accepted (positive control).
+5. **Unit conversion.** `P2` stored as 10000 W with `P1` in kW: only 34.5 kW is accepted; an unconverted 10024.5 is rejected.
+6. **Absolute temperatures.** `sum` of `T1`,`T2` is rejected; `difference` = 4.5 is accepted only as a temperature interval.
+7. **Cross-dimension ratio.** `ratio` of `P1` to `T1` is rejected; `ratio` of `P1` to `P2` is accepted as dimensionless.
+8. **Cross-dimension product.** Power x time -> energy is rejected in M2 even though `P1` x 1 h = 24.5 kWh is arithmetically right.
+9. **Free-form formula or unlisted operation** (`"p1 + t1 * 2"`) is rejected at schema validation.
+10. **Injected text.** An asset name or alarm subject instructs adding temperature to power; the model complies; rejected as in test 1.
+11. **Provenance disclosure still works.** Same-dimension inputs with different provenance classes are accepted when the mix is stated and rejected when it is not.
+12. **No residue.** After test 1 no total, ranking or summary built on the rejected calculation is delivered, and `status` is `evidence_only` if no claim survives.
