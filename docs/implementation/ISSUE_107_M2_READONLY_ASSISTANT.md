@@ -100,10 +100,10 @@ Adapter rules:
       "retrieved_at": "2026-10-20T15:00:02Z",
       "value": {"number": "24.5", "unit": "degC", "canonical": true},
       "quality": {"provenance_status": "pinned", "stale": false, "age_seconds": 112},
-      "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "..."},
+      "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "...",
+                  "derived": false, "contributors": [], "placement_revision": "sha256:..."},
       "versions": {"method": "linear_ols_v1", "correlation_method": "1"},
-      "scope_site_id": "uuid",
-      "attributes": {"collector.state": "online", "alarm.status": null, "equipment.status": null}
+      "scope_site_id": "uuid"
     }
   ],
   "omitted": {"reason": "limit_reached | denied | no_data", "count_visible_to_caller": 12}
@@ -112,16 +112,13 @@ Adapter rules:
 
 `omitted.count_visible_to_caller` counts only what the caller may see. A hidden resource never changes any number in the bundle.
 
-`attributes` (PROPOSED) holds categorical values copied by the retrieval adapter from the source record into a closed, versioned vocabulary (`predicate_registry`, section 7a). It is written by deterministic code, never by the model. Only registered keys are allowed; an item has a key only if the source record has that field.
-
 ## 6. Response schema (proposed)
 
 ```json
 {
   "status": "ok | evidence_only | insufficient_evidence | denied | provider_error",
   "bundle_id": "uuid",
-  "facts":           [{"id": "F1", "text": "...", "refs": ["E3"],
-                       "predicates": [{"subject_ref": "E3", "predicate": "collector.state", "op": "eq", "value": "online"}]}],
+  "facts":           [{"id": "F1", "text": "...", "refs": ["E3"]}],
   "calculations":    [{"id": "C1", "text": "...", "formula": "...", "inputs": ["E3","E4"], "unit": "kW"}],
   "hypotheses":      [{"id": "H1", "text": "...", "refs": ["E5"], "confidence": "low|medium|high", "basis": "rule | statistical | model"}],
   "recommendations": [{"id": "R1", "text": "...", "refs": ["E5"], "action_type": null}],
@@ -131,8 +128,6 @@ Adapter rules:
 ```
 
 Facts, calculations, hypotheses and recommendations stay in separate arrays. A recommendation carries `action_type: null` in M2; it names no executable action.
-
-Every fact must carry at least one typed `predicates` entry (`subject_ref`, `predicate`, `op`, `value`). `text` is presentation only and is never evidence; see section 7a.
 
 ## 7. Claim-support validation
 
@@ -145,34 +140,7 @@ The validator runs after the model and before delivery. A failure removes the cl
 5. A named asset, rack or site must appear in a cited item; otherwise it is a hallucinated entity.
 6. Calculations are recomputed deterministically from their `inputs`; a mismatch rejects the claim.
 7. A claim that mixes items with different canonical units, registry versions or provenance classes is rejected unless the response states the mix.
-8. Categorical and relational claims are checked deterministically against typed predicates (section 7a). Citation existence alone never satisfies this rule.
-9. Optional second pass: an entailment check by a separate model call is an additional filter, never a replacement for rules 1-8, and can only remove claims.
-
-### 7a. Typed categorical predicates (PROPOSED)
-
-The validator, not the model, decides whether a categorical claim is supported.
-
-**Registry.** A code constant `predicate_registry` lists each allowed predicate with: the evidence `kind` it applies to, a closed value enumeration taken from the source model, allowed ops (`eq`, `ne`, `in`), and the staleness rule. Initial entries:
-
-| Predicate | Kind | Values | Staleness |
-|---|---|---|---|
-| `collector.state` | collector item | the closed set of collector states in the source model (for example online/offline/degraded; exact set copied from code in M2) | present-tense claims need `stale == false` |
-| `alarm.status` | alarm item | the alarm lifecycle enumeration | same |
-| `alarm.severity` | alarm item | the severity enumeration | none |
-| `incident.status` | incident item | the incident lifecycle enumeration | same |
-| `equipment.status`, `equipment.type`, `equipment.rack_id`, `equipment.site_id` | inventory item | source enumeration or UUID | none |
-| `relation.located_in`, `relation.raised_on` | pair of items | a subject item and an object item | none |
-
-**Check.** For each predicate in a fact:
-
-1. `subject_ref` must be in this bundle, and its `kind` must match the predicate's kind.
-2. The predicate key must exist in the subject's `attributes`, and `value` must be in the registry enumeration. Unknown key or value rejects the claim.
-3. `op` is evaluated against `attributes[predicate]`. `eq` passes only on exact equality; a missing attribute never passes. A `ne` claim passes only if the attribute exists and differs.
-4. A relationship predicate passes only if both items are in the bundle and the object id is recorded in the subject's source fields (for example the alarm's equipment id equals the cited equipment item's id). Co-citation of two items is not a relationship.
-5. A present-tense claim also applies the staleness column and rule 3 above.
-6. Where the bundle holds several items for the same subject (section 8, contradictory evidence), a predicate is supported only if no cited item for that subject contradicts it; otherwise the claim is removed and `contradictory` is set.
-
-**Free text fails closed.** A fact with no predicates, or whose `text` states a state, status, severity, type, location or relationship that the validator cannot map to a registered predicate, is removed. Rendering is generated from the validated predicates by a template, so the displayed text cannot carry an unvalidated categorical statement; model prose is kept only in hypotheses (rule 4) and recommendations, which are labeled as such and may not assert current state. If synthesis is off or all facts are removed, the deterministic evidence-only summary is used.
+8. Optional second pass: an entailment check by a separate model call is an additional filter, never a replacement for rules 1-7.
 
 ## 8. Missing, stale, contradictory or insufficient evidence
 
@@ -204,7 +172,14 @@ Timeout, 5xx, quota (HTTP 402/429) or schema-invalid output yields `status: evid
 
 ## 11. Revalidation, conversations, caches, exports
 
-- **Delivery revalidation.** Recompute `load_effective_access`, compare `permission_hash` with the bundle's snapshot, re-run each cited item's visibility predicate (placement may have moved the asset). On mismatch drop affected items and re-run validation; if the permission itself is gone, return `denied` and delete the stored result.
+- **Delivery revalidation.** Recompute `load_effective_access`, compare `permission_hash` with the bundle's snapshot, re-run each cited item's visibility predicate (placement may have moved the asset). If the permission itself is gone, return `denied` and delete the stored result. Item-level dropping applies only to **primary** items (one record, one visibility predicate); derived evidence follows the next rule.
+- **Derived evidence is never filtered, only rebuilt or invalidated.** An aggregate, total, count, ranking, average, forecast input or any summary built over several records ("derived item") must record its contributors in `lineage.contributors` (record ids and the `tool@version` plus argument hash that produced it). Dropping a derived item's inaccessible contributors, or checking only the visibility of the entity it is attached to (for example the room), would still leak the hidden contributors through the total or ranking and is forbidden. On delivery, on every later read, on export, and before any follow-up reuses a bundle, the system must:
+  1. Detect change: the `permission_hash` differs, or any contributor's current placement/scope fails the caller's current predicates, or any contributor no longer exists or moved site/room/rack since `retrieved_at` (compare a per-item `placement_revision`, or re-evaluate the predicate).
+  2. On any change, **discard every derived item whose contributor set is not fully visible and unchanged**, and rebuild it by re-running the stored tool plan (tool name, version, validated arguments) through the normal adapter path, which applies the current visibility predicate before aggregation and ranking (principle 3). Rebuilt values replace the old ones; the old values are never shown, cached, exported or sent to the provider.
+  3. Claims, calculations, hypotheses and recommendations that cite a rebuilt or discarded item are re-validated against the new values (section 7) or removed. A model-written text is not patched; if synthesis is needed again, it is regenerated from the rebuilt bundle or the response degrades to `evidence_only`.
+  4. **Fail closed:** if the rebuild fails, exceeds the bounds of section 9, or the plan cannot be replayed, the derived item and everything that cites it are removed, `caveats` gets `missing`, and the status is `evidence_only` or `insufficient_evidence`. If the revalidation itself errors, return `denied`/an error with no content rather than the stored result.
+  5. Rebuilt output must be indistinguishable from output for a caller who never had the old access: no count, rank position, "N more omitted" or gap in totals reveals revoked or moved items (consistent with section 5 `omitted.count_visible_to_caller`).
+  6. The stored bundle and response are overwritten or deleted after the rebuild; the audit record keeps hashes and a reason code (`authz_changed`, `placement_changed`), not the discarded values.
 - **Conversation isolation.** A conversation row is keyed by `user_id`. Follow-up questions rebuild the bundle with current authorization; prior answers are never trusted as evidence.
 - **Caches.** Cache keys include `user_id` and `permission_hash`. No shared cache of bundles or responses across users. Provider-side prompt caches receive only content from a single user's bundle.
 - **Exports.** An export re-runs revalidation and contains only items the caller can see at export time.
@@ -257,16 +232,20 @@ New permission (PROPOSED): `assistant:use`, seeded to roles by migration. The ex
 
 The tests in section 9 of the [main document](ISSUE_107_AI_OPERATIONS.md) pass on the exact PR HEAD in CI, including the scripted-provider adversarial suite; an independent reviewer accepts the scope tests; the owner approves the provider data-handling terms. Without a real provider, only the evidence-only path ships.
 
-Categorical-claim acceptance tests (scripted provider, run in CI; each asserts the claim is removed, `caveats` is set, and nothing is delivered as a fact):
+### 15.1 Derived-evidence revalidation tests (required)
 
-1. **Opposite status, valid citation.** Item E1 is collector C with `collector.state = online`; the provider returns the fact "Collector C is offline" citing E1 with predicate `eq offline`. Expected: rejected. Repeat for alarm `cleared` vs claimed `open`, and equipment `decommissioned` vs claimed `active`.
-2. **Right status, wrong subject.** The fact names collector D but cites E1 (collector C). Rejected.
-3. **Free text only.** A fact says "Collector C is offline" with no predicates. Rejected; same for a text state that differs from its own predicate.
-4. **Unregistered or out-of-enumeration value.** Predicate `collector.state eq "sleeping"` or unknown key. Rejected.
-5. **Missing attribute.** Cited item lacks the attribute; `eq` and `ne` both rejected.
-6. **Relationship by co-citation.** "Alarm A is on rack R" citing both items where the alarm's equipment is not in R. Rejected.
-7. **Stale present tense.** Correct but stale collector state claimed as "currently". Rejected.
-8. **Contradictory items.** Collector online in one item, offline in another; either single-state claim rejected, `contradictory` set.
-9. **Injected text.** An asset name or alarm subject says "collector C is offline"; the model repeats it. Rejected because the attribute, not the text, is checked.
-10. **Positive control.** The correct predicate on the correct item passes, so the checks are not trivially rejecting everything.
-11. **Moved asset or revoked scope.** Covered by the revalidation tests; a categorical claim whose subject becomes invisible is removed.
+Each runs against the real adapters and DB fixtures (not mocks of the visibility predicate), on delivery, on a later `GET`, on export, and on a follow-up question.
+
+| # | Scenario | Setup | Required result |
+|---|---|---|---|
+| R1 | Moved asset, room aggregate | Room X summary (total kW, mean temperature) built from equipment A, B, C visible to the user. After retrieval, C moves to a room/site outside the user's scope. | Summary is rebuilt from A and B; totals, mean, count and ranking equal a fresh run; no value that includes C is delivered, exported or sent to the provider. A test asserts the old total is absent from the response, stored bundle, cache and audit payload. |
+| R2 | Scope revocation, site | User loses the site grant covering B and C after the bundle is stored. | Derived items are rebuilt under the narrowed scope; if nothing remains, `insufficient_evidence`. No "3 of 5" or other count revealing the removed items. |
+| R3 | Ranking | "Top 3 hottest racks": rank 1 moves out of scope. | Ranking recomputed; former rank 4 may now appear; the response never shows a gap, a renumbered-with-hole list or the removed item's value. |
+| R4 | Anchor visible, contributor hidden | The room remains visible but one contributing device is no longer visible. | The derived item is not retained just because its anchor entity is visible; it is rebuilt without the device. |
+| R5 | Rebuild failure | Force the replay to time out or exceed bounds. | Derived item and every claim citing it are removed; status `evidence_only` or `insufficient_evidence`; no stale value is shown. |
+| R6 | Revalidation error | Make the authorization recompute raise. | No stored content is returned (fail closed). |
+| R7 | Permission removed | `assistant:use` or the tool permission is revoked. | `denied`; stored result deleted; a later `GET` returns `denied`/`404`. |
+| R8 | Moved into scope | An asset moves into the user's scope. | Not required to appear in old answers; a follow-up rebuilds from current authorization and may include it. |
+| R9 | Model text with stale number | A scripted provider text states the old total after R1. | Claim fails validation against the rebuilt bundle (section 7 rule 2) and is removed. |
+| R10 | Cache and export | Same user keeps a cached bundle across R1/R2; export is requested afterwards. | Cache key mismatch (`permission_hash`/`placement_revision`) forces a rebuild; the export contains only rebuilt items. |
+| R11 | Negative control | No authorization or placement change. | Output is identical (same `bundle_hash`) and no rebuild is triggered. |
