@@ -102,7 +102,8 @@ Adapter rules:
       "quality": {"provenance_status": "pinned", "stale": false, "age_seconds": 112},
       "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "..."},
       "versions": {"method": "linear_ols_v1", "correlation_method": "1"},
-      "scope_site_id": "uuid"
+      "scope_site_id": "uuid",
+      "attributes": {"collector.state": "online", "alarm.status": null, "equipment.status": null}
     }
   ],
   "omitted": {"reason": "limit_reached | denied | no_data", "count_visible_to_caller": 12}
@@ -111,13 +112,16 @@ Adapter rules:
 
 `omitted.count_visible_to_caller` counts only what the caller may see. A hidden resource never changes any number in the bundle.
 
+`attributes` (PROPOSED) holds categorical values copied by the retrieval adapter from the source record into a closed, versioned vocabulary (`predicate_registry`, section 7a). It is written by deterministic code, never by the model. Only registered keys are allowed; an item has a key only if the source record has that field.
+
 ## 6. Response schema (proposed)
 
 ```json
 {
   "status": "ok | evidence_only | insufficient_evidence | denied | provider_error",
   "bundle_id": "uuid",
-  "facts":           [{"id": "F1", "text": "...", "refs": ["E3"]}],
+  "facts":           [{"id": "F1", "text": "...", "refs": ["E3"],
+                       "predicates": [{"subject_ref": "E3", "predicate": "collector.state", "op": "eq", "value": "online"}]}],
   "calculations":    [{"id": "C1", "text": "...", "formula": "...", "inputs": ["E3","E4"], "unit": "kW"}],
   "hypotheses":      [{"id": "H1", "text": "...", "refs": ["E5"], "confidence": "low|medium|high", "basis": "rule | statistical | model"}],
   "recommendations": [{"id": "R1", "text": "...", "refs": ["E5"], "action_type": null}],
@@ -127,6 +131,8 @@ Adapter rules:
 ```
 
 Facts, calculations, hypotheses and recommendations stay in separate arrays. A recommendation carries `action_type: null` in M2; it names no executable action.
+
+Every fact must carry at least one typed `predicates` entry (`subject_ref`, `predicate`, `op`, `value`). `text` is presentation only and is never evidence; see section 7a.
 
 ## 7. Claim-support validation
 
@@ -139,7 +145,34 @@ The validator runs after the model and before delivery. A failure removes the cl
 5. A named asset, rack or site must appear in a cited item; otherwise it is a hallucinated entity.
 6. Calculations are recomputed deterministically from their `inputs`; a mismatch rejects the claim.
 7. A claim that mixes items with different canonical units, registry versions or provenance classes is rejected unless the response states the mix.
-8. Optional second pass: an entailment check by a separate model call is an additional filter, never a replacement for rules 1-7.
+8. Categorical and relational claims are checked deterministically against typed predicates (section 7a). Citation existence alone never satisfies this rule.
+9. Optional second pass: an entailment check by a separate model call is an additional filter, never a replacement for rules 1-8, and can only remove claims.
+
+### 7a. Typed categorical predicates (PROPOSED)
+
+The validator, not the model, decides whether a categorical claim is supported.
+
+**Registry.** A code constant `predicate_registry` lists each allowed predicate with: the evidence `kind` it applies to, a closed value enumeration taken from the source model, allowed ops (`eq`, `ne`, `in`), and the staleness rule. Initial entries:
+
+| Predicate | Kind | Values | Staleness |
+|---|---|---|---|
+| `collector.state` | collector item | the closed set of collector states in the source model (for example online/offline/degraded; exact set copied from code in M2) | present-tense claims need `stale == false` |
+| `alarm.status` | alarm item | the alarm lifecycle enumeration | same |
+| `alarm.severity` | alarm item | the severity enumeration | none |
+| `incident.status` | incident item | the incident lifecycle enumeration | same |
+| `equipment.status`, `equipment.type`, `equipment.rack_id`, `equipment.site_id` | inventory item | source enumeration or UUID | none |
+| `relation.located_in`, `relation.raised_on` | pair of items | a subject item and an object item | none |
+
+**Check.** For each predicate in a fact:
+
+1. `subject_ref` must be in this bundle, and its `kind` must match the predicate's kind.
+2. The predicate key must exist in the subject's `attributes`, and `value` must be in the registry enumeration. Unknown key or value rejects the claim.
+3. `op` is evaluated against `attributes[predicate]`. `eq` passes only on exact equality; a missing attribute never passes. A `ne` claim passes only if the attribute exists and differs.
+4. A relationship predicate passes only if both items are in the bundle and the object id is recorded in the subject's source fields (for example the alarm's equipment id equals the cited equipment item's id). Co-citation of two items is not a relationship.
+5. A present-tense claim also applies the staleness column and rule 3 above.
+6. Where the bundle holds several items for the same subject (section 8, contradictory evidence), a predicate is supported only if no cited item for that subject contradicts it; otherwise the claim is removed and `contradictory` is set.
+
+**Free text fails closed.** A fact with no predicates, or whose `text` states a state, status, severity, type, location or relationship that the validator cannot map to a registered predicate, is removed. Rendering is generated from the validated predicates by a template, so the displayed text cannot carry an unvalidated categorical statement; model prose is kept only in hypotheses (rule 4) and recommendations, which are labeled as such and may not assert current state. If synthesis is off or all facts are removed, the deterministic evidence-only summary is used.
 
 ## 8. Missing, stale, contradictory or insufficient evidence
 
@@ -223,3 +256,17 @@ New permission (PROPOSED): `assistant:use`, seeded to roles by migration. The ex
 ## 15. Acceptance for M2
 
 The tests in section 9 of the [main document](ISSUE_107_AI_OPERATIONS.md) pass on the exact PR HEAD in CI, including the scripted-provider adversarial suite; an independent reviewer accepts the scope tests; the owner approves the provider data-handling terms. Without a real provider, only the evidence-only path ships.
+
+Categorical-claim acceptance tests (scripted provider, run in CI; each asserts the claim is removed, `caveats` is set, and nothing is delivered as a fact):
+
+1. **Opposite status, valid citation.** Item E1 is collector C with `collector.state = online`; the provider returns the fact "Collector C is offline" citing E1 with predicate `eq offline`. Expected: rejected. Repeat for alarm `cleared` vs claimed `open`, and equipment `decommissioned` vs claimed `active`.
+2. **Right status, wrong subject.** The fact names collector D but cites E1 (collector C). Rejected.
+3. **Free text only.** A fact says "Collector C is offline" with no predicates. Rejected; same for a text state that differs from its own predicate.
+4. **Unregistered or out-of-enumeration value.** Predicate `collector.state eq "sleeping"` or unknown key. Rejected.
+5. **Missing attribute.** Cited item lacks the attribute; `eq` and `ne` both rejected.
+6. **Relationship by co-citation.** "Alarm A is on rack R" citing both items where the alarm's equipment is not in R. Rejected.
+7. **Stale present tense.** Correct but stale collector state claimed as "currently". Rejected.
+8. **Contradictory items.** Collector online in one item, offline in another; either single-state claim rejected, `contradictory` set.
+9. **Injected text.** An asset name or alarm subject says "collector C is offline"; the model repeats it. Rejected because the attribute, not the text, is checked.
+10. **Positive control.** The correct predicate on the correct item passes, so the checks are not trivially rejecting everything.
+11. **Moved asset or revoked scope.** Covered by the revalidation tests; a categorical claim whose subject becomes invisible is removed.
