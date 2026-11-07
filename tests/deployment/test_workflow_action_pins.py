@@ -53,16 +53,16 @@ class WorkflowActionPinsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('external action must use a full commit SHA', result.stderr)
 
-    def test_mixed_upload_artifact_pins_are_rejected(self):
+    def test_unapproved_upload_artifact_pin_is_rejected(self):
         def mutate(path):
             text = path.read_text()
             text = re.sub(r'actions/upload-artifact@[0-9a-f]{40}', 'actions/upload-artifact@' + '1' * 40, text, count=1)
             path.write_text(text)
         result = self.run_check(mutate)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('unapproved upload-artifact pin', result.stderr)
+        self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
 
-    def test_unapproved_download_pin_is_rejected(self):
+    def test_unapproved_download_artifact_pin_is_rejected(self):
         def mutate(path):
             for workflow in path.parent.glob('*.yml'):
                 text = workflow.read_text()
@@ -70,17 +70,17 @@ class WorkflowActionPinsTests(unittest.TestCase):
                 workflow.write_text(text)
         result = self.run_check(mutate)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('unapproved download-artifact pin', result.stderr)
+        self.assertIn('artifact pin mismatch: download-artifact', result.stderr)
 
-    def test_cross_generation_pair_in_one_workflow_is_rejected(self):
+    def test_older_artifact_pair_in_a_new_workflow_is_rejected(self):
         def mutate(path):
-            review = path.parent / 'acceptance-review.yml'
-            text = review.read_text()
-            text = re.sub(r'actions/upload-artifact@[0-9a-f]{40}', 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', text)
-            review.write_text(text)
+            (path.parent / 'new-workflow.yml').write_text(
+                'name: new\non: workflow_dispatch\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n'
+                '    steps:\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n'
+            )
         result = self.run_check(mutate)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('not an approved pair', result.stderr)
+        self.assertIn('artifact pin mismatch: upload-artifact', result.stderr)
 
 
 if __name__ == '__main__':
