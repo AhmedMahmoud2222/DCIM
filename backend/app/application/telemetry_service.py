@@ -42,6 +42,7 @@ from app.domain.telemetry.numeric import (
     quantize_source,
 )
 from app.domain.telemetry.registry import (
+    REGISTRY_VERSION,
     UnitDimensionMismatch,
     UnknownMetric,
     UnknownRegistryVersion,
@@ -665,3 +666,68 @@ async def get_latest_status_for_rack(db: AsyncSession, *, rack_id: uuid.UUID) ->
         )
     ).all()
     return [LatestPortStatus(binding=binding, status=status) for binding, status in rows]
+
+
+# Issue: edge readings feed the rack overlay. Canonical metric -> (binding target_type, payload key, payload unit).
+# The reading's own stored unit is converted to the payload unit with the registry (a registry reading is stored in the
+# canonical unit, a pre-registry one in its mapping's source unit), and a reading whose unit cannot be converted is left
+# history-only. Link state and error rate have no canonical metric yet, so network_port bindings stay fed by
+# POST /telemetry/port-status/ingest alone.
+_LATEST_STATUS_PROJECTION: dict[str, tuple[str, str, str]] = {
+    "temperature_c": ("environmental", "temperature_celsius", "degC"),
+    "humidity_percent": ("environmental", "humidity_pct", "%"),
+    "power_kw": ("power_inlet", "active_power_watts", "W"),
+}
+_LATEST_STATUS_REQUIRED_KEY = {"environmental": "temperature_celsius", "power_inlet": "active_power_watts"}
+
+
+async def project_reading_to_latest_status(db: AsyncSession, *, reading_id: uuid.UUID) -> int:
+    """Fold one stored reading into the cached `TelemetryLatestStatus` row of each matching snmp binding.
+
+    A binding matches when its equipment is the managed asset the reading's metric mapping belongs to
+    (`reading.managed_asset_id`), its protocol is `snmp`, its `external_ref` equals the reading's `external_identifier`,
+    and its `target_type` is the one the reading's metric feeds. The asset must match: an OID is not unique across
+    devices, so a reading whose mapping names no asset, or another device's asset, stays history-only. The value is
+    converted from the reading's stored unit to the payload unit; a reading whose unit cannot be converted is skipped.
+    The reading's fields are merged into the binding's current payload (a humidity sample must not erase the
+    temperature). A binding whose payload still lacks its required field, or whose stored status is newer than this
+    reading, is left alone. Returns the number of bindings updated.
+    """
+    reading = await db.get(TelemetryReading, reading_id)
+    if reading is None or reading.managed_asset_id is None:
+        return 0
+    projection = _LATEST_STATUS_PROJECTION.get(reading.metric)
+    if projection is None:
+        return 0
+    target_type, key, payload_unit = projection
+    try:
+        converted = convert_value(
+            Decimal(str(reading.value)), reading.unit, payload_unit,
+            registry_version=reading.registry_version or REGISTRY_VERSION,
+        )
+    except (UnknownUnit, UnitDimensionMismatch, UnknownRegistryVersion, InvalidOperation):
+        return 0
+    bindings = (
+        await db.execute(
+            select(PortTelemetryBinding).where(
+                PortTelemetryBinding.equipment_id == reading.managed_asset_id,
+                PortTelemetryBinding.protocol == "snmp",
+                PortTelemetryBinding.external_ref == reading.external_identifier,
+                PortTelemetryBinding.target_type == target_type,
+            )
+        )
+    ).scalars().all()
+    updated = 0
+    for binding in bindings:
+        current = (
+            await db.execute(select(TelemetryLatestStatus).where(TelemetryLatestStatus.binding_id == binding.id))
+        ).scalar_one_or_none()
+        if current is not None and current.sampled_at >= reading.occurred_at:
+            continue
+        payload = dict(current.payload) if current is not None else {}
+        payload[key] = float(converted)
+        if _LATEST_STATUS_REQUIRED_KEY[target_type] not in payload:
+            continue
+        await record_latest_status(db, binding_id=binding.id, payload=payload, sampled_at=reading.occurred_at)
+        updated += 1
+    return updated

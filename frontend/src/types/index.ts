@@ -963,9 +963,10 @@ export interface NetworkPortStatusPayload {
 }
 
 export interface PowerInletStatusPayload {
-  current_amps: number;
+  /** Optional: the edge telemetry path carries watts only, so amps and volts are absent until another source sets them. */
+  current_amps?: number;
   active_power_watts: number;
-  voltage: number;
+  voltage?: number;
 }
 
 export interface EnvironmentalStatusPayload {

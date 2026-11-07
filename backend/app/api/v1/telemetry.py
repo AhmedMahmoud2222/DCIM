@@ -10,6 +10,7 @@ shapes would be worse than the small amount of namespacing added here (the same
 "documented, explicit deviation" this codebase already prefers — see e.g.
 power/models.py's `utility_intake` node-type addition)."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -42,6 +43,7 @@ from app.application.telemetry_service import (
     ingest_reading,
     list_port_telemetry_bindings,
     mark_hold_resolved_if_any,
+    project_reading_to_latest_status,
     record_latest_status,
     register_contract_hold,
 )
@@ -75,6 +77,8 @@ from app.domain.telemetry.registry import (
     registry_snapshot,
     validate_metric_unit,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 MAX_HISTORY_POINTS = 1000
@@ -415,6 +419,21 @@ async def ingest_collector_telemetry(
         )
 
 
+async def _project_reading_best_effort(db: AsyncSession, *, reading_id: uuid.UUID) -> None:
+    """Feed the rack overlay's cached status from a stored reading, without letting a fault there reject it.
+
+    The reading is history and already stored; the cached status is derived. The projection runs in its own savepoint,
+    after the ingest savepoint has committed, so a failure (a missing inlet, two open capacity rows, a database error)
+    rolls back only the projection: the record is still acknowledged and its batch peers still persist. The log line
+    carries the reading id and exception type only, never a value.
+    """
+    try:
+        async with db.begin_nested():
+            await project_reading_to_latest_status(db, reading_id=reading_id)
+    except Exception as error:  # noqa: BLE001 - a derived-status fault must not fail ingestion
+        logger.warning("latest-status projection skipped for reading %s (%s)", reading_id, type(error).__name__)
+
+
 async def _ingest_prelocked_collector_telemetry(
     db: AsyncSession, *, collector: Collector, body: TelemetryBatchIn, eligible_integrations: frozenset[uuid.UUID],
 ) -> TelemetryBatchOut:
@@ -456,6 +475,8 @@ async def _ingest_prelocked_collector_telemetry(
                     source_unit=record.source_unit,
                     source_scale=record.source_scale,
                 )
+            if outcome.reading_id is not None:
+                await _project_reading_best_effort(db, reading_id=outcome.reading_id)
             if record.dedup_key in open_holds:
                 await mark_hold_resolved_if_any(
                     db, collector_id=collector.id, dedup_key=record.dedup_key, reading_id=outcome.reading_id,

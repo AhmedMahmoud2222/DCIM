@@ -152,6 +152,32 @@ describe("FaceplateOverlay telemetry overlay", () => {
     expect(markerEl.getAttribute("aria-label")).toContain("1140 W");
   });
 
+  it("renders a power marker whose payload carries watts only", async () => {
+    const marker = makeMarker({
+      id: "marker-2", marker_type: "power_supply", network_port_template_id: null, power_supply_template_id: "psu-1",
+    });
+    vi.mocked(catalogApi.getRevision).mockResolvedValue(makeRevision([makeGraphic([marker])]));
+    vi.mocked(equipmentApi.getEquipmentPorts).mockResolvedValue({ ports: [], power_inlets: [makeInlet()] });
+
+    renderWithProviders(
+      <FaceplateOverlay
+        catalogModelRevisionId="rev-1"
+        equipmentId="equip-1"
+        side="front"
+        portStatusByInletId={{
+          "inlet-1": makeStatus({
+            target_type: "power_inlet", equipment_port_id: null, equipment_power_inlet_id: "inlet-1",
+            status_level: "NORMAL", payload: { active_power_watts: 640 },
+          }),
+        }}
+      />,
+    );
+
+    const markerEl = await waitFor(() => screen.getByTestId("faceplate-marker"));
+    expect(markerEl.getAttribute("aria-label")).toContain("640 W");
+    expect(markerEl.getAttribute("aria-label")).not.toContain(" A ");
+  });
+
   it("renders no telemetry ring when no binding exists for the marker", async () => {
     vi.mocked(catalogApi.getRevision).mockResolvedValue(makeRevision([makeGraphic([makeMarker()])]));
     vi.mocked(equipmentApi.getEquipmentPorts).mockResolvedValue({ ports: [makePort()], power_inlets: [] });

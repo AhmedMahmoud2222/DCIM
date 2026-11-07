@@ -45,6 +45,17 @@ before any packet is sent, unless that entry also sets `"allow_legacy_v2c": true
 `snmpv3` entry always takes precedence over a community and the opt-in; an invalid `snmpv3`
 entry is an error, never a fallback to v2c. The opt-in does not affect discovery.
 
+Telemetry acquisition (`telemetry_scheduler.py`) polls the numeric OIDs Central pins in
+`GET /collectors/{id}/telemetry-contracts` for each assigned integration, at the integration's
+poll interval, one device at a time. Values travel as exact, unscaled numerals; Central applies
+the pinned scale. Records queue with `record_type: "telemetry"` and go to
+`POST /collectors/{id}/telemetry`. The source OID is the `external_identifier`: create a
+Central telemetry binding with protocol `snmp`, `external_ref` set to that OID, and an `equipment_id`
+equal to the asset the metric mapping names (`managed_asset_id`). A mapping without an asset keeps
+reading history only. Central converts the reading from its stored unit before the overlay shows it,
+and the reading updates the rack overlay (temperature, humidity and power metrics today). Network-port
+link state is not carried by this path yet.
+
 Troubleshooting: check Central assignment/enabled status, selected active profile,
 numeric target address and CIDR policy, local credential UUID/version and file permissions,
 then UDP reachability. Do not enable payload/credential debug logging. Offline delivery
