@@ -38,11 +38,11 @@ AI dispatcher or blanket write permissions are introduced.
    `git-credentials-*.config` file and deletes that file when it sits directly in
    `$RUNNER_TEMP`, and unsets the `extraheader` in any other included file, resolving
    include paths as git does (`~` and paths relative to the including file) and
-   following nested includes to a fixed depth. Only a file whose whole name is
+   following nested includes to git's own depth limit of 10 (a deeper chain stops
+   the hook rather than being skipped). Only a file whose whole name is
    `git-credentials-<hex>.config` counts as a checkout credential. A real failure
    to remove a credential stops the hook, so no witness is posted; an absent
-   header is not a failure. The
-   pinned Claude action clears the header from `include.path` files only, so the
+   header is not a failure. The pinned Claude action clears the header from `include.path` files only, so the
    `includeIf` form is covered here. An exclusive PreToolUse guard permits
    only Read of the prepared context file and the native StructuredOutput result
    transport. It denies git configuration, credentials, process environments,
