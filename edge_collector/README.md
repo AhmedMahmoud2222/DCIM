@@ -50,8 +50,10 @@ Telemetry acquisition (`telemetry_scheduler.py`) polls the numeric OIDs Central 
 poll interval, one device at a time. Values travel as exact, unscaled numerals; Central applies
 the pinned scale. Records queue with `record_type: "telemetry"` and go to
 `POST /collectors/{id}/telemetry`. The source OID is the `external_identifier`: create a
-Central telemetry binding with protocol `snmp` and `external_ref` set to that OID, and the
-reading updates the rack overlay (temperature, humidity and power metrics today). Network-port
+Central telemetry binding with protocol `snmp`, `external_ref` set to that OID, and an `equipment_id`
+equal to the asset the metric mapping names (`managed_asset_id`). A mapping without an asset keeps
+reading history only. Central converts the reading from its stored unit before the overlay shows it,
+and the reading updates the rack overlay (temperature, humidity and power metrics today). Network-port
 link state is not carried by this path yet.
 
 Troubleshooting: check Central assignment/enabled status, selected active profile,

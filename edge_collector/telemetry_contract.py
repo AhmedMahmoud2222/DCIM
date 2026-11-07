@@ -12,7 +12,8 @@ those pieces share:
   3. `classify_telemetry_ack` says which Central rejections are final and which must stay queued.
 
 Central folds accepted readings into the rack overlay's cached status when a `PortTelemetryBinding` with protocol `snmp`
-has `external_ref` equal to the record's `external_identifier` (the source OID). The end-to-end contract is exercised in
+has `external_ref` equal to the record's `external_identifier` (the source OID) and `equipment_id` equal to the mapping's
+`managed_asset_id`. The value is converted from the reading's stored unit to the overlay unit; unconvertible readings are skipped. The end-to-end contract is exercised in
 backend/tests/api/test_telemetry_mapping_revisions_api.py and backend/tests/api/test_telemetry_reading_feeds_overlay.py.
 """
 

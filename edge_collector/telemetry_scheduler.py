@@ -8,7 +8,7 @@ runtime thread writes the durable queue. Central's authenticated plans decide wh
     OID to GET. A source without a pin is never polled, so an unpinned value cannot be queued.
 
 `external_identifier` is the source OID. A Central `PortTelemetryBinding` with protocol `snmp` and the same `external_ref`
-receives the reading in the rack overlay.
+receives the reading in the rack overlay when its `equipment_id` is the asset the mapping names.
 """
 from __future__ import annotations
 
