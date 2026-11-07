@@ -45,3 +45,38 @@ for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
     config = yaml.safe_load(workflow.read_text())
     check_action_refs(config, str(workflow))
 print('All external workflow actions use full commit SHAs')
+
+
+# Artifact action pins: the repository uses exactly one upload-artifact SHA and one
+# download-artifact SHA, and they must be the approved pair. A bump of one action without
+# its counterpart (or a new workflow on an older pair) fails here.
+APPROVED_UPLOAD_ARTIFACT = 'cf430e030ddbb5b0abf93d22962f4752f3646cd9'  # v7.0.2
+APPROVED_DOWNLOAD_ARTIFACT = '9000827ccba6bdab643e8b6fd33ac0654aef8333'  # v8.0.2
+artifact_pins = {'upload-artifact': {}, 'download-artifact': {}}
+
+
+def collect_artifact_pins(node, workflow):
+    if isinstance(node, dict):
+        ref = node.get('uses')
+        if isinstance(ref, str):
+            match = re.fullmatch(r'actions/(upload-artifact|download-artifact)@([0-9a-f]{40})', ref)
+            if match:
+                artifact_pins[match.group(1)].setdefault(match.group(2), set()).add(str(workflow))
+        for value in node.values():
+            collect_artifact_pins(value, workflow)
+    elif isinstance(node, list):
+        for value in node:
+            collect_artifact_pins(value, workflow)
+
+
+for workflow in sorted(Path('.github/workflows').glob('*.y*ml')):
+    collect_artifact_pins(yaml.safe_load(workflow.read_text()), workflow)
+for action, approved in (
+    ('upload-artifact', APPROVED_UPLOAD_ARTIFACT),
+    ('download-artifact', APPROVED_DOWNLOAD_ARTIFACT),
+):
+    for sha, files in artifact_pins[action].items():
+        assert sha == approved, (
+            f'artifact pin mismatch: {action}@{sha} is not the approved pin {approved}', sorted(files)
+        )
+print('Artifact upload and download pins are the single approved pair in every workflow')
