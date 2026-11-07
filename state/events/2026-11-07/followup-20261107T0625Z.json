@@ -1,0 +1,49 @@
+{
+  "run_id": "followup-20261107T0625Z",
+  "mode": "FOLLOW-UP",
+  "started_at": "2026-11-07T06:25:20Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired; policy/changelog loaded; ruleset bypass all pull_request"
+    },
+    {
+      "step": 1,
+      "result": "3 open PRs, 12 open issues; #294 and #295 inspected"
+    },
+    {
+      "step": 2,
+      "result": "#295 code diff matches mixed-case artifact pin fix; no independent Copilot review verified"
+    },
+    {
+      "step": 4,
+      "result": "REST inline review comments empty for #294/#295; GraphQL resolution not independently verified"
+    },
+    {
+      "step": "4a",
+      "result": "#295 Codex clean exact-head receipt; #294 no reviews"
+    },
+    {
+      "step": 5,
+      "result": "#294 optional Deployment tooling regressions failed; #295 waiting Copilot"
+    },
+    {
+      "step": 7,
+      "result": "no duplicate agent ask posted"
+    },
+    {
+      "step": 8,
+      "result": "no merges: #295 missing Copilot; #294 missing reviews and failing optional test"
+    },
+    {
+      "step": 9,
+      "result": "no new class I decision"
+    },
+    {
+      "step": 10,
+      "result": "delta report prepared"
+    }
+  ],
+  "writes": [],
+  "production_hold_0057": "intact"
+}
