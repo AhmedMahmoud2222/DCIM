@@ -68,7 +68,7 @@ The issue text names `main@4000a60` as baseline. That commit predates the units 
 Dependency gates:
 
 - **D1** Scoped read for alarms (and optionally collector health and telemetry) so site-restricted users can be served. Until it ships, M2 answers alarm and telemetry questions only for users who hold the underlying permission globally.
-- **D2** Decide the AI permission model (decision 1).
+- **D2** Decide the AI permission model (decision 1). Mechanism for site-restricted holders of `assistant:use`: [M2 section 13.1](ISSUE_107_M2_READONLY_ASSISTANT.md) (`FEATURE_GATE_PERMISSIONS`; `SCOPE_AWARE_PERMISSIONS` and `is_scope_independent` unchanged).
 - **D3** Provider data-handling decision (decision 3).
 - **D4** Metric-specific expected cadence and exclusions (maintenance windows) for M3. Only `Integration.poll_interval_seconds` exists today.
 - M4 predictive maintenance also needs labeled failure and maintenance history that the repository does not hold.

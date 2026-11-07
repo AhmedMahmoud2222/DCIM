@@ -1,6 +1,6 @@
 # Issue #107 M2: read-only assistant architecture and implementation contract
 
-**Document version:** 0.1 (2026-10-20). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
+**Document version:** 0.1.1 (2026-10-20; section 13.1 added 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
 
 ## 1. Principles
 
@@ -100,8 +100,7 @@ Adapter rules:
       "retrieved_at": "2026-10-20T15:00:02Z",
       "value": {"number": "24.5", "unit": "degC", "canonical": true},
       "quality": {"provenance_status": "pinned", "stale": false, "age_seconds": 112},
-      "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "...",
-                  "derived": false, "contributors": [], "placement_revision": "sha256:..."},
+      "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "..."},
       "versions": {"method": "linear_ols_v1", "correlation_method": "1"},
       "scope_site_id": "uuid"
     }
@@ -172,14 +171,7 @@ Timeout, 5xx, quota (HTTP 402/429) or schema-invalid output yields `status: evid
 
 ## 11. Revalidation, conversations, caches, exports
 
-- **Delivery revalidation.** Recompute `load_effective_access`, compare `permission_hash` with the bundle's snapshot, re-run each cited item's visibility predicate (placement may have moved the asset). If the permission itself is gone, return `denied` and delete the stored result. Item-level dropping applies only to **primary** items (one record, one visibility predicate); derived evidence follows the next rule.
-- **Derived evidence is never filtered, only rebuilt or invalidated.** An aggregate, total, count, ranking, average, forecast input or any summary built over several records ("derived item") must record its contributors in `lineage.contributors` (record ids and the `tool@version` plus argument hash that produced it). Dropping a derived item's inaccessible contributors, or checking only the visibility of the entity it is attached to (for example the room), would still leak the hidden contributors through the total or ranking and is forbidden. On delivery, on every later read, on export, and before any follow-up reuses a bundle, the system must:
-  1. Detect change: the `permission_hash` differs, or any contributor's current placement/scope fails the caller's current predicates, or any contributor no longer exists or moved site/room/rack since `retrieved_at` (compare a per-item `placement_revision`, or re-evaluate the predicate).
-  2. On any change, **discard every derived item whose contributor set is not fully visible and unchanged**, and rebuild it by re-running the stored tool plan (tool name, version, validated arguments) through the normal adapter path, which applies the current visibility predicate before aggregation and ranking (principle 3). Rebuilt values replace the old ones; the old values are never shown, cached, exported or sent to the provider.
-  3. Claims, calculations, hypotheses and recommendations that cite a rebuilt or discarded item are re-validated against the new values (section 7) or removed. A model-written text is not patched; if synthesis is needed again, it is regenerated from the rebuilt bundle or the response degrades to `evidence_only`.
-  4. **Fail closed:** if the rebuild fails, exceeds the bounds of section 9, or the plan cannot be replayed, the derived item and everything that cites it are removed, `caveats` gets `missing`, and the status is `evidence_only` or `insufficient_evidence`. If the revalidation itself errors, return `denied`/an error with no content rather than the stored result.
-  5. Rebuilt output must be indistinguishable from output for a caller who never had the old access: no count, rank position, "N more omitted" or gap in totals reveals revoked or moved items (consistent with section 5 `omitted.count_visible_to_caller`).
-  6. The stored bundle and response are overwritten or deleted after the rebuild; the audit record keeps hashes and a reason code (`authz_changed`, `placement_changed`), not the discarded values.
+- **Delivery revalidation.** Recompute `load_effective_access`, compare `permission_hash` with the bundle's snapshot, re-run each cited item's visibility predicate (placement may have moved the asset). On mismatch drop affected items and re-run validation; if the permission itself is gone, return `denied` and delete the stored result.
 - **Conversation isolation.** A conversation row is keyed by `user_id`. Follow-up questions rebuild the bundle with current authorization; prior answers are never trusted as evidence.
 - **Caches.** Cache keys include `user_id` and `permission_hash`. No shared cache of bundles or responses across users. Provider-side prompt caches receive only content from a single user's bundle.
 - **Exports.** An export re-runs revalidation and contains only items the caller can see at export time.
@@ -217,7 +209,55 @@ Response (abridged):
 
 `scope_hint` only narrows. A hint outside the caller's scope is ignored and reported as `denied`, with the same shape as an unknown id.
 
-New permission (PROPOSED): `assistant:use`, seeded to roles by migration. The existing rule applies: permission codes match exactly; it implies nothing else.
+### 13.1 Feature-gate eligibility for site-restricted users (PROPOSED)
+
+Audited on `origin/main`: `SCOPE_AWARE_PERMISSIONS` lists the codes whose endpoints filter by site/rack. `is_scope_independent(code)` is true only for those codes and for the `user`/`group` resources. In `load_effective_access`, a code whose `permission_scopes[code]` is not unrestricted and which is not `is_scope_independent` goes to `inactive_permissions` and is removed from `permission_codes`. Seeding `assistant:use` alone would therefore leave it inactive for every site-restricted holder, and `require_permission("assistant:use")` would return 403 before any authorized inventory tool ran.
+
+**Mechanism.** Add a third, separate set. Do not add `assistant:use` to `SCOPE_AWARE_PERMISSIONS` (that set means "the endpoint filters data by site", which is false for a gate) and do not widen `is_scope_independent` (it also drives the `site_scoped` flag in `api/v1/groups.py`).
+
+```python
+# backend/app/application/access_control.py   (PROPOSED)
+FEATURE_GATE_PERMISSIONS = frozenset({"assistant:use"})   # closed, code constant, no data access
+
+def keeps_active_when_restricted(code: str) -> bool:
+    return is_scope_independent(code) or code in FEATURE_GATE_PERMISSIONS
+```
+
+`load_effective_access` replaces its single `not is_scope_independent(code)` test with `not keeps_active_when_restricted(code)`. Nothing else in the function changes: the allow/deny union, `effective = allowed - denied`, and the SEC-ARCH-01 role-containment and organization handling all run first and still apply to `assistant:use`.
+
+**Why this does not widen tool-level scope.**
+
+1. `assistant:use` carries no data. No tool, query builder, `*_visible_clause` or `intersect_scopes` call may read `ctx.scope_for("assistant:use")`. Its scope value is meaningless and must not be a fallback for another code.
+2. Each tool still checks its own code(s) and builds its predicate from `ctx.scope_for(<own code>)` (`intersect_scopes` for two codes). A code that `load_effective_access` made inactive for the user (`alarm:read`, `telemetry:read`, `collector:read`, `power:read` while D1 is open) is absent from `permission_codes`, so `scope_for` returns `EMPTY_SCOPE` and the tool returns `denied`. The gate cannot reactivate it.
+3. The set is closed. Adding a code to `FEATURE_GATE_PERMISSIONS` is an authorization change that needs its own review. A guard test (below) fails if the set contains anything in `SCOPE_AWARE_PERMISSIONS`.
+4. Explicit deny: a group `deny` on `assistant:use` removes it for the user whatever allows exist. A deny on a tool code removes only that tool.
+5. A restricted holder with `assistant:use` and no active tool code gets an empty tool list and `denied` or `insufficient_evidence`, never a broader answer.
+
+**Deny-by-default rules.**
+
+- `assistant:use` absent from `permission_codes` (not granted, denied, or not seeded): 403 from the dependency, no planner, no provider call, no bundle.
+- Default seeding: no role receives it until the owner decides decision 1. A restricted user gets it only through an explicit role or group grant.
+- A context built without `permission_scopes` fails closed (`EMPTY_SCOPE`), as `AuthContext` already does.
+- Planner output naming a tool, argument or scope outside the registry and the caller's active codes is dropped, not repaired.
+- Revalidation (section 11) re-evaluates `assistant:use` and each tool code with `load_effective_access`. If the gate disappears, the result is `denied` and stored data is deleted.
+- The group editor reports `assistant:use` as "feature access only" instead of site-scoped, so administrators do not read it as site-limited data access.
+
+**Acceptance tests (site-restricted user).** Fixture: user U with no global role and a group G granting `assistant:use`, `equipment:read`, `rack:read`, `alarm:read`, `telemetry:read` on site A only. Site B has equipment, racks and alarms.
+
+1. `load_effective_access(U)`: `assistant:use`, `equipment:read`, `rack:read` are in `permission_codes`; `alarm:read` and `telemetry:read` are in `inactive_permissions` (while D1 is open).
+2. `POST /assistant/questions` succeeds for U and the equipment tool returns only site A items; site B ids return the same `not_found_or_denied` as missing ids.
+3. A question about alarms or telemetry returns `denied` for those tools. No alarm or telemetry item appears in the bundle, in counts or in `omitted`.
+4. `scope_hint` naming site B is rejected and does not broaden retrieval.
+5. Group deny on `assistant:use`: U gets 403, while `equipment:read` still works on the normal inventory API.
+6. Group deny on `equipment:read` only: gate active, inventory tool `denied`.
+7. `assistant:use` granted through a scoped role whose containment check fails (SEC-ARCH-01): the permission is dropped as today and U gets 403.
+8. G grants `assistant:use` and no sites: gate active, every tool returns empty or `denied`.
+9. Revocation between request and delivery: remove U from G; the delivery read returns `denied` and the stored result is deleted.
+10. Unrestricted user (global role) is unchanged; `assistant:use` without `equipment:read` still yields `denied` from inventory tools.
+11. Guard test: `FEATURE_GATE_PERMISSIONS == {"assistant:use"}`, disjoint from `SCOPE_AWARE_PERMISSIONS`; no module under `application/assistant` references `scope_for("assistant:use")`.
+12. Route sweep (same style as `test_user_groups_authz.py` and `test_pr69_route_sweep_strict.py`): every `/assistant/*` route depends on `assistant:use`, and every registered tool declares non-empty `required_permissions` that exclude the gate code.
+
+New permission (PROPOSED): `assistant:use`, seeded without default role grants. Permission codes match exactly; it implies nothing else.
 
 ## 14. Frontend behavior (PROPOSED)
 
@@ -231,21 +271,3 @@ New permission (PROPOSED): `assistant:use`, seeded to roles by migration. The ex
 ## 15. Acceptance for M2
 
 The tests in section 9 of the [main document](ISSUE_107_AI_OPERATIONS.md) pass on the exact PR HEAD in CI, including the scripted-provider adversarial suite; an independent reviewer accepts the scope tests; the owner approves the provider data-handling terms. Without a real provider, only the evidence-only path ships.
-
-### 15.1 Derived-evidence revalidation tests (required)
-
-Each runs against the real adapters and DB fixtures (not mocks of the visibility predicate), on delivery, on a later `GET`, on export, and on a follow-up question.
-
-| # | Scenario | Setup | Required result |
-|---|---|---|---|
-| R1 | Moved asset, room aggregate | Room X summary (total kW, mean temperature) built from equipment A, B, C visible to the user. After retrieval, C moves to a room/site outside the user's scope. | Summary is rebuilt from A and B; totals, mean, count and ranking equal a fresh run; no value that includes C is delivered, exported or sent to the provider. A test asserts the old total is absent from the response, stored bundle, cache and audit payload. |
-| R2 | Scope revocation, site | User loses the site grant covering B and C after the bundle is stored. | Derived items are rebuilt under the narrowed scope; if nothing remains, `insufficient_evidence`. No "3 of 5" or other count revealing the removed items. |
-| R3 | Ranking | "Top 3 hottest racks": rank 1 moves out of scope. | Ranking recomputed; former rank 4 may now appear; the response never shows a gap, a renumbered-with-hole list or the removed item's value. |
-| R4 | Anchor visible, contributor hidden | The room remains visible but one contributing device is no longer visible. | The derived item is not retained just because its anchor entity is visible; it is rebuilt without the device. |
-| R5 | Rebuild failure | Force the replay to time out or exceed bounds. | Derived item and every claim citing it are removed; status `evidence_only` or `insufficient_evidence`; no stale value is shown. |
-| R6 | Revalidation error | Make the authorization recompute raise. | No stored content is returned (fail closed). |
-| R7 | Permission removed | `assistant:use` or the tool permission is revoked. | `denied`; stored result deleted; a later `GET` returns `denied`/`404`. |
-| R8 | Moved into scope | An asset moves into the user's scope. | Not required to appear in old answers; a follow-up rebuilds from current authorization and may include it. |
-| R9 | Model text with stale number | A scripted provider text states the old total after R1. | Claim fails validation against the rebuilt bundle (section 7 rule 2) and is removed. |
-| R10 | Cache and export | Same user keeps a cached bundle across R1/R2; export is requested afterwards. | Cache key mismatch (`permission_hash`/`placement_revision`) forces a rebuild; the export contains only rebuilt items. |
-| R11 | Negative control | No authorization or placement change. | Output is identical (same `bundle_hash`) and no rebuild is triggered. |
