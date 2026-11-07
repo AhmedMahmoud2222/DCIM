@@ -17,6 +17,8 @@ MUTANTS = (
     ('source execution outcome', 'acceptance_core.py', "run.get('status') == 'completed' and run.get('conclusion') == 'success'", 'True'),
     ('open findings', 'acceptance_gate.py', "review['review']['verdict'] == 'ACCEPT' and not outstanding", 'True'),
     ('duplicate artifacts', 'acceptance_api.py', "len(matches) == 1, 'missing/duplicate evidence artifact'", "len(matches) >= 1, 'missing/duplicate evidence artifact'"),
+    ('credential include pointers', 'acceptance_provider_witness.py', 'if CREDENTIALS_CONFIG.search(value):', 'if False:'),
+    ('credential file deletion boundary', 'acceptance_provider_witness.py', 'target.parent.resolve() == Path(runner_temp).resolve()', 'True'),
     ('workflow source bytes', 'acceptance_api.py', "self.file(path, sha) == (self.root / path).read_bytes()", 'True'),
 )
 
