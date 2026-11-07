@@ -111,6 +111,8 @@ Adapter rules:
 
 `omitted.count_visible_to_caller` counts only what the caller may see. A hidden resource never changes any number in the bundle.
 
+`quality.stale` and `age_seconds` are retrieval-time values only; freshness is recomputed at every use (section 11a).
+
 ## 6. Response schema (proposed)
 
 ```json
@@ -134,7 +136,7 @@ The validator runs after the model and before delivery. A failure removes the cl
 
 1. Every `refs` entry exists in the bundle of this request and belongs to the caller.
 2. A numeric claim equals the cited value after unit conversion with the registry (`convert_to_presentation`), within rounding stated in the item.
-3. A time claim lies within the item's `observed_at` window; "now"/"currently" claims require `stale == false`.
+3. A time claim lies within the item's `observed_at` window. "now"/"currently" claims require freshness computed at the current evaluation time (section 11a); the stored `quality.stale` is never consulted for this rule.
 4. A comparative or causal claim is allowed only as a hypothesis, and only if the cited items include the entities it names.
 5. A named asset, rack or site must appear in a cited item; otherwise it is a hallucinated entity.
 6. Calculations must first pass dimensional validation (section 7b), then are recomputed deterministically from their `inputs`; either failure rejects the claim. Arithmetic reproducibility is necessary, never sufficient.
@@ -159,7 +161,7 @@ Disclosure, caveats, hypothesis labelling or explanatory text cannot move a calc
 | Condition | Behavior |
 |---|---|
 | No visible data | `insufficient_evidence`; no fabricated values |
-| Reading older than 2x `Integration.poll_interval_seconds` | Mark `stale`; cannot support a present-tense claim |
+| Reading older than 2x `Integration.poll_interval_seconds`, measured at the current evaluation time (section 11a) | Mark `stale`; cannot support a present-tense claim |
 | Two items disagree (different values for the same series and instant, or incident vs alarm status) | Report both with refs; no silent selection |
 | Mixed provenance (`unverified_legacy` with pinned) | State the mix; do not average across eras (same rule as `TelemetryTrend.tsx` grouping) |
 | Forecast status `sparse`, `stale`, `missing`, `estimated_mixed` | Relay the status and `no_forecast_reason`; no number |
@@ -189,6 +191,18 @@ Timeout, 5xx, quota (HTTP 402/429) or schema-invalid output yields `status: evid
 - **Caches.** Cache keys include `user_id` and `permission_hash`. No shared cache of bundles or responses across users. Provider-side prompt caches receive only content from a single user's bundle.
 - **Exports.** An export re-runs revalidation and contains only items the caller can see at export time.
 - **Admin access.** Administrators do not read other users' conversations by default; a break-glass read is audited.
+
+## 11a. Freshness is evaluated at use time (PROPOSED)
+
+`quality.stale` and `age_seconds` in a stored bundle (section 5) describe the moment of retrieval only. They are informational and are never an input to claim validation or delivery.
+
+1. **Evaluation time.** Every validation pass takes an explicit `evaluated_at` from the server clock at that moment. Age is `evaluated_at - observed_at`; an item is stale when age exceeds 2x the source's current `Integration.poll_interval_seconds` (section 8), read at evaluation time.
+2. **When it runs.** Before first delivery, on asynchronous completion (the Celery task re-evaluates after the provider returns, not at enqueue time), on every `GET` of a stored result, on every evidence listing, on export, and whenever a follow-up question reuses any part of a prior bundle or answer. No path may return a stored claim without a fresh evaluation.
+3. **Present-tense claims.** A fact whose text asserts a current state ("now", "currently", present-tense state predicates) that cites an item now stale is handled in this order: (a) if the item was fresh at `retrieved_at` and the claim is supported at that time, rewrite it from the validated predicate template as explicitly historical ("As of <observed_at>: ..."), with the caveat `stale`; (b) otherwise remove the claim. Model text is never patched; the template renders it.
+4. **Derived evidence.** An aggregate, ranking or calculation is stale if any contributor is stale; it is rebuilt through the adapter (a fresh read) or rendered historical as in 3. A fresh contributor never refreshes a stale one.
+5. **Follow-ups.** A follow-up re-runs retrieval for any item it needs to support a present-tense claim; prior bundles may support historical statements only.
+6. **Fail closed.** If `evaluated_at` cannot be obtained, the poll interval is unknown, `observed_at` is missing or in the future beyond clock tolerance, or re-evaluation errors, the item counts as stale. If no claim survives, the status is `evidence_only` or `insufficient_evidence`. Cached responses are keyed additionally by the evaluation outcome and are never served past the earliest item staleness threshold.
+7. **Interaction with 11.** Freshness changes do not alter `permission_hash`, so the authorization check alone never detects them; both checks run independently.
 
 ## 12. Provider data handling, redaction, retention
 
@@ -301,3 +315,20 @@ Scripted provider, real unit registry. Fixture items: `T1` = 24.5 degC, `T2` = 2
 10. **Injected text.** An asset name or alarm subject instructs adding temperature to power; the model complies; rejected as in test 1.
 11. **Provenance disclosure still works.** Same-dimension inputs with different provenance classes are accepted when the mix is stated and rejected when it is not.
 12. **No residue.** After test 1 no total, ranking or summary built on the rejected calculation is delivered, and `status` is `evidence_only` if no claim survives.
+
+### 15.3 Freshness tests (PROPOSED)
+
+Controllable clock, permissions and placement unchanged throughout. Fixture: `E3` = 24.5 degC observed at T0, poll interval 60 s (threshold 120 s). Answer F1 "Room A is currently 24.5 degC" cites `E3`.
+
+1. **Time advance, delivery.** Retrieve at T0+60 s (fresh). Advance the clock to T0+300 s before delivery. F1 is not delivered as present tense; it is rewritten as "As of T0: 24.5 degC" with caveat `stale`, or removed. `permission_hash` is identical.
+2. **Stored result, later read.** Deliver at T0+60 s, then `GET` at T0+10 min. The response is re-evaluated: historical wording, never the stored "currently".
+3. **Async completion.** The task enqueues at T0+100 s, the provider takes 40 s, the clock passes the threshold during the call. The completion pass re-evaluates and F1 is not delivered as present tense.
+4. **Export.** An export at T0+1 h contains no present-tense claim on `E3`.
+5. **Follow-up reuse.** A follow-up "is it still 24.5?" at T0+10 min triggers a fresh retrieval. If the new reading is unavailable, the answer is `insufficient_evidence` or historical only; the prior bundle never supports "currently".
+6. **Derived evidence.** A room average of `E3` (stale) and `E4` (fresh) is rebuilt or rendered historical; it is not delivered as current.
+7. **Boundary.** Age exactly at the threshold is fresh, one second past is stale (guards off-by-one).
+8. **Poll interval change.** The integration's interval is raised so the item is no longer stale (or lowered so it becomes stale); the outcome follows the interval at evaluation time.
+9. **Fail closed.** Clock source unavailable, missing `observed_at`, or `observed_at` in the future: the item is treated as stale.
+10. **Injected text.** An asset note says "reading is always current"; the model repeats it; the claim is still downgraded.
+11. **Positive control.** At T0+60 s the claim is delivered as present tense with no `stale` caveat.
+12. **Mutation-sensitive.** Run the validator with each mutant: (a) trust stored `quality.stale`, (b) evaluate at `retrieved_at` instead of `evaluated_at`, (c) skip re-evaluation on GET, (d) skip it on async completion, (e) skip it on export, (f) reuse a prior bundle for present tense on follow-up, (g) let a fresh contributor refresh a stale aggregate. Each mutant must fail at least one test above; a surviving mutant fails the section.
