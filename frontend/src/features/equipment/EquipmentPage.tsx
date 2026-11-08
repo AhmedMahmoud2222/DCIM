@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { DataTable, EmptyRow, RowCount, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
+import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
@@ -15,18 +15,27 @@ import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 export function EquipmentPage() {
+  const pageSize = 200;
+  const [offset, setOffset] = useState(0);
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const canImport = useHasPermission("equipment:import");
 
-  const equipmentQuery = useQuery({ queryKey: ["equipment"], queryFn: listEquipment });
+  const equipmentQuery = useQuery({ queryKey: ["equipment", offset], queryFn: () => listEquipment(pageSize, offset) });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
 
   const [assetTag, setAssetTag] = useState("");
   const [hostname, setHostname] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [modelName, setModelName] = useState("");
+
+  useEffect(() => {
+    const page = equipmentQuery.data;
+    if (page && offset > 0 && offset >= page.total) {
+      setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / pageSize) * pageSize);
+    }
+  }, [equipmentQuery.data, offset]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -135,7 +144,11 @@ export function EquipmentPage() {
 
       {equipmentQuery.data && (
         <>
-          <RowCount shown={equipmentQuery.data.items.length} total={equipmentQuery.data.total} noun="equipment" />
+          <p className="mb-2 text-xs text-fg-secondary" data-testid="row-count">
+            {equipmentQuery.data.total === 0
+              ? "0 equipment"
+              : `Showing ${offset + 1}-${offset + equipmentQuery.data.items.length} of ${equipmentQuery.data.total} equipment`}
+          </p>
           <DataTable label="Equipment">
             <thead>
               <tr className="border-b border-line-subtle bg-surface-panel">
@@ -179,6 +192,29 @@ export function EquipmentPage() {
               {equipmentQuery.data.items.length === 0 && <EmptyRow columns={4}>No equipment yet.</EmptyRow>}
             </tbody>
           </DataTable>
+          {equipmentQuery.data.total > pageSize && (
+            <nav aria-label="Equipment pages" className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOffset((current) => Math.max(0, current - pageSize))}
+                disabled={offset === 0 || equipmentQuery.isFetching}
+                className="rounded-sm border border-line-subtle px-3 py-1.5 text-sm text-fg-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous page
+              </button>
+              <span className="text-xs text-fg-secondary" aria-live="polite">
+                Page {Math.floor(offset / pageSize) + 1} of {Math.ceil(equipmentQuery.data.total / pageSize)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setOffset((current) => current + pageSize)}
+                disabled={offset + pageSize >= equipmentQuery.data.total || equipmentQuery.isFetching}
+                className="rounded-sm border border-line-subtle px-3 py-1.5 text-sm text-fg-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next page
+              </button>
+            </nav>
+          )}
         </>
       )}
     </div>

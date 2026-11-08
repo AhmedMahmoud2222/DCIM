@@ -23,7 +23,7 @@ export function PassThroughsPage() {
   const [label, setLabel] = useState("");
 
   const items = useQuery({ queryKey: ["network", "pass-throughs"], queryFn: () => listPassThroughs() });
-  const equipment = useQuery({ queryKey: ["equipment", "list"], queryFn: listEquipment, enabled: canManage });
+  const equipment = useQuery({ queryKey: ["equipment", "list"], queryFn: () => listEquipment(), enabled: canManage });
   const ports = useQuery({
     queryKey: ["equipment", equipmentId, "ports"],
     queryFn: () => getEquipmentPorts(equipmentId),

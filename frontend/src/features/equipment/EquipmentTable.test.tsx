@@ -22,7 +22,7 @@ const asset = (overrides: Record<string, unknown>) =>
     ...overrides,
   }) as unknown as Equipment;
 
-const page = (items: Equipment[], total = items.length): Page<Equipment> => ({ items, total, limit: 200, offset: 0 });
+const page = (items: Equipment[], total = items.length, offset = 0): Page<Equipment> => ({ items, total, limit: 200, offset });
 
 const rackedAt = (rack_id: string, u_start: number, u_end: number, side: string) => ({
   placement_type: "rack_mounted",
@@ -110,9 +110,26 @@ describe("Equipment table", () => {
     expect(await screen.findByTestId("row-count")).toHaveTextContent("1 equipment");
     unmount();
 
-    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(page([asset({})], 340));
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}` })), 340));
     renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
-    expect(await screen.findByTestId("row-count")).toHaveTextContent("Showing 1 of 340 equipment. The remaining 339 are not listed here.");
+    expect(await screen.findByTestId("row-count")).toHaveTextContent("Showing 1-200 of 340 equipment");
+    expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
+  });
+
+  it("loads the next equipment page and provides a way back", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}` })), 201))
+      .mockResolvedValueOnce(page([asset({ id: "e200", hostname: "last-device" })], 201, 200));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await screen.findByRole("button", { name: "Next page" });
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 201-201 of 201 equipment");
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 200);
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
   });
 
   it("shows the empty state inside the table, not a blank page", async () => {

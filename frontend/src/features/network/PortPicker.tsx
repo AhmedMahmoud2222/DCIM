@@ -11,7 +11,7 @@ interface Props {
 
 /** Two linked selects: equipment, then one of its network ports. */
 export function PortPicker({ label, equipmentId, portId, onChange }: Props) {
-  const equipment = useQuery({ queryKey: ["equipment", "list"], queryFn: listEquipment });
+  const equipment = useQuery({ queryKey: ["equipment", "list"], queryFn: () => listEquipment() });
   const ports = useQuery({
     queryKey: ["equipment", equipmentId, "ports"],
     queryFn: () => getEquipmentPorts(equipmentId),
