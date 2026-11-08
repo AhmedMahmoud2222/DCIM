@@ -1,0 +1,78 @@
+{
+  "run_id": "full-20261108T0302Z",
+  "mode": "FULL",
+  "started_at": "2026-11-08T03:02:52Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired; policy and changelog read; ruleset verified"
+    },
+    {
+      "step": 1,
+      "result": "2 open PRs, 11 open non-PR issues; both PR heads changed since previous index"
+    },
+    {
+      "step": 2,
+      "result": "PR294 pin diff inspected; PR116 architecture diff sampled; full exact-head verification incomplete"
+    },
+    {
+      "step": 3,
+      "result": "PR294 workflow-sensitive dependency; PR116 refreshed to current main"
+    },
+    {
+      "step": 4,
+      "result": "review threads inspected; no resolution without exact-head evidence"
+    },
+    {
+      "step": "4a",
+      "result": "previous findings not cleared"
+    },
+    {
+      "step": 5,
+      "result": "PR294 7 behind and backend running; PR116 CI running after refresh; no new review request"
+    },
+    {
+      "step": 6,
+      "result": "PR116 no longer 216 behind; supersession not warranted based on current comparison"
+    },
+    {
+      "step": 7,
+      "result": "no stale agent prompts sent due recent activity"
+    },
+    {
+      "step": 8,
+      "result": "no merges: both fail CI/review/thread gates"
+    },
+    {
+      "step": 9,
+      "result": "owner decision comments inspected; no new D/DX found after DX65"
+    },
+    {
+      "step": 10,
+      "result": "report prepared; production hold intact"
+    }
+  ],
+  "prs": [
+    {
+      "number": 294,
+      "head": "b1e640db851c690876d869473920ceb15e8f780f",
+      "behind": 7,
+      "required": "backend in progress, frontend success",
+      "threads": 1
+    },
+    {
+      "number": 116,
+      "head": "6398dcdeb1e0f892c3400cd3ff74dc108e999242",
+      "behind": 0,
+      "required": "CI not complete",
+      "threads": 11
+    }
+  ],
+  "merges": [],
+  "resolutions": [],
+  "policy_amendments": [],
+  "limitations": [
+    "full thread evidence and per-item state updates not completed",
+    "required CI aggregate not yet complete"
+  ]
+}
