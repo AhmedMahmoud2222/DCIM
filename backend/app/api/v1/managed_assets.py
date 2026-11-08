@@ -10,12 +10,14 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.application.audit_service import write_audit_log
 from app.application.idempotency import (
+    ClaimRef,
     IdempotencyConflict,
     IdempotencyStillProcessing,
     complete_claim,
@@ -25,7 +27,7 @@ from app.application.idempotency import (
 )
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
-from app.core.errors import ApiError, NotFoundError
+from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.identity.models import ALLOWED_LIFECYCLE_TRANSITIONS, ASSET_TYPES, ManagedAsset
 
 router = APIRouter(prefix="/managed-assets", tags=["managed-assets"])
@@ -97,7 +99,7 @@ async def create_managed_asset(
     # Captured now, before any rollback can expire `claim`'s attributes — accessing an
     # expired ORM attribute triggers an implicit lazy-load, which cannot run outside an
     # awaited context and would raise MissingGreenlet inside the except block below.
-    claim_id = claim.id if claim is not None else None
+    claim_ref = ClaimRef.of(claim) if claim is not None else None
 
     try:
         asset = ManagedAsset(asset_type=body.asset_type, asset_tag=body.asset_tag, serial_number=body.serial_number)
@@ -132,8 +134,8 @@ async def create_managed_asset(
         return out
     except Exception:
         await db.rollback()
-        if claim_id is not None:
-            await release_claim(db, claim_id)
+        if claim_ref is not None:
+            await release_claim(db, claim_ref)
         raise
 
 
@@ -202,7 +204,14 @@ async def transition_lifecycle(
         # The existing column is TIMESTAMP WITHOUT TIME ZONE. Store naive UTC to
         # match that contract; asyncpg rejects an aware datetime for this column.
         asset.decommissioned_at = datetime.now(UTC).replace(tzinfo=None)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # Issue #105: the database refuses to retire a cooling unit that is still related to a thermal zone.
+        await db.rollback()
+        if "restrict_violation" in str(exc.orig) or "still related to thermal zones" in str(exc.orig):
+            raise ConflictError(detail="Cooling unit still has thermal-zone relationships; remove them first.") from exc
+        raise
 
     request_id, correlation_id = _request_ids(request)
     await write_audit_log(

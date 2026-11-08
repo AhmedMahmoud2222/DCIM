@@ -13,10 +13,22 @@ from typing import Any
 import httpx
 
 from .queue import QueueRecord
+from .telemetry_contract import ContractBook, ContractPlanError, classify_telemetry_ack
+
+PERMANENT_REJECTION_CODES = frozenset({"INVALID_PAYLOAD"})
+PERMANENT_PAYLOAD_STATUSES = frozenset({400, 413, 422})
 
 
 class RetryableTransportError(RuntimeError):
     """A request did not produce a complete, trustworthy central acknowledgement."""
+
+
+class PermanentPayloadError(RetryableTransportError):
+    """Central refused the request body itself (400/413/422); resending the same bytes cannot succeed.
+
+    Subclasses the retryable error so callers that only retry (heartbeat, plan fetch) keep working;
+    the delivery loop catches it first and isolates the offending record instead of looping on it.
+    """
 
 
 class MalformedResponseError(RetryableTransportError):
@@ -66,6 +78,34 @@ class CentralClient:
             raise MalformedResponseError("central response was not JSON") from error
         return self._parse_ack(response_body, batch_id=batch_id, record_ids=record_ids)
 
+    def flush_telemetry(self, records: Sequence[QueueRecord]) -> AckResult:
+        """Deliver pinned telemetry records to `POST /collectors/{id}/telemetry`; Central acks each record."""
+        if not records:
+            return AckResult(frozenset(), frozenset())
+        record_ids = {record.record_id for record in records}
+        if len(record_ids) != len(records):
+            raise ValueError("batch records must have unique record IDs")
+        response = self._post(
+            f"/collectors/{self.collector_id}/telemetry", {"records": [self._telemetry_record(r) for r in records]},
+        )
+        try:
+            response_body = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise MalformedResponseError("central response was not JSON") from error
+        results = response_body.get("results") if isinstance(response_body, dict) else None
+        if not isinstance(results, list) or len(results) != len(records):
+            raise MalformedResponseError("central response did not acknowledge every record")
+        acknowledged: set[str] = set()
+        returned: set[str] = set()
+        for result in results:
+            record_id = result.get("dedup_key") if isinstance(result, dict) else None
+            if not isinstance(record_id, str) or record_id not in record_ids or record_id in returned:
+                raise MalformedResponseError("central response has invalid record identifiers")
+            returned.add(record_id)
+            if classify_telemetry_ack(result) == "acknowledge":
+                acknowledged.add(record_id)
+        return AckResult(frozenset(acknowledged), frozenset(record_ids - acknowledged))
+
     def heartbeat(self, *, queue_depth: int, status: str = "ok") -> None:
         response = self._post(
             f"/collectors/{self.collector_id}/heartbeat",
@@ -74,18 +114,46 @@ class CentralClient:
         if response.status_code != 204:
             raise RetryableTransportError(f"unexpected heartbeat status {response.status_code}")
 
+    def get_discovery_plan(self) -> list[dict[str, Any]]:
+        """The collector's assigned SNMP integrations with their secret-free profile plans."""
+        response = self._send("GET", f"/collectors/{self.collector_id}/discovery-plan", None)
+        try:
+            plan = response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise MalformedResponseError("central discovery plan was not JSON") from error
+        if not isinstance(plan, list) or not all(isinstance(item, dict) for item in plan):
+            raise MalformedResponseError("central discovery plan has an unexpected shape")
+        return plan
+
+    def get_telemetry_contracts(self) -> ContractBook:
+        """The immutable conversion contracts (Issue #128 / G1) to pin onto telemetry values at acquisition."""
+        response = self._send("GET", f"/collectors/{self.collector_id}/telemetry-contracts", None)
+        try:
+            return ContractBook.from_plan(response.json())
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise MalformedResponseError("central telemetry contracts were not JSON") from error
+        except ContractPlanError as error:
+            raise MalformedResponseError(f"central telemetry contracts are malformed: {error}") from error
+
     def _post(self, path: str, body: dict[str, Any]) -> httpx.Response:
-        raw_body = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return self._send("POST", path, body)
+
+    def _send(self, method: str, path: str, body: dict[str, Any] | None) -> httpx.Response:
+        raw_body = (
+            b"" if body is None
+            else json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        )
         timestamp = str(int(time.time()))
         nonce = secrets.token_urlsafe(24)
         message = f"{self.collector_id}.{timestamp}.{nonce}.".encode() + raw_body
         signature = hmac.new(self._secret.encode(), message, hashlib.sha256).hexdigest()
         try:
-            response = self._client.post(
+            response = self._client.request(
+                method,
                 path,
-                content=raw_body,
+                content=raw_body if body is not None else None,
                 headers={
-                    "Content-Type": "application/json",
+                    **({"Content-Type": "application/json"} if body is not None else {}),
                     "X-Collector-Id": str(self.collector_id),
                     "X-Collector-Timestamp": timestamp,
                     "X-Collector-Nonce": nonce,
@@ -96,6 +164,8 @@ class CentralClient:
             raise RetryableTransportError("central transport unavailable") from error
         if response.status_code == 429 or response.status_code >= 500:
             raise RetryableTransportError(f"central returned retryable status {response.status_code}")
+        if response.status_code in PERMANENT_PAYLOAD_STATUSES:
+            raise PermanentPayloadError(f"central rejected the request payload with status {response.status_code}")
         if not 200 <= response.status_code < 300:
             raise RetryableTransportError(f"central returned unexpected status {response.status_code}")
         return response
@@ -110,9 +180,30 @@ class CentralClient:
                 "external_identifier": payload["external_identifier"],
                 "occurred_at": record.occurred_at.isoformat(),
                 "raw_attributes": payload.get("raw_attributes", {}),
+                # Absent for device observations queued by older collectors; Central defaults to "device".
+                **({"record_type": payload["record_type"]} if "record_type" in payload else {}),
             }
         except KeyError as error:
             raise ValueError(f"queue record missing central ingest field: {error.args[0]}") from error
+
+    @staticmethod
+    def _telemetry_record(record: QueueRecord) -> dict[str, Any]:
+        payload = record.payload
+        try:
+            return {
+                "dedup_key": record.record_id,
+                "integration_id": payload["integration_id"],
+                "external_identifier": payload["external_identifier"],
+                "source_identifier": payload["source_identifier"],
+                "occurred_at": record.occurred_at.isoformat(),
+                "value": payload["value"],
+                "attributes": payload.get("attributes", {}),
+                "mapping_revision_id": payload["mapping_revision_id"],
+                "source_unit": payload["source_unit"],
+                "source_scale": payload["source_scale"],
+            }
+        except KeyError as error:
+            raise ValueError(f"queue record missing central telemetry field: {error.args[0]}") from error
 
     @staticmethod
     def _parse_ack(response_body: Any, *, batch_id: str, record_ids: set[str]) -> AckResult:
@@ -133,7 +224,10 @@ class CentralClient:
             if status not in {"accepted", "duplicate", "rejected"}:
                 raise MalformedResponseError("central response has an unknown acknowledgement status")
             returned_ids.add(record_id)
-            if status in {"accepted", "duplicate"}:
+            # A permanently invalid record can never succeed on retry; dropping it locally
+            # (it is still counted by Central) keeps it from blocking the queue until expiry.
+            permanent = status == "rejected" and result.get("error_code") in PERMANENT_REJECTION_CODES
+            if status in {"accepted", "duplicate"} or permanent:
                 acknowledged.add(record_id)
         if returned_ids != record_ids:
             raise MalformedResponseError("central response omitted a record acknowledgement")

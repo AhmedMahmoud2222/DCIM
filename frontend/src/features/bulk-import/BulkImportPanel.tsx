@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import {
   BulkImportResource,
@@ -12,10 +13,28 @@ import {
   uploadImportJob,
 } from "@/features/bulk-import/api";
 import { ApiError } from "@/lib/apiClient";
-import { BulkImportMode } from "@/types";
+import { BulkImportMode, BulkImportRow } from "@/types";
 
 const POLL_INTERVAL_MS = 1500;
 const ROWS_PER_PAGE = 25;
+
+// The backend's resolve_room() (app/application/bulk_import/resolvers.py) rejects a row
+// with `site_code: No such site with code '<code>'.` when the referenced site does not
+// exist. Rows are matched on that exact field + phrasing so the missing codes can be
+// surfaced as an actionable prerequisite instead of a raw per-row message.
+const MISSING_SITE_PATTERN = /No such site with code '([^']+)'/;
+
+function missingSiteCodes(rows: BulkImportRow[] | undefined): string[] {
+  const codes = new Set<string>();
+  for (const row of rows ?? []) {
+    for (const error of row.errors) {
+      if (error.field !== "site_code") continue;
+      const match = MISSING_SITE_PATTERN.exec(error.message);
+      if (match) codes.add(match[1]);
+    }
+  }
+  return [...codes].sort();
+}
 
 // Backend states, per backend/app/domain/bulk_import/models.py: the job is still being
 // worked on by a background task while in one of these — keep polling GET /import-jobs/
@@ -55,6 +74,25 @@ function downloadBlob(blob: Blob, fileName: string) {
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/** Rack/equipment rows are placed into a room that must already exist, referenced by the
+ * spreadsheet's `site_code`; the import deliberately never auto-creates a site or any other
+ * location row (app/application/bulk_import/resolvers.py). This points the user at the
+ * location-hierarchy administration screen where the prerequisite can be created. */
+function LocationPrerequisiteHint({ resource }: { resource: BulkImportResource }) {
+  if (resource === "catalog") return null;
+  return (
+    <p className="text-xs text-slate-400">
+      Imported rows are placed into a room that must already exist: the site is referenced by its{" "}
+      <code>site_code</code> and is never created automatically. If a referenced site is missing, create it
+      (Organization → Country → City → Site) under{" "}
+      <Link to="/locations" className="text-blue-400 hover:underline">
+        Location Administration
+      </Link>
+      , then re-upload.
+    </p>
+  );
 }
 
 /** One reusable bulk-import wizard, shared by the Racks/Equipment/Catalog pages
@@ -126,6 +164,8 @@ export function BulkImportPanel({
     enabled: showPreview,
     refetchInterval: jobInFlight ? POLL_INTERVAL_MS : false,
   });
+
+  const missingSites = missingSiteCodes(rowsQuery.data?.items);
 
   const commitMutation = useMutation({
     mutationFn: () => commitImportJob(jobId!),
@@ -238,6 +278,7 @@ export function BulkImportPanel({
 
         {!jobId && (
           <div className="space-y-4">
+            <LocationPrerequisiteHint resource={resource} />
             <div>
               <button
                 onClick={() => templateMutation.mutate()}
@@ -355,6 +396,24 @@ export function BulkImportPanel({
                   <dt className="text-slate-500">Failed</dt>
                   <dd>{job.failed_row_count}</dd>
                 </dl>
+
+                {missingSites.length > 0 && (
+                  <div
+                    role="alert"
+                    data-testid="missing-site-prerequisite"
+                    className="rounded-sm border border-yellow-700 bg-yellow-950/40 p-3 text-sm text-yellow-200"
+                  >
+                    <p className="font-medium">Missing site prerequisite</p>
+                    <p className="mt-1 text-xs">
+                      No site matches the <code>site_code</code> on one or more rows: {missingSites.join(", ")}. Sites are
+                      never created automatically by an import — create the site (Organization → Country → City → Site)
+                      here, then re-upload.
+                    </p>
+                    <Link to="/locations" className="mt-2 inline-block text-xs font-medium text-blue-300 hover:underline">
+                      Go to Location Administration →
+                    </Link>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2 text-xs text-slate-400">

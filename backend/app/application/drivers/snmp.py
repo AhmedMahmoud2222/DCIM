@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from app.application.drivers.base import AcquisitionResult, DriverConnectionError, ProtocolDriver, utcnow
+from app.application.drivers.snmpv3 import SnmpV3Credential, SnmpV3CredentialError
 
 SNMP_VERSIONS = ("v1", "v2c", "v3")
 
@@ -78,7 +79,8 @@ class SNMPDriver(ProtocolDriver):
     ) -> None:
         self.integration_id = integration_id
         self.metric_mappings = metric_mappings or []
-        # `transport_factory(target_host, target_port, version, community) -> SNMPTransport`
+        # `transport_factory(target_host, target_port, version, credential) -> SNMPTransport`
+        # (`credential` is the community string for v1/v2c and a `SnmpV3Credential` for v3)
         # -- injected so tests supply `SimulatedSNMPTransport`; a real deployment would
         # supply a real pysnmp-backed factory (NOT built in this phase).
         self._transport_factory = transport_factory
@@ -99,7 +101,22 @@ class SNMPDriver(ProtocolDriver):
                     "PHASE8_EDGE_COLLECTOR_CONTRACT.md."
                 ),
             )
-        self._transport = self._transport_factory(target_host, target_port, version, credential)
+        transport_credential: str | SnmpV3Credential | None = credential
+        if version == "v3":
+            # SNMPv3 is authPriv only. The decrypted credential is a JSON document that is
+            # parsed and re-validated here; the transport receives a typed object whose
+            # repr hides secrets. Failure reasons are fixed strings, never credential text.
+            try:
+                transport_credential = SnmpV3Credential.from_plaintext(credential)
+            except SnmpV3CredentialError as exc:
+                raise DriverConnectionError(
+                    integration_id=self.integration_id, reason="SNMPv3 credential is missing or invalid."
+                ) from exc
+            if (config.get("snmpv3") or {}).get("security_level", "authPriv") != "authPriv":
+                raise DriverConnectionError(
+                    integration_id=self.integration_id, reason="SNMPv3 requires authPriv; lower security levels are refused."
+                )
+        self._transport = self._transport_factory(target_host, target_port, version, transport_credential)
 
     async def poll(self) -> AcquisitionResult:
         if self._transport is None or self._target_host is None:

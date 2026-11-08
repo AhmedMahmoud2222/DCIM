@@ -1,0 +1,54 @@
+name: DCIM agent collaboration
+on:
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: [OpenCode, Claude Code, DCIM trusted review evidence, DCIM native Claude collaboration]
+    types: [completed]
+  schedule:
+    - cron: '*/10 * * * *'
+permissions: {}
+# Serialize all state writers. Scheduled scans recover callbacks displaced by
+# GitHub's single-pending-run concurrency behavior. CAS remains authoritative.
+concurrency:
+  group: dcim-collaboration-state
+  cancel-in-progress: false
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main' && vars.DCIM_COLLABORATION_ENABLED == 'true' && (github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.id == 285010264 && github.event.sender.id == 285010264 && startsWith(github.event.comment.body, '/collaborate ')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: agent-collaboration
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Refuse unapproved policy before requesting App credentials
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('.github/agents/collaboration-policy.json').read_text())
+          if p.get('enabled') is not True or not p.get('issuer'):
+              raise SystemExit('Disabled: independently reviewed policy and native proofs required')
+          PY
+      - name: Mint repository-scoped native publisher App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.OPENCODE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OPENCODE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: read
+          permission-actions: read
+          permission-checks: read
+      - name: Reconcile signed task journal and bounded native outbox
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+        run: python3 .github/scripts/orchestration_controller.py

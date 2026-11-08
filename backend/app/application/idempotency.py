@@ -33,6 +33,15 @@ atomic claim, not just a cache:
    STALE_CLAIM_TIMEOUT), a waiting request may reclaim it via a compare-and-swap UPDATE,
    mirroring the outbox dispatcher's stale-processing reclaim pattern
    (app/infrastructure/tasks/outbox_dispatcher.py).
+
+Fencing (stale-owner race, NEW-1): a claimant that is slow rather than dead can resume after
+its claim was reclaimed. Every claim therefore carries a monotonically increasing
+`claim_generation`. Reclaiming bumps it in the same compare-and-swap UPDATE, and
+`complete_claim()` / `release_claim()` only act on a row whose status is 'processing' AND whose
+generation still equals the one the caller was issued. A fenced-out owner gets
+`IdempotencyClaimLost` from `complete_claim()` (its caller's transaction, including the
+domain write, is rolled back) and `release_claim()` becomes a no-op, so it can never complete,
+overwrite or delete the replacement owner's claim.
 """
 
 import asyncio
@@ -61,6 +70,12 @@ class IdempotencyConflict(Exception):
     """The same Idempotency-Key was reused with a different request body."""
 
 
+class IdempotencyClaimLost(Exception):
+    """This caller's claim was reclaimed by another request (its generation is stale) or no
+    longer exists, so it must not complete it. The caller's transaction must be rolled back;
+    the replacement owner (or a retry) performs the write."""
+
+
 class IdempotencyStillProcessing(Exception):
     """The claim owner has not completed within the polling window — genuinely still in
     flight, not stale enough to reclaim. The caller should map this to a retryable
@@ -74,6 +89,19 @@ class IdempotencyOutcome:
 
     cached: IdempotencyKey | None = None
     claim: IdempotencyKey | None = None
+
+
+@dataclass(frozen=True)
+class ClaimRef:
+    """Plain-value identity of a claim (row id + fencing generation). Safe to hold across a
+    rollback, which expires the ORM `IdempotencyKey` attributes."""
+
+    id: uuid.UUID
+    generation: int
+
+    @classmethod
+    def of(cls, claim: IdempotencyKey) -> "ClaimRef":
+        return cls(id=claim.id, generation=claim.claim_generation)
 
 
 def hash_request_body(body: dict) -> str:
@@ -110,8 +138,13 @@ async def _try_reclaim_stale(db: AsyncSession, record: IdempotencyKey) -> uuid.U
     stale_before = now - STALE_CLAIM_TIMEOUT
     stmt = (
         update(table)
-        .where(table.c.id == record.id, table.c.status == "processing", table.c.updated_at < stale_before)
-        .values(status="processing", updated_at=now)
+        .where(
+            table.c.id == record.id,
+            table.c.status == "processing",
+            table.c.claim_generation == record.claim_generation,
+            table.c.updated_at < stale_before,
+        )
+        .values(status="processing", updated_at=now, claim_generation=table.c.claim_generation + 1)
         .returning(table.c.id)
     )
     result = await db.execute(stmt)
@@ -169,17 +202,34 @@ async def get_or_claim(db: AsyncSession, *, key: str, endpoint: str, request_has
 async def complete_claim(db: AsyncSession, claim: IdempotencyKey, *, response_status: int, response_body: dict) -> None:
     """Must be called within the same transaction as the write it is completing, before
     that transaction's own commit — so the domain write and the idempotency completion
-    become visible to other transactions atomically together."""
-    claim.status = "completed"
-    claim.response_status = response_status
-    claim.response_body = response_body
-    await db.flush()
+    become visible to other transactions atomically together.
+
+    Fenced: the UPDATE only matches while this caller still owns the claim (status
+    'processing' and the generation it was issued). Otherwise it raises IdempotencyClaimLost
+    and the caller's transaction, domain write included, must be rolled back."""
+    table = _TABLE
+    stmt = (
+        update(table)
+        .where(table.c.id == claim.id, table.c.status == "processing", table.c.claim_generation == claim.claim_generation)
+        .values(status="completed", response_status=response_status, response_body=response_body)
+        .returning(table.c.id)
+    )
+    if (await db.execute(stmt)).scalar_one_or_none() is None:
+        raise IdempotencyClaimLost()
+    await db.refresh(claim)
 
 
-async def release_claim(db: AsyncSession, claim_id: uuid.UUID) -> None:
+async def release_claim(db: AsyncSession, claim: ClaimRef) -> None:
     """Called after the owning write failed and its transaction was rolled back — deletes
     the claim in a fresh transaction so the key does not become permanently poisoned and a
-    retry (or a request that was waiting on it) can claim it again."""
+    retry (or a request that was waiting on it) can claim it again.
+
+    Fenced: a caller that lost its claim deletes nothing, so it cannot remove the
+    replacement owner's in-flight claim."""
     table = _TABLE
-    await db.execute(table.delete().where(table.c.id == claim_id, table.c.status == "processing"))
+    await db.execute(
+        table.delete().where(
+            table.c.id == claim.id, table.c.status == "processing", table.c.claim_generation == claim.generation
+        )
+    )
     await db.commit()

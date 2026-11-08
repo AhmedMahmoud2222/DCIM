@@ -8,7 +8,7 @@ domain-specific state only — it never repeats `asset_tag`, `serial_number`,
 
 import uuid
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -53,7 +53,7 @@ class Equipment(Base, TimestampMixin):
     # EquipmentModelRevision id directly) leaves this NULL — model_revision_id alone
     # already fully describes those rows, exactly as before this column existed.
     catalog_model_revision_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT")
+        ForeignKey("catalog_model_revision.id", ondelete="RESTRICT"), index=True
     )
     hostname: Mapped[str | None] = mapped_column(String(255))
     ip_address: Mapped[str | None] = mapped_column(INET)
@@ -68,3 +68,9 @@ class Equipment(Base, TimestampMixin):
 
     managed_asset = relationship("ManagedAsset", foreign_keys=[id])
     model_revision = relationship("EquipmentModelRevision")
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_rack_model_revision_id", Rack.model_revision_id)
+Index("ix_equipment_model_revision_id", Equipment.model_revision_id)

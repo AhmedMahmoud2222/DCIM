@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { FormEvent, useState } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
@@ -32,7 +34,7 @@ function GroupChecklist({
   return (
     <fieldset className="space-y-1" disabled={disabled}>
       <legend className="mb-1 text-xs text-slate-400">Groups</legend>
-      {groups.length === 0 && <p className="text-xs text-slate-500">No groups defined yet.</p>}
+      {groups.length === 0 && <p className="text-xs text-fg-secondary">No groups defined yet.</p>}
       {groups.map((g) => (
         <label key={g.id} className="flex items-center gap-2 text-sm">
           <input
@@ -57,18 +59,32 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
     <section aria-label="Effective access" className="space-y-3 text-sm">
       <p className="text-slate-300">
         {access.unrestricted
-          ? "Unrestricted: holds a global role, so all sites and racks are visible."
-          : "Site-restricted: only the sites and racks listed below are visible."}
+          ? "Global role present. Each permission has its own resource scope."
+          : "Site-restricted: each permission applies only within its own resource scope."}
       </p>
       {access.role_names.length > 0 && <p className="text-slate-400">Roles: {access.role_names.join(", ")}</p>}
       <div>
         <h3 className="mb-1 font-semibold text-slate-300">Effective permissions ({codes.length})</h3>
-        {codes.length === 0 && <p className="text-slate-500">None. Access is denied by default.</p>}
+        {codes.length === 0 && <p className="text-fg-secondary">None. Access is denied by default.</p>}
         <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
           {codes.map((code) => (
             <li key={code} className="rounded-sm bg-slate-800 px-2 py-1">
               <span className="font-mono text-xs">{code}</span>
               <span className="ml-2 text-xs text-slate-400">via {access.permissions[code].join(", ")}</span>
+              <p className="text-xs text-slate-300">
+                {(() => {
+                  const scope = access.permission_scopes?.[code];
+                  if (!scope) return "Resource scope unavailable";
+                  if (scope.unrestricted) return "All sites and racks";
+                  if (scope.site_ids.length === 0) return "No site resources";
+                  return scope.site_ids.map((site) => {
+                    const name = access.sites.find((s) => s.site_id === site)?.code ?? site;
+                    return scope.full_site_ids.includes(site)
+                      ? `${name}: all racks`
+                      : `${name}: ${scope.selected_racks_by_site[site]?.length ?? 0} selected rack(s)`;
+                  }).join("; ");
+                })()}
+              </p>
             </li>
           ))}
         </ul>
@@ -83,7 +99,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
         <div>
           <h3 className="mb-1 font-semibold text-amber-300">Granted but inactive</h3>
           <p className="text-xs text-slate-400">
-            These endpoints are not site-scoped yet, so a restricted user cannot use them:
+            These grants do not authorize the unscoped endpoints. Filtered thermal views may use their own bounded read grants:
           </p>
           <p className="font-mono text-xs">{access.inactive_permissions.join(", ")}</p>
         </div>
@@ -91,7 +107,7 @@ export function EffectiveAccessPanel({ userId }: { userId: string }) {
       {!access.unrestricted && (
         <div>
           <h3 className="mb-1 font-semibold text-slate-300">Sites ({access.sites.length})</h3>
-          {access.sites.length === 0 && <p className="text-slate-500">No site access.</p>}
+          {access.sites.length === 0 && <p className="text-fg-secondary">No site access.</p>}
           <ul className="space-y-1">
             {access.sites.map((s) => (
               <li key={s.site_id} className="rounded-sm bg-slate-800 px-2 py-1">
@@ -195,11 +211,7 @@ export function UsersPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Users</h1>
-      <p className="mb-4 max-w-2xl text-sm text-slate-400">
-        Create and manage users and assign them to groups. Group membership decides which sites and racks a user can see.
-        All rules are enforced by the server.
-      </p>
+      <PageHeader title="Users" description="Create and manage users and assign them to groups. Group membership decides which sites and racks a user can see. All rules are enforced by the server." />
       {message && (
         <p role={message.kind === "error" ? "alert" : "status"} className={`mb-3 text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}>
           {message.text}
@@ -245,8 +257,7 @@ export function UsersPage() {
               </button>
             </form>
           )}
-          {usersQuery.isLoading && <p className="text-sm text-slate-400">Loading…</p>}
-          {usersQuery.isError && <p role="alert" className="text-sm text-red-400">{errorText(usersQuery.error)}</p>}
+          <QueryStatus query={usersQuery} what="users" permission="user:read" columns={1} />
           <ul className="space-y-1" aria-label="Users">
             {usersQuery.data?.items.map((u) => (
               <li key={u.id}>

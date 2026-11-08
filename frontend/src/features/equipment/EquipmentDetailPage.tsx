@@ -15,23 +15,17 @@ import {
   getTelemetryHistory,
 } from "@/features/telemetry/api";
 import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
+import { provenanceLabel } from "@/features/telemetry/provenanceHelpers";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
+import { deriveFreshness } from "@/features/status/freshness";
+import { LifecycleStatus, MeasurementFreshness } from "@/features/status/StatusBadges";
 
 const REDUNDANCY_LABELS: Record<string, { text: string; color: string }> = {
   dual_feed_healthy: { text: "Dual-feed (A+B), healthy", color: "bg-green-900 text-green-200" },
   single_feed: { text: "Single feed (no redundancy)", color: "bg-slate-700 text-slate-300" },
   degraded: { text: "Redundancy degraded", color: "bg-yellow-800 text-yellow-100" },
   no_power_modeled: { text: "No power modeled", color: "bg-slate-800 text-slate-400" },
-};
-
-const LIFECYCLE_COLORS: Record<string, string> = {
-  planned: "bg-slate-700 text-slate-200",
-  installed: "bg-blue-700 text-blue-100",
-  active: "bg-green-700 text-green-100",
-  maintenance: "bg-yellow-700 text-yellow-100",
-  decommissioned: "bg-orange-800 text-orange-100",
-  removed: "bg-red-900 text-red-100",
 };
 
 export function EquipmentDetailPage() {
@@ -154,9 +148,7 @@ export function EquipmentDetailPage() {
           <h1 className="text-lg font-semibold">{equipment.hostname ?? equipment.asset_tag}</h1>
           <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
         </div>
-        <span className={`rounded-sm px-2 py-0.5 text-xs ${LIFECYCLE_COLORS[equipment.lifecycle_status] ?? "bg-slate-700"}`}>
-          {equipment.lifecycle_status}
-        </span>
+        <LifecycleStatus value={equipment.lifecycle_status} />
       </div>
 
       <div className="grid grid-cols-2 gap-6">
@@ -493,14 +485,19 @@ export function EquipmentDetailPage() {
         {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No telemetry is associated with this equipment.</p>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {latestTelemetryQuery.data?.map((reading) => {
-            const ageMs = Date.now() - new Date(reading.occurred_at).getTime();
-            // Two configured acquisition cycles is the MVP stale threshold.  The
-            // backend supplies the integration-specific cadence in the same query.
-            const stale = reading.expected_poll_interval_seconds != null && ageMs > reading.expected_poll_interval_seconds * 2_000;
+            // Derived in the browser from the real measurement time and the expected poll interval the
+            // backend supplies with the reading; see features/status/freshness.ts for the thresholds.
+            const freshness = deriveFreshness({
+              sourceType: "equipment_live_metric",
+              measuredAt: reading.occurred_at,
+              expectedIntervalSeconds: reading.expected_poll_interval_seconds,
+              now: Date.now(),
+            });
+            const occurredAt = Number.isNaN(Date.parse(reading.occurred_at)) ? "time unavailable" : new Date(reading.occurred_at).toLocaleString();
             return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded-sm bg-slate-800/60 p-3 text-left hover:bg-slate-800">
               <p className="text-xs uppercase tracking-wide text-slate-400">{reading.metric}</p>
-              <p className="mt-1 text-xl font-semibold">{reading.value} <span className="text-sm text-slate-400">{reading.unit}</span></p>
-              <p className={stale ? "mt-1 text-xs text-yellow-400" : "mt-1 text-xs text-green-400"}>{stale ? "Stale" : "Current"} · occurred {new Date(reading.occurred_at).toLocaleString()}</p>
+              <p className="mt-1 text-xl font-semibold">{reading.presentation_value} <span className="text-sm text-slate-400">{reading.presentation_unit}</span></p>
+              <p className="mt-1 text-xs text-slate-400"><MeasurementFreshness result={freshness} /> · occurred {occurredAt}</p>
               {reading.received_at !== reading.occurred_at && <p className="mt-1 text-xs text-slate-400">received {new Date(reading.received_at).toLocaleString()}</p>}
             </button>;
           })}
@@ -518,12 +515,12 @@ export function EquipmentDetailPage() {
           {historyQuery.isError && <p className="text-sm text-red-400">Unable to load the selected history range.</p>}
           {historyQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No readings in this range.</p>}
           {historyQuery.data && <TelemetryTrend points={historyQuery.data} />}
-          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded-sm bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.value} avg (${point.minimum_value}–${point.maximum_value}, n=${point.sample_count})` : point.value} {point.unit} <span className="text-slate-400">{point.resolution ?? "raw"}</span></span></div>)}</div>
+          <div className="max-h-64 space-y-1 overflow-auto text-xs">{historyQuery.data?.map((point) => <div key={point.id} className="flex justify-between rounded-sm bg-slate-800/50 px-2 py-1"><span>{new Date(point.occurred_at).toLocaleString()}</span><span>{point.resolution === "daily" ? `${point.presentation_value} avg (${point.presentation_minimum_value}–${point.presentation_maximum_value}, n=${point.sample_count})` : point.presentation_value} {point.presentation_unit} <span className="text-slate-400">{point.resolution ?? "raw"} · {provenanceLabel(point)}</span></span></div>)}</div>
         </div>
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4"><h2 className="mb-3 text-sm font-semibold text-slate-300">Alarm history</h2>
           {alarmHistoryQuery.isLoading && <p className="text-sm text-slate-400">Loading alarms…</p>}
           {alarmHistoryQuery.data?.items.length === 0 && <p className="text-sm italic text-slate-400">No alarms for this equipment.</p>}
-          <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded-sm bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.last_value}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-400">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-400">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded-sm bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
+          <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded-sm bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-400">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-400">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded-sm bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
         </div>
       </div>
       <ImpactAnalysisModal target={impactTarget} onClose={() => setImpactTarget(null)} />
@@ -597,3 +594,4 @@ function ConnectPortForm({
     </form>
   );
 }
+

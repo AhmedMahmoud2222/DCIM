@@ -1,0 +1,649 @@
+"""Default-disabled collaboration reconciler. Never merges, deploys or creates PRs.
+
+Journal commits are GitHub-signed; Contents API blob SHA supplies compare-and-swap.
+Delivery intent is persisted BEFORE an App-authenticated fresh comment. Ambiguous
+POSTs are recovered by exact nonce/body, never blindly retried. No model receives
+this process's token. Native adapters must emit authenticated result artifacts.
+"""
+import base64
+from copy import deepcopy, copy
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import time
+
+from acceptance_api import ArtifactUnavailable, GitHub, TransientError
+from acceptance_core import Rejected, require, decode, digest, binding, provider_identity, same_binding, jobs_and_checks
+from acceptance_gate import load_policy, verify_check
+from agent_authority import parse_command, comment_binding
+from orchestration_provenance import execution_policy
+
+POLICY = '.github/agents/collaboration-policy.json'
+WORKFLOW = '.github/workflows/agent-collaboration.yml'
+SCRIPT = '.github/scripts/orchestration_controller.py'
+TERMINAL = {'ACCEPTED', 'BLOCKED', 'ESCALATED'}
+
+
+class AmbiguousWrite(Exception):
+    """A journal PUT whose outcome cannot be established. Aborts the whole run."""
+
+
+class JournalFull(Rejected):
+    """Refused BEFORE any PUT: the journal would exceed its readable size cap."""
+
+
+class JournalConflict(Rejected):
+    """A journal write was definitively rejected (CAS conflict, unexpected signer).
+    The stored blob is no longer authoritative for this run, so it aborts the run."""
+
+
+def timestamp(value):
+    return int(datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp())
+
+
+def signed(commit):
+    verification = commit.get('commit', {}).get('verification', {})
+    require(verification.get('verified') is True and verification.get('reason') == 'valid',
+            'state commit is not GitHub-verified signed')
+
+
+JOURNAL_MAX_BYTES = 524288  # Must equal acceptance_core.decode()'s input limit.
+
+
+class Store:
+    def __init__(self, api, policy):
+        require(policy.get('state_branch') == 'automation/collaboration-state'
+                and policy['state_branch'] != policy.get('default_branch')
+                and policy.get('state_path') == '.github/agents/state.json',
+                'journal branch/path is outside the fixed state namespace')
+        self.api, self.policy = api, policy
+
+    def read(self):
+        p = self.policy
+        branch = self.api.request('/branches/' + p['state_branch'])
+        require(branch.get('protected') is True, 'state branch must be protected before activation')
+        sha = branch['commit']['sha']
+        commit = self.api.request('/commits/' + sha)
+        signed(commit)
+        data = self.api.request('/contents/' + p['state_path'] + '?ref=' + sha)
+        require(data.get('type') == 'file' and data.get('encoding') == 'base64', 'state missing; owner initialization required')
+        value = decode(base64.b64decode(data['content'].replace('\n', ''), validate=True))
+        require(set(value) == {'version', 'revision', 'tasks'} and value['version'] == 1
+                and type(value['revision']) is int and value['revision'] >= 0
+                and isinstance(value['tasks'], dict) and len(value['tasks']) <= 100, 'invalid state journal')
+        author = commit.get('author') or {}
+        expected = p['owner'] if value['revision'] == 0 and value['tasks'] == {} else p['issuer']
+        require(expected and author.get('id') == expected['id'] and author.get('login') == expected['login'],
+                'state commit author is not trusted issuer')
+        return value, data['sha']
+
+    def save(self, value, blob):
+        p = self.policy
+        value = deepcopy(value)
+        value['revision'] += 1
+        # Aggregate preflight: read() decodes with a hard byte cap, so a write above it
+        # would poison the shared journal for every task. Fail closed BEFORE the PUT;
+        # nothing is mutated and no evidence is dropped.
+        raw = json.dumps(value, sort_keys=True).encode()
+        if len(raw) > JOURNAL_MAX_BYTES:
+            raise JournalFull('journal write would exceed the readable size limit')
+        # GitHub rejects a stale content SHA with 409. Never blindly retry this write:
+        # another execution may already own the delivery intent.
+        try:
+            response = self.api.request('/contents/' + p['state_path'], 'PUT', {
+                'message': 'chore: record collaboration transition', 'branch': p['state_branch'],
+                'sha': blob, 'content': base64.b64encode(raw).decode()})
+        except TransientError:
+            # A timeout/5xx is AMBIGUOUS: the PUT may have landed. Resolve by reading
+            # the signed branch head instead of assuming either outcome.
+            return self._resolve(value, blob)
+        try:
+            commit = self.api.request('/commits/' + response['commit']['sha'])
+            signed(commit)
+            issuer = p['issuer']
+            require(commit.get('author', {}).get('id') == issuer['id']
+                    and commit['author'].get('login') == issuer['login'], 'unexpected journal signer')
+            return value, response['content']['sha']
+        except TransientError:
+            # PUT applied but its verification failed transiently: re-verify via read().
+            return self._resolve(value, blob)
+
+    def _resolve(self, value, blob):
+        """Decide whether an ambiguous PUT landed. read() re-verifies branch
+        protection, commit signature, trusted issuer author and journal schema."""
+        try:
+            fresh, fresh_blob = self.read()
+        except TransientError:
+            raise AmbiguousWrite('journal write outcome unknown; failing closed') from None
+        if fresh == value:
+            return value, fresh_blob  # Our exact write is the verified signed head.
+        if fresh_blob == blob:
+            raise TransientError('journal write was not applied')  # Provably unchanged.
+        raise AmbiguousWrite('journal moved to unrecognized content; failing closed')
+
+
+def owner_comment(comment, policy):
+    owner = policy['owner']
+    user = comment.get('user') or {}
+    return isinstance(user, dict) and all(user.get(k) == v for k, v in owner.items()) \
+        and comment.get('author_association') == 'OWNER' \
+        and comment.get('created_at') and comment.get('created_at') == comment.get('updated_at')
+
+
+def new_task(api, policy, number, command, comments, now):
+    require(owner_comment(command, policy), 'root event is not fresh authenticated owner command')
+    match = re.fullmatch(r'/collaborate ([1-9][0-9]*)', command.get('body', ''))
+    require(match, 'expected exact /collaborate ROOT_COMMENT_ID')
+    root_id = int(match[1])
+    roots = [c for c in comments if c['id'] == root_id and c['id'] < command['id']]
+    require(len(roots) == 1 and owner_comment(roots[0], policy), 'missing/edited owner OpenCode root')
+    task, _ = parse_command(roots[0].get('body'))
+    require(task, 'root must preserve existing exact /oc or /opencode command')
+    pr = api.request('/pulls/' + str(number))
+    b = binding(pr, policy)
+    require(str(number) in policy['implementers'], 'PR has no owner-enrolled implementer')
+    # Explicit immutable root binding prevents an old authorization acquiring a new HEAD.
+    require(roots[0]['body'].endswith('\nDCIM-Head: ' + b['head']), 'owner root lacks current HEAD')
+    return dict(id=f'pr-{number}-root-{root_id}', binding=b, root=root_id,
+                root_digest=digest(comment_binding(roots[0])), event=command['id'], state='ASSIGNED',
+                implementer=policy['implementers'][str(number)], mode='review',
+                created_at=now, updated_at=now, attempts={}, deliveries=[], audit=[])
+
+
+def audit(task, state, reason, now):
+    task['state'], task['updated_at'] = state, now
+    previous = task['audit'][-1]['hash'] if task['audit'] else '0' * 64
+    value = dict(sequence=len(task['audit']) + 1, state=state, reason=reason,
+                 at=now, previous=previous, controller_run=os.environ.get('GITHUB_RUN_ID'),
+                 controller_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
+                 source_sha=os.environ.get('GITHUB_WORKFLOW_SHA'))
+    value['hash'] = digest(value)
+    task['audit'].append(value)
+
+
+def command_body(task, provider, nonce, policy):
+    command = policy['providers'][provider]['command']
+    require(command in {'/oc', '/dcim-claude', '@codex'}, 'unsupported native command')
+    require(task['mode'] == 'review', 'implementation adapter has not been proven')
+    return (command + ' review the current PR independently; post findings on this same PR. '
+            'Do not modify code, create PRs, merge or deploy.\n'
+            + 'DCIM-Task: ' + task['id'] + '\nDCIM-Delivery: ' + nonce
+            + '\nDCIM-Root: ' + str(task['root']) + '\nDCIM-Head: ' + task['binding']['head'])
+
+
+def authenticated_execution(api, proof, policy, provider, now, task=None, delivery=None):
+    """Only artifacts of pinned trusted-native adapters establish capability/results."""
+    require(isinstance(proof, dict) and set(proof) == {'run_id', 'workflow_id', 'workflow_path', 'jobs'}, 'missing native proof')
+    require(re.fullmatch(r'\.github/workflows/[A-Za-z0-9_-]+\.ya?ml', proof['workflow_path']), 'invalid native workflow path')
+    run = api.request('/actions/runs/' + str(proof['run_id']))
+    current_sha = os.environ.get('GITHUB_WORKFLOW_SHA')
+    sha = run.get('head_sha')
+    require(run.get('id') == proof['run_id'] and run.get('workflow_id') == proof['workflow_id']
+            and run.get('path') == proof['workflow_path'] and run.get('head_sha') == sha
+            and run.get('head_branch') == policy['default_branch']
+            and run.get('event') == 'issue_comment' and run.get('status') == 'completed'
+            and run.get('conclusion') == 'success'
+            and run.get('repository', {}).get('full_name') == policy['repository']
+            and run.get('head_repository', {}).get('full_name') == policy['repository']
+            and isinstance(run.get('updated_at'), str) and 0 <= now - timestamp(run['updated_at']) <= policy['proof_max_age_seconds'], 'stale/compromised native execution')
+    historical_policy = execution_policy(api, policy, sha, current_sha)
+    api.trusted_file(proof['workflow_path'], current_sha)
+    jobs = api.pages(f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
+    checks = api.pages(f"/check-suites/{run['check_suite_id']}/check-runs", 'check_runs')
+    jobs_and_checks(run, jobs, checks, proof['jobs'], {'repository': policy['repository'], 'actions_app': {'id': 15368, 'slug': 'github-actions'}})
+    # The immutable artifact must match the policy of its ORIGINAL execution.
+    # Current revocations/authority were checked separately above.
+    evidence_api = copy(api)
+    evidence_api.policy = historical_policy
+    value, _ = evidence_api.artifact(run, 'dcim-agent-result-attempt-' + str(run['run_attempt']))
+    require(value.get('source_sha') == sha and value.get('run_id') == run['id']
+            and value.get('attempt') == run['run_attempt'] and value.get('policy_digest') == digest(historical_policy),
+            'result execution/policy binding mismatch')
+    require(value.get('provider') == provider and value.get('mode') == 'review'
+            and value.get('result') in {'SUCCESS', 'FAILED', 'BLOCKED'}, 'invalid provider result contract')
+    if task:
+        require(value.get('task_id') == task['id'] and value.get('delivery_id') == delivery['id'], 'result targets another delivery')
+        same_binding(value.get('binding'), task['binding'])
+    references = [key for key in ('provider_comment_id', 'provider_review_id') if key in value]
+    require(len(references) == 1 and type(value[references[0]]) is int and value[references[0]] > 0,
+            'missing/ambiguous native result reference')
+    if references[0] == 'provider_review_id':
+        require(provider == 'opencode', 'unsupported native PR-review adapter')
+        number = value['binding']['pr']
+        comment = api.request(f'/pulls/{number}/reviews/{value[references[0]]}')
+        require(comment.get('pull_request_url') == api.api_root + '/pulls/' + str(number)
+                and comment.get('commit_id') == value['binding']['head']
+                and comment.get('state') == 'COMMENTED', 'stale/wrong native PR review')
+    else:
+        comment = api.request('/issues/comments/' + str(value[references[0]]))
+        require(comment.get('issue_url') == api.api_root + '/issues/' + str(value['binding']['pr'])
+                and comment.get('created_at') == comment.get('updated_at'), 'edited/wrong-PR provider result')
+    require(provider_identity(comment, policy['providers'][provider]['identity']), 'spoofed provider result identity')
+    return value
+
+
+def choose(api, policy, task, now):
+    for name in ('opencode', 'claude', 'codex', 'copilot'):
+        info = policy['providers'][name]
+        if not info['enabled'] or not info['identity'] or not info['command'] \
+                or name == task['implementer'] or task['attempts'].get(name, 0) >= policy['max_attempts']:
+            continue
+        issuer = policy['issuer']
+        implementer = policy['providers'][task['implementer']]['identity']
+        if not implementer or info['identity']['id'] == implementer['id'] or info['identity']['app_id'] == implementer['app_id']:
+            continue
+        if info['identity']['id'] == issuer['id'] or info['identity']['app_id'] == issuer['app_id']:
+            continue  # Never interpret an App's own command as cross-provider work.
+        try:
+            evidence = authenticated_execution(api, info['proof'], policy, name, now)
+            if evidence['result'] == 'SUCCESS':
+                return name
+        except Rejected:
+            continue
+    return None
+
+
+CLOCK_SKEW_SECONDS = 120  # Runner clock versus GitHub's clock when filtering runs by delivery time.
+RETRY_LIMIT = 3  # Examinations of a run whose artifact could not be fetched before it counts as rejected.
+MAX_TRACKED_RERUNS = 32  # Bounds persisted scan state (journal reads are size-limited).
+SCAN_BUDGET = 100  # Authentications per reconciliation; progress persists across runs.
+SCAN_SECONDS = 240  # Wall clock per reconciliation, so a slow API ends the pass (and saves progress) before the 8 minute job kill.
+JOB_SECONDS = 360  # Wall clock for the whole run: no new scan or task starts after this, well before the 8 minute job kill.
+JOB_STARTED = time.monotonic()  # Reset at the start of main(); a process is one job.
+INGEST_SECONDS = 120  # Share of JOB_SECONDS ingestion may use; the rest is reserved for existing tasks.
+
+
+def result_key(result):
+    return json.dumps([result['result'], result.get('provider_comment_id'), result.get('provider_review_id')])
+
+
+def execution_result(api, policy, task, now):
+    delivery = task['deliveries'][-1] if task['deliveries'] else None
+    if not delivery or delivery['status'] != 'DELIVERED':
+        return None
+    proof = policy['providers'].get(delivery['provider'], {}).get('proof')
+    if not isinstance(proof, dict):
+        return None  # Revoked/missing enrollment never authorizes a result.
+    # F1: The workflow source SHA (run.head_sha) is the default-branch commit
+    # the workflow executed from, NOT the target PR HEAD. These are distinct
+    # bindings: (a) workflow source is authenticated by trusted-main provenance
+    # in authenticated_execution(); (b) PR head/base is authenticated through
+    # the command envelope and sealed result evidence (same_binding).
+    # Pre-filter only on metadata that identifies legitimate candidates.
+    delivery_created = delivery.get('created_at', 0)
+    runs = api.pages('/actions/workflows/' + str(proof['workflow_id']) + '/runs?event=issue_comment', 'workflow_runs')
+    # Scan progress persists in the delivery: `low`..`high` is a contiguous interval
+    # of candidate run ids already authenticated, `match` the retained evidence.
+    # Each reconciliation authenticates at most SCAN_BUDGET new candidates, so
+    # genuine runs beyond any page/budget boundary are eventually reached.
+    candidates, pending, attempt_of = set(), set(), {}
+    for run in runs:
+        if run.get('workflow_id') != proof['workflow_id'] or run.get('event') != 'issue_comment' \
+                or run.get('head_branch') != policy['default_branch']:
+            continue
+        run_created = run.get('created_at', '')
+        if isinstance(run_created, str) and run_created and delivery_created:
+            try:
+                if timestamp(run_created) < delivery_created - CLOCK_SKEW_SECONDS:
+                    continue  # A run cannot predate its delivery.
+            except (ValueError, TypeError, AttributeError):
+                pass
+        if run.get('status') != 'completed':
+            # An unfinished run may still become the result: acceptance waits for it, and
+            # the examined interval never straddles it, so it is reached once it completes.
+            pending.add(run['id'])
+        elif run.get('conclusion') == 'success':
+            candidates.add(run['id'])
+            attempt_of[run['id']] = run.get('run_attempt', 1)
+    scan = deepcopy(delivery.get('scan') or dict(low=None, high=None, match=None))
+    scan.setdefault('attempts', {})
+    scan.setdefault('retry', {})
+    low, high = scan['low'], scan['high']
+    ids = sorted(candidates)
+    for key in [k for k in scan['retry'] if int(k) not in candidates]:
+        del scan['retry'][key]  # A run that left the listing can no longer be retried or hold acceptance back.
+    if low is None:
+        order = list(reversed(ids))
+    else:
+        # Reruns keep their run id but bump run_attempt: a run inside the examined
+        # interval whose authenticated attempt differs (or that was never authenticated)
+        # is stale evidence and is re-examined first.
+        stale = [i for i in reversed(ids) if low <= i <= high and scan['attempts'].get(str(i), 1) != attempt_of[i]]
+        retry = [i for i in reversed(ids) if low <= i <= high and str(i) in scan['retry'] and i not in stale]
+        order = stale + retry + [i for i in ids if i > high] + [i for i in reversed(ids) if i < low]
+    examined, cut_short, started = 0, False, time.monotonic()
+    for rid in order:
+        if examined >= SCAN_BUDGET or time.monotonic() - started > SCAN_SECONDS \
+                or time.monotonic() - JOB_STARTED > JOB_SECONDS:
+            cut_short = True
+            break
+        lo, hi = (rid, rid) if low is None else (min(low, rid), max(high, rid))
+        if not (low is not None and low <= rid <= high) and any(lo < p < hi for p in pending):
+            continue  # Never let the examined interval straddle an unfinished run.
+        examined += 1
+        try:
+            result = authenticated_execution(api, dict(proof, run_id=rid), policy,
+                                             delivery['provider'], now, task, delivery)
+        except Rejected as exc:
+            result = None  # Spoofed, revoked, or bound to another task/delivery.
+            # An artifact that could not be fetched may only be an outage: look again a bounded
+            # number of times before the run counts as negative evidence.
+            tries = scan['retry'].get(str(rid), 0) + 1
+            if isinstance(exc, ArtifactUnavailable) and tries < RETRY_LIMIT:
+                if str(rid) not in scan['retry'] and len(scan['retry']) >= MAX_TRACKED_RERUNS:
+                    # Retry tracking is full: this run cannot be remembered, so it must not be
+                    # skipped as negative evidence. Leave it outside the interval and stop; it is
+                    # examined again once tracked retries settle, and nothing is accepted meanwhile.
+                    cut_short = True
+                    break
+                scan['retry'][str(rid)] = tries
+            else:
+                scan['retry'].pop(str(rid), None)
+        else:
+            scan['retry'].pop(str(rid), None)
+        # Sparse: only reruns (attempt > 1) are recorded; absent means attempt 1. Runs
+        # inside the interval are never unexamined (it never straddles unfinished runs),
+        # so this loses no evidence while keeping the shared journal bounded.
+        if attempt_of[rid] == 1:
+            scan['attempts'].pop(str(rid), None)
+        else:
+            scan['attempts'][str(rid)] = attempt_of[rid]
+            if len(scan['attempts']) > MAX_TRACKED_RERUNS:
+                raise Rejected('too many rerun workflow attempts to track safely')
+        if low is None:
+            low = high = rid
+        elif low <= rid <= high:
+            pass  # Re-examined rerun inside the interval.
+        elif rid > high:
+            high = rid
+        else:
+            low = rid
+        if result:
+            match = scan['match']
+            if match and match['key'] != result_key(result):
+                raise Rejected('contradictory provider results; multiple distinct evidence')
+            if not match or rid < match['run_id']:  # Duplicates: lowest run id, deterministic.
+                scan['match'] = dict(run_id=rid, key=result_key(result), result=result['result'],
+                                     summary=execution_summary(result))
+    scan['low'], scan['high'] = low, high
+    # A run whose artifact is still being retried may carry a second, different witness: not complete yet.
+    complete = not pending and len(order) <= SCAN_BUDGET and not cut_short and not scan['retry']
+    if complete and scan['match']:
+        # A retained match is only a lead: mutable witnesses (provider comment/review,
+        # enrollment, policy, run attempt) are re-authenticated live before acceptance.
+        match = scan['match']
+        live = authenticated_execution(api, dict(proof, run_id=match['run_id']), policy,
+                                       delivery['provider'], now, task, delivery)  # Rejected fails closed
+        if result_key(live) != match['key']:
+            raise Rejected('retained provider result changed; contradictory evidence')
+        return match['result'], match['run_id'], execution_summary(live)
+    if low is not None:
+        delivery['scan'] = scan
+    return None
+
+
+def execution_summary(result):
+    # Bound durable state size independently of provider artifact size.
+    fields = ('binding', 'task_id', 'delivery_id', 'source', 'source_sha', 'run_id',
+              'attempt', 'policy_digest', 'provider_comment_id', 'provider_review_id', 'native_review_id')
+    return dict({k: result[k] for k in fields if k in result}, evidence_digest=digest(result))
+
+
+def reconcile(api, store, policy, state, blob, task_id, now):
+    # The signed journal is the authority. `tracked.committed` is the last CONFIRMED
+    # saved (state, blob); it starts as the caller's pair and advances only after a
+    # verified save. Failures return it, so uncommitted mutations never leak and
+    # committed writes (e.g. RESERVED) are never rolled back to a stale blob.
+    tracked = Tracked(store, state, blob)
+    state = deepcopy(state)
+    task = state['tasks'][task_id]
+    if task['state'] in TERMINAL:
+        return state, blob
+    try:
+        return _reconcile(api, tracked, policy, state, task, blob, task_id, now)
+    except TransientError:
+        # An outage preserves the task only until its persisted deadline; afterwards
+        # the expiry is recorded from the last committed state (never a new command).
+        base, base_blob = tracked.committed
+        expired = base['tasks'].get(task_id)
+        if expired is None or expired['state'] in TERMINAL \
+                or now - expired['created_at'] < policy['timeout_seconds']:
+            return tracked.committed
+        state = deepcopy(base)
+        audit(state['tasks'][task_id], 'ESCALATED', 'task deadline exhausted during evidence outage', now)
+        try:
+            return tracked.save(state, base_blob)
+        except (TransientError, JournalFull):
+            return tracked.committed
+    except JournalConflict:
+        # A definitive journal write rejection (e.g. 409 CAS conflict) means our blob is
+        # no longer authoritative. Never escalate with a blind retry of the same CAS and
+        # never continue other tasks on it: abort the run; the next run re-reads the head.
+        raise
+    except Rejected as error:
+        # A definitive failure escalates only this task; independent tasks continue.
+        # AmbiguousWrite is deliberately not caught: it aborts the run fail-closed.
+        base, base_blob = tracked.committed
+        state = deepcopy(base)
+        task = state['tasks'].get(task_id)
+        if task is None or task['state'] in TERMINAL:
+            return base, base_blob
+        audit(task, 'ESCALATED', 'task reconciliation failed: ' + str(error)[:200], now)
+        try:
+            return tracked.save(state, base_blob)
+        except (TransientError, JournalFull):
+            # Escalation could not be recorded (outage, or journal at its size cap):
+            # keep the last committed pair; the task retries and is never silently dropped.
+            return tracked.committed
+
+
+class Tracked:
+    """Store wrapper remembering the last confirmed saved (state, blob)."""
+
+    def __init__(self, store, state, blob):
+        self.store, self.committed = store, (state, blob)
+
+    def save(self, value, blob):
+        try:
+            saved, saved_blob = self.store.save(value, blob)
+        except JournalFull:
+            raise
+        except Rejected as error:
+            raise JournalConflict(str(error)) from error
+        self.committed = (deepcopy(saved), saved_blob)
+        return saved, saved_blob
+
+
+def _reconcile(api, store, policy, state, task, blob, task_id, now):
+    try:
+        current = binding(api.request('/pulls/' + str(task['binding']['pr'])), policy)
+    except Rejected:
+        audit(task, 'BLOCKED', 'PR unavailable or no longer eligible', now)
+        return store.save(state, blob)
+    if current != task['binding']:
+        # A main advance must not erase a valid completed execution. Preserve its
+        # original exact binding, but NEVER accept it for the new HEAD/base.
+        observed = execution_result(api, policy, task, now)
+        if observed:
+            outcome, run_id, summary = observed
+            task['deliveries'][-1].update(status='COMPLETED', result=outcome,
+                                         run_id=run_id, execution_evidence=summary)
+            task['deliveries'][-1].pop('scan', None)
+        audit(task, 'BLOCKED', 'HEAD/base changed; new owner-bound task required', now)
+        return store.save(state, blob)
+    roots = api.pages('/issues/' + str(current['pr']) + '/comments')
+    root = [c for c in roots if c['id'] == task['root']]
+    if len(root) != 1 or not owner_comment(root[0], policy) or digest(comment_binding(root[0])) != task['root_digest']:
+        audit(task, 'BLOCKED', 'owner root changed or disappeared', now)
+        return store.save(state, blob)
+    if now - task['created_at'] >= policy['timeout_seconds']:
+        audit(task, 'ESCALATED', 'task deadline exhausted', now)
+        return store.save(state, blob)
+    if task['deliveries']:
+        delivery = task['deliveries'][-1]
+        if delivery['status'] == 'RESERVED':
+            matches = [c for c in roots if c.get('body') == delivery['body']
+                       and provider_identity(c, policy['issuer'])
+                       and c.get('created_at') == c.get('updated_at')]
+            if len(matches) != 1:
+                audit(task, 'ESCALATED', 'missing/ambiguous authenticated delivery; no automatic repost', now)
+                return store.save(state, blob)
+            delivery.update(status='DELIVERED', comment_id=matches[0]['id'])
+            audit(task, 'INDEPENDENT_REVIEW', 'recovered authenticated delivery', now)
+            return store.save(state, blob)
+        if delivery['status'] == 'DELIVERED':
+            before = deepcopy(delivery.get('scan'))
+            observed = execution_result(api, policy, task, now)
+            if observed:
+                outcome, run_id, summary = observed
+                delivery.update(status='COMPLETED', result=outcome, run_id=run_id,
+                                execution_evidence=summary)
+                delivery.pop('scan', None)
+                if outcome == 'SUCCESS':
+                    try:
+                        # Live collector verifies exact current review, CI, signatures,
+                        # owner attestation, Actions provenance and unresolved findings.
+                        verify_check(GitHub(load_policy(), root=api.root), current['pr'])
+                        audit(task, 'ACCEPTED', 'authenticated current acceptance gate', now)
+                    except ArtifactUnavailable as exc:
+                        raise TransientError('acceptance evidence artifact unavailable') from exc  # outage: defer
+                    except Rejected:
+                        audit(task, 'BLOCKED', 'review completed; independent acceptance requirements unmet', now)
+                else:
+                    audit(task, 'ASSIGNED', 'provider failed/blocked; bounded fallback', now)
+                return store.save(state, blob)
+            if delivery.get('scan') != before:
+                return store.save(state, blob)  # Persist bounded scan progress/evidence.
+            return state, blob  # Interrupted/quota-limited providers expire at deadline.
+    if len(task['deliveries']) >= policy['max_deliveries']:
+        audit(task, 'ESCALATED', 'delegation budget exhausted', now)
+        return store.save(state, blob)
+    provider = choose(api, policy, task, now)
+    if not provider:
+        audit(task, 'ESCALATED', 'no independently proven eligible native provider', now)
+        return store.save(state, blob)
+    nonce = digest(dict(task=task['id'], index=len(task['deliveries']), head=current['head']))[:32]
+    body = command_body(task, provider, nonce, policy)
+    delivery = dict(id=nonce, provider=provider, body=body, status='RESERVED', created_at=now)
+    task['deliveries'].append(delivery)
+    task['attempts'][provider] = task['attempts'].get(provider, 0) + 1
+    audit(task, 'ASSIGNED', 'reserved native delivery', now)
+    state, blob = store.save(state, blob)  # CAS AND verified signature before POST.
+    # A second live read closes normal queued execution races. The destination
+    # must independently revalidate HEAD as OpenCode already does.
+    same_binding(binding(api.request('/pulls/' + str(current['pr'])), policy), current)
+    comment = api.request('/issues/' + str(current['pr']) + '/comments', 'POST', dict(body=body))
+    require(provider_identity(comment, policy['issuer']) and comment.get('body') == body
+            and comment.get('created_at') == comment.get('updated_at'), 'wrong delivery App or mutated command')
+    task = state['tasks'][task_id]
+    task['deliveries'][-1].update(status='DELIVERED', comment_id=comment['id'])
+    audit(task, 'INDEPENDENT_REVIEW', 'fresh authenticated native command delivered', now)
+    return store.save(state, blob)
+
+
+
+def ingest_pending(api, store, policy, state, blob, now):
+    """Discover owner events lost from GitHub's single pending concurrency slot.
+
+    API history is authoritative. Only fresh commands on explicitly enrolled PRs
+    can start tasks; rediscovery never resets an existing identity or deadline.
+    Invalid/stale commands are ignored, but a failed CAS is never retried here.
+    """
+    enrolled = policy['implementers']
+    require(isinstance(enrolled, dict) and len(enrolled) <= 50, 'too many enrolled PRs')
+    state = deepcopy(state)
+    for number in sorted(enrolled, key=int):
+        require(re.fullmatch(r'[1-9][0-9]*', number), 'invalid enrolled PR')
+        if time.monotonic() - JOB_STARTED > INGEST_SECONDS:
+            break  # Budget spent: undiscovered commands wait for the next run; existing tasks keep their time.
+        try:
+            comments = api.pages('/issues/' + number + '/comments')
+        except TransientError:
+            continue  # Per-PR isolation: retried on the next scheduled run.
+        for comment in sorted(comments, key=lambda item: item['id']):
+            if not owner_comment(comment, policy) or not isinstance(comment.get('body'), str):
+                continue
+            match = re.fullmatch(r'/collaborate ([1-9][0-9]*)', comment['body'])
+            if not match:
+                continue
+            task_id = f'pr-{number}-root-{int(match[1])}'
+            if task_id in state['tasks']:
+                continue
+            try:
+                created = timestamp(comment['created_at'])
+                require(0 <= now - created < policy['timeout_seconds'], 'stale initiating command')
+                task = new_task(api, policy, int(number), comment, comments, now)
+            except (Rejected, ValueError):
+                continue
+            except TransientError:
+                # Retryable PR read outage: nothing is journaled, so the command is
+                # rediscovered by the next scheduled run; existing tasks still reconcile.
+                continue
+            require(len(state['tasks']) < 100, 'journal capacity; owner archival required')
+            task['created_at'] = created
+            state['tasks'][task_id] = task
+            try:
+                state, blob = store.save(state, blob)
+            except JournalFull:
+                # Admission refused before any PUT: nothing was written. The command stays
+                # unjournaled and is rediscovered later; existing tasks must still reconcile.
+                # JournalConflict and AmbiguousWrite are not caught and still abort the run.
+                del state['tasks'][task_id]
+    return state, blob
+
+
+def main():
+    root = Path(__file__).resolve().parents[2]
+    policy = decode((root / POLICY).read_bytes())
+    require(policy.get('enabled') is True, 'collaboration controller is disabled pending independent/live proof')
+    api = GitHub(policy, root=root)
+    require(os.environ.get('GITHUB_REPOSITORY') == policy['repository']
+            and os.environ.get('GITHUB_REF') == 'refs/heads/' + policy['default_branch']
+            and os.environ.get('GITHUB_WORKFLOW_REF') == policy['repository'] + '/' + WORKFLOW + '@refs/heads/' + policy['default_branch'], 'untrusted controller runtime')
+    sha = os.environ.get('GITHUB_WORKFLOW_SHA')
+    require(api.request('/branches/' + policy['default_branch'])['commit']['sha'] == sha, 'stale controller revision')
+    signed(api.request('/commits/' + sha))
+    for path in (POLICY, WORKFLOW, SCRIPT, '.github/scripts/orchestration_provenance.py', '.github/scripts/acceptance_api.py', '.github/scripts/acceptance_core.py', '.github/scripts/acceptance_gate.py', '.github/scripts/agent_authority.py', '.github/acceptance/policy.json'):
+        api.trusted_file(path, sha)
+    require(policy['issuer'] and all(p['identity'] is None or p['identity']['id'] != policy['owner']['id'] for p in policy['providers'].values()), 'issuer/provider configuration incomplete')
+    global JOB_STARTED
+    JOB_STARTED = time.monotonic()  # One budget for the whole job, ingestion included.
+    now = int(datetime.now(timezone.utc).timestamp())
+    event = decode(Path(os.environ['GITHUB_EVENT_PATH']).read_bytes())
+    store = Store(api, policy)
+    state, blob = store.read()
+    if os.environ.get('GITHUB_EVENT_NAME') == 'issue_comment':
+        require(event.get('action') == 'created' and event.get('issue', {}).get('pull_request')
+                and event.get('sender', {}).get('id') == policy['owner']['id'], 'unauthorized initiating event')
+        number = event['issue']['number']
+        comment = api.request('/issues/comments/' + str(event['comment']['id']))
+        require(comment.get('issue_url') == api.api_root + '/issues/' + str(number)
+                and all(comment.get(k) == event['comment'].get(k) for k in ('id', 'body', 'created_at', 'updated_at')), 'event/comment mismatch')
+        comments = api.pages('/issues/' + str(number) + '/comments')
+        task = new_task(api, policy, number, comment, comments, now)
+        if task['id'] not in state['tasks']:
+            require(len(state['tasks']) < 100, 'journal capacity; owner archival required')
+            state['tasks'][task['id']] = task
+            state, blob = store.save(state, blob)
+    else:
+        require(os.environ.get('GITHUB_EVENT_NAME') in {'schedule', 'workflow_run'}, 'unsupported event')
+    # Scan even after issue_comment: a newer pending callback may have displaced
+    # another root event before it ever reached the journal.
+    state, blob = ingest_pending(api, store, policy, state, blob, now)
+    # Tasks closest to their persisted deadline go first, so a slow API cannot starve the ones about to expire;
+    # once the job's own budget is spent the rest wait for the next scheduled run.
+    for task_id in sorted(state['tasks'], key=lambda t: (state['tasks'][t]['created_at'] + policy['timeout_seconds'], t)):
+        if time.monotonic() - JOB_STARTED > JOB_SECONDS:
+            break
+        state, blob = reconcile(api, store, policy, state, blob, task_id, now)
+    print(json.dumps(dict(revision=state['revision'], states={k: t['state'] for k, t in state['tasks'].items()})))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (Rejected, TransientError, AmbiguousWrite, KeyError, ValueError, TypeError, AttributeError, OSError):
+        raise SystemExit('Collaboration failed closed; inspect trusted run and journal. No automatic delivery retry.') from None

@@ -2,9 +2,13 @@
 
 **Parent Tracking Issue**: `#38`
 **Source Document**: `PHASE11_EDGE_COLLECTOR_SECURITY_ASSESSMENT.md`
-**Current Known Main Commit**: `25d17a4cbee805c1b0f8edb6904282212de11543`
+**Current Known Main Commit**: `47141e83335ffef1d6eebf7d7ec0b34541f7d80d`
 **Repository**: `AhmedMahmoud2222/DCIM`
 **Document Scope**: Implementation roadmap, owner decision gates, work packages, delivery sequence, and ready-to-post child issue templates for the Phase 11 Edge Collector security assessment.
+
+> **2026-10-14 reconciliation**: This plan predates the merge of PR #45/#49 (SEC-07) and PR #46 (SEC-05). Both are now resolved and merged to `main` — see the updated status rows and Work Packages 4 and 6 below. The baseline table and child-issue checklists below previously showed them as outstanding; this was stale and is corrected here. SEC-01/02/06 remain unresolved and owner-decision-gated.
+>
+> **Correction (same day, later pass)**: an earlier version of this note claimed PR #110 added SNMPv3 only to the central backend driver stack and left `edge_collector/` completely untouched. That was wrong — it was based on a truncated directory listing that missed several new files. PR #110 actually added genuine SNMPv3 USM auth/priv code *inside* `edge_collector/` itself: `snmp_usm.py` (USM auth/priv primitives), `snmp_wire.py` (shared BER/wire codec), `snmp_v3.py` (`SNMPv3Session`), plus `credentials.py` and `discovery_sessions.py` wiring. However, that new SNMPv3 support is wired exclusively into the **discovery/LLDP-CDP neighbor-walk path** (`discovery_sessions.py`, version-selected per credential-store entry) — `snmp_v2c.py`'s own docstring says so explicitly ("The original `SNMPv2cCollector` in `snmp.py` ... is unchanged"). The **telemetry metric-polling collector**, `SNMPv2cCollector.get()` in `edge_collector/snmp.py`, which is what SEC-04 is actually about, has no SNMPv3 variant and is not invoked from any `v3` session anywhere in the package (confirmed by searching every non-test file for `SNMPv2cCollector`/`SNMPv3`/`snmp_v3` usage). **SEC-04 is still open for the telemetry polling path**, but the owner-approved remediation (see Issue #38) will reuse the existing `snmp_usm.py`/`snmp_wire.py` primitives rather than duplicate them.
 
 ---
 
@@ -22,13 +26,13 @@ All findings from the security assessment were revalidated against `main` at com
 
 | Finding ID | Classification | Severity | Summary & Status |
 |---|---|---|---|
-| **SEC-01** | Hardening | **LOW** | Telemetry batch ingestion transaction semantics in `app/api/v1/telemetry.py`. Handled domain rejections (`NOT_ASSIGNED`, `UNKNOWN_METRIC_MAPPING`) work as designed. Owner decision required on nested savepoints vs whole-batch rollback. |
-| **SEC-02** | Deployment-Dependent / Architecture | **MEDIUM** | Fernet credential encryption key loading in `app/core/secrets.py`. `docs/OPERATIONS.md` item 4 currently prohibits mixed-key ciphertext during rotation under single-key operation. Key versioning (`v1:...`), keyring management, and online secret rotation represent an unresolved architecture and migration decision requiring owner approval. |
+| **SEC-01** | Hardening | **LOW** | **Partially changed, still open.** `ingest_collector_telemetry()` now wraps each record in `async with db.begin_nested():` (added incidentally by unrelated #128 G-series work, not as a SEC-01 fix) so every *known* domain rejection (`NOT_ASSIGNED`, `UNKNOWN_METRIC_MAPPING`, `REPLAY_HORIZON_EXCEEDED`, etc.) already isolates per-record. However, the function still issues one `await db.commit()` after the whole loop — a genuinely *unexpected* exception (e.g. a dropped DB connection) still propagates past that commit and discards the entire batch's pending work, which is the literal SEC-01 scenario. Owner decision on whole-batch vs. partial-batch persistence for *that* case remains required. |
+| **SEC-02** | Deployment-Dependent / Architecture | **MEDIUM** | Fernet credential encryption key loading in `app/core/secrets.py`. `docs/OPERATIONS.md` item 4 currently prohibits mixed-key ciphertext during rotation under single-key operation. Key versioning (`v1:...`), keyring management, and online secret rotation represent an unresolved architecture and migration decision requiring owner approval. Unchanged since last review. |
 | **SEC-03** | WITHDRAWN | **N/A** | Confirmed fully mitigated in `main`. `RESTDriver` (`app/application/drivers/rest.py`) enforces `network_policy.validate_target()`, deny-all default, and disables redirects. |
-| **SEC-04** | Protocol Limitation | **MEDIUM** | Cleartext SNMP v2c community transmission on local wire in `edge_collector/snmp.py`. Requires SNMPv3 USM (`authPriv`) support. Database schema migration (Alembic) and backward-compatibility rules distinguishing SNMPv2c configurations from SNMPv3 credentials require owner decision and approval (no approved schema/policy is assumed). |
-| **SEC-05** | Hardening | **LOW** | Monotonic row insertion in `collector_request_nonce` and `collector_heartbeat`. Immediate work-package planning and task scoping can proceed, but implementing and executing specific retention pruning thresholds requires owner confirmation of proposed retention policies. |
-| **SEC-06** | Deployment-Dependent | **MEDIUM** | Local Edge SQLite database stored unencrypted on disk (`edge_collector/queue.py`). Requires host LUKS / SQLCipher encryption guidance. |
-| **SEC-07** | Hardening | **INFORMATIONAL** | Exception message logging in `app/api/v1/collectors.py`. Requires logging sanitization for raw exception details. |
+| **SEC-04** | Protocol Limitation | **MEDIUM** | Cleartext SNMP v2c community transmission on local wire in `edge_collector/snmp.py`'s `SNMPv2cCollector.get()` (telemetry metric polling). **Re-checked against PR #110** (merged): that PR added real SNMPv3 USM auth/priv code *inside* `edge_collector/` (`snmp_usm.py`, `snmp_wire.py`, `snmp_v3.py`), but wired it only into the discovery/LLDP-CDP neighbor-walk path (`discovery_sessions.py`), not the telemetry-polling collector. `SNMPv2cCollector.get()` has no SNMPv3 variant and nothing calls a v3 session for metric GETs. **Owner-approved 2026-10-14**: add genuine SNMPv3 USM authPriv support to the telemetry polling path, reusing `snmp_usm.py`/`snmp_wire.py` rather than duplicating them; keep SNMPv2c as an explicitly documented/configured legacy option; encrypted/authenticated wire-level loopback tests; fail-closed behavior. |
+| **SEC-05** | Hardening | **LOW** | **RESOLVED.** Merged via PR #46 (`d3a18775474669f5c2aa79a270f756125cfeeb6a`): hourly Celery beat task, bounded batches with `FOR UPDATE SKIP LOCKED`, strict `<` cutoffs, disposable-PostgreSQL regression tests (`backend/tests/integration/test_collector_retention.py`). See `docs/SEC05_COLLECTOR_RETENTION.md`. No further action needed. |
+| **SEC-06** | Deployment-Dependent | **MEDIUM** | Local Edge SQLite database stored unencrypted on disk (`edge_collector/queue.py`). Requires host LUKS / SQLCipher encryption guidance. Unchanged since last review — zero SQLCipher/LUKS/dm-crypt references anywhere in `edge_collector/` or `docs/`. |
+| **SEC-07** | Hardening | **INFORMATIONAL** | **RESOLVED.** Merged via PR #45 (`7112cd2eccc1a42c0b2fa4b7932c9817ed49165f`) and PR #49 (`a1ba578cb5ae5d5fea0c9e56dc7c863e47ca6577`, closing the claim-release exception-leak gap found in independent review). `ingest_batch()`'s failure handlers log only fixed event names/codes; regression coverage in `backend/tests/api/test_collectors.py` and `test_m3_error_sanitization.py`. No further action needed. |
 
 ---
 
@@ -122,16 +126,15 @@ All findings from the security assessment were revalidated against `main` at com
 ## 3. Delivery Sequence & Owner Decision Gates
 
 ```text
-[Phase 1: Immediate Scoping & Independent Hardening]
-├── WP-05 (SEC-05): Nonce & Heartbeat Retention Task Scoping & Planning (code implementation & retention policies subject to Owner Confirmation)
-└── WP-07 (SEC-07): Ingest Exception Logging Sanitization
+[Phase 1: Immediate Scoping & Independent Hardening] — COMPLETE
+├── WP-05 (SEC-05): Nonce & Heartbeat Retention — RESOLVED, PR #46
+└── WP-07 (SEC-07): Ingest Exception Logging Sanitization — RESOLVED, PR #45 + #49
 
-[Phase 2: Owner Decision Gates] (Sequential)
-├── Gate 1: WP-01 (SEC-01) Telemetry Batch Transaction Semantics Decision
+[Phase 2: Owner Decision Gates] (Sequential) — OUTSTANDING
+├── Gate 1: WP-01 (SEC-01) Telemetry Batch Transaction Semantics Decision (per-record savepoints now exist for known rejections; the unexpected-exception whole-batch-rollback case is still gated)
 ├── Gate 2: WP-02 (SEC-02) KMS & Key Versioning Architecture Approval (reconciling docs/OPERATIONS.md single-key constraint)
-├── Gate 3: WP-04 (SEC-04) SNMPv3 USM Credential Schema, DB Migration & Compatibility Policy
-├── Gate 4: WP-05 (SEC-05) Nonce & Heartbeat Retention Policies Confirmation (enabling pruning implementation)
-└── Gate 5: WP-06 (SEC-06) Edge Storage Encryption Strategy (SQLCipher vs LUKS)
+├── Gate 3: WP-04 (SEC-04) SNMPv3 USM Credential Schema, DB Migration & Compatibility Policy — OWNER APPROVED 2026-10-14 (reuse `edge_collector/snmp_usm.py` + `snmp_wire.py` from PR #110's discovery-path SNMPv3 work; extend to the telemetry-polling collector, which PR #110 did not touch)
+└── Gate 4: WP-06 (SEC-06) Edge Storage Encryption Strategy (SQLCipher vs LUKS)
 ```
 
 ---
@@ -198,9 +201,11 @@ Add SNMPv3 USM (`authNoPriv` / `authPriv` with AES-128 and SHA-1) support to `ed
 Complete work-package planning and implement a Celery background maintenance task `prune_collector_nonces_and_heartbeats` to delete expired `CollectorRequestNonce` rows (>1 hour default, configurable via `NONCE_RETENTION_SECONDS`) and prune `CollectorHeartbeat` history (>30 days default, configurable via `HEARTBEAT_RETENTION_DAYS`), following owner confirmation of retention policies.
 
 ### Acceptance Criteria
-- [ ] Obtain owner confirmation for proposed retention policies (`NONCE_RETENTION_SECONDS` and `HEARTBEAT_RETENTION_DAYS`).
-- [ ] Implement `prune_collector_nonces_and_heartbeats` Celery beat task reading configurable retention settings.
-- [ ] Add unit and integration tests verifying pruning thresholds.
+- [x] Obtain owner confirmation for proposed retention policies (`NONCE_RETENTION_SECONDS` and `HEARTBEAT_RETENTION_DAYS`).
+- [x] Implement `prune_collector_nonces_and_heartbeats` Celery beat task reading configurable retention settings.
+- [x] Add unit and integration tests verifying pruning thresholds.
+
+**Resolved** via PR #46 (`d3a18775474669f5c2aa79a270f756125cfeeb6a`). See `docs/SEC05_COLLECTOR_RETENTION.md`.
 ```
 
 ### Child Issue 5: `[SEC-06] Edge Collector Storage Encryption (#38)`
@@ -229,6 +234,8 @@ Provide edge appliance storage security by supporting host OS transparent disk e
 Sanitize raw exception messages logged during `ingest_batch()` failures to ensure raw database or payload input strings are not written to central application logs.
 
 ### Acceptance Criteria
-- [ ] Sanitize `error` strings logged in `ingest_batch()`'s `except Exception:` handler.
-- [ ] Add regression test verifying redacted log output on ingest exceptions.
+- [x] Sanitize `error` strings logged in `ingest_batch()`'s `except Exception:` handler.
+- [x] Add regression test verifying redacted log output on ingest exceptions.
+
+**Resolved** via PR #45 (`7112cd2eccc1a42c0b2fa4b7932c9817ed49165f`) and PR #49 (`a1ba578cb5ae5d5fea0c9e56dc7c863e47ca6577`, which closed a residual claim-release exception-leak path found in independent review).
 ```

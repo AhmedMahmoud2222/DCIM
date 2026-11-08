@@ -208,4 +208,58 @@ describe("BulkImportPanel", () => {
 
     await waitFor(() => expect(api.commitImportJob).toHaveBeenCalledWith("job-1"));
   });
+
+  it("points rack imports at Location Administration for the site prerequisite", () => {
+    renderWithProviders(<BulkImportPanel resource="rack" resourceLabel="Rack" onClose={vi.fn()} />);
+
+    expect(screen.getByText(/site is referenced by its/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Location Administration" })).toHaveAttribute("href", "/locations");
+  });
+
+  it("does not show the site prerequisite for a catalog import", () => {
+    renderWithProviders(<BulkImportPanel resource="catalog" resourceLabel="Catalog" onClose={vi.fn()} />);
+
+    expect(screen.queryByRole("link", { name: "Location Administration" })).not.toBeInTheDocument();
+  });
+
+  it("surfaces missing sites from row errors as an actionable prerequisite", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.uploadImportJob).mockResolvedValue(makeJob({ status: "uploaded" }));
+    vi.mocked(api.getImportJob).mockResolvedValue(
+      makeJob({ status: "validated", row_count: 2, valid_row_count: 1, error_row_count: 1 }),
+    );
+    vi.mocked(api.listImportJobRows).mockResolvedValue(
+      mockPage([
+        makeRow({ id: "row-1", row_number: 2, status: "valid" }),
+        makeRow({
+          id: "row-2",
+          row_number: 3,
+          status: "invalid",
+          action: null,
+          errors: [{ field: "site_code", message: "No such site with code 'MISSING'." }],
+        }),
+      ]),
+    );
+
+    renderWithProviders(<BulkImportPanel resource="rack" resourceLabel="Rack" onClose={vi.fn()} />);
+    await uploadAFile(user);
+
+    const notice = await screen.findByTestId("missing-site-prerequisite");
+    expect(notice).toHaveTextContent("MISSING");
+    expect(notice).toHaveTextContent("never created automatically");
+    expect(screen.getByRole("link", { name: /Location Administration/ })).toHaveAttribute("href", "/locations");
+  });
+
+  it("does not show the missing-site notice when no row has a site_code error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.uploadImportJob).mockResolvedValue(makeJob({ status: "uploaded" }));
+    vi.mocked(api.getImportJob).mockResolvedValue(makeJob({ status: "validated", row_count: 1, valid_row_count: 1 }));
+    vi.mocked(api.listImportJobRows).mockResolvedValue(mockPage([makeRow()]));
+
+    renderWithProviders(<BulkImportPanel resource="rack" resourceLabel="Rack" onClose={vi.fn()} />);
+    await uploadAFile(user);
+
+    await screen.findByRole("table");
+    expect(screen.queryByTestId("missing-site-prerequisite")).not.toBeInTheDocument();
+  });
 });

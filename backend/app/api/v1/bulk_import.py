@@ -60,7 +60,13 @@ def _check_import_permission(job: BulkImportJob, ctx: AuthContext) -> None:
     `require_catalog_administrator` (app/application/rbac.py) exactly — this is not a new
     RBAC mechanism, just that dependency's logic inlined for a permission that can only
     be chosen after the job (and its import_type) is loaded."""
-    _assert_job_visible(job, ctx)
+    operation = f"{job.import_type}:import"
+    # A globally readable job is already visible: missing write permission must
+    # still produce 403. An unrelated global role cannot supply that visibility.
+    # A genuinely global import permission also retains its existing visibility
+    # without inventing an implicit read permission.
+    visibility = operation if ctx.scope_for(operation).unrestricted else f"{job.import_type}:read"
+    _assert_job_visible(job, ctx.for_permission(visibility))
     if job.import_type == "catalog":
         if not ctx.has_permission("catalog:import"):
             raise ForbiddenError("Missing required permission: catalog:import")
@@ -76,8 +82,8 @@ async def _load_job_for_read(
     job_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
 ) -> BulkImportJob:
     job = await _load_job(job_id, db)
-    _assert_job_visible(job, ctx)
     required = f"{job.import_type}:read"
+    _assert_job_visible(job, ctx.for_permission(required))
     if not ctx.has_permission(required):
         raise ForbiddenError(f"Missing required permission: {required}")
     return job

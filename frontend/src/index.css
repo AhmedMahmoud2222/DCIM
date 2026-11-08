@@ -1,5 +1,74 @@
 @import "tailwindcss";
 
+/* Typography (UI/UX checkpoint 4 of 7). IBM Plex is bundled in src/assets/fonts (SIL OFL 1.1, see the
+   README there) and served from this origin; nothing is requested from a font CDN. font-display: swap
+   shows the system fallback immediately and swaps when the file arrives, so text is never invisible.
+   The Latin subset is enough for the interface; other scripts use the system stack below. */
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("./assets/fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("./assets/fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("./assets/fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("./assets/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("./assets/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+/* Control Room semantic tokens (UI/UX checkpoint 1 of 7). Only tokens that checkpoint 1
+   uses are defined, and only NEW names: the slate, red, green and other palette scales are
+   deliberately not redefined, so every page that has not been migrated looks exactly as it
+   did. `static` makes Tailwind emit every variable on :root, so plain CSS and a future
+   [data-theme] override can read or replace them. Contrast of each pair is checked by
+   src/theme/palette.test.ts. */
+@theme static {
+  --color-surface-page: #0b1220;
+  --color-surface-sidebar: #0a0f1a;
+  --color-surface-panel: #111a2b;
+  --color-line-subtle: #2a3a57;
+  --color-line-control: #667a9e;
+  --color-fg-primary: #e8eef8;
+  --color-fg-secondary: #b4c0d4;
+  --color-action-primary: #2563eb;
+  --color-action-primary-fg: #ffffff;
+  --color-link: #6cb6ff;
+  --color-focus: #6cb6ff;
+  --color-focus-on-sidebar: #6cb6ff;
+  --color-side-fg: #b4c0d4;
+  --color-side-fg-muted: #8e9db5;
+  --color-side-selected: #17233a;
+  --color-side-edge: #8e9db5;
+  --color-side-selected-fg: #ffffff;
+
+  /* Row and inset surfaces for rows that sit on a panel or the page, and the hover state of a row or a
+     sidebar link. Named surfaces instead of white overlays, which would vanish on a light theme. */
+  --color-surface-hover: #1b2842;
+  --color-surface-inset: #172238;
+
+  /* Status tones (UI/UX checkpoint 3 of 7). A tone is a background and the foreground used for the
+     text, the icon and the chip border. Hue carries urgency; the shape of the icon carries which
+     dimension a chip belongs to, and the text always says the value, so no meaning rests on color
+     alone. `attention` is deliberately not on the urgency scale: it marks an alarm that is open
+     without saying how severe it is. Pairs are checked by src/theme/palette.test.ts. */
+  --color-tone-neutral-bg: #2b3850;
+  --color-tone-neutral-fg: #e2e9f5;
+  --color-tone-info-bg: #1e3a8a;
+  --color-tone-info-fg: #dbeafe;
+  --color-tone-ok-bg: #14532d;
+  --color-tone-ok-fg: #dcfce7;
+  --color-tone-caution-bg: #78350f;
+  --color-tone-caution-fg: #fef3c7;
+  --color-tone-serious-bg: #7c2d12;
+  --color-tone-serious-fg: #ffedd5;
+  --color-tone-danger-bg: #7f1d1d;
+  --color-tone-danger-fg: #fee2e2;
+  --color-tone-attention-bg: #4c1d95;
+  --color-tone-attention-fg: #ede9fe;
+  --color-tone-unknown-bg: #1b2436;
+  --color-tone-unknown-fg: #b4c0d4;
+
+  /* Font stacks. These replace Tailwind's default font-sans and font-mono, so `font-sans` (the page
+     default) and `font-mono` (identifiers, tags, codes) use IBM Plex first and fall back to the
+     operating system's own faces if the files are slow or blocked. */
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 /* Tailwind 4 changed the default border color to currentcolor. Keep the v3 default so
    existing borders without an explicit color render as before. */
 @layer base {
@@ -22,6 +91,18 @@
   textarea::placeholder {
     color: var(--color-gray-400);
   }
+
+  /* Text sizing follows the user: sizes are rem-based, and iOS/Android landscape text inflation is
+     off so a user's browser text-size setting is the only thing that scales type. */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* Digits in every table line up in columns without each page opting in. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 /* 3D floor layout (Infrastructure -> 3D Layout): Tailwind 3's utility set has no
@@ -33,34 +114,27 @@
   .layout3d-viewport { position: relative; min-height: 560px; overflow: hidden; perspective: 1100px; perspective-origin: 50% 44%; touch-action: none; background: radial-gradient(circle at 50% 35%, #1e293b 0%, #020617 62%); cursor: grab; }
   .layout3d-viewport:active { cursor: grabbing; }
   .layout3d-viewport:focus-visible { outline: 2px solid #93c5fd; outline-offset: -3px; }
-  .layout3d-world { position: absolute; inset: 14% 10%; transform-style: preserve-3d; transition: transform 80ms linear; }
+  .layout3d-world { position: absolute; left: 50%; top: 50%; transform-style: preserve-3d; transition: transform 80ms linear; }
   @media (prefers-reduced-motion: reduce) { .layout3d-world { transition: none; } }
-  .layout3d-floor { position: absolute; inset: 0; transform-style: preserve-3d; border: 1px solid rgb(71 85 105 / .7); background-image: linear-gradient(rgb(71 85 105 / .18) 1px, transparent 1px), linear-gradient(90deg, rgb(71 85 105 / .18) 1px, transparent 1px); background-size: 8% 8%; box-shadow: inset 0 0 80px rgb(15 23 42 / .9), 0 24px 36px rgb(0 0 0 / .55); }
-  .layout3d-floor::before, .layout3d-floor::after { content: ""; position: absolute; display: block; background: rgb(30 41 59 / .85); transform-origin: top left; }
-  .layout3d-floor::before { width: 100%; height: 18px; transform: rotateX(90deg); }
-  .layout3d-floor::after { width: 18px; height: 100%; transform: rotateY(-90deg); }
-  .layout3d-floor-label { position: absolute; left: 3%; top: 3%; transform: translateZ(3px); color: rgb(147 197 253 / .8); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-  .layout3d-rack { position: absolute; width: 46px; height: 84px; color: inherit; transform-style: preserve-3d; transform-origin: center center; }
-  .layout3d-rack-face { position: absolute; box-sizing: border-box; display: block; backface-visibility: hidden; }
-  .layout3d-rack-front { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; width: 46px; height: 84px; border: 1px solid #60a5fa; border-radius: 4px; background: linear-gradient(150deg, #2563eb, #1e3a8a 72%); box-shadow: inset 0 0 0 2px rgb(15 23 42 / .5), 0 0 22px rgb(37 99 235 / .3); font-size: 9px; transform: translateZ(17px); cursor: pointer; }
-  .layout3d-rack-front:focus-visible { outline: 2px solid #93c5fd; outline-offset: 6px; }
-  .layout3d-rack-front small { color: #bfdbfe; font-size: 6px; }
-  .layout3d-fallback-badge { position: absolute; top: 2px; right: 3px; font-style: normal; font-size: 7px; color: #fde68a; }
-  .layout3d-rack-back { width: 46px; height: 84px; border: 1px solid #1e3a8a; background: #172554; transform: rotateY(180deg) translateZ(17px); }
-  /* These four faces carry no interactive content of their own (only the front and back
-     faces host equipment links) — at some camera angles their projected geometry can
-     visually overlap the front/back faces despite each being explicitly
-     rotated/translated to its own side of the cuboid, which would otherwise let a click
-     meant for the front rack face land on an inert side/top/bottom face instead;
-     `pointer-events: none` here routes every click straight through to whichever face
-     they're actually aimed at, without changing how the faces look. */
-  .layout3d-rack-left, .layout3d-rack-right { width: 34px; height: 84px; border: 1px solid #1d4ed8; background: #1e3a8a; pointer-events: none; }
-  .layout3d-rack-left { transform: rotateY(-90deg) translateZ(17px); }
-  .layout3d-rack-right { transform: rotateY(90deg) translateZ(29px); }
-  .layout3d-rack-top, .layout3d-rack-bottom { width: 46px; height: 34px; background: #3b82f6; pointer-events: none; }
-  .layout3d-rack-top { transform: rotateX(90deg) translateZ(17px); }
-  .layout3d-rack-bottom { transform: rotateX(-90deg) translateZ(67px); }
-  .layout3d-rack:hover .layout3d-rack-front, .layout3d-rack-selected .layout3d-rack-front { border-color: #f8fafc; background: linear-gradient(150deg, #60a5fa, #1d4ed8 72%); box-shadow: inset 0 0 0 2px rgb(255 255 255 / .16), 0 0 28px rgb(96 165 250 / .58); }
+  .layout3d-floor { position: absolute; inset: 0; transform-style: preserve-3d; border: 1px solid rgb(71 85 105 / .7); background-color: rgb(15 23 42 / .55); background-image: linear-gradient(rgb(71 85 105 / .22) 1px, transparent 1px), linear-gradient(90deg, rgb(71 85 105 / .22) 1px, transparent 1px); box-shadow: inset 0 0 80px rgb(15 23 42 / .9), 0 24px 36px rgb(0 0 0 / .55); }
+  .layout3d-boundary { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; transform: translateZ(1px); }
+  .layout3d-floor-label { position: absolute; left: 6px; top: 6px; transform: translateZ(3px); color: rgb(147 197 253 / .8); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .layout3d-origin { position: absolute; left: -1px; top: -1px; width: 14px; height: 14px; border-left: 2px solid #38bdf8; border-top: 2px solid #38bdf8; transform: translateZ(2px); pointer-events: none; }
+  .layout3d-cuboid { position: absolute; width: var(--w); height: var(--d); transform-style: preserve-3d; transform-origin: center center; color: inherit; }
+  .layout3d-face { position: absolute; box-sizing: border-box; display: block; backface-visibility: hidden; border: 1px solid color-mix(in srgb, var(--c) 70%, white); }
+  .layout3d-face-front { left: 0; width: var(--w); height: var(--h); top: calc(var(--d) - var(--h) / 2); transform: translateZ(calc(var(--h) / 2)) rotateX(-90deg); background: linear-gradient(150deg, var(--c), color-mix(in srgb, var(--c) 40%, #020617) 78%); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 4px; font-size: 9px; cursor: pointer; }
+  .layout3d-face-front:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+  .layout3d-face-front small { color: #dbeafe; font-size: 7px; }
+  .layout3d-face-back { left: 0; width: var(--w); height: var(--h); top: calc(var(--h) / -2); transform: translateZ(calc(var(--h) / 2)) rotateX(90deg) rotate(180deg); background: color-mix(in srgb, var(--c) 35%, #020617); }
+  .layout3d-face-left { left: calc(var(--h) / -2); width: var(--h); height: var(--d); top: 0; transform: translateZ(calc(var(--h) / 2)) rotateY(-90deg); background: color-mix(in srgb, var(--c) 55%, #020617); pointer-events: none; }
+  .layout3d-face-right { left: calc(var(--w) - var(--h) / 2); width: var(--h); height: var(--d); top: 0; transform: translateZ(calc(var(--h) / 2)) rotateY(90deg); background: color-mix(in srgb, var(--c) 45%, #020617); pointer-events: none; }
+  .layout3d-face-top { left: 0; top: 0; width: var(--w); height: var(--d); transform: translateZ(var(--h)); background: color-mix(in srgb, var(--c) 85%, white); pointer-events: none; }
+  .layout3d-selected .layout3d-face { border-color: #f8fafc; }
+  .layout3d-selected .layout3d-face-front { box-shadow: 0 0 22px rgb(248 250 252 / .55); }
+  .layout3d-cuboid:hover .layout3d-face-front { filter: brightness(1.2); }
+  .layout3d-badge { position: absolute; top: 2px; right: 2px; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px; border-radius: 9999px; background: #020617; border: 1.5px solid var(--c); color: var(--c); font-size: 8px; font-style: normal; font-weight: 700; }
+  .layout3d-pin { position: absolute; width: 0; height: 0; transform-style: preserve-3d; }
+  .layout3d-pin > span { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border: 1.5px dashed #fbbf24; color: #fbbf24; font-size: 11px; font-weight: 700; line-height: 15px; text-align: center; transform: rotate(45deg) translateZ(2px); }
   .layout3d-equipment { position: absolute; left: 5px; right: 5px; overflow: hidden; min-height: 3px; border-radius: 1px; background: #fbbf24; box-shadow: 0 0 4px rgb(251 191 36 / .7); color: #422006; font-size: 5px; font-weight: 700; line-height: 1; text-align: center; text-decoration: none; white-space: nowrap; }
   .layout3d-equipment:focus-visible { outline: 1px solid #f8fafc; outline-offset: 1px; z-index: 1; }
   .layout3d-equipment-irregular { outline: 1px dashed #f87171; background: #fca5a5; }
@@ -74,5 +148,35 @@
   .layout3d-pan-pad button:nth-child(2) { grid-column: 1; }
   .layout3d-pan-pad button:nth-child(3) { grid-column: 3; }
   .layout3d-pan-pad button:nth-child(4) { grid-column: 2; grid-row: 2; }
-  .layout3d-provenance { position: absolute; right: 14px; bottom: 14px; max-width: 300px; color: #94a3b8; font-size: 11px; text-align: right; }
+  .layout3d-provenance { position: absolute; left: 14px; top: 12px; max-width: 360px; color: #94a3b8; font-size: 11px; text-align: left; pointer-events: none; }
+}
+
+/* Shared keyboard focus indicator. Deliberately OUTSIDE every @layer: unlayered rules beat
+   layered ones, so this also wins over Tailwind utilities such as `focus:outline-hidden`
+   that many inputs use today (a rule inside @layer base would lose to them and leave those
+   inputs with no ring). :where() keeps the specificity at zero. Exclusions: tabindex="-1"
+   (programmatic focus targets such as <main>, no ring wanted) and the 3D layout controls,
+   which define their own focus styles in the components layer above. */
+:where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:not([class*="layout3d-"]) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Inside the dark sidebar and drawer the ring uses its own token, so a future light theme
+   can keep a dark ring on content and a light ring on the sidebar. */
+:where(aside, [data-sidebar]) :where(a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible:not([class*="layout3d-"]) {
+  outline-color: var(--color-focus-on-sidebar);
+}
+
+/* Reduced motion: remove transitions and animation for people who ask for it. The
+   duration is near zero rather than 0 so transitionend and animationend still fire. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

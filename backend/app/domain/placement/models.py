@@ -67,8 +67,25 @@ class EquipmentPlacement(Base, UUIDPkMixin):
             name="rack_mounted_requires_rack_u_range_and_side",
         ),
         UniqueConstraint("spatial_object_id", name="uq_equipment_placement_spatial_object_id"),
+        CheckConstraint("(x_mm IS NULL) = (y_mm IS NULL)", name="position_pair"),
         Index("ix_equipment_placement_equipment_effective_to", "equipment_id", "effective_to"),
         Index("ix_equipment_placement_rack_effective_to", "rack_id", "effective_to"),
+        # Migration 0045: current-placement lookup by room.
+        Index(
+            "ix_equipment_placement_room_current",
+            "room_id",
+            postgresql_where="effective_to IS NULL",
+        ),
+        # Migration 0056 (Issue #150 R5 follow-up): a vertical (0U) PDU occupies the full
+        # rack height on one side, so at most one current vertical placement per rack + side.
+        # The discriminator is the `orientation` value 'pdu_vertical_0u'.
+        Index(
+            "uq_equipment_placement_pdu_vertical_0u",
+            "rack_id",
+            "side",
+            unique=True,
+            postgresql_where="placement_type = 'other' AND orientation = 'pdu_vertical_0u' AND effective_to IS NULL",
+        ),
     )
 
     equipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("managed_asset.id", ondelete="RESTRICT"), nullable=False)
@@ -102,6 +119,21 @@ class EquipmentPlacement(Base, UUIDPkMixin):
     mounting_method: Mapped[str | None] = mapped_column(String(64))
     orientation: Mapped[str | None] = mapped_column(String(32))
 
+    # Issue #105: direct room-local position (canonical mm) for placed assets that have no drawn SpatialObject,
+    # i.e. environmental sensors and cooling units. Each close-then-open row keeps its own coordinates, so a
+    # move preserves the previous position as history. `position_calibration_id` records the calibration that was
+    # current when the position was entered. Both coordinates are set or neither is.
+    x_mm: Mapped[int | None] = mapped_column(Integer)
+    y_mm: Mapped[int | None] = mapped_column(Integer)
+    position_calibration_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("floor_plan_calibration.id", ondelete="SET NULL")
+    )
+
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     effective_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     effective_to: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+# Foreign-key indexes (0057): the referencing column of each FK below had no leading index, so deletes/updates on the
+# referenced row scanned the whole child table.
+Index("ix_rack_placement_room_id", RackPlacement.room_id)

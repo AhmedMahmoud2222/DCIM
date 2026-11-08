@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from edge_collector.config import CollectorConfig
 from edge_collector.queue import QueueCorruptionError, QueueRecord, SQLiteQueue
 
-UTC = timezone.utc
 TEST_NOW = datetime(2026, 9, 18, tzinfo=UTC)
 
 

@@ -9,7 +9,7 @@ maintenance job, may ever touch old partitions (§30a)."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, CheckConstraint, String, func
+from sqlalchemy import TIMESTAMP, CheckConstraint, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,12 @@ class AuditLog(Base):
     __table_args__ = (
         CheckConstraint(f"result IN {RESULT_VALUES!r}", name="result_allowed"),
         CheckConstraint(f"source IN {SOURCE_VALUES!r}", name="source_allowed"),
+        # Created on the partitioned parent by migration 0002 as raw SQL; PostgreSQL
+        # automatically propagates them to every attached partition. Declared here so
+        # ORM metadata reflects the intended schema and Alembic comparison does not
+        # propose dropping them.
+        Index("ix_audit_log_entity", "entity_type", "entity_id", "timestamp"),
+        Index("ix_audit_log_actor", "actor_user_id", "timestamp"),
         {
             "postgresql_partition_by": "RANGE (timestamp)",
         },

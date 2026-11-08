@@ -169,6 +169,11 @@ test.describe("Phase 10B: catalog instantiation and rack elevation", () => {
     await page.getByRole("link", { name: "Equipment", exact: true }).click();
     await page.getByRole("link", { name: "Instantiate from catalog" }).click();
     await expect(page).toHaveURL("/equipment/instantiate");
+    await page.getByRole("link", { name: "Open the catalog designer" }).click();
+    await expect(page).toHaveURL("/admin/catalog");
+    await expect(page.getByRole("heading", { name: "Asset Catalog" })).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL("/equipment/instantiate");
     await page.getByTestId("instantiate-model-select").selectOption({ label: `${seed.modelName} ` });
     await page.getByTestId("instantiate-revision-select").selectOption({ index: 1 });
     const assetTag = `E2E-SRV-${Math.random().toString(36).slice(2, 8)}`;

@@ -15,7 +15,7 @@ into a catalog revision by this feature."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +40,13 @@ class CatalogExtractionJob(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "catalog_extraction_job"
     __table_args__ = (
         UniqueConstraint("catalog_document_id", "extractor_version", name="uq_catalog_extraction_job_document_version"),
+        # Migration 0033: work-queue lookup for pending jobs.
+        Index(
+            "ix_catalog_extraction_job_pending",
+            "status",
+            "lease_expires_at",
+            postgresql_where="status IN ('queued', 'running')",
+        ),
         CheckConstraint(f"status IN {JOB_STATUSES!r}", name="status_allowed"),
         CheckConstraint(f"outcome IS NULL OR outcome IN {JOB_OUTCOMES!r}", name="outcome_allowed"),
         CheckConstraint(f"method_summary IS NULL OR method_summary IN {METHOD_SUMMARIES!r}", name="method_summary_allowed"),

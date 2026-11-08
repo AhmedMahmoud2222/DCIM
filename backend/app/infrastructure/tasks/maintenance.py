@@ -8,7 +8,8 @@ The per-run cap bounds the work during a backlog; the next hourly run continues.
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.sql.schema import Table
 
@@ -17,6 +18,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.sync_session import sync_engine
 from app.domain.integration.models import CollectorHeartbeat, CollectorRequestNonce
+from app.domain.telemetry.models import MonitoringPolicy, TelemetryConsumedKey, TelemetryReplayLedgerState
 from app.infrastructure.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -25,6 +27,11 @@ BATCH_SIZE = 500
 MAX_BATCHES_PER_RUN = 100
 _NONCE_TABLE = cast(Table, CollectorRequestNonce.__table__)
 _HEARTBEAT_TABLE = cast(Table, CollectorHeartbeat.__table__)
+_LEDGER_TABLE = cast(Table, TelemetryConsumedKey.__table__)
+_LEDGER_STATE_TABLE = cast(Table, TelemetryReplayLedgerState.__table__)
+_POLICY_TABLE = cast(Table, MonitoringPolicy.__table__)
+LEDGER_BATCH_SIZE = 5000
+LEDGER_MAX_BATCHES_PER_RUN = 100
 
 
 def _delete_batch(conn: Connection, table: Table, timestamp_column: str, cutoff: datetime) -> int:
@@ -87,6 +94,80 @@ def prune_expired_collector_rows(
     }
     logger.info("collector_retention_completed", **result)
     return result
+
+
+def prune_consumed_keys(
+    *, now: datetime | None = None, engine: Engine | None = None
+) -> dict[str, int | bool | str]:
+    """Bounded pruning of consumed-key tombstones (Issue #128 / G4-R). A STRICT no-op while the horizon is NULL.
+
+    With a finite ``late_replay_horizon_days`` H, a tombstone is needed only until ``consumed_at + H`` (a record is accepted
+    only if its age is at most H, and a key cannot be consumed before it occurred), so rows whose ``consumed_day`` is earlier
+    than ``utc_day(now - H) - 1 day`` are deleted (one extra day covers UTC rounding). Before deleting anything the run
+    advances ``ledger_complete_since`` to that cutoff in its own committed transaction; the ``UPDATE`` waits for in-flight late
+    merges (which read the state ``FOR SHARE``), and every later merge applies ``min(H, now - ledger_complete_since)``, so a
+    horizon raised afterwards never relies on a tombstone that has been or is about to be deleted. Batches commit separately
+    and use SKIP LOCKED; a failed run leaves earlier batches committed and the next run resumes. Logs carry counts only.
+    """
+    instant = now if now is not None else datetime.now(UTC)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("Retention clock must be timezone-aware.")
+    database = engine if engine is not None else sync_engine
+    with database.begin() as conn:
+        # Lock the state row BEFORE reading the horizon. Clearing the horizon takes the same lock first
+        # (`guard_horizon_clear`), so a clear and this run are serialised: if the clear commits first this run reads NULL and
+        # skips; if this run gets the lock first it records `pruning_begun_at`, which makes the clear refuse.
+        conn.execute(
+            pg_insert(_LEDGER_STATE_TABLE).values(id=1, ledger_complete_since=instant).on_conflict_do_nothing(
+                index_elements=[_LEDGER_STATE_TABLE.c.id])
+        )
+        conn.execute(select(_LEDGER_STATE_TABLE.c.id).where(_LEDGER_STATE_TABLE.c.id == 1).with_for_update())
+        horizon = conn.execute(select(_POLICY_TABLE.c.late_replay_horizon_days).where(_POLICY_TABLE.c.id == 1)).scalar()
+        if horizon is None:
+            result: dict[str, int | bool | str] = {"skipped": True, "reason": "horizon_unset", "deleted": 0}
+            logger.info("telemetry_ledger_prune_skipped", reason="horizon_unset")
+            return result
+        cutoff_day = (instant - timedelta(days=horizon)).astimezone(UTC).date() - timedelta(days=1)
+        cutoff_start = datetime(cutoff_day.year, cutoff_day.month, cutoff_day.day, tzinfo=UTC)
+        conn.execute(
+            update(_LEDGER_STATE_TABLE).where(_LEDGER_STATE_TABLE.c.id == 1).values(
+                ledger_complete_since=func.greatest(_LEDGER_STATE_TABLE.c.ledger_complete_since, cutoff_start),
+                pruning_begun_at=func.coalesce(_LEDGER_STATE_TABLE.c.pruning_begun_at, instant))
+        )
+    deleted_total = 0
+    limit_reached = True
+    for batch_index in range(LEDGER_MAX_BATCHES_PER_RUN):
+        try:
+            with database.begin() as conn:
+                keys = (
+                    select(_LEDGER_TABLE.c.key_hash)
+                    .where(_LEDGER_TABLE.c.consumed_day < cutoff_day)
+                    .order_by(_LEDGER_TABLE.c.consumed_day)
+                    .limit(LEDGER_BATCH_SIZE)
+                    .with_for_update(skip_locked=True)
+                )
+                deleted = len(conn.execute(
+                    delete(_LEDGER_TABLE).where(_LEDGER_TABLE.c.key_hash.in_(keys)).returning(_LEDGER_TABLE.c.key_hash)
+                ).all())
+        except Exception:  # noqa: BLE001 -- log only fixed fields; Celery must see a failure
+            logger.error("telemetry_ledger_prune_failed", error_code="LEDGER_PRUNE_BATCH_FAILED",
+                         batch_index=batch_index, deleted=deleted_total)
+            raise RuntimeError("Telemetry ledger prune batch failed.") from None
+        deleted_total += deleted
+        if deleted == 0:
+            limit_reached = False
+            break
+    with database.begin() as conn:
+        conn.execute(update(_LEDGER_STATE_TABLE).where(_LEDGER_STATE_TABLE.c.id == 1).values(
+            last_pruned_at=instant, last_pruned_count=deleted_total))
+    outcome: dict[str, int | bool | str] = {"skipped": False, "deleted": deleted_total, "batch_limit_reached": limit_reached}
+    logger.info("telemetry_ledger_pruned", deleted=deleted_total, batch_limit_reached=limit_reached)
+    return outcome
+
+
+@celery_app.task(name="app.infrastructure.tasks.maintenance.prune_consumed_telemetry_keys")
+def prune_consumed_telemetry_keys() -> dict[str, int | bool | str]:
+    return prune_consumed_keys()
 
 
 @celery_app.task(name="app.infrastructure.tasks.maintenance.prune_collector_nonces_and_heartbeats")

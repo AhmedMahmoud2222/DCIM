@@ -5,18 +5,94 @@ reading has been inserted in the same transaction.
 """
 
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
+from app.core.errors import ApiError, ConflictError
+from app.core.logging import get_logger
 from app.domain.alarm.models import Alarm, AlarmRule
+from app.domain.integration.models import CollectorAssignment
 from app.domain.telemetry.models import TelemetryReading
+from app.domain.telemetry.registry import convert_value, validate_metric_unit
+
+logger = get_logger(__name__)
+BATCH_ALARM_RULE_IDS = "g8_batch_alarm_rule_ids"
 
 
-def condition_matches(rule_type: str, threshold: float | None, value: float) -> bool:
+@asynccontextmanager
+async def lock_collector_batch_rules(
+    db: AsyncSession, *, collector_id: uuid.UUID, integration_ids: list[uuid.UUID],
+) -> AsyncIterator[frozenset[uuid.UUID]]:
+    """Lock this collector's entire request rule set before record savepoints.
+
+    UUID order spans integration/metric groups. The snapshot prevents later
+    records from acquiring locks on newly inserted rules out of that order.
+    Such rules first participate in the next request. Existing ownership checks
+    are also repeated by the route before each record is processed.
+    """
+    authorized = frozenset((await db.execute(select(CollectorAssignment.integration_id).where(
+        CollectorAssignment.integration_id.in_(integration_ids),
+        CollectorAssignment.collector_id == collector_id,
+        CollectorAssignment.effective_to.is_(None),
+    ))).scalars().all())
+    # Recheck ownership in the lock query itself, without locking assignment rows
+    # or any rule belonging to a foreign collector. FOR UPDATE OF alarm_rule avoids
+    # taking assignment locks and introducing a second lock hierarchy.
+    rule_ids = tuple((await db.execute(select(AlarmRule.id).join(
+        CollectorAssignment, CollectorAssignment.integration_id == AlarmRule.integration_id,
+    ).where(
+        AlarmRule.integration_id.in_(authorized), AlarmRule.enabled.is_(True),
+        CollectorAssignment.collector_id == collector_id, CollectorAssignment.effective_to.is_(None),
+    ).order_by(AlarmRule.id).with_for_update(of=AlarmRule))).scalars().all())
+    previous = db.info.get(BATCH_ALARM_RULE_IDS)
+    db.info[BATCH_ALARM_RULE_IDS] = rule_ids
+    try:
+        yield authorized
+    finally:
+        if previous is None:
+            db.info.pop(BATCH_ALARM_RULE_IDS, None)
+        else:
+            db.info[BATCH_ALARM_RULE_IDS] = previous
+
+
+@asynccontextmanager
+async def lock_operator_hold_rules(
+    db: AsyncSession, *, integration_id: uuid.UUID,
+) -> AsyncIterator[None]:
+    """Match collector ordering: rules, then hold, then aggregate/ledger.
+
+    Called only after the telemetry:manage dependency authorizes the operator.
+    Freeze the request rule set so concurrent rule creation cannot add a later
+    out-of-order lock during the release.
+    """
+    rule_ids = tuple((await db.execute(
+        select(AlarmRule.id).where(
+            AlarmRule.integration_id == integration_id, AlarmRule.enabled.is_(True),
+        ).order_by(AlarmRule.id).with_for_update(of=AlarmRule)
+    )).scalars().all())
+    previous = db.info.get(BATCH_ALARM_RULE_IDS)
+    db.info[BATCH_ALARM_RULE_IDS] = rule_ids
+    try:
+        yield
+    finally:
+        if previous is None:
+            db.info.pop(BATCH_ALARM_RULE_IDS, None)
+        else:
+            db.info[BATCH_ALARM_RULE_IDS] = previous
+
+
+class AlarmUnitCompatibilityError(ApiError):
+    """An explicit 422 when telemetry cannot preserve an alarm threshold's units."""
+
+
+def condition_matches(rule_type: str, threshold: Decimal | float | None, value: Decimal | float) -> bool:
     if rule_type == "threshold_high":
         if threshold is None:
             raise ValueError("threshold rule lacks a threshold")
@@ -34,22 +110,71 @@ def subject_for(reading: TelemetryReading) -> str:
     return f"{reading.integration_id}:{reading.external_identifier}:{reading.metric}"
 
 
+def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal, str, str | None]:
+    """Compare stored readings in the fixed threshold unit, without scaling again.
+
+    Migration pins only unambiguous legacy units. Unresolved units must be decided
+    explicitly; current raw source units cannot establish an old threshold's unit.
+    """
+    if rule.metric != reading.metric:
+        raise ValueError("Alarm rule and reading metrics differ.")
+    if rule.registry_version is not None and rule.unit is None:
+        raise ValueError("Versioned alarm rule lacks an explicit threshold unit.")
+    if rule.unit is not None:
+        # Validate both dimensions and registry versions before comparing. A legacy
+        # explicit unit uses the active physical contract; its threshold is unchanged.
+        version = rule.registry_version if rule.registry_version is not None else "1"
+        validate_metric_unit(rule.metric, rule.unit, registry_version=version)
+        validate_metric_unit(reading.metric, reading.unit, registry_version=reading.registry_version or "1")
+        return convert_value(
+            Decimal(str(reading.value)), reading.unit, rule.unit,
+            registry_version=reading.registry_version or "1", target_registry_version=version,
+        ), rule.unit, rule.registry_version
+    raise AlarmUnitCompatibilityError(status_code=422, title="Unresolved legacy alarm unit",
+                   detail=f"Alarm rule {rule.id} requires an explicit threshold unit before evaluation.")
+
+
+
 async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
     """Open, retain, or clear alarms for one authoritative telemetry reading."""
+    stmt = select(AlarmRule).where(
+        AlarmRule.enabled.is_(True), AlarmRule.integration_id == reading.integration_id,
+        AlarmRule.metric == reading.metric,
+        # Tightened v2 policies never re-judge v1/legacy samples. Version mismatch
+        # skips evaluation; it cannot reject a valid telemetry record.
+        or_(AlarmRule.registry_version.is_(None), AlarmRule.registry_version == "1",
+            AlarmRule.registry_version == reading.registry_version),
+    )
+    if isinstance(db.info, dict) and BATCH_ALARM_RULE_IDS in db.info:
+        stmt = stmt.where(AlarmRule.id.in_(db.info[BATCH_ALARM_RULE_IDS]))
     rules = (
         (
             await db.execute(
-                select(AlarmRule).where(
-                    AlarmRule.enabled.is_(True),
-                    AlarmRule.integration_id == reading.integration_id,
-                    AlarmRule.metric == reading.metric,
-                )
+                stmt
+                .order_by(AlarmRule.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
         )
         .scalars()
         .all()
     )
     for rule in rules:
+        if rule.unit is None and rule.registry_version is None:
+            # The rule row lock serializes ingest with resolve/disable and makes the
+            # once-per-episode marker, audit and outbox atomic with the reading.
+            if rule.blocked_notified_at is None:
+                rule.blocked_notified_at = reading.received_at
+                await _record_rule_transition(
+                    db, rule, "alarm.rule.evaluation_blocked", "AlarmRuleEvaluationBlocked",
+                    before={"blocked_notified_at": None},
+                    after={"blocked_notified_at": rule.blocked_notified_at.isoformat(), "unit": None},
+                )
+                # Persisted marker rate limits this structured log to one per block
+                # episode; notification routing is an explicit deployment decision.
+                logger.warning("alarm_rule_evaluation_blocked", rule_id=str(rule.id),
+                               integration_id=str(rule.integration_id), metric=rule.metric)
+            continue
         subject_key = subject_for(reading)
         open_alarm = (
             await db.execute(
@@ -62,9 +187,19 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        matches = condition_matches(
-            rule.rule_type, float(rule.threshold) if rule.threshold is not None else None, float(reading.value)
-        )
+        try:
+            comparison_value, comparison_unit, comparison_version = comparison_for(rule, reading)
+        except ValueError as error:
+            raise AlarmUnitCompatibilityError(status_code=422, title="Incompatible alarm telemetry units",
+                           detail=f"Alarm rule {rule.id} cannot evaluate this metric/unit/registry combination.") from error
+        matches = condition_matches(rule.rule_type, rule.threshold, comparison_value)
+        comparison_details = {
+            "metric": reading.metric,
+            "unit": comparison_unit,
+            "registry_version": comparison_version,
+            "condition_occurred_at": reading.occurred_at.isoformat(),
+            "central_received_at": reading.received_at.isoformat(),
+        }
         # Collector delivery is at-least-once and may be out of occurrence order.
         # Never let an older reading overwrite a lifecycle decision made from a
         # newer observation.  The original occurred_at remains the operational
@@ -98,26 +233,109 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 subject_key=subject_key,
                 status="ACTIVE",
                 opened_at=reading.occurred_at,
-                last_value=reading.value,
-                details={
-                    "metric": reading.metric,
-                    "unit": reading.unit,
-                    "condition_occurred_at": reading.occurred_at.isoformat(),
-                    "central_received_at": reading.received_at.isoformat(),
-                },
+                last_value=comparison_value,
+                details=comparison_details,
             )
             db.add(alarm)
             await db.flush()
             await _record_transition(db, alarm, "alarm.open", "AlarmOpened")
         elif matches and open_alarm is not None:
             open_alarm.telemetry_reading_id = reading.id
-            open_alarm.last_value = reading.value
+            open_alarm.last_value = comparison_value
+            open_alarm.details = comparison_details
         elif not matches and open_alarm is not None:
             open_alarm.status = "CLEARED"
             open_alarm.cleared_at = reading.occurred_at
             open_alarm.telemetry_reading_id = reading.id
-            open_alarm.last_value = reading.value
+            open_alarm.last_value = comparison_value
+            open_alarm.details = comparison_details
             await _record_transition(db, open_alarm, "alarm.clear", "AlarmCleared")
+
+
+def rule_unit_status(rule: AlarmRule) -> str:
+    if rule.unit is None:
+        return "unresolved" if rule.registry_version is None else "invalid_contract"
+    return "inferred_legacy" if rule.registry_version is None else "explicit"
+
+
+def _validate_rule_update(rule: AlarmRule, reason: str, expected_updated_at: datetime) -> None:
+    if not reason.strip() or len(reason) > 2048:
+        raise ApiError(status_code=422, title="Invalid reason",
+                       detail="A nonblank reason of at most 2048 characters is required.")
+    if expected_updated_at.tzinfo is None:
+        raise ApiError(status_code=422, title="Invalid update timestamp", detail="expected_updated_at must include a timezone.")
+    if rule.updated_at != expected_updated_at:
+        raise ConflictError()
+
+
+async def resolve_rule_unit(
+    db: AsyncSession, *, rule: AlarmRule, unit: str, reason: str, expected_updated_at: datetime,
+    actor_user_id: uuid.UUID,
+) -> AlarmRule:
+    """Caller must hold the rule row lock until commit; no threshold rewrite/replay."""
+    # Always validate request text, including idempotent retries.
+    if not reason.strip() or len(reason) > 2048:
+        raise ApiError(status_code=422, title="Invalid reason",
+                       detail="A nonblank reason of at most 2048 characters is required.")
+    if rule.unit is not None:
+        if rule.unit == unit and rule.unit_resolved_at is not None:
+            return rule
+        raise ConflictError("Only unresolved legacy rules can be resolved; an existing threshold unit cannot change.")
+    if rule.registry_version is not None:
+        raise ConflictError("A versioned rule missing its threshold unit requires separate contract remediation.")
+    _validate_rule_update(rule, reason, expected_updated_at)
+    try:
+        validate_metric_unit(rule.metric, unit, registry_version="1")
+    except ValueError as error:
+        raise ApiError(status_code=422, title="Invalid alarm unit",
+                       detail="Unit must match the metric dimension in registry v1.") from error
+    before = {"unit": rule.unit, "registry_version": rule.registry_version}
+    now = datetime.now(UTC)
+    rule.unit = unit
+    rule.registry_version = "1"
+    rule.unit_resolved_by = actor_user_id
+    rule.unit_resolved_at = now
+    rule.unit_resolution_reason = reason.strip()
+    rule.updated_at = now
+    await _record_rule_transition(
+        db, rule, "alarm.rule.resolve_unit", "AlarmRuleUnitResolved", actor_user_id,
+        before=before, after={"unit": unit, "registry_version": "1", "retroactive_evaluation": False}, reason=reason.strip(),
+    )
+    return rule
+
+
+async def disable_rule(
+    db: AsyncSession, *, rule: AlarmRule, reason: str, expected_updated_at: datetime, actor_user_id: uuid.UUID,
+) -> AlarmRule:
+    """Caller must hold the rule row lock; disabling never alters existing alarms."""
+    if not reason.strip() or len(reason) > 2048:
+        raise ApiError(status_code=422, title="Invalid reason",
+                       detail="A nonblank reason of at most 2048 characters is required.")
+    if not rule.enabled:
+        return rule
+    _validate_rule_update(rule, reason, expected_updated_at)
+    rule.enabled = False
+    rule.updated_at = datetime.now(UTC)
+    await _record_rule_transition(
+        db, rule, "alarm.rule.disable", "AlarmRuleDisabled", actor_user_id,
+        before={"enabled": True}, after={"enabled": False}, reason=reason.strip(),
+    )
+    return rule
+
+
+async def _record_rule_transition(
+    db: AsyncSession, rule: AlarmRule, action: str, event_type: str, actor_user_id: uuid.UUID | None = None,
+    *, before: dict, after: dict, reason: str | None = None,
+) -> None:
+    await write_audit_log(
+        db, actor_user_id=actor_user_id, action=action, entity_type="alarm_rule", entity_id=rule.id,
+        request_id=None, correlation_id=None, before=before, after=after, reason=reason,
+    )
+    await write_outbox_event(
+        db, event_type=event_type, aggregate_type="alarm_rule", aggregate_id=rule.id,
+        payload={"rule_id": str(rule.id), "integration_id": str(rule.integration_id), "metric": rule.metric,
+                 "before": before, "after": after},
+    )
 
 
 async def acknowledge_alarm(db: AsyncSession, *, alarm: Alarm, actor_user_id: uuid.UUID) -> Alarm:

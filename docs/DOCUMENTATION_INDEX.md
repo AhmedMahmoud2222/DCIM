@@ -15,6 +15,7 @@
 | Administrator / security reviewer | [User & group management](USER_GROUP_MANAGEMENT.md) | Users, groups, allow/deny permissions, site and rack access, effective-permission rules and safeguards |
 | Catalog administrator / security reviewer | [Catalog datasheet storage](CATALOG_DOCUMENTS.md) | Secure PDF upload, scanning, versioning and download of manufacturer datasheets |
 | Catalog administrator / security reviewer | [Catalog datasheet extraction](CATALOG_DATASHEET_EXTRACTION.md) | Sandboxed native and OCR extraction, candidate values with provenance, multi-model handling, job semantics and review |
+| Operations / security reviewer | [SEC-06 edge storage encryption](SEC06_EDGE_STORAGE_ENCRYPTION.md) | LUKS/dm-crypt full-disk encryption runbook for the Edge Collector's durable queue: deployment steps, boot/unlock handling, reimage/recovery procedures and the verification checklist/script |
 
 ## Product roadmap
 

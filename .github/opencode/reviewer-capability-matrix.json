@@ -1,0 +1,76 @@
+{
+  "matrix_version": "1.0",
+  "purpose": "Reviewer capability evidence per approved model. Scores come only from recorded, reproducible evaluation runs; speed and price are never inputs.",
+  "dimensions": {
+    "code_reasoning_correctness": 0.25,
+    "security_vulnerability_identification": 0.25,
+    "database_transaction_safety": 0.15,
+    "test_quality_regression_detection": 0.15,
+    "cross_module_dependency_analysis": 0.1,
+    "complex_change_inspection": 0.1
+  },
+  "minimum_dimension_score": 0.5,
+  "evaluation_record_format": {
+    "suite": "name of the seeded-defect suite",
+    "suite_version": "version or commit of the suite",
+    "date": "YYYY-MM-DD",
+    "run_url": "https URL of the evaluation run",
+    "results_sha256": "sha256 of the stored results file",
+    "scores": "every dimension, number in [0,1]"
+  },
+  "models": {
+    "opencode-go/glm-5.3-flash": {
+      "evaluation": null
+    },
+    "opencode-go/glm-5.3": {
+      "evaluation": null
+    },
+    "opencode-go/glm-5.2": {
+      "evaluation": null,
+      "owner_waiver": {
+        "waived_by": "AhmedMahmoud2222",
+        "date": "2026-11-05",
+        "reason": "Owner accepts glm-5.2 as reviewer without a seeded-defect evaluation; it is the only model that passed the production probe. Replace with a real evaluation record when one exists."
+      }
+    },
+    "opencode-go/kimi-k3.1-pro": {
+      "evaluation": null
+    },
+    "opencode-go/kimi-k3": {
+      "evaluation": null
+    },
+    "opencode-go/kimi-k2.7-code": {
+      "evaluation": null
+    },
+    "opencode-go/longcat-2.0": {
+      "evaluation": null
+    },
+    "opencode-go/step-5-preview": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.6-flash": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.6-pro": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.5": {
+      "evaluation": null
+    },
+    "opencode-go/mimo-v2.5-pro": {
+      "evaluation": null
+    },
+    "opencode-go/minimax-m3.1-flash": {
+      "evaluation": null
+    },
+    "opencode-go/hy4-preview": {
+      "evaluation": null
+    },
+    "opencode-go/hy3": {
+      "evaluation": null
+    },
+    "opencode-go/qwen3.8-max": {
+      "evaluation": null
+    }
+  }
+}

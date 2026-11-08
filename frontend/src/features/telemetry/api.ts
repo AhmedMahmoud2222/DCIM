@@ -1,7 +1,13 @@
 import { apiFetch } from "@/lib/apiClient";
 import { LatestPortStatus } from "@/types";
 
+export type ReadingProvenanceStatus = "pinned" | "inferred" | "operator_resolved" | "unverified_registry" | "unverified_legacy";
+
 export interface TelemetryReading {
+  series_key?: string | null;
+  mapping_revision_id?: string | null;
+  contract_evidence?: string | null;
+  provenance_status?: ReadingProvenanceStatus | null;
   id: string;
   integration_id: string;
   managed_asset_id: string | null;
@@ -9,12 +15,26 @@ export interface TelemetryReading {
   metric: string;
   unit: string;
   value: number;
+  presentation_unit: string;
+  presentation_value: number;
+  raw_value?: number | null;
+  raw_unit?: string | null;
+  registry_version?: string | null;
+  source_scale?: number | null;
+  // Issue #128 / G3: exact decimal strings of the stored values; raw_value_text is the source numeral as received
+  // (null for readings stored before G3 and for daily aggregates). The number fields above are unchanged.
+  value_decimal?: string | null;
+  raw_value_decimal?: string | null;
+  source_scale_decimal?: string | null;
+  raw_value_text?: string | null;
   occurred_at: string;
   received_at: string;
   expected_poll_interval_seconds?: number | null;
   resolution?: "raw" | "daily";
   minimum_value?: number | null;
   maximum_value?: number | null;
+  presentation_minimum_value?: number | null;
+  presentation_maximum_value?: number | null;
   sample_count?: number | null;
 }
 
@@ -29,6 +49,9 @@ export interface Alarm {
   acknowledged_at: string | null;
   cleared_at: string | null;
   last_value: number;
+  unit: string | null;
+  presentation_value: number;
+  presentation_unit: string | null;
 }
 
 export interface AlarmHistoryPage { items: Alarm[]; next_cursor: string | null }
@@ -49,10 +72,19 @@ export interface AlarmHistoryFilters {
 export const getLatestTelemetry = (managedAssetId: string) =>
   apiFetch<TelemetryReading[]>(`/telemetry/latest?managed_asset_id=${encodeURIComponent(managedAssetId)}&limit=100`);
 
-export const getTelemetryHistory = (assetId: string, metric: string, start: Date, end: Date) =>
-  apiFetch<TelemetryReading[]>(
-    `/telemetry/history?managed_asset_id=${encodeURIComponent(assetId)}&metric=${encodeURIComponent(metric)}&start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}&limit=1000`,
-  );
+export interface TelemetryHistoryFilters {
+  seriesKey?: string;
+  registryVersion?: string;
+  provenanceStatus?: ReadingProvenanceStatus[];
+}
+
+export const getTelemetryHistory = (assetId: string, metric: string, start: Date, end: Date, filters: TelemetryHistoryFilters = {}) => {
+  const params = new URLSearchParams({ managed_asset_id: assetId, metric, start: start.toISOString(), end: end.toISOString(), limit: "1000" });
+  if (filters.seriesKey) params.set("series_key", filters.seriesKey);
+  if (filters.registryVersion) params.set("registry_version", filters.registryVersion);
+  filters.provenanceStatus?.forEach((status) => params.append("provenance_status", status));
+  return apiFetch<TelemetryReading[]>(`/telemetry/history?${params.toString()}`);
+};
 
 export const listAlarmHistory = (filters: AlarmHistoryFilters = {}) => {
   const params = new URLSearchParams({ limit: String(filters.limit ?? 50) });

@@ -20,6 +20,9 @@ const activeAlarm: Alarm = {
   acknowledged_at: null,
   cleared_at: null,
   last_value: 92,
+  unit: "%",
+  presentation_value: 92,
+  presentation_unit: "%",
 };
 
 const acknowledgedAlarm: Alarm = {
@@ -46,6 +49,16 @@ describe("EventsPage", () => {
     expect(within(table).getByText("rack-3.power.utilization")).toBeInTheDocument();
     expect(within(table).getByText("rack-4.temperature")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Active/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("shows each alarm's workflow state as text with an icon, and ACTIVE never looks like Critical", async () => {
+    renderWithProviders(<EventsPage />);
+
+    const active = (await screen.findAllByText("ACTIVE"))[0].parentElement!;
+    expect(active.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(active.className).not.toMatch(/danger|red-/);
+    expect(active).toHaveAttribute("title", expect.stringMatching(/does not indicate severity/i));
+    expect(screen.getAllByText("ACKNOWLEDGED").length).toBeGreaterThan(0);
   });
 
   it("filters visible events by the search box", async () => {
@@ -91,4 +104,51 @@ describe("EventsPage", () => {
 
     expect(await screen.findByText(/No active or acknowledged alarm condition/)).toBeInTheDocument();
   });
+  it("renders canonical availability as 100% and converted temperature in its presentation unit", async () => {
+    vi.mocked(api.getOpenAlarms).mockImplementation(async (status) => status === "ACTIVE" ? [
+      { ...activeAlarm, last_value: 1, unit: "1", presentation_value: 100, presentation_unit: "%" },
+      { ...acknowledgedAlarm, last_value: 77, unit: "degF", presentation_value: 25, presentation_unit: "degC" },
+    ] : []);
+    renderWithProviders(<EventsPage />);
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("100%")).toBeInTheDocument();
+    expect(within(table).getByText("25 degC")).toBeInTheDocument();
+    expect(within(table).queryByText("77")).not.toBeInTheDocument();
+    expect(screen.getByText("last value 100%")).toBeInTheDocument();
+  });
+
+  it("exports presented value and unit alongside retained storage fields", async () => {
+    vi.mocked(api.getOpenAlarms).mockImplementation(async (status) => status === "ACTIVE" ? [
+      { ...activeAlarm, last_value: 1, unit: "1", presentation_value: 100, presentation_unit: "%" },
+      { ...acknowledgedAlarm, last_value: 77, unit: "degF", presentation_value: 25, presentation_unit: "degC" },
+    ] : []);
+    const user = userEvent.setup();
+    renderWithProviders(<EventsPage />);
+    await screen.findByRole("table");
+    let csv = "";
+    const OriginalBlob = globalThis.Blob;
+    vi.stubGlobal("Blob", class extends OriginalBlob {
+      constructor(parts: BlobPart[], options?: BlobPropertyBag) {
+        super(parts, options);
+        csv = parts.join("");
+      }
+    });
+    const originalUrl = globalThis.URL;
+    vi.stubGlobal("URL", class extends originalUrl {
+      static createObjectURL = vi.fn(() => "blob:test");
+      static revokeObjectURL = vi.fn();
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    try {
+      await user.click(screen.getByRole("button", { name: "Export current results CSV" }));
+      expect(csv.split("\n")[0]).toContain("presentation_value,presentation_unit,last_value,unit");
+      expect(csv).toContain('"100","%","1","1"');
+      expect(csv).toContain('"25","degC","77","degF"');
+      expect(click).toHaveBeenCalledOnce();
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
 });

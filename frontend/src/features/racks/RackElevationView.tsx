@@ -223,8 +223,11 @@ function telemetryDetail(selected: SelectedMarker): { label: string; value: stri
     const p = telemetry.payload;
     return [
       { label: "Power status", value: telemetry.status_level },
-      { label: "Load", value: `${p.active_power_watts.toFixed(0)} W | ${p.current_amps.toFixed(1)} A` },
-      { label: "Voltage", value: `${p.voltage.toFixed(0)} V` },
+      {
+        label: "Load",
+        value: `${p.active_power_watts.toFixed(0)} W${p.current_amps === undefined ? "" : ` | ${p.current_amps.toFixed(1)} A`}`,
+      },
+      ...(p.voltage === undefined ? [] : [{ label: "Voltage", value: `${p.voltage.toFixed(0)} V` }]),
     ];
   }
   return [];

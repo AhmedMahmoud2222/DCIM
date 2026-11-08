@@ -2,16 +2,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { QueryStatus } from "@/components/data/QueryStatus";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
+import { AlarmWorkflowStatus } from "@/features/status/StatusBadges";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
 
-type ViewMode = "active" | "history";
+type ViewMode = "active" | "history" | OpsView;
+const OPS_TABS: { id: OpsView; label: string }[] = [
+  { id: "incidents", label: "Incidents" },
+  { id: "collectors", label: "Collector health" },
+  { id: "notifications", label: "Notifications" },
+  { id: "integrations", label: "Integrations" },
+];
 type StatusFilter = "ALL" | Alarm["status"];
-
-const STATUS_COLORS: Record<Alarm["status"], string> = {
-  ACTIVE: "bg-red-900 text-red-100",
-  ACKNOWLEDGED: "bg-yellow-800 text-yellow-100",
-  CLEARED: "bg-green-800 text-green-100",
-};
 
 function csvCell(value: string | number | null | undefined) {
   const text = value == null ? "" : String(value);
@@ -19,9 +23,9 @@ function csvCell(value: string | number | null | undefined) {
 }
 
 function exportCsv(alarms: Alarm[], fileName: string) {
-  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "last_value", "integration_id", "managed_asset_id", "rule_id"];
+  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "presentation_value", "presentation_unit", "last_value", "unit", "integration_id", "managed_asset_id", "rule_id"];
   const rows = alarms.map((alarm) =>
-    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.last_value, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
+    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.presentation_value, alarm.presentation_unit, alarm.last_value, alarm.unit, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
       .map(csvCell)
       .join(","),
   );
@@ -44,6 +48,7 @@ export function EventsPage() {
   const [customEnd, setCustomEnd] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const isOps = view !== "active" && view !== "history";
 
   const activeQuery = useQuery({ queryKey: ["events", "active"], queryFn: () => getOpenAlarms("ACTIVE") });
   const acknowledgedQuery = useQuery({ queryKey: ["events", "acknowledged"], queryFn: () => getOpenAlarms("ACKNOWLEDGED") });
@@ -85,6 +90,19 @@ export function EventsPage() {
   const selected = visibleAlarms.find((alarm) => alarm.id === selectedId) ?? visibleAlarms[0] ?? null;
   const loading = view === "active" ? activeQuery.isLoading || acknowledgedQuery.isLoading : historyQuery.isLoading;
   const error = view === "active" ? activeQuery.error || acknowledgedQuery.error : historyQuery.error;
+  // A list exists only once every request behind the view has answered. A paused or disabled request
+  // leaves its data undefined, which must not be read as "no events".
+  const ready = view === "active" ? activeQuery.data !== undefined && acknowledgedQuery.data !== undefined : historyQuery.data !== undefined;
+  const requestState = {
+    isLoading: loading,
+    error,
+    data: ready ? requestedAlarms : undefined,
+    fetchStatus:
+      view === "active"
+        ? activeQuery.fetchStatus === "paused" || acknowledgedQuery.fetchStatus === "paused" ? "paused" : "idle"
+        : historyQuery.fetchStatus,
+    refetch: () => (view === "active" ? Promise.all([activeQuery.refetch(), acknowledgedQuery.refetch()]) : historyQuery.refetch()),
+  };
 
   function changePreset(value: string) {
     setPreset(value);
@@ -98,27 +116,24 @@ export function EventsPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="mb-1 text-lg font-semibold">Events</h1>
-          <p className="text-sm text-slate-500">
-            Current alarm conditions and retained lifecycle history. Data is bounded by the existing alarm APIs; no event state
-            is created in the browser.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
-          disabled={visibleAlarms.length === 0}
-          className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-        >
-          Export current results CSV
-        </button>
-      </div>
+      <PageHeader
+        title="Events"
+        description="Current alarm conditions and retained lifecycle history. Data is bounded by the existing alarm APIs; no event state is created in the browser."
+        actions={
+          <button
+            type="button"
+            onClick={() => exportCsv(visibleAlarms, `dcim-events-${view}.csv`)}
+            disabled={visibleAlarms.length === 0 || isOps}
+            className="whitespace-nowrap rounded-sm border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          >
+            Export current results CSV
+          </button>
+        }
+      />
 
       <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div role="tablist" aria-label="Events view" className="flex gap-2">
+          <div role="tablist" aria-label="Events view" className="flex flex-wrap gap-2">
             <button
               type="button"
               role="tab"
@@ -144,8 +159,23 @@ export function EventsPage() {
             >
               History
             </button>
+            {OPS_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={view === tab.id}
+                onClick={() => {
+                  setView(tab.id);
+                  setSelectedId(null);
+                }}
+                className={`rounded-sm px-3 py-1.5 text-sm ${view === tab.id ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" hidden={isOps}>
             {view === "history" && (
               <>
                 <select
@@ -178,7 +208,7 @@ export function EventsPage() {
             )}
             <input
               aria-label="Search events"
-              className="min-w-[220px] rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500"
+              className="min-w-[220px] rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 placeholder:text-fg-secondary"
               placeholder="Search subject or identifier"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -218,30 +248,32 @@ export function EventsPage() {
         )}
       </div>
 
-      {loading && <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Loading requested events…</div>}
-      {error && (
-        <div className="mt-4 rounded-sm border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">Unable to retrieve the requested event records.</div>
+      {isOps && <OperationsViews view={view as OpsView} />}
+      {!isOps && (
+        <div className="mt-4">
+          <QueryStatus query={requestState} what="events" permission="alarm:read" columns={5} />
+        </div>
       )}
-      {!loading && !error && visibleAlarms.length === 0 && (
-        <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-500">
+      {!isOps && ready && !loading && !error && visibleAlarms.length === 0 && (
+        <div className="mt-4 rounded-sm border border-slate-800 bg-slate-900 p-8 text-center text-sm text-fg-secondary">
           {view === "active"
             ? "No active or acknowledged alarm condition is currently reported."
             : "No events in this range. Try a different time range or state filter."}
         </div>
       )}
 
-      {!loading && !error && visibleAlarms.length > 0 && (
+      {!isOps && ready && !loading && !error && visibleAlarms.length > 0 && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="overflow-hidden rounded-sm border border-slate-800 bg-slate-900">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-slate-500">
+            <div role="region" aria-label="Events table" tabIndex={0} className="relative overflow-x-auto">
+              <table aria-label="Events" className="w-full text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-fg-secondary">
                   <tr>
-                    <th className="px-3 py-2">State</th>
-                    <th className="px-3 py-2">Subject</th>
-                    <th className="px-3 py-2">Latest value</th>
-                    <th className="px-3 py-2">First occurrence</th>
-                    <th className="px-3 py-2">Acknowledgement</th>
+                    <th scope="col" className="px-3 py-2">State</th>
+                    <th scope="col" className="px-3 py-2">Subject</th>
+                    <th scope="col" className="px-3 py-2">Latest value</th>
+                    <th scope="col" className="px-3 py-2">First occurrence</th>
+                    <th scope="col" className="px-3 py-2">Acknowledgement</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -249,16 +281,24 @@ export function EventsPage() {
                     <tr
                       key={alarm.id}
                       onClick={() => setSelectedId(alarm.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedId(alarm.id);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-current={selected?.id === alarm.id ? "true" : undefined}
                       className={`cursor-pointer border-t border-slate-800 ${selected?.id === alarm.id ? "bg-slate-800/70" : "hover:bg-slate-800/40"}`}
                     >
                       <td className="px-3 py-2">
-                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[alarm.status]}`}>{alarm.status}</span>
+                        <AlarmWorkflowStatus status={alarm.status} size="sm" />
                       </td>
                       <td className="max-w-[280px] truncate px-3 py-2 font-medium text-slate-200">
                         {alarm.subject_key}
-                        <p className="mt-0.5 font-mono text-[11px] text-slate-500">{alarm.id.slice(0, 8)}…</p>
+                        <p className="mt-0.5 font-mono text-[11px] text-fg-secondary">{alarm.id.slice(0, 8)}…</p>
                       </td>
-                      <td className="px-3 py-2">{alarm.last_value}</td>
+                      <td className="px-3 py-2">{alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-400">{new Date(alarm.opened_at).toLocaleString()}</td>
                       <td className="px-3 py-2 text-slate-400">
                         {alarm.acknowledged_at ? new Date(alarm.acknowledged_at).toLocaleString() : "Unacknowledged"}
@@ -270,7 +310,7 @@ export function EventsPage() {
             </div>
             {view === "history" && (
               <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-sm">
-                <span className="text-slate-500">Showing one bounded history page of up to 50 records.</span>
+                <span className="text-fg-secondary">Showing one bounded history page of up to 50 records.</span>
                 {historyQuery.data?.next_cursor && (
                   <button
                     type="button"
@@ -288,31 +328,31 @@ export function EventsPage() {
           </div>
           {selected && (
             <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Event detail</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">Event detail</p>
               <div className="mt-3 flex items-center gap-2">
-                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
-                <span className="text-sm text-slate-400">last value {selected.last_value}</span>
+                <AlarmWorkflowStatus status={selected.status} size="sm" />
+                <span className="text-sm text-slate-400">last value {selected.presentation_value}{selected.presentation_unit === "%" ? "%" : ` ${selected.presentation_unit ?? ""}`}</span>
               </div>
               <h2 className="mt-3 wrap-break-word text-lg font-semibold text-slate-100">{selected.subject_key}</h2>
               <dl className="mt-4 space-y-2 text-sm">
                 <div>
-                  <dt className="text-slate-500">First occurrence</dt>
+                  <dt className="text-fg-secondary">First occurrence</dt>
                   <dd>{new Date(selected.opened_at).toLocaleString()}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Latest recorded state</dt>
+                  <dt className="text-fg-secondary">Latest recorded state</dt>
                   <dd>{selected.cleared_at ? `Cleared ${new Date(selected.cleared_at).toLocaleString()}` : "Not cleared"}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Acknowledgement</dt>
+                  <dt className="text-fg-secondary">Acknowledgement</dt>
                   <dd>{selected.acknowledged_at ? new Date(selected.acknowledged_at).toLocaleString() : "Unacknowledged"}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Integration identifier</dt>
+                  <dt className="text-fg-secondary">Integration identifier</dt>
                   <dd className="break-all font-mono text-xs">{selected.integration_id}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Rule identifier</dt>
+                  <dt className="text-fg-secondary">Rule identifier</dt>
                   <dd className="break-all font-mono text-xs">{selected.rule_id}</dd>
                 </div>
               </dl>

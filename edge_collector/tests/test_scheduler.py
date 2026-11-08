@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -8,8 +8,6 @@ from edge_collector.scheduler import (
     PollSchedule,
     stable_jitter_seconds,
 )
-
-UTC = timezone.utc
 
 
 def test_default_and_allowed_intervals():
