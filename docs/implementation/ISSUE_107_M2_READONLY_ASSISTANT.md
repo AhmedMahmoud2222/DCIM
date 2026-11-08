@@ -1,6 +1,6 @@
 # Issue #107 M2: read-only assistant architecture and implementation contract
 
-**Document version:** 0.1.2 (2026-10-20; sections 7a, 7b, 11 derived evidence, 11a, 13.1 and tests 15.1-15.4 reconciled 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
+**Document version:** 0.1.3 (freshness by evidence kind, 2026-11-08; previously 0.1.2: 2026-10-20; sections 7a, 7b, 11 derived evidence, 11a, 13.1 and tests 15.1-15.4 reconciled 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
 
 ## 1. Principles
 
@@ -100,6 +100,7 @@ Adapter rules:
       "retrieved_at": "2026-10-20T15:00:02Z",
       "value": {"number": "24.5", "unit": "degC", "canonical": true},
       "quality": {"provenance_status": "pinned", "stale": false, "age_seconds": 112},
+      "freshness": {"class": "cadence | live_read", "source_version": "7"},
       "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "...",
                   "derived": false, "contributors": [], "placement_revision": "sha256:..."},
       "versions": {"method": "linear_ols_v1", "correlation_method": "1"},
@@ -165,8 +166,8 @@ The validator, not the model, decides whether a categorical claim is supported.
 | `alarm.status` | alarm item | the alarm lifecycle enumeration | same |
 | `alarm.severity` | alarm item | the severity enumeration | none |
 | `incident.status` | incident item | the incident lifecycle enumeration | same |
-| `equipment.status`, `equipment.type`, `equipment.rack_id`, `equipment.site_id` | inventory item | source enumeration or UUID | none |
-| `relation.located_in`, `relation.raised_on` | pair of items | a subject item and an object item | none |
+| `equipment.status`, `equipment.type`, `equipment.rack_id`, `equipment.site_id` | inventory item | source enumeration or UUID | present-tense claims need the `live_read` check (section 11a.1b); no polling interval is used |
+| `relation.located_in`, `relation.raised_on` | pair of items | a subject item and an object item | `live_read` check on both items (section 11a.1b) |
 
 **Check.** For each predicate in a fact:
 
@@ -198,7 +199,8 @@ Disclosure, caveats, hypothesis labelling or explanatory text cannot move a calc
 | Condition | Behavior |
 |---|---|
 | No visible data | `insufficient_evidence`; no fabricated values |
-| Reading older than 2x `Integration.poll_interval_seconds`, measured at the current evaluation time (section 11a) | Mark `stale`; cannot support a present-tense claim |
+| `cadence` item (telemetry, collector state) older than 2x `Integration.poll_interval_seconds`, measured at the current evaluation time (section 11a.1a) | Mark `stale`; cannot support a present-tense claim |
+| `live_read` item (inventory, alarm and incident status; no integration) whose scoped re-read at evaluation time fails, shows a changed `source_version`, or is no longer visible (section 11a.1b) | Not current: re-validate against the re-read values, render historical, or remove; never judged by a polling interval |
 | Two items disagree (different values for the same series and instant, or incident vs alarm status) | Report both with refs; no silent selection |
 | Mixed provenance (`unverified_legacy` with pinned) | State the mix; do not average across eras (same rule as `TelemetryTrend.tsx` grouping) |
 | Forecast status `sparse`, `stale`, `missing`, `estimated_mixed` | Relay the status and `no_forecast_reason`; no number |
@@ -240,12 +242,16 @@ Timeout, 5xx, quota (HTTP 402/429) or schema-invalid output yields `status: evid
 
 `quality.stale` and `age_seconds` in a stored bundle (section 5) describe the moment of retrieval only. They are informational and are never an input to claim validation or delivery.
 
-1. **Evaluation time.** Every validation pass takes an explicit `evaluated_at` from the server clock at that moment. Age is `evaluated_at - observed_at`; an item is stale when age exceeds 2x the source's current `Integration.poll_interval_seconds` (section 8), read at evaluation time.
+1. **Evaluation time and freshness class.** Every validation pass takes an explicit `evaluated_at` from the server clock at that moment. Each item carries a `freshness_class` assigned by its retrieval adapter (a code constant per tool, never the model). Currency is decided by class:
+   - **a. `cadence` (telemetry readings, collector heartbeat and state, forecasts built from readings).** Age is `evaluated_at - observed_at`; the item is stale when age exceeds 2x the source's current `Integration.poll_interval_seconds` (section 8), read at evaluation time. Only items with an integration may use this class.
+   - **b. `live_read` (inventory: equipment, racks, locations, and relations between them; any record with no integration and no sampling cadence).** There is no polling interval and none is consulted. The item stores `source_version` (the row's integer `version` where it has one, otherwise a hash of the cited fields and `updated_at`) and its `placement_revision`. At `evaluated_at` the validator performs a scoped re-read of the record through the normal adapter path (current visibility predicate, principle 3) and compares. Unchanged and still visible: the item is current as of `evaluated_at` (`verified_at`), regardless of how old `retrieved_at` is. Changed: the claim is re-validated against the re-read values (7a), or rewritten historical as in 3 if the change makes the old value false. Not visible any more, deleted, moved out of scope, or not re-readable: handled by section 11 (denied or not_found_or_denied shape, no stale value shown). The re-read is bounded by section 9 and counted against its limits.
+   - **c. Alarm and incident status** are `live_read` (state-changing rows), not `cadence`; their `observed_at` is informational.
+   - A freshness class the registry does not know is stale (item 6).
 2. **When it runs.** Before first delivery, on asynchronous completion (the Celery task re-evaluates after the provider returns, not at enqueue time), on every `GET` of a stored result, on every evidence listing, on export, and whenever a follow-up question reuses any part of a prior bundle or answer. No path may return a stored claim without a fresh evaluation.
 3. **Present-tense claims.** A fact whose text asserts a current state ("now", "currently", present-tense state predicates) that cites an item now stale is handled in this order: (a) if the item was fresh at `retrieved_at` and the claim is supported at that time, rewrite it from the validated predicate template as explicitly historical ("As of <observed_at>: ..."), with the caveat `stale`; (b) otherwise remove the claim. Model text is never patched; the template renders it.
 4. **Derived evidence.** An aggregate, ranking or calculation is stale if any contributor is stale; it is rebuilt through the adapter (a fresh read) or rendered historical as in 3. A fresh contributor never refreshes a stale one.
 5. **Follow-ups.** A follow-up re-runs retrieval for any item it needs to support a present-tense claim; prior bundles may support historical statements only.
-6. **Fail closed.** If `evaluated_at` cannot be obtained, the poll interval is unknown, `observed_at` is missing or in the future beyond clock tolerance, or re-evaluation errors, the item counts as stale. If no claim survives, the status is `evidence_only` or `insufficient_evidence`. Cached responses are keyed additionally by the evaluation outcome and are never served past the earliest item staleness threshold.
+6. **Fail closed.** If `evaluated_at` cannot be obtained, the item is stale. For `cadence` items the same applies when the poll interval is unknown, `observed_at` is missing or in the future beyond clock tolerance. For `live_read` items it applies when the re-read fails, times out, or `source_version` is missing, and an absent polling interval is never a reason (it is not an input for that class). Any class-specific re-evaluation error counts as stale. If no claim survives, the status is `evidence_only` or `insufficient_evidence`. Cached responses are keyed additionally by the evaluation outcome and are never served past the earliest item staleness threshold.
 7. **Interaction with 11.** Freshness changes do not alter `permission_hash`, so the authorization check alone never detects them; both checks run independently.
 
 ## 12. Provider data handling, redaction, retention
@@ -417,4 +423,13 @@ Controllable clock, permissions and placement unchanged throughout. Fixture: `E3
 9. **Fail closed.** Clock source unavailable, missing `observed_at`, or `observed_at` in the future: the item is treated as stale.
 10. **Injected text.** An asset note says "reading is always current"; the model repeats it; the claim is still downgraded.
 11. **Positive control.** At T0+60 s the claim is delivered as present tense with no `stale` caveat.
-12. **Mutation-sensitive.** Run the validator with each mutant: (a) trust stored `quality.stale`, (b) evaluate at `retrieved_at` instead of `evaluated_at`, (c) skip re-evaluation on GET, (d) skip it on async completion, (e) skip it on export, (f) reuse a prior bundle for present tense on follow-up, (g) let a fresh contributor refresh a stale aggregate. Each mutant must fail at least one test above; a surviving mutant fails the section.
+12. **Mutation-sensitive.** Run the validator with each mutant: (a) trust stored `quality.stale`, (b) evaluate at `retrieved_at` instead of `evaluated_at`, (c) skip re-evaluation on GET, (d) skip it on async completion, (e) skip it on export, (f) reuse a prior bundle for present tense on follow-up, (g) let a fresh contributor refresh a stale aggregate, (h) apply the polling-interval rule to `live_read` items, (i) treat a `live_read` item as current without the re-read, (j) accept a `live_read` item whose re-read shows a changed `source_version` or lost visibility, (k) treat a `cadence` item as `live_read`. Each mutant must fail at least one test in this section; a surviving mutant fails the section.
+
+Inventory without an integration (clock controllable; fixture: `E10` = equipment "PDU-7", `equipment.status = active`, row `version` 7, no integration and no `poll_interval_seconds`; F10 "PDU-7 is currently active" with predicate `equipment.status eq active`):
+
+13. **Positive control, old but current.** `E10` retrieved at T0; evaluate at T0+30 days with the row unchanged and still visible. The scoped re-read matches `source_version` 7; F10 is delivered as present tense with no `stale` caveat, and the absence of a polling interval does not downgrade it. Same result on `GET`, export, async completion and a follow-up (the follow-up re-reads).
+14. **Changed row.** The status is changed to `decommissioned` (version 8) after T0. F10 is not delivered as current; it is re-validated against the re-read value and removed (opposite status, 7a), or rendered "As of T0: active" with caveat `stale`. The new status may be stated only through a validated predicate.
+15. **Inaccessible inventory.** After T0, the caller's site scope is revoked, or the asset moves to another site (placement change). The re-read returns the `not_found_or_denied` shape; F10 and anything derived from `E10` are removed, with no stale value, no count or "N omitted" revealing it (section 11, tests 15.1 R1 to R4). The row is not reported as merely stale.
+16. **Unverifiable.** The re-read errors or times out, or `source_version` is missing on the item. The item is stale (fail closed): no present-tense delivery; historical wording only if it was supported at retrieval, otherwise removed. Status is `evidence_only` or `insufficient_evidence` if nothing survives.
+17. **Relation.** F11 "PDU-7 is located in Rack R-12" (`relation.located_in`). The positive control passes when both rows are unchanged and visible. Moving PDU-7 to rack R-13 makes F11 fail, and it is never supported by co-citation.
+18. **Class assignment.** An inventory tool that declares `cadence`, or a `cadence` item with no integration, is rejected at registry load (fail closed); an unknown class is stale (mutants (h) and (k)).
