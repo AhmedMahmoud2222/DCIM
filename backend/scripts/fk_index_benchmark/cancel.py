@@ -72,6 +72,9 @@ class PgProxy:
         self.keys: list[BackendKey] = []
         self.tls_seen = False
         self._lock = threading.Lock()
+        # Keep every accepted client attempt, including handshakes that have not completed. A key is
+        # safe to return only when exactly one attempt exists and its BackendKeyData is registered.
+        self._connections: list[dict] = []
         self._closing = threading.Event()
         self._sockets: list[socket.socket] = []
         self._threads: list[threading.Thread] = []
@@ -103,17 +106,24 @@ class PgProxy:
                 client, _ = self._listener.accept()
             except OSError:
                 return
+            state = {"ssl_requested": False, "startup_error": None, "classified": False, "status": "pending"}
+            with self._lock:
+                self._connections.append(state)
             try:
                 server = socket.create_connection(self.upstream, timeout=10)
             except OSError:
+                with self._lock:
+                    state["status"] = "failed"
                 client.close()
                 continue
             server.settimeout(None)
             client.settimeout(None)
-            state = {"ssl_requested": False, "startup_error": None, "classified": False}
             with self._lock:
                 self._sockets += [client, server]
-            for target, args in ((self._client_to_server, (client, server, state)), (self._server_to_client, (server, client, state))):
+            for target, args in (
+                (self._client_to_server, (client, server, state)),
+                (self._server_to_client, (server, client, state)),
+            ):
                 t = threading.Thread(target=target, args=args, daemon=True)
                 t.start()
                 self._threads.append(t)
@@ -157,7 +167,7 @@ class PgProxy:
                     if length < 8 or length > max_startup_bytes:
                         state["startup_error"] = f"malformed startup: invalid length {length}"
                         raise ValueError(state["startup_error"])
-                    state["ssl_requested"] = (length == 8 and code == SSL_REQUEST_CODE)
+                    state["ssl_requested"] = length == 8 and code == SSL_REQUEST_CODE
                     state["classified"] = True
                     classified = True
                     # Forward the entire buffered prefix (header + any trailing bytes) in original order, exactly once.
@@ -181,33 +191,68 @@ class PgProxy:
                 data = server.recv(65536)
                 if not data:
                     break
-                client.sendall(data)
                 if not looking:
+                    client.sendall(data)
                     continue
                 buffer += data
                 if ssl_reply_pending and state["ssl_requested"]:
+                    if not buffer:
+                        continue
                     ssl_reply_pending = False
                     reply, buffer = buffer[:1], buffer[1:]
                     if reply == b"S":  # TLS: the stream is opaque from here, so the key can never be read
-                        self.tls_seen = True
+                        with self._lock:
+                            self.tls_seen = True
+                            state["status"] = "tls"
+                        client.sendall(reply + buffer)
+                        buffer = b""
                         looking = False
                         continue
+                    client.sendall(reply)
                 elif ssl_reply_pending:
                     ssl_reply_pending = False
+
+                # Parse complete backend messages one at a time. In particular, never forward
+                # BackendKeyData until it has been recorded: clients can return from connect() as
+                # soon as they receive ReadyForQuery, which may share a TCP read with the key.
+                forwarded = bytearray()
                 while looking and len(buffer) >= 5:
                     kind, length = buffer[:1], struct.unpack("!i", buffer[1:5])[0]
+                    if length < 4 or length > (1 << 20):
+                        raise ValueError(f"malformed backend message length {length}")
                     if len(buffer) < 1 + length:
                         break
+                    frame = buffer[: 1 + length]
                     body = buffer[5 : 1 + length]
                     buffer = buffer[1 + length :]
                     if kind == b"K" and len(body) == 8:
                         pid, secret = struct.unpack("!ii", body)
                         with self._lock:
                             self.keys.append(BackendKey(pid, secret))
+                            state["status"] = "key"
+                        forwarded.extend(frame)
+                        forwarded.extend(buffer)
+                        buffer = b""
                         looking = False
+                        break
+                    forwarded.extend(frame)
+                    # A server error or ReadyForQuery without a key cannot later become a safe
+                    # cancellation target. Preserve the response but make the failure explicit.
+                    if kind in (b"E", b"Z"):
+                        with self._lock:
+                            state["status"] = "no_key"
+                if forwarded:
+                    client.sendall(bytes(forwarded))
+                # Preserve incomplete frame bytes until a later read completes them. Never pass a
+                # partial K frame through to the client before its key is registered.
         except OSError:
             pass
+        except (ValueError, struct.error) as exc:
+            state["startup_error"] = f"malformed backend response: {exc}"
         finally:
+            with self._lock:
+                if state["status"] in ("pending", "key"):
+                    state["status"] = "closed"
             self._shut(client, server)
 
     # -- use -------------------------------------------------------------------------------------------------------
@@ -215,15 +260,17 @@ class PgProxy:
         """The BackendKeyData of the single proxied connection; raises NoBackendKey rather than guessing among several."""
         import time
 
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             with self._lock:
                 if self.tls_seen:
                     raise NoBackendKey("the server negotiated TLS, so the relay cannot read BackendKeyData; refusing to cancel")
-                if len(self.keys) == 1:
+                if len(self._connections) > 1:
+                    raise NoBackendKey(f"{len(self._connections)} connections were proxied; refusing to pick one")
+                if len(self._connections) == 1 and self._connections[0]["status"] == "key" and len(self.keys) == 1:
                     return self.keys[0]
-                if len(self.keys) > 1:
-                    raise NoBackendKey(f"{len(self.keys)} connections were proxied; refusing to pick one")
+                if self._connections and self._connections[0]["status"] in ("failed", "closed", "no_key"):
+                    raise NoBackendKey("the proxied connection closed or completed its handshake without BackendKeyData")
             time.sleep(0.05)
         raise NoBackendKey("no BackendKeyData observed on the proxied connection")
 
