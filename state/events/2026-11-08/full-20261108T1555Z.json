@@ -1,0 +1,24 @@
+{
+  "run_id": "full-20261108T1555Z",
+  "mode": "FULL",
+  "started_at": "2026-11-08T15:55:40Z",
+  "steps": [
+    "0 lease acquired; policy and changelog read; ruleset verified all bypass pull_request",
+    "1 one open PR #309 and 17 open issues (excluding PR); main 12708ee1",
+    "2 #309 diff inspected; no fix claims accepted without verification",
+    "3 prioritized #309; draft and independent reviews pending",
+    "4 #309 zero review threads",
+    "4a #309 no review findings",
+    "5 #309 draft; backend/frontend green; wait for ready and independent reviews",
+    "6 no historical open PR candidates",
+    "7 no pending agent asks on #309",
+    "8 zero merges; #309 draft and missing Codex/Copilot acceptance",
+    "9 no new class I decisions; #214 hold intact",
+    "10 report completed; no production execution"
+  ],
+  "merged": [],
+  "open_prs": [
+    309
+  ],
+  "production_hold_214": true
+}
