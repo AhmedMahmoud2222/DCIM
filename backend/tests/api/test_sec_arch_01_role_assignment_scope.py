@@ -215,6 +215,23 @@ async def test_in_scope_create_move_and_retire_work_with_a_site_scoped_role(clie
     assert (await client.post(f"/api/v1/racks/{rack_a}/move", json={"room_id": a["room"]}, headers=headers)).status_code in (200, 409)
 
 
+async def test_site_scoped_rack_place_role_cannot_retire_a_rack_at_another_site(client, admin, auth_headers, db_session):
+    a, _b, rack_a, rack_b = await _world(client, admin, auth_headers)
+    gid = await _group(client, admin, allow=["rack:read", "location:read"], sites=[{"site_id": a["site"], "rack_scope": "all"}])
+    user, headers = await _group_user(client, admin, [gid])
+    await _assign(db_session, user["id"], await _role(db_session, ["rack:place"]), "site", a["site"])
+
+    before = (await client.get(f"/api/v1/racks/{rack_b}", headers=admin)).json()["placement"]
+    denied = await client.post(f"/api/v1/racks/{rack_b}/retire", headers=headers)
+    after = (await client.get(f"/api/v1/racks/{rack_b}", headers=admin)).json()["placement"]
+    assert denied.status_code == 404
+    assert after == before, "out-of-scope retire must leave the rack's current placement unchanged"
+
+    allowed = await client.post(f"/api/v1/racks/{rack_a}/retire", headers=headers)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["placement"] is None
+
+
 async def test_scoped_administrator_assignment_does_not_confer_the_role_name(client, admin, db_session):
     """An out-of-scope Administrator assignment must not satisfy role-membership checks (catalog, import)."""
     a, b = await _make_site(client, admin), await _make_site(client, admin)
