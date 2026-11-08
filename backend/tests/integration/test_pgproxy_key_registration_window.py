@@ -1,16 +1,4 @@
-"""Deterministic witness for the PgProxy BackendKeyData registration window (issue #260). No PostgreSQL is needed.
-
-`PgProxy._server_to_client` forwards the server's bytes to the client (`client.sendall`) BEFORE it parses them and appends the
-BackendKey under `self._lock`. A client that has seen ReadyForQuery therefore may call `only_key()` while that connection's key is
-not registered yet. This module pins that window with a gated lock instead of timing, and keeps the safety property separately.
-
-* `test_witness_*` is a DIAGNOSTIC reproducer: it asserts the CURRENT, unsafe observation (one key returned while two connections
-  are established). If the relay is later changed to register before forwarding, it fails with an explicit "obsolete" message and
-  should then be removed or inverted. It proves the window exists; it says nothing about how often CI hits it.
-  It is independent of TCP receive boundaries: the relay's upstream socket is wrapped so that its first read always ends after
-  ReadyForQuery, whether the fake server writes the response in one piece or splits it between BackendKeyData and ReadyForQuery.
-* `test_safety_*` is a passing SAFETY regression: once both keys are registered, `only_key` must refuse to pick one.
-"""
+"""Deterministic PgProxy registration and ambiguity regressions for issue #260. No PostgreSQL is needed."""
 
 from __future__ import annotations
 
@@ -257,11 +245,8 @@ def split_upstream(request):
     fake.close()
 
 
-def test_witness_only_key_returns_one_key_while_second_connection_is_established(split_upstream, coalesce_upstream_reads):
-    """DIAGNOSTIC: pins the current window; passing means the window exists, not that it caused the CI failure.
-
-    Runs with the response written whole and split between BackendKeyData and ReadyForQuery; both give the same observation.
-    """
+def test_key_is_registered_before_ready_for_query_can_reach_client(split_upstream, coalesce_upstream_reads):
+    """A gated registration must block the second connection's response, and ambiguity must fail closed meanwhile."""
     upstream = split_upstream
     hook, wrappers = coalesce_upstream_reads
     hook.upstream = upstream
@@ -272,22 +257,33 @@ def test_witness_only_key_returns_one_key_while_second_connection_is_established
         try:
             clients.append(_connect_and_read_ready(proxy))
             _wait_for_keys(proxy, 1)
-
-            gate.armed = True
-            try:
-                # B's client receives ReadyForQuery while the relay thread is parked before registering B's key.
-                clients.append(_connect_and_read_ready(proxy))
-            except (TimeoutError, OSError) as exc:
-                pytest.fail(f"witness obsolete: the relay no longer forwards ReadyForQuery before registering the key ({exc!r})")
-            assert gate.reached.wait(WAIT), "the relay never reached the registration point for the second connection"
-            if upstream.split:
-                assert all(w.reads >= 2 for w in wrappers), "split mode did not actually split the relay's reads"
-            assert len(proxy.keys) == 1  # two established connections, one registered key
-
-            # The observation under test: the guard returns a single key although two connections are established.
             assert proxy.only_key(timeout=WAIT) == BackendKey(1000, 2000)
 
+            gate.armed = True
+            connected = threading.Event()
+            result: dict = {}
+
+            def connect_second():
+                try:
+                    result["client"] = _connect_and_read_ready(proxy)
+                    connected.set()
+                except BaseException as exc:  # surface helper-thread failures in the test thread
+                    result["error"] = exc
+                    connected.set()
+
+            thread = threading.Thread(target=connect_second, daemon=True)
+            thread.start()
+            assert gate.reached.wait(WAIT), "the relay never reached the registration point for the second connection"
+            assert not connected.wait(0.1), "the second connection received ReadyForQuery before its key was registered"
+            with pytest.raises(NoBackendKey, match="refusing to pick"):
+                proxy.only_key(timeout=WAIT)
             gate.release.set()
+            thread.join(JOIN)
+            assert not thread.is_alive(), "second client did not finish after key registration was released"
+            assert "error" not in result, result.get("error")
+            clients.append(result["client"])
+            if upstream.split:
+                assert all(w.reads >= 2 for w in wrappers), "split mode did not actually split the relay's reads"
             _wait_for_keys(proxy, 2)
             with pytest.raises(NoBackendKey, match="refusing to pick"):
                 proxy.only_key(timeout=WAIT)
@@ -310,3 +306,90 @@ def test_safety_only_key_refuses_once_both_connections_are_registered(upstream):
         finally:
             for client in clients:
                 client.close()
+
+
+def test_pending_second_handshake_prevents_returning_first_key(upstream):
+    """A second accepted socket is ambiguous even before it completes startup or exposes a key."""
+    clients: list[socket.socket] = []
+    with running_proxy(upstream.port) as proxy:
+        try:
+            clients.append(_connect_and_read_ready(proxy))
+            pending = socket.create_connection((proxy.host, proxy.port), timeout=WAIT)
+            clients.append(pending)
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                with proxy._lock:
+                    if len(proxy._connections) == 2:
+                        break
+                time.sleep(0.01)
+            else:
+                pytest.fail("proxy did not register the second accepted connection")
+            with pytest.raises(NoBackendKey, match="refusing to pick"):
+                proxy.only_key(timeout=WAIT)
+        finally:
+            for client in clients:
+                client.close()
+
+
+def test_upstream_socket_failure_fails_closed():
+    unavailable = socket.socket()
+    unavailable.bind(("127.0.0.1", 0))
+    port = unavailable.getsockname()[1]
+    unavailable.close()
+    with running_proxy(port) as proxy:
+        with socket.create_connection((proxy.host, proxy.port), timeout=WAIT):
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                with proxy._lock:
+                    if proxy._connections and proxy._connections[0]["status"] == "failed":
+                        break
+                time.sleep(0.01)
+            else:
+                pytest.fail("upstream connection failure was not recorded")
+            with pytest.raises(NoBackendKey, match="closed|handshake"):
+                proxy.only_key(timeout=WAIT)
+
+
+def test_tls_handshake_is_forwarded_but_cannot_expose_a_key():
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    finished = threading.Event()
+
+    def serve_tls_request():
+        try:
+            upstream, _ = listener.accept()
+            with upstream:
+                request = b""
+                while len(request) < 8:
+                    request += upstream.recv(8 - len(request))
+                assert request == struct.pack("!ii", 8, 80877103)
+                upstream.sendall(b"S")
+                upstream.recv(1)
+        finally:
+            finished.set()
+
+    server = threading.Thread(target=serve_tls_request, daemon=True)
+    server.start()
+    try:
+        with running_proxy(port) as proxy:
+            with socket.create_connection((proxy.host, proxy.port), timeout=WAIT) as client:
+                client.sendall(struct.pack("!ii", 8, 80877103))
+                assert client.recv(1) == b"S"
+                client.sendall(b"x")
+            with pytest.raises(NoBackendKey, match="TLS"):
+                proxy.only_key(timeout=WAIT)
+            assert proxy.tls_seen
+    finally:
+        listener.close()
+        server.join(JOIN)
+        assert finished.is_set()
+
+
+def test_incomplete_startup_never_becomes_a_cancel_target(upstream):
+    with running_proxy(upstream.port) as proxy:
+        with socket.create_connection((proxy.host, proxy.port), timeout=WAIT) as client:
+            client.sendall(STARTUP[:3])
+        with pytest.raises(NoBackendKey):
+            proxy.only_key(timeout=WAIT)
