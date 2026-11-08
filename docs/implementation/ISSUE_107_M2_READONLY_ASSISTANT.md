@@ -1,6 +1,6 @@
 # Issue #107 M2: read-only assistant architecture and implementation contract
 
-**Document version:** 0.1.3 (freshness by evidence kind, 2026-11-08; previously 0.1.2: 2026-10-20; sections 7a, 7b, 11 derived evidence, 11a, 13.1 and tests 15.1-15.4 reconciled 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
+**Document version:** 0.1.4 (collector heartbeat freshness class, 2026-11-08; 0.1.3: freshness by evidence kind, 2026-11-08; previously 0.1.2: 2026-10-20; sections 7a, 7b, 11 derived evidence, 11a, 13.1 and tests 15.1-15.4 reconciled 2026-11-07). **Everything below is PROPOSED. Nothing is implemented.** Existing-behavior claims cite `main@92be692`; see the [main document](ISSUE_107_AI_OPERATIONS.md).
 
 ## 1. Principles
 
@@ -100,12 +100,12 @@ Adapter rules:
       "retrieved_at": "2026-10-20T15:00:02Z",
       "value": {"number": "24.5", "unit": "degC", "canonical": true},
       "quality": {"provenance_status": "pinned", "stale": false, "age_seconds": 112},
-      "freshness": {"class": "cadence | live_read", "source_version": "7"},
+      "freshness": {"class": "cadence | live_read | heartbeat", "source_version": "7", "heartbeat_ts": null},
       "lineage": {"mapping_revision_id": "uuid", "registry_version": "1", "evidence_class": "...",
                   "derived": false, "contributors": [], "placement_revision": "sha256:..."},
       "versions": {"method": "linear_ols_v1", "correlation_method": "1"},
       "scope_site_id": "uuid",
-      "attributes": {"collector.state": "online", "alarm.status": null, "equipment.status": null}
+      "attributes": {"collector.state": "healthy", "alarm.status": null, "equipment.status": null}
     }
   ],
   "omitted": {"reason": "limit_reached | denied | no_data", "count_visible_to_caller": 12}
@@ -127,7 +127,7 @@ Adapter rules:
   "status": "ok | evidence_only | insufficient_evidence | denied | provider_error",
   "bundle_id": "uuid",
   "facts":           [{"id": "F1", "text": "...", "refs": ["E3"],
-                       "predicates": [{"subject_ref": "E3", "predicate": "collector.state", "op": "eq", "value": "online"}]}],
+                       "predicates": [{"subject_ref": "E3", "predicate": "collector.state", "op": "eq", "value": "healthy"}]}],
   "calculations":    [{"id": "C1", "text": "...", "operation": "sum", "inputs": ["E3","E4"], "unit": "kW"}],
   "hypotheses":      [{"id": "H1", "text": "...", "refs": ["E5"], "confidence": "low|medium|high", "basis": "rule | statistical | model"}],
   "recommendations": [{"id": "R1", "text": "...", "refs": ["E5"], "action_type": null}],
@@ -162,7 +162,7 @@ The validator, not the model, decides whether a categorical claim is supported.
 
 | Predicate | Kind | Values | Staleness |
 |---|---|---|---|
-| `collector.state` | collector item | the closed set of collector states in the source model (exact set copied from code in M2; not verified here) | present-tense claims need freshness at evaluation time (section 11a) |
+| `collector.state` | collector item | the closed set returned by the collector health classifier (`healthy`, `stale`, `offline` in `collector_service.py` at the time of writing; the registry copies the set from code in M2 and a test guards drift) | `heartbeat` class (section 11a.1d): recomputed from the latest heartbeat and the server clock at every use; no integration or polling interval is used |
 | `alarm.status` | alarm item | the alarm lifecycle enumeration | same |
 | `alarm.severity` | alarm item | the severity enumeration | none |
 | `incident.status` | incident item | the incident lifecycle enumeration | same |
@@ -199,7 +199,8 @@ Disclosure, caveats, hypothesis labelling or explanatory text cannot move a calc
 | Condition | Behavior |
 |---|---|
 | No visible data | `insufficient_evidence`; no fabricated values |
-| `cadence` item (telemetry, collector state) older than 2x `Integration.poll_interval_seconds`, measured at the current evaluation time (section 11a.1a) | Mark `stale`; cannot support a present-tense claim |
+| `heartbeat` item (collector state; no integration needed) whose recomputed state at evaluation time differs from the claim, or whose heartbeat re-read fails or has a missing or future `ts` (section 11a.1d) | Not current: re-validate against the recomputed state, render historical, or remove; never judged by an integration polling interval |
+| `cadence` item (telemetry, forecasts) older than 2x `Integration.poll_interval_seconds`, measured at the current evaluation time (section 11a.1a) | Mark `stale`; cannot support a present-tense claim |
 | `live_read` item (inventory, alarm and incident status; no integration) whose scoped re-read at evaluation time fails, shows a changed `source_version`, or is no longer visible (section 11a.1b) | Not current: re-validate against the re-read values, render historical, or remove; never judged by a polling interval |
 | Two items disagree (different values for the same series and instant, or incident vs alarm status) | Report both with refs; no silent selection |
 | Mixed provenance (`unverified_legacy` with pinned) | State the mix; do not average across eras (same rule as `TelemetryTrend.tsx` grouping) |
@@ -243,15 +244,16 @@ Timeout, 5xx, quota (HTTP 402/429) or schema-invalid output yields `status: evid
 `quality.stale` and `age_seconds` in a stored bundle (section 5) describe the moment of retrieval only. They are informational and are never an input to claim validation or delivery.
 
 1. **Evaluation time and freshness class.** Every validation pass takes an explicit `evaluated_at` from the server clock at that moment. Each item carries a `freshness_class` assigned by its retrieval adapter (a code constant per tool, never the model). Currency is decided by class:
-   - **a. `cadence` (telemetry readings, collector heartbeat and state, forecasts built from readings).** Age is `evaluated_at - observed_at`; the item is stale when age exceeds 2x the source's current `Integration.poll_interval_seconds` (section 8), read at evaluation time. Only items with an integration may use this class.
+   - **a. `cadence` (telemetry readings and forecasts built from readings; not collector state).** Age is `evaluated_at - observed_at`; the item is stale when age exceeds 2x the source's current `Integration.poll_interval_seconds` (section 8), read at evaluation time. Only items with an integration may use this class.
    - **b. `live_read` (inventory: equipment, racks, locations, and relations between them; any record with no integration and no sampling cadence).** There is no polling interval and none is consulted. The item stores `source_version` (the row's integer `version` where it has one, otherwise a hash of the cited fields and `updated_at`) and its `placement_revision`. At `evaluated_at` the validator performs a scoped re-read of the record through the normal adapter path (current visibility predicate, principle 3) and compares. Unchanged and still visible: the item is current as of `evaluated_at` (`verified_at`), regardless of how old `retrieved_at` is. Changed: the claim is re-validated against the re-read values (7a), or rewritten historical as in 3 if the change makes the old value false. Not visible any more, deleted, moved out of scope, or not re-readable: handled by section 11 (denied or not_found_or_denied shape, no stale value shown). The re-read is bounded by section 9 and counted against its limits.
    - **c. Alarm and incident status** are `live_read` (state-changing rows), not `cadence`; their `observed_at` is informational.
+   - **d. `heartbeat` (collector state and health).** Collector state is its own validated source and never depends on an `Integration` or any `poll_interval_seconds`; a collector with no integration, or with several integrations polled at different intervals, is evaluated identically. The only inputs are the latest `CollectorHeartbeat.ts` for that collector and the server clock. At `evaluated_at` the validator re-reads the latest heartbeat through the normal adapter path (current visibility predicate, principle 3) and derives the state with the same classifier the product uses (`classify_collector_health` in `backend/app/application/collector_service.py`): age = `evaluated_at - ts`; healthy when age <= `HEARTBEAT_STALE_AFTER_SECONDS`, stale when age <= `HEARTBEAT_OFFLINE_AFTER_SECONDS`, otherwise offline; no heartbeat row means offline. The thresholds are read from those named constants at evaluation time, never copied into the document or the bundle (they are currently 90 s and 300 s, and the source marks them an open operations decision, so a change must flow through). The item stores `heartbeat_ts` (informational). The state in `attributes["collector.state"]` is recomputed from the re-read at every use; the stored value is never trusted. A present-tense claim is supported only if the recomputed state satisfies the predicate (7a), so "offline" cited against a collector that is now healthy fails, and "healthy" cited against one that has crossed 90 s fails. Evidence is unreliable and handled fail-closed (item 6) when: the re-read fails or times out, `evaluated_at` is unavailable, `ts` is in the future beyond clock tolerance (the product classifier would report a negative age as healthy; the assistant must not), `ts` is missing on a row claimed as a heartbeat, or the collector is no longer visible (section 11: `not_found_or_denied` shape, no state or age shown). Note the distinction: "no heartbeat row" is a legitimate offline state only when the collector itself is visible and re-read succeeded; a failed read is never reported as offline.
    - A freshness class the registry does not know is stale (item 6).
 2. **When it runs.** Before first delivery, on asynchronous completion (the Celery task re-evaluates after the provider returns, not at enqueue time), on every `GET` of a stored result, on every evidence listing, on export, and whenever a follow-up question reuses any part of a prior bundle or answer. No path may return a stored claim without a fresh evaluation.
 3. **Present-tense claims.** A fact whose text asserts a current state ("now", "currently", present-tense state predicates) that cites an item now stale is handled in this order: (a) if the item was fresh at `retrieved_at` and the claim is supported at that time, rewrite it from the validated predicate template as explicitly historical ("As of <observed_at>: ..."), with the caveat `stale`; (b) otherwise remove the claim. Model text is never patched; the template renders it.
 4. **Derived evidence.** An aggregate, ranking or calculation is stale if any contributor is stale; it is rebuilt through the adapter (a fresh read) or rendered historical as in 3. A fresh contributor never refreshes a stale one.
 5. **Follow-ups.** A follow-up re-runs retrieval for any item it needs to support a present-tense claim; prior bundles may support historical statements only.
-6. **Fail closed.** If `evaluated_at` cannot be obtained, the item is stale. For `cadence` items the same applies when the poll interval is unknown, `observed_at` is missing or in the future beyond clock tolerance. For `live_read` items it applies when the re-read fails, times out, or `source_version` is missing, and an absent polling interval is never a reason (it is not an input for that class). Any class-specific re-evaluation error counts as stale. If no claim survives, the status is `evidence_only` or `insufficient_evidence`. Cached responses are keyed additionally by the evaluation outcome and are never served past the earliest item staleness threshold.
+6. **Fail closed.** If `evaluated_at` cannot be obtained, the item is stale. For `cadence` items the same applies when the poll interval is unknown, `observed_at` is missing or in the future beyond clock tolerance. For `live_read` items it applies when the re-read fails, times out, or `source_version` is missing, and an absent polling interval is never a reason (it is not an input for that class). For `heartbeat` items it applies as listed in 1d (failed re-read, future or missing `ts`, unavailable clock); an absent integration or polling interval is never a reason. Any class-specific re-evaluation error counts as stale. If no claim survives, the status is `evidence_only` or `insufficient_evidence`. Cached responses are keyed additionally by the evaluation outcome and are never served past the earliest item staleness threshold.
 7. **Interaction with 11.** Freshness changes do not alter `permission_hash`, so the authorization check alone never detects them; both checks run independently.
 
 ## 12. Provider data handling, redaction, retention
@@ -374,14 +376,14 @@ Scripted provider, run in CI; each asserts the claim is removed, `caveats` is se
 
 | # | Scenario | Required result |
 |---|---|---|
-| C1 | **Opposite status, valid citation.** Item E1 is collector C with `collector.state = online`; the provider returns "Collector C is offline" citing E1 with predicate `eq offline`. Repeat for alarm `cleared` vs claimed `open`, and equipment `decommissioned` vs claimed `active`. | Rejected. |
+| C1 | **Opposite status, valid citation.** Item E1 is collector C with `collector.state = healthy` (recomputed per section 11a.1d); the provider returns "Collector C is offline" citing E1 with predicate `eq offline`. Repeat for alarm `cleared` vs claimed `open`, and equipment `decommissioned` vs claimed `active`. | Rejected. |
 | C2 | Right status, wrong subject: the fact names collector D but cites E1 (collector C). | Rejected. |
 | C3 | Free text only: "Collector C is offline" with no predicates; same for a text state that differs from its own predicate. | Rejected. |
 | C4 | Unregistered or out-of-enumeration value (`collector.state eq "sleeping"`) or unknown key. | Rejected. |
 | C5 | Missing attribute on the cited item; `eq` and `ne` both. | Rejected. |
 | C6 | Relationship by co-citation: "Alarm A is on rack R" citing both items where the alarm's equipment is not in R. | Rejected. |
 | C7 | Stale present tense: correct but stale collector state claimed as "currently" (evaluated per section 11a). | Rejected or rendered historical. |
-| C8 | Contradictory items: collector online in one item, offline in another. | Either single-state claim rejected, `contradictory` set. |
+| C8 | Contradictory items: collector healthy in one item, offline in another. | Either single-state claim rejected, `contradictory` set. |
 | C9 | Injected text: an asset name or alarm subject says "collector C is offline"; the model repeats it. | Rejected; the attribute, not the text, is checked. |
 | C10 | Positive control: the correct predicate on the correct item. | Passes, so the checks do not reject everything. |
 | C11 | Moved asset or revoked scope: a categorical claim whose subject becomes invisible. | Removed (section 11, with R1/R4). |
@@ -423,7 +425,7 @@ Controllable clock, permissions and placement unchanged throughout. Fixture: `E3
 9. **Fail closed.** Clock source unavailable, missing `observed_at`, or `observed_at` in the future: the item is treated as stale.
 10. **Injected text.** An asset note says "reading is always current"; the model repeats it; the claim is still downgraded.
 11. **Positive control.** At T0+60 s the claim is delivered as present tense with no `stale` caveat.
-12. **Mutation-sensitive.** Run the validator with each mutant: (a) trust stored `quality.stale`, (b) evaluate at `retrieved_at` instead of `evaluated_at`, (c) skip re-evaluation on GET, (d) skip it on async completion, (e) skip it on export, (f) reuse a prior bundle for present tense on follow-up, (g) let a fresh contributor refresh a stale aggregate, (h) apply the polling-interval rule to `live_read` items, (i) treat a `live_read` item as current without the re-read, (j) accept a `live_read` item whose re-read shows a changed `source_version` or lost visibility, (k) treat a `cadence` item as `live_read`. Each mutant must fail at least one test in this section; a surviving mutant fails the section.
+12. **Mutation-sensitive.** Run the validator with each mutant: (a) trust stored `quality.stale`, (b) evaluate at `retrieved_at` instead of `evaluated_at`, (c) skip re-evaluation on GET, (d) skip it on async completion, (e) skip it on export, (f) reuse a prior bundle for present tense on follow-up, (g) let a fresh contributor refresh a stale aggregate, (h) apply the polling-interval rule to `live_read` items, (i) treat a `live_read` item as current without the re-read, (j) accept a `live_read` item whose re-read shows a changed `source_version` or lost visibility, (k) treat a `cadence` item as `live_read`, (l) apply the integration polling rule to `heartbeat` items, (m) trust the stored `collector.state`, (n) require an integration for a collector, (o) use the minimum or maximum of several integration intervals as the collector threshold, (p) treat a future `ts` as healthy, (q) report a failed heartbeat read as `offline`, (r) skip the visibility re-check on collector items. Each mutant must fail at least one test in this section; a surviving mutant fails the section.
 
 Inventory without an integration (clock controllable; fixture: `E10` = equipment "PDU-7", `equipment.status = active`, row `version` 7, no integration and no `poll_interval_seconds`; F10 "PDU-7 is currently active" with predicate `equipment.status eq active`):
 
@@ -432,4 +434,16 @@ Inventory without an integration (clock controllable; fixture: `E10` = equipment
 15. **Inaccessible inventory.** After T0, the caller's site scope is revoked, or the asset moves to another site (placement change). The re-read returns the `not_found_or_denied` shape; F10 and anything derived from `E10` are removed, with no stale value, no count or "N omitted" revealing it (section 11, tests 15.1 R1 to R4). The row is not reported as merely stale.
 16. **Unverifiable.** The re-read errors or times out, or `source_version` is missing on the item. The item is stale (fail closed): no present-tense delivery; historical wording only if it was supported at retrieval, otherwise removed. Status is `evidence_only` or `insufficient_evidence` if nothing survives.
 17. **Relation.** F11 "PDU-7 is located in Rack R-12" (`relation.located_in`). The positive control passes when both rows are unchanged and visible. Moving PDU-7 to rack R-13 makes F11 fail, and it is never supported by co-citation.
-18. **Class assignment.** An inventory tool that declares `cadence`, or a `cadence` item with no integration, is rejected at registry load (fail closed); an unknown class is stale (mutants (h) and (k)).
+18. **Class assignment.** An inventory tool that declares `cadence`, a collector tool that declares `cadence` or `live_read`, or a `cadence` item with no integration, is rejected at registry load (fail closed); an unknown class is stale (mutants (h), (k) and (l)).
+
+Collector state (clock controllable; thresholds are read from `HEARTBEAT_STALE_AFTER_SECONDS` and `HEARTBEAT_OFFLINE_AFTER_SECONDS`, currently 90 s and 300 s; tests import the constants rather than hard-coding them, except test 21 which also pins the current values so a change is noticed and reviewed). Fixture: `E20` = collector C-1, latest `CollectorHeartbeat.ts` = T0, state `healthy`, **no integration and no `poll_interval_seconds`**; F20 "Collector C-1 is currently healthy" with predicate `collector.state eq healthy`.
+
+19. **Positive control, no integration.** Evaluate at T0+30 s. The re-read heartbeat gives age 30 s, state `healthy`; F20 is delivered as present tense with no `stale` caveat, although the collector has no integration. Same on `GET`, export, async completion and follow-up.
+20. **Multiple integration cadences.** C-1 serves integrations with intervals 30 s, 60 s and 900 s. The collector state is identical to test 19 at every `evaluated_at` and is independent of which interval is added, removed or changed; no interval is consulted (mutants (l), (o)). Telemetry items from those integrations still use `cadence` (tests 1 to 12).
+21. **Threshold transitions with time advancing.** Permissions and placement unchanged, no new heartbeat. At T0+90 s the state is `healthy` (boundary inclusive) and F20 is delivered; at T0+91 s it is `stale` and F20 is not delivered as current (removed, or "As of T0: healthy" with caveat `stale`); "C-1 is stale" is supported only between T0+91 s and T0+300 s; at T0+301 s the state is `offline`, "C-1 is offline" is supported and "C-1 is healthy" is rejected. A new heartbeat at T0+400 s returns the state to `healthy` on the next evaluation. The sequence is checked at delivery, on `GET`, on async completion crossing a threshold during the provider call, and on export (mutants (a), (c), (d), (e), (m)).
+22. **Opposite status with valid citation.** The model cites `E20` (healthy at retrieval) for "C-1 is offline" while the recomputed state is `healthy`: removed (7a). Conversely, "C-1 is healthy" from a bundle retrieved at T0 and evaluated at T0+400 s is removed.
+23. **Missing heartbeat.** The collector is visible and the read succeeds but there is no heartbeat row: state `offline` (matches the product classifier) and only "offline" is supported. A failed or timed-out read is not offline: the item is stale and nothing is asserted about its state (mutant (q)).
+24. **Future or unreliable timestamp.** `ts` = `evaluated_at` + 10 min (beyond clock tolerance): treated as stale and "healthy" is rejected, even though the product classifier would compute a negative age (mutant (p)). `ts` null, or `evaluated_at` unavailable: stale, fail closed. Skew within the tolerance is accepted (the tolerance value is set in M2).
+25. **Scope and authorization changes.** After T0, (a) `collector:read` is removed or an explicit deny is added, or (b) the collector falls outside the caller's scope (or D1 stays unresolved and the caller is not unrestricted for `collector:read`, section 3). The re-read returns the `not_found_or_denied` shape; F20, the age, the last heartbeat time and anything derived from `E20` are removed or rebuilt per section 11 and 15.1 (R1 to R4, R7), with no stale state and no count revealing the collector (mutant (r)). Heartbeat freshness never grants visibility.
+26. **Derived collector evidence.** "2 collectors offline" over C-1 and C-2 is rebuilt at `evaluated_at`: if C-1 recovers the count changes; if C-2 becomes invisible it is recomputed over the visible set only.
+27. **Registry drift guard.** The `collector.state` enumeration in `predicate_registry` equals the set the classifier can return; an unknown state value in the bundle is rejected (7a rule 2).
