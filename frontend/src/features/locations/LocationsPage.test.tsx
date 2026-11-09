@@ -170,6 +170,38 @@ describe("LocationsPage", () => {
     expect(screen.queryByRole("button", { name: "Save room" })).not.toBeInTheDocument();
   });
 
+  it("offers deletion to managers and asks for confirmation before calling the API", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.deleteRoom).mockResolvedValue(undefined);
+    renderWithProviders(<LocationsPage />, { user: LOCATION_ADMIN });
+    await user.click(await drillToRooms(user));
+
+    await user.click(screen.getByRole("button", { name: "Delete room" }));
+    expect(api.deleteRoom).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm delete room" }));
+
+    await waitFor(() => expect(api.deleteRoom).toHaveBeenCalledWith("room-1"));
+  });
+
+  it("shows the backend dependency explanation when deletion is blocked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.deleteRoom).mockRejectedValue(new ApiError(409, "Conflict", "rack placements (4) still reference this room.", null));
+    renderWithProviders(<LocationsPage />, { user: LOCATION_ADMIN });
+    await user.click(await drillToRooms(user));
+    await user.click(screen.getByRole("button", { name: "Delete room" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete room" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("rack placements (4) still reference this room.");
+  });
+
+  it("does not show location delete actions to read-only users", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<LocationsPage />, { user: LOCATION_VIEWER });
+    await user.click(await drillToRooms(user));
+
+    expect(screen.queryByRole("button", { name: "Delete room" })).not.toBeInTheDocument();
+  });
+
   it("pages through a level with more rows than one backend page", async () => {
     const user = userEvent.setup();
     const org2: Organization = { ...org, id: "org-2", name: "Beta Corp" };

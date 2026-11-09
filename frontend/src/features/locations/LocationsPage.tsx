@@ -19,6 +19,13 @@ import {
   createOrganization,
   createRoom,
   createSite,
+  deleteBuilding,
+  deleteCity,
+  deleteCountry,
+  deleteFloor,
+  deleteOrganization,
+  deleteRoom,
+  deleteSite,
   listBuildings,
   listCities,
   listCountries,
@@ -33,8 +40,8 @@ import { Page } from "@/types";
 
 /** Location hierarchy administration: Organization → Country → City → Site → Building →
  * Floor → Room, backed only by the existing `app/api/v1/locations.py` endpoints (create and
- * list for every level; Room update via its If-Match optimistic-concurrency endpoint — there
- * is no delete in the API, so none is offered). A cascade: each level appears once its parent
+ * list/delete for every level; Room update via its If-Match optimistic-concurrency endpoint).
+ * Deletion is blocked server-side while any dependent record exists. A cascade: each level appears once its parent
  * is selected, so a parent is always chosen from the authoritative list rather than typed as
  * a raw id. All create affordances are gated on the `location:manage` permission that the
  * backend's `require_permission("location:manage")` actually enforces, and the lists on
@@ -155,19 +162,21 @@ function HierarchyItem({
   primary,
   secondary,
   onSelect,
+  actions,
 }: {
   selected: boolean;
   primary: string;
   secondary?: string;
   onSelect: () => void;
+  actions?: ReactNode;
 }) {
   return (
-    <li>
+    <li className="flex items-center gap-2">
       <button
         type="button"
         aria-pressed={selected}
         onClick={onSelect}
-        className={`flex w-full items-baseline justify-between gap-3 rounded-sm border px-3 py-1.5 text-left text-sm ${
+        className={`flex min-w-0 flex-1 items-baseline justify-between gap-3 rounded-sm border px-3 py-1.5 text-left text-sm ${
           selected
             ? "border-blue-600 bg-blue-600/20 text-slate-100"
             : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-600"
@@ -176,6 +185,7 @@ function HierarchyItem({
         <span className="font-medium">{primary}</span>
         {secondary && <span className="text-xs text-slate-500">{secondary}</span>}
       </button>
+      {actions}
     </li>
   );
 }
@@ -230,6 +240,9 @@ function LevelList<T extends { id: string }>({
   renderPrimary,
   renderSecondary,
   emptyLabel,
+  canDelete = false,
+  noun,
+  onDelete,
 }: {
   list: HierarchyList<T>;
   selectedId: string;
@@ -237,12 +250,34 @@ function LevelList<T extends { id: string }>({
   renderPrimary: (item: T) => string;
   renderSecondary?: (item: T) => string | undefined;
   emptyLabel: string;
+  canDelete?: boolean;
+  noun?: string;
+  onDelete?: (id: string) => Promise<unknown>;
 }) {
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  async function confirmDelete(id: string) {
+    if (!onDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(id);
+      setConfirmingId(null);
+    } catch (error) {
+      setDeleteError(error instanceof ApiError ? error.detail : `Could not delete this ${noun ?? "location"}.`);
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   if (list.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
   if (list.error) return <p className="text-sm text-red-400">{list.error.message}</p>;
   if (list.items.length === 0) return <p className="text-sm text-slate-500">{emptyLabel}</p>;
   return (
     <div className="space-y-2">
+      {deleteError && <p role="alert" className="text-sm text-red-400">{deleteError}</p>}
       <ul className="space-y-1">
         {list.items.map((item) => (
           <HierarchyItem
@@ -251,6 +286,22 @@ function LevelList<T extends { id: string }>({
             primary={renderPrimary(item)}
             secondary={renderSecondary?.(item)}
             onSelect={() => onSelect(item.id)}
+            actions={canDelete && <div className="flex shrink-0 gap-1">
+              {confirmingId === item.id ? (
+                <>
+                  <button type="button" disabled={isDeleting} onClick={() => void confirmDelete(item.id)} className="rounded-sm bg-red-800 px-2 py-1 text-xs text-red-100 disabled:opacity-50">
+                    {isDeleting ? "Deleting…" : `Confirm delete ${noun ?? "location"}`}
+                  </button>
+                  <button type="button" disabled={isDeleting} onClick={() => setConfirmingId(null)} className="rounded-sm border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" aria-label={`Delete ${noun ?? "location"}`} onClick={() => { setDeleteError(null); setConfirmingId(item.id); }} className="rounded-sm border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950">
+                  Delete
+                </button>
+              )}
+            </div>}
           />
         ))}
       </ul>
@@ -364,6 +415,43 @@ export function LocationsPage() {
 
   const invalidate = (key: unknown[]) => queryClient.invalidateQueries({ queryKey: key });
 
+  async function removeOrganization(id: string) {
+    await deleteOrganization(id);
+    if (orgId === id) selectOrganization("");
+    await invalidate(["locations", "organizations"]);
+  }
+  async function removeCountry(id: string) {
+    await deleteCountry(id);
+    if (countryId === id) selectCountry("");
+    await invalidate(["locations", "countries", orgId]);
+  }
+  async function removeCity(id: string) {
+    await deleteCity(id);
+    if (cityId === id) selectCity("");
+    await invalidate(["locations", "cities", countryId]);
+  }
+  async function removeSite(id: string) {
+    await deleteSite(id);
+    if (siteId === id) selectSite("");
+    await invalidate(["locations", "sites", cityId]);
+  }
+  async function removeBuilding(id: string) {
+    await deleteBuilding(id);
+    if (buildingId === id) selectBuilding("");
+    await invalidate(["locations", "buildings", siteId]);
+  }
+  async function removeFloor(id: string) {
+    await deleteFloor(id);
+    if (floorId === id) selectFloor("");
+    await invalidate(["locations", "floors", buildingId]);
+  }
+  async function removeRoom(id: string) {
+    await deleteRoom(id);
+    if (roomId === id) selectRoom("");
+    await invalidate(["locations", "rooms", floorId]);
+    await invalidate(["rooms"]);
+  }
+
   const selectedOrg = organizations.items.find((o) => o.id === orgId);
   const selectedCountry = countries.items.find((c) => c.id === countryId);
   const selectedCity = cities.items.find((c) => c.id === cityId);
@@ -438,6 +526,7 @@ export function LocationsPage() {
             renderPrimary={(o: Organization) => o.name}
             renderSecondary={(o: Organization) => new Date(o.created_at).toLocaleDateString()}
             emptyLabel="No organizations yet. Create one to begin."
+            canDelete={canManage} noun="organization" onDelete={removeOrganization}
           />
         </Section>
       )}
@@ -466,6 +555,7 @@ export function LocationsPage() {
             renderPrimary={(c: Country) => c.name}
             renderSecondary={(c: Country) => c.iso_code ?? undefined}
             emptyLabel="No countries in this organization yet."
+            canDelete={canManage} noun="country" onDelete={removeCountry}
           />
         </Section>
       )}
@@ -488,6 +578,7 @@ export function LocationsPage() {
             onSelect={selectCity}
             renderPrimary={(c: City) => c.name}
             emptyLabel="No cities in this country yet."
+            canDelete={canManage} noun="city" onDelete={removeCity}
           />
         </Section>
       )}
@@ -517,6 +608,7 @@ export function LocationsPage() {
             renderPrimary={(s: Site) => s.name}
             renderSecondary={(s: Site) => `${s.code} · ${s.timezone}`}
             emptyLabel="No sites in this city yet."
+            canDelete={canManage} noun="site" onDelete={removeSite}
           />
         </Section>
       )}
@@ -543,6 +635,7 @@ export function LocationsPage() {
             renderPrimary={(b: Building) => b.name}
             renderSecondary={(b: Building) => b.code}
             emptyLabel="No buildings in this site yet."
+            canDelete={canManage} noun="building" onDelete={removeBuilding}
           />
         </Section>
       )}
@@ -571,6 +664,7 @@ export function LocationsPage() {
             renderPrimary={(f: Floor) => f.name}
             renderSecondary={(f: Floor) => `level ${f.level_number}`}
             emptyLabel="No floors in this building yet."
+            canDelete={canManage} noun="floor" onDelete={removeFloor}
           />
         </Section>
       )}
@@ -608,6 +702,7 @@ export function LocationsPage() {
             renderPrimary={(r: Room) => r.name}
             renderSecondary={(r: Room) => `${r.code} · ${r.room_type}`}
             emptyLabel="No rooms on this floor yet."
+            canDelete={canManage} noun="room" onDelete={removeRoom}
           />
           {selectedRoom && (
             <div className="mt-4 border-t border-slate-800 pt-3">

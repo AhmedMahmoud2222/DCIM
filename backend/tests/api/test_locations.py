@@ -40,6 +40,37 @@ async def test_full_location_chain_creation_as_dcim_manager(client, auth_headers
     assert chain["room"]["version"] == 1
 
 
+async def test_location_hierarchy_deletes_only_empty_records_bottom_up(client, auth_headers):
+    headers = await auth_headers("DCIM Manager")
+    chain = await _create_full_chain(client, headers)
+    routes = [
+        ("rooms", "room"), ("floors", "floor"), ("buildings", "building"), ("sites", "site"),
+        ("cities", "city"), ("countries", "country"), ("organizations", "organization"),
+    ]
+    for route, entity in routes:
+        response = await client.delete(f"/api/v1/{route}/{chain[entity]['id']}", headers=headers)
+        assert response.status_code == 204, response.text
+
+
+async def test_location_hierarchy_delete_reports_child_dependencies_and_checks_permission(client, auth_headers):
+    manager = await auth_headers("DCIM Manager")
+    viewer = await auth_headers("Viewer")
+    chain = await _create_full_chain(client, manager)
+    routes = [
+        ("organizations", "organization", "country"), ("countries", "country", "city"),
+        ("cities", "city", "site"), ("sites", "site", "building"),
+        ("buildings", "building", "floor"), ("floors", "floor", "room"),
+    ]
+    for route, entity, child_table in routes:
+        response = await client.delete(f"/api/v1/{route}/{chain[entity]['id']}", headers=manager)
+        assert response.status_code == 409, response.text
+        assert "dependent records still reference it" in response.json()["detail"]
+        assert child_table in response.json()["detail"]
+
+    forbidden = await client.delete(f"/api/v1/rooms/{chain['room']['id']}", headers=viewer)
+    assert forbidden.status_code == 403
+
+
 async def test_viewer_cannot_create_locations(client, auth_headers):
     headers = await auth_headers("Viewer")
     resp = await client.post("/api/v1/organizations", json={"name": "Should Fail"}, headers=headers)
