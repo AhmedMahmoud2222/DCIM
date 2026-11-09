@@ -79,7 +79,7 @@ async def test_create_rule_is_available_to_managers(monkeypatch):
     db.commit.assert_awaited_once()
 
 
-@pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000"])
+@pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000", "1.123456789"])
 async def test_create_rule_rejects_nonfinite_or_out_of_range_thresholds(threshold):
     response, db = await request(
         "POST", "/alarms/rules",
@@ -90,7 +90,7 @@ async def test_create_rule_rejects_nonfinite_or_out_of_range_thresholds(threshol
     db.execute.assert_not_awaited()
 
 
-@pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000"])
+@pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000", "1.123456789"])
 async def test_edit_rule_rejects_nonfinite_or_out_of_range_thresholds(threshold):
     row = legacy_rule()
     row.unit = "kW"

@@ -30,7 +30,8 @@ class AlarmRuleIn(BaseModel):
     metric: str = Field(max_length=64)
     rule_type: str
     threshold: Decimal | None = Field(
-        default=None, allow_inf_nan=False, ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
+        default=None, allow_inf_nan=False, max_digits=18, decimal_places=8,
+        ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
     )
     name: str = Field(max_length=128)
 
@@ -54,7 +55,8 @@ class AlarmRuleResolveIn(AlarmRuleUpdateIn):
 class AlarmRuleEditIn(AlarmRuleUpdateIn):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     threshold: Decimal | None = Field(
-        default=None, allow_inf_nan=False, ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
+        default=None, allow_inf_nan=False, max_digits=18, decimal_places=8,
+        ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
     )
 
     @field_validator("name")
@@ -123,7 +125,7 @@ async def create_alarm_rule(
         definition = registry_snapshot(body.registry_version).metrics.get(body.metric)
         if definition is not None:
             validate_metric_rule(body.metric, body.rule_type,
-                                 Decimal(str(body.threshold)) if body.threshold is not None else None,
+                                 body.threshold,
                                  definition.canonical_unit, registry_version=body.registry_version)
     except ValueError as error:
         from app.core.errors import ApiError
@@ -223,7 +225,7 @@ async def update_alarm_rule(
     rule = await _locked_rule(db, rule_id)
     await update_rule(
         db, rule=rule, name=body.name,
-        threshold=Decimal(str(body.threshold)) if body.threshold is not None else None,
+        threshold=body.threshold,
         threshold_set="threshold" in body.model_fields_set,
         reason=body.reason, expected_updated_at=body.expected_updated_at, actor_user_id=ctx.user.id,
     )
