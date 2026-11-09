@@ -162,7 +162,7 @@ describe("Equipment table", () => {
 
     await user.click(await screen.findByRole("button", { name: "Next page" }));
     expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
-    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 50);
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(50, 50);
     expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 51-51 of 51 equipment");
   });
 

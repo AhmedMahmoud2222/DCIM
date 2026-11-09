@@ -18,6 +18,7 @@ const EQUIPMENT_PAGE_SIZE = 200;
 
 export function EquipmentPage() {
   const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState(EQUIPMENT_PAGE_SIZE);
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -25,7 +26,7 @@ export function EquipmentPage() {
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", offset],
-    queryFn: () => listEquipment(EQUIPMENT_PAGE_SIZE, offset),
+    queryFn: () => listEquipment(pageSize, offset),
   });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
 
@@ -33,13 +34,16 @@ export function EquipmentPage() {
   const [hostname, setHostname] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [modelName, setModelName] = useState("");
-  const pageSize = equipmentQuery.data?.limit ?? EQUIPMENT_PAGE_SIZE;
+  const currentPageSize = equipmentQuery.data?.limit ?? pageSize;
   const pageOutOfRange = Boolean(equipmentQuery.data && offset > 0 && offset >= equipmentQuery.data.total);
 
   useEffect(() => {
     const page = equipmentQuery.data;
+    if (page && page.limit > 0 && page.limit !== pageSize) {
+      setPageSize(page.limit);
+    }
     if (page && offset > 0 && offset >= page.total) {
-      setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / pageSize) * pageSize);
+      setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / page.limit) * page.limit);
     }
   }, [equipmentQuery.data, offset, pageSize]);
 
@@ -202,23 +206,23 @@ export function EquipmentPage() {
               {equipmentQuery.data.items.length === 0 && <EmptyRow columns={4}>No equipment yet.</EmptyRow>}
             </tbody>
           </DataTable>
-          {equipmentQuery.data.total > pageSize && (
+          {equipmentQuery.data.total > currentPageSize && (
             <nav aria-label="Equipment pages" className="mt-3 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setOffset((current) => Math.max(0, current - pageSize))}
+                onClick={() => setOffset((current) => Math.max(0, current - currentPageSize))}
                 disabled={offset === 0 || equipmentQuery.isFetching}
                 className="rounded-sm border border-line-subtle px-3 py-1.5 text-sm text-fg-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Previous page
               </button>
               <span className="text-xs text-fg-secondary" aria-live="polite">
-                Page {Math.floor(offset / pageSize) + 1} of {Math.ceil(equipmentQuery.data.total / pageSize)}
+                Page {Math.floor(offset / currentPageSize) + 1} of {Math.ceil(equipmentQuery.data.total / currentPageSize)}
               </span>
               <button
                 type="button"
-                onClick={() => setOffset((current) => current + pageSize)}
-                disabled={offset + pageSize >= equipmentQuery.data.total || equipmentQuery.isFetching}
+                onClick={() => setOffset((current) => current + currentPageSize)}
+                disabled={offset + currentPageSize >= equipmentQuery.data.total || equipmentQuery.isFetching}
                 className="rounded-sm border border-line-subtle px-3 py-1.5 text-sm text-fg-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Next page
