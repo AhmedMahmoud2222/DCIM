@@ -479,7 +479,12 @@ function IntegrationsView() {
         {channels.isPending ? (
           <Loading what="channels" />
         ) : channels.isError ? (
-          <ErrorLine error={channels.error} />
+          <div>
+            <ErrorLine error={channels.error} />
+            <button type="button" onClick={() => void channels.refetch()} disabled={channels.isFetching} className="text-sm text-blue-400 underline disabled:opacity-50">
+              Retry loading channels
+            </button>
+          </div>
         ) : (
           <ul className="text-sm">
             {channels.data.map((c: Channel) => (
@@ -515,9 +520,13 @@ function IntegrationsView() {
       <section aria-label="Notification policies" className="space-y-2">
         <h2 className="text-sm font-semibold">Notification policies</h2>
         {channels.isError ? (
-          <p role="status" className="text-sm text-amber-400">Notification channels could not be loaded. Retry the channel list above before creating a policy.</p>
+          <p role="status" className="text-sm text-amber-400">Notification channels could not be loaded. Retry loading channels above before creating a policy.</p>
         ) : !channels.isPending && availableChannels.length === 0 ? (
-          <p role="status" className="text-sm text-fg-secondary">No enabled notification channels are available. Add or enable a channel above before creating a policy.</p>
+          <p role="status" className="text-sm text-fg-secondary">
+            {canManage
+              ? "No enabled notification channels are available. Add or enable a channel above before creating a policy."
+              : "No enabled notification channels are available."}
+          </p>
         ) : null}
         <ul className="text-sm">
           {(policies.data ?? []).map((p) => (
@@ -565,7 +574,7 @@ function IntegrationsView() {
             </fieldset>
             <button
               type="submit"
-              disabled={addPolicy.isPending || pol.events.length === 0 || channels.isPending || channels.isError || availableChannels.length === 0}
+              disabled={addPolicy.isPending || pol.events.length === 0 || channels.isPending || channels.isError || !availableChannels.some((channel) => channel.id === pol.channel)}
               className="rounded-sm bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
             >
               Add policy

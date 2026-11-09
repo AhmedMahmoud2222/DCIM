@@ -196,6 +196,32 @@ describe("integration settings", () => {
     const channel = await screen.findByLabelText("Channel");
     expect(await within(channel).findByRole("option", { name: "ops-hook" })).toHaveValue("ch-enabled");
     expect(within(channel).queryByRole("option", { name: "old-hook" })).not.toBeInTheDocument();
+    const addPolicy = screen.getByRole("button", { name: "Add policy" });
+    expect(addPolicy).toBeDisabled();
+    await userEvent.selectOptions(channel, "ch-enabled");
+    expect(addPolicy).toBeEnabled();
+  });
+
+  it("shows a role-appropriate empty state to read-only users", async () => {
+    vi.mocked(api.listChannels).mockResolvedValue([]);
+    renderWithProviders(<OperationsViews view="integrations" />, { user: VIEWER });
+
+    await screen.findByText("No enabled notification channels are available.");
+    const policies = await screen.findByRole("region", { name: "Notification policies" });
+    expect(within(policies).getByRole("status")).toHaveTextContent("No enabled notification channels are available.");
+    expect(within(policies).getByRole("status")).not.toHaveTextContent("Add or enable");
+    expect(within(policies).queryByLabelText("Channel")).not.toBeInTheDocument();
+  });
+
+  it("provides a retry action when channel loading fails", async () => {
+    vi.mocked(api.listChannels)
+      .mockRejectedValueOnce(new ApiError(503, "Unavailable", "Channels unavailable", null))
+      .mockResolvedValueOnce([{ id: "ch-retry", name: "recovered-hook", kind: "webhook", url_display: "https://retry.example.com", has_signing_secret: false, enabled: true, version: 1 }]);
+    renderWithProviders(<OperationsViews view="integrations" />, { user: MANAGER });
+
+    expect(await screen.findByText("Notification channels could not be loaded. Retry loading channels above before creating a policy.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry loading channels" }));
+    expect(await screen.findByRole("option", { name: "recovered-hook" })).toHaveValue("ch-retry");
   });
 
   it("hides every settings form from a read-only user and shows the ITSM password field as a password input", async () => {

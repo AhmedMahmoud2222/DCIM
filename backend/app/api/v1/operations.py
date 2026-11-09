@@ -741,8 +741,11 @@ class PolicyOut(BaseModel):
 async def create_policy(
     body: PolicyIn, request: Request, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("integration:manage"))
 ) -> PolicyOut:
-    if await db.get(NotificationChannel, body.channel_id) is None:
+    channel = await db.get(NotificationChannel, body.channel_id)
+    if channel is None:
         raise NotFoundError(f"Channel {body.channel_id} not found.")
+    if body.enabled and not channel.enabled:
+        raise ConflictError("An enabled notification policy requires an enabled channel.")
     if body.site_id is not None and await db.get(Site, body.site_id) is None:
         raise NotFoundError(f"Site {body.site_id} not found.")
     await _unique_name(db, NotificationPolicy, body.name)
