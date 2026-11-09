@@ -105,6 +105,7 @@ describe("LifecycleTransitionAction", () => {
         <>
           <LifecycleTransitionAction assetId="equipment-1" assetName="server-01" status={status} assetLabel="equipment" />
           <button type="button" onClick={() => setStatus("installed")}>Simulate refreshed status</button>
+          <button type="button" onClick={() => setStatus("planned")}>Simulate status restored</button>
         </>
       );
     }
@@ -118,8 +119,11 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: "Simulate refreshed status" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Asset was already installed");
     expect(screen.getByRole("alert")).toHaveFocus();
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss message: server-01" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId("lifecycle-action")).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Simulate status restored" }));
+    expect(screen.getByRole("button", { name: "Mark installed: server-01" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm install server-01" })).not.toBeInTheDocument();
   });
 });

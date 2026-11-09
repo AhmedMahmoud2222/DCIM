@@ -95,8 +95,10 @@ export function LifecycleTransitionAction({
           {status !== "planned" && (
             <button
               type="button"
+              aria-label={`Dismiss message: ${assetName}`}
               onClick={() => {
                 mutation.reset();
+                setConfirming(false);
                 wrapperRef.current?.focus();
               }}
               className="rounded-sm border border-line-subtle px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover"
