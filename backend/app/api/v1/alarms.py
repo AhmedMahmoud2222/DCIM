@@ -33,7 +33,14 @@ class AlarmRuleIn(BaseModel):
         default=None, allow_inf_nan=False, max_digits=18, decimal_places=8,
         ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
     )
-    name: str = Field(max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A nonblank name is required.")
+        return value.strip()
 
 
 class AlarmRuleUpdateIn(BaseModel):

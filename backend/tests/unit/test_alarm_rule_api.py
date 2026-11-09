@@ -79,6 +79,17 @@ async def test_create_rule_is_available_to_managers(monkeypatch):
     db.commit.assert_awaited_once()
 
 
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_create_rule_rejects_blank_name(name):
+    response, db = await request(
+        "POST", "/alarms/rules",
+        body={"integration_id": str(uuid.uuid4()), "metric": "power_kw", "rule_type": "threshold_high", "threshold": 7, "name": name},
+    )
+    assert response.status_code == 422
+    db.add.assert_not_called()
+    db.execute.assert_not_awaited()
+
+
 @pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000", "1.123456789"])
 async def test_create_rule_rejects_nonfinite_or_out_of_range_thresholds(threshold):
     response, db = await request(
