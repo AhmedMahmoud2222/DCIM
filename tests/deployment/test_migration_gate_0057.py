@@ -61,15 +61,16 @@ class GateTests(unittest.TestCase):
 
     def test_upgrade_failure_propagates(self):
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(gate.run(OK_ENV, lambda: [], lambda c: PENDING, lambda: 1), 1)
+            self.assertEqual(gate.run(OK_ENV, list, lambda c: PENDING, lambda: 1), 1)
 
     def test_real_pending_computation(self):
         # Reads the real revision files; needs no alembic installation.
-        self.assertEqual(gate.pending_revisions(['0056_pdu_vertical_placement']), [gate.GATED_REVISION])
-        self.assertEqual(gate.pending_revisions([gate.GATED_REVISION]), [])
         everything = gate.pending_revisions([])
         self.assertIn(gate.GATED_REVISION, everything)
         self.assertGreater(len(everything), 10)
+        graph = gate.load_graph()
+        expected_after_gate = set(graph) - gate._ancestors(graph, gate.GATED_REVISION)
+        self.assertEqual(set(gate.pending_revisions([gate.GATED_REVISION])), expected_after_gate)
 
     def test_unknown_or_multiple_current_fails_closed(self):
         with self.assertRaises(gate.GateError):

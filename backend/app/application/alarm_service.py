@@ -107,7 +107,7 @@ def condition_matches(rule_type: str, threshold: Decimal | float | None, value: 
 
 
 def subject_for(reading: TelemetryReading) -> str:
-    return f"{reading.integration_id}:{reading.external_identifier}:{reading.metric}"
+    return f"{reading.external_identifier}:{reading.metric}"
 
 
 def comparison_for(rule: AlarmRule, reading: TelemetryReading) -> tuple[Decimal, str, str | None]:

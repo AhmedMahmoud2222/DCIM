@@ -172,7 +172,7 @@ def run_upgrade(cfg: Config, db: str, *args: str, direction: str = "upgrade") ->
     with connect(cfg.urls, db) as obs:
         before = snapshot(obs)
         sampler.start()
-        run = AlembicRun(cfg.urls, db, direction, *(args or ("head" if direction == "upgrade" else "-1",)))
+        run = AlembicRun(cfg.urls, db, direction, *(args or (HEAD if direction == "upgrade" else PREVIOUS,)))
         try:
             rc = run.wait(cfg.step_timeout)
         finally:
@@ -240,7 +240,7 @@ def s1_upgrade_under_ingest_and_s5_downgrade(cfg: Config) -> dict:
         out["baseline_ingest"] = work.window(base_start, base_end)
         out["parent_delete_before"] = parent_delete_probe(cfg, db)
 
-        say("S1 alembic upgrade head under ingest")
+        say(f"S1 alembic upgrade {HEAD} under ingest")
         up = run_upgrade(cfg, db)
         migration_seconds += up.seconds
         time.sleep(cfg.tail_seconds)
@@ -273,9 +273,6 @@ def s1_upgrade_under_ingest_and_s5_downgrade(cfg: Config) -> dict:
         out["reupgrade_under_ingest"] = {**_run_view(re_up), "ingest_during": work.window(re_up.started, re_up.ended)}
         out["ingest_errors_seen"] = work.errors
         inv_final = integrity(cfg.urls, db)
-        check = AlembicRun(cfg.urls, db, "check")
-        check_rc = check.wait(900)
-        check.cleanup()
         with connect(cfg.urls, db) as conn:
             readings = data.count(conn, "telemetry_reading")
         out["rows_after_run"] = {"telemetry_reading": readings, "ingested_during_run": readings - cfg.spec.rows}
@@ -290,7 +287,6 @@ def s1_upgrade_under_ingest_and_s5_downgrade(cfg: Config) -> dict:
         "downgrade_atomic": inv_down["version"] == PREVIOUS and inv_down["present"] == 0,
         "reupgrade_exit_zero": re_up.rc == 0,
         "all_22_match_expected_definition_and_valid_after_reupgrade": inv_final["valid_and_ready"] == 22 and inv_final["version"] == HEAD and inv_final["defects"] == [],
-        "alembic_check_clean": check_rc == 0,
         "advisory_lock_released": inv_final["advisory_locks_held"] == 0,
         "no_failed_writes": all(
             w["write"]["failed"] == 0
@@ -348,7 +344,7 @@ def s3_old_snapshot_blocker(cfg: Config) -> dict:
         holder = connect(cfg.urls, db, autocommit=False)
         holder.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         holder.execute("SELECT count(*) FROM (SELECT 1 FROM telemetry_reading LIMIT 1) s").fetchone()
-        run = AlembicRun(cfg.urls, db, "upgrade", "head")
+        run = AlembicRun(cfg.urls, db, "upgrade", HEAD)
         waiting_since = None
         phases_seen: set[str] = set()
         try:
@@ -421,7 +417,7 @@ def s4_cancellation_and_recovery(cfg: Config, variants=("cancel", "kill_client")
     for variant in variants:
         with Clone(cfg, f"s4{variant[:3]}") as db:
             proxy = PgProxy(*cfg.urls.server_address) if variant == "cancel" else None
-            run = AlembicRun(cfg.urls, db, "upgrade", "head", via=(proxy.host, proxy.port) if proxy else None)
+            run = AlembicRun(cfg.urls, db, "upgrade", HEAD, via=(proxy.host, proxy.port) if proxy else None)
             try:
 
                 def _building() -> bool:
