@@ -251,6 +251,23 @@ describe("RoomFloorPlanPage workflow", () => {
     expect(notice).not.toHaveTextContent("calibrate");
   });
 
+  it("explains that a manual boundary does not calibrate an uploaded drawing", async () => {
+    vi.mocked(api.listFloorPlans).mockResolvedValue(page([plan({ status: "active", source_file_name: "hall.dxf" })]));
+    vi.mocked(api.getRoomSpatialView).mockResolvedValue(view({ active_floor_plan_id: "fp-1", active_floor_plan_revision: 1 }));
+    vi.mocked(api.setRoomBoundary).mockResolvedValue({
+      spatial_object_id: "outline-1",
+      floor_plan: plan({ status: "active", source_file_name: "hall.dxf", version: 3 }),
+      racks_outside_boundary: [],
+    });
+    const user = userEvent.setup();
+    mountPage();
+    await user.type(await screen.findByLabelText("Boundary width (mm)"), "6000");
+    await user.type(screen.getByLabelText("Boundary depth (mm)"), "4000");
+    await user.click(screen.getByRole("button", { name: "Set boundary" }));
+
+    expect(await screen.findByTestId("notice")).toHaveTextContent("does not calibrate the imported drawing");
+  });
+
   it("switches the 2D plan to an operational overlay and links to the 3D twin for this room", async () => {
     vi.mocked(api.getRoomOverlays).mockResolvedValue({
       room_id: "room-1", generated_at: "",
