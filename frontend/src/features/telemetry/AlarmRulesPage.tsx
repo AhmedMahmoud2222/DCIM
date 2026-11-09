@@ -226,12 +226,13 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
             {integrations.map((integration) => <option key={integration.id} value={integration.id}>{integration.name}{integration.enabled ? "" : " (disabled)"}</option>)}
           </select></label>
           <label className="text-xs text-slate-400">Metric<select required value={metric} onChange={(event) => setMetric(event.target.value)} className={field}>
-            {METRICS.filter((item) => ruleType !== "availability_unavailable" || item.key === "availability").map((item) => <option key={item.key} value={item.key}>{item.key} ({item.unit})</option>)}
+            {METRICS.filter((item) => ruleType === "availability_unavailable" ? item.key === "availability" : item.key !== "availability").map((item) => <option key={item.key} value={item.key}>{item.key} ({item.unit})</option>)}
           </select></label>
           <label className="text-xs text-slate-400">Condition<select required value={ruleType} onChange={(event) => {
             const next = event.target.value;
             setRuleType(next);
             if (next === "availability_unavailable") setMetric("availability");
+            else if (metric === "availability") setMetric("power_kw");
           }} className={field}>
             <option value="threshold_high">Above threshold</option><option value="threshold_low">Below threshold</option><option value="availability_unavailable">Unavailable</option>
           </select></label>
@@ -265,6 +266,7 @@ function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: (
 
   return (
     <form onSubmit={submit} aria-label={`Edit ${rule.name}`} className="mt-4 space-y-3 border-t border-slate-800 pt-3">
+      {!rule.enabled && <p role="status" className="text-sm text-amber-300">This rule is disabled. Editing it will not re-enable it.</p>}
       <label className="block text-xs text-slate-400">Rule name<input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
       {rule.rule_type !== "availability_unavailable" && rule.unit !== null ? (
         <label className="block text-xs text-slate-400">Threshold ({rule.unit})<input aria-label="Threshold" type="number" step="any" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>

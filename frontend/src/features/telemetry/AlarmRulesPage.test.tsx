@@ -52,6 +52,22 @@ describe("AlarmRulesPage", () => {
     }));
   });
 
+  it("resets availability to a threshold-compatible metric when the condition changes", async () => {
+    vi.mocked(alarmRules.createAlarmRule).mockResolvedValue({ id: "new-rule" });
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Add alarm rule" }));
+    await userEvent.type(await screen.findByLabelText("Rule name"), "Availability rule");
+    await userEvent.selectOptions(screen.getByLabelText("Condition"), "availability_unavailable");
+    expect(screen.getByLabelText("Metric")).toHaveValue("availability");
+    await userEvent.selectOptions(screen.getByLabelText("Condition"), "threshold_high");
+    expect(screen.getByLabelText("Metric")).toHaveValue("power_kw");
+    await userEvent.type(screen.getByLabelText("Threshold"), "8");
+    await userEvent.click(screen.getByRole("button", { name: "Save rule" }));
+    await waitFor(() => expect(alarmRules.createAlarmRule).toHaveBeenCalledWith({
+      integration_id: "i-1", metric: "power_kw", rule_type: "threshold_high", threshold: 8, name: "Availability rule",
+    }));
+  });
+
   it("edits a rule's threshold with the current timestamp and reason", async () => {
     vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([resolvedRule]);
     vi.mocked(alarmRules.editAlarmRule).mockResolvedValue({ ...resolvedRule, threshold: 9 });
@@ -65,6 +81,13 @@ describe("AlarmRulesPage", () => {
     await waitFor(() => expect(alarmRules.editAlarmRule).toHaveBeenCalledWith("r-2", {
       name: "Rack-B limit", threshold: 9, reason: "Revised operating limit", expected_updated_at: "2026-10-08T10:00:00Z",
     }));
+  });
+
+  it("explains that editing a disabled rule does not enable it", async () => {
+    vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([{ ...resolvedRule, enabled: false }]);
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Edit rule" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("This rule is disabled. Editing it will not re-enable it.");
   });
 
   it("lists rules needing attention and shows the blocked reason", async () => {

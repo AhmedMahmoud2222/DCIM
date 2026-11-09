@@ -334,17 +334,21 @@ async def update_rule(
 
     before: dict = {}
     after: dict = {}
+    new_threshold = rule.threshold
     if name is not None and name != rule.name:
         before["name"] = rule.name
-        rule.name = after["name"] = name
+        after["name"] = name
     if threshold_set:
-        if rule.rule_type == "availability_unavailable" and threshold is None:
-            pass
+        if rule.rule_type == "availability_unavailable":
+            if threshold is not None:
+                raise ApiError(status_code=422, title="Invalid threshold", detail="Unavailable rules cannot have a threshold.")
         elif rule.unit is None:
             raise ConflictError("Resolve this rule's threshold unit before editing its threshold.")
         elif threshold is None:
             raise ApiError(status_code=422, title="Invalid threshold", detail="A threshold is required for this rule type.")
         else:
+            if not threshold.is_finite():
+                raise ApiError(status_code=422, title="Invalid threshold", detail="A finite threshold is required.")
             version = rule.registry_version or "1"
             try:
                 validate_metric_rule(rule.metric, rule.rule_type, threshold, rule.unit, registry_version=version)
@@ -352,11 +356,15 @@ async def update_rule(
                 raise ApiError(status_code=422, title="Invalid alarm semantics", detail=str(error)) from error
             if threshold != rule.threshold:
                 before["threshold"] = str(rule.threshold) if rule.threshold is not None else None
-                rule.threshold = threshold
+                new_threshold = threshold
                 after["threshold"] = str(threshold)
     if not after:
         raise ApiError(status_code=422, title="No rule changes", detail="The submitted values match the current rule.")
 
+    if "name" in after:
+        rule.name = after["name"]
+    if "threshold" in after:
+        rule.threshold = new_threshold
     rule.updated_at = datetime.now(UTC)
     await _record_rule_transition(
         db, rule, "alarm.rule.update", "AlarmRuleUpdated", actor_user_id,

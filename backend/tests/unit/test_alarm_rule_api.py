@@ -83,7 +83,10 @@ async def test_edit_rule_updates_name_and_threshold_with_audit(monkeypatch):
     row = legacy_rule()
     row.unit = "kW"
     row.registry_version = "1"
-    monkeypatch.setattr("app.application.alarm_service._record_rule_transition", AsyncMock())
+    audit = AsyncMock()
+    outbox = AsyncMock()
+    monkeypatch.setattr("app.application.alarm_service.write_audit_log", audit)
+    monkeypatch.setattr("app.application.alarm_service.write_outbox_event", outbox)
     response, db = await request(
         "PATCH", f"/alarms/rules/{row.id}", row=row,
         body={"name": "PDU load high", "threshold": 8.5, "reason": "Updated operating limit", "expected_updated_at": row.updated_at.isoformat()},
@@ -91,7 +94,100 @@ async def test_edit_rule_updates_name_and_threshold_with_audit(monkeypatch):
     assert response.status_code == 200
     assert row.name == "PDU load high" and row.threshold == 8.5
     assert response.json()["unit"] == "kW"
+    audit.assert_awaited_once()
+    assert audit.await_args.kwargs["before"] == {"name": "legacy", "threshold": "1500"}
+    assert audit.await_args.kwargs["after"] == {"name": "PDU load high", "threshold": "8.5"}
+    outbox.assert_awaited_once()
+    assert outbox.await_args.kwargs["event_type"] == "AlarmRuleUpdated"
+    assert db.execute.await_count == 1  # lock the rule only; historical alarms/readings are not replayed or mutated
     db.commit.assert_awaited_once()
+
+
+async def test_edit_stale_timestamp_conflicts_without_mutating_rule():
+    row = legacy_rule()
+    original = (row.name, row.threshold, row.updated_at)
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"name": "Changed", "reason": "stale request", "expected_updated_at": (row.updated_at - timedelta(seconds=1)).isoformat()},
+    )
+    assert response.status_code == 409
+    assert (row.name, row.threshold, row.updated_at) == original
+    db.commit.assert_not_awaited()
+
+
+async def test_edit_unresolved_threshold_conflicts_without_applying_name():
+    row = legacy_rule()
+    original = (row.name, row.threshold, row.updated_at)
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"name": "Changed", "threshold": 8, "reason": "unit unresolved", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert response.status_code == 409
+    assert (row.name, row.threshold, row.updated_at) == original
+    db.commit.assert_not_awaited()
+
+
+async def test_edit_rejects_noop_and_invalid_threshold_without_mutation():
+    row = legacy_rule()
+    row.unit = "%"
+    row.metric = "humidity_percent"
+    row.registry_version = "2"
+    row.threshold = 50
+    original = (row.name, row.threshold, row.updated_at)
+
+    noop, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"name": row.name, "reason": "no change", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert noop.status_code == 422
+    db.commit.assert_not_awaited()
+
+    invalid, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"name": "Changed", "threshold": 101, "reason": "out of range", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert invalid.status_code == 422
+    assert (row.name, row.threshold, row.updated_at) == original
+    db.commit.assert_not_awaited()
+
+
+async def test_unresolved_rule_allows_name_only_edit():
+    row = legacy_rule()
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"name": "Clarified label", "reason": "Better label", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert response.status_code == 200
+    assert row.name == "Clarified label" and row.unit is None and row.threshold == 1500
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize("threshold", ["Infinity", "NaN"])
+async def test_edit_rejects_non_finite_threshold(threshold):
+    row = legacy_rule()
+    row.unit = "kW"
+    row.registry_version = "1"
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"threshold": threshold, "reason": "finite threshold required", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert response.status_code == 422
+    assert row.threshold == 1500
+    db.commit.assert_not_awaited()
+
+
+async def test_edit_rejects_threshold_for_unavailable_rule():
+    row = legacy_rule()
+    row.metric = "availability"
+    row.rule_type = "availability_unavailable"
+    row.threshold = None
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"threshold": 1, "reason": "threshold unsupported", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert response.status_code == 422
+    assert row.threshold is None
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize("operation", ["resolve-unit", "disable"])
