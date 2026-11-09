@@ -16,13 +16,13 @@ describe("refreshAccessToken failure policy", () => {
 
     const bootstrapRefresh = refreshAccessToken({ clearOnFailure: false });
     const normalRequestRefresh = refreshAccessToken();
+    useAuthStore.getState().setSession("existing-token", null);
     finishRequest(new Response(JSON.stringify({ title: "Unavailable", detail: "Retry later" }), { status: 503 }));
 
     const results = await Promise.allSettled([bootstrapRefresh, normalRequestRefresh]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(results.every((result) => result.status === "rejected" && result.reason instanceof ApiError)).toBe(true);
-    expect(useAuthStore.getState().isInitialized).toBe(true);
-    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(useAuthStore.getState()).toMatchObject({ isInitialized: true, accessToken: "existing-token" });
   });
 
   it("preserves the session on a bootstrap-only transient failure", async () => {
@@ -32,6 +32,24 @@ describe("refreshAccessToken failure policy", () => {
     useAuthStore.getState().setSession("existing-token", null);
 
     await expect(refreshAccessToken({ clearOnFailure: false })).rejects.toBeInstanceOf(ApiError);
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: "existing-token", isInitialized: true });
+  });
+
+  it.each([401, 403])("clears an invalid session after HTTP %s", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ title: "Unauthorized", detail: "Session expired" }), { status }),
+    ));
+    useAuthStore.getState().setSession("existing-token", null);
+
+    await expect(refreshAccessToken()).rejects.toMatchObject({ status });
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: null, user: null, isInitialized: true });
+  });
+
+  it("preserves the session when a refresh request fails at the network layer", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    useAuthStore.getState().setSession("existing-token", null);
+
+    await expect(refreshAccessToken()).rejects.toThrow("Failed to fetch");
     expect(useAuthStore.getState()).toMatchObject({ accessToken: "existing-token", isInitialized: true });
   });
 });

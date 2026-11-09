@@ -51,7 +51,8 @@ async function refreshAccessToken(options: { clearOnFailure?: boolean } = {}): P
   try {
     return await request;
   } catch (error) {
-    if (options.clearOnFailure !== false) useAuthStore.getState().clear();
+    const invalidSession = error instanceof ApiError && (error.status === 401 || error.status === 403);
+    if (options.clearOnFailure !== false && invalidSession) useAuthStore.getState().clear();
     throw error;
   } finally {
     if (refreshInFlight === request) refreshInFlight = null;
