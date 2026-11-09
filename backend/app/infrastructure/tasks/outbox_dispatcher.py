@@ -92,4 +92,13 @@ def process_outbox_event(self, event_id: str) -> None:
                 event.status = "pending"
                 event.next_attempt_at = datetime.now(UTC) + timedelta(seconds=2**event.attempts)
             db.commit()
-            logger.error("outbox_event_dispatch_failed", event_id=str(event.event_id), error=str(exc))
+            # Exception strings often contain SQL text or bound values; retain the
+            # existing bounded database diagnostic, but keep operational logs scrubbed.
+            logger.error(
+                "outbox_event_dispatch_failed",
+                event_id=str(event.event_id),
+                event_type=event.event_type,
+                error_type=type(exc).__name__,
+                attempt=event.attempts,
+                status=event.status,
+            )

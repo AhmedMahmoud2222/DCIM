@@ -132,3 +132,30 @@ async def test_outbox_event_id_is_unique_supporting_idempotent_dispatch(db_sessi
     await db_session.commit()
     assert event.event_id is not None
     assert isinstance(event.event_id, uuid.UUID)
+
+
+async def test_outbox_failure_log_omits_exception_text(db_session, monkeypatch):
+    from app.infrastructure.tasks import outbox_dispatcher
+
+    asset = ManagedAsset(asset_type="rack", asset_tag="RACK-OUTBOX-LOG")
+    db_session.add(asset)
+    await db_session.flush()
+    event = await write_outbox_event(
+        db_session, event_type="ManagedAssetCreated", aggregate_type="managed_asset", aggregate_id=asset.id, payload={}
+    )
+    await db_session.commit()
+
+    logged = {}
+
+    def fail_dispatch(*_args, **_kwargs):
+        raise RuntimeError("private-value-must-not-be-logged")
+
+    monkeypatch.setattr(outbox_dispatcher.logger, "info", fail_dispatch)
+    monkeypatch.setattr(outbox_dispatcher.logger, "error", lambda name, **fields: logged.update(name=name, **fields))
+
+    outbox_dispatcher.process_outbox_event.run(str(event.event_id))
+
+    assert logged["name"] == "outbox_event_dispatch_failed"
+    assert logged["error_type"] == "RuntimeError"
+    assert "error" not in logged
+    assert "private-value-must-not-be-logged" not in repr(logged)
