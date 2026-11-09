@@ -121,6 +121,17 @@ async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_
     missing = await client.delete(f"/api/v1/sites/{uuid.uuid4()}", headers=scoped_headers)
     assert missing.status_code == 404
 
+    empty_org = (await client.post("/api/v1/organizations", json={"name": "No visible sites"}, headers=admin)).json()
+    empty_country = (await client.post(
+        "/api/v1/countries", json={"organization_id": empty_org["id"], "name": "Empty", "iso_code": "EM"}, headers=admin,
+    )).json()
+    empty_city = (await client.post(
+        "/api/v1/cities", json={"country_id": empty_country["id"], "name": "Empty"}, headers=admin,
+    )).json()
+    for route, entity in (("organizations", empty_org), ("countries", empty_country), ("cities", empty_city)):
+        response = await client.delete(f"/api/v1/{route}/{entity['id']}", headers=scoped_headers)
+        assert response.status_code == 404
+
 
 async def test_integrity_error_delete_fallback_rolls_back_then_audits(client, auth_headers, db_session, monkeypatch):
     manager = await auth_headers("DCIM Manager")

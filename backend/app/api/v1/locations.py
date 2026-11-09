@@ -52,6 +52,18 @@ def _request_ids(request: Request) -> tuple[str | None, str | None]:
     return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
 
 
+async def _audit_delete_conflict(
+    db: AsyncSession, *, actor_id: uuid.UUID, record_id: uuid.UUID, entity_name: str,
+    request_id: str | None, correlation_id: str | None, message: str,
+) -> None:
+    await write_audit_log(
+        db, actor_user_id=actor_id, action=f"location.{entity_name}.delete", entity_type=entity_name,
+        entity_id=record_id, request_id=request_id, correlation_id=correlation_id,
+        result="failure", reason=message,
+    )
+    await db.commit()
+
+
 async def _foreign_key_dependents(
     db: AsyncSession, table_name: str, record_id: uuid.UUID, *, include_counts: bool,
 ) -> list[tuple[str, int | None]]:
@@ -103,6 +115,7 @@ async def _delete_location(
     if entity is None:
         raise NotFoundError(f"{entity_name.title()} {record_id} not found.")
 
+    request_id, correlation_id = _request_ids(request)
     include_counts = ctx.scope.unrestricted
     dependencies = await _foreign_key_dependents(
         db, model.__tablename__, record_id, include_counts=include_counts,
@@ -118,16 +131,12 @@ async def _delete_location(
             # Restricted users may learn that the in-scope parent has dependents, but
             # never receive hidden table names or counts.
             message = f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
-        request_id, correlation_id = _request_ids(request)
-        await write_audit_log(
-            db, actor_user_id=actor_id, action=f"location.{entity_name}.delete", entity_type=entity_name,
-            entity_id=record_id, request_id=request_id, correlation_id=correlation_id,
-            result="failure", reason=message,
+        await _audit_delete_conflict(
+            db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
+            request_id=request_id, correlation_id=correlation_id, message=message,
         )
-        await db.commit()
         raise ConflictError(message)
 
-    request_id, correlation_id = _request_ids(request)
     before = {}
     for key in _LOCATION_AUDIT_FIELDS[entity_name]:
         value = getattr(entity, key)
@@ -138,12 +147,10 @@ async def _delete_location(
     except IntegrityError as error:
         await db.rollback()
         message = f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
-        await write_audit_log(
-            db, actor_user_id=actor_id, action=f"location.{entity_name}.delete", entity_type=entity_name,
-            entity_id=record_id, request_id=request_id, correlation_id=correlation_id,
-            result="failure", reason=message,
+        await _audit_delete_conflict(
+            db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
+            request_id=request_id, correlation_id=correlation_id, message=message,
         )
-        await db.commit()
         raise ConflictError(message) from error
     await write_audit_log(
         db, actor_user_id=actor_id, action=f"location.{entity_name}.delete", entity_type=entity_name,
