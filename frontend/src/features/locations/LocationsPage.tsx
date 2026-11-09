@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
@@ -258,6 +258,10 @@ function LevelList<T extends { id: string }>({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  useEffect(() => {
+    if (confirmingId && !list.items.some((item) => item.id === confirmingId)) setConfirmingId(null);
+  }, [confirmingId, list.items]);
+
   async function confirmDelete(id: string) {
     if (!onDelete) return;
     setIsDeleting(true);
@@ -289,10 +293,10 @@ function LevelList<T extends { id: string }>({
             actions={canDelete && <div className="flex shrink-0 gap-1">
               {confirmingId === item.id ? (
                 <>
-                  <button type="button" disabled={isDeleting} onClick={() => void confirmDelete(item.id)} className="rounded-sm bg-red-800 px-2 py-1 text-xs text-red-100 disabled:opacity-50">
+                  <button type="button" aria-label={`Confirm delete ${noun ?? "location"} ${renderPrimary(item)}`} disabled={isDeleting} onClick={() => void confirmDelete(item.id)} className="rounded-sm bg-red-800 px-2 py-1 text-xs text-red-100 disabled:opacity-50">
                     {isDeleting ? "Deleting…" : `Confirm delete ${noun ?? "location"}`}
                   </button>
-                  <button type="button" disabled={isDeleting} onClick={() => setConfirmingId(null)} className="rounded-sm border border-slate-700 px-2 py-1 text-xs text-slate-300">
+                  <button type="button" aria-label={`Cancel delete ${noun ?? "location"} ${renderPrimary(item)}`} disabled={isDeleting} onClick={() => setConfirmingId(null)} className="rounded-sm border border-slate-700 px-2 py-1 text-xs text-slate-300">
                     Cancel
                   </button>
                 </>

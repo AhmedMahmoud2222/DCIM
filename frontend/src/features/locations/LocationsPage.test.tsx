@@ -175,12 +175,17 @@ describe("LocationsPage", () => {
     vi.mocked(api.deleteRoom).mockResolvedValue(undefined);
     renderWithProviders(<LocationsPage />, { user: LOCATION_ADMIN });
     await user.click(await drillToRooms(user));
+    await user.click(screen.getByRole("button", { name: /Data Hall 1/ }));
 
     await user.click(screen.getByRole("button", { name: "Delete room" }));
     expect(api.deleteRoom).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Confirm delete room" }));
+    await user.click(screen.getByRole("button", { name: "Cancel delete room Data Hall 1" }));
+    expect(api.deleteRoom).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete room" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete room Data Hall 1" }));
 
     await waitFor(() => expect(api.deleteRoom).toHaveBeenCalledWith("room-1"));
+    expect(screen.queryByLabelText("Edit room name")).not.toBeInTheDocument();
   });
 
   it("shows the backend dependency explanation when deletion is blocked", async () => {
@@ -189,7 +194,7 @@ describe("LocationsPage", () => {
     renderWithProviders(<LocationsPage />, { user: LOCATION_ADMIN });
     await user.click(await drillToRooms(user));
     await user.click(screen.getByRole("button", { name: "Delete room" }));
-    await user.click(screen.getByRole("button", { name: "Confirm delete room" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete room Data Hall 1" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("rack placements (4) still reference this room.");
   });

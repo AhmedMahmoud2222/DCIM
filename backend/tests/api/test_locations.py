@@ -2,7 +2,10 @@ import re
 import uuid
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.api.pagination import MAX_LIMIT
+from app.domain.audit.models import AuditLog
 from tests.api.test_user_groups import _group, _group_user, _make_site
 
 
@@ -40,7 +43,7 @@ async def test_full_location_chain_creation_as_dcim_manager(client, auth_headers
     assert chain["room"]["version"] == 1
 
 
-async def test_location_hierarchy_deletes_only_empty_records_bottom_up(client, auth_headers):
+async def test_location_hierarchy_deletes_only_empty_records_bottom_up(client, auth_headers, db_session):
     headers = await auth_headers("DCIM Manager")
     chain = await _create_full_chain(client, headers)
     routes = [
@@ -50,9 +53,13 @@ async def test_location_hierarchy_deletes_only_empty_records_bottom_up(client, a
     for route, entity in routes:
         response = await client.delete(f"/api/v1/{route}/{chain[entity]['id']}", headers=headers)
         assert response.status_code == 204, response.text
+    audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
+    ))
+    assert audit is not None and audit.before["floor_id"] == chain["floor"]["id"]
 
 
-async def test_location_hierarchy_delete_reports_child_dependencies_and_checks_permission(client, auth_headers):
+async def test_location_hierarchy_delete_reports_child_dependencies_and_checks_permission(client, auth_headers, db_session):
     manager = await auth_headers("DCIM Manager")
     viewer = await auth_headers("Viewer")
     chain = await _create_full_chain(client, manager)
@@ -66,9 +73,25 @@ async def test_location_hierarchy_delete_reports_child_dependencies_and_checks_p
         assert response.status_code == 409, response.text
         assert "dependent records still reference it" in response.json()["detail"]
         assert child_table in response.json()["detail"]
+        failure_audit = await db_session.scalar(select(AuditLog).where(
+            AuditLog.action == f"location.{entity}.delete", AuditLog.entity_id == chain[entity]["id"],
+            AuditLog.result == "failure",
+        ))
+        assert failure_audit is not None
 
     forbidden = await client.delete(f"/api/v1/rooms/{chain['room']['id']}", headers=viewer)
     assert forbidden.status_code == 403
+
+
+async def test_site_delete_detects_non_location_foreign_key_dependents(client, auth_headers):
+    manager = await auth_headers("Administrator")
+    site = await _make_site(client, manager)
+    await _group(
+        client, manager, allow=["location:read"], sites=[{"site_id": site["site"], "rack_scope": "all"}],
+    )
+    response = await client.delete(f"/api/v1/sites/{site['site']}", headers=manager)
+    assert response.status_code == 409
+    assert "site access grants (1)" in response.json()["detail"]
 
 
 async def test_viewer_cannot_create_locations(client, auth_headers):

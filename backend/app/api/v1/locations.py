@@ -38,7 +38,9 @@ def _request_ids(request: Request) -> tuple[str | None, str | None]:
     return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
 
 
-async def _foreign_key_dependents(db: AsyncSession, table_name: str, record_id: uuid.UUID) -> list[tuple[str, int]]:
+async def _foreign_key_dependents(
+    db: AsyncSession, table_name: str, record_id: uuid.UUID, *, include_counts: bool,
+) -> list[tuple[str, int | None]]:
     """Find actual database FK references so safe deletes account for every domain table.
 
     The catalog lookup avoids relying on the ORM import order and includes inventory,
@@ -55,20 +57,24 @@ async def _foreign_key_dependents(db: AsyncSession, table_name: str, record_id: 
         JOIN unnest(c.confkey) WITH ORDINALITY parent_key(attnum, ord) USING (ord)
         JOIN pg_attribute parent_att ON parent_att.attrelid = parent.oid AND parent_att.attnum = parent_key.attnum
         JOIN pg_attribute child_att ON child_att.attrelid = child.oid AND child_att.attnum = child_key.attnum
+        -- Location tables are owned by the application schema and all target the id primary key.
         WHERE c.contype = 'f' AND parent_ns.nspname = current_schema()
           AND parent.relname = :table_name AND parent_att.attname = 'id' AND child.oid <> parent.oid
         ORDER BY child_ns.nspname, child.relname, child_att.attname
     """), {"table_name": table_name})
-    dependencies: list[tuple[str, int]] = []
+    dependencies: list[tuple[str, int | None]] = []
     for schema_name, child_table, child_column in refs:
         def quote(value: str) -> str:
             return '"' + value.replace('"', '""') + '"'
 
-        count = await db.scalar(text(
-            f"SELECT count(*) FROM {quote(schema_name)}.{quote(child_table)} WHERE {quote(child_column)} = :record_id"
-        ), {"record_id": record_id})
-        if count:
-            dependencies.append((child_table, int(count)))
+        relation = f"{quote(schema_name)}.{quote(child_table)}"
+        condition = f"{quote(child_column)} = :record_id"
+        if include_counts:
+            count = await db.scalar(text(f"SELECT count(*) FROM {relation} WHERE {condition}"), {"record_id": record_id})
+            if count:
+                dependencies.append((child_table, int(count)))
+        elif await db.scalar(text(f"SELECT 1 FROM {relation} WHERE {condition} LIMIT 1"), {"record_id": record_id}):
+            dependencies.append((child_table, None))
     return dependencies
 
 
@@ -82,24 +88,53 @@ async def _delete_location(
     if entity is None:
         raise NotFoundError(f"{entity_name.title()} {record_id} not found.")
 
-    dependencies = await _foreign_key_dependents(db, model.__tablename__, record_id)
+    include_counts = ctx.scope.unrestricted
+    dependencies = await _foreign_key_dependents(
+        db, model.__tablename__, record_id, include_counts=include_counts,
+    )
     if dependencies:
-        detail = ", ".join(f"{table.replace('_', ' ')} ({count})" for table, count in dependencies)
-        raise ConflictError(
-            f"Cannot delete this {entity_name}: dependent records still reference it: {detail}. "
-            "Remove or move those records first."
+        if include_counts:
+            labels = {
+                "rack_placement": "rack placements", "equipment_placement": "equipment placements",
+                "user_group_site_access": "site access grants", "floor_plan": "floor plans",
+            }
+            detail = ", ".join(
+                f"{labels.get(table, table.replace('_', ' '))} ({count})" for table, count in dependencies
+            )
+            message = f"Cannot delete this {entity_name}: dependent records still reference it: {detail}. " \
+                "Remove or move those records first."
+        else:
+            message = f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
+        request_id, correlation_id = _request_ids(request)
+        await write_audit_log(
+            db, actor_user_id=ctx.user.id, action=f"location.{entity_name}.delete", entity_type=entity_name,
+            entity_id=record_id, request_id=request_id, correlation_id=correlation_id,
+            result="failure", reason=message,
         )
+        await db.commit()
+        raise ConflictError(message)
 
     request_id, correlation_id = _request_ids(request)
-    before = {key: getattr(entity, key) for key in ("name", "code") if hasattr(entity, key)}
+    before = {
+        key: str(value) if isinstance((value := getattr(entity, key)), uuid.UUID) else value
+        for key in (
+            "id", "name", "code", "organization_id", "country_id", "city_id", "site_id", "building_id", "floor_id", "version",
+        )
+        if hasattr(entity, key)
+    }
     try:
         await db.delete(entity)
         await db.flush()
     except IntegrityError as error:
         await db.rollback()
-        raise ConflictError(
-            f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
-        ) from error
+        message = f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
+        await write_audit_log(
+            db, actor_user_id=ctx.user.id, action=f"location.{entity_name}.delete", entity_type=entity_name,
+            entity_id=record_id, request_id=request_id, correlation_id=correlation_id,
+            result="failure", reason=message,
+        )
+        await db.commit()
+        raise ConflictError(message) from error
     await write_audit_log(
         db, actor_user_id=ctx.user.id, action=f"location.{entity_name}.delete", entity_type=entity_name,
         entity_id=record_id, request_id=request_id, correlation_id=correlation_id, before=before,
