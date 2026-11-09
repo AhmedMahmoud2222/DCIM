@@ -4,9 +4,11 @@ import importlib.util
 import uuid
 from pathlib import Path
 
+import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations/versions/0058_alarm_subject_key_node_metric.py"
 
@@ -63,5 +65,14 @@ async def test_populated_upgrade_and_downgrade_preserve_alarm_node_metric_identi
             assert restored_keys[alarm_id] == old_key
             assert restored_keys[colon_alarm_id] == colon_key
             assert restored_keys[new_format_alarm_id] == f"{second_integration_id}:{already_new_key}"
+
+            long_key = "x" * 476
+            await conn.execute(text("UPDATE alarm SET subject_key=:key WHERE id=:a"), {"key": long_key, "a": alarm_id})
+            savepoint = await conn.begin_nested()
+            with pytest.raises(DBAPIError, match="Cannot downgrade alarm subject keys longer than 475 characters"):
+                await conn.run_sync(_run, "downgrade")
+            await savepoint.rollback()
+            unchanged_key = (await conn.execute(text("SELECT subject_key FROM alarm WHERE id=:a"), {"a": alarm_id})).scalar_one()
+            assert unchanged_key == long_key
         finally:
             await tx.rollback()

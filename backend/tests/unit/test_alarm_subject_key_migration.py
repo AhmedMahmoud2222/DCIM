@@ -32,4 +32,5 @@ def test_downgrade_restores_the_integration_prefix():
 
     statement = str(module.op.execute.call_args.args[0])
     assert "integration_id::text || ':' || subject_key" in statement
-    assert "WHERE" not in statement.upper()
+    assert "char_length(subject_key) > 475" in statement
+    assert "Cannot downgrade alarm subject keys longer than 475 characters" in statement
