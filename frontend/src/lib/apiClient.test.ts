@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, refreshAccessToken } from "@/lib/apiClient";
+import { ApiError, apiFetch, refreshAccessToken } from "@/lib/apiClient";
 import { useAuthStore } from "@/lib/authStore";
 
 describe("refreshAccessToken failure policy", () => {
@@ -50,6 +50,21 @@ describe("refreshAccessToken failure policy", () => {
     useAuthStore.getState().setSession("existing-token", null);
 
     await expect(refreshAccessToken()).rejects.toThrow("Failed to fetch");
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: "existing-token", isInitialized: true });
+  });
+
+  it("surfaces the original 401 and keeps the session when the refresh endpoint is temporarily unavailable", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Access token expired" }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Retry later" }), { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    useAuthStore.getState().setSession("existing-token", null);
+
+    await expect(apiFetch("/equipment")).rejects.toMatchObject({
+      status: 401,
+      detail: "Access token expired",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(useAuthStore.getState()).toMatchObject({ accessToken: "existing-token", isInitialized: true });
   });
 });

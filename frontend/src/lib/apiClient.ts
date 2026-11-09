@@ -83,6 +83,8 @@ export async function apiFetch<T>(
       await refreshAccessToken();
       res = await doFetch();
     } catch {
+      // Keep the original request error visible while a transient refresh failure
+      // preserves the session; subsequent requests can retry refresh when service returns.
       await parseProblemResponse(res);
     }
   }
