@@ -32,4 +32,4 @@ def test_downgrade_restores_the_integration_prefix():
 
     statement = str(module.op.execute.call_args.args[0])
     assert "integration_id::text || ':' || subject_key" in statement
-    assert "subject_key NOT LIKE integration_id::text || ':%'" in statement
+    assert "WHERE" not in statement.upper()
