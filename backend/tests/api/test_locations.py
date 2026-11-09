@@ -116,6 +116,9 @@ async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_
         AuditLog.result == "success",
     ))
     assert success_audit is not None
+    for route, record_id in (("floors", site["floor"]), ("buildings", site["building"])):
+        scoped_delete = await client.delete(f"/api/v1/{route}/{record_id}", headers=scoped_headers)
+        assert scoped_delete.status_code == 204, scoped_delete.text
 
     conflict = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
     assert conflict.status_code == 409

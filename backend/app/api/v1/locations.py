@@ -52,6 +52,20 @@ def _request_ids(request: Request) -> tuple[str | None, str | None]:
     return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
 
 
+def _delete_conflict_message(
+    entity_name: str, dependencies: list[tuple[str, int | None]], *, include_counts: bool,
+) -> str:
+    if not include_counts:
+        return f"Cannot delete this {entity_name}: dependent records still reference it. " \
+            "Contact an administrator to remove the blockers."
+    detail = ", ".join(
+        f"{_DEPENDENCY_LABELS.get(table, table.replace('_', ' '))} ({count})" for table, count in dependencies
+    )
+    dependency_detail = f": {detail}" if detail else ""
+    return f"Cannot delete this {entity_name}: dependent records still reference it{dependency_detail}. " \
+        "Remove or move those records first."
+
+
 async def _audit_delete_conflict(
     db: AsyncSession, *, actor_id: uuid.UUID, record_id: uuid.UUID, entity_name: str,
     request_id: str | None, correlation_id: str | None, message: str,
@@ -121,17 +135,9 @@ async def _delete_location(
         db, model.__tablename__, record_id, include_counts=include_counts,
     )
     if dependencies:
-        if include_counts:
-            detail = ", ".join(
-                f"{_DEPENDENCY_LABELS.get(table, table.replace('_', ' '))} ({count})" for table, count in dependencies
-            )
-            message = f"Cannot delete this {entity_name}: dependent records still reference it: {detail}. " \
-                "Remove or move those records first."
-        else:
-            # Restricted users may learn that the in-scope parent has dependents, but
-            # never receive hidden table names or counts.
-            message = f"Cannot delete this {entity_name}: dependent records still reference it. " \
-                "Contact an administrator to remove the blockers."
+        # Restricted users may learn that the in-scope parent has dependents, but
+        # never receive hidden table names or counts.
+        message = _delete_conflict_message(entity_name, dependencies, include_counts=include_counts)
         await _audit_delete_conflict(
             db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
             request_id=request_id, correlation_id=correlation_id, message=message,
@@ -147,8 +153,7 @@ async def _delete_location(
         await db.flush()
     except IntegrityError as error:
         await db.rollback()
-        message = f"Cannot delete this {entity_name}: dependent records still reference it. "
-        message += "Remove or move them first." if include_counts else "Contact an administrator to remove the blockers."
+        message = _delete_conflict_message(entity_name, [], include_counts=include_counts)
         await _audit_delete_conflict(
             db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
             request_id=request_id, correlation_id=correlation_id, message=message,
