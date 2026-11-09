@@ -65,8 +65,11 @@ class GateTests(unittest.TestCase):
 
     def test_real_pending_computation(self):
         # Reads the real revision files; needs no alembic installation.
-        self.assertEqual(gate.pending_revisions(['0056_pdu_vertical_placement']), [gate.GATED_REVISION])
-        self.assertEqual(gate.pending_revisions([gate.GATED_REVISION]), [])
+        self.assertEqual(
+            gate.pending_revisions(['0056_pdu_vertical_placement']),
+            [gate.GATED_REVISION, '0058_alarm_subject_key'],
+        )
+        self.assertEqual(gate.pending_revisions([gate.GATED_REVISION]), ['0058_alarm_subject_key'])
         everything = gate.pending_revisions([])
         self.assertIn(gate.GATED_REVISION, everything)
         self.assertGreater(len(everything), 10)

@@ -207,13 +207,13 @@ def test_fresh_empty_database_upgrade_downgrade_roundtrip_and_no_drift():
     name = f"dcim_fk_fresh_{uuid.uuid4().hex[:8]}"
     _run(_create_db(name))
     try:
-        alembic_ok(name, "upgrade", "head")
+        alembic_ok(name, "upgrade", HEAD)
         assert version(name) == HEAD
         assert_all_ours_valid(name)
         alembic_ok(name, "check")
-        alembic_ok(name, "downgrade", "-1")
+        alembic_ok(name, "downgrade", PREVIOUS)
         assert version(name) == PREVIOUS and index_rows(name) == {}
-        alembic_ok(name, "upgrade", "head")
+        alembic_ok(name, "upgrade", HEAD)
         assert_all_ours_valid(name)
         alembic_ok(name, "check")
     finally:
@@ -223,14 +223,14 @@ def test_fresh_empty_database_upgrade_downgrade_roundtrip_and_no_drift():
 def test_populated_upgrade_from_0056_keeps_rows_and_index_is_usable(db):
     assert version(db) == PREVIOUS
     assert q(db, "SELECT count(*) AS n FROM telemetry_reading")[0]["n"] == TELEMETRY_ROWS
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     assert version(db) == HEAD
     assert_all_ours_valid(db)
     assert q(db, "SELECT count(*) AS n FROM telemetry_reading")[0]["n"] == TELEMETRY_ROWS
     alembic_ok(db, "check")
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
     assert index_rows(db) == {}
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     assert_all_ours_valid(db)
 
 
@@ -255,7 +255,7 @@ WRONG_DEFINITIONS = {
 def test_valid_wrong_definition_index_fails_closed_and_is_untouched(db, variant):
     q(db, WRONG_DEFINITIONS[variant])
     before = index_rows(db, [FIRST_NAME])[FIRST_NAME]
-    r = alembic(db, "upgrade", "head")
+    r = alembic(db, "upgrade", HEAD)
     assert r.returncode != 0
     assert FIRST_NAME in r.stderr + r.stdout and "Refusing" in r.stderr + r.stdout
     assert version(db) == PREVIOUS  # not stamped
@@ -281,7 +281,7 @@ def test_unrelated_invalid_index_is_not_dropped(db, variant):
     q(db, f"CREATE INDEX {FIRST_NAME} ON {'alarm' if variant == 'other_table' else FIRST_TABLE} (id)")
     _mark_invalid(db, FIRST_NAME)
     before = index_rows(db, [FIRST_NAME])[FIRST_NAME]
-    r = alembic(db, "upgrade", "head")
+    r = alembic(db, "upgrade", HEAD)
     assert r.returncode != 0 and "Refusing" in r.stderr + r.stdout
     after = index_rows(db, [FIRST_NAME])[FIRST_NAME]
     assert after["oid"] == before["oid"] and after["valid"] is False
@@ -290,7 +290,7 @@ def test_unrelated_invalid_index_is_not_dropped(db, variant):
 
 def test_non_index_relation_with_the_index_name_is_not_dropped(db):
     q(db, f"CREATE TABLE {NAMES[3]} (x int)")
-    r = alembic(db, "upgrade", "head")
+    r = alembic(db, "upgrade", HEAD)
     assert r.returncode != 0 and "Refusing" in r.stderr + r.stdout
     assert q(db, "SELECT to_regclass($1) AS r", f"public.{NAMES[3]}")[0]["r"] is not None
     assert version(db) == PREVIOUS
@@ -298,7 +298,7 @@ def test_non_index_relation_with_the_index_name_is_not_dropped(db):
 
 def test_missing_or_partitioned_target_table_fails_clearly(db):
     q(db, f"ALTER TABLE {FIRST_TABLE} RENAME TO {FIRST_TABLE}_gone")
-    r = alembic(db, "upgrade", "head")
+    r = alembic(db, "upgrade", HEAD)
     assert r.returncode != 0 and "does not exist" in r.stderr + r.stdout
     assert version(db) == PREVIOUS
 
@@ -311,7 +311,7 @@ def test_matching_invalid_artifact_is_dropped_and_rebuilt(db, ready):
     q(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
     _mark_invalid(db, FIRST_NAME, ready=ready)
     old_oid = index_rows(db, [FIRST_NAME])[FIRST_NAME]["oid"]
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     rows = assert_all_ours_valid(db)
     assert rows[FIRST_NAME]["oid"] != old_oid, "the interrupted artifact must have been rebuilt, not reused"
     assert version(db) == HEAD
@@ -397,7 +397,7 @@ def test_invalid_index_of_an_active_concurrent_build_is_not_dropped_or_rebuilt(d
         r = alembic(
             db,
             "upgrade",
-            "head",
+            HEAD,
             env_overrides={"PGOPTIONS": "-c lock_timeout=3s -c statement_timeout=8s"},
         )
         assert r.returncode != 0 and "possibly active" in r.stderr + r.stdout
@@ -417,7 +417,7 @@ async def test_simultaneous_migration_invocation_fails_fast_under_session_lock(d
         r = alembic(
             db,
             "upgrade",
-            "head",
+            HEAD,
             env_overrides={"PGOPTIONS": "-c lock_timeout=3s -c statement_timeout=8s"},
         )
         assert r.returncode != 0 and "another migration invocation is active" in r.stderr + r.stdout
@@ -428,14 +428,14 @@ async def test_simultaneous_migration_invocation_fails_fast_under_session_lock(d
             assert await conn.fetchval("SELECT pg_advisory_unlock(1940057, 1)")
         finally:
             await conn.close()
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     assert (await _admin(db, "SELECT version_num FROM alembic_version"))[0]["version_num"] == HEAD
 
 
 def test_matching_valid_index_is_reused_not_rebuilt(db):
     q(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
     old_oid = index_rows(db, [FIRST_NAME])[FIRST_NAME]["oid"]
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     assert assert_all_ours_valid(db)[FIRST_NAME]["oid"] == old_oid
 
 
@@ -448,7 +448,7 @@ def test_same_name_object_in_another_schema_is_ignored_and_left_alone(db):
     q(db, f"CREATE INDEX {FIRST_NAME} ON other.{FIRST_TABLE} ({FIRST_COLUMN})")
     q(db, f"UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'other.{FIRST_NAME}'::regclass")
     before = index_rows(db, [FIRST_NAME], schema="other")[FIRST_NAME]
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     assert_all_ours_valid(db)
     after = index_rows(db, [FIRST_NAME], schema="other")[FIRST_NAME]
     assert (after["oid"], after["valid"]) == (before["oid"], False)
@@ -462,7 +462,7 @@ def test_partially_completed_upgrade_is_retried_to_completion_and_reuses_built_i
     # earlier indexes were already built and committed (each index is its own autocommit statement).
     failing_table, _ = next(item for item in FK_INDEXES if item[0] == "generator")
     q(db, f"ALTER TABLE {failing_table} OWNER TO postgres")
-    r = alembic(db, "upgrade", "head")
+    r = alembic(db, "upgrade", HEAD)
     assert r.returncode != 0 and "must be owner" in (r.stderr + r.stdout)
     assert version(db) == PREVIOUS
     partial = index_rows(db)
@@ -472,7 +472,7 @@ def test_partially_completed_upgrade_is_retried_to_completion_and_reuses_built_i
     assert all(r_["valid"] and r_["ready"] for r_ in partial.values())
 
     q(db, f"ALTER TABLE {failing_table} OWNER TO dcim_app")
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     final = assert_all_ours_valid(db)
     assert all(final[n]["oid"] == partial[n]["oid"] for n in built), "already-built valid indexes must be reused"
     assert version(db) == HEAD
@@ -483,26 +483,26 @@ def test_partially_completed_upgrade_is_retried_to_completion_and_reuses_built_i
 
 
 def test_downgrade_drops_only_our_indexes_and_leaves_unrelated_same_name_object(db):
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     victim = NAMES[7]
     victim_table, _ = FK_INDEXES[7]
     q(db, f"DROP INDEX {victim}")
     q(db, f"CREATE INDEX {victim} ON {victim_table} (id)")
     foreign_oid = index_rows(db, [victim])[victim]["oid"]
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
     assert version(db) == PREVIOUS
     assert set(index_rows(db)) == {victim}
     assert index_rows(db)[victim]["oid"] == foreign_oid
 
 
 def test_downgrade_leaves_constraint_owned_same_name_index_without_partial_failure(db):
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     victim = FIRST_NAME
     q(db, f"DROP INDEX {victim}")
     q(db, f"ALTER TABLE {FIRST_TABLE} ADD CONSTRAINT {victim} EXCLUDE USING btree ({FIRST_COLUMN} WITH =)")
     constrained_oid = index_rows(db, [victim])[victim]["oid"]
 
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
 
     assert version(db) == PREVIOUS
     assert set(index_rows(db)) == {victim}
@@ -511,12 +511,12 @@ def test_downgrade_leaves_constraint_owned_same_name_index_without_partial_failu
 
 def test_downgrade_leaves_non_index_same_name_object_without_failing(db):
     """Codex P2 on 624a525: pinning a same-name TABLE ("is not an index") must not abort the rollback."""
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     victim = FIRST_NAME
     q(db, f"DROP INDEX {victim}")
     q(db, f"CREATE TABLE {victim} (id integer)")
 
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
 
     assert version(db) == PREVIOUS
     assert index_rows(db) == {}, "every one of our other indexes must still be removed"
@@ -526,7 +526,7 @@ def test_downgrade_leaves_non_index_same_name_object_without_failing(db):
 def test_downgrade_leaves_unrelated_index_owned_by_another_role_without_failing(db):
     """Codex P2 on 624a525: an unrelated same-name index we do not own must not introduce an ownership failure."""
     role = f"other_owner_{uuid.uuid4().hex[:8]}"
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     victim = FIRST_NAME
     q(db, f"CREATE ROLE {role}")
     try:
@@ -536,7 +536,7 @@ def test_downgrade_leaves_unrelated_index_owned_by_another_role_without_failing(
         q(db, f"CREATE INDEX {victim} ON foreign_owned_t (id)")
         foreign_oid = index_rows(db, [victim])[victim]["oid"]
 
-        alembic_ok(db, "downgrade", "-1")
+        alembic_ok(db, "downgrade", PREVIOUS)
 
         assert version(db) == PREVIOUS
         assert set(index_rows(db)) == {victim}
@@ -680,7 +680,7 @@ async def paused_at_barrier(db: str, setup_sql: str, *alembic_args: str):
 
 def paused_at_version_stamp(db: str):
     """`alembic upgrade head`, held at the `alembic_version` update (after upgrade() returned)."""
-    return paused_at_barrier(db, _STAMP_TRIGGER_SQL, "upgrade", "head")
+    return paused_at_barrier(db, _STAMP_TRIGGER_SQL, "upgrade", HEAD)
 
 
 _DROP_INDEX_BARRIER_SQL = f"""
@@ -696,7 +696,7 @@ CREATE EVENT TRIGGER drop_index_barrier ON ddl_command_start WHEN TAG IN ('DROP 
 
 def paused_before_drop_index(db: str):
     """`alembic downgrade -1`, held after its inspection and just before the DROP INDEX statement starts."""
-    return paused_at_barrier(db, _DROP_INDEX_BARRIER_SQL, "downgrade", "-1")
+    return paused_at_barrier(db, _DROP_INDEX_BARRIER_SQL, "downgrade", PREVIOUS)
 
 
 SPARE_NAME = "ix_spare_wrong"
@@ -740,7 +740,7 @@ def test_replacing_a_reused_index_mid_run_is_caught_before_the_stamp(db):
             tx = blocker.transaction()
             await tx.start()
             await blocker.execute(f"LOCK TABLE {LATE_TABLE} IN SHARE UPDATE EXCLUSIVE MODE")
-            proc = await _spawn_alembic(db, "upgrade", "head")
+            proc = await _spawn_alembic(db, "upgrade", HEAD)
             # alembic is now parked inside the build phase: the plan is old, the reused index is not locked.
             await _wait_until(
                 _waiting_on_lock(db, f"CREATE INDEX CONCURRENTLY%{LATE_TABLE}%"), proc, f"build of {LATE_TABLE} to block"
@@ -777,7 +777,7 @@ def test_replacing_an_interrupted_artifact_before_the_drop_never_drops_the_repla
             tx = holder.transaction()
             await tx.start()
             await holder.execute(f"SELECT 1 FROM {FIRST_TABLE} LIMIT 1")  # ACCESS SHARE: does not look like a build
-            proc = await _spawn_alembic(db, "upgrade", "head")
+            proc = await _spawn_alembic(db, "upgrade", HEAD)
             # alembic planned REBUILD and is queued for ACCESS EXCLUSIVE behind our read lock: the plan is now stale.
             await _wait_until(
                 _waiting_on_lock(db, "LOCK TABLE%ACCESS EXCLUSIVE%"), proc, "the ACCESS EXCLUSIVE lock request to queue"
@@ -842,7 +842,7 @@ def test_second_runner_fails_fast_while_the_first_is_parked_at_the_version_stamp
 
     async def scenario():
         async with paused_at_version_stamp(db) as (proc, release):
-            second = await _spawn_alembic(db, "upgrade", "head")
+            second = await _spawn_alembic(db, "upgrade", HEAD)
             try:
                 second_rc, second_out = await _finish(second, timeout=60)
             finally:
@@ -861,7 +861,7 @@ def test_second_runner_fails_fast_while_the_first_is_parked_at_the_version_stamp
 
 def test_failed_run_releases_the_advisory_lock_and_the_next_run_succeeds(db):
     q(db, WRONG_DEFINITIONS["wrong_column"])
-    r = alembic(db, "upgrade", "head")
+    r = alembic(db, "upgrade", HEAD)
     assert r.returncode != 0 and "Refusing" in r.stderr + r.stdout
 
     async def lock_is_free():
@@ -873,7 +873,7 @@ def test_failed_run_releases_the_advisory_lock_and_the_next_run_succeeds(db):
 
     assert _run(lock_is_free()), "a failed run must not leave the migration advisory lock held"
     q(db, f"DROP INDEX {FIRST_NAME}")
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     assert version(db) == HEAD
 
 
@@ -907,12 +907,12 @@ DOWNGRADE_FAILURE_TABLES = {
 @pytest.mark.parametrize("position", sorted(DOWNGRADE_FAILURE_TABLES))
 def test_failed_downgrade_leaves_version_and_all_22_indexes_unchanged(db, position):
     """Inject a failure at a chosen position of the drop sequence (table owned by someone else)."""
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     before = assert_all_ours_valid(db)
     failing_table = DOWNGRADE_FAILURE_TABLES[position]
     q(db, f"ALTER TABLE {failing_table} OWNER TO postgres")
 
-    r = alembic(db, "downgrade", "-1")
+    r = alembic(db, "downgrade", PREVIOUS)
 
     assert r.returncode != 0, "the downgrade was expected to fail"
     assert version(db) == HEAD, "a failed downgrade must leave 0057 stamped"
@@ -921,13 +921,13 @@ def test_failed_downgrade_leaves_version_and_all_22_indexes_unchanged(db, positi
     assert {n: after[n]["oid"] for n in NAMES} == {n: before[n]["oid"] for n in NAMES}, "indexes must be untouched"
 
     q(db, f"ALTER TABLE {failing_table} OWNER TO dcim_app")
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
     assert version(db) == PREVIOUS and index_rows(db) == {}
 
 
 def test_downgrade_that_cannot_get_its_locks_changes_nothing(db):
     """A reader holding a lock on a late table makes the lock wait time out; nothing may be dropped or re-stamped."""
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     before = assert_all_ours_valid(db)
 
     async def scenario():
@@ -937,7 +937,7 @@ def test_downgrade_that_cannot_get_its_locks_changes_nothing(db):
             tx = holder.transaction()
             await tx.start()
             await holder.execute(f"SELECT 1 FROM {LATE_TABLE} LIMIT 1")
-            proc = await _spawn_alembic(db, "downgrade", "-1")
+            proc = await _spawn_alembic(db, "downgrade", PREVIOUS)
             result = await _finish(proc)  # bounded: the migration applies its own 5s lock_timeout
             await tx.rollback()
             return result
@@ -950,7 +950,7 @@ def test_downgrade_that_cannot_get_its_locks_changes_nothing(db):
     assert version(db) == HEAD
     after = index_rows(db)
     assert {n: after[n]["oid"] for n in NAMES} == {n: before[n]["oid"] for n in NAMES}
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
     assert version(db) == PREVIOUS and index_rows(db) == {}
 
 
@@ -978,7 +978,7 @@ def test_rename_swap_between_final_verification_and_the_stamp_is_blocked(db):
 
 def test_rename_swap_between_downgrade_inspection_and_drop_is_blocked(db):
     """The downgrade must not drop an unrelated index that was renamed into one of our names after inspection."""
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     q(db, f"CREATE INDEX {SPARE_NAME} ON {FIRST_TABLE} (id)")
 
     async def scenario():
@@ -999,7 +999,7 @@ def test_rename_swap_between_downgrade_inspection_and_drop_is_blocked(db):
 
 def test_pinning_indexes_cannot_deadlock_into_a_half_applied_state(db):
     """A session holding the last index and asking for the first (opposite order) must resolve, not hang or corrupt."""
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     q(db, "UPDATE alembic_version SET version_num = $1", PREVIOUS)  # all 22 exist and are valid; only the stamp is missing
     first, last = sorted(NAMES)[0], sorted(NAMES)[-1]
 
@@ -1010,7 +1010,7 @@ def test_pinning_indexes_cannot_deadlock_into_a_half_applied_state(db):
             tx = holder.transaction()
             await tx.start()
             await holder.execute(f"COMMENT ON INDEX {last} IS NULL")  # SHARE UPDATE EXCLUSIVE on the last index
-            proc = await _spawn_alembic(db, "upgrade", "head")
+            proc = await _spawn_alembic(db, "upgrade", HEAD)
             await _wait_until(
                 _waiting_on_lock(db, "%INDEX %"), proc, "the migration to queue behind the held index"
             )
@@ -1030,7 +1030,7 @@ def test_pinning_indexes_cannot_deadlock_into_a_half_applied_state(db):
     assert version(db) == (HEAD if rc == 0 else PREVIOUS), f"stamp must match the outcome (rc={rc}): {out}"
     if rc != 0:
         assert "deadlock" in out.lower() or "lock timeout" in out.lower(), out
-        alembic_ok(db, "upgrade", "head")  # a retry completes
+        alembic_ok(db, "upgrade", HEAD)  # a retry completes
     assert version(db) == HEAD
     assert_all_ours_valid(db)
 
@@ -1040,7 +1040,7 @@ def test_pinning_leaves_index_comments_exactly_as_they_were(db):
     tricky = "keep me: it's ':named' and $1 and 100% 'quoted'"
     q(db, f"CREATE INDEX {FIRST_NAME} ON {FIRST_TABLE} ({FIRST_COLUMN})")
     q(db, f"COMMENT ON INDEX {FIRST_NAME} IS '{tricky.replace(chr(39), chr(39) * 2)}'")
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     comments = {
         r["name"]: r["comment"]
         for r in q(
@@ -1053,7 +1053,7 @@ def test_pinning_leaves_index_comments_exactly_as_they_were(db):
     assert comments[FIRST_NAME] == tricky
     assert all(v is None for n, v in comments.items() if n != FIRST_NAME)
     assert q(db, "SELECT relname FROM pg_class WHERE relname LIKE 'pin0057%'") == [], "no scratch pin name may remain"
-    alembic_ok(db, "downgrade", "-1")
+    alembic_ok(db, "downgrade", PREVIOUS)
     assert version(db) == PREVIOUS and index_rows(db) == {}
 
 
@@ -1063,7 +1063,7 @@ def test_concurrent_comment_change_is_not_overwritten_by_pinning(db):
     Session B holds an uncommitted `COMMENT ... IS 'new'` on a verified index; the migration reaches that index and must
     wait for B. After B commits, the migration continues and must leave B's comment in place.
     """
-    alembic_ok(db, "upgrade", "head")
+    alembic_ok(db, "upgrade", HEAD)
     q(db, "UPDATE alembic_version SET version_num = $1", PREVIOUS)  # all 22 exist; only the stamp is missing
     q(db, f"COMMENT ON INDEX {FIRST_NAME} IS 'old'")
 
@@ -1074,7 +1074,7 @@ def test_concurrent_comment_change_is_not_overwritten_by_pinning(db):
             tx = writer.transaction()
             await tx.start()
             await writer.execute(f"COMMENT ON INDEX {FIRST_NAME} IS 'new'")  # SHARE UPDATE EXCLUSIVE, uncommitted
-            proc = await _spawn_alembic(db, "upgrade", "head")
+            proc = await _spawn_alembic(db, "upgrade", HEAD)
             await _wait_until(_waiting_on_lock(db, "%INDEX %"), proc, "the migration to queue behind the comment writer")
             await tx.commit()  # the migration has already looked at the index; now B's comment becomes visible
             return await _finish(proc)
