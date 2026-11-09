@@ -154,15 +154,61 @@ describe("RoomFloorPlanPage workflow", () => {
     expect(screen.getByTestId("action-error")).toHaveAttribute("role", "alert");
   });
 
-  it("sets a rectangular room boundary from millimetre inputs", async () => {
-    vi.mocked(api.setRoomBoundary).mockResolvedValue({ spatial_object_id: "o", floor_plan: plan(), racks_outside_boundary: ["Rack Z"] });
+  it("refreshes the active 2D view after saving a manual boundary and explains calibration remains separate", async () => {
+    const roomBoundary = {
+      id: "outline-1", object_type: "room_outline", geometry_type: "rect" as const, x_mm: 0, y_mm: 0,
+      width_mm: 6000, height_mm: 4000, rotation_deg: 0, label: "Room boundary", source: "authoritative" as const, geometry_data: null,
+    };
+    const before = view({
+      active_floor_plan_id: "fp-1", active_floor_plan_revision: 1,
+      incomplete_reasons: ["no_calibration", "no_room_boundary"],
+    });
+    const after = view({
+      active_floor_plan_id: "fp-1", active_floor_plan_revision: 1,
+      room_width_mm: 6000, room_height_mm: 4000,
+      boundary: roomBoundary,
+      objects: [roomBoundary],
+      incomplete_reasons: ["no_calibration"],
+    });
+    vi.mocked(api.listFloorPlans).mockResolvedValue(page([plan({ status: "active" })]));
+    vi.mocked(api.getRoomSpatialView).mockReset().mockResolvedValueOnce(before).mockResolvedValue(after);
+    vi.mocked(api.setRoomBoundary).mockResolvedValue({
+      spatial_object_id: "outline-1", floor_plan: plan({ status: "active", room_width_mm: 6000, room_height_mm: 4000, version: 3 }),
+      racks_outside_boundary: [],
+    });
     const user = userEvent.setup();
     mountPage();
     await user.type(await screen.findByLabelText("Boundary width (mm)"), "6000");
     await user.type(screen.getByLabelText("Boundary depth (mm)"), "4000");
     await user.click(screen.getByRole("button", { name: "Set boundary" }));
     await waitFor(() => expect(api.setRoomBoundary).toHaveBeenCalledWith(expect.objectContaining({ id: "fp-1" }), { shape: "rect", x_mm: 0, y_mm: 0, width_mm: 6000, height_mm: 4000 }));
-    expect(await screen.findByTestId("notice")).toHaveTextContent("Racks outside it (not moved): Rack Z");
+    expect(await screen.findByTestId("notice")).toHaveTextContent("Saved on active revision 1");
+    expect(screen.getByTestId("notice")).toHaveTextContent("does not calibrate an imported drawing");
+    expect(await screen.findByTestId("scale-source")).toHaveTextContent("approved room boundary");
+    expect(document.querySelector('[data-object-type="room_outline"]')).toBeInTheDocument();
+    expect(screen.getByTestId("incomplete-reasons")).toHaveTextContent("floor plan is not calibrated");
+    expect(vi.mocked(api.getRoomSpatialView).mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("does not imply a boundary saved on a draft changed the active 2D/3D layout", async () => {
+    const activeView = view({ active_floor_plan_id: "fp-active", active_floor_plan_revision: 1, room_width_mm: 8000, room_height_mm: 6000 });
+    vi.mocked(api.listFloorPlans).mockResolvedValue(page([plan({ revision_number: 2, status: "draft" })]));
+    vi.mocked(api.getRoomSpatialView).mockResolvedValue(activeView);
+    vi.mocked(api.setRoomBoundary).mockResolvedValue({
+      spatial_object_id: "draft-outline", floor_plan: plan({ revision_number: 2, status: "draft", room_width_mm: 6000, room_height_mm: 4000, version: 3 }),
+      racks_outside_boundary: ["Rack Z"],
+    });
+    const user = userEvent.setup();
+    mountPage();
+    await user.type(await screen.findByLabelText("Boundary width (mm)"), "6000");
+    await user.type(screen.getByLabelText("Boundary depth (mm)"), "4000");
+    await user.click(screen.getByRole("button", { name: "Set boundary" }));
+    const notice = await screen.findByTestId("notice");
+    expect(notice).toHaveTextContent("Saved on draft revision 2");
+    expect(notice).toHaveTextContent("Activate this revision to update the active 2D/3D views");
+    expect(notice).toHaveTextContent("Racks outside it (not moved): Rack Z");
+    expect(screen.getByText("Active revision 1")).toBeInTheDocument();
+    expect(screen.getByTestId("layout-state")).not.toHaveAttribute("data-layout-state", "validated");
   });
 
   it("switches the 2D plan to an operational overlay and links to the 3D twin for this room", async () => {
