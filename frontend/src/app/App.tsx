@@ -15,6 +15,7 @@ import { InstantiatePage } from "@/features/equipment/InstantiatePage";
 import { GroupsPage } from "@/features/access/GroupsPage";
 import { UsersPage } from "@/features/access/UsersPage";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { AuthBootstrap } from "@/features/auth/AuthBootstrap";
 import { RoomFloorPlanPage } from "@/features/floor-plans/RoomFloorPlanPage";
 import { FloorPlansPage } from "@/features/floor-plans/FloorPlansPage";
 import { CollectorsPage } from "@/features/integrations/CollectorsPage";
@@ -43,6 +44,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <AuthBootstrap />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<ProtectedRoute />}>

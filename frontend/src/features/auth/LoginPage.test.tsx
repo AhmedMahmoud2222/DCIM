@@ -11,7 +11,7 @@ vi.mock("@/features/auth/useAuth");
 describe("LoginPage accessibility", () => {
   it("associates labels and announces a failed keyboard submission", async () => {
     const login = vi.fn().mockRejectedValue(new Error("invalid"));
-    vi.mocked(auth.useAuth).mockReturnValue({ login, accessToken: null, user: null, isAuthenticated: false, logout: vi.fn() });
+    vi.mocked(auth.useAuth).mockReturnValue({ login, accessToken: null, user: null, isAuthenticated: false, isInitialized: true, logout: vi.fn() });
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
 
@@ -26,5 +26,14 @@ describe("LoginPage accessibility", () => {
     await waitFor(() => expect(login).toHaveBeenCalledWith("tester@example.com", "password"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Login failed. Please try again.");
     expect(screen.getByLabelText("Password")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("does not submit credentials until startup session restoration has finished", async () => {
+    const login = vi.fn();
+    vi.mocked(auth.useAuth).mockReturnValue({ login, accessToken: null, user: null, isAuthenticated: false, isInitialized: false, logout: vi.fn() });
+    renderWithProviders(<LoginPage />);
+
+    expect(screen.getByRole("button", { name: "Checking session…" })).toBeDisabled();
+    expect(login).not.toHaveBeenCalled();
   });
 });

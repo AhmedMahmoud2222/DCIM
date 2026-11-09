@@ -11,16 +11,21 @@ function readCsrfToken(): string | null {
 }
 
 export function useAuth() {
-  const { accessToken, user, setSession, clear } = useAuthStore();
+  const { accessToken, user, isInitialized, setSession, clear } = useAuthStore();
 
   async function login(email: string, password: string): Promise<void> {
     const res = await apiFetch<LoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    useAuthStore.getState().setAccessToken(res.access_token);
-    const me = await apiFetch<CurrentUser>("/auth/me");
-    setSession(res.access_token, me);
+    try {
+      useAuthStore.getState().setAccessToken(res.access_token);
+      const me = await apiFetch<CurrentUser>("/auth/me");
+      setSession(res.access_token, me);
+    } catch (error) {
+      clear();
+      throw error;
+    }
   }
 
   async function logout(): Promise<void> {
@@ -35,5 +40,5 @@ export function useAuth() {
     }
   }
 
-  return { accessToken, user, isAuthenticated: accessToken !== null, login, logout };
+  return { accessToken, user, isAuthenticated: accessToken !== null, isInitialized, login, logout };
 }
