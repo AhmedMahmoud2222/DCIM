@@ -130,6 +130,9 @@ async def _delete_location(
         raise NotFoundError(f"{entity_name.title()} {record_id} not found.")
 
     request_id, correlation_id = _request_ids(request)
+    # Scoped location:manage grants are currently inactive in require_permission because
+    # hierarchy mutations are not safely filterable by site. Keep this scope-aware query
+    # and generic error path as defense in depth if that permission policy changes.
     include_counts = ctx.scope.unrestricted
     dependencies = await _foreign_key_dependents(
         db, model.__tablename__, record_id, include_counts=include_counts,

@@ -102,17 +102,34 @@ async def test_site_delete_detects_non_location_foreign_key_dependents(client, a
 
 async def test_site_scoped_user_cannot_delete_locations(client, auth_headers):
     admin = await auth_headers("Administrator")
-    site = await _make_site(client, admin)
+    chain = await _create_full_chain(client, admin)
     group_id = await _group(
         client, admin, allow=["location:read", "location:manage"],
-        sites=[{"site_id": site["site"], "rack_scope": "all"}],
+        sites=[{"site_id": chain["site"]["id"], "rack_scope": "all"}],
     )
     _user, scoped_headers = await _group_user(client, admin, [group_id])
 
-    # location:manage is intentionally inactive for site-scoped users because deleting
-    # hierarchy records can affect data outside their granted site.
-    response = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
-    assert response.status_code == 403
+    # location:manage is inactive for site-scoped users because the hierarchy mutation
+    # endpoints are not safely filterable by site. Verify every route rejects the request
+    # and that an unrestricted reader still sees the target record afterwards.
+    routes = (
+        ("organizations", chain["organization"]["id"], f"/api/v1/organizations/{chain['organization']['id']}"),
+        ("countries", chain["country"]["id"], f"/api/v1/countries?organization_id={chain['organization']['id']}"),
+        ("cities", chain["city"]["id"], f"/api/v1/cities?country_id={chain['country']['id']}"),
+        ("sites", chain["site"]["id"], f"/api/v1/sites/{chain['site']['id']}"),
+        ("buildings", chain["building"]["id"], f"/api/v1/buildings?site_id={chain['site']['id']}"),
+        ("floors", chain["floor"]["id"], f"/api/v1/floors?building_id={chain['building']['id']}"),
+        ("rooms", chain["room"]["id"], f"/api/v1/rooms/{chain['room']['id']}"),
+    )
+    for route, record_id, read_path in routes:
+        denied = await client.delete(f"/api/v1/{route}/{record_id}", headers=scoped_headers)
+        assert denied.status_code == 403, denied.text
+        visible = await client.get(read_path, headers=admin)
+        assert visible.status_code == 200, visible.text
+        if "?" in read_path:
+            assert record_id in {item["id"] for item in visible.json()["items"]}
+        else:
+            assert visible.json()["id"] == record_id
 
 
 async def test_integrity_error_delete_fallback_rolls_back_then_audits(client, auth_headers, db_session, monkeypatch):
