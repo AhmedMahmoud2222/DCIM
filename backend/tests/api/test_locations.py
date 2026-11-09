@@ -109,12 +109,26 @@ async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_
     )
     _user, scoped_headers = await _group_user(client, admin, [group_id])
 
+    deleted_room = await client.delete(f"/api/v1/rooms/{site['room']}", headers=scoped_headers)
+    assert deleted_room.status_code == 204
+    success_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == site["room"],
+        AuditLog.result == "success",
+    ))
+    assert success_audit is not None
+
     conflict = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
     assert conflict.status_code == 409
     detail = conflict.json()["detail"]
     assert "dependent records still reference it" in detail
+    assert "Contact an administrator" in detail
     assert "building" not in detail and "access" not in detail and "grants" not in detail
     assert "(" not in detail
+    site_failure_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.site.delete", AuditLog.entity_id == site["site"],
+        AuditLog.result == "failure",
+    ))
+    assert site_failure_audit is not None
 
     outside = await _make_site(client, admin)
     out_of_scope = await client.delete(f"/api/v1/sites/{outside['site']}", headers=scoped_headers)
@@ -151,6 +165,12 @@ async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_
     assert empty_site_conflict.status_code == 409
     assert "(" not in empty_site_conflict.json()["detail"]
     assert "access" not in empty_site_conflict.json()["detail"]
+    assert "Contact an administrator" in empty_site_conflict.json()["detail"]
+    empty_site_failure_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.site.delete", AuditLog.entity_id == scoped_empty["id"],
+        AuditLog.result == "failure",
+    ))
+    assert empty_site_failure_audit is not None
 
     # Shared parents with both visible and hidden child sites return the same generic
     # conflict, without exposing child-table names or counts to the scoped user.

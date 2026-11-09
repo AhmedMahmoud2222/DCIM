@@ -130,7 +130,8 @@ async def _delete_location(
         else:
             # Restricted users may learn that the in-scope parent has dependents, but
             # never receive hidden table names or counts.
-            message = f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
+            message = f"Cannot delete this {entity_name}: dependent records still reference it. " \
+                "Contact an administrator to remove the blockers."
         await _audit_delete_conflict(
             db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
             request_id=request_id, correlation_id=correlation_id, message=message,
@@ -146,7 +147,8 @@ async def _delete_location(
         await db.flush()
     except IntegrityError as error:
         await db.rollback()
-        message = f"Cannot delete this {entity_name}: dependent records still reference it. Remove or move them first."
+        message = f"Cannot delete this {entity_name}: dependent records still reference it. "
+        message += "Remove or move them first." if include_counts else "Contact an administrator to remove the blockers."
         await _audit_delete_conflict(
             db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
             request_id=request_id, correlation_id=correlation_id, message=message,
