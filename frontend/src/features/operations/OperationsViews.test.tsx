@@ -175,6 +175,29 @@ describe("integration settings", () => {
     expect(document.body.textContent).not.toContain("TOKEN");
   });
 
+  it("explains when no enabled channels are available for a notification policy", async () => {
+    vi.mocked(api.listChannels).mockResolvedValue([]);
+    renderWithProviders(<OperationsViews view="integrations" />, { user: MANAGER });
+
+    await screen.findByText(/No enabled notification channels are available/);
+    const policies = await screen.findByRole("region", { name: "Notification policies" });
+    expect(within(policies).getByRole("status")).toHaveTextContent("No enabled notification channels are available");
+    expect(within(policies).getByLabelText("Channel")).toBeDisabled();
+    expect(within(policies).getByRole("button", { name: "Add policy" })).toBeDisabled();
+  });
+
+  it("offers only enabled notification channels to policies", async () => {
+    vi.mocked(api.listChannels).mockResolvedValue([
+      { id: "ch-disabled", name: "old-hook", kind: "webhook", url_display: "https://disabled.example.com", has_signing_secret: false, enabled: false, version: 1 },
+      { id: "ch-enabled", name: "ops-hook", kind: "webhook", url_display: "https://enabled.example.com", has_signing_secret: false, enabled: true, version: 1 },
+    ]);
+    renderWithProviders(<OperationsViews view="integrations" />, { user: MANAGER });
+
+    const channel = await screen.findByLabelText("Channel");
+    expect(await within(channel).findByRole("option", { name: "ops-hook" })).toHaveValue("ch-enabled");
+    expect(within(channel).queryByRole("option", { name: "old-hook" })).not.toBeInTheDocument();
+  });
+
   it("hides every settings form from a read-only user and shows the ITSM password field as a password input", async () => {
     const first = renderWithProviders(<OperationsViews view="integrations" />, { user: VIEWER });
     await screen.findByText(/ops-hook/);
