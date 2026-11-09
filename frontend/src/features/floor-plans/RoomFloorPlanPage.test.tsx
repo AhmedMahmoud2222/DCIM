@@ -183,7 +183,7 @@ describe("RoomFloorPlanPage workflow", () => {
     await user.click(screen.getByRole("button", { name: "Set boundary" }));
     await waitFor(() => expect(api.setRoomBoundary).toHaveBeenCalledWith(expect.objectContaining({ id: "fp-1" }), { shape: "rect", x_mm: 0, y_mm: 0, width_mm: 6000, height_mm: 4000 }));
     expect(await screen.findByTestId("notice")).toHaveTextContent("Saved on active revision 1");
-    expect(screen.getByTestId("notice")).toHaveTextContent("does not calibrate an imported drawing");
+    expect(screen.getByTestId("notice")).toHaveTextContent("Calibration applies to uploaded drawings");
     expect(await screen.findByTestId("scale-source")).toHaveTextContent("approved room boundary");
     expect(document.querySelector('[data-object-type="room_outline"]')).toBeInTheDocument();
     expect(screen.getByTestId("incomplete-reasons")).toHaveTextContent("floor plan is not calibrated");
@@ -209,6 +209,46 @@ describe("RoomFloorPlanPage workflow", () => {
     expect(notice).toHaveTextContent("Racks outside it (not moved): Rack Z");
     expect(screen.getByText("Active revision 1")).toBeInTheDocument();
     expect(screen.getByTestId("layout-state")).not.toHaveAttribute("data-layout-state", "validated");
+  });
+
+  it("reports a saved boundary when refreshing the active layout fails", async () => {
+    vi.mocked(api.listFloorPlans).mockResolvedValue(page([plan({ status: "active" })]));
+    vi.mocked(api.getRoomSpatialView)
+      .mockResolvedValueOnce(view({ active_floor_plan_id: "fp-1", active_floor_plan_revision: 1 }))
+      .mockRejectedValue(new Error("Spatial service unavailable"));
+    vi.mocked(api.setRoomBoundary).mockResolvedValue({
+      spatial_object_id: "outline-1", floor_plan: plan({ status: "active", version: 3 }), racks_outside_boundary: [],
+    });
+    const user = userEvent.setup();
+    mountPage();
+    await screen.findByTestId("verify-2d");
+    await user.type(await screen.findByLabelText("Boundary width (mm)"), "6000");
+    await user.type(screen.getByLabelText("Boundary depth (mm)"), "4000");
+    await user.click(screen.getByRole("button", { name: "Set boundary" }));
+
+    const notice = await screen.findByTestId("notice");
+    expect(notice).toHaveTextContent("Saved on active revision 1");
+    expect(notice).toHaveTextContent("view did not refresh");
+    expect(screen.queryByTestId("action-error")).not.toBeInTheDocument();
+  });
+
+  it("does not show an import-calibration warning when the active plan is calibrated", async () => {
+    vi.mocked(api.listFloorPlans).mockResolvedValue(page([plan({ status: "active", current_calibration: calibration })]));
+    vi.mocked(api.getRoomSpatialView).mockResolvedValue(view({ active_floor_plan_id: "fp-1", active_floor_plan_revision: 1 }));
+    vi.mocked(api.setRoomBoundary).mockResolvedValue({
+      spatial_object_id: "outline-1",
+      floor_plan: plan({ status: "active", current_calibration: calibration, version: 3 }),
+      racks_outside_boundary: [],
+    });
+    const user = userEvent.setup();
+    mountPage();
+    await user.type(await screen.findByLabelText("Boundary width (mm)"), "6000");
+    await user.type(screen.getByLabelText("Boundary depth (mm)"), "4000");
+    await user.click(screen.getByRole("button", { name: "Set boundary" }));
+
+    const notice = await screen.findByTestId("notice");
+    expect(notice).toHaveTextContent("Saved on active revision 1");
+    expect(notice).not.toHaveTextContent("calibrate");
   });
 
   it("switches the 2D plan to an operational overlay and links to the 3D twin for this room", async () => {
