@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
@@ -16,6 +16,12 @@ export function RackDetailPage() {
   const [moveRoomId, setMoveRoomId] = useState("");
   const [moveX, setMoveX] = useState("");
   const [moveY, setMoveY] = useState("");
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const lifecycleNoticeRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (lifecycleNotice) lifecycleNoticeRef.current?.focus();
+  }, [lifecycleNotice]);
 
   const rackQuery = useQuery({ queryKey: ["racks", rackId], queryFn: () => getRack(rackId!), enabled: !!rackId });
   const elevationQuery = useQuery({
@@ -75,9 +81,11 @@ export function RackDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <LifecycleStatus value={rack.lifecycle_status} />
-          <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" />
+          <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" onCompleted={setLifecycleNotice} />
         </div>
       </div>
+
+      {lifecycleNotice && <p ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice}</p>}
 
       <div className="mb-6 grid grid-cols-2 gap-6">
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">

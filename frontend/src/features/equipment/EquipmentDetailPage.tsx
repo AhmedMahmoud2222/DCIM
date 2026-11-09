@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
@@ -42,6 +42,12 @@ export function EquipmentDetailPage() {
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [historyHours, setHistoryHours] = useState(24);
   const [impactTarget, setImpactTarget] = useState<ImpactTarget | null>(null);
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const lifecycleNoticeRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (lifecycleNotice) lifecycleNoticeRef.current?.focus();
+  }, [lifecycleNotice]);
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -151,9 +157,11 @@ export function EquipmentDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <LifecycleStatus value={equipment.lifecycle_status} />
-          <LifecycleTransitionAction assetId={equipment.id} assetName={equipment.hostname ?? equipment.asset_tag} status={equipment.lifecycle_status} assetLabel="equipment" />
+          <LifecycleTransitionAction assetId={equipment.id} assetName={equipment.hostname ?? equipment.asset_tag} status={equipment.lifecycle_status} assetLabel="equipment" onCompleted={setLifecycleNotice} />
         </div>
       </div>
+
+      {lifecycleNotice && <p ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice}</p>}
 
       <div className="grid grid-cols-2 gap-6">
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">

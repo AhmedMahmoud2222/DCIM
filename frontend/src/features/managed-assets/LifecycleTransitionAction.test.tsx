@@ -1,5 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,7 +27,25 @@ describe("LifecycleTransitionAction", () => {
       lifecycle_status: "installed", created_at: "2026-01-01T00:00:00Z",
     });
     const assetName = assetLabel === "rack" ? "Rack 01" : "server-01";
-    const { queryClient } = renderWithProviders(<LifecycleTransitionAction assetId={assetId} assetName={assetName} status="planned" assetLabel={assetLabel} />, { user: LIFECYCLE_MANAGER });
+    function PageHarness() {
+      const [visible, setVisible] = useState(true);
+      const [notice, setNotice] = useState<string | null>(null);
+      const noticeRef = useRef<HTMLParagraphElement>(null);
+      useEffect(() => { if (notice) noticeRef.current?.focus(); }, [notice]);
+      return (
+        <>
+          {visible && <LifecycleTransitionAction
+            assetId={assetId}
+            assetName={assetName}
+            status="planned"
+            assetLabel={assetLabel}
+            onCompleted={(message) => { setNotice(message); setVisible(false); }}
+          />}
+          {notice && <p ref={noticeRef} tabIndex={-1} role="status">{notice}</p>}
+        </>
+      );
+    }
+    const { queryClient } = renderWithProviders(<PageHarness />, { user: LIFECYCLE_MANAGER });
     const queryKey = [assetLabel === "rack" ? "racks" : "equipment"];
     queryClient.setQueryData(queryKey, []);
     await userEvent.click(screen.getByRole("button", { name: `Mark installed: ${assetName}` }));
@@ -35,7 +53,7 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: `Confirm install ${assetName}` }));
     expect(api.transitionManagedAssetLifecycle).toHaveBeenCalledWith(assetId, "installed");
     await waitFor(() => expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true));
-    expect(screen.getByRole("status")).toHaveTextContent("Installation status saved.");
+    expect(screen.getByRole("status")).toHaveTextContent(`${assetName} installation status saved.`);
     expect(screen.getByRole("status")).toHaveFocus();
   });
 

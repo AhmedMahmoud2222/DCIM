@@ -9,11 +9,13 @@ export function LifecycleTransitionAction({
   assetName,
   status,
   assetLabel,
+  onCompleted,
 }: {
   assetId: string;
   assetName: string;
   status: string;
   assetLabel: "rack" | "equipment";
+  onCompleted?: (message: string) => void;
 }) {
   const canUpdate = useHasPermission("managed_asset:update_lifecycle");
   const queryClient = useQueryClient();
@@ -21,14 +23,16 @@ export function LifecycleTransitionAction({
   const [completed, setCompleted] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
-  const completionRef = useRef<HTMLSpanElement>(null);
   const errorRef = useRef<HTMLSpanElement>(null);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const wasConfirming = useRef(false);
   const queryKey = [assetLabel === "rack" ? "racks" : "equipment"];
   const mutation = useMutation({
     mutationFn: () => transitionManagedAssetLifecycle(assetId, "installed"),
-    onSuccess: () => setCompleted(true),
+    onSuccess: () => {
+      setCompleted(true);
+      onCompleted?.(`${assetName} installation status saved.`);
+    },
     onSettled: (_data, error) => {
       if (!error) setConfirming(false);
       return queryClient.invalidateQueries({ queryKey });
@@ -37,9 +41,7 @@ export function LifecycleTransitionAction({
 
   useEffect(() => {
     if (completed) {
-      // Keep success focus ahead of the confirmation cleanup that follows onSettled.
       wasConfirming.current = false;
-      completionRef.current?.focus();
     } else if (status !== "planned" && mutation.isError) {
       wasConfirming.current = false;
       errorRef.current?.focus();
@@ -57,7 +59,7 @@ export function LifecycleTransitionAction({
   return (
     <span ref={wrapperRef} tabIndex={-1} data-testid="lifecycle-action" className="inline-flex flex-col items-start gap-1">
       {completed ? (
-        <span ref={completionRef} tabIndex={-1} role="status" className="text-xs text-green-300">Installation status saved.</span>
+        <span aria-hidden="true" className="text-xs text-green-300">Installation status saved.</span>
       ) : status !== "planned" ? null : !confirming ? (
         <button
           type="button"

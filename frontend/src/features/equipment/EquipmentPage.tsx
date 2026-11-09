@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
@@ -23,6 +23,8 @@ export function EquipmentPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
+  const lifecycleNoticeRef = useRef<HTMLParagraphElement>(null);
   const canImport = useHasPermission("equipment:import");
 
   const equipmentQuery = useQuery({
@@ -37,6 +39,10 @@ export function EquipmentPage() {
   const [modelName, setModelName] = useState("");
   const currentPageSize = equipmentQuery.data?.limit && equipmentQuery.data.limit > 0 ? equipmentQuery.data.limit : pageSize;
   const pageOutOfRange = Boolean(equipmentQuery.data && offset > 0 && offset >= equipmentQuery.data.total);
+
+  useEffect(() => {
+    if (lifecycleNotice) lifecycleNoticeRef.current?.focus();
+  }, [lifecycleNotice]);
 
   useEffect(() => {
     const page = equipmentQuery.data;
@@ -98,6 +104,8 @@ export function EquipmentPage() {
           </button>
         </div>
       </div>
+
+      {lifecycleNotice && <p ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice}</p>}
 
       {showBulkImport && (
         <BulkImportPanel
@@ -186,7 +194,7 @@ export function EquipmentPage() {
                   <td className={TD}>
                     <div className="flex flex-wrap items-center gap-2">
                       <LifecycleStatus value={eq.lifecycle_status} />
-                      <LifecycleTransitionAction assetId={eq.id} assetName={eq.hostname ?? eq.asset_tag} status={eq.lifecycle_status} assetLabel="equipment" />
+                    <LifecycleTransitionAction assetId={eq.id} assetName={eq.hostname ?? eq.asset_tag} status={eq.lifecycle_status} assetLabel="equipment" onCompleted={setLifecycleNotice} />
                     </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>
