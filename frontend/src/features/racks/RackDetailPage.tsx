@@ -75,7 +75,7 @@ export function RackDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <LifecycleStatus value={rack.lifecycle_status} />
-          <LifecycleTransitionAction assetId={rack.id} status={rack.lifecycle_status} assetLabel="rack" />
+          <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" />
         </div>
       </div>
 

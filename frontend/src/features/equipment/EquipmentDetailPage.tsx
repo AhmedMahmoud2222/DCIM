@@ -151,7 +151,7 @@ export function EquipmentDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <LifecycleStatus value={equipment.lifecycle_status} />
-          <LifecycleTransitionAction assetId={equipment.id} status={equipment.lifecycle_status} assetLabel="equipment" />
+          <LifecycleTransitionAction assetId={equipment.id} assetName={equipment.hostname ?? equipment.asset_tag} status={equipment.lifecycle_status} assetLabel="equipment" />
         </div>
       </div>
 
