@@ -53,6 +53,7 @@ BASELINE: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
     ('GET', '/api/v1/alarms/history'): ('permission', ('alarm:read',)),
     ('GET', '/api/v1/alarms/rules'): ('permission', ('alarm:read',)),
     ('POST', '/api/v1/alarms/rules'): ('permission', ('alarm:manage',)),
+    ('PATCH', '/api/v1/alarms/rules/{rule_id}'): ('permission', ('alarm:manage',)),
     ('POST', '/api/v1/alarms/rules/{rule_id}/disable'): ('permission', ('alarm:manage',)),
     ('POST', '/api/v1/alarms/rules/{rule_id}/resolve-unit'): ('permission', ('alarm:manage',)),
     ('POST', '/api/v1/alarms/{alarm_id}/acknowledge'): ('permission', ('alarm:manage',)),
