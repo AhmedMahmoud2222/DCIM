@@ -62,7 +62,7 @@ export function LifecycleTransitionAction({
   return (
     <span ref={wrapperRef} tabIndex={-1} data-testid="lifecycle-action" className="inline-flex flex-col items-start gap-1">
       {completed ? (
-        <span aria-hidden="true" className="text-xs text-green-300">Installation status saved.</span>
+        null
       ) : status !== "planned" ? null : !confirming ? (
         <button
           type="button"

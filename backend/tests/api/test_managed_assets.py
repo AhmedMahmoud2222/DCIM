@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.domain.audit.models import AuditLog
 from app.domain.identity.models import ManagedAsset
 from app.domain.outbox.models import OutboxEvent
+from tests.api._phase2_helpers import create_equipment, create_rack
 
 
 async def test_create_managed_asset(client, auth_headers):
@@ -93,13 +94,12 @@ async def test_lifecycle_transition_valid_path(client, auth_headers):
 @pytest.mark.parametrize("asset_type", ["rack", "equipment"])
 async def test_rack_and_equipment_planned_install_transition_contract(client, auth_headers, db_session, asset_type):
     manager = await auth_headers("Engineer")
-    created = await client.post(
-        "/api/v1/managed-assets",
-        json={"asset_type": asset_type, "asset_tag": f"{asset_type.upper()}-{uuid.uuid4().hex[:8]}"},
-        headers=manager,
-    )
-    assert created.status_code == 201
-    asset_id = created.json()["id"]
+    if asset_type == "rack":
+        created = await create_rack(client, manager, auth_headers)
+    else:
+        created = await create_equipment(client, manager, auth_headers)
+    asset_id = created["id"]
+    assert created["lifecycle_status"] == "planned"
 
     installed = await client.post(
         f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "installed"}, headers=manager

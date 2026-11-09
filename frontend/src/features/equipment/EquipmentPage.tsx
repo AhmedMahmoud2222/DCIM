@@ -190,7 +190,14 @@ export function EquipmentPage() {
                   <td className={TD}>
                     <div className="flex flex-wrap items-center gap-2">
                       <LifecycleStatus value={eq.lifecycle_status} />
-                    <LifecycleTransitionAction assetId={eq.id} assetName={eq.hostname ?? eq.asset_tag} status={eq.lifecycle_status} assetLabel="equipment" onCompleted={showNotice} onStarted={clearNotice} />
+                    <LifecycleTransitionAction
+                      assetId={eq.id}
+                      assetName={eq.hostname ?? eq.asset_tag}
+                      status={eq.lifecycle_status}
+                      assetLabel="equipment"
+                      onCompleted={showNotice}
+                      onStarted={clearNotice}
+                    />
                     </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>

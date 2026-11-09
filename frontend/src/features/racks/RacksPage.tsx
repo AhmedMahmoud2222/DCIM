@@ -215,7 +215,14 @@ export function RacksPage() {
                   <td className={TD}>
                     <div className="flex flex-wrap items-center gap-2">
                       <LifecycleStatus value={rack.lifecycle_status} />
-                      <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" onCompleted={showNotice} onStarted={clearNotice} />
+                      <LifecycleTransitionAction
+                        assetId={rack.id}
+                        assetName={rack.name}
+                        status={rack.lifecycle_status}
+                        assetLabel="rack"
+                        onCompleted={showNotice}
+                        onStarted={clearNotice}
+                      />
                     </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>
