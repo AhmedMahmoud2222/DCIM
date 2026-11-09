@@ -7,8 +7,10 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -26,14 +28,146 @@ from app.application.access_control import (
 from app.application.audit_service import write_audit_log
 from app.application.concurrency import lock_versioned_row, require_if_match
 from app.application.rbac import require_permission
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.domain.location.models import Building, City, Country, Floor, Organization, Room, Site
 
 router = APIRouter(tags=["locations"])
 
+_DEPENDENCY_LABELS = {
+    "rack_placement": "rack placements", "equipment_placement": "equipment placements",
+    "user_group_site_access": "site access grants", "floor_plan": "floor plans",
+}
+_LOCATION_AUDIT_FIELDS = {
+    "organization": ("id", "name"),
+    "country": ("id", "name", "organization_id", "iso_code"),
+    "city": ("id", "name", "country_id"),
+    "site": ("id", "code", "name", "city_id"),
+    "building": ("id", "code", "name", "site_id"),
+    "floor": ("id", "name", "building_id", "level_number"),
+    "room": ("id", "code", "name", "floor_id", "version"),
+}
+
 
 def _request_ids(request: Request) -> tuple[str | None, str | None]:
     return getattr(request.state, "request_id", None), getattr(request.state, "correlation_id", None)
+
+
+def _delete_conflict_message(
+    entity_name: str, dependencies: list[tuple[str, int | None]], *, include_counts: bool,
+) -> str:
+    if not include_counts:
+        return f"Cannot delete this {entity_name}: dependent records still reference it. " \
+            "Contact an administrator to remove the blockers."
+    detail = ", ".join(
+        f"{_DEPENDENCY_LABELS.get(table, table.replace('_', ' '))} ({count})" for table, count in dependencies
+    )
+    dependency_detail = f": {detail}" if detail else ""
+    return f"Cannot delete this {entity_name}: dependent records still reference it{dependency_detail}. " \
+        "Remove or move those records first."
+
+
+async def _audit_delete_conflict(
+    db: AsyncSession, *, actor_id: uuid.UUID, record_id: uuid.UUID, entity_name: str,
+    request_id: str | None, correlation_id: str | None, message: str,
+) -> None:
+    await write_audit_log(
+        db, actor_user_id=actor_id, action=f"location.{entity_name}.delete", entity_type=entity_name,
+        entity_id=record_id, request_id=request_id, correlation_id=correlation_id,
+        result="failure", reason=message,
+    )
+    await db.commit()
+
+
+async def _foreign_key_dependents(
+    db: AsyncSession, table_name: str, record_id: uuid.UUID, *, include_counts: bool,
+) -> list[tuple[str, int | None]]:
+    """Find actual database FK references so safe deletes account for every domain table.
+
+    The catalog lookup avoids relying on the ORM import order and includes inventory,
+    placements, plans, and operational records added by later modules.
+    """
+    refs = await db.execute(text("""
+        SELECT child_ns.nspname AS schema_name, child.relname AS table_name, child_att.attname AS column_name
+        FROM pg_constraint c
+        JOIN pg_class parent ON parent.oid = c.confrelid
+        JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+        JOIN pg_class child ON child.oid = c.conrelid
+        JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
+        JOIN unnest(c.conkey) WITH ORDINALITY child_key(attnum, ord) ON TRUE
+        JOIN unnest(c.confkey) WITH ORDINALITY parent_key(attnum, ord) USING (ord)
+        JOIN pg_attribute parent_att ON parent_att.attrelid = parent.oid AND parent_att.attnum = parent_key.attnum
+        JOIN pg_attribute child_att ON child_att.attrelid = child.oid AND child_att.attnum = child_key.attnum
+        -- Location tables are owned by the application schema and all target the id primary key.
+        WHERE c.contype = 'f' AND parent_ns.nspname = current_schema()
+          AND parent.relname = :table_name AND parent_att.attname = 'id' AND child.oid <> parent.oid
+        ORDER BY child_ns.nspname, child.relname, child_att.attname
+    """), {"table_name": table_name})
+    dependencies: list[tuple[str, int | None]] = []
+    for schema_name, child_table, child_column in refs:
+        def quote(value: str) -> str:
+            return '"' + value.replace('"', '""') + '"'
+
+        relation = f"{quote(schema_name)}.{quote(child_table)}"
+        condition = f"{quote(child_column)} = :record_id"
+        if include_counts:
+            count = await db.scalar(text(f"SELECT count(*) FROM {relation} WHERE {condition}"), {"record_id": record_id})
+            if count:
+                dependencies.append((child_table, int(count)))
+        elif await db.scalar(text(f"SELECT 1 FROM {relation} WHERE {condition} LIMIT 1"), {"record_id": record_id}):
+            dependencies.append((child_table, None))
+    return dependencies
+
+
+async def _delete_location(
+    db: AsyncSession, request: Request, ctx, model, record_id: uuid.UUID, entity_name: str, visible_clause,
+) -> Response:
+    actor_id = ctx.user.id
+    result = await db.execute(
+        select(model).where(model.id == record_id, visible_clause).with_for_update()
+    )
+    entity = result.scalar_one_or_none()
+    if entity is None:
+        raise NotFoundError(f"{entity_name.title()} {record_id} not found.")
+
+    request_id, correlation_id = _request_ids(request)
+    # Scoped location:manage grants are currently inactive in require_permission because
+    # hierarchy mutations are not safely filterable by site. Keep this scope-aware query
+    # and generic error path as defense in depth if that permission policy changes.
+    include_counts = ctx.scope.unrestricted
+    dependencies = await _foreign_key_dependents(
+        db, model.__tablename__, record_id, include_counts=include_counts,
+    )
+    if dependencies:
+        # Restricted users may learn that the in-scope parent has dependents, but
+        # never receive hidden table names or counts.
+        message = _delete_conflict_message(entity_name, dependencies, include_counts=include_counts)
+        await _audit_delete_conflict(
+            db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
+            request_id=request_id, correlation_id=correlation_id, message=message,
+        )
+        raise ConflictError(message)
+
+    before = {}
+    for key in _LOCATION_AUDIT_FIELDS[entity_name]:
+        value = getattr(entity, key)
+        before[key] = str(value) if isinstance(value, uuid.UUID) else value
+    try:
+        await db.delete(entity)
+        await db.flush()
+    except IntegrityError as error:
+        await db.rollback()
+        message = _delete_conflict_message(entity_name, [], include_counts=include_counts)
+        await _audit_delete_conflict(
+            db, actor_id=actor_id, record_id=record_id, entity_name=entity_name,
+            request_id=request_id, correlation_id=correlation_id, message=message,
+        )
+        raise ConflictError(message) from error
+    await write_audit_log(
+        db, actor_user_id=actor_id, action=f"location.{entity_name}.delete", entity_type=entity_name,
+        entity_id=record_id, request_id=request_id, correlation_id=correlation_id, before=before,
+    )
+    await db.commit()
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------- Organization
@@ -496,3 +630,66 @@ async def update_room(
     await db.commit()
     await db.refresh(room)
     return room
+
+
+# --------------------------------------------------------------- safe deletion
+
+
+@router.delete("/organizations/{organization_id}", status_code=204)
+async def delete_organization(
+    organization_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, Organization, organization_id, "organization",
+                                  organization_visible_clause(ctx.scope, Organization.id))
+
+
+@router.delete("/countries/{country_id}", status_code=204)
+async def delete_country(
+    country_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, Country, country_id, "country",
+                                  country_visible_clause(ctx.scope, Country.id))
+
+
+@router.delete("/cities/{city_id}", status_code=204)
+async def delete_city(
+    city_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, City, city_id, "city",
+                                  city_visible_clause(ctx.scope, City.id))
+
+
+@router.delete("/sites/{site_id}", status_code=204)
+async def delete_site(
+    site_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, Site, site_id, "site", site_visible_clause(ctx.scope, Site.id))
+
+
+@router.delete("/buildings/{building_id}", status_code=204)
+async def delete_building(
+    building_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, Building, building_id, "building",
+                                  site_visible_clause(ctx.scope, Building.site_id))
+
+
+@router.delete("/floors/{floor_id}", status_code=204)
+async def delete_floor(
+    floor_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, Floor, floor_id, "floor", floor_visible_clause(ctx.scope, Floor.id))
+
+
+@router.delete("/rooms/{room_id}", status_code=204)
+async def delete_room(
+    room_id: uuid.UUID, request: Request, db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("location:manage")),
+) -> Response:
+    return await _delete_location(db, request, ctx, Room, room_id, "room", room_visible_clause(ctx.scope, Room.id))

@@ -2,7 +2,11 @@ import re
 import uuid
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
 from app.api.pagination import MAX_LIMIT
+from app.domain.audit.models import AuditLog
 from tests.api.test_user_groups import _group, _group_user, _make_site
 
 
@@ -38,6 +42,119 @@ async def test_full_location_chain_creation_as_dcim_manager(client, auth_headers
     chain = await _create_full_chain(client, headers)
     assert chain["room"]["code"] == "DH03"
     assert chain["room"]["version"] == 1
+
+
+async def test_location_hierarchy_deletes_only_empty_records_bottom_up(client, auth_headers, db_session):
+    headers = await auth_headers("DCIM Manager")
+    chain = await _create_full_chain(client, headers)
+    routes = [
+        ("rooms", "room"), ("floors", "floor"), ("buildings", "building"), ("sites", "site"),
+        ("cities", "city"), ("countries", "country"), ("organizations", "organization"),
+    ]
+    for route, entity in routes:
+        response = await client.delete(f"/api/v1/{route}/{chain[entity]['id']}", headers=headers)
+        assert response.status_code == 204, response.text
+    audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
+    ))
+    failure_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
+        AuditLog.result == "failure",
+    ))
+    assert audit is not None and audit.result == "success" and audit.before["floor_id"] == chain["floor"]["id"]
+    assert failure_audit is None
+
+
+async def test_location_hierarchy_delete_reports_child_dependencies_and_checks_permission(client, auth_headers, db_session):
+    manager = await auth_headers("DCIM Manager")
+    viewer = await auth_headers("Viewer")
+    chain = await _create_full_chain(client, manager)
+    routes = [
+        ("organizations", "organization", "country"), ("countries", "country", "city"),
+        ("cities", "city", "site"), ("sites", "site", "building"),
+        ("buildings", "building", "floor"), ("floors", "floor", "room"),
+    ]
+    for route, entity, child_table in routes:
+        response = await client.delete(f"/api/v1/{route}/{chain[entity]['id']}", headers=manager)
+        assert response.status_code == 409, response.text
+        assert "dependent records still reference it" in response.json()["detail"]
+        assert child_table in response.json()["detail"]
+        failure_audit = await db_session.scalar(select(AuditLog).where(
+            AuditLog.action == f"location.{entity}.delete", AuditLog.entity_id == chain[entity]["id"],
+            AuditLog.result == "failure",
+        ))
+        assert failure_audit is not None
+
+    forbidden = await client.delete(f"/api/v1/rooms/{chain['room']['id']}", headers=viewer)
+    assert forbidden.status_code == 403
+
+
+async def test_site_delete_detects_non_location_foreign_key_dependents(client, auth_headers):
+    manager = await auth_headers("Administrator")
+    site = await _make_site(client, manager)
+    await _group(
+        client, manager, allow=["location:read"], sites=[{"site_id": site["site"], "rack_scope": "all"}],
+    )
+    response = await client.delete(f"/api/v1/sites/{site['site']}", headers=manager)
+    assert response.status_code == 409
+    assert "site access grants (1)" in response.json()["detail"]
+
+
+async def test_site_scoped_user_cannot_delete_locations(client, auth_headers):
+    admin = await auth_headers("Administrator")
+    chain = await _create_full_chain(client, admin)
+    group_id = await _group(
+        client, admin, allow=["location:read", "location:manage"],
+        sites=[{"site_id": chain["site"]["id"], "rack_scope": "all"}],
+    )
+    _user, scoped_headers = await _group_user(client, admin, [group_id])
+
+    # location:manage is inactive for site-scoped users because the hierarchy mutation
+    # endpoints are not safely filterable by site. Verify every route rejects the request
+    # and that an unrestricted reader still sees the target record afterwards.
+    routes = (
+        ("organizations", chain["organization"]["id"], f"/api/v1/organizations/{chain['organization']['id']}"),
+        ("countries", chain["country"]["id"], f"/api/v1/countries?organization_id={chain['organization']['id']}"),
+        ("cities", chain["city"]["id"], f"/api/v1/cities?country_id={chain['country']['id']}"),
+        ("sites", chain["site"]["id"], f"/api/v1/sites/{chain['site']['id']}"),
+        ("buildings", chain["building"]["id"], f"/api/v1/buildings?site_id={chain['site']['id']}"),
+        ("floors", chain["floor"]["id"], f"/api/v1/floors?building_id={chain['building']['id']}"),
+        ("rooms", chain["room"]["id"], f"/api/v1/rooms/{chain['room']['id']}"),
+    )
+    for route, record_id, read_path in routes:
+        denied = await client.delete(f"/api/v1/{route}/{record_id}", headers=scoped_headers)
+        assert denied.status_code == 403, denied.text
+        visible = await client.get(read_path, headers=admin)
+        assert visible.status_code == 200, visible.text
+        if "?" in read_path:
+            assert record_id in {item["id"] for item in visible.json()["items"]}
+        else:
+            assert visible.json()["id"] == record_id
+
+
+async def test_integrity_error_delete_fallback_rolls_back_then_audits(client, auth_headers, db_session, monkeypatch):
+    manager = await auth_headers("DCIM Manager")
+    chain = await _create_full_chain(client, manager)
+    original_flush = db_session.flush
+    fail_once = True
+
+    async def fail_first_delete_flush(*args, **kwargs):
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise IntegrityError("DELETE", {}, RuntimeError("forced FK race"))
+        return await original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "flush", fail_first_delete_flush)
+    response = await client.delete(f"/api/v1/rooms/{chain['room']['id']}", headers=manager)
+    assert response.status_code == 409
+    assert "dependent records still reference it" in response.json()["detail"]
+    assert response.json()["detail"].endswith("still reference it. Remove or move those records first.")
+    failure_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
+        AuditLog.result == "failure",
+    ))
+    assert failure_audit is not None
 
 
 async def test_viewer_cannot_create_locations(client, auth_headers):
