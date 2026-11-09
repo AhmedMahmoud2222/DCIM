@@ -140,7 +140,7 @@ async def create_alarm_rule(
     if definition is None:
         from app.core.errors import ApiError
         raise ApiError(status_code=422, title="Invalid alarm metric", detail="Metric is not in the active registry.")
-    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit,
+    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit, enabled=True,
                      **body.model_dump())
     db.add(rule)
     await db.flush()
@@ -152,14 +152,33 @@ async def create_alarm_rule(
         entity_id=rule.id,
         request_id=None,
         correlation_id=None,
-        after={"integration_id": str(rule.integration_id), "metric": rule.metric},
+        after={
+            "integration_id": str(rule.integration_id),
+            "metric": rule.metric,
+            "rule_type": rule.rule_type,
+            "threshold": str(rule.threshold) if rule.threshold is not None else None,
+            "unit": rule.unit,
+            "name": rule.name,
+            "registry_version": rule.registry_version,
+            "enabled": rule.enabled,
+        },
     )
     await write_outbox_event(
         db,
         event_type="AlarmRuleCreated",
         aggregate_type="alarm_rule",
         aggregate_id=rule.id,
-        payload={"rule_id": str(rule.id), "integration_id": str(rule.integration_id)},
+        payload={
+            "rule_id": str(rule.id),
+            "integration_id": str(rule.integration_id),
+            "metric": rule.metric,
+            "rule_type": rule.rule_type,
+            "threshold": str(rule.threshold) if rule.threshold is not None else None,
+            "unit": rule.unit,
+            "name": rule.name,
+            "registry_version": rule.registry_version,
+            "enabled": rule.enabled,
+        },
     )
     await db.commit()
     return {"id": rule.id}

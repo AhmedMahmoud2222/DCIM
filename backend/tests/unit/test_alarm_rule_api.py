@@ -67,8 +67,10 @@ async def test_rule_routes_require_permission(method, path):
 
 
 async def test_create_rule_is_available_to_managers(monkeypatch):
-    monkeypatch.setattr("app.api.v1.alarms.write_audit_log", AsyncMock())
-    monkeypatch.setattr("app.api.v1.alarms.write_outbox_event", AsyncMock())
+    audit = AsyncMock()
+    outbox = AsyncMock()
+    monkeypatch.setattr("app.api.v1.alarms.write_audit_log", audit)
+    monkeypatch.setattr("app.api.v1.alarms.write_outbox_event", outbox)
     response, db = await request(
         "POST", "/alarms/rules",
         body={"integration_id": str(uuid.uuid4()), "metric": "power_kw", "rule_type": "threshold_high", "threshold": 7, "name": "PDU load"},
@@ -76,6 +78,16 @@ async def test_create_rule_is_available_to_managers(monkeypatch):
     assert response.status_code == 201
     assert db.add.call_args.args[0].name == "PDU load"
     assert db.add.call_args.args[0].unit == "kW"
+    rule = db.add.call_args.args[0]
+    expected_config = {
+        "integration_id": str(rule.integration_id), "metric": "power_kw", "rule_type": "threshold_high",
+        "threshold": "7", "unit": "kW", "name": "PDU load", "registry_version": rule.registry_version,
+        "enabled": True,
+    }
+    audit.assert_awaited_once()
+    assert audit.await_args.kwargs["after"] == expected_config
+    outbox.assert_awaited_once()
+    assert outbox.await_args.kwargs["payload"] == {"rule_id": str(rule.id), **expected_config}
     db.commit.assert_awaited_once()
 
 
