@@ -22,7 +22,7 @@ const asset = (overrides: Record<string, unknown>) =>
     ...overrides,
   }) as unknown as Equipment;
 
-const page = (items: Equipment[], total = items.length): Page<Equipment> => ({ items, total, limit: 200, offset: 0 });
+const page = (items: Equipment[], total = items.length, offset = 0, limit = 200): Page<Equipment> => ({ items, total, limit, offset });
 
 const rackedAt = (rack_id: string, u_start: number, u_end: number, side: string) => ({
   placement_type: "rack_mounted",
@@ -33,6 +33,7 @@ const rackedAt = (rack_id: string, u_start: number, u_end: number, side: string)
 });
 
 beforeEach(() => {
+  vi.mocked(equipmentApi.listEquipment).mockReset();
   vi.mocked(racksApi.listRacks).mockResolvedValue({
     items: [{ id: "r1", name: "Rack A1" } as unknown as Rack],
     total: 1,
@@ -110,9 +111,84 @@ describe("Equipment table", () => {
     expect(await screen.findByTestId("row-count")).toHaveTextContent("1 equipment");
     unmount();
 
-    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(page([asset({})], 340));
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}` })), 340));
     renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
-    expect(await screen.findByTestId("row-count")).toHaveTextContent("Showing 1 of 340 equipment. The remaining 339 are not listed here.");
+    expect(await screen.findByTestId("row-count")).toHaveTextContent("Showing 1-200 of 340 equipment");
+    expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled();
+  });
+
+  it("loads the next equipment page and provides a way back", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValue(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 201))
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 201))
+      .mockResolvedValueOnce(page([asset({ id: "e200", hostname: "last-device" })], 201, 200));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await screen.findByRole("button", { name: "Next page" });
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 201-201 of 201 equipment");
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 200);
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByRole("link", { name: "device-0" })).toBeInTheDocument();
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 1-200 of 201 equipment");
+  });
+
+  it("recovers to the last valid page when the total shrinks", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValue(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 200))
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 201))
+      .mockResolvedValueOnce(page([], 200, 200))
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 200));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    let refreshStatusWasAdded = false;
+    let emptyStateWasAdded = false;
+    const observer = new MutationObserver((records) => {
+      for (const node of records.flatMap((record) => Array.from(record.addedNodes))) {
+        const text = node.textContent ?? "";
+        if (text.includes("Refreshing the equipment list")) refreshStatusWasAdded = true;
+        if (text.includes("No equipment yet.")) emptyStateWasAdded = true;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(refreshStatusWasAdded).toBe(true));
+    observer.disconnect();
+    expect(emptyStateWasAdded).toBe(false);
+    await waitFor(() => expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 0));
+    expect(await screen.findByRole("link", { name: "device-0" })).toBeInTheDocument();
+    expect(screen.queryByText("No equipment yet.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 1-200 of 200 equipment");
+  });
+
+  it("uses the server-returned page size for subsequent offsets", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValueOnce(page(Array.from({ length: 50 }, (_, i) => asset({ id: `e${i}` })), 51, 0, 50))
+      .mockResolvedValueOnce(page([asset({ id: "e50", hostname: "last-device" })], 51, 50, 50));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(50, 50);
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 51-51 of 51 equipment");
+  });
+
+  it("uses the default size if a response has an invalid zero limit", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}` })), 201, 0, 0))
+      .mockResolvedValueOnce(page([asset({ id: "e200", hostname: "last-device" })], 201, 200));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 200);
   });
 
   it("shows the empty state inside the table, not a blank page", async () => {

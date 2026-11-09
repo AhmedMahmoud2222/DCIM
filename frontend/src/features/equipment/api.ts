@@ -11,7 +11,8 @@ import {
   Side,
 } from "@/types";
 
-export const listEquipment = () => apiFetch<Page<Equipment>>("/equipment?limit=200");
+export const listEquipment = (limit = 200, offset = 0) =>
+  apiFetch<Page<Equipment>>(`/equipment?limit=${limit}&offset=${offset}`);
 export const getEquipment = (id: string) => apiFetch<Equipment>(`/equipment/${id}`);
 export const listEquipmentModels = () => apiFetch<Page<EquipmentModel>>("/equipment-models?limit=200");
 export const listEquipmentModelRevisions = (equipmentModelId: string) =>

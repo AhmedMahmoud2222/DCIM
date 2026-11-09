@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { DataTable, EmptyRow, RowCount, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
+import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
@@ -14,19 +14,39 @@ import {
 import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
+const EQUIPMENT_PAGE_SIZE = 200;
+
 export function EquipmentPage() {
+  const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState(EQUIPMENT_PAGE_SIZE);
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const canImport = useHasPermission("equipment:import");
 
-  const equipmentQuery = useQuery({ queryKey: ["equipment"], queryFn: listEquipment });
+  const equipmentQuery = useQuery({
+    queryKey: ["equipment", offset],
+    queryFn: () => listEquipment(pageSize, offset),
+  });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
 
   const [assetTag, setAssetTag] = useState("");
   const [hostname, setHostname] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [modelName, setModelName] = useState("");
+  const currentPageSize = equipmentQuery.data?.limit && equipmentQuery.data.limit > 0 ? equipmentQuery.data.limit : pageSize;
+  const pageOutOfRange = Boolean(equipmentQuery.data && offset > 0 && offset >= equipmentQuery.data.total);
+
+  useEffect(() => {
+    const page = equipmentQuery.data;
+    if (page && page.limit > 0 && page.limit !== pageSize) {
+      setPageSize(page.limit);
+    }
+    if (page && offset > 0 && offset >= page.total) {
+      const size = page.limit > 0 ? page.limit : pageSize;
+      setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / size) * size);
+    }
+  }, [equipmentQuery.data, offset, pageSize]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -133,9 +153,17 @@ export function EquipmentPage() {
         <TableError error={equipmentQuery.error} what="the equipment list" permission="equipment:read" onRetry={() => equipmentQuery.refetch()} />
       )}
 
-      {equipmentQuery.data && (
+      {equipmentQuery.data && pageOutOfRange && (
+        <p role="status" className="text-sm text-fg-secondary">Refreshing the equipment list…</p>
+      )}
+
+      {equipmentQuery.data && !pageOutOfRange && (
         <>
-          <RowCount shown={equipmentQuery.data.items.length} total={equipmentQuery.data.total} noun="equipment" />
+          <p className="mb-2 text-xs text-fg-secondary" data-testid="row-count">
+            {equipmentQuery.data.total === 0
+              ? "0 equipment"
+              : `Showing ${offset + 1}-${offset + equipmentQuery.data.items.length} of ${equipmentQuery.data.total} equipment`}
+          </p>
           <DataTable label="Equipment">
             <thead>
               <tr className="border-b border-line-subtle bg-surface-panel">
@@ -179,6 +207,29 @@ export function EquipmentPage() {
               {equipmentQuery.data.items.length === 0 && <EmptyRow columns={4}>No equipment yet.</EmptyRow>}
             </tbody>
           </DataTable>
+          {equipmentQuery.data.total > currentPageSize && (
+            <nav aria-label="Equipment pages" className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOffset((current) => Math.max(0, current - currentPageSize))}
+                disabled={offset === 0 || equipmentQuery.isFetching}
+                className="rounded-sm border border-line-subtle px-3 py-1.5 text-sm text-fg-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous page
+              </button>
+              <span className="text-xs text-fg-secondary" aria-live="polite">
+                Page {Math.floor(offset / currentPageSize) + 1} of {Math.ceil(equipmentQuery.data.total / currentPageSize)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setOffset((current) => current + currentPageSize)}
+                disabled={offset + currentPageSize >= equipmentQuery.data.total || equipmentQuery.isFetching}
+                className="rounded-sm border border-line-subtle px-3 py-1.5 text-sm text-fg-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next page
+              </button>
+            </nav>
+          )}
         </>
       )}
     </div>
