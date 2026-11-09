@@ -11,8 +11,8 @@ vi.mock("@/lib/apiClient", async (importOriginal) => {
 describe("managed asset lifecycle transition API", () => {
   beforeEach(() => vi.mocked(client.apiFetch).mockReset());
 
-  it.each(["rack", "equipment"] as const)("uses the audited lifecycle endpoint for a %s", async (assetType) => {
-    const assetId = assetType === "rack" ? "rack-1" : "equipment-1";
+  it("uses the audited lifecycle endpoint for the managed asset ID", async () => {
+    const assetId = "asset-1";
     await transitionManagedAssetLifecycle(assetId, "installed");
     expect(client.apiFetch).toHaveBeenCalledWith(`/managed-assets/${assetId}/lifecycle-transition`, {
       method: "POST",

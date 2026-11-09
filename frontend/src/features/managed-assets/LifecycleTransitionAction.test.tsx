@@ -41,7 +41,7 @@ describe("LifecycleTransitionAction", () => {
     expect(screen.queryByRole("button", { name: "Mark installed: Rack 01" })).not.toBeInTheDocument();
   });
 
-  it("offers only the next valid transition from planned", () => {
+  it("hides the transition for non-planned assets", () => {
     renderWithProviders(<LifecycleTransitionAction assetId="rack-1" assetName="Rack 01" status="active" assetLabel="rack" />, { user: LIFECYCLE_MANAGER });
     expect(screen.queryByRole("button", { name: "Mark installed: Rack 01" })).not.toBeInTheDocument();
   });
@@ -57,5 +57,22 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: "Confirm install server-01" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Cannot transition from 'installed' to 'installed'.");
     await waitFor(() => expect(queryClient.getQueryState(["equipment"])?.isInvalidated).toBe(true));
+  });
+
+  it("clears a failed transition message on cancel and restores focus", async () => {
+    vi.mocked(api.transitionManagedAssetLifecycle).mockRejectedValue(new Error("Transition conflict"));
+    renderWithProviders(
+      <LifecycleTransitionAction assetId="equipment-1" assetName="server-01" status="planned" assetLabel="equipment" />,
+      { user: LIFECYCLE_MANAGER },
+    );
+    const trigger = screen.getByRole("button", { name: "Mark installed: server-01" });
+    await userEvent.click(trigger);
+    const confirm = screen.getByRole("button", { name: "Confirm install server-01" });
+    expect(confirm).toHaveFocus();
+    await userEvent.click(confirm);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Transition conflict");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark installed: server-01" })).toHaveFocus();
   });
 });

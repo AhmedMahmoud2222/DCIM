@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { transitionManagedAssetLifecycle } from "@/features/managed-assets/api";
@@ -18,14 +18,27 @@ export function LifecycleTransitionAction({
   const canUpdate = useHasPermission("managed_asset:update_lifecycle");
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
   const queryKey = [assetLabel === "rack" ? "racks" : "equipment"];
   const mutation = useMutation({
     mutationFn: () => transitionManagedAssetLifecycle(assetId, "installed"),
-    onSettled: () => {
-      setConfirming(false);
+    onSettled: (_data, error) => {
+      if (!error) setConfirming(false);
       return queryClient.invalidateQueries({ queryKey });
     },
   });
+
+  useEffect(() => {
+    if (confirming) {
+      wasConfirming.current = true;
+      confirmRef.current?.focus();
+    } else if (wasConfirming.current) {
+      wasConfirming.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [confirming]);
 
   if (!canUpdate || status !== "planned") return null;
 
@@ -34,7 +47,11 @@ export function LifecycleTransitionAction({
       {!confirming ? (
         <button
           type="button"
-          onClick={() => setConfirming(true)}
+          ref={triggerRef}
+          onClick={() => {
+            mutation.reset();
+            setConfirming(true);
+          }}
           aria-label={`Mark installed: ${assetName}`}
           className="rounded-sm border border-line-subtle px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover"
         >
@@ -44,10 +61,13 @@ export function LifecycleTransitionAction({
         <span className="inline-flex flex-col gap-1">
           <span role="status" className="text-xs text-amber-300">Installation cannot be changed back to planned.</span>
           <span className="flex gap-1">
-            <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending} className="rounded-sm bg-blue-700 px-2 py-1 text-xs text-white disabled:opacity-50">
+            <button ref={confirmRef} type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending} className="rounded-sm bg-blue-700 px-2 py-1 text-xs text-white disabled:opacity-50">
               {mutation.isPending ? "Saving…" : `Confirm install ${assetName}`}
             </button>
-            <button type="button" onClick={() => setConfirming(false)} disabled={mutation.isPending} className="rounded-sm border border-line-subtle px-2 py-1 text-xs text-fg-primary disabled:opacity-50">
+            <button type="button" onClick={() => {
+              mutation.reset();
+              setConfirming(false);
+            }} disabled={mutation.isPending} className="rounded-sm border border-line-subtle px-2 py-1 text-xs text-fg-primary disabled:opacity-50">
               Cancel
             </button>
           </span>
