@@ -12,7 +12,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status
+from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status, update_rule
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -47,6 +47,18 @@ class AlarmRuleUpdateIn(BaseModel):
 
 class AlarmRuleResolveIn(AlarmRuleUpdateIn):
     unit: str = Field(min_length=1, max_length=32)
+
+
+class AlarmRuleEditIn(AlarmRuleUpdateIn):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    threshold: float | None = None
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("A nonblank name is required.")
+        return value.strip() if value is not None else None
 
 
 class AlarmRuleOut(BaseModel):
@@ -194,6 +206,23 @@ async def disable_alarm_rule(
     rule = await _locked_rule(db, rule_id)
     await disable_rule(db, rule=rule, reason=body.reason, expected_updated_at=body.expected_updated_at,
                        actor_user_id=ctx.user.id)
+    result = _rule_out(rule)
+    await db.commit()
+    return result
+
+
+@router.patch("/rules/{rule_id}", response_model=AlarmRuleOut)
+async def update_alarm_rule(
+    rule_id: uuid.UUID, body: AlarmRuleEditIn,
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:manage")),
+) -> AlarmRuleOut:
+    rule = await _locked_rule(db, rule_id)
+    await update_rule(
+        db, rule=rule, name=body.name,
+        threshold=Decimal(str(body.threshold)) if body.threshold is not None else None,
+        threshold_set="threshold" in body.model_fields_set,
+        reason=body.reason, expected_updated_at=body.expected_updated_at, actor_user_id=ctx.user.id,
+    )
     result = _rule_out(rule)
     await db.commit()
     return result

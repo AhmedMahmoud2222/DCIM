@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AlarmRulesPage } from "@/features/telemetry/AlarmRulesPage";
 import * as alarmRules from "@/features/telemetry/alarmRulesApi";
+import * as integrations from "@/features/integrations/api";
 import { ApiError } from "@/lib/apiClient";
 import { renderWithProviders } from "@/test/renderWithProviders";
 
 vi.mock("@/features/telemetry/alarmRulesApi");
+vi.mock("@/features/integrations/api");
 
 const MANAGER = {
   id: "u1", email: "m@example.com", full_name: "M", role_names: ["DCIM Manager"],
@@ -27,9 +29,44 @@ const resolvedRule: alarmRules.AlarmRule = { ...baseRule, id: "r-2", name: "Rack
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([baseRule]);
+  vi.mocked(integrations.listIntegrations).mockResolvedValue([
+    { id: "i-1", name: "Power monitoring", integration_type: "snmp", site_id: null, target_host: "host", target_port: null,
+      config: {}, enabled: true, poll_interval_seconds: 60, last_poll_at: null, last_success_at: null, last_failure_at: null,
+      consecutive_failures: 0, has_credential: false, assigned_collector_id: null, version: 1 },
+  ]);
 });
 
 describe("AlarmRulesPage", () => {
+  it("creates a threshold rule against a selected integration", async () => {
+    vi.mocked(alarmRules.createAlarmRule).mockResolvedValue({ id: "new-rule" });
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Add alarm rule" }));
+    await userEvent.type(await screen.findByLabelText("Rule name"), "Room temperature high");
+    await userEvent.selectOptions(screen.getByLabelText("Integration"), "i-1");
+    await userEvent.selectOptions(screen.getByLabelText("Metric"), "temperature_c");
+    await userEvent.type(screen.getByLabelText("Threshold"), "30");
+    await userEvent.click(screen.getByRole("button", { name: "Save rule" }));
+
+    await waitFor(() => expect(alarmRules.createAlarmRule).toHaveBeenCalledWith({
+      integration_id: "i-1", metric: "temperature_c", rule_type: "threshold_high", threshold: 30, name: "Room temperature high",
+    }));
+  });
+
+  it("edits a rule's threshold with the current timestamp and reason", async () => {
+    vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([resolvedRule]);
+    vi.mocked(alarmRules.editAlarmRule).mockResolvedValue({ ...resolvedRule, threshold: 9 });
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Edit rule" }));
+    await userEvent.clear(screen.getByLabelText("Threshold"));
+    await userEvent.type(screen.getByLabelText("Threshold"), "9");
+    await userEvent.type(screen.getByLabelText("Reason for change"), "Revised operating limit");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(alarmRules.editAlarmRule).toHaveBeenCalledWith("r-2", {
+      name: "Rack-B limit", threshold: 9, reason: "Revised operating limit", expected_updated_at: "2026-10-08T10:00:00Z",
+    }));
+  });
+
   it("lists rules needing attention and shows the blocked reason", async () => {
     renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
     // The name renders in both the list row and the detail heading — assert on the list row.

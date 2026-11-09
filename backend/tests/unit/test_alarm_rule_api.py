@@ -55,6 +55,8 @@ async def test_attention_list_exposes_unresolved_contract_and_timestamp():
 
 
 @pytest.mark.parametrize("method,path", [("GET", "/alarms/rules"),
+                                          ("POST", "/alarms/rules"),
+                                          ("PATCH", f"/alarms/rules/{uuid.uuid4()}"),
                                           ("POST", f"/alarms/rules/{uuid.uuid4()}/resolve-unit"),
                                           ("POST", f"/alarms/rules/{uuid.uuid4()}/disable")])
 async def test_rule_routes_require_permission(method, path):
@@ -62,6 +64,34 @@ async def test_rule_routes_require_permission(method, path):
                                  body={"unit": "W", "reason": "Evidence", "expected_updated_at": datetime.now(UTC).isoformat()})
     assert response.status_code == 403
     db.execute.assert_not_awaited()
+
+
+async def test_create_rule_is_available_to_managers(monkeypatch):
+    monkeypatch.setattr("app.api.v1.alarms.write_audit_log", AsyncMock())
+    monkeypatch.setattr("app.api.v1.alarms.write_outbox_event", AsyncMock())
+    response, db = await request(
+        "POST", "/alarms/rules",
+        body={"integration_id": str(uuid.uuid4()), "metric": "power_kw", "rule_type": "threshold_high", "threshold": 7, "name": "PDU load"},
+    )
+    assert response.status_code == 201
+    assert db.add.call_args.args[0].name == "PDU load"
+    assert db.add.call_args.args[0].unit == "kW"
+    db.commit.assert_awaited_once()
+
+
+async def test_edit_rule_updates_name_and_threshold_with_audit(monkeypatch):
+    row = legacy_rule()
+    row.unit = "kW"
+    row.registry_version = "1"
+    monkeypatch.setattr("app.application.alarm_service._record_rule_transition", AsyncMock())
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"name": "PDU load high", "threshold": 8.5, "reason": "Updated operating limit", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert response.status_code == 200
+    assert row.name == "PDU load high" and row.threshold == 8.5
+    assert response.json()["unit"] == "kW"
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.parametrize("operation", ["resolve-unit", "disable"])

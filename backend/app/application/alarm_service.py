@@ -20,7 +20,7 @@ from app.core.logging import get_logger
 from app.domain.alarm.models import Alarm, AlarmRule
 from app.domain.integration.models import CollectorAssignment
 from app.domain.telemetry.models import TelemetryReading
-from app.domain.telemetry.registry import convert_value, validate_metric_unit
+from app.domain.telemetry.registry import convert_value, validate_metric_rule, validate_metric_unit
 
 logger = get_logger(__name__)
 BATCH_ALARM_RULE_IDS = "g8_batch_alarm_rule_ids"
@@ -319,6 +319,48 @@ async def disable_rule(
     await _record_rule_transition(
         db, rule, "alarm.rule.disable", "AlarmRuleDisabled", actor_user_id,
         before={"enabled": True}, after={"enabled": False}, reason=reason.strip(),
+    )
+    return rule
+
+
+async def update_rule(
+    db: AsyncSession, *, rule: AlarmRule, name: str | None, threshold: Decimal | None,
+    threshold_set: bool, reason: str, expected_updated_at: datetime, actor_user_id: uuid.UUID,
+) -> AlarmRule:
+    """Edit an alarm rule's label or threshold without replaying historical readings."""
+    _validate_rule_update(rule, reason, expected_updated_at)
+    if name is None and not threshold_set:
+        raise ApiError(status_code=422, title="No rule changes", detail="Provide a name or threshold to update.")
+
+    before: dict = {}
+    after: dict = {}
+    if name is not None and name != rule.name:
+        before["name"] = rule.name
+        rule.name = after["name"] = name
+    if threshold_set:
+        if rule.rule_type == "availability_unavailable" and threshold is None:
+            pass
+        elif rule.unit is None:
+            raise ConflictError("Resolve this rule's threshold unit before editing its threshold.")
+        elif threshold is None:
+            raise ApiError(status_code=422, title="Invalid threshold", detail="A threshold is required for this rule type.")
+        else:
+            version = rule.registry_version or "1"
+            try:
+                validate_metric_rule(rule.metric, rule.rule_type, threshold, rule.unit, registry_version=version)
+            except ValueError as error:
+                raise ApiError(status_code=422, title="Invalid alarm semantics", detail=str(error)) from error
+            if threshold != rule.threshold:
+                before["threshold"] = str(rule.threshold) if rule.threshold is not None else None
+                rule.threshold = threshold
+                after["threshold"] = str(threshold)
+    if not after:
+        raise ApiError(status_code=422, title="No rule changes", detail="The submitted values match the current rule.")
+
+    rule.updated_at = datetime.now(UTC)
+    await _record_rule_transition(
+        db, rule, "alarm.rule.update", "AlarmRuleUpdated", actor_user_id,
+        before=before, after=after, reason=reason.strip(),
     )
     return rule
 
