@@ -52,6 +52,22 @@ describe("AlarmRulesPage", () => {
     }));
   });
 
+  it("prevents duplicate rule submissions while the create request is pending", async () => {
+    let finishCreate!: (value: { id: string }) => void;
+    vi.mocked(alarmRules.createAlarmRule).mockReturnValue(new Promise((resolve) => { finishCreate = resolve; }));
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Add alarm rule" }));
+    await userEvent.type(await screen.findByLabelText("Rule name"), "Room temperature high");
+    await userEvent.type(screen.getByLabelText("Threshold"), "30");
+    const save = screen.getByRole("button", { name: "Save rule" });
+    expect(screen.getByLabelText("Threshold")).toHaveAttribute("max", "9999999999.99999999");
+    await userEvent.click(save);
+    expect(save).toBeDisabled();
+    await userEvent.click(save);
+    expect(alarmRules.createAlarmRule).toHaveBeenCalledTimes(1);
+    finishCreate({ id: "new-rule" });
+  });
+
   it("resets availability to a threshold-compatible metric when the condition changes", async () => {
     vi.mocked(alarmRules.createAlarmRule).mockResolvedValue({ id: "new-rule" });
     renderWithProviders(<AlarmRulesPage />, { user: MANAGER });

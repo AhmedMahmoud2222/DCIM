@@ -29,7 +29,9 @@ class AlarmRuleIn(BaseModel):
     integration_id: uuid.UUID
     metric: str = Field(max_length=64)
     rule_type: str
-    threshold: float | None = None
+    threshold: Decimal | None = Field(
+        default=None, allow_inf_nan=False, ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
+    )
     name: str = Field(max_length=128)
 
 
@@ -51,7 +53,9 @@ class AlarmRuleResolveIn(AlarmRuleUpdateIn):
 
 class AlarmRuleEditIn(AlarmRuleUpdateIn):
     name: str | None = Field(default=None, min_length=1, max_length=128)
-    threshold: float | None = None
+    threshold: Decimal | None = Field(
+        default=None, allow_inf_nan=False, ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
+    )
 
     @field_validator("name")
     @classmethod

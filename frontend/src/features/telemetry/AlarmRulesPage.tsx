@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   AlarmRule,
@@ -204,14 +204,19 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
   const [metric, setMetric] = useState("power_kw");
   const [ruleType, setRuleType] = useState("threshold_high");
   const [threshold, setThreshold] = useState("");
+  const submitting = useRef(false);
   const mutation = useMutation({ mutationFn: (input: CreateAlarmRuleInput) => createAlarmRule(input), onSuccess: (result) => onCreated(result.id) });
   const selectedMetric = METRICS.find((item) => item.key === metric);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     mutation.mutate({
       name: name.trim(), integration_id: integrationId, metric, rule_type: ruleType,
       threshold: ruleType === "availability_unavailable" ? null : Number(threshold),
+    }, {
+      onSettled: () => { submitting.current = false; },
     });
   }
 
@@ -236,7 +241,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
           }} className={field}>
             <option value="threshold_high">Above threshold</option><option value="threshold_low">Below threshold</option><option value="availability_unavailable">Unavailable</option>
           </select></label>
-          {ruleType !== "availability_unavailable" && <label className="text-xs text-slate-400">Threshold ({selectedMetric?.unit})<input aria-label="Threshold" type="number" step="any" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className={field} /></label>}
+          {ruleType !== "availability_unavailable" && <label className="text-xs text-slate-400">Threshold ({selectedMetric?.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className={field} /></label>}
           {mutation.isError && <p role="alert" className="text-sm text-red-400 md:col-span-2">{errorText(mutation.error)}</p>}
           <div className="flex gap-2 md:col-span-2">
             <button type="submit" disabled={mutation.isPending || !integrationId || (ruleType !== "availability_unavailable" && threshold === "")} className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">{mutation.isPending ? "Saving…" : "Save rule"}</button>
@@ -269,7 +274,7 @@ function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: (
       {!rule.enabled && <p role="status" className="text-sm text-amber-300">This rule is disabled. Editing it will not re-enable it.</p>}
       <label className="block text-xs text-slate-400">Rule name<input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
       {rule.rule_type !== "availability_unavailable" && rule.unit !== null ? (
-        <label className="block text-xs text-slate-400">Threshold ({rule.unit})<input aria-label="Threshold" type="number" step="any" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
+        <label className="block text-xs text-slate-400">Threshold ({rule.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
       ) : rule.unit === null && <p className="text-sm text-amber-300">Resolve the threshold unit before editing this legacy rule's threshold.</p>}
       <label className="block text-xs text-slate-400">Reason for change<textarea required maxLength={2048} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
       {mutation.isError && <p role="alert" className="text-sm text-red-400">{errorText(mutation.error)}</p>}

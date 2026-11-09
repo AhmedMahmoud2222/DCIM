@@ -79,6 +79,31 @@ async def test_create_rule_is_available_to_managers(monkeypatch):
     db.commit.assert_awaited_once()
 
 
+@pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000"])
+async def test_create_rule_rejects_nonfinite_or_out_of_range_thresholds(threshold):
+    response, db = await request(
+        "POST", "/alarms/rules",
+        body={"integration_id": str(uuid.uuid4()), "metric": "custom_metric", "rule_type": "threshold_high", "threshold": threshold, "name": "Invalid threshold"},
+    )
+    assert response.status_code == 422
+    db.add.assert_not_called()
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("threshold", ["NaN", "Infinity", "-Infinity", "10000000000"])
+async def test_edit_rule_rejects_nonfinite_or_out_of_range_thresholds(threshold):
+    row = legacy_rule()
+    row.unit = "kW"
+    row.registry_version = "1"
+    response, db = await request(
+        "PATCH", f"/alarms/rules/{row.id}", row=row,
+        body={"threshold": threshold, "reason": "Invalid threshold", "expected_updated_at": row.updated_at.isoformat()},
+    )
+    assert response.status_code == 422
+    assert row.threshold == 1500
+    db.execute.assert_not_awaited()
+
+
 async def test_edit_rule_updates_name_and_threshold_with_audit(monkeypatch):
     row = legacy_rule()
     row.unit = "kW"
