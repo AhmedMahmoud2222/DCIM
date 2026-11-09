@@ -11,7 +11,7 @@ vi.mock("@/features/auth/useAuth");
 describe("LoginPage accessibility", () => {
   it("associates labels and announces a failed keyboard submission", async () => {
     const login = vi.fn().mockRejectedValue(new Error("invalid"));
-    vi.mocked(auth.useAuth).mockReturnValue({ login, accessToken: null, user: null, isAuthenticated: false, logout: vi.fn() });
+    vi.mocked(auth.useAuth).mockReturnValue({ login, accessToken: null, user: null, isAuthenticated: false, isInitialized: true, logout: vi.fn() });
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
 
