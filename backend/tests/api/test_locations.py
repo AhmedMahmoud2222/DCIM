@@ -100,7 +100,7 @@ async def test_site_delete_detects_non_location_foreign_key_dependents(client, a
     assert "site access grants (1)" in response.json()["detail"]
 
 
-async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_ids(client, auth_headers, db_session):
+async def test_site_scoped_user_cannot_delete_locations(client, auth_headers):
     admin = await auth_headers("Administrator")
     site = await _make_site(client, admin)
     group_id = await _group(
@@ -109,117 +109,10 @@ async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_
     )
     _user, scoped_headers = await _group_user(client, admin, [group_id])
 
-    deleted_room = await client.delete(f"/api/v1/rooms/{site['room']}", headers=scoped_headers)
-    assert deleted_room.status_code == 204
-    success_audit = await db_session.scalar(select(AuditLog).where(
-        AuditLog.action == "location.room.delete", AuditLog.entity_id == site["room"],
-        AuditLog.result == "success",
-    ))
-    assert success_audit is not None
-    for route, entity_name, record_id in (
-        ("floors", "floor", site["floor"]), ("buildings", "building", site["building"]),
-    ):
-        scoped_delete = await client.delete(f"/api/v1/{route}/{record_id}", headers=scoped_headers)
-        assert scoped_delete.status_code == 204, scoped_delete.text
-        scoped_success_audit = await db_session.scalar(select(AuditLog).where(
-            AuditLog.action == f"location.{entity_name}.delete", AuditLog.entity_id == record_id,
-            AuditLog.result == "success",
-        ))
-        assert scoped_success_audit is not None
-
-    conflict = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
-    assert conflict.status_code == 409
-    detail = conflict.json()["detail"]
-    assert "dependent records still reference it" in detail
-    assert "Contact an administrator" in detail
-    assert "building" not in detail and "access" not in detail and "grants" not in detail
-    assert "(" not in detail
-    site_failure_audit = await db_session.scalar(select(AuditLog).where(
-        AuditLog.action == "location.site.delete", AuditLog.entity_id == site["site"],
-        AuditLog.result == "failure",
-    ))
-    assert site_failure_audit is not None
-
-    outside = await _make_site(client, admin)
-    out_of_scope = await client.delete(f"/api/v1/sites/{outside['site']}", headers=scoped_headers)
-    assert out_of_scope.status_code == 404
-    missing = await client.delete(f"/api/v1/sites/{uuid.uuid4()}", headers=scoped_headers)
-    assert missing.status_code == 404
-
-    empty_org = (await client.post("/api/v1/organizations", json={"name": "No visible sites"}, headers=admin)).json()
-    empty_country = (await client.post(
-        "/api/v1/countries", json={"organization_id": empty_org["id"], "name": "Empty", "iso_code": "EM"}, headers=admin,
-    )).json()
-    empty_city = (await client.post(
-        "/api/v1/cities", json={"country_id": empty_country["id"], "name": "Empty"}, headers=admin,
-    )).json()
-    for route, entity in (("organizations", empty_org), ("countries", empty_country), ("cities", empty_city)):
-        response = await client.delete(f"/api/v1/{route}/{entity['id']}", headers=scoped_headers)
-        assert response.status_code == 404
-
-    # A scoped site grant is itself a foreign-key dependent, so even an otherwise empty
-    # in-scope site cannot be deleted while the grant remains. Its details stay private.
-    scoped_empty = (await client.post(
-        "/api/v1/sites", json={"city_id": empty_city["id"], "code": "EMPTY-IN-SCOPE", "name": "Empty"},
-        headers=admin,
-    )).json()
-    await client.put(
-        f"/api/v1/groups/{group_id}/site-access",
-        json={"sites": [
-            {"site_id": site["site"], "rack_scope": "all"},
-            {"site_id": scoped_empty["id"], "rack_scope": "all"},
-        ]},
-        headers=admin,
-    )
-    empty_site_conflict = await client.delete(f"/api/v1/sites/{scoped_empty['id']}", headers=scoped_headers)
-    assert empty_site_conflict.status_code == 409
-    assert "(" not in empty_site_conflict.json()["detail"]
-    assert "access" not in empty_site_conflict.json()["detail"]
-    assert "Contact an administrator" in empty_site_conflict.json()["detail"]
-    empty_site_failure_audit = await db_session.scalar(select(AuditLog).where(
-        AuditLog.action == "location.site.delete", AuditLog.entity_id == scoped_empty["id"],
-        AuditLog.result == "failure",
-    ))
-    assert empty_site_failure_audit is not None
-
-    # Shared parents with both visible and hidden child sites return the same generic
-    # conflict, without exposing child-table names or counts to the scoped user.
-    shared_org = (await client.post(
-        "/api/v1/organizations", json={"name": "Shared scope"}, headers=admin,
-    )).json()
-    shared_country = (await client.post(
-        "/api/v1/countries",
-        json={"organization_id": shared_org["id"], "name": "Shared", "iso_code": "SS"}, headers=admin,
-    )).json()
-    shared_city = (await client.post(
-        "/api/v1/cities", json={"country_id": shared_country["id"], "name": "Shared"}, headers=admin,
-    )).json()
-    visible_site = (await client.post(
-        "/api/v1/sites", json={"city_id": shared_city["id"], "code": "VISIBLE", "name": "Visible"},
-        headers=admin,
-    )).json()
-    await client.post(
-        "/api/v1/sites", json={"city_id": shared_city["id"], "code": "HIDDEN", "name": "Hidden"},
-        headers=admin,
-    )
-    await client.put(
-        f"/api/v1/groups/{group_id}/site-access",
-        json={"sites": [{"site_id": visible_site["id"], "rack_scope": "all"}]}, headers=admin,
-    )
-    for route, entity, audit_entity in (
-        ("cities", shared_city, "city"), ("countries", shared_country, "country"),
-        ("organizations", shared_org, "organization"),
-    ):
-        response = await client.delete(f"/api/v1/{route}/{entity['id']}", headers=scoped_headers)
-        assert response.status_code == 409
-        detail = response.json()["detail"]
-        assert "dependent records still reference it" in detail
-        assert "(" not in detail and "site" not in detail and "access" not in detail
-        failure_audit = await db_session.scalar(select(AuditLog).where(
-            AuditLog.action == f"location.{audit_entity}.delete", AuditLog.entity_id == entity["id"],
-            AuditLog.result == "failure",
-        ))
-        assert failure_audit is not None
+    # location:manage is intentionally inactive for site-scoped users because deleting
+    # hierarchy records can affect data outside their granted site.
+    response = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
+    assert response.status_code == 403
 
 
 async def test_integrity_error_delete_fallback_rolls_back_then_audits(client, auth_headers, db_session, monkeypatch):
