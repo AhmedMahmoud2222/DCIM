@@ -671,6 +671,14 @@ async def update_channel(
         ch.secret_ciphertext = None
         changed["signing_secret"] = "removed"
     if body.enabled is not None and body.enabled != ch.enabled:
+        if not body.enabled:
+            has_enabled_policy = await db.scalar(
+                select(NotificationPolicy.id)
+                .where(NotificationPolicy.channel_id == ch.id, NotificationPolicy.enabled.is_(True))
+                .limit(1)
+            )
+            if has_enabled_policy is not None:
+                raise ConflictError("Disable notification policies before disabling their channel.")
         ch.enabled = body.enabled
         changed["enabled"] = body.enabled
     ch.version += 1
@@ -741,7 +749,9 @@ class PolicyOut(BaseModel):
 async def create_policy(
     body: PolicyIn, request: Request, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("integration:manage"))
 ) -> PolicyOut:
-    channel = await db.get(NotificationChannel, body.channel_id)
+    channel = await db.scalar(
+        select(NotificationChannel).where(NotificationChannel.id == body.channel_id).with_for_update()
+    )
     if channel is None:
         raise NotFoundError(f"Channel {body.channel_id} not found.")
     if body.enabled and not channel.enabled:
@@ -808,6 +818,14 @@ async def update_policy(
             raise _bad(f"min_confidence must be one of {CONFIDENCES}.")
         pol.min_confidence = changed["min_confidence"] = body.min_confidence
     if body.enabled is not None:
+        if body.enabled:
+            channel = await db.scalar(
+                select(NotificationChannel).where(NotificationChannel.id == pol.channel_id).with_for_update()
+            )
+            if channel is None:
+                raise NotFoundError(f"Channel {pol.channel_id} not found.")
+            if not channel.enabled:
+                raise ConflictError("An enabled notification policy requires an enabled channel.")
         pol.enabled = changed["enabled"] = body.enabled
     pol.version += 1
     await db.flush()
