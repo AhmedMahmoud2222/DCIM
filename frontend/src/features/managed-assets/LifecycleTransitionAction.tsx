@@ -23,6 +23,7 @@ export function LifecycleTransitionAction({
   const confirmRef = useRef<HTMLButtonElement>(null);
   const completionRef = useRef<HTMLSpanElement>(null);
   const errorRef = useRef<HTMLSpanElement>(null);
+  const wrapperRef = useRef<HTMLSpanElement>(null);
   const wasConfirming = useRef(false);
   const queryKey = [assetLabel === "rack" ? "racks" : "equipment"];
   const mutation = useMutation({
@@ -36,6 +37,7 @@ export function LifecycleTransitionAction({
 
   useEffect(() => {
     if (completed) {
+      // Keep success focus ahead of the confirmation cleanup that follows onSettled.
       wasConfirming.current = false;
       completionRef.current?.focus();
     } else if (status !== "planned" && mutation.isError) {
@@ -53,7 +55,7 @@ export function LifecycleTransitionAction({
   if (!canUpdate) return null;
 
   return (
-    <span className="inline-flex flex-col items-start gap-1">
+    <span ref={wrapperRef} tabIndex={-1} data-testid="lifecycle-action" className="inline-flex flex-col items-start gap-1">
       {completed ? (
         <span ref={completionRef} tabIndex={-1} role="status" className="text-xs text-green-300">Installation status saved.</span>
       ) : status !== "planned" ? null : !confirming ? (
@@ -85,7 +87,23 @@ export function LifecycleTransitionAction({
           </span>
         </span>
       )}
-      {mutation.isError && <span ref={errorRef} tabIndex={-1} role="alert" className="text-xs text-red-400">{(mutation.error as Error).message}</span>}
+      {mutation.isError && (
+        <span className="inline-flex items-center gap-2">
+          <span ref={errorRef} tabIndex={-1} role="alert" className="text-xs text-red-400">{(mutation.error as Error).message}</span>
+          {status !== "planned" && (
+            <button
+              type="button"
+              onClick={() => {
+                mutation.reset();
+                wrapperRef.current?.focus();
+              }}
+              className="rounded-sm border border-line-subtle px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover"
+            >
+              Dismiss
+            </button>
+          )}
+        </span>
+      )}
     </span>
   );
 }

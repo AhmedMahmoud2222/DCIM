@@ -100,5 +100,8 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: "Simulate refreshed status" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Asset was already installed");
     expect(screen.getByRole("alert")).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-action")).toHaveFocus();
   });
 });
