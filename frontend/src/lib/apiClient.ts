@@ -33,26 +33,28 @@ async function parseProblemResponse(res: Response): Promise<never> {
 let refreshInFlight: Promise<string> | null = null;
 
 async function refreshAccessToken(options: { clearOnFailure?: boolean } = {}): Promise<string> {
-  if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = (async () => {
+  // Share only the network request. Each caller applies its own failure policy below;
+  // bootstrap must be able to preserve a session on transient failures while normal
+  // authenticated requests still clear an expired session.
+  const request = refreshInFlight ?? (refreshInFlight = (async () => {
     const csrfToken = readCookie(CSRF_COOKIE_NAME);
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: "POST",
       credentials: "include",
       headers: csrfToken ? { [CSRF_HEADER_NAME]: csrfToken } : {},
     });
-    if (!res.ok) {
-      if (options.clearOnFailure !== false) useAuthStore.getState().clear();
-      await parseProblemResponse(res);
-    }
+    if (!res.ok) await parseProblemResponse(res);
     const body = (await res.json()) as { access_token: string };
     useAuthStore.getState().setAccessToken(body.access_token);
     return body.access_token;
-  })();
+  })());
   try {
-    return await refreshInFlight;
+    return await request;
+  } catch (error) {
+    if (options.clearOnFailure !== false) useAuthStore.getState().clear();
+    throw error;
   } finally {
-    refreshInFlight = null;
+    if (refreshInFlight === request) refreshInFlight = null;
   }
 }
 
