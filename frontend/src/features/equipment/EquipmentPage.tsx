@@ -11,6 +11,8 @@ import {
   createEquipmentModelRevision,
   listEquipment,
 } from "@/features/equipment/api";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
+import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
@@ -22,6 +24,7 @@ export function EquipmentPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
   const canImport = useHasPermission("equipment:import");
 
   const equipmentQuery = useQuery({
@@ -97,6 +100,8 @@ export function EquipmentPage() {
           </button>
         </div>
       </div>
+
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       {showBulkImport && (
         <BulkImportPanel
@@ -183,7 +188,17 @@ export function EquipmentPage() {
                   </td>
                   <td className={`${TD} font-mono text-fg-secondary`}>{eq.asset_tag}</td>
                   <td className={TD}>
-                    <LifecycleStatus value={eq.lifecycle_status} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <LifecycleStatus value={eq.lifecycle_status} />
+                      <LifecycleTransitionAction
+                        assetId={eq.id}
+                        assetName={eq.hostname ?? eq.asset_tag}
+                        status={eq.lifecycle_status}
+                        assetLabel="equipment"
+                        onCompleted={showNotice}
+                        onStarted={clearNotice}
+                      />
+                    </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>
                     {eq.placement ? (

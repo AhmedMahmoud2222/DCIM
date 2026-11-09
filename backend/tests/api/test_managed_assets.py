@@ -1,7 +1,13 @@
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy import select
+
+from app.domain.audit.models import AuditLog
 from app.domain.identity.models import ManagedAsset
+from app.domain.outbox.models import OutboxEvent
+from tests.api._phase2_helpers import create_equipment, create_rack
 
 
 async def test_create_managed_asset(client, auth_headers):
@@ -83,6 +89,53 @@ async def test_lifecycle_transition_valid_path(client, auth_headers):
     )
     assert resp.status_code == 200
     assert resp.json()["lifecycle_status"] == "installed"
+
+
+@pytest.mark.parametrize("asset_type", ["rack", "equipment"])
+async def test_rack_and_equipment_planned_install_transition_contract(client, auth_headers, db_session, asset_type):
+    manager = await auth_headers("Engineer")
+    if asset_type == "rack":
+        created = await create_rack(client, manager, auth_headers)
+    else:
+        created = await create_equipment(client, manager, auth_headers)
+    asset_id = created["id"]
+    assert created["lifecycle_status"] == "planned"
+
+    installed = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "installed"}, headers=manager
+    )
+    assert installed.status_code == 200
+    assert installed.json()["lifecycle_status"] == "installed"
+    audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "managed_asset.lifecycle_transition", AuditLog.entity_id == uuid.UUID(asset_id),
+    ))
+    assert audit is not None
+    assert audit.before == {"lifecycle_status": "planned"}
+    assert audit.after == {"lifecycle_status": "installed"}
+    event = await db_session.scalar(select(OutboxEvent).where(
+        OutboxEvent.event_type == "ManagedAssetLifecycleChanged", OutboxEvent.aggregate_id == uuid.UUID(asset_id),
+    ))
+    assert event is not None and event.payload == {"from": "planned", "to": "installed"}
+
+    invalid = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "planned"}, headers=manager
+    )
+    assert invalid.status_code == 422
+
+    viewer = await auth_headers("Viewer")
+    unauthorized = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "active"}, headers=viewer
+    )
+    assert unauthorized.status_code == 403
+    asset = await db_session.get(ManagedAsset, uuid.UUID(asset_id))
+    assert asset is not None and asset.lifecycle_status == "installed"
+    audits = (await db_session.scalars(select(AuditLog).where(
+        AuditLog.action == "managed_asset.lifecycle_transition", AuditLog.entity_id == uuid.UUID(asset_id),
+    ))).all()
+    events = (await db_session.scalars(select(OutboxEvent).where(
+        OutboxEvent.event_type == "ManagedAssetLifecycleChanged", OutboxEvent.aggregate_id == uuid.UUID(asset_id),
+    ))).all()
+    assert len(audits) == 1 and len(events) == 1
 
 
 async def test_lifecycle_transition_to_decommissioned_persists_utc_timestamp(client, auth_headers, db_session):
