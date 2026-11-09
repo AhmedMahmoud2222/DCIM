@@ -14,14 +14,21 @@ export function useLifecycleNotice() {
 
   const showNotice = useCallback((message: string) => {
     sequence.current += 1;
+    setIsFocused(false);
+    setIsHovered(false);
     setNotice({ id: sequence.current, message });
   }, []);
-  const clearNotice = useCallback(() => setNotice(null), []);
+  const clearNotice = useCallback(() => {
+    setIsFocused(false);
+    setIsHovered(false);
+    setNotice(null);
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
     noticeRef.current?.focus();
     if (isFocused || isHovered) return;
+    // The eight-second reading window starts after keyboard and pointer interaction ends.
     const timeout = window.setTimeout(() => {
       setNotice((current) => current?.id === notice.id ? null : current);
     }, 8_000);
