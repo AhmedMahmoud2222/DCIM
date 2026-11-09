@@ -16,7 +16,7 @@ export function RacksPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
-  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, showNotice, clearNotice } = useLifecycleNotice();
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
   const canImport = useHasPermission("rack:import");
 
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
@@ -86,7 +86,7 @@ export function RacksPage() {
         }
       />
 
-      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       {showBulkImport && (
         <BulkImportPanel

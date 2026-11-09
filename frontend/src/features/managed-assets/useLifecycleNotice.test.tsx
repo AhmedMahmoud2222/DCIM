@@ -5,12 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 
 function NoticeHarness() {
-  const { notice, noticeRef, showNotice, clearNotice } = useLifecycleNotice();
+  const { notice, noticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
   return (
     <>
       <button type="button" onClick={() => showNotice("Rack 01 installation status saved.")}>Show notice</button>
       <button type="button" onClick={clearNotice}>Clear notice</button>
-      {notice && <p key={notice.id} ref={noticeRef} tabIndex={-1} role="status">{notice.message}</p>}
+      {notice && <p key={notice.id} ref={noticeRef} tabIndex={-1} role="status" {...noticeEventHandlers}>{notice.message}</p>}
     </>
   );
 }
@@ -18,7 +18,7 @@ function NoticeHarness() {
 afterEach(() => vi.useRealTimers());
 
 describe("useLifecycleNotice", () => {
-  it("re-announces identical messages and clears them after eight seconds", async () => {
+  it("re-announces identical messages and pauses the timeout while focused", async () => {
     vi.useFakeTimers();
     render(<NoticeHarness />);
 
@@ -31,6 +31,11 @@ describe("useLifecycleNotice", () => {
     expect(repeated).toHaveFocus();
 
     await act(async () => { vi.advanceTimersByTime(8_000); });
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    fireEvent.blur(repeated);
+    await act(async () => { vi.advanceTimersByTime(7_999); });
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(1); });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 

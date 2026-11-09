@@ -7,6 +7,8 @@ export interface LifecycleNotice {
 
 export function useLifecycleNotice() {
   const [notice, setNotice] = useState<LifecycleNotice | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const sequence = useRef(0);
   const noticeRef = useRef<HTMLParagraphElement>(null);
 
@@ -19,11 +21,19 @@ export function useLifecycleNotice() {
   useEffect(() => {
     if (!notice) return;
     noticeRef.current?.focus();
+    if (isFocused || isHovered) return;
     const timeout = window.setTimeout(() => {
       setNotice((current) => current?.id === notice.id ? null : current);
     }, 8_000);
     return () => window.clearTimeout(timeout);
-  }, [notice]);
+  }, [isFocused, isHovered, notice]);
 
-  return { notice, noticeRef, showNotice, clearNotice };
+  const noticeEventHandlers = {
+    onFocus: () => setIsFocused(true),
+    onBlur: () => setIsFocused(false),
+    onPointerEnter: () => setIsHovered(true),
+    onPointerLeave: () => setIsHovered(false),
+  };
+
+  return { notice, noticeRef, noticeEventHandlers, showNotice, clearNotice };
 }

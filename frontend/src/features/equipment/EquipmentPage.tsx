@@ -24,7 +24,7 @@ export function EquipmentPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
-  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, showNotice, clearNotice } = useLifecycleNotice();
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
   const canImport = useHasPermission("equipment:import");
 
   const equipmentQuery = useQuery({
@@ -101,7 +101,7 @@ export function EquipmentPage() {
         </div>
       </div>
 
-      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       {showBulkImport && (
         <BulkImportPanel
@@ -190,14 +190,14 @@ export function EquipmentPage() {
                   <td className={TD}>
                     <div className="flex flex-wrap items-center gap-2">
                       <LifecycleStatus value={eq.lifecycle_status} />
-                    <LifecycleTransitionAction
-                      assetId={eq.id}
-                      assetName={eq.hostname ?? eq.asset_tag}
-                      status={eq.lifecycle_status}
-                      assetLabel="equipment"
-                      onCompleted={showNotice}
-                      onStarted={clearNotice}
-                    />
+                      <LifecycleTransitionAction
+                        assetId={eq.id}
+                        assetName={eq.hostname ?? eq.asset_tag}
+                        status={eq.lifecycle_status}
+                        assetLabel="equipment"
+                        onCompleted={showNotice}
+                        onStarted={clearNotice}
+                      />
                     </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>

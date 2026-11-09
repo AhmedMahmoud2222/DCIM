@@ -43,7 +43,7 @@ export function EquipmentDetailPage() {
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [historyHours, setHistoryHours] = useState(24);
   const [impactTarget, setImpactTarget] = useState<ImpactTarget | null>(null);
-  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, showNotice, clearNotice } = useLifecycleNotice();
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -164,7 +164,7 @@ export function EquipmentDetailPage() {
         </div>
       </div>
 
-      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       <div className="grid grid-cols-2 gap-6">
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">

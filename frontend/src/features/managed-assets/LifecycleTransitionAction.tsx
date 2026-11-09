@@ -61,9 +61,7 @@ export function LifecycleTransitionAction({
 
   return (
     <span ref={wrapperRef} tabIndex={-1} data-testid="lifecycle-action" className="inline-flex flex-col items-start gap-1">
-      {completed ? (
-        null
-      ) : status !== "planned" ? null : !confirming ? (
+      {completed || status !== "planned" ? null : !confirming ? (
         <button
           type="button"
           ref={triggerRef}
