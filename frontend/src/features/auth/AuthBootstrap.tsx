@@ -17,7 +17,7 @@ export function AuthBootstrap() {
     void (async () => {
       try {
         const token = await refreshAccessToken({ clearOnFailure: false });
-        const user = await apiFetch<CurrentUser>("/auth/me");
+        const user = await apiFetch<CurrentUser>("/auth/me", { clearOnRefreshFailure: false });
         if (active) setSession(token, user);
       } catch (error) {
         if (!active) return;

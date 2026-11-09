@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
@@ -46,7 +47,7 @@ describe("AuthBootstrap", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("Restoring your session");
     expect(await screen.findByRole("heading", { name: "Protected page" })).toBeInTheDocument();
-    expect(api.apiFetch).toHaveBeenCalledWith("/auth/me");
+    expect(api.apiFetch).toHaveBeenCalledWith("/auth/me", { clearOnRefreshFailure: false });
     expect(useAuthStore.getState()).toMatchObject({ accessToken: "refreshed-token", user: ADMINISTRATOR_TEST_USER, isInitialized: true });
   });
 
@@ -68,14 +69,30 @@ describe("AuthBootstrap", () => {
       });
     vi.mocked(api.apiFetch).mockResolvedValue(ADMINISTRATOR_TEST_USER);
 
+    const user = userEvent.setup();
     renderProtected();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Your session could not be restored");
     expect(api.refreshAccessToken).toHaveBeenNthCalledWith(1, { clearOnFailure: false });
     expect(screen.queryByRole("heading", { name: "Login page" })).not.toBeInTheDocument();
     expect(useAuthStore.getState().isInitialized).toBe(false);
-    await screen.getByRole("button", { name: "Retry session restore" }).click();
+    await user.click(screen.getByRole("button", { name: "Retry session restore" }));
 
     expect(await screen.findByRole("heading", { name: "Protected page" })).toBeInTheDocument();
+  });
+
+  it("keeps bootstrap alive when /auth/me receives 401 and its retry refresh is temporarily unavailable", async () => {
+    vi.mocked(api.refreshAccessToken).mockImplementation(async () => {
+      useAuthStore.getState().setAccessToken("refreshed-token");
+      return "refreshed-token";
+    });
+    vi.mocked(api.apiFetch).mockRejectedValue(new api.ApiError(503, "Unavailable", "Retry later", null));
+
+    renderProtected();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session could not be restored");
+    expect(api.apiFetch).toHaveBeenCalledWith("/auth/me", { clearOnRefreshFailure: false });
+    expect(screen.queryByRole("heading", { name: "Login page" })).not.toBeInTheDocument();
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: "refreshed-token", user: null, isInitialized: false });
   });
 });

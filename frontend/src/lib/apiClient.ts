@@ -61,9 +61,9 @@ async function refreshAccessToken(options: { clearOnFailure?: boolean } = {}): P
 
 export async function apiFetch<T>(
   path: string,
-  options: RequestInit & { idempotencyKey?: string; ifMatch?: number } = {},
+  options: RequestInit & { idempotencyKey?: string; ifMatch?: number; clearOnRefreshFailure?: boolean } = {},
 ): Promise<T> {
-  const { idempotencyKey, ifMatch, ...init } = options;
+  const { idempotencyKey, ifMatch, clearOnRefreshFailure, ...init } = options;
   const doFetch = async (): Promise<Response> => {
     const token = useAuthStore.getState().accessToken;
     const headers = new Headers(init.headers);
@@ -80,13 +80,17 @@ export async function apiFetch<T>(
   let res = await doFetch();
   if (res.status === 401 && useAuthStore.getState().accessToken !== null) {
     try {
-      await refreshAccessToken();
-      res = await doFetch();
-    } catch {
+      await refreshAccessToken({ clearOnFailure: clearOnRefreshFailure });
+    } catch (error) {
+      const invalidSession = error instanceof ApiError && (error.status === 401 || error.status === 403);
+      if (clearOnRefreshFailure === false && !invalidSession) throw error;
       // Keep the original request error visible while a transient refresh failure
       // preserves the session; subsequent requests can retry refresh when service returns.
       await parseProblemResponse(res);
     }
+    // Keep the retried request outside the refresh catch so its network errors are not
+    // misreported as the original request's stale 401.
+    res = await doFetch();
   }
   if (!res.ok) await parseProblemResponse(res);
   if (res.status === 204) return undefined as T;

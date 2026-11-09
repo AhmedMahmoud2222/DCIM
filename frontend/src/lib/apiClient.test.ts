@@ -9,7 +9,7 @@ describe("refreshAccessToken failure policy", () => {
     vi.unstubAllGlobals();
   });
 
-  it("applies clear-on-failure per caller while sharing the refresh request", async () => {
+  it("keeps the bootstrap caller's session but clears it for a normal caller sharing an invalid refresh", async () => {
     let finishRequest!: (response: Response) => void;
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { finishRequest = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
@@ -17,17 +17,17 @@ describe("refreshAccessToken failure policy", () => {
     const bootstrapRefresh = refreshAccessToken({ clearOnFailure: false });
     const normalRequestRefresh = refreshAccessToken();
     useAuthStore.getState().setSession("existing-token", null);
-    finishRequest(new Response(JSON.stringify({ title: "Unavailable", detail: "Retry later" }), { status: 503 }));
+    finishRequest(new Response(JSON.stringify({ title: "Unauthorized", detail: "Session expired" }), { status: 401 }));
 
     const results = await Promise.allSettled([bootstrapRefresh, normalRequestRefresh]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(results.every((result) => result.status === "rejected" && result.reason instanceof ApiError)).toBe(true);
-    expect(useAuthStore.getState()).toMatchObject({ isInitialized: true, accessToken: "existing-token" });
+    expect(useAuthStore.getState()).toMatchObject({ isInitialized: true, accessToken: null, user: null });
   });
 
-  it("preserves the session on a bootstrap-only transient failure", async () => {
+  it("preserves the session on a bootstrap-only invalid-refresh failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ title: "Unavailable", detail: "Retry later" }), { status: 503 }),
+      new Response(JSON.stringify({ title: "Unauthorized", detail: "Session expired" }), { status: 401 }),
     ));
     useAuthStore.getState().setSession("existing-token", null);
 
@@ -66,5 +66,30 @@ describe("refreshAccessToken failure policy", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(useAuthStore.getState()).toMatchObject({ accessToken: "existing-token", isInitialized: true });
+  });
+
+  it("propagates transient refresh failure to bootstrap instead of converting it to the stale 401", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Access token expired" }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Retry later" }), { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    useAuthStore.getState().setSession("existing-token", null);
+
+    await expect(apiFetch("/auth/me", { clearOnRefreshFailure: false })).rejects.toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(useAuthStore.getState()).toMatchObject({ accessToken: "existing-token", isInitialized: true });
+  });
+
+  it("surfaces a network failure from the retried request after refresh succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Access token expired" }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "refreshed-token" }), { status: 200 }))
+      .mockRejectedValueOnce(new TypeError("Network failed after refresh"));
+    vi.stubGlobal("fetch", fetchMock);
+    useAuthStore.getState().setSession("existing-token", null);
+
+    await expect(apiFetch("/equipment")).rejects.toThrow("Network failed after refresh");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(useAuthStore.getState().accessToken).toBe("refreshed-token");
   });
 });
