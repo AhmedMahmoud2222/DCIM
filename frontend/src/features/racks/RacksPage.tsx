@@ -7,6 +7,7 @@ import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
@@ -208,7 +209,10 @@ export function RacksPage() {
                   </td>
                   <td className={`${TD} font-mono text-fg-secondary`}>{rack.asset_tag}</td>
                   <td className={TD}>
-                    <LifecycleStatus value={rack.lifecycle_status} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <LifecycleStatus value={rack.lifecycle_status} />
+                      <LifecycleTransitionAction assetId={rack.id} status={rack.lifecycle_status} assetLabel="rack" />
+                    </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>
                     {rack.placement

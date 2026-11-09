@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
 from app.domain.identity.models import ManagedAsset
 
 
@@ -83,6 +85,35 @@ async def test_lifecycle_transition_valid_path(client, auth_headers):
     )
     assert resp.status_code == 200
     assert resp.json()["lifecycle_status"] == "installed"
+
+
+@pytest.mark.parametrize("asset_type", ["rack", "equipment"])
+async def test_rack_and_equipment_planned_install_transition_contract(client, auth_headers, asset_type):
+    manager = await auth_headers("Engineer")
+    created = await client.post(
+        "/api/v1/managed-assets",
+        json={"asset_type": asset_type, "asset_tag": f"{asset_type.upper()}-{uuid.uuid4().hex[:8]}"},
+        headers=manager,
+    )
+    assert created.status_code == 201
+    asset_id = created.json()["id"]
+
+    installed = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "installed"}, headers=manager
+    )
+    assert installed.status_code == 200
+    assert installed.json()["lifecycle_status"] == "installed"
+
+    invalid = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "planned"}, headers=manager
+    )
+    assert invalid.status_code == 422
+
+    viewer = await auth_headers("Viewer")
+    unauthorized = await client.post(
+        f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "active"}, headers=viewer
+    )
+    assert unauthorized.status_code == 403
 
 
 async def test_lifecycle_transition_to_decommissioned_persists_utc_timestamp(client, auth_headers, db_session):

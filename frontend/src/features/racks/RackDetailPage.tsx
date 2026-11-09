@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getEquipmentPowerSummary } from "@/features/power/api";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/features/racks/api";
 import { RackElevationView } from "@/features/racks/RackElevationView";
 import { ApiError } from "@/lib/apiClient";
@@ -72,7 +73,10 @@ export function RackDetailPage() {
           <h1 className="text-lg font-semibold">{rack.name}</h1>
           <p className="font-mono text-sm text-slate-400">{rack.asset_tag}</p>
         </div>
-        <LifecycleStatus value={rack.lifecycle_status} />
+        <div className="flex flex-col items-end gap-2">
+          <LifecycleStatus value={rack.lifecycle_status} />
+          <LifecycleTransitionAction assetId={rack.id} status={rack.lifecycle_status} assetLabel="rack" />
+        </div>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-6">

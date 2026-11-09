@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { connectEquipmentPort, getEquipment, getEquipmentPorts, moveEquipment, retireEquipment } from "@/features/equipment/api";
 import { ImpactAnalysisModal, ImpactTarget } from "@/features/impact/ImpactAnalysisModal";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
@@ -148,7 +149,10 @@ export function EquipmentDetailPage() {
           <h1 className="text-lg font-semibold">{equipment.hostname ?? equipment.asset_tag}</h1>
           <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
         </div>
-        <LifecycleStatus value={equipment.lifecycle_status} />
+        <div className="flex flex-col items-end gap-2">
+          <LifecycleStatus value={equipment.lifecycle_status} />
+          <LifecycleTransitionAction assetId={equipment.id} status={equipment.lifecycle_status} assetLabel="equipment" />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-6">

@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
   createEquipment,
@@ -183,7 +184,10 @@ export function EquipmentPage() {
                   </td>
                   <td className={`${TD} font-mono text-fg-secondary`}>{eq.asset_tag}</td>
                   <td className={TD}>
-                    <LifecycleStatus value={eq.lifecycle_status} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <LifecycleStatus value={eq.lifecycle_status} />
+                      <LifecycleTransitionAction assetId={eq.id} status={eq.lifecycle_status} assetLabel="equipment" />
+                    </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>
                     {eq.placement ? (
