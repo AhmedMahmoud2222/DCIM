@@ -1,9 +1,6 @@
 import { apiFetch } from "@/lib/apiClient";
 
-// Issue #128 / G8: thin client for the existing alarm-rule operator endpoints in
-// backend/app/api/v1/alarms.py. These are read/resolve/disable over rules only; they never
-// mutate thresholds or replay telemetry. Authorization is enforced by the backend
-// (alarm:read to list, alarm:manage to resolve/disable) regardless of what the UI hides.
+// Thin client for alarm-rule management endpoints. Authorization is enforced by the backend.
 export interface AlarmRule {
   id: string;
   integration_id: string;
@@ -54,6 +51,27 @@ export interface DisableRuleInput {
   reason: string;
   expected_updated_at: string;
 }
+
+export interface CreateAlarmRuleInput {
+  integration_id: string;
+  metric: string;
+  rule_type: string;
+  threshold: number | null;
+  name: string;
+}
+
+export interface EditAlarmRuleInput {
+  name?: string;
+  threshold?: number;
+  reason: string;
+  expected_updated_at: string;
+}
+
+export const createAlarmRule = (input: CreateAlarmRuleInput) =>
+  apiFetch<{ id: string }>("/alarms/rules", { method: "POST", body: JSON.stringify(input) });
+
+export const editAlarmRule = (id: string, input: EditAlarmRuleInput) =>
+  apiFetch<AlarmRule>(`/alarms/rules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
 
 export const resolveAlarmRuleUnit = (id: string, input: ResolveRuleUnitInput) =>
   apiFetch<AlarmRuleResolution>(`/alarms/rules/${encodeURIComponent(id)}/resolve-unit`, {

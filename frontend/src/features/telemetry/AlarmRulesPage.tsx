@@ -1,18 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   AlarmRule,
+  CreateAlarmRuleInput,
   DisableRuleInput,
+  EditAlarmRuleInput,
   ResolveRuleUnitInput,
+  createAlarmRule,
   disableAlarmRule,
+  editAlarmRule,
   listAlarmRules,
   resolveAlarmRuleUnit,
 } from "@/features/telemetry/alarmRulesApi";
 import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
+import { listIntegrations } from "@/features/integrations/api";
 import { ApiError } from "@/lib/apiClient";
+import { Integration } from "@/types";
 
 // Issue #128 / G8: operator panel for alarm rules that need attention — legacy rules stored
 // without an explicit threshold unit (unit_status "unresolved") whose evaluation is blocked
@@ -178,24 +184,135 @@ function DisableForm({ rule, onDisabled, onCancel }: DisableFormProps) {
   );
 }
 
+const METRICS = [
+  { key: "temperature_c", unit: "degC" },
+  { key: "humidity_percent", unit: "%" },
+  { key: "power_kw", unit: "kW" },
+  { key: "load_percent", unit: "%" },
+  { key: "availability", unit: "1" },
+  { key: "supply_air_temperature_c", unit: "degC" },
+  { key: "return_air_temperature_c", unit: "degC" },
+  { key: "airflow_m3_s", unit: "m3/s" },
+  { key: "airflow_velocity_m_s", unit: "m/s" },
+  { key: "differential_pressure_pa", unit: "Pa" },
+  { key: "cooling_output_kw", unit: "kW" },
+];
+
+function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: Integration[]; onCreated: (id: string) => void; onCancel: () => void }) {
+  const [name, setName] = useState("");
+  const [integrationId, setIntegrationId] = useState(integrations[0]?.id ?? "");
+  const [metric, setMetric] = useState("power_kw");
+  const [ruleType, setRuleType] = useState("threshold_high");
+  const [threshold, setThreshold] = useState("");
+  const submitting = useRef(false);
+  const mutation = useMutation({ mutationFn: (input: CreateAlarmRuleInput) => createAlarmRule(input), onSuccess: (result) => onCreated(result.id) });
+  const selectedMetric = METRICS.find((item) => item.key === metric);
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
+    mutation.mutate({
+      name: name.trim(), integration_id: integrationId, metric, rule_type: ruleType,
+      threshold: ruleType === "availability_unavailable" ? null : Number(threshold),
+    }, {
+      onSettled: () => { submitting.current = false; },
+    });
+  }
+
+  const field = "mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100";
+  return (
+    <form onSubmit={submit} aria-label="Add alarm rule" className="mb-4 grid gap-3 rounded-sm border border-slate-800 bg-slate-900 p-4 md:grid-cols-2">
+      <h2 className="md:col-span-2 text-base font-semibold">Add alarm rule</h2>
+      {integrations.length === 0 ? <p className="text-sm text-fg-secondary md:col-span-2">Create an integration before adding an alarm rule.</p> : (
+        <>
+          <label className="text-xs text-slate-400">Rule name<input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} className={field} /></label>
+          <label className="text-xs text-slate-400">Integration<select required value={integrationId} onChange={(event) => setIntegrationId(event.target.value)} className={field}>
+            {integrations.map((integration) => <option key={integration.id} value={integration.id}>{integration.name}{integration.enabled ? "" : " (disabled)"}</option>)}
+          </select></label>
+          <label className="text-xs text-slate-400">Metric<select required value={metric} onChange={(event) => setMetric(event.target.value)} className={field}>
+            {METRICS.filter((item) => ruleType === "availability_unavailable" ? item.key === "availability" : item.key !== "availability").map((item) => <option key={item.key} value={item.key}>{item.key} ({item.unit})</option>)}
+          </select></label>
+          <label className="text-xs text-slate-400">Condition<select required value={ruleType} onChange={(event) => {
+            const next = event.target.value;
+            setRuleType(next);
+            if (next === "availability_unavailable") setMetric("availability");
+            else if (metric === "availability") setMetric("power_kw");
+          }} className={field}>
+            <option value="threshold_high">Above threshold</option><option value="threshold_low">Below threshold</option><option value="availability_unavailable">Unavailable</option>
+          </select></label>
+          {ruleType !== "availability_unavailable" && <label className="text-xs text-slate-400">Threshold ({selectedMetric?.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className={field} /></label>}
+          {mutation.isError && <p role="alert" className="text-sm text-red-400 md:col-span-2">{errorText(mutation.error)}</p>}
+          <div className="flex gap-2 md:col-span-2">
+            <button type="submit" disabled={mutation.isPending || !integrationId || (ruleType !== "availability_unavailable" && threshold === "")} className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">{mutation.isPending ? "Saving…" : "Save rule"}</button>
+            <button type="button" onClick={onCancel} className="rounded-sm border border-slate-700 px-3 py-1.5 text-sm text-slate-300">Cancel</button>
+          </div>
+        </>
+      )}
+      {integrations.length === 0 && <button type="button" onClick={onCancel} className="w-fit rounded-sm border border-slate-700 px-3 py-1.5 text-sm text-slate-300">Close</button>}
+    </form>
+  );
+}
+
+function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(rule.name);
+  const [threshold, setThreshold] = useState(rule.threshold === null ? "" : String(rule.threshold));
+  const [reason, setReason] = useState("");
+  const mutation = useMutation({ mutationFn: (input: EditAlarmRuleInput) => editAlarmRule(rule.id, input), onSuccess: onSaved });
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    mutation.mutate({
+      name: name.trim(),
+      ...(rule.rule_type !== "availability_unavailable" && rule.unit !== null ? { threshold: Number(threshold) } : {}),
+      reason: reason.trim(), expected_updated_at: rule.updated_at,
+    });
+  }
+
+  return (
+    <form onSubmit={submit} aria-label={`Edit ${rule.name}`} className="mt-4 space-y-3 border-t border-slate-800 pt-3">
+      {!rule.enabled && <p role="status" className="text-sm text-amber-300">This rule is disabled. Editing it will not re-enable it.</p>}
+      <label className="block text-xs text-slate-400">Rule name<input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
+      {rule.rule_type !== "availability_unavailable" && rule.unit !== null ? (
+        <label className="block text-xs text-slate-400">Threshold ({rule.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
+      ) : rule.unit === null && <p className="text-sm text-amber-300">Resolve the threshold unit before editing this legacy rule's threshold.</p>}
+      <label className="block text-xs text-slate-400">Reason for change<textarea required maxLength={2048} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
+      {mutation.isError && <p role="alert" className="text-sm text-red-400">{errorText(mutation.error)}</p>}
+      <div className="flex gap-2"><button type="submit" disabled={mutation.isPending || !name.trim() || !reason.trim() || (rule.rule_type !== "availability_unavailable" && rule.unit !== null && threshold === "")} className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">{mutation.isPending ? "Saving…" : "Save changes"}</button><button type="button" onClick={onCancel} className="rounded-sm border border-slate-700 px-3 py-1.5 text-sm text-slate-300">Cancel</button></div>
+    </form>
+  );
+}
+
 export function AlarmRulesPage() {
   const queryClient = useQueryClient();
   const canRead = useHasPermission("alarm:read");
   const canManage = useHasPermission("alarm:manage");
   const [attentionOnly, setAttentionOnly] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [action, setAction] = useState<"resolve" | "disable" | null>(null);
+  const [action, setAction] = useState<"create" | "edit" | "resolve" | "disable" | null>(null);
 
   const rulesQuery = useQuery({
     queryKey: ["alarm-rules", attentionOnly],
     queryFn: () => listAlarmRules({ needsAttention: attentionOnly }),
     enabled: canRead,
   });
+  const integrationsQuery = useQuery({
+    queryKey: ["integrations"],
+    queryFn: listIntegrations,
+    enabled: canManage && action === "create",
+  });
 
   const rules = useMemo(() => rulesQuery.data ?? [], [rulesQuery.data]);
   const selected = rules.find((rule) => rule.id === selectedId) ?? rules[0] ?? null;
 
   function handleSettled() {
+    queryClient.invalidateQueries({ queryKey: ["alarm-rules"] });
+    setAction(null);
+  }
+
+  function handleCreated(id: string) {
+    setAttentionOnly(false);
+    setSelectedId(id);
     queryClient.invalidateQueries({ queryKey: ["alarm-rules"] });
     setAction(null);
   }
@@ -212,8 +329,18 @@ export function AlarmRulesPage() {
     <div>
       <PageHeader
         title="Alarm Rules"
-        description="Rules needing attention are legacy rules stored without an explicit threshold unit. Their evaluation is blocked until a unit is resolved or the rule is disabled; nothing is auto-inferred or replayed."
+        description="Create and edit alarm rules, or resolve legacy threshold units. Editing a rule affects future readings; existing alarms are preserved."
       />
+
+      {canManage && <div className="mb-4 flex gap-2">
+        <button type="button" onClick={() => setAction(action === "create" ? null : "create")} className="rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500">Add alarm rule</button>
+      </div>}
+
+      {canManage && action === "create" && (
+        integrationsQuery.isPending ? <p role="status" className="mb-4 text-sm text-fg-secondary">Loading integrations…</p>
+          : integrationsQuery.isError ? <p role="alert" className="mb-4 text-sm text-red-400">Could not load integrations.</p>
+            : <CreateRuleForm integrations={integrationsQuery.data ?? []} onCreated={handleCreated} onCancel={() => setAction(null)} />
+      )}
 
       <div className="mb-4 flex items-center gap-3 rounded-sm border border-slate-800 bg-slate-900 p-3">
         <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -330,8 +457,19 @@ export function AlarmRulesPage() {
                 )}
               </dl>
 
-              {canManage && selected.needs_attention && action === null && (
+              {canManage && action === null && (
                 <div className="mt-4 flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAction("edit")}
+                    className="w-full rounded-sm bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+                  >
+                    Edit rule
+                  </button>
+                </div>
+              )}
+              {canManage && selected.needs_attention && action === null && (
+                <div className="mt-2 flex flex-col gap-2">
                   <button
                     type="button"
                     onClick={() => setAction("resolve")}
@@ -356,6 +494,9 @@ export function AlarmRulesPage() {
               )}
               {canManage && action === "disable" && (
                 <DisableForm rule={selected} onDisabled={handleSettled} onCancel={() => setAction(null)} />
+              )}
+              {canManage && action === "edit" && (
+                <EditRuleForm rule={selected} onSaved={handleSettled} onCancel={() => setAction(null)} />
               )}
             </aside>
           )}
