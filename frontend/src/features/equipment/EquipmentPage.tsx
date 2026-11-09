@@ -14,28 +14,34 @@ import {
 import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
+const EQUIPMENT_PAGE_SIZE = 200;
+
 export function EquipmentPage() {
-  const pageSize = 200;
   const [offset, setOffset] = useState(0);
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const canImport = useHasPermission("equipment:import");
 
-  const equipmentQuery = useQuery({ queryKey: ["equipment", offset], queryFn: () => listEquipment(pageSize, offset) });
+  const equipmentQuery = useQuery({
+    queryKey: ["equipment", offset],
+    queryFn: () => listEquipment(EQUIPMENT_PAGE_SIZE, offset),
+  });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
 
   const [assetTag, setAssetTag] = useState("");
   const [hostname, setHostname] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [modelName, setModelName] = useState("");
+  const pageSize = equipmentQuery.data?.limit ?? EQUIPMENT_PAGE_SIZE;
+  const pageOutOfRange = Boolean(equipmentQuery.data && offset > 0 && offset >= equipmentQuery.data.total);
 
   useEffect(() => {
     const page = equipmentQuery.data;
     if (page && offset > 0 && offset >= page.total) {
       setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / pageSize) * pageSize);
     }
-  }, [equipmentQuery.data, offset]);
+  }, [equipmentQuery.data, offset, pageSize]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -142,7 +148,11 @@ export function EquipmentPage() {
         <TableError error={equipmentQuery.error} what="the equipment list" permission="equipment:read" onRetry={() => equipmentQuery.refetch()} />
       )}
 
-      {equipmentQuery.data && (
+      {equipmentQuery.data && pageOutOfRange && (
+        <p role="status" className="text-sm text-fg-secondary">Refreshing the equipment list…</p>
+      )}
+
+      {equipmentQuery.data && !pageOutOfRange && (
         <>
           <p className="mb-2 text-xs text-fg-secondary" data-testid="row-count">
             {equipmentQuery.data.total === 0

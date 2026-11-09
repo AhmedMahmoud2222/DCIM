@@ -22,7 +22,7 @@ const asset = (overrides: Record<string, unknown>) =>
     ...overrides,
   }) as unknown as Equipment;
 
-const page = (items: Equipment[], total = items.length, offset = 0): Page<Equipment> => ({ items, total, limit: 200, offset });
+const page = (items: Equipment[], total = items.length, offset = 0, limit = 200): Page<Equipment> => ({ items, total, limit, offset });
 
 const rackedAt = (rack_id: string, u_start: number, u_end: number, side: string) => ({
   placement_type: "rack_mounted",
@@ -33,6 +33,7 @@ const rackedAt = (rack_id: string, u_start: number, u_end: number, side: string)
 });
 
 beforeEach(() => {
+  vi.mocked(equipmentApi.listEquipment).mockReset();
   vi.mocked(racksApi.listRacks).mockResolvedValue({
     items: [{ id: "r1", name: "Rack A1" } as unknown as Rack],
     total: 1,
@@ -118,7 +119,8 @@ describe("Equipment table", () => {
 
   it("loads the next equipment page and provides a way back", async () => {
     vi.mocked(equipmentApi.listEquipment)
-      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}` })), 201))
+      .mockResolvedValue(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 201))
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 201))
       .mockResolvedValueOnce(page([asset({ id: "e200", hostname: "last-device" })], 201, 200));
     const user = userEvent.setup();
     renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
@@ -130,6 +132,38 @@ describe("Equipment table", () => {
     expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 200);
     expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByRole("link", { name: "device-0" })).toBeInTheDocument();
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 1-200 of 201 equipment");
+  });
+
+  it("recovers to the last valid page when the total shrinks", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValue(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 200))
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 201))
+      .mockResolvedValueOnce(page([], 200, 200))
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}`, hostname: `device-${i}` })), 200));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 0));
+    expect(await screen.findByRole("link", { name: "device-0" })).toBeInTheDocument();
+    expect(screen.queryByText("No equipment yet.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 1-200 of 200 equipment");
+  });
+
+  it("uses the server-returned page size for subsequent offsets", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValueOnce(page(Array.from({ length: 50 }, (_, i) => asset({ id: `e${i}` })), 51, 0, 50))
+      .mockResolvedValueOnce(page([asset({ id: "e50", hostname: "last-device" })], 51, 50, 50));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 50);
+    expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 51-51 of 51 equipment");
   });
 
   it("shows the empty state inside the table, not a blank page", async () => {
