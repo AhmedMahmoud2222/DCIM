@@ -116,9 +116,16 @@ async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_
         AuditLog.result == "success",
     ))
     assert success_audit is not None
-    for route, record_id in (("floors", site["floor"]), ("buildings", site["building"])):
+    for route, entity_name, record_id in (
+        ("floors", "floor", site["floor"]), ("buildings", "building", site["building"]),
+    ):
         scoped_delete = await client.delete(f"/api/v1/{route}/{record_id}", headers=scoped_headers)
         assert scoped_delete.status_code == 204, scoped_delete.text
+        scoped_success_audit = await db_session.scalar(select(AuditLog).where(
+            AuditLog.action == f"location.{entity_name}.delete", AuditLog.entity_id == record_id,
+            AuditLog.result == "success",
+        ))
+        assert scoped_success_audit is not None
 
     conflict = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
     assert conflict.status_code == 409
@@ -232,6 +239,7 @@ async def test_integrity_error_delete_fallback_rolls_back_then_audits(client, au
     response = await client.delete(f"/api/v1/rooms/{chain['room']['id']}", headers=manager)
     assert response.status_code == 409
     assert "dependent records still reference it" in response.json()["detail"]
+    assert response.json()["detail"].endswith("still reference it. Remove or move those records first.")
     failure_audit = await db_session.scalar(select(AuditLog).where(
         AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
         AuditLog.result == "failure",
