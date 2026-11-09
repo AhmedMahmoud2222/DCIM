@@ -1,3 +1,4 @@
+import re
 import uuid
 
 import structlog
@@ -7,6 +8,14 @@ from starlette.responses import Response
 
 REQUEST_ID_HEADER = "X-Request-Id"
 CORRELATION_ID_HEADER = "X-Correlation-Id"
+_SAFE_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z", re.ASCII)
+
+
+def _safe_id(value: str | None) -> str:
+    """Accept bounded, log-safe caller IDs; replace malformed values with a fresh ID."""
+    if value is not None and _SAFE_ID.fullmatch(value):
+        return value
+    return str(uuid.uuid4())
 
 
 class CorrelationMiddleware(BaseHTTPMiddleware):
@@ -15,8 +24,9 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
     back to it (§37/§25 of ARCHITECTURE_REVIEW.md)."""
 
     async def dispatch(self, request: Request, call_next):
-        request_id = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
-        correlation_id = request.headers.get(CORRELATION_ID_HEADER) or request_id
+        request_id = _safe_id(request.headers.get(REQUEST_ID_HEADER))
+        raw_correlation_id = request.headers.get(CORRELATION_ID_HEADER)
+        correlation_id = _safe_id(raw_correlation_id) if raw_correlation_id else request_id
 
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id, correlation_id=correlation_id)
