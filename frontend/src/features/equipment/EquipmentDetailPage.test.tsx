@@ -7,6 +7,8 @@ import * as equipmentApi from "@/features/equipment/api";
 import * as powerApi from "@/features/power/api";
 import * as racksApi from "@/features/racks/api";
 import * as telemetryApi from "@/features/telemetry/api";
+import * as managedAssetApi from "@/features/managed-assets/api";
+import { CurrentUser } from "@/lib/authStore";
 import { ApiError } from "@/lib/apiClient";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { Equipment } from "@/types";
@@ -15,6 +17,12 @@ vi.mock("@/features/equipment/api");
 vi.mock("@/features/power/api");
 vi.mock("@/features/racks/api");
 vi.mock("@/features/telemetry/api");
+vi.mock("@/features/managed-assets/api");
+
+const LIFECYCLE_MANAGER: CurrentUser = {
+  id: "lifecycle-manager", email: "manager@example.com", full_name: "Lifecycle Manager", role_names: [],
+  permission_codes: ["managed_asset:update_lifecycle"],
+};
 
 const equipment: Equipment = {
   id: "eq-1",
@@ -226,4 +234,22 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     });
   });
 
+});
+
+describe("EquipmentDetailPage lifecycle feedback", () => {
+  it("shows and focuses a page-level notice after the equipment is installed", async () => {
+    vi.mocked(equipmentApi.getEquipment).mockResolvedValue({ ...equipment, lifecycle_status: "planned" });
+    vi.mocked(managedAssetApi.transitionManagedAssetLifecycle).mockResolvedValue({
+      id: equipment.id, asset_type: "equipment", asset_tag: equipment.asset_tag, serial_number: null,
+      lifecycle_status: "installed", created_at: equipment.created_at,
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentDetailPage />, { ...routeOptions, user: LIFECYCLE_MANAGER });
+
+    await user.click(await screen.findByRole("button", { name: "Mark installed: srv-001" }));
+    await user.click(screen.getByRole("button", { name: "Confirm install srv-001" }));
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent("srv-001 installation status saved.");
+    expect(notice).toHaveFocus();
+  });
 });

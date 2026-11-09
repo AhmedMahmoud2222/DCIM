@@ -131,12 +131,15 @@ export function RoomFloorPlanPage() {
     if (selectedCandidateId && candidates.length > 0 && !candidates.some((c) => c.id === selectedCandidateId)) setSelectedCandidateId(candidates[0].id);
   }, [candidates, selectedCandidateId]);
 
-  const refreshAll = () => {
-    queryClient.invalidateQueries({ queryKey: ["floor-plans", roomId] });
-    queryClient.invalidateQueries({ queryKey: ["import-candidates", selectedJobId] });
-    queryClient.invalidateQueries({ queryKey: ["spatial", roomId] });
-    queryClient.invalidateQueries({ queryKey: ["overlays", roomId] });
-    queryClient.invalidateQueries({ queryKey: ["floor-plan-objects", selectedFloorPlanId] });
+  const refreshAll = async (): Promise<boolean> => {
+    const results = await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: ["floor-plans", roomId] }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: ["import-candidates", selectedJobId] }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: ["spatial", roomId] }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: ["overlays", roomId] }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: ["floor-plan-objects", selectedFloorPlanId] }, { throwOnError: true }),
+    ]);
+    return results.every((result) => result.status === "fulfilled");
   };
   const onError = (e: unknown) => setActionError(messageOf(e));
   const onOk = () => setActionError(null);
@@ -208,12 +211,24 @@ export function RoomFloorPlanPage() {
   });
   const boundaryMutation = useMutation({
     mutationFn: (v: { width: number; height: number }) => setRoomBoundary(selectedFloorPlan!, { shape: "rect", x_mm: 0, y_mm: 0, width_mm: v.width, height_mm: v.height }),
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
       onOk();
-      setNotice(
-        r.racks_outside_boundary.length ? `Boundary saved. Racks outside it (not moved): ${r.racks_outside_boundary.join(", ")}.` : "Room boundary saved.",
-      );
-      refreshAll();
+      const refreshed = await refreshAll();
+      const publication = r.floor_plan.status === "active"
+        ? `Saved on active revision ${r.floor_plan.revision_number}.`
+        : `Saved on draft revision ${r.floor_plan.revision_number}. Activate this revision to update the active 2D/3D views.`;
+      const calibrationNote = r.floor_plan.current_calibration
+        ? ""
+        : r.floor_plan.source_file_name
+          ? " A manual boundary sets room dimensions but does not calibrate the imported drawing."
+          : " Calibration applies to uploaded drawings, separately from room dimensions.";
+      const refreshNote = refreshed
+        ? " The 2D/3D views are refreshed."
+        : " The boundary was saved, but the view did not refresh. Reload the page to see the latest layout.";
+      const outsideNote = r.racks_outside_boundary.length
+        ? ` Racks outside it (not moved): ${r.racks_outside_boundary.join(", ")}.`
+        : "";
+      setNotice(`${publication}${refreshNote}${calibrationNote}${outsideNote}`);
     },
     onError,
   });
@@ -337,6 +352,9 @@ export function RoomFloorPlanPage() {
 
               <form onSubmit={submitBoundary} className="rounded-sm bg-slate-800/40 p-2 text-xs text-slate-400" aria-label="Set rectangular room boundary">
                 <p className="mb-1 font-medium text-slate-300">Room boundary (manual)</p>
+                <p className="mb-2 text-slate-500">
+                  Applies to revision {selectedFloorPlan.revision_number} ({selectedFloorPlan.status}). The 2D/3D layouts show the active revision. A boundary sets room size; it does not calibrate an imported drawing.
+                </p>
                 <div className="flex flex-wrap items-end gap-2">
                   <label>
                     Width (mm)

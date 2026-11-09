@@ -173,6 +173,47 @@ async def test_policies_validate_references_and_events(client, auth_headers, db_
 
 
 @pytest.mark.asyncio
+async def test_enabled_policy_requires_enabled_channel(client, auth_headers):
+    mgr = await auth_headers("DCIM Manager")
+    channel = (await client.post(f"{OPS}/notification-channels", json={"name": "disabled-hook", "url": URL, "enabled": False}, headers=mgr)).json()
+    response = await client.post(
+        f"{OPS}/notification-policies",
+        json={"name": "invalid-enabled-policy", "channel_id": channel["id"], "event_types": ["incident.opened"]},
+        headers=mgr,
+    )
+    assert response.status_code == 409
+    assert "requires an enabled channel" in response.json()["detail"]
+
+    disabled_policy = await client.post(
+        f"{OPS}/notification-policies",
+        json={"name": "disabled-policy", "channel_id": channel["id"], "event_types": ["incident.opened"], "enabled": False},
+        headers=mgr,
+    )
+    assert disabled_policy.status_code == 201
+    enable_response = await client.patch(
+        f"{OPS}/notification-policies/{disabled_policy.json()['id']}",
+        json={"enabled": True},
+        headers={**mgr, "If-Match": "1"},
+    )
+    assert enable_response.status_code == 409
+
+    enabled_channel = (await client.post(
+        f"{OPS}/notification-channels", json={"name": "enabled-hook", "url": URL}, headers=mgr
+    )).json()
+    await client.post(
+        f"{OPS}/notification-policies",
+        json={"name": "enabled-policy", "channel_id": enabled_channel["id"], "event_types": ["incident.opened"]},
+        headers=mgr,
+    )
+    disable_response = await client.patch(
+        f"{OPS}/notification-channels/{enabled_channel['id']}",
+        json={"enabled": False},
+        headers={**mgr, "If-Match": "1"},
+    )
+    assert disable_response.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_delivery_history_and_operator_retry(client, auth_headers, db_session):
     mgr = await auth_headers("DCIM Manager")
     viewer = await auth_headers("Viewer")

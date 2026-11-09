@@ -5,6 +5,8 @@ import { Link, useParams } from "react-router-dom";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { connectEquipmentPort, getEquipment, getEquipmentPorts, moveEquipment, retireEquipment } from "@/features/equipment/api";
 import { ImpactAnalysisModal, ImpactTarget } from "@/features/impact/ImpactAnalysisModal";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
+import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import {
@@ -41,6 +43,7 @@ export function EquipmentDetailPage() {
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [historyHours, setHistoryHours] = useState(24);
   const [impactTarget, setImpactTarget] = useState<ImpactTarget | null>(null);
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -148,8 +151,20 @@ export function EquipmentDetailPage() {
           <h1 className="text-lg font-semibold">{equipment.hostname ?? equipment.asset_tag}</h1>
           <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
         </div>
-        <LifecycleStatus value={equipment.lifecycle_status} />
+        <div className="flex flex-col items-end gap-2">
+          <LifecycleStatus value={equipment.lifecycle_status} />
+          <LifecycleTransitionAction
+            assetId={equipment.id}
+            assetName={equipment.hostname ?? equipment.asset_tag}
+            status={equipment.lifecycle_status}
+            assetLabel="equipment"
+            onCompleted={showNotice}
+            onStarted={clearNotice}
+          />
+        </div>
       </div>
+
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       <div className="grid grid-cols-2 gap-6">
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">

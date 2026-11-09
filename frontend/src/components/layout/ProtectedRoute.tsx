@@ -7,7 +7,10 @@ import { useAuth } from "@/features/auth/useAuth";
  * server-side (see app/application/rbac.py); this component only avoids flashing
  * protected UI at an unauthenticated visitor before the API would reject them anyway. */
 export function ProtectedRoute() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isInitialized } = useAuth();
+  if (!isInitialized) {
+    return <div role="status" aria-live="polite" className="p-6 text-sm text-fg-secondary">Restoring your session…</div>;
+  }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <Outlet />;
 }

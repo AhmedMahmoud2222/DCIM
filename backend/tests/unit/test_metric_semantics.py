@@ -5,6 +5,7 @@ from decimal import Decimal
 from types import MappingProxyType
 
 import pytest
+from pydantic import ValidationError
 
 from app.api.v1.alarms import AlarmRuleIn, create_alarm_rule
 from app.api.v1.telemetry import MetricMappingIn
@@ -85,12 +86,20 @@ def test_mapping_api_defaults_to_v1_and_accepts_explicit_version_only():
 @pytest.mark.parametrize('metric,type_,threshold', [
     ('humidity_percent', 'threshold_high', 101), ('power_kw', 'threshold_low', -1),
     ('availability', 'threshold_high', 1), ('temperature_c', 'availability_unavailable', None),
-    ('humidity_percent', 'threshold_high', float('inf')),
 ])
 async def test_alarm_api_rejects_v2_incompatible_semantics_before_db(metric, type_, threshold):
     body=AlarmRuleIn(integration_id=uuid.uuid4(), metric=metric, rule_type=type_, threshold=threshold, name='bad', registry_version='2')
     with pytest.raises(ApiError):
         await create_alarm_rule(body, db=None, ctx=None)
+
+
+@pytest.mark.parametrize('threshold', [float('inf'), float('-inf'), float('nan')])
+def test_alarm_rule_request_rejects_nonfinite_thresholds(threshold):
+    with pytest.raises(ValidationError):
+        AlarmRuleIn(
+            integration_id=uuid.uuid4(), metric='humidity_percent', rule_type='threshold_high',
+            threshold=threshold, name='bad', registry_version='2',
+        )
 
 
 def test_threshold_authored_unit_converts_before_range_check():

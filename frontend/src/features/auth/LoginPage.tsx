@@ -7,7 +7,7 @@ import { APP_TITLE } from "@/lib/appTitle";
 import { useAuth } from "./useAuth";
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, isInitialized } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -72,10 +72,10 @@ export function LoginPage() {
 
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !isInitialized}
           className="w-full rounded-sm bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
         >
-          {submitting ? "Signing in…" : "Sign in"}
+          {submitting ? "Signing in…" : !isInitialized ? "Checking session…" : "Sign in"}
         </button>
       </form>
     </div>

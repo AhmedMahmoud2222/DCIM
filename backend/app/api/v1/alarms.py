@@ -12,7 +12,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status
+from app.application.alarm_service import acknowledge_alarm, disable_rule, resolve_rule_unit, rule_unit_status, update_rule
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -29,8 +29,18 @@ class AlarmRuleIn(BaseModel):
     integration_id: uuid.UUID
     metric: str = Field(max_length=64)
     rule_type: str
-    threshold: float | None = None
-    name: str = Field(max_length=128)
+    threshold: Decimal | None = Field(
+        default=None, allow_inf_nan=False, max_digits=18, decimal_places=8,
+        ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
+    )
+    name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A nonblank name is required.")
+        return value.strip()
 
 
 class AlarmRuleUpdateIn(BaseModel):
@@ -47,6 +57,21 @@ class AlarmRuleUpdateIn(BaseModel):
 
 class AlarmRuleResolveIn(AlarmRuleUpdateIn):
     unit: str = Field(min_length=1, max_length=32)
+
+
+class AlarmRuleEditIn(AlarmRuleUpdateIn):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    threshold: Decimal | None = Field(
+        default=None, allow_inf_nan=False, max_digits=18, decimal_places=8,
+        ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
+    )
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("A nonblank name is required.")
+        return value.strip() if value is not None else None
 
 
 class AlarmRuleOut(BaseModel):
@@ -107,7 +132,7 @@ async def create_alarm_rule(
         definition = registry_snapshot(body.registry_version).metrics.get(body.metric)
         if definition is not None:
             validate_metric_rule(body.metric, body.rule_type,
-                                 Decimal(str(body.threshold)) if body.threshold is not None else None,
+                                 body.threshold,
                                  definition.canonical_unit, registry_version=body.registry_version)
     except ValueError as error:
         from app.core.errors import ApiError
@@ -115,7 +140,7 @@ async def create_alarm_rule(
     if definition is None:
         from app.core.errors import ApiError
         raise ApiError(status_code=422, title="Invalid alarm metric", detail="Metric is not in the active registry.")
-    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit,
+    rule = AlarmRule(id=uuid.uuid4(), unit=definition.canonical_unit, enabled=True,
                      **body.model_dump())
     db.add(rule)
     await db.flush()
@@ -127,14 +152,33 @@ async def create_alarm_rule(
         entity_id=rule.id,
         request_id=None,
         correlation_id=None,
-        after={"integration_id": str(rule.integration_id), "metric": rule.metric},
+        after={
+            "integration_id": str(rule.integration_id),
+            "metric": rule.metric,
+            "rule_type": rule.rule_type,
+            "threshold": str(rule.threshold) if rule.threshold is not None else None,
+            "unit": rule.unit,
+            "name": rule.name,
+            "registry_version": rule.registry_version,
+            "enabled": rule.enabled,
+        },
     )
     await write_outbox_event(
         db,
         event_type="AlarmRuleCreated",
         aggregate_type="alarm_rule",
         aggregate_id=rule.id,
-        payload={"rule_id": str(rule.id), "integration_id": str(rule.integration_id)},
+        payload={
+            "rule_id": str(rule.id),
+            "integration_id": str(rule.integration_id),
+            "metric": rule.metric,
+            "rule_type": rule.rule_type,
+            "threshold": str(rule.threshold) if rule.threshold is not None else None,
+            "unit": rule.unit,
+            "name": rule.name,
+            "registry_version": rule.registry_version,
+            "enabled": rule.enabled,
+        },
     )
     await db.commit()
     return {"id": rule.id}
@@ -194,6 +238,23 @@ async def disable_alarm_rule(
     rule = await _locked_rule(db, rule_id)
     await disable_rule(db, rule=rule, reason=body.reason, expected_updated_at=body.expected_updated_at,
                        actor_user_id=ctx.user.id)
+    result = _rule_out(rule)
+    await db.commit()
+    return result
+
+
+@router.patch("/rules/{rule_id}", response_model=AlarmRuleOut)
+async def update_alarm_rule(
+    rule_id: uuid.UUID, body: AlarmRuleEditIn,
+    db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("alarm:manage")),
+) -> AlarmRuleOut:
+    rule = await _locked_rule(db, rule_id)
+    await update_rule(
+        db, rule=rule, name=body.name,
+        threshold=body.threshold,
+        threshold_set="threshold" in body.model_fields_set,
+        reason=body.reason, expected_updated_at=body.expected_updated_at, actor_user_id=ctx.user.id,
+    )
     result = _rule_out(rule)
     await db.commit()
     return result

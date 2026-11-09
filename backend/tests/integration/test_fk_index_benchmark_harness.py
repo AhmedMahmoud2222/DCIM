@@ -499,7 +499,7 @@ def test_workload_rejects_unknown_mode_and_service_without_url():
 
 
 def _upgraded(urls: Urls, clone: str) -> dict[str, int]:
-    alembic_ok(urls, clone, "upgrade", "head", timeout=STEP_TIMEOUT).cleanup()
+    alembic_ok(urls, clone, "upgrade", HEAD, timeout=STEP_TIMEOUT).cleanup()
     state = integrity(urls, clone)
     assert state["defects"] == [] and state["valid_and_ready"] == 22
     return state["oids"]
@@ -632,7 +632,7 @@ def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(ur
         "metric, unit, value, occurred_at, received_at) SELECT md5('c')::uuid, md5('i')::uuid, md5('m1')::uuid, 'x', 's', 'blocker', 'm', 'u', 1, now(), now()"
     )
     proxy = PgProxy(*urls.server_address) if interrupt == "cancel" else None
-    run = AlembicRun(urls, clone, "upgrade", "head", via=(proxy.host, proxy.port) if proxy else None)
+    run = AlembicRun(urls, clone, "upgrade", HEAD, via=(proxy.host, proxy.port) if proxy else None)
     try:
         pid = _wait_for_build_phase(urls, clone, run, "waiting for writers")
         if proxy:
@@ -673,7 +673,7 @@ def test_interrupted_build_leaves_invalid_artifact_and_a_plain_rerun_recovers(ur
 
     blocker.rollback()
     blocker.close()
-    alembic_ok(urls, clone, "upgrade", "head", timeout=STEP_TIMEOUT).cleanup()
+    alembic_ok(urls, clone, "upgrade", HEAD, timeout=STEP_TIMEOUT).cleanup()
     final = integrity(urls, clone)
     assert final["version"] == HEAD and final["valid_and_ready"] == 22 and final["defects"] == []
     assert final["invalid_anywhere"] == 0

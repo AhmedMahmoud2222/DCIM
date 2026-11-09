@@ -7,6 +7,8 @@ import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
+import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
@@ -14,6 +16,7 @@ export function RacksPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
   const canImport = useHasPermission("rack:import");
 
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
@@ -82,6 +85,8 @@ export function RacksPage() {
           </>
         }
       />
+
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       {showBulkImport && (
         <BulkImportPanel
@@ -208,7 +213,17 @@ export function RacksPage() {
                   </td>
                   <td className={`${TD} font-mono text-fg-secondary`}>{rack.asset_tag}</td>
                   <td className={TD}>
-                    <LifecycleStatus value={rack.lifecycle_status} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <LifecycleStatus value={rack.lifecycle_status} />
+                      <LifecycleTransitionAction
+                        assetId={rack.id}
+                        assetName={rack.name}
+                        status={rack.lifecycle_status}
+                        assetLabel="rack"
+                        onCompleted={showNotice}
+                        onStarted={clearNotice}
+                      />
+                    </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>
                     {rack.placement

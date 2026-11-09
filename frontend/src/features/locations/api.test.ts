@@ -4,6 +4,13 @@ import * as client from "@/lib/apiClient";
 import {
   HIERARCHY_MAX_LIMIT,
   HIERARCHY_PAGE_SIZE,
+  deleteBuilding,
+  deleteCity,
+  deleteCountry,
+  deleteFloor,
+  deleteOrganization,
+  deleteRoom,
+  deleteSite,
   listBuildings,
   listCities,
   listCountries,
@@ -69,5 +76,19 @@ describe("location hierarchy api pagination contract", () => {
   it("uses offset paging so lists beyond a single page stay reachable", async () => {
     await listOrganizations(HIERARCHY_PAGE_SIZE, 200);
     expect(lastPath()).toContain("offset=200");
+  });
+
+  it("sends DELETE requests for every location hierarchy level", async () => {
+    const calls: Array<() => Promise<unknown>> = [
+      () => deleteOrganization("org-1"), () => deleteCountry("country-1"), () => deleteCity("city-1"),
+      () => deleteSite("site-1"), () => deleteBuilding("building-1"), () => deleteFloor("floor-1"),
+      () => deleteRoom("room-1"),
+    ];
+    for (const call of calls) await call();
+    expect(vi.mocked(client.apiFetch).mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ["/organizations/org-1", "DELETE"], ["/countries/country-1", "DELETE"], ["/cities/city-1", "DELETE"],
+      ["/sites/site-1", "DELETE"], ["/buildings/building-1", "DELETE"], ["/floors/floor-1", "DELETE"],
+      ["/rooms/room-1", "DELETE"],
+    ]);
   });
 });

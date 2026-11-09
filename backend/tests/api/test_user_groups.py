@@ -27,7 +27,10 @@ async def _make_site(client, admin, org_id=None):
     building = (await client.post("/api/v1/buildings", json={"site_id": site["id"], "code": "A", "name": "B"}, headers=admin)).json()
     floor = (await client.post("/api/v1/floors", json={"building_id": building["id"], "name": "F", "level_number": 1}, headers=admin)).json()
     room = (await client.post("/api/v1/rooms", json={"floor_id": floor["id"], "code": f"R-{uuid.uuid4().hex[:5]}", "name": "Room"}, headers=admin)).json()
-    return {"org": org_id, "site": site["id"], "room": room["id"]}
+    return {
+        "org": org_id, "site": site["id"], "building": building["id"],
+        "floor": floor["id"], "room": room["id"],
+    }
 
 
 async def _make_rack(client, admin, auth_headers, room_id):
