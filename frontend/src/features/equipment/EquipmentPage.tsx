@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
 import { useHasPermission } from "@/features/auth/useAuthorization";
-import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
   createEquipment,
@@ -12,6 +11,7 @@ import {
   createEquipmentModelRevision,
   listEquipment,
 } from "@/features/equipment/api";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 

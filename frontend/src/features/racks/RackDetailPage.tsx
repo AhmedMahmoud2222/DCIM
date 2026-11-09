@@ -2,8 +2,8 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { getEquipmentPowerSummary } from "@/features/power/api";
 import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
+import { getEquipmentPowerSummary } from "@/features/power/api";
 import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/features/racks/api";
 import { RackElevationView } from "@/features/racks/RackElevationView";
 import { ApiError } from "@/lib/apiClient";

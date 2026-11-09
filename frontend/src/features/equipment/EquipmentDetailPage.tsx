@@ -3,9 +3,9 @@ import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
-import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { connectEquipmentPort, getEquipment, getEquipmentPorts, moveEquipment, retireEquipment } from "@/features/equipment/api";
 import { ImpactAnalysisModal, ImpactTarget } from "@/features/impact/ImpactAnalysisModal";
+import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import {

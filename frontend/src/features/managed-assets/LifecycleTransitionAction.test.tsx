@@ -1,4 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -34,6 +35,8 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: `Confirm install ${assetName}` }));
     expect(api.transitionManagedAssetLifecycle).toHaveBeenCalledWith(assetId, "installed");
     await waitFor(() => expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true));
+    expect(screen.getByRole("status")).toHaveTextContent("Installation status saved.");
+    expect(screen.getByRole("status")).toHaveFocus();
   });
 
   it("hides the transition from users without lifecycle permission", () => {
@@ -74,5 +77,28 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mark installed: server-01" })).toHaveFocus();
+  });
+
+  it("keeps and focuses a conflict alert after refreshed status is no longer planned", async () => {
+    vi.mocked(api.transitionManagedAssetLifecycle).mockRejectedValue(new Error("Asset was already installed"));
+    function StatusHarness() {
+      const [status, setStatus] = useState("planned");
+      return (
+        <>
+          <LifecycleTransitionAction assetId="equipment-1" assetName="server-01" status={status} assetLabel="equipment" />
+          <button type="button" onClick={() => setStatus("installed")}>Simulate refreshed status</button>
+        </>
+      );
+    }
+    renderWithProviders(
+      <StatusHarness />,
+      { user: LIFECYCLE_MANAGER },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Mark installed: server-01" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm install server-01" }));
+    await screen.findByRole("alert");
+    await userEvent.click(screen.getByRole("button", { name: "Simulate refreshed status" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Asset was already installed");
+    expect(screen.getByRole("alert")).toHaveFocus();
   });
 });
