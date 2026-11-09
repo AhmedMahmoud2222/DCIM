@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, RowCount, TD, TH, TR } from "@/components/data/DataTable";
@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
+import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
@@ -15,13 +16,8 @@ export function RacksPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
-  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
-  const lifecycleNoticeRef = useRef<HTMLParagraphElement>(null);
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, showNotice, clearNotice } = useLifecycleNotice();
   const canImport = useHasPermission("rack:import");
-
-  useEffect(() => {
-    if (lifecycleNotice) lifecycleNoticeRef.current?.focus();
-  }, [lifecycleNotice]);
 
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks });
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms });
@@ -90,7 +86,7 @@ export function RacksPage() {
         }
       />
 
-      {lifecycleNotice && <p ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice}</p>}
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       {showBulkImport && (
         <BulkImportPanel
@@ -219,7 +215,7 @@ export function RacksPage() {
                   <td className={TD}>
                     <div className="flex flex-wrap items-center gap-2">
                       <LifecycleStatus value={rack.lifecycle_status} />
-                      <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" onCompleted={setLifecycleNotice} />
+                      <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" onCompleted={showNotice} onStarted={clearNotice} />
                     </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>

@@ -10,12 +10,14 @@ export function LifecycleTransitionAction({
   status,
   assetLabel,
   onCompleted,
+  onStarted,
 }: {
   assetId: string;
   assetName: string;
   status: string;
   assetLabel: "rack" | "equipment";
   onCompleted?: (message: string) => void;
+  onStarted?: () => void;
 }) {
   const canUpdate = useHasPermission("managed_asset:update_lifecycle");
   const queryClient = useQueryClient();
@@ -29,6 +31,7 @@ export function LifecycleTransitionAction({
   const queryKey = [assetLabel === "rack" ? "racks" : "equipment"];
   const mutation = useMutation({
     mutationFn: () => transitionManagedAssetLifecycle(assetId, "installed"),
+    onMutate: () => onStarted?.(),
     onSuccess: () => {
       setCompleted(true);
       onCompleted?.(`${assetName} installation status saved.`);

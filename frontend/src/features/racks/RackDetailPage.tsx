@@ -1,8 +1,9 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
+import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 import { getEquipmentPowerSummary } from "@/features/power/api";
 import { getRack, getRackElevation, listRooms, moveRack, retireRack } from "@/features/racks/api";
 import { RackElevationView } from "@/features/racks/RackElevationView";
@@ -16,12 +17,7 @@ export function RackDetailPage() {
   const [moveRoomId, setMoveRoomId] = useState("");
   const [moveX, setMoveX] = useState("");
   const [moveY, setMoveY] = useState("");
-  const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
-  const lifecycleNoticeRef = useRef<HTMLParagraphElement>(null);
-
-  useEffect(() => {
-    if (lifecycleNotice) lifecycleNoticeRef.current?.focus();
-  }, [lifecycleNotice]);
+  const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, showNotice, clearNotice } = useLifecycleNotice();
 
   const rackQuery = useQuery({ queryKey: ["racks", rackId], queryFn: () => getRack(rackId!), enabled: !!rackId });
   const elevationQuery = useQuery({
@@ -81,11 +77,11 @@ export function RackDetailPage() {
         </div>
         <div className="flex flex-col items-end gap-2">
           <LifecycleStatus value={rack.lifecycle_status} />
-          <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" onCompleted={setLifecycleNotice} />
+          <LifecycleTransitionAction assetId={rack.id} assetName={rack.name} status={rack.lifecycle_status} assetLabel="rack" onCompleted={showNotice} onStarted={clearNotice} />
         </div>
       </div>
 
-      {lifecycleNotice && <p ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice}</p>}
+      {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 
       <div className="mb-6 grid grid-cols-2 gap-6">
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
