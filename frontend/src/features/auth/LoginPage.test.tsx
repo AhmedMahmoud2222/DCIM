@@ -27,4 +27,13 @@ describe("LoginPage accessibility", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Login failed. Please try again.");
     expect(screen.getByLabelText("Password")).toHaveAttribute("aria-invalid", "true");
   });
+
+  it("does not submit credentials until startup session restoration has finished", async () => {
+    const login = vi.fn();
+    vi.mocked(auth.useAuth).mockReturnValue({ login, accessToken: null, user: null, isAuthenticated: false, isInitialized: false, logout: vi.fn() });
+    renderWithProviders(<LoginPage />);
+
+    expect(screen.getByRole("button", { name: "Checking session…" })).toBeDisabled();
+    expect(login).not.toHaveBeenCalled();
+  });
 });

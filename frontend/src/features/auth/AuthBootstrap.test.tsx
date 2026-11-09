@@ -8,7 +8,11 @@ import * as api from "@/lib/apiClient";
 import { useAuthStore } from "@/lib/authStore";
 import { ADMINISTRATOR_TEST_USER } from "@/test/renderWithProviders";
 
-vi.mock("@/lib/apiClient", () => ({ apiFetch: vi.fn(), refreshAccessToken: vi.fn() }));
+vi.mock("@/lib/apiClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/apiClient")>()),
+  apiFetch: vi.fn(),
+  refreshAccessToken: vi.fn(),
+}));
 
 function renderProtected() {
   return render(
@@ -47,11 +51,31 @@ describe("AuthBootstrap", () => {
   });
 
   it("shows login when the refresh cookie is missing or expired", async () => {
-    vi.mocked(api.refreshAccessToken).mockRejectedValue(new Error("Refresh failed"));
+    vi.mocked(api.refreshAccessToken).mockRejectedValue(new api.ApiError(401, "Unauthorized", "Refresh failed", null));
 
     renderProtected();
 
     expect(await screen.findByRole("heading", { name: "Login page" })).toBeInTheDocument();
     expect(useAuthStore.getState()).toMatchObject({ accessToken: null, user: null, isInitialized: true });
+  });
+
+  it("keeps the protected route waiting during a temporary failure and offers retry", async () => {
+    vi.mocked(api.refreshAccessToken)
+      .mockRejectedValueOnce(new api.ApiError(503, "Unavailable", "Temporary failure", null))
+      .mockImplementationOnce(async () => {
+        useAuthStore.getState().setAccessToken("restored-on-retry");
+        return "restored-on-retry";
+      });
+    vi.mocked(api.apiFetch).mockResolvedValue(ADMINISTRATOR_TEST_USER);
+
+    renderProtected();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your session could not be restored");
+    expect(api.refreshAccessToken).toHaveBeenNthCalledWith(1, { clearOnFailure: false });
+    expect(screen.queryByRole("heading", { name: "Login page" })).not.toBeInTheDocument();
+    expect(useAuthStore.getState().isInitialized).toBe(false);
+    await screen.getByRole("button", { name: "Retry session restore" }).click();
+
+    expect(await screen.findByRole("heading", { name: "Protected page" })).toBeInTheDocument();
   });
 });

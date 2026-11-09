@@ -32,7 +32,7 @@ async function parseProblemResponse(res: Response): Promise<never> {
 
 let refreshInFlight: Promise<string> | null = null;
 
-async function refreshAccessToken(): Promise<string> {
+async function refreshAccessToken(options: { clearOnFailure?: boolean } = {}): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     const csrfToken = readCookie(CSRF_COOKIE_NAME);
@@ -42,7 +42,7 @@ async function refreshAccessToken(): Promise<string> {
       headers: csrfToken ? { [CSRF_HEADER_NAME]: csrfToken } : {},
     });
     if (!res.ok) {
-      useAuthStore.getState().clear();
+      if (options.clearOnFailure !== false) useAuthStore.getState().clear();
       await parseProblemResponse(res);
     }
     const body = (await res.json()) as { access_token: string };
