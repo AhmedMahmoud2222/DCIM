@@ -34,7 +34,7 @@ export function EquipmentPage() {
   const [hostname, setHostname] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [modelName, setModelName] = useState("");
-  const currentPageSize = equipmentQuery.data?.limit ?? pageSize;
+  const currentPageSize = equipmentQuery.data?.limit && equipmentQuery.data.limit > 0 ? equipmentQuery.data.limit : pageSize;
   const pageOutOfRange = Boolean(equipmentQuery.data && offset > 0 && offset >= equipmentQuery.data.total);
 
   useEffect(() => {
@@ -43,7 +43,8 @@ export function EquipmentPage() {
       setPageSize(page.limit);
     }
     if (page && offset > 0 && offset >= page.total) {
-      setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / page.limit) * page.limit);
+      const size = page.limit > 0 ? page.limit : pageSize;
+      setOffset(page.total === 0 ? 0 : Math.floor((page.total - 1) / size) * size);
     }
   }, [equipmentQuery.data, offset, pageSize]);
 

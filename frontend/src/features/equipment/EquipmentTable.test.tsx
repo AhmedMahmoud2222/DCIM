@@ -146,7 +146,20 @@ describe("Equipment table", () => {
     const user = userEvent.setup();
     renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
 
+    let refreshStatusWasAdded = false;
+    let emptyStateWasAdded = false;
+    const observer = new MutationObserver((records) => {
+      for (const node of records.flatMap((record) => Array.from(record.addedNodes))) {
+        const text = node.textContent ?? "";
+        if (text.includes("Refreshing the equipment list")) refreshStatusWasAdded = true;
+        if (text.includes("No equipment yet.")) emptyStateWasAdded = true;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
     await user.click(await screen.findByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(refreshStatusWasAdded).toBe(true));
+    observer.disconnect();
+    expect(emptyStateWasAdded).toBe(false);
     await waitFor(() => expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 0));
     expect(await screen.findByRole("link", { name: "device-0" })).toBeInTheDocument();
     expect(screen.queryByText("No equipment yet.")).not.toBeInTheDocument();
@@ -164,6 +177,18 @@ describe("Equipment table", () => {
     expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
     expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(50, 50);
     expect(screen.getByTestId("row-count")).toHaveTextContent("Showing 51-51 of 51 equipment");
+  });
+
+  it("uses the default size if a response has an invalid zero limit", async () => {
+    vi.mocked(equipmentApi.listEquipment)
+      .mockResolvedValueOnce(page(Array.from({ length: 200 }, (_, i) => asset({ id: `e${i}` })), 201, 0, 0))
+      .mockResolvedValueOnce(page([asset({ id: "e200", hostname: "last-device" })], 201, 200));
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("link", { name: "last-device" })).toBeInTheDocument();
+    expect(equipmentApi.listEquipment).toHaveBeenLastCalledWith(200, 200);
   });
 
   it("shows the empty state inside the table, not a blank page", async () => {
