@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.pagination import MAX_LIMIT
 from app.domain.audit.models import AuditLog
@@ -56,7 +57,12 @@ async def test_location_hierarchy_deletes_only_empty_records_bottom_up(client, a
     audit = await db_session.scalar(select(AuditLog).where(
         AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
     ))
-    assert audit is not None and audit.before["floor_id"] == chain["floor"]["id"]
+    failure_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
+        AuditLog.result == "failure",
+    ))
+    assert audit is not None and audit.result == "success" and audit.before["floor_id"] == chain["floor"]["id"]
+    assert failure_audit is None
 
 
 async def test_location_hierarchy_delete_reports_child_dependencies_and_checks_permission(client, auth_headers, db_session):
@@ -92,6 +98,52 @@ async def test_site_delete_detects_non_location_foreign_key_dependents(client, a
     response = await client.delete(f"/api/v1/sites/{site['site']}", headers=manager)
     assert response.status_code == 409
     assert "site access grants (1)" in response.json()["detail"]
+
+
+async def test_scoped_location_deletes_hide_dependency_details_and_out_of_scope_ids(client, auth_headers):
+    admin = await auth_headers("Administrator")
+    site = await _make_site(client, admin)
+    group_id = await _group(
+        client, admin, allow=["location:read", "location:manage"],
+        sites=[{"site_id": site["site"], "rack_scope": "all"}],
+    )
+    _user, scoped_headers = await _group_user(client, admin, [group_id])
+
+    conflict = await client.delete(f"/api/v1/sites/{site['site']}", headers=scoped_headers)
+    assert conflict.status_code == 409
+    detail = conflict.json()["detail"]
+    assert "dependent records still reference it" in detail
+    assert "building" not in detail and "(" not in detail
+
+    outside = await _make_site(client, admin)
+    out_of_scope = await client.delete(f"/api/v1/sites/{outside['site']}", headers=scoped_headers)
+    assert out_of_scope.status_code == 404
+    missing = await client.delete(f"/api/v1/sites/{uuid.uuid4()}", headers=scoped_headers)
+    assert missing.status_code == 404
+
+
+async def test_integrity_error_delete_fallback_rolls_back_then_audits(client, auth_headers, db_session, monkeypatch):
+    manager = await auth_headers("DCIM Manager")
+    chain = await _create_full_chain(client, manager)
+    original_flush = db_session.flush
+    fail_once = True
+
+    async def fail_first_delete_flush(*args, **kwargs):
+        nonlocal fail_once
+        if fail_once:
+            fail_once = False
+            raise IntegrityError("DELETE", {}, RuntimeError("forced FK race"))
+        return await original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "flush", fail_first_delete_flush)
+    response = await client.delete(f"/api/v1/rooms/{chain['room']['id']}", headers=manager)
+    assert response.status_code == 409
+    assert "dependent records still reference it" in response.json()["detail"]
+    failure_audit = await db_session.scalar(select(AuditLog).where(
+        AuditLog.action == "location.room.delete", AuditLog.entity_id == chain["room"]["id"],
+        AuditLog.result == "failure",
+    ))
+    assert failure_audit is not None
 
 
 async def test_viewer_cannot_create_locations(client, auth_headers):
