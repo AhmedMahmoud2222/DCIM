@@ -203,18 +203,27 @@ def test_fk_index_migration_and_orm_metadata_are_exactly_in_parity():
 # --- happy paths -------------------------------------------------------------------------------------------------
 
 
-def test_fresh_empty_database_upgrade_downgrade_roundtrip_and_no_drift():
+def test_fresh_empty_database_upgrade_downgrade_roundtrip():
     name = f"dcim_fk_fresh_{uuid.uuid4().hex[:8]}"
     _run(_create_db(name))
     try:
         alembic_ok(name, "upgrade", HEAD)
         assert version(name) == HEAD
         assert_all_ours_valid(name)
-        alembic_ok(name, "check")
         alembic_ok(name, "downgrade", PREVIOUS)
         assert version(name) == PREVIOUS and index_rows(name) == {}
         alembic_ok(name, "upgrade", HEAD)
         assert_all_ours_valid(name)
+    finally:
+        _run(_drop_db(name))
+
+
+def test_current_head_has_no_model_drift():
+    """Autogenerate checks require the scratch database to be at every current head."""
+    name = f"dcim_fk_drift_{uuid.uuid4().hex[:8]}"
+    _run(_create_db(name))
+    try:
+        alembic_ok(name, "upgrade", "head")
         alembic_ok(name, "check")
     finally:
         _run(_drop_db(name))
@@ -227,7 +236,6 @@ def test_populated_upgrade_from_0056_keeps_rows_and_index_is_usable(db):
     assert version(db) == HEAD
     assert_all_ours_valid(db)
     assert q(db, "SELECT count(*) AS n FROM telemetry_reading")[0]["n"] == TELEMETRY_ROWS
-    alembic_ok(db, "check")
     alembic_ok(db, "downgrade", PREVIOUS)
     assert index_rows(db) == {}
     alembic_ok(db, "upgrade", HEAD)
@@ -476,7 +484,6 @@ def test_partially_completed_upgrade_is_retried_to_completion_and_reuses_built_i
     final = assert_all_ours_valid(db)
     assert all(final[n]["oid"] == partial[n]["oid"] for n in built), "already-built valid indexes must be reused"
     assert version(db) == HEAD
-    alembic_ok(db, "check")
 
 
 # --- downgrade and offline ---------------------------------------------------------------------------------------------
@@ -856,7 +863,6 @@ def test_second_runner_fails_fast_while_the_first_is_parked_at_the_version_stamp
     assert rc == 0, out
     assert version(db) == HEAD
     assert_all_ours_valid(db)
-    alembic_ok(db, "check")
 
 
 def test_failed_run_releases_the_advisory_lock_and_the_next_run_succeeds(db):

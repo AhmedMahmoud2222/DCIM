@@ -14,7 +14,9 @@ depends_on = None
 
 def upgrade() -> None:
     # Existing keys emitted by the alarm service were always
-    # ``<integration UUID>:<node name>:<metric>``. Remove exactly that prefix.
+    # ``<integration UUID>:<node name>:<metric>``. Remove exactly the first
+    # UUID prefix; colons inside node names remain part of the node identity.
+    # This assumes rows at 0057 use the legacy format (not a mixed-format detector).
     op.execute(
         """
         UPDATE alarm
@@ -25,11 +27,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Before this migration every alarm subject key included its integration
-    # UUID, so restore that historical format for every row.
+    # A legacy key can use at most 475 characters after adding the 37-character
+    # UUID prefix. Fail before changing anything if post-migration data no longer
+    # fits the old String(512) contract; silent truncation would corrupt identity.
     op.execute(
         """
-        UPDATE alarm
-        SET subject_key = integration_id::text || ':' || subject_key
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM alarm WHERE char_length(subject_key) > 475) THEN
+                RAISE EXCEPTION 'Cannot downgrade alarm subject keys longer than 475 characters';
+            END IF;
+            UPDATE alarm
+            SET subject_key = integration_id::text || ':' || subject_key;
+        END $$;
         """
     )
