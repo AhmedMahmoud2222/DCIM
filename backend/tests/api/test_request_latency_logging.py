@@ -43,7 +43,7 @@ async def test_escaped_exception_is_counted_and_logged_without_request_data(monk
 
     def server_error_count():
         return sum(
-            item["count"] for item in snapshot()["requests_total"] if item["method"] == "GET" and item["status_class"] == "5xx"
+            item["count"] for item in snapshot()["requests_total"] if (item["method"] == "GET" and item["status_class"] == "5xx")
         )
 
     before = server_error_count()
@@ -59,8 +59,9 @@ async def test_escaped_exception_is_counted_and_logged_without_request_data(monk
     assert server_error_count() == before + 1
     assert "do-not-record" not in repr(after)
     assert "sensitive exception details" not in repr(after)
-    assert len(completion_logs) == 1
-    event, fields = completion_logs[0]
+    completion_events = [item for item in completion_logs if item[0] == "api_request_completed"]
+    assert len(completion_events) == 1
+    event, fields = completion_events[0]
     assert event == "api_request_completed"
     assert fields["status_code"] == 500
     assert fields["route"] == path

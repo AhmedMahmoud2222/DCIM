@@ -16,6 +16,19 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z", re.ASCII)
 logger = get_logger(__name__)
 
 
+def _record_request_completion(request: Request, *, status_code: int, started_at: float) -> None:
+    route = request.scope.get("route")
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    logger.info(
+        "api_request_completed",
+        method=request.method,
+        route=getattr(route, "path", "unmatched"),
+        status_code=status_code,
+        duration_ms=round(duration_ms, 2),
+    )
+    observe_request(method=request.method, status_code=status_code, duration_ms=duration_ms)
+
+
 def _safe_id(value: str | None) -> str:
     """Accept bounded, log-safe caller IDs; replace malformed values with a fresh ID."""
     if value is not None and _SAFE_ID.fullmatch(value):
@@ -46,35 +59,9 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
             # Exceptions that escape the ASGI stack become server errors, but there is
             # no Response object from which to read a status. Count a bounded 5xx
             # observation before preserving the exception for the normal error path.
-            route = request.scope.get("route")
-            duration_ms = (time.perf_counter() - started_at) * 1000
-            logger.info(
-                "api_request_completed",
-                method=request.method,
-                route=getattr(route, "path", "unmatched"),
-                status_code=500,
-                duration_ms=round(duration_ms, 2),
-            )
-            observe_request(
-                method=request.method,
-                status_code=500,
-                duration_ms=duration_ms,
-            )
+            _record_request_completion(request, status_code=500, started_at=started_at)
             raise
-        route = request.scope.get("route")
-        duration_ms = (time.perf_counter() - started_at) * 1000
-        logger.info(
-            "api_request_completed",
-            method=request.method,
-            route=getattr(route, "path", "unmatched"),
-            status_code=response.status_code,
-            duration_ms=round(duration_ms, 2),
-        )
-        observe_request(
-            method=request.method,
-            status_code=response.status_code,
-            duration_ms=duration_ms,
-        )
+        _record_request_completion(request, status_code=response.status_code, started_at=started_at)
         response.headers[REQUEST_ID_HEADER] = request_id
         response.headers[CORRELATION_ID_HEADER] = correlation_id
         return response
