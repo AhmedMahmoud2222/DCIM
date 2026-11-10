@@ -40,7 +40,18 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
         request.state.correlation_id = correlation_id
 
-        response: Response = await call_next(request)
+        try:
+            response: Response = await call_next(request)
+        except Exception:
+            # Exceptions that escape the ASGI stack become server errors, but there is
+            # no Response object from which to read a status. Count a bounded 5xx
+            # observation before preserving the exception for the normal error path.
+            observe_request(
+                method=request.method,
+                status_code=500,
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+            )
+            raise
         route = request.scope.get("route")
         duration_ms = (time.perf_counter() - started_at) * 1000
         logger.info(
