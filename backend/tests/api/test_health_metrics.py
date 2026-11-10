@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
@@ -52,6 +53,34 @@ async def test_metrics_use_only_bounded_labels_and_exclude_query_values(client, 
     assert response.status_code == 200
     body = response.json()
     assert any(item["method"] == "GET" and item["status_class"] == "2xx" for item in body["requests_total"])
-    assert set(body) == {"requests_total", "request_duration_ms"}
+    assert set(body) == {"requests_total", "request_duration_ms", "database_pool"}
+    assert set(body["database_pool"]) == {"size", "checked_out", "overflow_in_use", "max_overflow"}
     assert "secret-query-value" not in response.text
     assert "/api/v1/health/live" not in response.text
+
+
+async def test_metrics_include_bounded_database_pool_gauges(client, auth_headers, monkeypatch):
+    from app.db import health as db_health
+
+    class Pool:
+        def size(self):
+            return 10
+
+        def checkedout(self):
+            return 7
+
+        def overflow(self):
+            return 2
+
+    monkeypatch.setattr(db_health, "engine", SimpleNamespace(pool=Pool()))
+    admin = await auth_headers("Administrator")
+
+    response = await client.get("/api/v1/health/metrics", headers=admin)
+
+    assert response.status_code == 200
+    assert response.json()["database_pool"] == {
+        "size": 10,
+        "checked_out": 7,
+        "overflow_in_use": 2,
+        "max_overflow": db_health.settings.database_max_overflow,
+    }

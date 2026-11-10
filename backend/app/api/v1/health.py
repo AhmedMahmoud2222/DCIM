@@ -10,7 +10,7 @@ from app.api.deps import get_db
 from app.application.rbac import AuthContext, get_auth_context
 from app.core.errors import ForbiddenError
 from app.core.request_metrics import snapshot as metrics_snapshot
-from app.db.health import check_database, check_redis
+from app.db.health import check_database, check_redis, database_pool_snapshot
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -42,7 +42,9 @@ async def readiness(response: Response, db: AsyncSession = Depends(get_db)) -> d
 
 @router.get("/metrics")
 async def metrics(ctx: AuthContext = Depends(get_auth_context)) -> dict:
-    """Process-local bounded API metrics; restricted to unrestricted Administrators."""
+    """Return bounded process-local metrics; restricted to unrestricted Administrators."""
     if not ctx.scope.unrestricted or not ctx.has_role("Administrator"):
         raise ForbiddenError()
-    return metrics_snapshot()
+    snapshot = metrics_snapshot()
+    snapshot["database_pool"] = database_pool_snapshot()
+    return snapshot
