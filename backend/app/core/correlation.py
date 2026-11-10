@@ -1,4 +1,5 @@
 import re
+import time
 import uuid
 
 import structlog
@@ -6,9 +7,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.core.logging import get_logger
+
 REQUEST_ID_HEADER = "X-Request-Id"
 CORRELATION_ID_HEADER = "X-Correlation-Id"
 _SAFE_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z", re.ASCII)
+logger = get_logger(__name__)
 
 
 def _safe_id(value: str | None) -> str:
@@ -24,6 +28,7 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
     back to it (§37/§25 of ARCHITECTURE_REVIEW.md)."""
 
     async def dispatch(self, request: Request, call_next):
+        started_at = time.perf_counter()
         request_id = _safe_id(request.headers.get(REQUEST_ID_HEADER))
         raw_correlation_id = request.headers.get(CORRELATION_ID_HEADER)
         correlation_id = _safe_id(raw_correlation_id) if raw_correlation_id else request_id
@@ -35,6 +40,14 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
         request.state.correlation_id = correlation_id
 
         response: Response = await call_next(request)
+        route = request.scope.get("route")
+        logger.info(
+            "api_request_completed",
+            method=request.method,
+            route=getattr(route, "path", "unmatched"),
+            status_code=response.status_code,
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
         response.headers[REQUEST_ID_HEADER] = request_id
         response.headers[CORRELATION_ID_HEADER] = correlation_id
         return response
