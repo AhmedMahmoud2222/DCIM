@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.logging import get_logger
+from app.core.request_metrics import observe as observe_request
 
 REQUEST_ID_HEADER = "X-Request-Id"
 CORRELATION_ID_HEADER = "X-Correlation-Id"
@@ -41,12 +42,18 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
 
         response: Response = await call_next(request)
         route = request.scope.get("route")
+        duration_ms = (time.perf_counter() - started_at) * 1000
         logger.info(
             "api_request_completed",
             method=request.method,
             route=getattr(route, "path", "unmatched"),
             status_code=response.status_code,
-            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            duration_ms=round(duration_ms, 2),
+        )
+        observe_request(
+            method=request.method,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
         )
         response.headers[REQUEST_ID_HEADER] = request_id
         response.headers[CORRELATION_ID_HEADER] = correlation_id
