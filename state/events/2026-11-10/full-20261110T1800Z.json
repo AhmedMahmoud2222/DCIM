@@ -1,0 +1,57 @@
+{
+  "run_id": "full-20261110T1800Z",
+  "mode": "FULL",
+  "timestamp": "2026-11-10T18:03:00Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired; policy/changelog read; ruleset verified"
+    },
+    {
+      "step": 1,
+      "result": "1 open draft PR, 9 open non-PR issues; inventory and checks collected"
+    },
+    {
+      "step": 2,
+      "result": "exact-head CI verified; claims not treated as code proof"
+    },
+    {
+      "step": 3,
+      "result": "PR 324 only; draft"
+    },
+    {
+      "step": 4,
+      "result": "PR 324 zero inline review comments; no resolutions"
+    },
+    {
+      "step": "4a",
+      "result": "No new inline findings; Claude P3 noted"
+    },
+    {
+      "step": 5,
+      "result": "No review request; draft and Copilot absent"
+    },
+    {
+      "step": 6,
+      "result": "No historical open PRs"
+    },
+    {
+      "step": 7,
+      "result": "No eligible stale agent request"
+    },
+    {
+      "step": 8,
+      "result": "No merge: PR 324 draft, Copilot missing"
+    },
+    {
+      "step": 9,
+      "result": "No new class I decision"
+    },
+    {
+      "step": 10,
+      "result": "Report prepared; Migration 0057 hold intact"
+    }
+  ],
+  "ruleset_bypass": "six actors pull_request; none always",
+  "merge_count": 0
+}
