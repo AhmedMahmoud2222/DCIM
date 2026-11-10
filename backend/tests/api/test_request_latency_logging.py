@@ -22,9 +22,17 @@ async def test_request_completion_log_uses_bounded_route_and_omits_query(client,
     assert "query-secret-value" not in repr(fields)
 
 
-async def test_escaped_exception_is_counted_as_server_error_without_request_data():
+async def test_escaped_exception_is_counted_and_logged_without_request_data(monkeypatch):
+    from app.core import correlation
     from app.core.request_metrics import snapshot
     from app.main import app
+
+    completion_logs = []
+    monkeypatch.setattr(
+        correlation.logger,
+        "info",
+        lambda event, **fields: completion_logs.append((event, fields)),
+    )
 
     async def raise_unhandled_error():
         raise RuntimeError("sensitive exception details")
@@ -51,3 +59,11 @@ async def test_escaped_exception_is_counted_as_server_error_without_request_data
     assert server_error_count() == before + 1
     assert "do-not-record" not in repr(after)
     assert "sensitive exception details" not in repr(after)
+    assert len(completion_logs) == 1
+    event, fields = completion_logs[0]
+    assert event == "api_request_completed"
+    assert fields["status_code"] == 500
+    assert fields["route"] == path
+    assert fields["duration_ms"] >= 0
+    assert "do-not-record" not in repr(fields)
+    assert "sensitive exception details" not in repr(fields)

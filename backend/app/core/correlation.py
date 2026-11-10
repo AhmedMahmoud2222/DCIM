@@ -46,10 +46,19 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
             # Exceptions that escape the ASGI stack become server errors, but there is
             # no Response object from which to read a status. Count a bounded 5xx
             # observation before preserving the exception for the normal error path.
+            route = request.scope.get("route")
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            logger.info(
+                "api_request_completed",
+                method=request.method,
+                route=getattr(route, "path", "unmatched"),
+                status_code=500,
+                duration_ms=round(duration_ms, 2),
+            )
             observe_request(
                 method=request.method,
                 status_code=500,
-                duration_ms=(time.perf_counter() - started_at) * 1000,
+                duration_ms=duration_ms,
             )
             raise
         route = request.scope.get("route")
