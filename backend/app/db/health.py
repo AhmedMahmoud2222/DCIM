@@ -1,6 +1,9 @@
+from typing import cast
+
 import redis.asyncio as aioredis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from app.core.config import get_settings
 from app.db.session import engine, settings
@@ -27,7 +30,7 @@ async def check_redis() -> bool:
 
 def database_pool_snapshot() -> dict[str, int]:
     """Return fixed database-pool gauges without querying PostgreSQL."""
-    pool = engine.pool
+    pool = cast(AsyncAdaptedQueuePool, engine.pool)
     return {
         "size": int(pool.size()),
         "checked_out": int(pool.checkedout()),
