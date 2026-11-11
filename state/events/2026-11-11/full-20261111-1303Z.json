@@ -1,0 +1,82 @@
+{
+  "run_id": "full-20261111-1303Z",
+  "mode": "FULL",
+  "at": "2026-11-11T13:03:29.241Z",
+  "main_sha": "487f8201a285866107f84df4189f609dd6422992",
+  "open_prs": 0,
+  "open_issues": [
+    300,
+    255,
+    225,
+    223,
+    220,
+    214,
+    195,
+    107,
+    106,
+    52
+  ],
+  "steps": [
+    [
+      "0",
+      "lease acquired; policy and changelog loaded; no policy amendments"
+    ],
+    [
+      "1",
+      "0 open PRs; 10 open issues; ruleset fetched"
+    ],
+    [
+      "2",
+      "no open PR claims to verify"
+    ],
+    [
+      "3",
+      "no open PR prioritization"
+    ],
+    [
+      "4",
+      "no open PR threads"
+    ],
+    [
+      "4a",
+      "no open PR findings"
+    ],
+    [
+      "5",
+      "no open PR actions; staging holds remain"
+    ],
+    [
+      "6",
+      "no historical open PR candidates"
+    ],
+    [
+      "7",
+      "no pending open PR agent prompts"
+    ],
+    [
+      "8",
+      "no open PR eligible to merge"
+    ],
+    [
+      "9",
+      "no new class I decisions identified"
+    ],
+    [
+      "10",
+      "report generated; no merge"
+    ]
+  ],
+  "ruleset_bypass": [
+    "842251:pull_request",
+    "946600:pull_request",
+    "1144995:pull_request",
+    "1236702:pull_request",
+    "4229212:pull_request",
+    "285010264:pull_request"
+  ],
+  "notes": [
+    "Main acceptance gate run 43006660990 succeeded",
+    "No production actions requested",
+    "Issue #300 planned not executed"
+  ]
+}
