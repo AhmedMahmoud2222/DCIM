@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "2fc97771-30ab-4aed-b0cf-3ae9ffc5652e",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/candidate.json",
+  "output": "/home/user/DCIM/.archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay-v2.html",
+  "specification": {
+    "sha256": "4701a07d81708e659ddafa65982fd3cac72e99844b4bdda550c98586cb74b3e2",
+    "bytes": 9157
+  },
+  "artifact": {
+    "sha256": "dbe97f3d6bfe856c6fbebc123e3045161e2fdc77d056a61a75ac6241530ad6cc",
+    "bytes": 851723
+  }
+}

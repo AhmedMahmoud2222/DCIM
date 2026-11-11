@@ -3,7 +3,7 @@
   "diagram_type": "dataflow",
   "meta": {
     "title": "DCIM Telemetry Flow: Edge Collector to Rack Overlay",
-    "output": ".archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay.html",
+    "output": ".archify/dataflow-telemetry-overlay-20261106-112942/telemetry-edge-to-rack-overlay-v2.html",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/AhmedMahmoud2222/DCIM",
@@ -286,7 +286,7 @@
       "to": "ingest_api",
       "label": "discovery batch",
       "classification": "signed",
-      "variant": "security",
+      "variant": "default",
       "route": "straight"
     },
     {
