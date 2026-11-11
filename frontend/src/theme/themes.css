@@ -1,0 +1,197 @@
+/* themes.css v1.0.0 - e& brand themes: "Normal" (light) and "Dark".
+ *
+ * The semantic tokens (surface-*, fg-*, line-*, tone-*, side-*, action-*, link, focus) are defined for the
+ * Dark theme in index.css (`@theme static`, emitted on :root). This file holds everything a theme changes
+ * that index.css must not redefine:
+ *   1. The Tailwind palette scales used by pages that still carry raw `slate-*`, `red-*` ... classes.
+ *      Dark gives the slate scale an Ocean Blue tint and swaps the blue scale for e& Red, the brand's
+ *      primary action color. Normal inverts the scales: the shades pages use as text on dark (100-400)
+ *      become dark, the shades used as dark surfaces (800-950) become light, and the solid fills that
+ *      carry white text (500-700) stay put.
+ *   2. The Normal-theme values of the semantic tokens.
+ * The active theme is the `data-theme` attribute on <html> (see src/lib/theme.ts). With no attribute
+ * the Dark values apply, which is what the app looked like before themes existed.
+ *
+ * Brand source: e& Red #E00800, Ocean Blue #181F4B, Burgundy #7C0124, Mauve #631C46, Green #47CB6C,
+ * Grey #71716F, Light Grey #DADAD7. Contrast of the semantic pairs is checked by palette.test.ts. */
+
+/* ---------------------------------------------------------------- Dark (default) */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Ocean Blue tinted neutrals */
+  --color-slate-50: #f4f5fb;
+  --color-slate-100: #eceefa;
+  --color-slate-200: #d5d9ef;
+  --color-slate-300: #b9bfe0;
+  --color-slate-400: #9aa2d3;
+  --color-slate-500: #8089c4;
+  --color-slate-600: #5a639f;
+  --color-slate-700: #38428a;
+  --color-slate-800: #232b62;
+  --color-slate-900: #181f4b;
+  --color-slate-950: #0c1131;
+
+  /* "blue" is the accent pages use for buttons, links and selected tabs. In e& it is brand red. */
+  --color-blue-100: #ffe3e1;
+  --color-blue-200: #ffc2be;
+  --color-blue-300: #ff9d97;
+  --color-blue-400: #ff8a84;
+  --color-blue-500: #c40700;
+  --color-blue-600: #e00800;
+  --color-blue-700: #a30600;
+  --color-blue-800: #6e0418;
+  --color-blue-900: #4d0a1f;
+  --color-blue-950: #33060f;
+}
+
+/* ---------------------------------------------------------------- Normal (light) */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-surface-page: #f3f3f1;
+  --color-surface-sidebar: #181f4b;
+  --color-surface-panel: #ffffff;
+  --color-line-subtle: #dadad7;
+  --color-line-control: #71716f;
+  --color-fg-primary: #181f4b;
+  --color-fg-secondary: #565654;
+  --color-action-primary: #e00800;
+  --color-action-primary-fg: #ffffff;
+  --color-link: #c00700;
+  --color-focus: #181f4b;
+  --color-focus-on-sidebar: #ff8a84;
+  --color-side-fg: #dfe2f5;
+  --color-side-fg-muted: #aab1de;
+  --color-side-selected: #2b3478;
+  --color-side-hover: #232b62;
+  --color-side-edge: #aab1de;
+  --color-side-selected-fg: #ffffff;
+  --color-side-marker: #ff8a84;
+
+  --color-surface-hover: #e9e9e6;
+  --color-surface-inset: #f6f6f4;
+
+  --color-tone-neutral-bg: #e4e4e1;
+  --color-tone-neutral-fg: #2d2d2c;
+  --color-tone-info-bg: #dce0f5;
+  --color-tone-info-fg: #181f4b;
+  --color-tone-ok-bg: #d4f5de;
+  --color-tone-ok-fg: #0d5a28;
+  --color-tone-caution-bg: #fdefc4;
+  --color-tone-caution-fg: #6b4a00;
+  --color-tone-serious-bg: #ffe0cc;
+  --color-tone-serious-fg: #7a2e00;
+  --color-tone-danger-bg: #fddddb;
+  --color-tone-danger-fg: #8f0600;
+  --color-tone-attention-bg: #f3dcea;
+  --color-tone-attention-fg: #631c46;
+  --color-tone-unknown-bg: #eeeeec;
+  --color-tone-unknown-fg: #565654;
+
+  /* Warm light neutrals from the e& Light Grey */
+  --color-slate-50: #0f1437;
+  --color-slate-100: #181f4b;
+  --color-slate-200: #262c58;
+  --color-slate-300: #3d4163;
+  --color-slate-400: #565654;
+  --color-slate-500: #6b6b69;
+  --color-slate-600: #9a9a97;
+  --color-slate-700: #d2d2ce;
+  --color-slate-800: #f2f2ef;
+  --color-slate-900: #ffffff;
+  --color-slate-950: #f3f3f1;
+
+  --color-blue-100: #4d0010;
+  --color-blue-200: #6e0418;
+  --color-blue-300: #8f0600;
+  --color-blue-400: #b00700;
+  --color-blue-500: #c40700;
+  --color-blue-600: #e00800;
+  --color-blue-700: #a30600;
+  --color-blue-800: #fbd5d2;
+  --color-blue-900: #fde4e2;
+  --color-blue-950: #fff1f0;
+
+  /* red */
+  --color-red-100: oklch(25.8% 0.092 26.042);
+  --color-red-200: oklch(39.6% 0.141 25.723);
+  --color-red-300: oklch(44.4% 0.177 26.899);
+  --color-red-400: oklch(50.5% 0.213 27.518);
+  --color-red-800: oklch(88.5% 0.062 18.334);
+  --color-red-900: oklch(93.6% 0.032 17.717);
+  --color-red-950: oklch(97.1% 0.013 17.38);
+  /* orange */
+  --color-orange-100: oklch(26.6% 0.079 36.259);
+  --color-orange-200: oklch(40.8% 0.123 38.172);
+  --color-orange-300: oklch(47% 0.157 37.304);
+  --color-orange-400: oklch(55.3% 0.195 38.402);
+  --color-orange-800: oklch(90.1% 0.076 70.697);
+  --color-orange-900: oklch(95.4% 0.038 75.164);
+  --color-orange-950: oklch(98% 0.016 73.684);
+  /* amber */
+  --color-amber-100: oklch(27.9% 0.077 45.635);
+  --color-amber-200: oklch(41.4% 0.112 45.904);
+  --color-amber-300: oklch(47.3% 0.137 46.201);
+  --color-amber-400: oklch(55.5% 0.163 48.998);
+  --color-amber-800: oklch(92.4% 0.12 95.746);
+  --color-amber-900: oklch(96.2% 0.059 95.617);
+  --color-amber-950: oklch(98.7% 0.022 95.277);
+  /* yellow */
+  --color-yellow-100: oklch(28.6% 0.066 53.813);
+  --color-yellow-200: oklch(42.1% 0.095 57.708);
+  --color-yellow-300: oklch(47.6% 0.114 61.907);
+  --color-yellow-400: oklch(55.4% 0.135 66.442);
+  --color-yellow-800: oklch(94.5% 0.129 101.54);
+  --color-yellow-900: oklch(97.3% 0.071 103.193);
+  --color-yellow-950: oklch(98.7% 0.026 102.212);
+  /* green */
+  --color-green-100: oklch(26.6% 0.065 152.934);
+  --color-green-200: oklch(39.3% 0.095 152.535);
+  --color-green-300: oklch(44.8% 0.119 151.328);
+  --color-green-400: oklch(52.7% 0.154 150.069);
+  --color-green-800: oklch(92.5% 0.084 155.995);
+  --color-green-900: oklch(96.2% 0.044 156.743);
+  --color-green-950: oklch(98.2% 0.018 155.826);
+  /* emerald */
+  --color-emerald-100: oklch(26.2% 0.051 172.552);
+  --color-emerald-200: oklch(37.8% 0.077 168.94);
+  --color-emerald-300: oklch(43.2% 0.095 166.913);
+  --color-emerald-400: oklch(50.8% 0.118 165.612);
+  --color-emerald-800: oklch(90.5% 0.093 164.15);
+  --color-emerald-900: oklch(95% 0.052 163.051);
+  --color-emerald-950: oklch(97.9% 0.021 166.113);
+  /* teal */
+  --color-teal-100: oklch(27.7% 0.046 192.524);
+  --color-teal-200: oklch(38.6% 0.063 188.416);
+  --color-teal-300: oklch(43.7% 0.078 188.216);
+  --color-teal-400: oklch(51.1% 0.096 186.391);
+  --color-teal-800: oklch(91% 0.096 180.426);
+  --color-teal-900: oklch(95.3% 0.051 180.801);
+  --color-teal-950: oklch(98.4% 0.014 180.72);
+  /* sky */
+  --color-sky-100: oklch(29.3% 0.066 243.157);
+  --color-sky-200: oklch(39.1% 0.09 240.876);
+  --color-sky-300: oklch(44.3% 0.11 240.79);
+  --color-sky-400: oklch(50% 0.134 242.749);
+  --color-sky-800: oklch(90.1% 0.058 230.902);
+  --color-sky-900: oklch(95.1% 0.026 236.824);
+  --color-sky-950: oklch(97.7% 0.013 236.62);
+  /* purple */
+  --color-purple-100: oklch(29.1% 0.149 302.717);
+  --color-purple-200: oklch(38.1% 0.176 304.987);
+  --color-purple-300: oklch(43.8% 0.218 303.724);
+  --color-purple-400: oklch(49.6% 0.265 301.924);
+  --color-purple-800: oklch(90.2% 0.063 306.703);
+  --color-purple-900: oklch(94.6% 0.033 307.174);
+  --color-purple-950: oklch(97.7% 0.014 308.299);
+  /* rose */
+  --color-rose-100: oklch(27.1% 0.105 12.094);
+  --color-rose-200: oklch(41% 0.159 10.272);
+  --color-rose-300: oklch(45.5% 0.188 13.697);
+  --color-rose-400: oklch(51.4% 0.222 16.935);
+  --color-rose-800: oklch(89.2% 0.058 10.001);
+  --color-rose-900: oklch(94.1% 0.03 12.58);
+  --color-rose-950: oklch(96.9% 0.015 12.422);
+}
