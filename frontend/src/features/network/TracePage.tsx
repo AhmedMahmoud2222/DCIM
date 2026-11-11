@@ -46,7 +46,7 @@ function LinkBox({ step }: { step: TraceStep }) {
 function PortBox({ title, port }: { title: string; port: TracePortView }) {
   return (
     <div className="min-w-40 rounded-sm border border-slate-700 bg-slate-900 p-3 text-xs">
-      <div className="text-[10px] uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="text-[10px] uppercase tracking-wide text-fg-secondary">{title}</div>
       <div className="font-semibold text-slate-100">{port.equipment_hostname ?? port.equipment_asset_tag}</div>
       <div className="text-slate-400">{port.equipment_asset_tag}</div>
       <div className="mt-1 font-mono text-slate-200">{port.port_name}</div>
@@ -106,7 +106,7 @@ export function TracePage() {
                   {step.pass_through && (
                     <li data-testid="trace-pass-through">
                       <div className="rounded-sm border border-slate-600 bg-slate-800 px-3 py-2 text-center text-xs">
-                        <div className="text-[10px] uppercase tracking-wide text-slate-500">Passes through</div>
+                        <div className="text-[10px] uppercase tracking-wide text-fg-secondary">Passes through</div>
                         {step.pass_through.label && <div className="font-mono text-slate-100">{step.pass_through.label}</div>}
                       </div>
                     </li>
@@ -124,7 +124,7 @@ export function TracePage() {
               {result.path.length === 0 && result.terminated === "no_link" && (
                 <span className="italic text-slate-400">This port has no recorded cable or connection.</span>
               )}
-              <span className="text-slate-500">{result.hop_count ?? result.path.length} link(s)</span>
+              <span className="text-fg-secondary">{result.hop_count ?? result.path.length} link(s)</span>
             </p>
           </section>
 
@@ -140,7 +140,7 @@ export function TracePage() {
           )}
 
           <section aria-label="Discovery evidence" className="rounded-sm border border-slate-800 bg-slate-900 p-3 text-xs">
-            <h2 className="mb-1 font-semibold text-slate-200">Discovery evidence <span className="font-normal text-slate-500">(observed, not authoritative)</span></h2>
+            <h2 className="mb-1 font-semibold text-slate-200">Discovery evidence <span className="font-normal text-fg-secondary">(observed, not authoritative)</span></h2>
             <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${AGREEMENT_TEXT[result.evidence.agreement].style}`}>
               {AGREEMENT_TEXT[result.evidence.agreement].text}
             </span>
@@ -151,7 +151,7 @@ export function TracePage() {
                   {n.status === "stale" ? " (stale)" : ""}
                 </li>
               ))}
-              {result.evidence.neighbors.length === 0 && <li className="italic text-slate-500">Nothing observed.</li>}
+              {result.evidence.neighbors.length === 0 && <li className="italic text-fg-secondary">Nothing observed.</li>}
             </ul>
           </section>
         </div>

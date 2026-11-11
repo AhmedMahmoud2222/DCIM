@@ -151,7 +151,7 @@ function Section({ title, description, children }: { title: string; description?
   return (
     <section className="rounded-sm border border-slate-800 bg-slate-900 p-4">
       <h2 className="mb-1 text-sm font-semibold text-slate-200">{title}</h2>
-      {description && <p className="mb-3 text-xs text-slate-500">{description}</p>}
+      {description && <p className="mb-3 text-xs text-fg-secondary">{description}</p>}
       {children}
     </section>
   );
@@ -183,7 +183,7 @@ function HierarchyItem({
         }`}
       >
         <span className="font-medium">{primary}</span>
-        {secondary && <span className="text-xs text-slate-500">{secondary}</span>}
+        {secondary && <span className="text-xs text-fg-secondary">{secondary}</span>}
       </button>
       {actions}
     </li>
@@ -278,7 +278,7 @@ function LevelList<T extends { id: string }>({
 
   if (list.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
   if (list.error) return <p className="text-sm text-red-400">{list.error.message}</p>;
-  if (list.items.length === 0) return <p className="text-sm text-slate-500">{emptyLabel}</p>;
+  if (list.items.length === 0) return <p className="text-sm text-fg-secondary">{emptyLabel}</p>;
   return (
     <div className="space-y-2">
       {deleteError && <p role="alert" className="text-sm text-red-400">{deleteError}</p>}
@@ -482,7 +482,7 @@ export function LocationsPage() {
           Select a level to reveal the next. Rack and equipment bulk imports resolve sites by <code>site_code</code>, so the
           site must exist here first.
         </p>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-fg-secondary">
           Looking for an operational view instead?{" "}
           <Link to="/infrastructure" className="text-blue-400 hover:underline">
             Infrastructure
@@ -493,7 +493,7 @@ export function LocationsPage() {
 
       {breadcrumb.length > 0 && (
         <nav aria-label="Location path" className="flex flex-wrap items-center gap-1 text-xs text-slate-400">
-          <span className="text-slate-500">Path:</span>
+          <span className="text-fg-secondary">Path:</span>
           {breadcrumb.map((crumb, i) => (
             <span key={`${crumb.label}-${i}`} className="flex items-center gap-1">
               {i > 0 && <span className="text-slate-600">/</span>}
@@ -734,7 +734,7 @@ export function LocationsPage() {
                   }}
                 />
               ) : (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-fg-secondary">
                   You need the <code>location:update</code> permission to edit rooms.
                 </p>
               )}

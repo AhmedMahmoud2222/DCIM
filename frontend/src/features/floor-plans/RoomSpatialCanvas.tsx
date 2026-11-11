@@ -89,7 +89,7 @@ export function RoomSpatialCanvas({
         ) : (
           <span className="rounded-sm bg-yellow-900 px-2 py-0.5 text-yellow-100">Incomplete layout</span>
         )}
-        <span className="text-slate-500" data-testid="scale-source">
+        <span className="text-fg-secondary" data-testid="scale-source">
           {source === "boundary" && "Fitted to the approved room boundary"}
           {source === "room_dimensions" && "Fitted to the recorded room dimensions (no approved boundary polygon)"}
           {source === "content" && "No boundary or room size recorded: fitted to the placed racks"}
@@ -100,7 +100,7 @@ export function RoomSpatialCanvas({
             {calibration.error_bound_mm == null ? "error bound unverified" : `error ≤ ±${calibration.error_bound_mm} mm`} · {calibration.confidence} confidence
           </span>
         ) : (
-          <span className="text-slate-500">No calibrated import is active for this room.</span>
+          <span className="text-fg-secondary">No calibrated import is active for this room.</span>
         )}
       </div>
       {reasons.length > 0 && (
@@ -220,7 +220,7 @@ export function RoomSpatialCanvas({
       </svg>
 
       {extraLegend}
-      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-fg-secondary">
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 bg-blue-700" /> Rack at catalog width × depth (white edge = front)
         </span>
@@ -266,7 +266,7 @@ export function RoomSpatialCanvas({
         <summary className="cursor-pointer">Text alternative: placed racks and floor equipment</summary>
         <table className="mt-2 w-full text-left" data-testid="spatial-table">
           <thead>
-            <tr className="text-slate-500">
+            <tr className="text-fg-secondary">
               <th scope="col">Asset</th>
               <th scope="col">X, Y (mm)</th>
               <th scope="col">Size W × D (mm)</th>

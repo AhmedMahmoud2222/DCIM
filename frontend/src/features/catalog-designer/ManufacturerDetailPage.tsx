@@ -52,7 +52,7 @@ export function ManufacturerDetailPage() {
                     <Link to={`/admin/catalog/models/${model.id}`} className="font-medium text-blue-400 hover:underline">
                       {model.model_name}
                     </Link>
-                    {model.model_number && <span className="ml-2 font-mono text-xs text-slate-500">{model.model_number}</span>}
+                    {model.model_number && <span className="ml-2 font-mono text-xs text-fg-secondary">{model.model_number}</span>}
                   </td>
                   <td className="py-2 text-slate-400">{model.category}</td>
                   <td className="py-2 text-slate-300">{model.status}</td>
@@ -60,7 +60,7 @@ export function ManufacturerDetailPage() {
               ))}
               {modelsQuery.data.items.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="py-6 text-center text-slate-500">
+                  <td colSpan={3} className="py-6 text-center text-fg-secondary">
                     No models from this manufacturer yet.
                   </td>
                 </tr>

@@ -102,8 +102,8 @@ export function ProfilesPage() {
               <div className="mb-1 flex items-center justify-between gap-2">
                 <div>
                   <span className="font-semibold text-slate-100">{vendor.name}</span>{" "}
-                  <span className="font-mono text-slate-500">{vendor.code}</span>{" "}
-                  <span className="text-slate-500">v{vendor.version}</span>
+                  <span className="font-mono text-fg-secondary">{vendor.code}</span>{" "}
+                  <span className="text-fg-secondary">v{vendor.version}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   {vendor.status === "retired" && <span className="rounded-sm bg-slate-700 px-1.5 py-0.5 text-[10px]">retired</span>}
@@ -127,9 +127,9 @@ export function ProfilesPage() {
                   .map((device) => (
                     <li key={device.id} className="flex items-center justify-between rounded-sm bg-slate-800/60 px-2 py-1">
                       <button className="text-left text-slate-200 hover:underline" onClick={() => setSelectedDevice(device)}>
-                        {device.name} <span className="font-mono text-slate-500">{device.code}</span>
-                        <span className="ml-2 text-slate-500">{device.device_class}</span>
-                        {device.status === "retired" && <span className="ml-2 text-slate-500">(retired)</span>}
+                        {device.name} <span className="font-mono text-fg-secondary">{device.code}</span>
+                        <span className="ml-2 text-fg-secondary">{device.device_class}</span>
+                        {device.status === "retired" && <span className="ml-2 text-fg-secondary">(retired)</span>}
                       </button>
                       {canManage && device.status === "active" && (
                         <button
@@ -145,7 +145,7 @@ export function ProfilesPage() {
               </ul>
             </div>
           ))}
-          {vendors.data?.length === 0 && <p className="text-xs italic text-slate-500">No vendor profiles yet.</p>}
+          {vendors.data?.length === 0 && <p className="text-xs italic text-fg-secondary">No vendor profiles yet.</p>}
           {(retireVendor.isError || retireDevice.isError) && (
             <p role="alert" className="text-xs text-red-400">{errorText(retireVendor.error ?? retireDevice.error)}</p>
           )}
@@ -172,7 +172,7 @@ export function ProfilesPage() {
                 {mappings.data?.map((m) => (
                   <li key={m.id}>{m.oid} → {m.canonical_metric} ({m.unit}) ×{m.scale}</li>
                 ))}
-                {mappings.data?.length === 0 && <li className="italic text-slate-500">none</li>}
+                {mappings.data?.length === 0 && <li className="italic text-fg-secondary">none</li>}
               </ul>
             </div>
           )}

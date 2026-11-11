@@ -43,7 +43,7 @@ function DataQualityBadge({ quality }: { quality: string }) {
   const colors: Record<string, string> = {
     known: "bg-green-900 text-green-200",
     unknown: "bg-slate-700 text-slate-300",
-    not_applicable: "bg-slate-800 text-slate-500",
+    not_applicable: "bg-slate-800 text-fg-secondary",
   };
   return <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${colors[quality] ?? "bg-slate-700"}`}>{quality}</span>;
 }
@@ -102,14 +102,14 @@ function PduOutletsPanel({
         the node id shown here is the handle to use when connecting a load.
       </p>
 
-      {outletsQuery.isLoading && <p className="text-xs text-slate-500">Loading outlets…</p>}
+      {outletsQuery.isLoading && <p className="text-xs text-fg-secondary">Loading outlets…</p>}
       {outletsQuery.isError && (
         <p className="text-xs text-red-400">
           {outletsQuery.error instanceof ApiError ? outletsQuery.error.detail : (outletsQuery.error as Error).message}
         </p>
       )}
       {outletsQuery.data && outlets.length === 0 && (
-        <p className="text-xs italic text-slate-500">
+        <p className="text-xs italic text-fg-secondary">
           No PDU outlets yet — instantiate a PDU from a published catalog revision to create them.
         </p>
       )}
@@ -117,7 +117,7 @@ function PduOutletsPanel({
       {outlets.length > 0 && (
         <table className="w-full border-collapse text-xs">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wide text-slate-500">
+            <tr className="text-left text-[10px] uppercase tracking-wide text-fg-secondary">
               <th className="border-b border-slate-800 px-2 py-1">Outlet</th>
               <th className="border-b border-slate-800 px-2 py-1">Power node id</th>
               <th className="border-b border-slate-800 px-2 py-1">Owning PDU asset</th>
@@ -136,7 +136,7 @@ function PduOutletsPanel({
                 <td className="border-b border-slate-800/60 px-2 py-1 font-mono text-[10px] text-slate-400">
                   {outlet.id}
                 </td>
-                <td className="border-b border-slate-800/60 px-2 py-1 font-mono text-[10px] text-slate-500">
+                <td className="border-b border-slate-800/60 px-2 py-1 font-mono text-[10px] text-fg-secondary">
                   {outlet.owning_asset_id ?? "—"}
                 </td>
                 <td className="border-b border-slate-800/60 px-2 py-1">
@@ -392,14 +392,14 @@ function PowerTopologyContent() {
                 <NodeBadge nodeType={node.node_type} />
               </button>
             ))}
-            {nodesQuery.data?.items.length === 0 && <p className="text-xs italic text-slate-500">No power nodes yet.</p>}
+            {nodesQuery.data?.items.length === 0 && <p className="text-xs italic text-fg-secondary">No power nodes yet.</p>}
           </div>
         </div>
 
         {/* Selected node detail + topology */}
         <div className="col-span-2 space-y-4">
           {!selectedNode && (
-            <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+            <div className="rounded-sm border border-slate-800 bg-slate-900 p-4 text-sm text-fg-secondary">
               Select a power node from the list to inspect it.
             </div>
           )}
@@ -473,29 +473,29 @@ function PowerTopologyContent() {
                 {capacity && (
                   <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                     <div>
-                      <dt className="text-slate-500">Rated</dt>
+                      <dt className="text-fg-secondary">Rated</dt>
                       <dd>{fmtKw(capacity.rated_capacity_kw)}</dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Configured</dt>
+                      <dt className="text-fg-secondary">Configured</dt>
                       <dd>{fmtKw(capacity.configured_capacity_kw)}</dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Allocated</dt>
+                      <dt className="text-fg-secondary">Allocated</dt>
                       <dd>{fmtKw(capacity.allocated_kw)}</dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Available</dt>
+                      <dt className="text-fg-secondary">Available</dt>
                       <dd className={capacity.available_kw !== null && capacity.available_kw < 0 ? "text-red-400" : ""}>
                         {fmtKw(capacity.available_kw)}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Utilization</dt>
+                      <dt className="text-fg-secondary">Utilization</dt>
                       <dd>{capacity.utilization_pct === null ? "—" : `${capacity.utilization_pct.toFixed(1)}%`}</dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Data quality</dt>
+                      <dt className="text-fg-secondary">Data quality</dt>
                       <dd>
                         <DataQualityBadge quality={capacity.data_quality} />
                       </dd>
@@ -526,7 +526,7 @@ function PowerTopologyContent() {
                 <div className="rounded-sm border border-slate-800 bg-slate-900 p-4" data-testid="power-downstream">
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Downstream (loads)</h3>
                   <div className="space-y-1">
-                    {downstreamQuery.data?.length === 0 && <p className="text-xs italic text-slate-500">Nothing connected downstream.</p>}
+                    {downstreamQuery.data?.length === 0 && <p className="text-xs italic text-fg-secondary">Nothing connected downstream.</p>}
                     {downstreamQuery.data?.map((n) => (
                       <button
                         key={n.node_id}

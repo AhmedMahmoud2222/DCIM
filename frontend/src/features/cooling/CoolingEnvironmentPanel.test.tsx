@@ -30,8 +30,8 @@ describe("CoolingEnvironmentPanel", () => {
     expect(await screen.findByTestId("map-state-badge")).toHaveTextContent("Temperature map: Healthy");
     const cells = screen.getByTestId("heat-cells");
     expect(cells).toHaveAttribute("data-provenance", "interpolated");
-    expect(cells.querySelectorAll("rect[data-cell-index]").length).toBeGreaterThan(50);
-    expect(Array.from(cells.querySelectorAll("rect[data-cell-index]")).every((r) => r.getAttribute("data-provenance") === "interpolated")).toBe(true);
+    expect(cells.querySelectorAll("g[data-cell-index]").length).toBeGreaterThan(50);
+    expect(Array.from(cells.querySelectorAll("g[data-cell-index]")).every((r) => r.getAttribute("data-provenance") === "interpolated")).toBe(true);
     const sensors = screen.getByTestId("sensor-layer");
     expect(sensors).toHaveAttribute("data-provenance", "measured");
     await waitFor(() => expect(sensors.querySelectorAll("[data-sensor-id]")).toHaveLength(4));
@@ -41,8 +41,9 @@ describe("CoolingEnvironmentPanel", () => {
 
   it("shows the legend range and the alarm-rule threshold in text", async () => {
     renderPanel();
-    expect(await screen.findByTestId("legend-range")).toHaveTextContent("Minimum 20 degC, maximum 29.9 degC");
+    expect(await screen.findByTestId("legend-range")).toHaveTextContent("Fixed scale 10 to 35 degC");
     expect(screen.getByTestId("legend-ticks").querySelectorAll("li")).toHaveLength(5);
+    expect(screen.getByTestId("legend-bands").querySelectorAll("li[data-testid^='legend-band-']")).toHaveLength(4);
     expect(screen.getByTestId("legend-thresholds")).toHaveTextContent("High alarm threshold 27 degC (High inlet)");
   });
 

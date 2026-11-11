@@ -208,7 +208,7 @@ function ProtectionTab({ siteId }: { siteId: string }) {
                     {STATES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 ) : (
-                  <span className="text-slate-500">Read only</span>
+                  <span className="text-fg-secondary">Read only</span>
                 )}
               </td>
             </tr>
@@ -358,7 +358,7 @@ function ReportsTab({ siteId }: { siteId: string }) {
                     <button type="button" onClick={() => download(j)} className="rounded-sm bg-slate-800 px-2 py-0.5 text-xs hover:bg-slate-700">
                       Download {j.format.toUpperCase()}
                     </button>
-                  ) : <span className="text-slate-500">Not ready</span>}
+                  ) : <span className="text-fg-secondary">Not ready</span>}
                 </td>
               </tr>
             ))}
@@ -390,10 +390,28 @@ function PowerAnalyticsContent() {
           {sites.data?.items.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </label>
-      <div role="tablist" aria-label="Power analytics views" className="mb-4 flex gap-1 border-b border-slate-800">
+      <div
+        role="tablist"
+        aria-label="Power analytics views"
+        className="mb-4 flex gap-1 border-b border-slate-800"
+        onKeyDown={(event) => {
+          const index = TABS.findIndex((item) => item.id === tab);
+          const next =
+            event.key === "ArrowRight" ? (index + 1) % TABS.length
+            : event.key === "ArrowLeft" ? (index - 1 + TABS.length) % TABS.length
+            : event.key === "Home" ? 0
+            : event.key === "End" ? TABS.length - 1
+            : null;
+          if (next === null) return;
+          event.preventDefault();
+          setTab(TABS[next].id);
+          document.getElementById(`tab-${TABS[next].id}`)?.focus();
+        }}
+      >
         {TABS.map((t) => (
           <button
             key={t.id}
+            type="button"
             role="tab"
             id={`tab-${t.id}`}
             aria-selected={tab === t.id}
