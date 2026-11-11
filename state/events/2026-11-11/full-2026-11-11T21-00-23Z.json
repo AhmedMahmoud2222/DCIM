@@ -1,0 +1,81 @@
+{
+  "run_id": "full-2026-11-11T21-00-23Z",
+  "mode": "FULL",
+  "started_at": "2026-11-11T21:00:23Z",
+  "main_sha": "487f8201a285866107f84df4189f609dd6422992",
+  "open_pr_count": 0,
+  "open_issues": [
+    300,
+    255,
+    225,
+    223,
+    220,
+    214,
+    195,
+    107,
+    106,
+    52
+  ],
+  "ruleset_bypass_modes": [
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request"
+  ],
+  "policy_amendments": [],
+  "merges": [],
+  "comments": [],
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired; policy and ruleset checked"
+    },
+    {
+      "step": 1,
+      "result": "zero open PRs; ten open issues"
+    },
+    {
+      "step": 2,
+      "result": "no open PR claims to validate"
+    },
+    {
+      "step": 3,
+      "result": "no PR prioritization needed"
+    },
+    {
+      "step": 4,
+      "result": "no open review threads"
+    },
+    {
+      "step": 5,
+      "result": "no actionable open PRs; issue holds retained"
+    },
+    {
+      "step": 6,
+      "result": "no supersession candidates"
+    },
+    {
+      "step": 7,
+      "result": "no pending PR agent asks"
+    },
+    {
+      "step": 8,
+      "result": "no eligible merges"
+    },
+    {
+      "step": 9,
+      "result": "no new owner decisions"
+    },
+    {
+      "step": 10,
+      "result": "report prepared"
+    }
+  ],
+  "notes": [
+    "Latest main workflow run 43075289033 succeeded",
+    "Migration 0057 production hold unchanged",
+    "No PR review or merge actions warranted"
+  ]
+}
