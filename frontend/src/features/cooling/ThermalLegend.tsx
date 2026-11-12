@@ -1,8 +1,29 @@
+import { useId } from "react";
+
 import type { HeatMap, ThermalMetric } from "@/types";
+import { BREACH_STYLE } from "./ThermalLayers";
 import { SENSOR_STATE_META, legendTicks, metricLabel, ramp, scaleBounds } from "./thermalMath";
 import { BAND_META, ENVELOPES, bandExplanation, type ThermalBand } from "./thermalState";
 
 const BAND_ORDER: ThermalBand[] = ["normal", "caution", "warning", "critical"];
+
+/** Small swatch that draws a breach cell exactly as the map does: hatch plus outline over the band's tint. */
+function BreachSwatch({ band }: { band: "warning" | "critical" }) {
+  const id = `legend-hatch-${band}-${useId().replace(/:/g, "")}`;
+  const style = BREACH_STYLE[band];
+  return (
+    <svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true" focusable="false" className="mr-1 inline-block align-middle" data-testid={`legend-swatch-${band}`}>
+      <defs>
+        <pattern id={id} width={style.hatchSize} height={style.hatchSize} patternUnits="userSpaceOnUse" patternTransform={`rotate(${style.hatchAngle})`}>
+          <line x1="0" y1="0" x2="0" y2={style.hatchSize} stroke={style.hatch} strokeWidth={style.hatchWidth} />
+        </pattern>
+      </defs>
+      <rect x="0" y="0" width="22" height="14" fill="#475569" fillOpacity="0.55" />
+      <rect x="0" y="0" width="22" height="14" fill={`url(#${id})`} />
+      <rect x="1" y="1" width="20" height="12" fill="none" stroke={style.outline} strokeWidth={style.outlineWidth} strokeDasharray={style.dash} />
+    </svg>
+  );
+}
 
 const gradient = (metric: ThermalMetric) => `linear-gradient(to right, ${ramp(metric).map((c, i, a) => `rgb(${c.join(" ")}) ${Math.round((i / (a.length - 1)) * 100)}%`).join(", ")})`;
 
@@ -33,7 +54,9 @@ export function ThermalLegend({ map }: { map: HeatMap | null | undefined }) {
                   <span className="font-medium text-fg-primary">{BAND_META[band].label}:</span> {bandExplanation(map.metric, band)}
                 </li>
               ))}
-              <li>Hatching and a solid outline mark warning and critical cells. Recommended range {ENVELOPES[map.metric].recommended.min}–{ENVELOPES[map.metric].recommended.max} {ENVELOPES[map.metric].unit}{map.metric === "temperature_c" ? " (ASHRAE TC 9.9 Class A1)" : ""}.</li>
+              <li data-testid="legend-breach-warning"><BreachSwatch band="warning" />Dashed outline with fine orange hatching: warning cell</li>
+              <li data-testid="legend-breach-critical"><BreachSwatch band="critical" />Solid outline with dense pink hatching: critical cell</li>
+              <li>Recommended range {ENVELOPES[map.metric].recommended.min}–{ENVELOPES[map.metric].recommended.max} {ENVELOPES[map.metric].unit}{map.metric === "temperature_c" ? " (ASHRAE TC 9.9 Class A1)" : ""}.</li>
             </ul>
           </>
         ) : (

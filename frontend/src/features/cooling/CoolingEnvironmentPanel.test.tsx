@@ -60,6 +60,19 @@ describe("CoolingEnvironmentPanel", () => {
     expect(group(2).querySelector("[data-testid^='breach-']")).toBeNull();
   });
 
+  it("shows legend swatches that tell warning hatching from critical hatching", async () => {
+    renderPanel();
+    const warning = await screen.findByTestId("legend-breach-warning");
+    const critical = screen.getByTestId("legend-breach-critical");
+    expect(warning).toHaveTextContent(/dashed outline.*warning/i);
+    expect(critical).toHaveTextContent(/solid outline.*critical/i);
+    const outline = (el: HTMLElement) => el.querySelector("svg rect[fill='none']") as SVGRectElement;
+    expect(outline(warning)).toHaveAttribute("stroke-dasharray");
+    expect(outline(critical)).not.toHaveAttribute("stroke-dasharray");
+    expect(within(warning).getByTestId("legend-swatch-warning")).toHaveAttribute("aria-hidden", "true");
+    expect(outline(warning).getAttribute("stroke")).not.toBe(outline(critical).getAttribute("stroke"));
+  });
+
   it("shows the legend range and the alarm-rule threshold in text", async () => {
     renderPanel();
     expect(await screen.findByTestId("legend-range")).toHaveTextContent("Fixed scale 10 to 35 degC");
