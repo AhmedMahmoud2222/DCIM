@@ -73,7 +73,7 @@ def test_unidentifiable_or_malformed_documents_are_refused_with_fixed_text(mutat
 
 def test_fields_are_sanitized_and_bounded():
     evidence = parse_neighbor(doc(
-        remote={"chassis_id": "bad\x00\x1b[0m id", "port_id": "p" * 999, "system_name": "n‮" * 400,
+        remote={"chassis_id": "bad\x00\x1b[0m id", "port_id": "p" * 999, "system_name": "n\u202e" * 400,
                 "management_address": "not-an-ip", "system_description": "d" * 5000},
         capabilities=["bridge", "BAD CAP", 5, "x" * 40, *["router"] * 100], native_vlan=99999, ttl_seconds=-1,
         raw={"ok": "v" * 1000, "Bad-Key": "x", "n": 5, "flag": True, "nested": {"a": 1}},
