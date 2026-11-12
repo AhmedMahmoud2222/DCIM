@@ -38,7 +38,7 @@ import type { AcceptCandidateRequest, CalibrationRequest, ImportCandidate, Overl
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-slate-700 text-slate-200",
   active: "bg-green-700 text-green-100",
-  superseded: "bg-slate-800 text-slate-500",
+  superseded: "bg-slate-800 text-fg-secondary",
   queued: "bg-slate-700 text-slate-200",
   quarantined: "bg-yellow-700 text-yellow-100",
   parsing: "bg-blue-700 text-blue-100",
@@ -318,7 +318,7 @@ export function RoomFloorPlanPage() {
                     }}
                     aria-pressed={fp.id === selectedFloorPlanId} className="text-left">
                     Revision {fp.revision_number}
-                    {fp.current_calibration && <span className="ml-2 text-xs text-slate-500">calibrated</span>}
+                    {fp.current_calibration && <span className="ml-2 text-xs text-fg-secondary">calibrated</span>}
                   </button>
                   <span className="flex items-center gap-2">
                     <span className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[fp.status]}`}>{fp.status}</span>
@@ -331,12 +331,12 @@ export function RoomFloorPlanPage() {
                 </div>
               </li>
             ))}
-            {floorPlansQuery.data?.items.length === 0 && <li className="py-4 text-center text-sm text-slate-500">No floor plans yet.</li>}
+            {floorPlansQuery.data?.items.length === 0 && <li className="py-4 text-center text-sm text-fg-secondary">No floor plans yet.</li>}
           </ul>
 
           {selectedFloorPlan && (
             <div className="mt-4 space-y-3 border-t border-slate-800 pt-4">
-              <label className="block text-xs text-slate-500">
+              <label className="block text-xs text-fg-secondary">
                 Upload DXF, VSDX, SVG, PNG or JPEG for revision {selectedFloorPlan.revision_number}
                 <input
                   type="file"
@@ -352,7 +352,7 @@ export function RoomFloorPlanPage() {
 
               <form onSubmit={submitBoundary} className="rounded-sm bg-slate-800/40 p-2 text-xs text-slate-400" aria-label="Set rectangular room boundary">
                 <p className="mb-1 font-medium text-slate-300">Room boundary (manual)</p>
-                <p className="mb-2 text-slate-500">
+                <p className="mb-2 text-fg-secondary">
                   Applies to revision {selectedFloorPlan.revision_number} ({selectedFloorPlan.status}). The 2D/3D layouts show the active revision. A boundary sets room size; it does not calibrate an imported drawing.
                 </p>
                 <div className="flex flex-wrap items-end gap-2">
@@ -368,7 +368,7 @@ export function RoomFloorPlanPage() {
                     Set boundary
                   </button>
                 </div>
-                <p className="mt-1 text-slate-500">Or accept a detected room outline below.</p>
+                <p className="mt-1 text-fg-secondary">Or accept a detected room outline below.</p>
               </form>
             </div>
           )}
@@ -376,8 +376,8 @@ export function RoomFloorPlanPage() {
 
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4" data-testid="diagnostics-panel">
           <h2 className="mb-3 text-sm font-semibold text-slate-300">Import diagnostics</h2>
-          {!selectedJob && !selectedJobId && <p className="text-sm text-slate-500">Upload a file to see import diagnostics here.</p>}
-          {!selectedJob && !!selectedJobId && <p role="status" className="text-sm text-slate-500">Processing… this view refreshes automatically.</p>}
+          {!selectedJob && !selectedJobId && <p className="text-sm text-fg-secondary">Upload a file to see import diagnostics here.</p>}
+          {!selectedJob && !!selectedJobId && <p role="status" className="text-sm text-fg-secondary">Processing… this view refreshes automatically.</p>}
           {selectedJob && (
             <>
               <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
@@ -385,36 +385,36 @@ export function RoomFloorPlanPage() {
                 <span data-testid="job-status" className={`rounded-sm px-2 py-0.5 text-xs ${STATUS_COLORS[selectedJob.status] ?? "bg-slate-700"}`}>
                   {selectedJob.status}
                 </span>
-                {selectedJob.detected_format && <span className="text-xs text-slate-500">detected: {selectedJob.detected_format}</span>}
+                {selectedJob.detected_format && <span className="text-xs text-fg-secondary">detected: {selectedJob.detected_format}</span>}
               </div>
               {selectedJob.status === "failed" && (
                 <p role="alert" className="mb-2 text-sm text-red-400" data-testid="job-failure">
                   {selectedJob.rejection_reason}
                 </p>
               )}
-              {jobInFlight && <p role="status" className="text-sm text-slate-500">Processing… this view refreshes automatically.</p>}
+              {jobInFlight && <p role="status" className="text-sm text-fg-secondary">Processing… this view refreshes automatically.</p>}
               {diagnosticsQuery.data && (
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                  <dt className="text-slate-500">Parser</dt>
+                  <dt className="text-fg-secondary">Parser</dt>
                   <dd>
                     {diagnosticsQuery.data.parser_name ?? "n/a"} v{diagnosticsQuery.data.parser_version ?? "?"}
                   </dd>
-                  <dt className="text-slate-500">Source units</dt>
+                  <dt className="text-fg-secondary">Source units</dt>
                   <dd>
                     {diagnosticsQuery.data.source_units ?? "n/a"}
                     {diagnosticsQuery.data.units_trusted === false && " (not authoritative)"}
                   </dd>
-                  <dt className="text-slate-500">Objects discovered</dt>
+                  <dt className="text-fg-secondary">Objects discovered</dt>
                   <dd>{diagnosticsQuery.data.objects_discovered}</dd>
-                  <dt className="text-slate-500">Racks detected</dt>
+                  <dt className="text-fg-secondary">Racks detected</dt>
                   <dd data-testid="racks-detected">{diagnosticsQuery.data.racks_detected}</dd>
-                  <dt className="text-slate-500">Needing review</dt>
+                  <dt className="text-fg-secondary">Needing review</dt>
                   <dd>{diagnosticsQuery.data.ambiguous_count}</dd>
-                  <dt className="text-slate-500">Unsupported/stripped</dt>
+                  <dt className="text-fg-secondary">Unsupported/stripped</dt>
                   <dd>{diagnosticsQuery.data.unsupported_object_count}</dd>
                   {diagnosticsQuery.data.sir_sha256 && (
                     <>
-                      <dt className="text-slate-500">Geometry fingerprint</dt>
+                      <dt className="text-fg-secondary">Geometry fingerprint</dt>
                       <dd className="truncate font-mono text-xs" title={diagnosticsQuery.data.sir_sha256}>
                         {diagnosticsQuery.data.sir_sha256.slice(0, 12)}…
                       </dd>
@@ -518,7 +518,7 @@ export function RoomFloorPlanPage() {
           </div>
         </div>
         {planMode === "layout" && overlay !== "none" && (
-          <p className="mb-2 text-xs text-slate-500" data-testid="overlay-source">
+          <p className="mb-2 text-xs text-fg-secondary" data-testid="overlay-source">
             {OVERLAY_KINDS.find((k) => k.id === overlay)?.source}
             {overlaysQuery.isLoading && " · loading…"}
             {overlaysQuery.isError && <span role="alert" className="text-red-400"> · {messageOf(overlaysQuery.error)}</span>}
@@ -528,7 +528,7 @@ export function RoomFloorPlanPage() {
         {spatialViewQuery.error && <p role="alert" className="text-sm text-red-400">{messageOf(spatialViewQuery.error)}</p>}
         {spatialViewQuery.data && (
           <>
-            <p className="mb-2 text-xs text-slate-500">
+            <p className="mb-2 text-xs text-fg-secondary">
               {spatialViewQuery.data.active_floor_plan_id
                 ? `Active revision ${spatialViewQuery.data.active_floor_plan_revision}`
                 : "No active floor plan for this room yet. Activate a revision to publish its geometry; placed racks are shown meanwhile."}

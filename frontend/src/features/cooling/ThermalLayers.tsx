@@ -12,9 +12,9 @@ import {
   heatColour,
   normalise,
   scaleBounds,
-  thresholdBreach,
   zonePoints,
 } from "./thermalMath";
+import { assessThermal } from "./thermalState";
 
 export interface ThermalLayerToggles {
   heat: boolean;
@@ -68,6 +68,8 @@ export function ThermalHeatLayer({
 }) {
   const uid = useId().replace(/:/g, "");
   const clipId = `thermal-clip-${uid}`;
+  const warnId = `thermal-hatch-warning-${uid}`;
+  const critId = `thermal-hatch-critical-${uid}`;
   const bounds = map ? scaleBounds(map) : null;
   const colour = (value: number) => (map && bounds ? heatColour(map.metric, normalise(value, bounds.min, bounds.max)) : "#94a3b8");
   const grid = map?.grid ?? null;
@@ -102,15 +104,33 @@ export function ThermalHeatLayer({
             <polygon points={clip.map(([x, y]) => mmToPx(vp, x, y).join(",")).join(" ")} />
           </clipPath>
         )}
+        <pattern id={`${warnId}`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="#fb923c" strokeWidth="2" />
+        </pattern>
+        <pattern id={`${critId}`} width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+          <line x1="0" y1="0" x2="0" y2="4" stroke="#fecaca" strokeWidth="2.2" />
+        </pattern>
       </defs>
       {toggles.heat && grid && map && (
         <g data-testid="heat-cells" data-provenance="interpolated" clipPath={clip ? `url(#${clipId})` : undefined} role="group" aria-label={`${map.metric === "humidity_percent" ? "Humidity" : "Temperature"} field, interpolated from sensors, not measured. Press an arrow key to inspect cells.`} tabIndex={0} onKeyDown={onGridKey}>
           {cellRects(grid).map((cell) => {
             const [px, py] = mmToPx(vp, cell.xMm, cell.yMm);
             const size = cell.sizeMm * vp.scale;
-            const breach = thresholdBreach(map, cell.value);
+            const assessment = assessThermal(map, cell.value);
+            const band = assessment.band;
+            const flagged = band === "warning" || band === "critical";
             return (
-              <rect key={cell.index} x={px} y={py} width={size + 0.5} height={size + 0.5} fill={colour(cell.value)} fillOpacity={0.55} data-cell-index={cell.index} data-value={cell.value} data-provenance="interpolated" data-breach={breach ?? undefined} />
+              <g key={cell.index}>
+                <rect x={px} y={py} width={size + 0.5} height={size + 0.5} fill={colour(cell.value)} fillOpacity={0.55} data-cell-index={cell.index} data-value={cell.value} data-provenance="interpolated" data-band={band} data-breach={flagged ? band : undefined}>
+                  {flagged && <title>{`${band === "critical" ? "Critical" : "Warning"}: ${assessment.reason}`}</title>}
+                </rect>
+                {flagged && (
+                  <>
+                    <rect x={px} y={py} width={size + 0.5} height={size + 0.5} fill={`url(#${band === "critical" ? critId : warnId})`} pointerEvents="none" data-testid={`breach-hatch-${band}`} />
+                    <rect x={px + 1} y={py + 1} width={Math.max(0, size - 1.5)} height={Math.max(0, size - 1.5)} fill="none" stroke={band === "critical" ? "#fee2e2" : "#fed7aa"} strokeWidth={band === "critical" ? 2 : 1.5} strokeDasharray={band === "warning" ? "4 2" : undefined} pointerEvents="none" data-testid={`breach-outline-${band}`} />
+                  </>
+                )}
+              </g>
             );
           })}
           <rect x={0} y={0} width={vp.widthPx} height={vp.heightPx} fill="transparent" onClick={onGridClick} data-testid="heat-hit-area" />

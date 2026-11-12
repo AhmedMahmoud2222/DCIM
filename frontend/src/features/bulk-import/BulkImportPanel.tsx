@@ -51,14 +51,14 @@ const JOB_STATUS_COLORS: Record<string, string> = {
   committing: "bg-blue-700 text-blue-100",
   committed: "bg-green-700 text-green-100",
   committed_with_errors: "bg-yellow-700 text-yellow-100",
-  cancelled: "bg-slate-800 text-slate-500",
+  cancelled: "bg-slate-800 text-fg-secondary",
 };
 
 const ROW_STATUS_COLORS: Record<string, string> = {
   pending: "bg-slate-700 text-slate-200",
   valid: "bg-green-700 text-green-100",
   invalid: "bg-red-900 text-red-100",
-  skipped: "bg-slate-800 text-slate-500",
+  skipped: "bg-slate-800 text-fg-secondary",
   committed: "bg-green-700 text-green-100",
   failed: "bg-red-900 text-red-100",
 };
@@ -296,7 +296,7 @@ export function BulkImportPanel({
 
             <form onSubmit={handleUploadSubmit} className="space-y-3 rounded-sm border border-slate-800 bg-slate-950 p-4">
               <fieldset>
-                <legend className="mb-1 text-xs uppercase tracking-wide text-slate-500">Mode</legend>
+                <legend className="mb-1 text-xs uppercase tracking-wide text-fg-secondary">Mode</legend>
                 <label className="mr-4 inline-flex items-center gap-2 text-sm text-slate-200">
                   <input
                     type="radio"
@@ -383,17 +383,17 @@ export function BulkImportPanel({
             {showPreview && job && (
               <>
                 <dl className="grid grid-cols-3 gap-x-4 gap-y-1 text-sm sm:grid-cols-6">
-                  <dt className="text-slate-500">Rows</dt>
+                  <dt className="text-fg-secondary">Rows</dt>
                   <dd>{job.row_count}</dd>
-                  <dt className="text-slate-500">Valid</dt>
+                  <dt className="text-fg-secondary">Valid</dt>
                   <dd>{job.valid_row_count}</dd>
-                  <dt className="text-slate-500">Errors</dt>
+                  <dt className="text-fg-secondary">Errors</dt>
                   <dd>{job.error_row_count}</dd>
-                  <dt className="text-slate-500">Warnings</dt>
+                  <dt className="text-fg-secondary">Warnings</dt>
                   <dd>{job.warning_row_count}</dd>
-                  <dt className="text-slate-500">Committed</dt>
+                  <dt className="text-fg-secondary">Committed</dt>
                   <dd>{job.committed_row_count}</dd>
-                  <dt className="text-slate-500">Failed</dt>
+                  <dt className="text-fg-secondary">Failed</dt>
                   <dd>{job.failed_row_count}</dd>
                 </dl>
 
@@ -502,7 +502,7 @@ export function BulkImportPanel({
                       ))}
                       {rowsQuery.data.items.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="py-4 text-center text-slate-500">
+                          <td colSpan={4} className="py-4 text-center text-fg-secondary">
                             No rows match this filter.
                           </td>
                         </tr>

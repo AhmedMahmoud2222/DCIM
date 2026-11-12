@@ -1,3 +1,4 @@
+import { ENVELOPES } from "./thermalState";
 import type { CoolingLayoutZone, HeatMap, HeatMapGrid, HeatMapState, SensorValueState, ThermalMetric, ThermalSensorPoint } from "@/types";
 
 export type Point = [number, number];
@@ -64,11 +65,14 @@ export function normalise(value: number, min: number, max: number): number {
   return max > min ? clamp01((value - min) / (max - min)) : 0.5;
 }
 
-/** Colour scale bounds shared by cells and sensor markers, so a marker and the cell beneath it agree. */
+/** Colour scale bounds shared by cells and sensor markers, so a marker and the cell beneath it agree.
+ * The domain is fixed per metric (ASHRAE A1 context, 10–35 °C), never derived from the current snapshot, so the
+ * same temperature is the same colour on every refresh. Returns null when the map holds no usable value. */
 export function scaleBounds(map: HeatMap): { min: number; max: number } | null {
-  const values = [...(map.grid && map.grid.min != null && map.grid.max != null ? [map.grid.min, map.grid.max] : []), ...map.sensors.filter((s) => s.state === "measured_fresh" && s.value != null).map((s) => s.value as number)];
-  if (values.length === 0) return null;
-  return { min: Math.min(...values), max: Math.max(...values) };
+  const hasGrid = map.grid != null && map.grid.min != null && map.grid.max != null;
+  const hasSensor = map.sensors.some((s) => s.state === "measured_fresh" && s.value != null);
+  if (!hasGrid && !hasSensor) return null;
+  return { ...ENVELOPES[map.metric].domain };
 }
 
 export interface CellRect {

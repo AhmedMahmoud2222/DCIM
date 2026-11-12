@@ -474,7 +474,7 @@ function NetworkPortTemplateEditor({
         {revision.network_ports.map((port) => (
           <li key={port.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1">
             <span>
-              {port.display_name} <span className="text-slate-500">({port.connector_type}, {port.side})</span>
+              {port.display_name} <span className="text-fg-secondary">({port.connector_type}, {port.side})</span>
             </span>
             {!readOnly && (
               <button onClick={() => deleteMutation.mutate(port.id)} className="text-red-400 hover:text-red-300">
@@ -483,7 +483,7 @@ function NetworkPortTemplateEditor({
             )}
           </li>
         ))}
-        {revision.network_ports.length === 0 && <li className="italic text-slate-500">No ports.</li>}
+        {revision.network_ports.length === 0 && <li className="italic text-fg-secondary">No ports.</li>}
       </ul>
     </section>
   );
@@ -582,7 +582,7 @@ function PowerSupplyTemplateEditor({
         {revision.power_supplies.map((psu) => (
           <li key={psu.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1">
             <span>
-              {psu.label} <span className="text-slate-500">({psu.connector_type} × {psu.quantity})</span>
+              {psu.label} <span className="text-fg-secondary">({psu.connector_type} × {psu.quantity})</span>
             </span>
             {!readOnly && (
               <button onClick={() => deleteMutation.mutate(psu.id)} className="text-red-400 hover:text-red-300">
@@ -591,7 +591,7 @@ function PowerSupplyTemplateEditor({
             )}
           </li>
         ))}
-        {revision.power_supplies.length === 0 && <li className="italic text-slate-500">No power supplies.</li>}
+        {revision.power_supplies.length === 0 && <li className="italic text-fg-secondary">No power supplies.</li>}
       </ul>
     </section>
   );
@@ -695,7 +695,7 @@ function MonitoringTemplateEditor({
         {revision.monitoring_metrics.map((metric) => (
           <li key={metric.id} className="flex items-center justify-between rounded-sm bg-slate-800/50 px-2 py-1">
             <span>
-              {metric.metric_name} <span className="text-slate-500">({metric.protocol})</span>
+              {metric.metric_name} <span className="text-fg-secondary">({metric.protocol})</span>
             </span>
             {!readOnly && (
               <button onClick={() => deleteMutation.mutate(metric.id)} className="text-red-400 hover:text-red-300">
@@ -704,7 +704,7 @@ function MonitoringTemplateEditor({
             )}
           </li>
         ))}
-        {revision.monitoring_metrics.length === 0 && <li className="italic text-slate-500">No metrics.</li>}
+        {revision.monitoring_metrics.length === 0 && <li className="italic text-fg-secondary">No metrics.</li>}
       </ul>
     </section>
   );

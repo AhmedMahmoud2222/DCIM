@@ -157,11 +157,11 @@ export function PduInstantiatePanel({ revisionId }: { revisionId: string }) {
           </p>
           <dl className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
             <div>
-              <dt className="text-slate-500">PDU power node</dt>
+              <dt className="text-fg-secondary">PDU power node</dt>
               <dd className="font-mono break-all text-slate-300">{result.id}</dd>
             </div>
             <div>
-              <dt className="text-slate-500">Managed asset</dt>
+              <dt className="text-fg-secondary">Managed asset</dt>
               <dd className="font-mono break-all text-slate-300">{result.managed_asset_id ?? "—"}</dd>
             </div>
           </dl>
@@ -173,7 +173,7 @@ export function PduInstantiatePanel({ revisionId }: { revisionId: string }) {
               {result.outlets.map((outlet) => (
                 <li key={outlet.id} className="flex items-center justify-between gap-3 rounded-sm bg-slate-800/50 px-2 py-1">
                   <span className="truncate text-slate-200">{outlet.label}</span>
-                  <span className="font-mono break-all text-[10px] text-slate-500">{outlet.id}</span>
+                  <span className="font-mono break-all text-[10px] text-fg-secondary">{outlet.id}</span>
                 </li>
               ))}
             </ul>

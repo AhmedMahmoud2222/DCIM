@@ -37,6 +37,12 @@ const READABLE_TEXT = [
   "features/access/GroupsPage.tsx",
   "features/racks/RacksPage.tsx",
   "features/equipment/EquipmentPage.tsx",
+  "features/equipment/EquipmentDetailPage.tsx",
+  "features/cooling/CoolingEnvironmentPanel.tsx",
+  "features/cooling/ThermalLegend.tsx",
+  "features/cooling/ThermalBandChip.tsx",
+  "features/power/PowerAnalyticsPage.tsx",
+  "features/power/PowerTopologyPage.tsx",
 ];
 
 const PALETTE = "slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black";
