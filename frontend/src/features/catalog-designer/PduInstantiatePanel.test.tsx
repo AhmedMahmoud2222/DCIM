@@ -1,6 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PduInstantiatePanel } from "@/features/catalog-designer/PduInstantiatePanel";
 import * as api from "@/features/power/api";
@@ -49,6 +49,17 @@ describe("PduInstantiatePanel", () => {
   beforeEach(() => {
     vi.mocked(api.instantiatePdu).mockReset();
   });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, assetTag = "PDU-001") {
+    await user.type(screen.getByLabelText("Asset tag"), assetTag);
+    await user.type(screen.getByLabelText("Name"), "Rack PDU A");
+    await user.click(screen.getByRole("button", { name: "Instantiate PDU" }));
+  }
 
   it("sends asset identity and the revision id — never electrical values — with an idempotency key", async () => {
     const user = userEvent.setup();
@@ -125,5 +136,53 @@ describe("PduInstantiatePanel", () => {
     const firstKey = vi.mocked(api.instantiatePdu).mock.calls[0][1];
     const secondKey = vi.mocked(api.instantiatePdu).mock.calls[1][1];
     expect(secondKey).toBe(firstKey);
+  });
+
+  it("rotates the Idempotency-Key after a success so the next PDU gets its own key", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.instantiatePdu).mockResolvedValue(makeInstantiated());
+
+    renderWithProviders(<PduInstantiatePanel revisionId="rev-1" />);
+    await fillAndSubmit(user, "PDU-001");
+    await user.click(await screen.findByRole("button", { name: "Instantiate another" }));
+    await fillAndSubmit(user, "PDU-002");
+
+    await waitFor(() => expect(api.instantiatePdu).toHaveBeenCalledTimes(2));
+    const firstKey = vi.mocked(api.instantiatePdu).mock.calls[0][1];
+    const secondKey = vi.mocked(api.instantiatePdu).mock.calls[1][1];
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("keeps retry reuse and never touches Math.random when crypto.randomUUID is unavailable (issue #328)", async () => {
+    const user = userEvent.setup();
+    const mathRandom = vi.spyOn(Math, "random");
+    const realGetRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    vi.stubGlobal("crypto", { getRandomValues: realGetRandomValues });
+    vi.mocked(api.instantiatePdu)
+      .mockRejectedValueOnce(new ApiError(503, "Unavailable", "Temporary failure.", null))
+      .mockResolvedValueOnce(makeInstantiated());
+
+    renderWithProviders(<PduInstantiatePanel revisionId="rev-1" />);
+    await fillAndSubmit(user);
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Instantiate PDU" }));
+
+    await waitFor(() => expect(api.instantiatePdu).toHaveBeenCalledTimes(2));
+    const firstKey = vi.mocked(api.instantiatePdu).mock.calls[0][1];
+    const secondKey = vi.mocked(api.instantiatePdu).mock.calls[1][1];
+    expect(firstKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(secondKey).toBe(firstKey);
+    expect(mathRandom).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing and tells the user why when the browser has no secure randomness (issue #328)", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("crypto", {});
+
+    renderWithProviders(<PduInstantiatePanel revisionId="rev-1" />);
+    await fillAndSubmit(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/cannot generate a secure request key/i);
+    expect(api.instantiatePdu).not.toHaveBeenCalled();
   });
 });
