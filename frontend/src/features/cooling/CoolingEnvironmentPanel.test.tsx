@@ -72,6 +72,19 @@ describe("CoolingEnvironmentPanel", () => {
     }
   });
 
+  it("shows the thermal band chip and its reason for the selected cell", async () => {
+    const base = heatMap();
+    const values = base.grid!.values.map((v) => (v == null ? v : 33));
+    mockAll({ map: heatMap({ grid: { ...base.grid!, values, min: 33, max: 33 } }) });
+    renderPanel();
+    const field = await screen.findByTestId("heat-cells");
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowRight" });
+    const band = await screen.findByTestId("detail-band");
+    expect(band).toHaveTextContent("Thermal state: Critical");
+    expect(within(band).getByTestId("detail-band-reason")).toHaveTextContent("at or above the 32 °C A1 allowable maximum");
+  });
+
   it("shows legend swatches that tell warning hatching from critical hatching", async () => {
     renderPanel();
     const warning = await screen.findByTestId("legend-breach-warning");
