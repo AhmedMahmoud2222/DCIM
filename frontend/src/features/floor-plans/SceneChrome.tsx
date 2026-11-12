@@ -31,7 +31,7 @@ export function GridControls({ settings, onChange, idPrefix }: { settings: GridS
   );
 }
 
-const GRID_STROKE = "rgb(51 65 85 / 0.55)";
+const GRID_STROKE = "var(--viz-grid)";
 
 /** Engineering grid + rulers + origin marker + scale bar over canonical mm, in a pixel viewport. */
 export function SceneChrome({
@@ -67,7 +67,7 @@ export function SceneChrome({
           })}
         </g>
       )}
-      <g fontSize={9} fill="#64748b">
+      <g fontSize={9} fill="var(--viz-muted)">
         {xs
           .filter((_, i) => i % Math.max(1, Math.round(56 / (interval * vp.scale))) === 0)
           .map((x) => {
@@ -86,25 +86,25 @@ export function SceneChrome({
             </text>
           );
         })}
-        <text x={x1} y={y0 - 18} textAnchor="end" fill="#94a3b8">
+        <text x={x1} y={y0 - 18} textAnchor="end" fill="var(--viz-label)">
           {interval >= 1000 ? "metres" : "millimetres"} · grid {formatGridInterval(interval)}
         </text>
       </g>
       {ox >= x0 - 1 && ox <= x1 + 1 && oy >= y0 - 1 && oy <= y1 + 1 && (
-        <g stroke="#38bdf8" strokeWidth={1.5} data-testid="room-origin">
+        <g stroke="var(--viz-accent)" strokeWidth={1.5} data-testid="room-origin">
           <line x1={ox - 9} x2={ox + 9} y1={oy} y2={oy} />
           <line x1={ox} x2={ox} y1={oy - 9} y2={oy + 9} />
-          <circle cx={ox} cy={oy} r={3.5} fill="#0c4a6e" />
-          <text x={ox + 8} y={oy + 14} fontSize={9} fill="#7dd3fc" stroke="none">
+          <circle cx={ox} cy={oy} r={3.5} fill="var(--viz-halo)" />
+          <text x={ox + 8} y={oy + 14} fontSize={9} fill="var(--viz-accent)" stroke="none">
             room origin (0, 0) · X→ Y↓
           </text>
         </g>
       )}
       <g data-testid="scale-bar" transform={`translate(${x0}, ${y1 + 22})`}>
-        <line x1={0} x2={barMm * vp.scale} y1={0} y2={0} stroke="#cbd5e1" strokeWidth={2} />
-        <line x1={0} x2={0} y1={-4} y2={4} stroke="#cbd5e1" strokeWidth={2} />
-        <line x1={barMm * vp.scale} x2={barMm * vp.scale} y1={-4} y2={4} stroke="#cbd5e1" strokeWidth={2} />
-        <text x={barMm * vp.scale + 8} y={3} fontSize={10} fill="#cbd5e1">
+        <line x1={0} x2={barMm * vp.scale} y1={0} y2={0} stroke="var(--viz-axis)" strokeWidth={2} />
+        <line x1={0} x2={0} y1={-4} y2={4} stroke="var(--viz-axis)" strokeWidth={2} />
+        <line x1={barMm * vp.scale} x2={barMm * vp.scale} y1={-4} y2={4} stroke="var(--viz-axis)" strokeWidth={2} />
+        <text x={barMm * vp.scale + 8} y={3} fontSize={10} fill="var(--viz-axis)">
           {formatLength(barMm)} ({unitLabel})
         </text>
       </g>

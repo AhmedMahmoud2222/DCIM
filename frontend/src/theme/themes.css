@@ -1,4 +1,4 @@
-/* themes.css v1.0.0 - e& brand themes: "Normal" (light) and "Dark".
+/* themes.css v1.1.0 - e& brand themes: "Normal" (light) and "Dark".
  *
  * The semantic tokens (surface-*, fg-*, line-*, tone-*, side-*, action-*, link, focus) are defined for the
  * Dark theme in index.css (`@theme static`, emitted on :root). This file holds everything a theme changes
@@ -44,6 +44,34 @@
   --color-blue-800: #6e0418;
   --color-blue-900: #4d0a1f;
   --color-blue-950: #33060f;
+
+  /* Chart and scene chrome (--viz-*): labels, grids, halos and accents drawn inside SVG plans, the rack
+     elevation and the 3D layout. Data hues (status, heat ramp, rack colors) are not themed. */
+  --viz-label: #94a3b8;
+  --viz-muted: #7480ae;
+  --viz-axis: #cbd5e1;
+  --viz-strong: #f8fafc;
+  --viz-halo: #0c1131;
+  --viz-edge: #2a3270;
+  --viz-edge-strong: #4a5496;
+  --viz-grid: rgb(74 84 150 / 0.55);
+  --viz-accent: #8fa0ff;
+  --viz-warn: #facc15;
+  --viz-violet: #a78bfa;
+  --viz-teal: #2dd4bf;
+  --viz-blue: #60a5fa;
+  --viz-orange: #fb923c;
+  --viz-cyan: #67e8f9;
+  --viz-rose: #fca5a5;
+  --viz-lime: #a3e635;
+  --viz-panel: rgb(12 17 49 / 0.85);
+  --viz-3d-sky: #232b62;
+  --viz-3d-ground: #080b22;
+  --viz-floor-bg: rgb(24 31 75 / 0.55);
+  --viz-floor-line: rgb(74 84 150 / 0.8);
+  --viz-floor-grid: rgb(74 84 150 / 0.25);
+  --viz-floor-shade: rgb(12 17 49 / 0.9);
+  --viz-floor-drop: rgb(0 0 0 / 0.55);
 }
 
 /* ---------------------------------------------------------------- Normal (light) */
@@ -102,6 +130,32 @@
   --color-slate-800: #f2f2ef;
   --color-slate-900: #ffffff;
   --color-slate-950: #f3f3f1;
+
+  --viz-label: #565654;
+  --viz-muted: #71716f;
+  --viz-axis: #3d4163;
+  --viz-strong: #181f4b;
+  --viz-halo: #ffffff;
+  --viz-edge: #dadad7;
+  --viz-edge-strong: #a8a8a4;
+  --viz-grid: rgb(113 113 111 / 0.3);
+  --viz-accent: #181f4b;
+  --viz-warn: #a16207;
+  --viz-violet: #6d28d9;
+  --viz-teal: #0f766e;
+  --viz-blue: #1d4ed8;
+  --viz-orange: #c2410c;
+  --viz-cyan: #0e7490;
+  --viz-rose: #b91c1c;
+  --viz-lime: #4d7c0f;
+  --viz-panel: rgb(255 255 255 / 0.9);
+  --viz-3d-sky: #ffffff;
+  --viz-3d-ground: #d6d7df;
+  --viz-floor-bg: rgb(255 255 255 / 0.6);
+  --viz-floor-line: rgb(113 113 111 / 0.7);
+  --viz-floor-grid: rgb(24 31 75 / 0.12);
+  --viz-floor-shade: rgb(24 31 75 / 0.12);
+  --viz-floor-drop: rgb(24 31 75 / 0.25);
 
   --color-blue-100: #4d0010;
   --color-blue-200: #6e0418;

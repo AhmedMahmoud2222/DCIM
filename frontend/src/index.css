@@ -114,48 +114,46 @@
 
 /* 3D floor layout (Infrastructure -> 3D Layout): Tailwind 3's utility set has no
    preserve-3d/perspective transform utilities, so this schematic CSS-projection scene
-   (no Three.js/WebGL) needs its own small, self-contained component layer. Colors match
-   the rest of the app's blue-accent dark slate palette (see RacksPage/EquipmentPage
-   lifecycle badges) rather than introducing a new accent. */
+   (no Three.js/WebGL) needs its own small, self-contained component layer. Colors come from the --viz-* chart tokens in theme/themes.css, so the scene follows the Normal and Dark themes. */
 @layer components {
-  .layout3d-viewport { position: relative; min-height: 560px; overflow: hidden; perspective: 1100px; perspective-origin: 50% 44%; touch-action: none; background: radial-gradient(circle at 50% 35%, #1e293b 0%, #020617 62%); cursor: grab; }
+  .layout3d-viewport { position: relative; min-height: 560px; overflow: hidden; perspective: 1100px; perspective-origin: 50% 44%; touch-action: none; background: radial-gradient(circle at 50% 35%, var(--viz-3d-sky) 0%, var(--viz-3d-ground) 62%); cursor: grab; }
   .layout3d-viewport:active { cursor: grabbing; }
-  .layout3d-viewport:focus-visible { outline: 2px solid #93c5fd; outline-offset: -3px; }
+  .layout3d-viewport:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -3px; }
   .layout3d-world { position: absolute; left: 50%; top: 50%; transform-style: preserve-3d; transition: transform 80ms linear; }
   @media (prefers-reduced-motion: reduce) { .layout3d-world { transition: none; } }
-  .layout3d-floor { position: absolute; inset: 0; transform-style: preserve-3d; border: 1px solid rgb(71 85 105 / .7); background-color: rgb(15 23 42 / .55); background-image: linear-gradient(rgb(71 85 105 / .22) 1px, transparent 1px), linear-gradient(90deg, rgb(71 85 105 / .22) 1px, transparent 1px); box-shadow: inset 0 0 80px rgb(15 23 42 / .9), 0 24px 36px rgb(0 0 0 / .55); }
+  .layout3d-floor { position: absolute; inset: 0; transform-style: preserve-3d; border: 1px solid var(--viz-floor-line); background-color: var(--viz-floor-bg); background-image: linear-gradient(var(--viz-floor-grid) 1px, transparent 1px), linear-gradient(90deg, var(--viz-floor-grid) 1px, transparent 1px); box-shadow: inset 0 0 80px var(--viz-floor-shade), 0 24px 36px var(--viz-floor-drop); }
   .layout3d-boundary { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; transform: translateZ(1px); }
-  .layout3d-floor-label { position: absolute; left: 6px; top: 6px; transform: translateZ(3px); color: rgb(147 197 253 / .8); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-  .layout3d-origin { position: absolute; left: -1px; top: -1px; width: 14px; height: 14px; border-left: 2px solid #38bdf8; border-top: 2px solid #38bdf8; transform: translateZ(2px); pointer-events: none; }
+  .layout3d-floor-label { position: absolute; left: 6px; top: 6px; transform: translateZ(3px); color: var(--viz-accent); font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .layout3d-origin { position: absolute; left: -1px; top: -1px; width: 14px; height: 14px; border-left: 2px solid var(--viz-accent); border-top: 2px solid var(--viz-accent); transform: translateZ(2px); pointer-events: none; }
   .layout3d-cuboid { position: absolute; width: var(--w); height: var(--d); transform-style: preserve-3d; transform-origin: center center; color: inherit; }
   .layout3d-face { position: absolute; box-sizing: border-box; display: block; backface-visibility: hidden; border: 1px solid color-mix(in srgb, var(--c) 70%, white); }
   .layout3d-face-front { left: 0; width: var(--w); height: var(--h); top: calc(var(--d) - var(--h) / 2); transform: translateZ(calc(var(--h) / 2)) rotateX(-90deg); background: linear-gradient(150deg, var(--c), color-mix(in srgb, var(--c) 40%, #020617) 78%); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 4px; font-size: 9px; cursor: pointer; }
-  .layout3d-face-front:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+  .layout3d-face-front:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
   .layout3d-face-front small { color: #dbeafe; font-size: 7px; }
   .layout3d-face-back { left: 0; width: var(--w); height: var(--h); top: calc(var(--h) / -2); transform: translateZ(calc(var(--h) / 2)) rotateX(90deg) rotate(180deg); background: color-mix(in srgb, var(--c) 35%, #020617); }
   .layout3d-face-left { left: calc(var(--h) / -2); width: var(--h); height: var(--d); top: 0; transform: translateZ(calc(var(--h) / 2)) rotateY(-90deg); background: color-mix(in srgb, var(--c) 55%, #020617); pointer-events: none; }
   .layout3d-face-right { left: calc(var(--w) - var(--h) / 2); width: var(--h); height: var(--d); top: 0; transform: translateZ(calc(var(--h) / 2)) rotateY(90deg); background: color-mix(in srgb, var(--c) 45%, #020617); pointer-events: none; }
   .layout3d-face-top { left: 0; top: 0; width: var(--w); height: var(--d); transform: translateZ(var(--h)); background: color-mix(in srgb, var(--c) 85%, white); pointer-events: none; }
-  .layout3d-selected .layout3d-face { border-color: #f8fafc; }
-  .layout3d-selected .layout3d-face-front { box-shadow: 0 0 22px rgb(248 250 252 / .55); }
+  .layout3d-selected .layout3d-face { border-color: var(--viz-strong); }
+  .layout3d-selected .layout3d-face-front { box-shadow: 0 0 22px color-mix(in srgb, var(--viz-strong) 55%, transparent); }
   .layout3d-cuboid:hover .layout3d-face-front { filter: brightness(1.2); }
-  .layout3d-badge { position: absolute; top: 2px; right: 2px; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px; border-radius: 9999px; background: #020617; border: 1.5px solid var(--c); color: var(--c); font-size: 8px; font-style: normal; font-weight: 700; }
+  .layout3d-badge { position: absolute; top: 2px; right: 2px; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px; border-radius: 9999px; background: var(--viz-halo); border: 1.5px solid var(--c); color: var(--c); font-size: 8px; font-style: normal; font-weight: 700; }
   .layout3d-pin { position: absolute; width: 0; height: 0; transform-style: preserve-3d; }
-  .layout3d-pin > span { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border: 1.5px dashed #fbbf24; color: #fbbf24; font-size: 11px; font-weight: 700; line-height: 15px; text-align: center; transform: rotate(45deg) translateZ(2px); }
+  .layout3d-pin > span { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border: 1.5px dashed var(--viz-warn); color: var(--viz-warn); font-size: 11px; font-weight: 700; line-height: 15px; text-align: center; transform: rotate(45deg) translateZ(2px); }
   .layout3d-equipment { position: absolute; left: 5px; right: 5px; overflow: hidden; min-height: 3px; border-radius: 1px; background: #fbbf24; box-shadow: 0 0 4px rgb(251 191 36 / .7); color: #422006; font-size: 5px; font-weight: 700; line-height: 1; text-align: center; text-decoration: none; white-space: nowrap; }
-  .layout3d-equipment:focus-visible { outline: 1px solid #f8fafc; outline-offset: 1px; z-index: 1; }
+  .layout3d-equipment:focus-visible { outline: 1px solid var(--viz-strong); outline-offset: 1px; z-index: 1; }
   .layout3d-equipment-irregular { outline: 1px dashed #f87171; background: #fca5a5; }
-  .layout3d-controls { position: absolute; bottom: 14px; left: 14px; display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid rgb(71 85 105 / .8); border-radius: 8px; background: rgb(2 6 23 / .82); padding: 8px 10px; color: #94a3b8; font-size: 11px; }
+  .layout3d-controls { position: absolute; bottom: 14px; left: 14px; display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid var(--viz-floor-line); border-radius: 8px; background: var(--viz-panel); padding: 8px 10px; color: var(--viz-label); font-size: 11px; }
   .layout3d-controls label { display: flex; align-items: center; gap: 5px; }
-  .layout3d-controls input { width: 74px; accent-color: #3b82f6; }
+  .layout3d-controls input { width: 74px; accent-color: var(--color-action-primary); }
   .layout3d-pan-pad { display: grid; grid-template-columns: repeat(3, 20px); grid-template-rows: repeat(2, 18px); gap: 2px; align-items: center; justify-items: center; }
-  .layout3d-pan-pad button { grid-row: 1; display: flex; align-items: center; justify-content: center; width: 20px; height: 18px; border: 1px solid rgb(71 85 105 / .8); border-radius: 4px; background: rgb(15 23 42 / .8); color: #cbd5e1; font-size: 9px; cursor: pointer; }
-  .layout3d-pan-pad button:hover { border-color: #3b82f6; color: #dbeafe; }
+  .layout3d-pan-pad button { grid-row: 1; display: flex; align-items: center; justify-content: center; width: 20px; height: 18px; border: 1px solid var(--viz-floor-line); border-radius: 4px; background: var(--viz-panel); color: var(--viz-axis); font-size: 9px; cursor: pointer; }
+  .layout3d-pan-pad button:hover { border-color: var(--color-action-primary); color: var(--viz-strong); }
   .layout3d-pan-pad button:nth-child(1) { grid-column: 2; }
   .layout3d-pan-pad button:nth-child(2) { grid-column: 1; }
   .layout3d-pan-pad button:nth-child(3) { grid-column: 3; }
   .layout3d-pan-pad button:nth-child(4) { grid-column: 2; grid-row: 2; }
-  .layout3d-provenance { position: absolute; left: 14px; top: 12px; max-width: 360px; color: #94a3b8; font-size: 11px; text-align: left; pointer-events: none; }
+  .layout3d-provenance { position: absolute; left: 14px; top: 12px; max-width: 360px; color: var(--viz-label); font-size: 11px; text-align: left; pointer-events: none; }
 }
 
 /* Shared keyboard focus indicator. Deliberately OUTSIDE every @layer: unlayered rules beat
