@@ -1,6 +1,6 @@
 # Issue #332 — make hostile Unicode evidence auditable
 
-**Status: implementation pending. This file is a handoff, not a fix.**
+**Status: implemented (v2). The fixture now uses an escape sequence and a source guard test enforces it.**
 
 Owner issue: https://github.com/AhmedMahmoud2222/DCIM/issues/332
 
