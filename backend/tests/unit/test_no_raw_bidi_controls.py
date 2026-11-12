@@ -2,7 +2,8 @@
 
 Raw bidirectional control characters (U+202A to U+202E, U+2066 to U+2069) reorder text in
 editors and diff views, which hides what a line of source does from a reviewer. Tests that
-need such a character in their data must write it as an escape sequence (``\\u202e``).
+need such a character in their data must build it from its code point (``chr(0x202E)``)
+or write it as an escape sequence in source.
 """
 
 import subprocess
@@ -26,14 +27,16 @@ def raw_bidi_hits(text: str) -> list[tuple[int, str]]:
 
 def test_detector_flags_raw_character_and_allows_escape_sequence():
     raw = "name = 'n" + chr(0x202E) + "'"
-    escaped = "name = 'n\\u202e'"
+    escaped = "name = 'n" + chr(0x5C) + "u202e'"
     assert raw_bidi_hits(raw) == [(1, "U+202E")]
     assert raw_bidi_hits(escaped) == []
 
 
-def test_escape_sequence_keeps_the_control_character_at_runtime():
-    assert "n‮" == "n" + chr(0x202E)
-    assert len("n‮" * 400) == 800
+def test_fixture_built_from_code_point_keeps_the_control_character_at_runtime():
+    fixture = "n" + chr(0x202E)
+    assert [ord(char) for char in fixture] == [0x6E, 0x202E]
+    assert len(fixture * 400) == 800
+    assert raw_bidi_hits(fixture) == [(1, "U+202E")]
 
 
 def test_tracked_text_files_hold_no_raw_bidi_controls():
