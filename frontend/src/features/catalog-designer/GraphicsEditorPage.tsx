@@ -346,8 +346,8 @@ function FrontRearImageCanvas({
                 onKeyDown={(e) => handleMarkerKeyDown(e, marker)}
                 onDoubleClick={() => setEditingMarkerId(marker.id)}
               >
-                <circle cx={pos.x} cy={pos.y} r={0.014} fill={MARKER_COLORS[marker.marker_type]} stroke="#0f172a" strokeWidth={0.003} />
-                <circle cx={pos.x} cy={pos.y} r={0.02} fill="transparent" stroke="#3b82f6" strokeWidth={0.004} className="opacity-0 focus-visible:opacity-100" />
+                <circle cx={pos.x} cy={pos.y} r={0.014} fill={MARKER_COLORS[marker.marker_type]} stroke="var(--viz-halo)" strokeWidth={0.003} />
+                <circle cx={pos.x} cy={pos.y} r={0.02} fill="transparent" stroke="var(--viz-blue)" strokeWidth={0.004} className="opacity-0 focus-visible:opacity-100" />
               </g>
             );
           })}

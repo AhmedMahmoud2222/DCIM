@@ -20,7 +20,7 @@ const STATUS_COLORS: Record<MarkerStatus, string> = {
   connected: "#22c55e",
   planned: "#eab308",
   faulted: "#ef4444",
-  unassigned: "#64748b",
+  unassigned: "var(--viz-muted)",
 };
 
 // Phase 10C: live telemetry ring colors, independent of the cabling STATUS_COLORS dot
@@ -210,7 +210,7 @@ export function FaceplateOverlay({
                   <animate attributeName="opacity" values="0.7;0.05;0.7" dur="1.2s" repeatCount="indefinite" />
                 </circle>
               )}
-              <circle cx={marker.marker_x} cy={marker.marker_y} r={0.016} fill={STATUS_COLORS[status]} stroke="#0f172a" strokeWidth={0.003} />
+              <circle cx={marker.marker_x} cy={marker.marker_y} r={0.016} fill={STATUS_COLORS[status]} stroke="var(--viz-halo)" strokeWidth={0.003} />
               {telemetryColor && (
                 <circle
                   data-testid="telemetry-status-ring"
@@ -227,7 +227,7 @@ export function FaceplateOverlay({
                 cy={marker.marker_y}
                 r={0.024}
                 fill="transparent"
-                stroke="#3b82f6"
+                stroke="var(--viz-blue)"
                 strokeWidth={0.004}
                 className="opacity-0 focus-visible:opacity-100"
               />

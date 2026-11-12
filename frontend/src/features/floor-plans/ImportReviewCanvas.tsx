@@ -22,14 +22,14 @@ import {
 export type PickMode = "none" | "two-point" | "origin";
 
 const TYPE_COLORS: Record<string, string> = {
-  rack: "#3b82f6",
-  equipment: "#14b8a6",
-  room_outline: "#38bdf8",
-  wall: "#94a3b8",
-  column: "#a78bfa",
-  obstacle: "#a78bfa",
-  aisle: "#2dd4bf",
-  annotation: "#64748b",
+  rack: "var(--viz-blue)",
+  equipment: "var(--viz-teal)",
+  room_outline: "var(--viz-accent)",
+  wall: "var(--viz-label)",
+  column: "var(--viz-violet)",
+  obstacle: "var(--viz-violet)",
+  aisle: "var(--viz-teal)",
+  annotation: "var(--viz-muted)",
 };
 const MATCH_DASH: Record<string, string | undefined> = { duplicate: "2 3", conflict: "6 3", ambiguous: "4 3" };
 
@@ -133,18 +133,18 @@ export function ImportReviewCanvas({
     if (e.kind === "rect" && e.cx != null && e.cy != null && e.width && e.height) {
       const r = rectSourceToMm(cal, { cx: e.cx, cy: e.cy, width: e.width, height: e.height, rotation_deg: e.rotation_deg });
       const pts = rectCorners(r.x_mm, r.y_mm, r.width_mm, r.height_mm, r.rotation_deg).map(([x, y]) => mmToPx(vp, x, y).join(",")).join(" ");
-      return <polygon key={`e${i}`} points={pts} fill="none" stroke="#475569" strokeWidth={1} />;
+      return <polygon key={`e${i}`} points={pts} fill="none" stroke="var(--viz-edge-strong)" strokeWidth={1} />;
     }
     if (e.kind === "circle" && e.cx != null && e.cy != null) {
       const [x, y] = mmToPx(vp, ...sourceToMm(cal, e.cx, e.cy));
-      return <circle key={`e${i}`} cx={x} cy={y} r={Math.max(1, (e.radius ?? 0) * cal.mm_per_unit * vp.scale)} fill="none" stroke="#475569" />;
+      return <circle key={`e${i}`} cx={x} cy={y} r={Math.max(1, (e.radius ?? 0) * cal.mm_per_unit * vp.scale)} fill="none" stroke="var(--viz-edge-strong)" />;
     }
     if (e.points && e.points.length >= 2) {
       const pts = e.points.map((p) => mmToPx(vp, ...sourceToMm(cal, p[0], p[1])).join(",")).join(" ");
       return e.kind === "polygon" ? (
-        <polygon key={`e${i}`} points={pts} fill="none" stroke="#475569" strokeWidth={1} />
+        <polygon key={`e${i}`} points={pts} fill="none" stroke="var(--viz-edge-strong)" strokeWidth={1} />
       ) : (
-        <polyline key={`e${i}`} points={pts} fill="none" stroke="#475569" strokeWidth={1} />
+        <polyline key={`e${i}`} points={pts} fill="none" stroke="var(--viz-edge-strong)" strokeWidth={1} />
       );
     }
     return null;
@@ -179,11 +179,11 @@ export function ImportReviewCanvas({
         {candidates.map((c) => {
           const g = c.effective_geometry;
           const type = c.effective_object_type ?? "";
-          const color = TYPE_COLORS[type] ?? "#94a3b8";
+          const color = TYPE_COLORS[type] ?? "var(--viz-label)";
           const selected = c.id === selectedId;
           const dash = MATCH_DASH[c.match_status];
           const label = c.effective_label ?? "";
-          const common = { fill: color, fillOpacity: selected ? 0.55 : 0.28, stroke: selected ? "#f8fafc" : color, strokeWidth: selected ? 2.5 : 1.25, strokeDasharray: dash };
+          const common = { fill: color, fillOpacity: selected ? 0.55 : 0.28, stroke: selected ? "var(--viz-strong)" : color, strokeWidth: selected ? 2.5 : 1.25, strokeDasharray: dash };
           if (isRect(g)) {
             const r = rectSourceToMm(cal, { cx: g.cx, cy: g.cy, width: g.width, height: g.height, rotation_deg: g.rotation_deg });
             const [px, py] = mmToPx(vp, r.x_mm, r.y_mm);
@@ -221,7 +221,7 @@ export function ImportReviewCanvas({
               >
                 <rect x={px} y={py} width={w} height={h} {...common} />
                 {w > 20 && h > 10 && (
-                  <text x={px + w / 2} y={py + h / 2 + 3} fontSize={Math.min(10, Math.max(6, w / 6))} textAnchor="middle" fill="#f8fafc" pointerEvents="none">
+                  <text x={px + w / 2} y={py + h / 2 + 3} fontSize={Math.min(10, Math.max(6, w / 6))} textAnchor="middle" fill="var(--viz-strong)" pointerEvents="none">
                     {label}
                   </text>
                 )}
@@ -245,7 +245,7 @@ export function ImportReviewCanvas({
                 {g.shape_type === "circle" ? (
                   <circle cx={x} cy={y} r={Math.max(2, (g.radius ?? 0) * cal.mm_per_unit * vp.scale)} {...common} />
                 ) : (
-                  <text x={x} y={y} fontSize={9} fill={selected ? "#f8fafc" : "#94a3b8"}>
+                  <text x={x} y={y} fontSize={9} fill={selected ? "var(--viz-strong)" : "var(--viz-label)"}>
                     {label || "text"}
                   </text>
                 )}
@@ -259,10 +259,10 @@ export function ImportReviewCanvas({
           const [x, y] = mmToPx(vp, ...sourceToMm(cal, p[0], p[1]));
           return (
             <g key={`pick${i}`} data-testid={`pick-${i}`} pointerEvents="none">
-              <circle cx={x} cy={y} r={6} fill="none" stroke="#facc15" strokeWidth={2} />
-              <line x1={x - 9} x2={x + 9} y1={y} y2={y} stroke="#facc15" />
-              <line x1={x} x2={x} y1={y - 9} y2={y + 9} stroke="#facc15" />
-              <text x={x + 9} y={y - 8} fontSize={10} fill="#facc15">
+              <circle cx={x} cy={y} r={6} fill="none" stroke="var(--viz-warn)" strokeWidth={2} />
+              <line x1={x - 9} x2={x + 9} y1={y} y2={y} stroke="var(--viz-warn)" />
+              <line x1={x} x2={x} y1={y - 9} y2={y + 9} stroke="var(--viz-warn)" />
+              <text x={x + 9} y={y - 8} fontSize={10} fill="var(--viz-warn)">
                 P{i + 1}
               </text>
             </g>
@@ -275,7 +275,7 @@ export function ImportReviewCanvas({
               const [x2, y2] = mmToPx(vp, ...sourceToMm(cal, picks[1][0], picks[1][1]));
               return { x1, y1, x2, y2 };
             })()}
-            stroke="#facc15"
+            stroke="var(--viz-warn)"
             strokeDasharray="4 3"
             pointerEvents="none"
           />

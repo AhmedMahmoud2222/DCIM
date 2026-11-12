@@ -54,9 +54,11 @@ describe("bundled typography (index.css)", () => {
     expect(readFileSync(path.resolve(srcDir, "assets/fonts/OFL-IBM-Plex-Mono.txt"), "utf8")).toMatch(/SIL OPEN FONT LICENSE Version 1\.1/i);
   });
 
-  it("puts IBM Plex first and keeps a complete system fallback stack ending in a generic family", () => {
+  it("puts the brand face first and the bundled IBM Plex next and keeps a complete system fallback stack ending in a generic family", () => {
     const sans = declared("sans");
-    expect(sans.trimStart()).toMatch(/^"IBM Plex Sans",/);
+    // e& brand type first (used when installed), then the bundled IBM Plex Sans.
+    expect(sans.trimStart()).toMatch(/^"Suisse Int'l",/);
+    expect(sans).toContain('"IBM Plex Sans"');
     for (const family of ["ui-sans-serif", "system-ui", "Segoe UI", "Roboto", "Arial"]) expect(sans).toContain(family);
     expect(sans.trimEnd()).toMatch(/sans-serif$/);
 

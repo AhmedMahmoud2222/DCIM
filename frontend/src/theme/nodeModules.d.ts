@@ -4,9 +4,11 @@
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: "utf8"): string;
   export function existsSync(path: string): boolean;
+  export function readdirSync(path: string): string[];
+  export function statSync(path: string): { isDirectory(): boolean };
 }
 
 declare module "node:path" {
-  const path: { resolve(...segments: string[]): string };
+  const path: { resolve(...segments: string[]): string; join(...segments: string[]): string; relative(from: string, to: string): string };
   export default path;
 }
