@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "@/features/cooling/api";
 import { CoolingEnvironmentPanel } from "@/features/cooling/CoolingEnvironmentPanel";
+import { BREACH_STYLE } from "@/features/cooling/breachStyle";
 import { airflow, capacity, exceptions, heatMap, layout, partialMap, spatialView, unavailableMap, zone } from "@/features/cooling/fixtures";
 import { ApiError } from "@/lib/apiClient";
 import { renderWithProviders } from "@/test/renderWithProviders";
@@ -58,6 +59,30 @@ describe("CoolingEnvironmentPanel", () => {
     expect(cell(1).querySelector("title")?.textContent).toContain("High inlet");
     expect(cell(2)).toHaveAttribute("data-band", "normal");
     expect(group(2).querySelector("[data-testid^='breach-']")).toBeNull();
+    // the map draws each breach with the shared style the legend swatches use
+    for (const [i, band] of [[0, "critical"], [1, "warning"]] as const) {
+      const outline = within(group(i)).getByTestId(`breach-outline-${band}`);
+      expect(outline).toHaveAttribute("stroke", BREACH_STYLE[band].outline);
+      expect(outline).toHaveAttribute("stroke-width", String(BREACH_STYLE[band].outlineWidth));
+      if (BREACH_STYLE[band].dash) expect(outline).toHaveAttribute("stroke-dasharray", BREACH_STYLE[band].dash);
+      else expect(outline).not.toHaveAttribute("stroke-dasharray");
+      const hatchId = within(group(i)).getByTestId(`breach-hatch-${band}`).getAttribute("fill")!.replace(/^url\(#|\)$/g, "");
+      const pattern = cells.ownerDocument.getElementById(hatchId)!;
+      expect(pattern.querySelector("line")).toHaveAttribute("stroke", BREACH_STYLE[band].hatch);
+    }
+  });
+
+  it("shows legend swatches that tell warning hatching from critical hatching", async () => {
+    renderPanel();
+    const warning = await screen.findByTestId("legend-breach-warning");
+    const critical = screen.getByTestId("legend-breach-critical");
+    expect(warning).toHaveTextContent(/dashed outline.*warning/i);
+    expect(critical).toHaveTextContent(/solid outline.*critical/i);
+    const outline = (el: HTMLElement) => el.querySelector("svg rect[fill='none']") as SVGRectElement;
+    expect(outline(warning)).toHaveAttribute("stroke-dasharray");
+    expect(outline(critical)).not.toHaveAttribute("stroke-dasharray");
+    expect(within(warning).getByTestId("legend-swatch-warning")).toHaveAttribute("aria-hidden", "true");
+    expect(outline(warning).getAttribute("stroke")).not.toBe(outline(critical).getAttribute("stroke"));
   });
 
   it("shows the legend range and the alarm-rule threshold in text", async () => {

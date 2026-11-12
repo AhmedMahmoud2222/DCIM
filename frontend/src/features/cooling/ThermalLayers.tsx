@@ -14,6 +14,7 @@ import {
   scaleBounds,
   zonePoints,
 } from "./thermalMath";
+import { BREACH_STYLE } from "./breachStyle";
 import { assessThermal } from "./thermalState";
 
 export interface ThermalLayerToggles {
@@ -104,12 +105,14 @@ export function ThermalHeatLayer({
             <polygon points={clip.map(([x, y]) => mmToPx(vp, x, y).join(",")).join(" ")} />
           </clipPath>
         )}
-        <pattern id={`${warnId}`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="6" stroke="#fb923c" strokeWidth="2" />
-        </pattern>
-        <pattern id={`${critId}`} width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
-          <line x1="0" y1="0" x2="0" y2="4" stroke="#fecaca" strokeWidth="2.2" />
-        </pattern>
+        {(["warning", "critical"] as const).map((band) => {
+          const style = BREACH_STYLE[band];
+          return (
+            <pattern key={band} id={band === "critical" ? critId : warnId} width={style.hatchSize} height={style.hatchSize} patternUnits="userSpaceOnUse" patternTransform={`rotate(${style.hatchAngle})`}>
+              <line x1="0" y1="0" x2="0" y2={style.hatchSize} stroke={style.hatch} strokeWidth={style.hatchWidth} />
+            </pattern>
+          );
+        })}
       </defs>
       {toggles.heat && grid && map && (
         <g data-testid="heat-cells" data-provenance="interpolated" clipPath={clip ? `url(#${clipId})` : undefined} role="group" aria-label={`${map.metric === "humidity_percent" ? "Humidity" : "Temperature"} field, interpolated from sensors, not measured. Press an arrow key to inspect cells.`} tabIndex={0} onKeyDown={onGridKey}>
@@ -127,7 +130,7 @@ export function ThermalHeatLayer({
                 {flagged && (
                   <>
                     <rect x={px} y={py} width={size + 0.5} height={size + 0.5} fill={`url(#${band === "critical" ? critId : warnId})`} pointerEvents="none" data-testid={`breach-hatch-${band}`} />
-                    <rect x={px + 1} y={py + 1} width={Math.max(0, size - 1.5)} height={Math.max(0, size - 1.5)} fill="none" stroke={band === "critical" ? "#fee2e2" : "#fed7aa"} strokeWidth={band === "critical" ? 2 : 1.5} strokeDasharray={band === "warning" ? "4 2" : undefined} pointerEvents="none" data-testid={`breach-outline-${band}`} />
+                    <rect x={px + 1} y={py + 1} width={Math.max(0, size - 1.5)} height={Math.max(0, size - 1.5)} fill="none" stroke={BREACH_STYLE[band].outline} strokeWidth={BREACH_STYLE[band].outlineWidth} strokeDasharray={BREACH_STYLE[band].dash} pointerEvents="none" data-testid={`breach-outline-${band}`} />
                   </>
                 )}
               </g>
