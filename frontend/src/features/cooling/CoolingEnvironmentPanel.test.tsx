@@ -30,8 +30,10 @@ describe("CoolingEnvironmentPanel", () => {
     expect(await screen.findByTestId("map-state-badge")).toHaveTextContent("Temperature map: Healthy");
     const cells = screen.getByTestId("heat-cells");
     expect(cells).toHaveAttribute("data-provenance", "interpolated");
-    expect(cells.querySelectorAll("g[data-cell-index]").length).toBeGreaterThan(50);
-    expect(Array.from(cells.querySelectorAll("g[data-cell-index]")).every((r) => r.getAttribute("data-provenance") === "interpolated")).toBe(true);
+    expect(cells.querySelectorAll("rect[data-cell-index]").length).toBeGreaterThan(50);
+    expect(Array.from(cells.querySelectorAll("rect[data-cell-index]")).every((r) => r.getAttribute("data-provenance") === "interpolated")).toBe(true);
+    // mirrors e2e/cooling-thermal.spec.ts: overlays must not add rects that carry cell or provenance attributes
+    expect(cells.querySelectorAll("rect[data-provenance='interpolated']").length).toBe(cells.querySelectorAll("rect[data-cell-index]").length);
     const sensors = screen.getByTestId("sensor-layer");
     expect(sensors).toHaveAttribute("data-provenance", "measured");
     await waitFor(() => expect(sensors.querySelectorAll("[data-sensor-id]")).toHaveLength(4));
@@ -45,18 +47,17 @@ describe("CoolingEnvironmentPanel", () => {
     mockAll({ map: heatMap({ grid: { ...base.grid!, values, min: 22, max: 33 } }) });
     renderPanel();
     const cells = await screen.findByTestId("heat-cells");
-    const critical = cells.querySelector("g[data-cell-index='0']") as SVGGElement;
-    const warning = cells.querySelector("g[data-cell-index='1']") as SVGGElement;
-    const normal = cells.querySelector("g[data-cell-index='2']") as SVGGElement;
-    expect(critical).toHaveAttribute("data-band", "critical");
-    expect(within(critical as unknown as HTMLElement).getByTestId("breach-hatch-critical")).toBeInTheDocument();
-    expect(within(critical as unknown as HTMLElement).getByTestId("breach-outline-critical")).toBeInTheDocument();
-    expect(critical.querySelector("title")?.textContent).toMatch(/Critical: 33 degC|Critical: 33 °C/);
-    expect(warning).toHaveAttribute("data-band", "warning");
-    expect(within(warning as unknown as HTMLElement).getByTestId("breach-hatch-warning")).toBeInTheDocument();
-    expect(warning.querySelector("title")?.textContent).toContain("High inlet");
-    expect(normal).toHaveAttribute("data-band", "normal");
-    expect(normal.querySelector("[data-testid^='breach-']")).toBeNull();
+    const cell = (i: number) => cells.querySelector(`rect[data-cell-index='${i}']`) as SVGRectElement;
+    const group = (i: number) => cell(i).parentElement as unknown as HTMLElement;
+    expect(cell(0)).toHaveAttribute("data-band", "critical");
+    expect(within(group(0)).getByTestId("breach-hatch-critical")).toBeInTheDocument();
+    expect(within(group(0)).getByTestId("breach-outline-critical")).toBeInTheDocument();
+    expect(cell(0).querySelector("title")?.textContent).toMatch(/^Critical: 33 /);
+    expect(cell(1)).toHaveAttribute("data-band", "warning");
+    expect(within(group(1)).getByTestId("breach-hatch-warning")).toBeInTheDocument();
+    expect(cell(1).querySelector("title")?.textContent).toContain("High inlet");
+    expect(cell(2)).toHaveAttribute("data-band", "normal");
+    expect(group(2).querySelector("[data-testid^='breach-']")).toBeNull();
   });
 
   it("shows the legend range and the alarm-rule threshold in text", async () => {

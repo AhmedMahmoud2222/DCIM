@@ -120,13 +120,14 @@ export function ThermalHeatLayer({
             const band = assessment.band;
             const flagged = band === "warning" || band === "critical";
             return (
-              <g key={cell.index} data-cell-index={cell.index} data-value={cell.value} data-provenance="interpolated" data-band={band} data-breach={flagged ? band : undefined}>
-                <rect x={px} y={py} width={size + 0.5} height={size + 0.5} fill={colour(cell.value)} fillOpacity={0.55} />
+              <g key={cell.index}>
+                <rect x={px} y={py} width={size + 0.5} height={size + 0.5} fill={colour(cell.value)} fillOpacity={0.55} data-cell-index={cell.index} data-value={cell.value} data-provenance="interpolated" data-band={band} data-breach={flagged ? band : undefined}>
+                  {flagged && <title>{`${band === "critical" ? "Critical" : "Warning"}: ${assessment.reason}`}</title>}
+                </rect>
                 {flagged && (
                   <>
                     <rect x={px} y={py} width={size + 0.5} height={size + 0.5} fill={`url(#${band === "critical" ? critId : warnId})`} pointerEvents="none" data-testid={`breach-hatch-${band}`} />
                     <rect x={px + 1} y={py + 1} width={Math.max(0, size - 1.5)} height={Math.max(0, size - 1.5)} fill="none" stroke={band === "critical" ? "#fee2e2" : "#fed7aa"} strokeWidth={band === "critical" ? 2 : 1.5} strokeDasharray={band === "warning" ? "4 2" : undefined} pointerEvents="none" data-testid={`breach-outline-${band}`} />
-                    <title>{`${band === "critical" ? "Critical" : "Warning"}: ${assessment.reason}`}</title>
                   </>
                 )}
               </g>
