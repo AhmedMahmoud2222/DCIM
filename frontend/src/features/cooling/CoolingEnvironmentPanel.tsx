@@ -7,7 +7,9 @@ import { ApiError } from "@/lib/apiClient";
 import type { CapacityZone, CoolingLayout, HeatMap, RoomAirflow, RoomSpatialView, ThermalException, ThermalMetric } from "@/types";
 import { getCoolingLayout, getHeatMap, getRoomAirflow, getRoomCapacity, getRoomExceptions } from "./api";
 import { ThermalHeatLayer, ThermalMarkerLayers, type ThermalLayerToggles, type ThermalSelection } from "./ThermalLayers";
+import { ThermalBandChip } from "./ThermalBandChip";
 import { ThermalLegend } from "./ThermalLegend";
+import { assessThermal } from "./thermalState";
 import { MAP_STATE_META, SENSOR_STATE_META, cellAt, describeSensor, explainExclusion, explainReason, formatAge, formatQuantity, metricLabel } from "./thermalMath";
 
 const REFRESH_MS = 30_000;
@@ -124,11 +126,14 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
     }
   } else if (selection?.kind === "cell" && map?.grid) {
     const cell = cellAt(map.grid, map.grid.origin_x_mm + selection.column * map.grid.cell_mm + 1, map.grid.origin_y_mm + selection.row * map.grid.cell_mm + 1);
-    body = cell ? (
+    const assessment = cell ? assessThermal(map, cell.value) : null;
+    body = cell && assessment ? (
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="detail-cell">
         <dt className="text-fg-secondary">Cell</dt><dd>Column {cell.column + 1}, row {cell.row + 1}</dd>
         <dt className="text-fg-secondary">Provenance</dt><dd data-testid="detail-provenance">Interpolated (not measured)</dd>
         <dt className="text-fg-secondary">Value</dt><dd data-testid="detail-value">≈ {formatQuantity(cell.value, map.presentation_unit, 2)}</dd>
+        <dt className="text-fg-secondary">Thermal state</dt>
+        <dd data-testid="detail-band"><ThermalBandChip band={assessment.band} reason={assessment.reason} /> <span data-testid="detail-band-reason">{assessment.reason}</span></dd>
         <dt className="text-fg-secondary">Centre</dt><dd>{Math.round(cell.xMm + cell.sizeMm / 2)}, {Math.round(cell.yMm + cell.sizeMm / 2)} mm</dd>
         <dt className="text-fg-secondary">Supporting sensors</dt><dd>{cell.support} fresh sensor(s) within {map.method.radius_mm} mm</dd>
         <dt className="text-fg-secondary">Method</dt><dd>Inverse-distance weighting; an estimate between sensors, never a reading</dd>
