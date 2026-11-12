@@ -27,8 +27,6 @@ down_revision = "0058_alarm_subject_key"
 branch_labels = None
 depends_on = None
 
-_UUID_RE = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-
 
 def upgrade() -> None:
     op.add_column(
@@ -36,10 +34,11 @@ def upgrade() -> None:
         sa.Column("principal", sa.String(length=100), nullable=False, server_default="legacy:unscoped"),
     )
     op.execute(
-        f"""
+        """
         UPDATE idempotency_key
         SET principal = 'collector:' || lower(split_part(key, ':', 1))
-        WHERE endpoint = 'collector_ingest' AND split_part(key, ':', 1) ~ '{_UUID_RE}'
+        WHERE endpoint = 'collector_ingest'
+          AND split_part(key, ':', 1) ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
         """
     )
     # New callers must always supply a principal; no silent default.
