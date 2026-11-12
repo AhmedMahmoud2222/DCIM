@@ -1,10 +1,12 @@
 """Failure-path tests for the ClamAV and shared-volume runtime checks in compose_smoke.py.
 Docker is replaced by in-memory fakes: these prove the gate fails (with a message naming the
 failure class) when ClamAV is unhealthy/missing or the media volume is not shared."""
+import contextlib
 import importlib.util
+import io
 import re
+import runpy
 import subprocess
-import sys
 import types
 import unittest
 from pathlib import Path
@@ -154,7 +156,12 @@ class CommandDispatchTests(unittest.TestCase):
                          'verify_shared_media', 'diagnose', 'cleanup')
 
     def cli(self, *args):
-        return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=30, check=False)
+        """Runs the script's own `__main__` block in this process; returns (exit code, stderr)."""
+        stderr = io.StringIO()
+        with mock.patch.object(smoke.sys, 'argv', [str(SCRIPT), *args]), contextlib.redirect_stderr(stderr), \
+                self.assertRaises(SystemExit) as exit_:
+            runpy.run_path(str(SCRIPT), run_name='__main__')
+        return exit_.exception.code, stderr.getvalue()
 
     def test_table_holds_exactly_the_nine_workflow_commands(self):
         self.assertEqual(tuple(smoke.COMMANDS), self.WORKFLOW_COMMANDS)
@@ -195,16 +202,15 @@ class CommandDispatchTests(unittest.TestCase):
 
     def test_cli_rejects_unknown_helper_and_dunder_names(self):
         for name in ('run', 'context', 'exit', '__builtins__', 'COMMANDS', 'Verify', ''):
-            result = self.cli(name)
-            self.assertEqual(result.returncode, 1, name)
-            self.assertIn('FAIL: expected exactly one command', result.stderr)
-            self.assertNotIn('Traceback', result.stderr)
+            code, stderr = self.cli(name)
+            self.assertEqual(code, 1, name)
+            self.assertIn('FAIL: expected exactly one command', stderr)
 
     def test_cli_rejects_missing_and_extra_arguments(self):
         for args in ((), ('verify', 'run')):
-            result = self.cli(*args)
-            self.assertEqual(result.returncode, 1, args)
-            self.assertIn('FAIL: expected exactly one command', result.stderr)
+            code, stderr = self.cli(*args)
+            self.assertEqual(code, 1, args)
+            self.assertIn('FAIL: expected exactly one command', stderr)
 
 
 if __name__ == '__main__':
