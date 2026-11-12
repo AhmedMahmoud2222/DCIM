@@ -509,7 +509,8 @@ async def ingest_batch(
         # records still to be processed.
         try:
             outcome = await idem.get_or_claim(
-                db, key=f"{collector_id}:{record.dedup_key}", endpoint="collector_ingest", request_hash=request_hash,
+                db, principal=idem.collector_principal(collector.id), key=f"{collector_id}:{record.dedup_key}",
+                endpoint="collector_ingest", request_hash=request_hash,
             )
         except IdempotencyConflict:
             results.append(

@@ -30,6 +30,7 @@ from app.application.idempotency import (
     get_or_claim,
     hash_request_body,
     release_claim,
+    user_principal,
 )
 from app.application.outbox_service import write_outbox_event
 from app.application.pdu_instantiation_service import PDUInstantiationRejected, instantiate_pdu
@@ -214,7 +215,8 @@ async def instantiate_pdu_endpoint(
     if idempotency_key is not None:
         try:
             outcome = await get_or_claim(
-                db, key=idempotency_key, endpoint="POST:/power/pdus/instantiate", request_hash=request_hash
+                db, principal=user_principal(ctx.user.id), key=idempotency_key,
+                endpoint="POST:/power/pdus/instantiate", request_hash=request_hash
             )
         except IdempotencyConflict as exc:
             raise ApiError(
