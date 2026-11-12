@@ -42,8 +42,8 @@ export function ThermalFloor3D({ scene, map, layout }: { scene: SceneModel; map:
         return (
           <g key={s.sensor_id} data-sensor-id={s.sensor_id} data-state={s.state} data-provenance="measured">
             <circle cx={px(s.x_mm as number)} cy={py(s.y_mm as number)} r={6} fill={s.state === "measured_fresh" && s.value != null ? colour(s.value) : "none"} stroke={meta.colour} strokeWidth={2} strokeDasharray={s.state === "measured_fresh" ? undefined : "3 2"} />
-            <text x={px(s.x_mm as number)} y={py(s.y_mm as number) + 3} fontSize={8} fill={meta.colour} textAnchor="middle" fontWeight={700}>{s.state === "measured_fresh" ? "" : meta.glyph}</text>
-            <text x={px(s.x_mm as number) + 9} y={py(s.y_mm as number) + 3} fontSize={9} fill={meta.colour}>{s.presentation_value != null ? formatQuantity(s.presentation_value, s.presentation_unit) : meta.label}</text>
+            <text x={px(s.x_mm as number)} y={py(s.y_mm as number) + 3} fontSize={8} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} textAnchor="middle" fontWeight={700}>{s.state === "measured_fresh" ? "" : meta.glyph}</text>
+            <text x={px(s.x_mm as number) + 9} y={py(s.y_mm as number) + 3} fontSize={9} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3}>{s.presentation_value != null ? formatQuantity(s.presentation_value, s.presentation_unit) : meta.label}</text>
             <title>{describeSensor(s)}</title>
           </g>
         );

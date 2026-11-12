@@ -187,7 +187,7 @@ export function ThermalMarkerLayers({
             return (
               <g key={zone.id} data-zone-id={zone.id} data-zone-kind={zone.zone_kind} data-containment={zone.containment}>
                 <polygon points={px} fill={style.fill} stroke={style.stroke} strokeWidth={contained ? 3 : 1.5} strokeDasharray={contained ? undefined : style.dash} />
-                <text x={lx} y={ly} fontSize={10} fill={style.stroke} textAnchor="middle" pointerEvents="none" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3}>
+                <text x={lx} y={ly} fontSize={10} fill="var(--viz-strong)" textAnchor="middle" pointerEvents="none" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3}>
                   {style.label}
                   {contained ? " · contained" : ""}
                 </text>
@@ -244,7 +244,7 @@ export function ThermalMarkerLayers({
               <g key={e.id} role="button" tabIndex={0} aria-label={`Airflow at ${e.name}: ${text}, direction ${e.direction_deg} degrees (configured)`} data-airflow-id={e.id} data-provenance={measured ? "measured" : "configured"} onClick={() => onSelect({ kind: "airflow", id: e.id })} onKeyDown={keyActivate(() => onSelect({ kind: "airflow", id: e.id }))} style={{ cursor: "pointer" }}>
                 <line x1={px} y1={py} x2={px + dx} y2={py + dy} stroke="transparent" strokeWidth={14} data-hit-area="airflow" />
                 <line x1={px} y1={py} x2={px + dx} y2={py + dy} stroke={stroke} strokeWidth={selected ? 4 : 2.5} strokeDasharray={measured && !stale ? undefined : "6 3"} markerEnd={`url(#${arrowId})`} />
-                <text x={px + dx / 2 + 4} y={py + dy / 2 - 4} fontSize={9} fill={stroke} paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} pointerEvents="none">
+                <text x={px + dx / 2 + 4} y={py + dy / 2 - 4} fontSize={9} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} pointerEvents="none">
                   {text}
                 </text>
                 <title>{`${e.name}: ${text}; direction is the configured orientation, not a measured flow path`}</title>
@@ -281,7 +281,7 @@ export function ThermalMarkerLayers({
                     <text x={px + 8} y={py - 5} fontSize={8} fill="#fecaca" textAnchor="middle">!</text>
                   </g>
                 )}
-                <text x={px + 11} y={py + 3} fontSize={10} fill={meta.colour} paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} pointerEvents="none">
+                <text x={px + 11} y={py + 3} fontSize={10} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} pointerEvents="none">
                   {p.presentation_value != null ? formatQuantity(p.presentation_value, p.presentation_unit) : meta.label}
                 </text>
                 {selected && <circle cx={px} cy={py} r={13} fill="none" stroke="var(--viz-strong)" strokeWidth={2} />}

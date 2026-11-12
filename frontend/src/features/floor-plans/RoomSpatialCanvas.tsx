@@ -168,14 +168,14 @@ export function RoomSpatialCanvas({
                 {/* front edge (toward +Y at 0 degrees) so orientation is readable */}
                 <line x1={px} x2={px + w} y1={py + d} y2={py + d} stroke="var(--viz-strong)" strokeWidth={2} />
                 {w > 26 && d > 12 && (
-                  <text x={px + w / 2} y={py + d / 2 + 3} fontSize={Math.min(10, w / 5)} fill="var(--viz-strong)" textAnchor="middle" pointerEvents="none">
+                  <text x={px + w / 2} y={py + d / 2 + 3} fontSize={Math.min(10, w / 5)} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} textAnchor="middle" pointerEvents="none">
                     {rack.name}
                   </text>
                 )}
                 {item && (
                   <g pointerEvents="none">
                     <circle cx={px + w - 2} cy={py + 2} r={6} fill="var(--viz-halo)" stroke={color} strokeWidth={1.5} />
-                    <text x={px + w - 2} y={py + 5} fontSize={8} fill={color} textAnchor="middle" fontWeight={700}>
+                    <text x={px + w - 2} y={py + 5} fontSize={8} fill="var(--viz-strong)" textAnchor="middle" fontWeight={700}>
                       {STATE_SYMBOL[item.state]}
                     </text>
                   </g>

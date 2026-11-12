@@ -1,4 +1,4 @@
-/* themes.css v1.1.0 - e& brand themes: "Normal" (light) and "Dark".
+/* themes.css v1.2.0 - e& brand themes: "Normal" (light) and "Dark".
  *
  * The semantic tokens (surface-*, fg-*, line-*, tone-*, side-*, action-*, link, focus) are defined for the
  * Dark theme in index.css (`@theme static`, emitted on :root). This file holds everything a theme changes
@@ -132,7 +132,7 @@
   --color-slate-950: #f3f3f1;
 
   --viz-label: #565654;
-  --viz-muted: #71716f;
+  --viz-muted: #666664;
   --viz-axis: #3d4163;
   --viz-strong: #181f4b;
   --viz-halo: #ffffff;
@@ -140,7 +140,7 @@
   --viz-edge-strong: #a8a8a4;
   --viz-grid: rgb(113 113 111 / 0.3);
   --viz-accent: #181f4b;
-  --viz-warn: #a16207;
+  --viz-warn: #8f5a05;
   --viz-violet: #6d28d9;
   --viz-teal: #0f766e;
   --viz-blue: #1d4ed8;

@@ -9,6 +9,6 @@ declare module "node:fs" {
 }
 
 declare module "node:path" {
-  const path: { resolve(...segments: string[]): string; join(...segments: string[]): string };
+  const path: { resolve(...segments: string[]): string; join(...segments: string[]): string; relative(from: string, to: string): string };
   export default path;
 }
