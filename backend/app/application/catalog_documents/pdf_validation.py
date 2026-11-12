@@ -12,7 +12,19 @@ the file and clicks it.
 `pypdf` has had denial-of-service defects on malformed input, so the API never parses in its
 own process. `validate_pdf_isolated()` runs this module as a child interpreter with CPU and
 address-space rlimits and a wall-clock timeout; an over-limit or crashing parse becomes a
-rejection, never a hung request."""
+rejection, never a hung request.
+
+Forbidden names are looked for in three places, and a file must pass all three:
+
+1. Every object the parser reaches through the cross-reference table, including objects in
+   compressed object streams: dictionary keys, name values and `/S` action types.
+2. The decoded bytes of every object stream, so a member the cross-reference table does not
+   list is still seen.
+3. The raw file bytes, minus stream payloads. A payload is compressed or binary data in
+   which `/JS` or `/AA` appear by chance (ASCII85 uses `/` and letters), so scanning it
+   rejects benign files. Only the exact bytes the parser itself consumed as a stream's data
+   are skipped, never a span guessed from the `stream`/`endstream` keywords, and a payload
+   that carries object syntax (`endobj`, `endstream`, an `N G obj` header) is not skipped."""
 
 import io
 import json
@@ -38,7 +50,22 @@ _FORBIDDEN_ACTION_TYPES = frozenset(
 _MAX_ANNOTATIONS_SCANNED = 20000
 _MAX_OBJECTS_SCANNED = 200000
 _MAX_NODES_PER_OBJECT = 50000
-_FORBIDDEN_KEYS = frozenset({"/JS", "/AA", "/OpenAction", "/XFA", "/EF", "/RichMedia"})
+# The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
+_FORBIDDEN_NAMES = frozenset(
+    {
+        "/JavaScript", "/JS", "/Launch", "/OpenAction", "/AA", "/EmbeddedFile", "/EmbeddedFiles", "/XFA",
+        "/RichMedia", "/SubmitForm", "/ImportData", "/GoToR", "/GoToE",
+    }
+)
+_FORBIDDEN_KEYS = _FORBIDDEN_NAMES | {"/EF"}
+_PDF_WHITESPACE = rb"[\x00\t\n\x0c\r ]"
+# Object syntax inside a stream payload. Compressed or binary data does not spell these by
+# chance (six or more fixed bytes), so a payload that contains one is scanned like the rest
+# of the file: it may be a second set of objects aimed at a reader that rebuilds a broken
+# cross-reference table by searching the file for `N G obj`.
+_OBJECT_SYNTAX_IN_PAYLOAD = re.compile(rb"endobj|endstream|\d" + _PDF_WHITESPACE + rb"+\d+" + _PDF_WHITESPACE + rb"+obj")
+_STREAM_KEYWORD_BEFORE_PAYLOAD = re.compile(rb"(?<!end)stream(?:\r\n|\n|\r)\Z")
+_ENDSTREAM_AFTER_PAYLOAD = re.compile(_PDF_WHITESPACE + rb"{0,4}endstream")
 _TRAILER_WINDOW = 1024
 
 CHILD_TIMEOUT_SECONDS = 20
@@ -84,23 +111,53 @@ def _scan_action(action: object, where: str) -> None:
             _scan_action(item, where)
 
 
-def _scan_all_objects(reader: "PdfReader") -> None:
+def _has_forbidden_name(data: bytes) -> bool:
+    return _FORBIDDEN_NAME.search(_names_normalized(data)) is not None
+
+
+def _scan_decoded_object_stream(stream: object) -> None:
+    """An object stream holds dictionaries, so its decoded bytes get the same name scan as the
+    file itself. This sees members the cross-reference table does not list, which the object
+    walk never visits but a reader that repairs the file may load."""
+    try:
+        decoded = stream.get_data()  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001  an undecodable object stream is refused, whatever the decoder raised
+        raise _reject("invalid_structure", f"The PDF could not be parsed ({type(exc).__name__}).") from exc
+    if isinstance(decoded, bytes) and _has_forbidden_name(decoded):
+        raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
+
+
+def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
     """Checks every parsed object, including those stored in compressed object streams that
     the raw byte scan cannot see and the page/catalog walk may not reach (outlines, fields no
-    page references). Dictionary keys and `/S` action types are compared to the forbidden sets."""
-    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
+    page references). Dictionary keys, name values and `/S` action types are compared to the
+    forbidden sets, so a forbidden name in any dictionary the parser read is refused here
+    without relying on the byte scan.
+
+    Returns `(file offset of the object, raw payload)` for every stream object, for
+    `_outside_stream_payloads()`."""
+    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject, StreamObject
 
     xref = cast(dict, reader.xref)
     compressed = cast(dict, reader.xref_objStm)
-    references = [(number, generation) for generation, entries in xref.items() for number in entries]
-    references += [(number, 0) for number in compressed]
+    references: list[tuple[int, int, object]] = [
+        (number, generation, offset) for generation, entries in xref.items() for number, offset in entries.items()
+    ]
+    references += [(number, 0, None) for number in compressed]
     if len(references) > _MAX_OBJECTS_SCANNED:
         raise _reject("too_complex", "The PDF contains too many objects to inspect safely.")
-    for number, generation in references:
+    payloads: list[tuple[int, bytes]] = []
+    for number, generation, offset in references:
         try:
             obj = IndirectObject(number, generation, reader).get_object()
         except Exception:  # noqa: BLE001  unreadable free or broken entries are the parser's concern
             continue
+        if isinstance(obj, StreamObject):
+            raw = getattr(obj, "_data", None)
+            if isinstance(raw, bytes) and raw and isinstance(offset, int) and offset >= 0:
+                payloads.append((offset, raw))
+            if obj.get("/Type") == "/ObjStm":
+                _scan_decoded_object_stream(obj)
         pending = [obj]
         visited = 0
         while pending:
@@ -112,6 +169,8 @@ def _scan_all_objects(reader: "PdfReader") -> None:
                 # Indirect members are visited as objects of their own; only direct ones nest here.
                 pending.extend(item for item in candidate if not isinstance(item, IndirectObject))
                 continue
+            if isinstance(candidate, NameObject) and candidate in _FORBIDDEN_NAMES:
+                raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
             if not isinstance(candidate, DictionaryObject):
                 continue
             if _FORBIDDEN_KEYS.intersection(candidate.keys()):
@@ -120,6 +179,42 @@ def _scan_all_objects(reader: "PdfReader") -> None:
             if action_type is not None and str(action_type) in _FORBIDDEN_ACTION_TYPES:
                 raise _reject("active_content", f"PDF contains a {action_type} action.")
             pending.extend(value for value in candidate.values() if not isinstance(value, IndirectObject))
+    return payloads
+
+
+def _outside_stream_payloads(content: bytes, payloads: list[tuple[int, bytes]]) -> bytes:
+    """The file with stream payloads cut out, for the forbidden-name byte scan.
+
+    A payload is cut only where all of these hold; anything else stays in the scan:
+
+    - the bytes are what the parser read as that stream's data (not a span between keywords,
+      so a `stream` keyword written inside a string or a comment hides nothing);
+    - they are the first occurrence at or after the object's own offset, directly after
+      `stream` + end-of-line and directly before `endstream`. That occurrence is either the
+      real payload or a copy of it inside the object's own dictionary. A copy leaves the real
+      payload, with the same bytes, in the scan, and the object walk covers the dictionary;
+    - they contain no object syntax (see `_OBJECT_SYNTAX_IN_PAYLOAD`), which also covers a
+      `/Length` that reaches past the stream's own `endstream` to swallow a later object."""
+    spans: list[tuple[int, int]] = []
+    for offset, payload in payloads:
+        if _OBJECT_SYNTAX_IN_PAYLOAD.search(payload):
+            continue
+        start = content.find(payload, offset)
+        if start < 0:
+            continue
+        end = start + len(payload)
+        if _STREAM_KEYWORD_BEFORE_PAYLOAD.search(content[max(0, start - 12) : start]) and _ENDSTREAM_AFTER_PAYLOAD.match(
+            content, end
+        ):
+            spans.append((start, end))
+    pieces: list[bytes] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        if start > cursor:
+            pieces.append(content[cursor:start])
+        cursor = max(cursor, end)
+    pieces.append(content[cursor:])
+    return b"".join(pieces)
 
 
 def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
@@ -133,10 +228,6 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
         raise _reject("not_pdf", "File content is not recognized as a PDF (checked by content, not filename).")
     if b"%%EOF" not in content[-_TRAILER_WINDOW:]:
         raise _reject("truncated", "The PDF is truncated or malformed (no end-of-file marker).")
-    if _FORBIDDEN_NAME.search(_names_normalized(content)):
-        raise _reject(
-            "active_content", "PDF contains active or embedded content (scripts, launch actions, attachments or forms)."
-        )
 
     from pypdf import PdfReader
     from pypdf.errors import PyPdfError
@@ -164,7 +255,7 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
         if acro_form is not None and "/XFA" in cast(DictionaryObject, acro_form.get_object()):
             raise _reject("active_content", "PDF contains XFA forms.")
 
-        _scan_all_objects(reader)
+        stream_payloads = _scan_all_objects(reader)
 
         scanned = 0
         for index, page in enumerate(reader.pages):
@@ -185,7 +276,17 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
     except PdfRejected:
         raise
     except (PyPdfError, ValueError, KeyError, TypeError, AttributeError, RecursionError, OSError) as exc:
+        # A file the parser cannot read is refused either way; one that also names active
+        # content keeps the more specific reason. No payload is skipped here.
+        if _has_forbidden_name(content):
+            raise _reject(
+                "active_content", "PDF contains active or embedded content (scripts, launch actions, attachments or forms)."
+            ) from exc
         raise _reject("invalid_structure", f"The PDF could not be parsed ({type(exc).__name__}).") from exc
+    if _has_forbidden_name(_outside_stream_payloads(content, stream_payloads)):
+        raise _reject(
+            "active_content", "PDF contains active or embedded content (scripts, launch actions, attachments or forms)."
+        )
     return PdfInfo(page_count=page_count)
 
 
