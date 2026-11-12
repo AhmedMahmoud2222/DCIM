@@ -490,6 +490,11 @@ async def ingest_batch(
             detail=f"A batch may contain at most {MAX_BATCH_RECORDS} records; got {len(body.records)}.",
         )
 
+    # Derive the idempotency principal ONCE, before the loop. `collector_id` was just
+    # verified equal to `collector.id` above. `_release_claim_safely` may `db.rollback()`,
+    # which expires `collector`; reading `collector.id` in a later iteration would then
+    # lazy-load outside an awaited context and raise MissingGreenlet.
+    principal = idem.collector_principal(collector_id)
     results: list[IngestRecordResult] = []
     for record in body.records:
         if record.record_type != "device" and not _attributes_within_bound(record.raw_attributes):
@@ -509,7 +514,7 @@ async def ingest_batch(
         # records still to be processed.
         try:
             outcome = await idem.get_or_claim(
-                db, principal=idem.collector_principal(collector.id), key=f"{collector_id}:{record.dedup_key}",
+                db, principal=principal, key=f"{collector_id}:{record.dedup_key}",
                 endpoint="collector_ingest", request_hash=request_hash,
             )
         except IdempotencyConflict:
