@@ -77,6 +77,20 @@ describe("text contrast guard", () => {
   });
 });
 
+describe("text contrast guard across the whole app", () => {
+  // Every app source file as raw text, loaded by Vite so no Node typings are needed.
+  const sources = import.meta.glob<string>(["../**/*.{ts,tsx,css}", "!../**/*.test.{ts,tsx}", "!../theme/themes.css"], { query: "?raw", import: "default", eager: true });
+
+  // Border and hover-border uses of slate-600 are not text and stay allowed; only text colours are checked.
+  it("no component uses text-slate-500 or text-slate-600, which fail 4.5:1 on the dark panels", () => {
+    expect(Object.keys(sources).length).toBeGreaterThan(100);
+    const offenders = Object.entries(sources)
+      .filter(([, text]) => /(?:^|[\s"'`:])(?:[a-z-]+:)*text-slate-(?:500|600)(?=[\s"'`/]|$)/m.test(text))
+      .map(([file]) => file);
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("scroll regions contain hidden screen-reader text", () => {
   // `sr-only` is absolutely positioned. In a scrolling region that is not itself positioned it escapes the
   // clipping and widens the whole page (a 41 px sideways scroll at 320 px on Equipment).
