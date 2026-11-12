@@ -2,7 +2,10 @@
 Docker is replaced by in-memory fakes: these prove the gate fails (with a message naming the
 failure class) when ClamAV is unhealthy/missing or the media volume is not shared."""
 import importlib.util
+import re
 import subprocess
+import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -142,6 +145,66 @@ class OcrSandboxMessageTests(unittest.TestCase):
 
     def test_success_passes(self):
         self.verify(0)
+
+
+
+class CommandDispatchTests(unittest.TestCase):
+    """Issue #331: the command line selects from an explicit table, never from module globals."""
+    WORKFLOW_COMMANDS = ('prepare', 'config', 'start', 'verify', 'verify_clamav', 'verify_ocr_sandbox',
+                         'verify_shared_media', 'diagnose', 'cleanup')
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=30, check=False)
+
+    def test_table_holds_exactly_the_nine_workflow_commands(self):
+        self.assertEqual(tuple(smoke.COMMANDS), self.WORKFLOW_COMMANDS)
+        for name, function in smoke.COMMANDS.items():
+            self.assertIs(function, getattr(smoke, name))
+
+    def test_deployment_validation_workflow_only_uses_table_commands(self):
+        workflow = (SCRIPT.parents[1] / 'workflows' / 'deployment-validation.yml').read_text()
+        used = re.findall(r'compose_smoke\.py[ \t]+(\S+)', workflow)
+        self.assertEqual(tuple(used), self.WORKFLOW_COMMANDS)
+
+    def test_script_no_longer_dispatches_through_globals(self):
+        self.assertNotIn('globals()', SCRIPT.read_text())
+
+    def test_each_command_dispatches_to_its_own_function(self):
+        for name in self.WORKFLOW_COMMANDS:
+            with mock.patch.dict(smoke.COMMANDS, {name: mock.Mock()}):
+                self.assertEqual(smoke.main(['compose_smoke.py', name]), 0)
+                smoke.COMMANDS[name].assert_called_once_with()
+
+    def test_internal_helpers_and_module_names_are_not_commands(self):
+        helpers = sorted(
+            name for name, value in vars(smoke).items()
+            if name not in smoke.COMMANDS and (callable(value) or isinstance(value, types.ModuleType))
+        )
+        for expected in ('run', 'context', 'container', 'compose_exec', 'media_remove', 'main', 'subprocess', 'os'):
+            self.assertIn(expected, helpers)
+        main = smoke.main
+        for name in helpers:
+            with mock.patch.object(smoke, name) as helper, mock.patch.object(smoke.sys, 'stderr'):
+                self.assertEqual(main(['compose_smoke.py', name]), 1, name)
+            helper.assert_not_called()
+
+    def test_command_failure_exits_nonzero(self):
+        with mock.patch.dict(smoke.COMMANDS, {'verify': mock.Mock(side_effect=RuntimeError('boom'))}), \
+                mock.patch.object(smoke.sys, 'stderr'):
+            self.assertEqual(smoke.main(['compose_smoke.py', 'verify']), 1)
+
+    def test_cli_rejects_unknown_helper_and_dunder_names(self):
+        for name in ('run', 'context', 'exit', '__builtins__', 'COMMANDS', 'Verify', ''):
+            result = self.cli(name)
+            self.assertEqual(result.returncode, 1, name)
+            self.assertIn('FAIL: expected exactly one command', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+
+    def test_cli_rejects_missing_and_extra_arguments(self):
+        for args in ((), ('verify', 'run')):
+            result = self.cli(*args)
+            self.assertEqual(result.returncode, 1, args)
+            self.assertIn('FAIL: expected exactly one command', result.stderr)
 
 
 if __name__ == '__main__':

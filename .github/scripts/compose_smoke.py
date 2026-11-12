@@ -320,9 +320,32 @@ def cleanup():
         env_file.parent.rmdir()
 
 
-if __name__ == "__main__":
+# The only names the command line may select. Helpers such as `run` and `context` stay out.
+COMMANDS = {
+    "prepare": prepare,
+    "config": config,
+    "start": start,
+    "verify": verify,
+    "verify_clamav": verify_clamav,
+    "verify_ocr_sandbox": verify_ocr_sandbox,
+    "verify_shared_media": verify_shared_media,
+    "diagnose": diagnose,
+    "cleanup": cleanup,
+}
+
+
+def main(argv):
+    command = COMMANDS.get(argv[1]) if len(argv) == 2 else None
+    if command is None:
+        print(f"FAIL: expected exactly one command from: {', '.join(COMMANDS)}", file=sys.stderr)
+        return 1
     try:
-        globals()[sys.argv[1]]()
+        command()
     except (KeyError, IndexError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"FAIL: {error}", file=sys.stderr)
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
