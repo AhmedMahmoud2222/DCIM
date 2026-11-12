@@ -4,12 +4,8 @@ import { Link } from "react-router-dom";
 
 import { instantiatePdu, PDUInstantiateInput } from "@/features/power/api";
 import { ApiError } from "@/lib/apiClient";
+import { newIdempotencyKey } from "@/lib/idempotencyKey";
 import { PDUInstantiatedAsset } from "@/types";
-
-function newIdempotencyKey(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  return `pdu-inst-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-}
 
 const inputClass = "w-full rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-100";
 
@@ -18,7 +14,8 @@ const inputClass = "w-full rounded-sm border border-slate-700 bg-slate-800 px-2 
  * set are derived server-side from the published revision, so this form only collects
  * asset identity + management protocol. A stable `Idempotency-Key` is reused across
  * retries of the same submission and rotated after success, so a network-flaked double
- * submit cannot create two PDUs. */
+ * submit cannot create two PDUs. The key comes from a CSPRNG (issue #328); a browser with
+ * no secure randomness gets an error in the form and the request is not sent. */
 export function PduInstantiatePanel({ revisionId }: { revisionId: string }) {
   const queryClient = useQueryClient();
   const [assetTag, setAssetTag] = useState("");
