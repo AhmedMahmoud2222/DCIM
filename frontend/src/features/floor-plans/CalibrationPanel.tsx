@@ -85,7 +85,7 @@ export function CalibrationPanel({ floorPlan, jobId, diagnostics, picks, pickMod
       ) : (
         <form onSubmit={submit} className="space-y-3 text-sm">
           <fieldset>
-            <legend className="mb-1 text-xs text-slate-500">Method</legend>
+            <legend className="mb-1 text-xs text-fg-secondary">Method</legend>
             {(
               [
                 ["declared_units", `Use the file's declared units${diagnostics?.source_units ? ` (${diagnostics.source_units}${diagnostics.units_trusted ? "" : ", not authoritative"})` : ""}`],
@@ -107,7 +107,7 @@ export function CalibrationPanel({ floorPlan, jobId, diagnostics, picks, pickMod
                 <button type="button" className="rounded-sm border border-slate-600 px-2 py-1 text-xs" onClick={() => (onClearPicks(), onPickMode("two-point"))} aria-pressed={pickMode === "two-point"}>
                   {picks.length === 2 ? "Re-pick points" : "Pick two points on the drawing"}
                 </button>
-                <span className="text-xs text-slate-500" data-testid="pick-status">
+                <span className="text-xs text-fg-secondary" data-testid="pick-status">
                   {picks.length}/2 points{baseline ? ` · ${baseline.toFixed(2)} source units apart` : ""}
                 </span>
               </div>
@@ -146,7 +146,7 @@ export function CalibrationPanel({ floorPlan, jobId, diagnostics, picks, pickMod
                   <input aria-label={label as string} inputMode="decimal" value={value as string} onChange={(e) => (setter as (v: string) => void)(e.target.value)} className="mt-1 w-full rounded-sm border border-slate-700 bg-slate-950 px-2 py-1 text-sm" />
                 </label>
               ))}
-              <p className="col-span-2 text-xs text-slate-500">Giving both dimensions checks the drawing is not distorted; scales that differ by more than 2% are rejected.</p>
+              <p className="col-span-2 text-xs text-fg-secondary">Giving both dimensions checks the drawing is not distorted; scales that differ by more than 2% are rejected.</p>
             </div>
           )}
 

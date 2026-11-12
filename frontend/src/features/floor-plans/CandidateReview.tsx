@@ -59,7 +59,7 @@ export function CandidateReview({ view, candidates, selectedId, onSelect, calibr
           </select>
         </label>
       </div>
-      <p className="mb-2 text-xs text-slate-500">
+      <p className="mb-2 text-xs text-fg-secondary">
         Detection is a suggestion only. Nothing here changes inventory until you accept a shape; unmatched, ambiguous, conflicting and duplicate shapes are never accepted automatically.
       </p>
       <ul className="mb-3 max-h-56 space-y-1 overflow-auto" data-testid="candidate-list">
@@ -87,7 +87,7 @@ export function CandidateReview({ view, candidates, selectedId, onSelect, calibr
             </li>
           );
         })}
-        {visible.length === 0 && <li className="py-3 text-center text-xs text-slate-500">No shapes match this filter.</li>}
+        {visible.length === 0 && <li className="py-3 text-center text-xs text-fg-secondary">No shapes match this filter.</li>}
       </ul>
       {selected ? (
         <CandidateEditor
@@ -103,7 +103,7 @@ export function CandidateReview({ view, candidates, selectedId, onSelect, calibr
           onReject={onReject}
         />
       ) : (
-        <p className="text-xs text-slate-500">Select a shape in the list or on the drawing to review, correct and accept it.</p>
+        <p className="text-xs text-fg-secondary">Select a shape in the list or on the drawing to review, correct and accept it.</p>
       )}
     </section>
   );
@@ -217,7 +217,7 @@ function CandidateEditor({
       </div>
       {rect && (
         <fieldset className="grid grid-cols-5 gap-2">
-          <legend className="mb-1 text-xs text-slate-500">{calibration ? "Position and size (real-world, room-local origin)" : "Position and size (drawing units, uncalibrated)"}</legend>
+          <legend className="mb-1 text-xs text-fg-secondary">{calibration ? "Position and size (real-world, room-local origin)" : "Position and size (drawing units, uncalibrated)"}</legend>
           {numField("x", calibration ? "Left X" : "Centre X")}
           {numField("y", calibration ? "Top Y" : "Centre Y")}
           {numField("w", "Width")}
@@ -225,7 +225,7 @@ function CandidateEditor({
           {numField("r", "Rotation °")}
         </fieldset>
       )}
-      <p className="text-xs text-slate-500" data-testid="canonical-note">
+      <p className="text-xs text-fg-secondary" data-testid="canonical-note">
         {canonicalNote}
       </p>
 
@@ -240,7 +240,7 @@ function CandidateEditor({
 
       {(type === "rack" || type === "equipment") && (
         <fieldset className="space-y-2 rounded-sm bg-slate-800/40 p-2">
-          <legend className="text-xs text-slate-500">{type === "rack" ? "Match to an existing rack" : "Match to floor-standing equipment"}</legend>
+          <legend className="text-xs text-fg-secondary">{type === "rack" ? "Match to an existing rack" : "Match to floor-standing equipment"}</legend>
           {type === "rack" && candidate.match_status !== "not_applicable" && (
             <p className="text-xs" data-testid="match-summary">
               <span className={`rounded-sm px-1.5 py-0.5 ${MATCH_BADGE[candidate.match_status].cls}`}>{MATCH_BADGE[candidate.match_status].label}</span>

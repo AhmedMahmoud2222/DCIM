@@ -135,7 +135,7 @@ export function ModelDetailPage() {
           </form>
         ) : (
           <div className="text-sm">
-            <p className="mb-2 text-slate-300">{model.description || <span className="italic text-slate-500">No description.</span>}</p>
+            <p className="mb-2 text-slate-300">{model.description || <span className="italic text-fg-secondary">No description.</span>}</p>
             <div className="flex flex-wrap gap-1">
               {model.tags.map((tag) => (
                 <span key={tag} className="rounded-sm bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
@@ -203,7 +203,7 @@ export function ModelDetailPage() {
             ))}
             {model.revisions.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-6 text-center text-slate-500">
+                <td colSpan={5} className="py-6 text-center text-fg-secondary">
                   No revisions yet. Create a draft to get started.
                 </td>
               </tr>

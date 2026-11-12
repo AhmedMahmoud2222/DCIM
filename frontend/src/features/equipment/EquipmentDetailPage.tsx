@@ -18,6 +18,7 @@ import {
 } from "@/features/telemetry/api";
 import { TelemetryTrend } from "@/features/telemetry/TelemetryTrend";
 import { provenanceLabel } from "@/features/telemetry/provenanceHelpers";
+import { useNow } from "@/lib/useNow";
 import { ApiError } from "@/lib/apiClient";
 import { PLACEMENT_TYPES, PlacementType, PORT_CONNECTION_STATUSES, PortConnectionStatus, SIDES, Side } from "@/types";
 import { deriveFreshness } from "@/features/status/freshness";
@@ -59,7 +60,9 @@ export function EquipmentDetailPage() {
   });
   const latestTelemetryQuery = useQuery({
     queryKey: ["telemetry", "latest", equipmentId], queryFn: () => getLatestTelemetry(equipmentId!), enabled: !!equipmentId,
+    refetchInterval: 5_000, refetchIntervalInBackground: false,
   });
+  const now = useNow(5_000);
   const alarmHistoryQuery = useQuery({
     queryKey: ["alarms", "equipment", equipmentId], queryFn: () => getAlarmHistory(equipmentId!), enabled: !!equipmentId,
   });
@@ -506,10 +509,11 @@ export function EquipmentDetailPage() {
               sourceType: "equipment_live_metric",
               measuredAt: reading.occurred_at,
               expectedIntervalSeconds: reading.expected_poll_interval_seconds,
-              now: Date.now(),
+              now,
             });
+            const selected = metric === reading.metric;
             const occurredAt = Number.isNaN(Date.parse(reading.occurred_at)) ? "time unavailable" : new Date(reading.occurred_at).toLocaleString();
-            return <button key={reading.id} onClick={() => setSelectedMetric(reading.metric)} className="rounded-sm bg-slate-800/60 p-3 text-left hover:bg-slate-800">
+            return <button key={reading.id} type="button" aria-pressed={selected} onClick={() => setSelectedMetric(reading.metric)} className={`rounded-sm border p-3 text-left ${selected ? "border-action-primary bg-surface-inset" : "border-transparent bg-surface-panel hover:bg-surface-hover"}`}>
               <p className="text-xs uppercase tracking-wide text-slate-400">{reading.metric}</p>
               <p className="mt-1 text-xl font-semibold">{reading.presentation_value} <span className="text-sm text-slate-400">{reading.presentation_unit}</span></p>
               <p className="mt-1 text-xs text-slate-400"><MeasurementFreshness result={freshness} /> · occurred {occurredAt}</p>

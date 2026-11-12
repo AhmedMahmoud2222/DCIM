@@ -103,10 +103,11 @@ describe("text formatting", () => {
 });
 
 describe("map level helpers", () => {
-  const map = { grid, sensors: [sensor({ value: 18 }), sensor({ value: 30 }), sensor({ state: "measured_stale", value: 99 })], thresholds: [{ rule_type: "threshold_high", threshold: 27, unit: "degC", name: "hot" }, { rule_type: "threshold_low", threshold: 18, unit: "degC", name: "cold" }] } as unknown as HeatMap;
-  it("bounds the colour scale by the field and fresh sensors only (a stale value never stretches it)", () => {
-    expect(scaleBounds(map)).toEqual({ min: 18, max: 30 });
-    expect(scaleBounds({ grid: null, sensors: [sensor({ state: "missing", value: null })] } as unknown as HeatMap)).toBeNull();
+  const map = { metric: "temperature_c", grid, sensors: [sensor({ value: 18 }), sensor({ value: 30 }), sensor({ state: "measured_stale", value: 99 })], thresholds: [{ rule_type: "threshold_high", threshold: 27, unit: "degC", name: "hot" }, { rule_type: "threshold_low", threshold: 18, unit: "degC", name: "cold" }] } as unknown as HeatMap;
+  it("bounds the colour scale by the field and fresh sensors only (a stale value never moves it)", () => {
+    // fixed ASHRAE-context domain, independent of the snapshot values
+    expect(scaleBounds(map)).toEqual({ min: 10, max: 35 });
+    expect(scaleBounds({ metric: "temperature_c", grid: null, sensors: [sensor({ state: "missing", value: null })] } as unknown as HeatMap)).toBeNull();
   });
   it("reports threshold bands from the alarm rules", () => {
     expect(thresholdBreach(map, 28)).toBe("high");

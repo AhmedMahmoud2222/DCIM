@@ -25,7 +25,7 @@ function Section({ title, id, children }: { title: string; id: string; children:
 }
 
 function QueryNote({ isLoading, error, what }: { isLoading: boolean; error: unknown; what: string }) {
-  if (isLoading) return <p role="status" className="text-xs text-slate-500">Loading {what}…</p>;
+  if (isLoading) return <p role="status" className="text-xs text-fg-secondary">Loading {what}…</p>;
   if (error) return <p role="alert" className="text-xs text-red-400">Could not load {what}: {messageOf(error)}</p>;
   return null;
 }
@@ -74,17 +74,17 @@ function MapStatus({ map }: { map: HeatMap }) {
         </ul>
       )}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-0.5 sm:grid-cols-4" data-testid="map-counts">
-        <div><dt className="text-slate-500">Sensors expected</dt><dd data-testid="count-total">{q.sensor_count}</dd></div>
-        <div><dt className="text-slate-500">Fresh</dt><dd data-testid="count-fresh">{q.fresh_count}</dd></div>
-        <div><dt className="text-slate-500">Stale</dt><dd data-testid="count-stale">{q.stale_count}</dd></div>
-        <div><dt className="text-slate-500">Missing</dt><dd data-testid="count-missing">{q.missing_count}</dd></div>
-        <div><dt className="text-slate-500">Invalid / unlocated</dt><dd>{q.invalid_count} / {q.unlocated_count}</dd></div>
-        <div><dt className="text-slate-500">Interpolation coverage</dt><dd data-testid="coverage">{q.coverage_percent}% ({q.coverage_class})</dd></div>
-        <div><dt className="text-slate-500">Age skew</dt><dd>{q.max_age_skew_seconds}s of {q.max_age_skew_allowed_seconds}s allowed</dd></div>
-        <div><dt className="text-slate-500">Freshness rule</dt><dd>{q.freshness_cutoff}</dd></div>
+        <div><dt className="text-fg-secondary">Sensors expected</dt><dd data-testid="count-total">{q.sensor_count}</dd></div>
+        <div><dt className="text-fg-secondary">Fresh</dt><dd data-testid="count-fresh">{q.fresh_count}</dd></div>
+        <div><dt className="text-fg-secondary">Stale</dt><dd data-testid="count-stale">{q.stale_count}</dd></div>
+        <div><dt className="text-fg-secondary">Missing</dt><dd data-testid="count-missing">{q.missing_count}</dd></div>
+        <div><dt className="text-fg-secondary">Invalid / unlocated</dt><dd>{q.invalid_count} / {q.unlocated_count}</dd></div>
+        <div><dt className="text-fg-secondary">Interpolation coverage</dt><dd data-testid="coverage">{q.coverage_percent}% ({q.coverage_class})</dd></div>
+        <div><dt className="text-fg-secondary">Age skew</dt><dd>{q.max_age_skew_seconds}s of {q.max_age_skew_allowed_seconds}s allowed</dd></div>
+        <div><dt className="text-fg-secondary">Freshness rule</dt><dd>{q.freshness_cutoff}</dd></div>
       </dl>
       <p className="mt-2 text-slate-400" data-testid="map-disclaimer">{map.disclaimer}</p>
-      <details className="mt-1 text-slate-500">
+      <details className="mt-1 text-fg-secondary">
         <summary className="cursor-pointer">Method and assumptions</summary>
         <p className="mt-1">
           Inverse-distance weighting (power {map.method.power}), influence radius {map.method.radius_mm} mm, cell size {map.method.cell_mm ?? "n/a"} mm, at least{" "}
@@ -101,24 +101,24 @@ function MapStatus({ map }: { map: HeatMap }) {
 }
 
 function Details({ selection, map, layout, airflow, capacity }: { selection: ThermalSelection; map?: HeatMap; layout?: CoolingLayout; airflow?: RoomAirflow; capacity?: CapacityZone[] }) {
-  let body: React.ReactNode = <p className="text-slate-500">Select a sensor, a cooling unit, an airflow arrow, or a heat-map cell (click it, or focus the field and use the arrow keys).</p>;
+  let body: React.ReactNode = <p className="text-fg-secondary">Select a sensor, a cooling unit, an airflow arrow, or a heat-map cell (click it, or focus the field and use the arrow keys).</p>;
   if (selection?.kind === "sensor") {
     const p = map?.sensors.find((s) => s.sensor_id === selection.id);
     if (p) {
       const meta = SENSOR_STATE_META[p.state];
       body = (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="detail-sensor">
-          <dt className="text-slate-500">Sensor</dt><dd>{p.name} ({p.asset_tag})</dd>
-          <dt className="text-slate-500">Provenance</dt><dd data-testid="detail-provenance">Measured</dd>
-          <dt className="text-slate-500">State</dt><dd data-testid="detail-state"><span aria-hidden="true">{meta.glyph}</span> {meta.label}</dd>
-          <dt className="text-slate-500">Value</dt><dd data-testid="detail-value">{p.presentation_value != null ? formatQuantity(p.presentation_value, p.presentation_unit, 2) : "No value"}{p.state === "measured_stale" && " (stale: not current)"}</dd>
-          <dt className="text-slate-500">Timestamp</dt><dd>{p.occurred_at ? `${new Date(p.occurred_at).toLocaleString()} (${formatAge(p.age_seconds)})` : "never"}</dd>
-          <dt className="text-slate-500">Poll interval</dt><dd>{p.expected_poll_interval_seconds != null ? `${p.expected_poll_interval_seconds} s` : "unknown"}</dd>
-          <dt className="text-slate-500">Position</dt><dd>{p.x_mm != null ? `${Math.round(p.x_mm)}, ${Math.round(p.y_mm ?? 0)} mm${p.position_exact ? "" : " · approximate (rack footprint)"}` : "not recorded"}</dd>
-          <dt className="text-slate-500">Role / kind</dt><dd>{p.measurement_role} · {p.sensor_kind}</dd>
-          <dt className="text-slate-500">In the field</dt><dd data-testid="detail-used">{p.used_in_field ? "Yes, contributes to the interpolation" : `No (${explainExclusion(p.excluded_reason) || "not contributing"})`}</dd>
-          {(p.active_alarm_count ?? 0) > 0 && (<><dt className="text-slate-500">Alarms</dt><dd className="text-red-300">{p.active_alarm_count} active</dd></>)}
-          {p.source && (<><dt className="text-slate-500">Source</dt><dd>{p.source.integration_name}</dd></>)}
+          <dt className="text-fg-secondary">Sensor</dt><dd>{p.name} ({p.asset_tag})</dd>
+          <dt className="text-fg-secondary">Provenance</dt><dd data-testid="detail-provenance">Measured</dd>
+          <dt className="text-fg-secondary">State</dt><dd data-testid="detail-state"><span aria-hidden="true">{meta.glyph}</span> {meta.label}</dd>
+          <dt className="text-fg-secondary">Value</dt><dd data-testid="detail-value">{p.presentation_value != null ? formatQuantity(p.presentation_value, p.presentation_unit, 2) : "No value"}{p.state === "measured_stale" && " (stale: not current)"}</dd>
+          <dt className="text-fg-secondary">Timestamp</dt><dd>{p.occurred_at ? `${new Date(p.occurred_at).toLocaleString()} (${formatAge(p.age_seconds)})` : "never"}</dd>
+          <dt className="text-fg-secondary">Poll interval</dt><dd>{p.expected_poll_interval_seconds != null ? `${p.expected_poll_interval_seconds} s` : "unknown"}</dd>
+          <dt className="text-fg-secondary">Position</dt><dd>{p.x_mm != null ? `${Math.round(p.x_mm)}, ${Math.round(p.y_mm ?? 0)} mm${p.position_exact ? "" : " · approximate (rack footprint)"}` : "not recorded"}</dd>
+          <dt className="text-fg-secondary">Role / kind</dt><dd>{p.measurement_role} · {p.sensor_kind}</dd>
+          <dt className="text-fg-secondary">In the field</dt><dd data-testid="detail-used">{p.used_in_field ? "Yes, contributes to the interpolation" : `No (${explainExclusion(p.excluded_reason) || "not contributing"})`}</dd>
+          {(p.active_alarm_count ?? 0) > 0 && (<><dt className="text-fg-secondary">Alarms</dt><dd className="text-red-300">{p.active_alarm_count} active</dd></>)}
+          {p.source && (<><dt className="text-fg-secondary">Source</dt><dd>{p.source.integration_name}</dd></>)}
         </dl>
       );
     }
@@ -126,12 +126,12 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
     const cell = cellAt(map.grid, map.grid.origin_x_mm + selection.column * map.grid.cell_mm + 1, map.grid.origin_y_mm + selection.row * map.grid.cell_mm + 1);
     body = cell ? (
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="detail-cell">
-        <dt className="text-slate-500">Cell</dt><dd>Column {cell.column + 1}, row {cell.row + 1}</dd>
-        <dt className="text-slate-500">Provenance</dt><dd data-testid="detail-provenance">Interpolated (not measured)</dd>
-        <dt className="text-slate-500">Value</dt><dd data-testid="detail-value">≈ {formatQuantity(cell.value, map.presentation_unit, 2)}</dd>
-        <dt className="text-slate-500">Centre</dt><dd>{Math.round(cell.xMm + cell.sizeMm / 2)}, {Math.round(cell.yMm + cell.sizeMm / 2)} mm</dd>
-        <dt className="text-slate-500">Supporting sensors</dt><dd>{cell.support} fresh sensor(s) within {map.method.radius_mm} mm</dd>
-        <dt className="text-slate-500">Method</dt><dd>Inverse-distance weighting; an estimate between sensors, never a reading</dd>
+        <dt className="text-fg-secondary">Cell</dt><dd>Column {cell.column + 1}, row {cell.row + 1}</dd>
+        <dt className="text-fg-secondary">Provenance</dt><dd data-testid="detail-provenance">Interpolated (not measured)</dd>
+        <dt className="text-fg-secondary">Value</dt><dd data-testid="detail-value">≈ {formatQuantity(cell.value, map.presentation_unit, 2)}</dd>
+        <dt className="text-fg-secondary">Centre</dt><dd>{Math.round(cell.xMm + cell.sizeMm / 2)}, {Math.round(cell.yMm + cell.sizeMm / 2)} mm</dd>
+        <dt className="text-fg-secondary">Supporting sensors</dt><dd>{cell.support} fresh sensor(s) within {map.method.radius_mm} mm</dd>
+        <dt className="text-fg-secondary">Method</dt><dd>Inverse-distance weighting; an estimate between sensors, never a reading</dd>
       </dl>
     ) : (
       <p data-testid="detail-cell-empty" className="text-slate-400">This cell has no value: fewer than two fresh sensors are within reach, or it lies outside the room. Nothing is estimated here.</p>
@@ -142,13 +142,13 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
     if (unit) {
       body = (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="detail-unit">
-          <dt className="text-slate-500">Cooling unit</dt><dd>{unit.name} ({unit.asset_tag})</dd>
-          <dt className="text-slate-500">Type</dt><dd>{unit.unit_kind.toUpperCase()}</dd>
-          <dt className="text-slate-500">Status</dt><dd>{unit.operating_status} · lifecycle {unit.lifecycle_status}</dd>
-          <dt className="text-slate-500">Rated capacity</dt><dd>{unit.rated_cooling_capacity_kw != null ? `${unit.rated_cooling_capacity_kw} kW` : "Unknown"}</dd>
-          <dt className="text-slate-500">Effective capacity</dt><dd>{capacityUnit ? (capacityUnit.effective_kw != null ? `${capacityUnit.effective_kw} kW` : "Unknown") : "Not assigned to a served zone"}</dd>
-          <dt className="text-slate-500">Supply direction</dt><dd>{unit.supply_direction_deg != null ? `${unit.supply_direction_deg}° (configured)` : "Not configured"}</dd>
-          <dt className="text-slate-500">Footprint</dt><dd>Not modelled; the marker is not to scale</dd>
+          <dt className="text-fg-secondary">Cooling unit</dt><dd>{unit.name} ({unit.asset_tag})</dd>
+          <dt className="text-fg-secondary">Type</dt><dd>{unit.unit_kind.toUpperCase()}</dd>
+          <dt className="text-fg-secondary">Status</dt><dd>{unit.operating_status} · lifecycle {unit.lifecycle_status}</dd>
+          <dt className="text-fg-secondary">Rated capacity</dt><dd>{unit.rated_cooling_capacity_kw != null ? `${unit.rated_cooling_capacity_kw} kW` : "Unknown"}</dd>
+          <dt className="text-fg-secondary">Effective capacity</dt><dd>{capacityUnit ? (capacityUnit.effective_kw != null ? `${capacityUnit.effective_kw} kW` : "Unknown") : "Not assigned to a served zone"}</dd>
+          <dt className="text-fg-secondary">Supply direction</dt><dd>{unit.supply_direction_deg != null ? `${unit.supply_direction_deg}° (configured)` : "Not configured"}</dd>
+          <dt className="text-fg-secondary">Footprint</dt><dd>Not modelled; the marker is not to scale</dd>
         </dl>
       );
     }
@@ -157,10 +157,10 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
     if (e) {
       body = (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="detail-airflow">
-          <dt className="text-slate-500">Element</dt><dd>{e.name}</dd>
-          <dt className="text-slate-500">Magnitude</dt><dd data-testid="detail-provenance">{e.magnitude_provenance === "measured" ? "Measured" : e.magnitude_provenance === "configured_design" ? "Configured design airflow" : "None"}</dd>
-          <dt className="text-slate-500">Direction</dt><dd>{e.direction_deg}° · configured orientation, not a measured flow path</dd>
-          <dt className="text-slate-500">Modelled</dt><dd>No. This is not a CFD result.</dd>
+          <dt className="text-fg-secondary">Element</dt><dd>{e.name}</dd>
+          <dt className="text-fg-secondary">Magnitude</dt><dd data-testid="detail-provenance">{e.magnitude_provenance === "measured" ? "Measured" : e.magnitude_provenance === "configured_design" ? "Configured design airflow" : "None"}</dd>
+          <dt className="text-fg-secondary">Direction</dt><dd>{e.direction_deg}° · configured orientation, not a measured flow path</dd>
+          <dt className="text-fg-secondary">Modelled</dt><dd>No. This is not a CFD result.</dd>
         </dl>
       );
     }
@@ -262,19 +262,19 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
             <QueryNote isLoading={exceptionsQuery.isLoading} error={exceptionsQuery.error} what="exceptions" />
             {exceptionsQuery.data && (
               <>
-                <p className="mb-1 text-xs text-slate-500" data-testid="exception-counts">
+                <p className="mb-1 text-xs text-fg-secondary" data-testid="exception-counts">
                   {exceptionsQuery.data.items.length === 0 ? "No exceptions." : `${exceptionsQuery.data.items.length} exception(s): ${Object.entries(exceptionsQuery.data.counts).map(([k, v]) => `${v} ${k}`).join(", ")}`}
                 </p>
                 <ul className="max-h-72 space-y-1 overflow-auto text-xs" data-testid="exception-list">
                   {exceptionsQuery.data.items.map((item, i) => (
                     <li key={`${item.type}-${item.subject_id}-${i}`} data-exception-type={item.type} data-source={item.source}>
                       <span className={`mr-1 rounded-sm px-1.5 py-0.5 ${SEVERITY_STYLE[item.severity]}`}><span aria-hidden="true">{SEVERITY_GLYPH[item.severity]}</span> {item.severity}</span>
-                      <span className="mr-1 text-slate-500">[{item.source === "alarm" ? "alarm" : "derived"}]</span>
+                      <span className="mr-1 text-fg-secondary">[{item.source === "alarm" ? "alarm" : "derived"}]</span>
                       {item.message}
                     </li>
                   ))}
                 </ul>
-                {exceptionsQuery.data.alarms_omitted && <p className="mt-1 text-xs text-slate-500">{exceptionsQuery.data.alarms_omitted}</p>}
+                {exceptionsQuery.data.alarms_omitted && <p className="mt-1 text-xs text-fg-secondary">{exceptionsQuery.data.alarms_omitted}</p>}
               </>
             )}
           </Section>
@@ -288,10 +288,10 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
         )}
         {capacityQuery.data && capacityQuery.data.zones.length > 0 && (
           <>
-            <p className="mb-2 text-xs text-slate-500" data-testid="capacity-assumption">{capacityQuery.data.load_assumption}</p>
+            <p className="mb-2 text-xs text-fg-secondary" data-testid="capacity-assumption">{capacityQuery.data.load_assumption}</p>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs" data-testid="capacity-table">
-                <thead className="text-slate-500">
+                <thead className="text-fg-secondary">
                   <tr>
                     <th scope="col">Zone</th><th scope="col">Units (available / total)</th><th scope="col">Installed rated</th><th scope="col">Available</th>
                     <th scope="col">Thermal load</th><th scope="col">Headroom</th><th scope="col">Redundancy</th><th scope="col">Status</th>
@@ -322,7 +322,7 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
         {map && map.sensors.length === 0 && <p className="mt-2" data-testid="sensors-empty">No {metricLabel(metric).toLowerCase()} sensor is placed in this room.</p>}
         {map && map.sensors.length > 0 && (
           <table className="mt-2 w-full text-left" data-testid="sensor-table">
-            <thead className="text-slate-500">
+            <thead className="text-fg-secondary">
               <tr><th scope="col">Sensor</th><th scope="col">State</th><th scope="col">Value</th><th scope="col">Age</th><th scope="col">Position (mm)</th><th scope="col">In field</th></tr>
             </thead>
             <tbody>
@@ -341,7 +341,7 @@ export function CoolingEnvironmentPanel({ roomId, view }: { roomId: string; view
         )}
       </details>
       {airflowQuery.data && (
-        <p className="text-xs text-slate-500" data-testid="airflow-note">
+        <p className="text-xs text-fg-secondary" data-testid="airflow-note">
           Airflow: {airflowQuery.data.provenance_summary.measured_magnitude} measured, {airflowQuery.data.provenance_summary.configured_design} configured design, {airflowQuery.data.provenance_summary.modelled} modelled; {airflowQuery.data.provenance_summary.not_drawable} not drawn (no direction or magnitude configured). {airflowQuery.data.note}
         </p>
       )}

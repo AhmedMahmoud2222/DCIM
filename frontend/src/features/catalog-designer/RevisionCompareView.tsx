@@ -43,7 +43,7 @@ export function RevisionCompareView() {
       <div className="mb-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Field changes</h2>
         {compare.field_diffs.length === 0 ? (
-          <p className="text-sm italic text-slate-500">No scalar field differences.</p>
+          <p className="text-sm italic text-fg-secondary">No scalar field differences.</p>
         ) : (
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -69,7 +69,7 @@ export function RevisionCompareView() {
       <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Child template changes</h2>
         {compare.child_diffs.length === 0 ? (
-          <p className="text-sm italic text-slate-500">No child template differences.</p>
+          <p className="text-sm italic text-fg-secondary">No child template differences.</p>
         ) : (
           <ul className="space-y-2 text-sm">
             {compare.child_diffs.map((diff, i) => (

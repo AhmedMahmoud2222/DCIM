@@ -152,7 +152,7 @@ export function ImportReviewCanvas({
 
   return (
     <div data-testid="import-review-canvas" data-calibrated={calibrated ? "true" : "false"}>
-      <p className="mb-1 text-xs text-slate-500" role="status">
+      <p className="mb-1 text-xs text-fg-secondary" role="status">
         {calibrated
           ? "Calibrated view: distances are real-world millimetres."
           : `Uncalibrated view in the drawing's own units (${source?.source_units ?? "unknown"}). Calibrate before accepting anything.`}

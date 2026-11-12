@@ -68,7 +68,7 @@ function providerState(status: string, attempts: number, max: number | null, cod
 }
 
 function DeliveryTable({ rows, canManage, onRetry }: { rows: DeliverySummary[]; canManage: boolean; onRetry: (id: string) => void }) {
-  if (rows.length === 0) return <p className="text-sm text-slate-500">No notifications were queued for this incident.</p>;
+  if (rows.length === 0) return <p className="text-sm text-fg-secondary">No notifications were queued for this incident.</p>;
   return (
     <table className="w-full text-left text-sm">
       <caption className="mb-1 text-left text-sm font-semibold">Notifications</caption>
@@ -105,7 +105,7 @@ function DeliveryTable({ rows, canManage, onRetry }: { rows: DeliverySummary[]; 
 }
 
 function TicketTable({ rows, canManage, onRetry }: { rows: Ticket[]; canManage: boolean; onRetry: (id: string) => void }) {
-  if (rows.length === 0) return <p className="text-sm text-slate-500">No ITSM ticket is linked to this incident.</p>;
+  if (rows.length === 0) return <p className="text-sm text-fg-secondary">No ITSM ticket is linked to this incident.</p>;
   return (
     <table className="w-full text-left text-sm">
       <caption className="mb-1 text-left text-sm font-semibold">ITSM tickets</caption>
@@ -195,7 +195,7 @@ function IncidentPanel({ id }: { id: string }) {
               </li>
             ))}
         </ul>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-fg-secondary">
           Correlation {d.correlation_id}. Resolving the incident never clears or changes the source alarms below.
           {d.all_sources_cleared ? " All source alarms have cleared." : ""}
         </p>
@@ -273,7 +273,7 @@ function IncidentsView() {
   const [selected, setSelected] = useState<string | null>(null);
   if (q.isPending) return <Loading what="incidents" />;
   if (q.isError) return <ErrorLine error={q.error} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-slate-500">No correlated incidents. Unrelated alarms stay separate.</p>;
+  if (q.data.items.length === 0) return <p className="text-sm text-fg-secondary">No correlated incidents. Unrelated alarms stay separate.</p>;
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <table className="w-full text-left text-sm">
@@ -305,7 +305,7 @@ function IncidentsView() {
           ))}
         </tbody>
       </table>
-      {selected ? <IncidentPanel id={selected} /> : <p className="text-sm text-slate-500">Select an incident to see its evidence and source events.</p>}
+      {selected ? <IncidentPanel id={selected} /> : <p className="text-sm text-fg-secondary">Select an incident to see its evidence and source events.</p>}
     </div>
   );
 }
@@ -343,7 +343,7 @@ function CollectorsView() {
           ))}
         </tbody>
       </table>
-      {states.data.length === 0 && <p className="text-sm text-slate-500">No collector state has been recorded yet.</p>}
+      {states.data.length === 0 && <p className="text-sm text-fg-secondary">No collector state has been recorded yet.</p>}
       <table className="w-full text-left text-sm">
         <caption className="mb-1 text-left text-sm font-semibold">Transition history</caption>
         <thead className="text-slate-400">
@@ -369,7 +369,7 @@ function CollectorsView() {
           ))}
         </tbody>
       </table>
-      {transitions.data.items.length === 0 && <p className="text-sm text-slate-500">No transitions yet.</p>}
+      {transitions.data.items.length === 0 && <p className="text-sm text-fg-secondary">No transitions yet.</p>}
     </div>
   );
 }
@@ -399,7 +399,7 @@ function NotificationsView() {
       ) : q.isError ? (
         <ErrorLine error={q.error} />
       ) : q.data.items.length === 0 ? (
-        <p className="text-sm text-slate-500">No notification deliveries.</p>
+        <p className="text-sm text-fg-secondary">No notification deliveries.</p>
       ) : (
         <table className="w-full text-left text-sm">
           <caption className="mb-1 text-left text-sm font-semibold">Delivery history</caption>
@@ -492,7 +492,7 @@ function IntegrationsView() {
                 {c.name}: {c.url_display}, {c.has_signing_secret ? "signed" : "unsigned"}, {c.enabled ? "enabled" : "disabled"}
               </li>
             ))}
-            {channels.data.length === 0 && <li className="text-slate-500">No channels.</li>}
+            {channels.data.length === 0 && <li className="text-fg-secondary">No channels.</li>}
           </ul>
         )}
         {canManage && (
@@ -534,7 +534,7 @@ function IntegrationsView() {
               {p.name}: {p.event_types.join(", ")} ({p.enabled ? "enabled" : "disabled"})
             </li>
           ))}
-          {policies.data?.length === 0 && <li className="text-slate-500">No policies.</li>}
+          {policies.data?.length === 0 && <li className="text-fg-secondary">No policies.</li>}
         </ul>
         {canManage && (
           <form className="flex flex-wrap items-end gap-2" onSubmit={submit(() => addPolicy.mutate())}>
@@ -592,7 +592,7 @@ function IntegrationsView() {
               {c.name}: {c.base_url} as {c.username}, {c.enabled ? "enabled" : "disabled"}, {c.auto_create ? "creates tickets automatically" : "manual tickets"}
             </li>
           ))}
-          {itsm.data?.length === 0 && <li className="text-slate-500">No ITSM connection.</li>}
+          {itsm.data?.length === 0 && <li className="text-fg-secondary">No ITSM connection.</li>}
         </ul>
         {canManage && (
           <form className="flex flex-wrap items-end gap-2" onSubmit={submit(() => addItsm.mutate())}>

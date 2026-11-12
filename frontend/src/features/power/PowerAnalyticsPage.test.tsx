@@ -90,6 +90,23 @@ describe("PowerAnalyticsPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Access restricted: Permission denied");
   });
 
+  it("moves between tabs with Arrow, Home and End keys and wraps at the ends", async () => {
+    render();
+    const capacity = await screen.findByRole("tab", { name: "Capacity" });
+    capacity.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Protection" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Protection" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{End}");
+    expect(screen.getByRole("tab", { name: "Reports" })).toHaveFocus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Capacity" })).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "Reports" })).toHaveFocus();
+    await userEvent.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "Capacity" })).toHaveFocus();
+  });
+
   it("changes breaker state with the current version and refreshes", async () => {
     vi.mocked(api.listProtectionDevices).mockResolvedValue({ items: [device], total: 1, limit: 200, offset: 0 });
     vi.mocked(api.setProtectionState).mockResolvedValue({ ...device, state: "tripped", version: 4 });

@@ -125,7 +125,7 @@ function SideGraphicPanel({
           markerLabelSuggestions={markerLabelSuggestions}
         />
       ) : (
-        <p className="text-xs italic text-slate-500">No {side} image uploaded yet.</p>
+        <p className="text-xs italic text-fg-secondary">No {side} image uploaded yet.</p>
       )}
     </section>
   );
@@ -326,7 +326,7 @@ function FrontRearImageCanvas({
             draggable={false}
           />
         ) : (
-          <div className="flex h-40 items-center justify-center text-xs text-slate-500">Loading image…</div>
+          <div className="flex h-40 items-center justify-center text-xs text-fg-secondary">Loading image…</div>
         )}
         <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
           {graphic.markers.map((marker) => {

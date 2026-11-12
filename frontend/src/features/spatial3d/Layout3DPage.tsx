@@ -264,7 +264,7 @@ export function Layout3DPage() {
   return (
     <div>
       <h1 className="mb-1 text-lg font-semibold">3D digital twin</h1>
-      <p className="mb-4 text-sm text-slate-500">
+      <p className="mb-4 text-sm text-fg-secondary">
         Room, rack and equipment geometry at real scale, taken from authoritative placements and catalog dimensions. Anything whose position or
         dimensions are not recorded is listed below the scene instead of being drawn.
       </p>
@@ -320,7 +320,7 @@ export function Layout3DPage() {
           </label>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-fg-secondary">
             Drag to orbit · Shift + drag to pan · scroll to zoom · focus the scene and use arrow keys to pan, +/− to zoom, 0 to reset.
           </span>
           <Link
@@ -340,11 +340,11 @@ export function Layout3DPage() {
       </div>
 
       {rooms.isLoading || (!!activeRoom && view.isPending) ? (
-        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-sm text-slate-500" role="status">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-sm text-fg-secondary" role="status">
           Loading authoritative spatial data…
         </div>
       ) : !activeRoom ? (
-        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-sm text-slate-500" role="status">
+        <div className="rounded-sm border border-slate-800 bg-slate-900 p-8 text-sm text-fg-secondary" role="status">
           There are no rooms to show yet.
         </div>
       ) : view.isError ? (
@@ -480,41 +480,41 @@ export function Layout3DPage() {
                   <h3 className="mt-3 text-lg font-semibold" data-testid="selected-name">
                     {selectedBox.label}
                   </h3>
-                  <p className="text-xs text-slate-500" data-testid="selected-asset-id" data-asset-id={selectedBox.id}>
+                  <p className="text-xs text-fg-secondary" data-testid="selected-asset-id" data-asset-id={selectedBox.id}>
                     {selectedBox.assetTag} · {selectedBox.id}
                   </p>
                   <dl className="mt-4 space-y-2 text-sm">
                     <div>
-                      <dt className="text-slate-500">Room position</dt>
+                      <dt className="text-fg-secondary">Room position</dt>
                       <dd>
                         {selectedBox.mm.x}, {selectedBox.mm.y} mm
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Rotation</dt>
+                      <dt className="text-fg-secondary">Rotation</dt>
                       <dd>{selectedBox.rotationDeg}°</dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Footprint (W × D)</dt>
+                      <dt className="text-fg-secondary">Footprint (W × D)</dt>
                       <dd>
                         {selectedBox.mm.width} × {selectedBox.mm.depth} mm
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-slate-500">Height</dt>
+                      <dt className="text-fg-secondary">Height</dt>
                       <dd>
                         {selectedBox.mm.height} mm{selectedBox.heightU ? ` (${selectedBox.heightU}U)` : ""}
                       </dd>
                     </div>
                     {selectedBox.kind === "rack" && (
                       <div>
-                        <dt className="text-slate-500">Placed equipment</dt>
+                        <dt className="text-fg-secondary">Placed equipment</dt>
                         <dd>{rackEquipment.filter((item) => item.rack_id === selectedBox.id).length || "None recorded"}</dd>
                       </div>
                     )}
                     {overlay !== "none" && (
                       <div data-testid="selected-overlay">
-                        <dt className="text-slate-500">{OVERLAY_KINDS.find((k) => k.id === overlay)?.label} state</dt>
+                        <dt className="text-fg-secondary">{OVERLAY_KINDS.find((k) => k.id === overlay)?.label} state</dt>
                         <dd>{selectedOverlay ? `${STATE_LABEL[selectedOverlay.state]}: ${selectedOverlay.reason}` : "No data for this asset"}</dd>
                       </div>
                     )}
@@ -527,7 +527,7 @@ export function Layout3DPage() {
                   </Link>
                 </>
               ) : (
-                <p className="mt-3 text-sm text-slate-500">Select a rack or equipment item in the scene.</p>
+                <p className="mt-3 text-sm text-fg-secondary">Select a rack or equipment item in the scene.</p>
               )}
 
               {scene && (scene.missingRackPosition.length > 0 || scene.missingRackDimensions.length > 0 || scene.missingEquipmentPosition.length > 0 || scene.pins.length > 0) && (

@@ -1,5 +1,8 @@
 import type { HeatMap, ThermalMetric } from "@/types";
 import { SENSOR_STATE_META, legendTicks, metricLabel, ramp, scaleBounds } from "./thermalMath";
+import { BAND_META, ENVELOPES, bandExplanation, type ThermalBand } from "./thermalState";
+
+const BAND_ORDER: ThermalBand[] = ["normal", "caution", "warning", "critical"];
 
 const gradient = (metric: ThermalMetric) => `linear-gradient(to right, ${ramp(metric).map((c, i, a) => `rgb(${c.join(" ")}) ${Math.round((i / (a.length - 1)) * 100)}%`).join(", ")})`;
 
@@ -9,9 +12,9 @@ export function ThermalLegend({ map }: { map: HeatMap | null | undefined }) {
   const bounds = map ? scaleBounds(map) : null;
   const unit = map?.presentation_unit ?? "";
   return (
-    <div className="mt-3 grid gap-4 text-xs text-slate-400 md:grid-cols-2" data-testid="thermal-legend">
+    <div className="mt-3 grid gap-4 text-xs text-fg-secondary md:grid-cols-2" data-testid="thermal-legend">
       <section aria-label="Colour scale">
-        <p className="mb-1 font-medium text-slate-300">{map ? metricLabel(map.metric) : "Value"} scale ({unit || "—"})</p>
+        <p className="mb-1 font-medium text-fg-primary">{map ? metricLabel(map.metric) : "Value"} scale ({unit || "—"})</p>
         {map && bounds ? (
           <>
             <div className="h-3 w-full max-w-xs rounded-sm border border-slate-700" style={{ background: gradient(map.metric) }} role="img" aria-label={`Colour scale from ${bounds.min} to ${bounds.max} ${unit}`} />
@@ -22,8 +25,16 @@ export function ThermalLegend({ map }: { map: HeatMap | null | undefined }) {
               ))}
             </ol>
             <p className="mt-1" data-testid="legend-range">
-              Minimum {bounds.min} {unit}, maximum {bounds.max} {unit}
+              Fixed scale {bounds.min} to {bounds.max} {unit}; colours do not change with the current readings.
             </p>
+            <ul className="mt-1" data-testid="legend-bands">
+              {BAND_ORDER.map((band) => (
+                <li key={band} data-testid={`legend-band-${band}`}>
+                  <span className="font-medium text-fg-primary">{BAND_META[band].label}:</span> {bandExplanation(map.metric, band)}
+                </li>
+              ))}
+              <li>Hatching and a solid outline mark warning and critical cells. Recommended range {ENVELOPES[map.metric].recommended.min}–{ENVELOPES[map.metric].recommended.max} {ENVELOPES[map.metric].unit}{map.metric === "temperature_c" ? " (ASHRAE TC 9.9 Class A1)" : ""}.</li>
+            </ul>
           </>
         ) : (
           <p data-testid="legend-no-scale">No valid values to scale yet.</p>
@@ -39,7 +50,7 @@ export function ThermalLegend({ map }: { map: HeatMap | null | undefined }) {
         )}
       </section>
       <section aria-label="Data provenance and state">
-        <p className="mb-1 font-medium text-slate-300">What you are looking at</p>
+        <p className="mb-1 font-medium text-fg-primary">What you are looking at</p>
         <ul className="space-y-0.5">
           <li data-testid="legend-interpolated">
             <span className="inline-block h-3 w-4 align-middle" style={{ background: "linear-gradient(90deg, rgb(59 130 246 / .55), rgb(239 68 68 / .55))" }} /> Tinted cells: interpolated from sensors, not measured
