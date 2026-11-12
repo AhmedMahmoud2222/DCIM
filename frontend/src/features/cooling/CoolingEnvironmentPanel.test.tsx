@@ -39,6 +39,26 @@ describe("CoolingEnvironmentPanel", () => {
     expect(screen.getByTestId("legend-interpolated")).toHaveTextContent("interpolated from sensors, not measured");
   });
 
+  it("marks warning and critical cells with hatching, an outline and a reason", async () => {
+    const base = heatMap();
+    const values = base.grid!.values.map((v, i) => (v == null ? v : i === 0 ? 33 : i === 1 ? 28 : 22));
+    mockAll({ map: heatMap({ grid: { ...base.grid!, values, min: 22, max: 33 } }) });
+    renderPanel();
+    const cells = await screen.findByTestId("heat-cells");
+    const critical = cells.querySelector("g[data-cell-index='0']") as SVGGElement;
+    const warning = cells.querySelector("g[data-cell-index='1']") as SVGGElement;
+    const normal = cells.querySelector("g[data-cell-index='2']") as SVGGElement;
+    expect(critical).toHaveAttribute("data-band", "critical");
+    expect(within(critical as unknown as HTMLElement).getByTestId("breach-hatch-critical")).toBeInTheDocument();
+    expect(within(critical as unknown as HTMLElement).getByTestId("breach-outline-critical")).toBeInTheDocument();
+    expect(critical.querySelector("title")?.textContent).toMatch(/Critical: 33 degC|Critical: 33 °C/);
+    expect(warning).toHaveAttribute("data-band", "warning");
+    expect(within(warning as unknown as HTMLElement).getByTestId("breach-hatch-warning")).toBeInTheDocument();
+    expect(warning.querySelector("title")?.textContent).toContain("High inlet");
+    expect(normal).toHaveAttribute("data-band", "normal");
+    expect(normal.querySelector("[data-testid^='breach-']")).toBeNull();
+  });
+
   it("shows the legend range and the alarm-rule threshold in text", async () => {
     renderPanel();
     expect(await screen.findByTestId("legend-range")).toHaveTextContent("Fixed scale 10 to 35 degC");

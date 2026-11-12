@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -195,6 +195,30 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
         expect(chip).toHaveTextContent(label);
         expect(chip).toHaveTextContent(age);
       }
+    });
+
+    it("re-derives freshness as time passes without a new reading", async () => {
+      vi.mocked(telemetryApi.getLatestTelemetry).mockResolvedValue([reading("power", 10, 60)]);
+      renderWithProviders(<EquipmentDetailPage />, routeOptions);
+      expect(within(await card("power")).getByTestId("measurement-freshness")).toHaveTextContent("Fresh");
+
+      vi.setSystemTime(NOW + 300_000);
+      // useNow refreshes immediately when the tab becomes visible again
+      document.dispatchEvent(new Event("visibilitychange"));
+      await waitFor(() => expect(within(screen.getByText("power").closest("button") as HTMLElement).getByTestId("measurement-freshness")).toHaveTextContent("Stale"));
+    });
+
+    it("exposes metric tiles as toggle buttons with aria-pressed for the selected metric", async () => {
+      vi.mocked(telemetryApi.getLatestTelemetry).mockResolvedValue([reading("power", 10, 60), reading("temp", 10, 60)]);
+      renderWithProviders(<EquipmentDetailPage />, routeOptions);
+      const power = await card("power");
+      const temp = await card("temp");
+      expect(power).toHaveAttribute("type", "button");
+      expect(power).toHaveAttribute("aria-pressed", "true");
+      expect(temp).toHaveAttribute("aria-pressed", "false");
+      await userEvent.click(temp);
+      expect(temp).toHaveAttribute("aria-pressed", "true");
+      expect(power).toHaveAttribute("aria-pressed", "false");
     });
 
     it("no longer says Current", async () => {
