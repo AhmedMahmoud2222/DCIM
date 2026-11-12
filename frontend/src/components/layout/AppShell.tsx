@@ -7,6 +7,7 @@ import { APP_TITLE } from "@/lib/appTitle";
 import { useAuthStore } from "@/lib/authStore";
 
 import { activeNavLink, DASHBOARD_ITEM, isNavItemVisible, NavItem, visibleNavGroups } from "./navModel";
+import { ThemeToggle } from "./ThemeToggle";
 
 /** Tailwind's `sm` breakpoint (40rem). Below it the sidebar becomes a modal drawer. The same
  * value drives the `sm:` classes below, so layout and behaviour switch at the same width. */
@@ -38,8 +39,8 @@ const TOUCH_TARGET = "min-h-11 sm:pointer-fine:min-h-0";
 function navLinkClass(isActive: boolean): string {
   return `flex items-center rounded-r-sm border-l-[3px] px-3 py-2 text-sm ${TOUCH_TARGET} ${
     isActive
-      ? "border-link bg-side-selected font-semibold text-side-selected-fg"
-      : "border-transparent text-side-fg hover:bg-surface-hover hover:text-side-selected-fg"
+      ? "border-side-marker bg-side-selected font-semibold text-side-selected-fg"
+      : "border-transparent text-side-fg hover:bg-side-hover hover:text-side-selected-fg"
   }`;
 }
 
@@ -178,14 +179,17 @@ export function AppShell() {
   const sidebarContent = (
     <>
         <div className="mb-6 flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold tracking-wide text-side-fg">DCIM PLATFORM</div>
+          <div className="flex items-center gap-2 text-sm font-semibold tracking-wide text-side-selected-fg">
+            <span aria-hidden="true" className="h-5 w-1.5 rounded-xs bg-brand-red" />
+            DCIM PLATFORM
+          </div>
           {!isDesktop && (
             <button
               ref={closeButtonRef}
               type="button"
               aria-label="Close menu"
               onClick={() => closeMenu(true)}
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-side-edge text-side-selected-fg hover:bg-surface-hover"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-side-edge text-side-selected-fg hover:bg-side-hover"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
                 <path d="M6 6l12 12M18 6 6 18" />
@@ -240,7 +244,7 @@ export function AppShell() {
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-line-subtle bg-surface-panel px-4 py-3 sm:px-6">
+        <header className="flex items-center justify-between gap-3 border-t-4 border-t-brand-red border-b border-b-line-subtle bg-surface-panel px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             {!isDesktop && (
               <button
@@ -259,9 +263,12 @@ export function AppShell() {
             )}
             <span className="min-w-0 break-all text-sm text-fg-secondary">{user?.email}</span>
           </div>
+          <div className="flex shrink-0 items-center gap-3">
+          <ThemeToggle />
           <button onClick={handleLogout} className={`shrink-0 rounded-sm px-2 text-sm text-fg-secondary hover:text-fg-primary ${TOUCH_TARGET}`}>
             Sign out
           </button>
+          </div>
         </header>
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 p-4 sm:p-6">
           <Outlet />

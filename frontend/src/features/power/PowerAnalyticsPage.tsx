@@ -231,7 +231,7 @@ function TrendChart({ points }: { points: Snapshot[] }) {
     .join(" ");
   return (
     <svg viewBox="0 0 100 48" role="img" aria-label={`Load trend from ${min.toFixed(2)} to ${max.toFixed(2)} kW over ${loads.length} hours`} className="h-28 w-full rounded-sm bg-slate-950">
-      <path d={d} fill="none" stroke="#38bdf8" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <path d={d} fill="none" stroke="var(--viz-accent)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

@@ -112,7 +112,7 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
       <svg aria-label={`Rack elevation, ${elevation.height_u} units; equipment links and faceplate controls follow`} width={svgWidth} height={totalHeight + 4} className="rounded-sm border border-slate-800 bg-slate-950">
         {Array.from({ length: elevation.height_u }, (_, i) => i + 1).map((u) => (
           <g key={u}>
-            <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="#94a3b8">
+            <text x={2} y={uToY(u) + U_HEIGHT_PX / 2 + 4} fontSize={9} fill="var(--viz-label)">
               {u}
             </text>
             <line
@@ -120,24 +120,24 @@ export function RackElevationView({ elevation }: { elevation: RackElevation }) {
               y1={uToY(u)}
               x2={svgWidth}
               y2={uToY(u)}
-              stroke="#1e293b"
+              stroke="var(--viz-edge)"
               strokeWidth={1}
             />
           </g>
         ))}
-        <rect x={LABEL_COL_WIDTH_PX} y={0} width={COL_WIDTH_PX} height={totalHeight} fill="none" stroke="#334155" />
+        <rect x={LABEL_COL_WIDTH_PX} y={0} width={COL_WIDTH_PX} height={totalHeight} fill="none" stroke="var(--viz-edge)" />
         <rect
           x={LABEL_COL_WIDTH_PX + COL_WIDTH_PX + 4}
           y={0}
           width={COL_WIDTH_PX}
           height={totalHeight}
           fill="none"
-          stroke="#334155"
+          stroke="var(--viz-edge)"
         />
         {elevation.slots.map((slot) => {
           const y = uToY(slot.u_end - 1);
           const height = (slot.u_end - slot.u_start) * U_HEIGHT_PX;
-          const color = SIDE_COLOR[slot.side] ?? "#475569";
+          const color = SIDE_COLOR[slot.side] ?? "var(--viz-edge-strong)";
           const highlight = impactHighlights[slot.equipment_id];
           const boxes: Box[] =
             slot.side === "both"

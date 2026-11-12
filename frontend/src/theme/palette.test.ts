@@ -8,14 +8,27 @@ declare const __dirname: string;
 
 // Vitest routes .css imports (even with ?raw) through its CSS pipeline, and the jsdom
 // environment replaces URL, so resolve the file from __dirname and read it directly.
-const css =readFileSync(path.resolve(__dirname, "../index.css"), "utf8");
+const css = readFileSync(path.resolve(__dirname, "../index.css"), "utf8");
+const themes = readFileSync(path.resolve(__dirname, "./themes.css"), "utf8");
+const lightBlock = themes.slice(themes.indexOf(':root[data-theme="light"]'));
 
 /** Reads a `--color-<name>: #rrggbb;` declaration from index.css, the single source of truth. */
-function token(name: string): string {
-  const match = css.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})\\s*;`));
-  if (!match) throw new Error(`token --color-${name} is not defined in index.css`);
+function tokenIn(source: string, name: string): string {
+  const match = source.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})\\s*;`));
+  if (!match) throw new Error(`token --color-${name} is not defined`);
   return match[1];
 }
+
+type TokenReader = (name: string) => string;
+const darkToken: TokenReader = (name) => tokenIn(css, name);
+// The Normal theme overrides most tokens in themes.css and inherits the rest from index.css.
+const lightToken: TokenReader = (name) => {
+  try {
+    return tokenIn(lightBlock, name);
+  } catch {
+    return tokenIn(css, name);
+  }
+};
 
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => {
@@ -35,7 +48,7 @@ function contrast(foreground: string, background: string): number {
 const TEXT = 4.5;
 const NON_TEXT = 3;
 
-const PAIRS: ReadonlyArray<[label: string, foreground: string, background: string, minimum: number]> = [
+const pairsFor = (token: TokenReader): ReadonlyArray<[label: string, foreground: string, background: string, minimum: number]> => [
   ["primary text on page", token("fg-primary"), token("surface-page"), TEXT],
   ["primary text on panel", token("fg-primary"), token("surface-panel"), TEXT],
   ["secondary text on panel", token("fg-secondary"), token("surface-panel"), TEXT],
@@ -45,14 +58,15 @@ const PAIRS: ReadonlyArray<[label: string, foreground: string, background: strin
   ["primary text on row hover", token("fg-primary"), token("surface-hover"), TEXT],
   ["secondary text on row hover", token("fg-secondary"), token("surface-hover"), TEXT],
   ["link on row hover", token("link"), token("surface-hover"), TEXT],
-  ["sidebar text on sidebar hover", token("side-fg"), token("surface-hover"), TEXT],
+  ["sidebar text on sidebar hover", token("side-fg"), token("side-hover"), TEXT],
+  ["selected marker text on sidebar hover", token("side-selected-fg"), token("side-hover"), TEXT],
   ["primary text on inset row", token("fg-primary"), token("surface-inset"), TEXT],
   ["secondary text on inset row", token("fg-secondary"), token("surface-inset"), TEXT],
   ["link on inset row", token("link"), token("surface-inset"), TEXT],
   ["primary action text on primary action", token("action-primary-fg"), token("action-primary"), TEXT],
   ["link on page", token("link"), token("surface-page"), TEXT],
   ["link on panel", token("link"), token("surface-panel"), TEXT],
-  ["selected item marker on sidebar", token("link"), token("surface-sidebar"), NON_TEXT],
+  ["selected item marker on sidebar", token("side-marker"), token("surface-sidebar"), NON_TEXT],
   ["focus ring on page", token("focus"), token("surface-page"), NON_TEXT],
   ["focus ring on panel", token("focus"), token("surface-panel"), NON_TEXT],
   ["focus ring on sidebar", token("focus-on-sidebar"), token("surface-sidebar"), NON_TEXT],
@@ -63,19 +77,24 @@ const PAIRS: ReadonlyArray<[label: string, foreground: string, background: strin
 
 const TONES = ["neutral", "info", "ok", "caution", "serious", "danger", "attention", "unknown"] as const;
 
-const TONE_PAIRS: ReadonlyArray<[label: string, foreground: string, background: string, minimum: number]> = TONES.flatMap((tone) => [
+const tonePairsFor = (token: TokenReader): ReadonlyArray<[label: string, foreground: string, background: string, minimum: number]> => TONES.flatMap((tone) => [
   [`${tone} tone text on its background`, token(`tone-${tone}-fg`), token(`tone-${tone}-bg`), TEXT] as [string, string, string, number],
   // The chip border and icon use the foreground color; they must stand out from the panel behind the chip.
   [`${tone} tone border and icon on panel`, token(`tone-${tone}-fg`), token("surface-panel"), NON_TEXT] as [string, string, string, number],
 ]);
 
 describe("Control Room palette (index.css)", () => {
-  it.each(PAIRS)("%s meets its WCAG AA contrast", (_label, foreground, background, minimum) => {
-    expect(contrast(foreground, background)).toBeGreaterThanOrEqual(minimum);
-  });
+  describe.each([
+    ["Dark", darkToken],
+    ["Normal", lightToken],
+  ] as const)("%s theme", (_theme, reader) => {
+    it.each(pairsFor(reader))("%s meets its WCAG AA contrast", (_label, foreground, background, minimum) => {
+      expect(contrast(foreground, background)).toBeGreaterThanOrEqual(minimum);
+    });
 
-  it.each(TONE_PAIRS)("%s meets its WCAG AA contrast", (_label, foreground, background, minimum) => {
-    expect(contrast(foreground, background)).toBeGreaterThanOrEqual(minimum);
+    it.each(tonePairsFor(reader))("%s meets its WCAG AA contrast", (_label, foreground, background, minimum) => {
+      expect(contrast(foreground, background)).toBeGreaterThanOrEqual(minimum);
+    });
   });
 
   it("emits every token on :root (theme static) so plain CSS and a future theme attribute can use them", () => {
@@ -84,6 +103,7 @@ describe("Control Room palette (index.css)", () => {
 
   it("does not redefine any existing palette scale (slate, red, green and so on)", () => {
     // Only definitions count; reading var(--color-gray-200) elsewhere in the file is fine.
+    // Theme-specific scale remaps live in themes.css, not in the static theme block.
     expect(css).not.toMatch(/^\s*--color-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d+\s*:/m);
   });
 

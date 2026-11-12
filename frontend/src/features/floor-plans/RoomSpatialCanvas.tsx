@@ -20,15 +20,15 @@ import {
 const DEFAULT_CANVAS_WIDTH_PX = 880;
 
 const OBJECT_STYLE: Record<string, { stroke: string; fill: string; width: number; dash?: string }> = {
-  room_outline: { stroke: "#38bdf8", fill: "none", width: 2.5 },
-  wall: { stroke: "#94a3b8", fill: "none", width: 3 },
-  column: { stroke: "#64748b", fill: "rgb(100 116 139 / .55)", width: 1 },
-  obstacle: { stroke: "#a78bfa", fill: "rgb(167 139 250 / .2)", width: 1 },
-  aisle: { stroke: "#2dd4bf", fill: "rgb(45 212 191 / .08)", width: 1, dash: "6 4" },
-  rack: { stroke: "#60a5fa", fill: "none", width: 1, dash: "3 3" },
-  equipment: { stroke: "#2dd4bf", fill: "none", width: 1, dash: "3 3" },
-  annotation: { stroke: "#64748b", fill: "none", width: 1 },
-  imported_shape: { stroke: "#64748b", fill: "none", width: 1, dash: "4 2" },
+  room_outline: { stroke: "var(--viz-accent)", fill: "none", width: 2.5 },
+  wall: { stroke: "var(--viz-label)", fill: "none", width: 3 },
+  column: { stroke: "var(--viz-muted)", fill: "color-mix(in srgb, var(--viz-muted) 55%, transparent)", width: 1 },
+  obstacle: { stroke: "var(--viz-violet)", fill: "color-mix(in srgb, var(--viz-violet) 22%, transparent)", width: 1 },
+  aisle: { stroke: "var(--viz-teal)", fill: "color-mix(in srgb, var(--viz-teal) 10%, transparent)", width: 1, dash: "6 4" },
+  rack: { stroke: "var(--viz-blue)", fill: "none", width: 1, dash: "3 3" },
+  equipment: { stroke: "var(--viz-teal)", fill: "none", width: 1, dash: "3 3" },
+  annotation: { stroke: "var(--viz-muted)", fill: "none", width: 1 },
+  imported_shape: { stroke: "var(--viz-muted)", fill: "none", width: 1, dash: "4 2" },
 };
 
 function polygonPoints(o: SpatialObject): Point[] | null {
@@ -128,7 +128,7 @@ export function RoomSpatialCanvas({
           if (o.geometry_type === "text") {
             const [px, py] = mmToPx(vp, o.x_mm, o.y_mm);
             return (
-              <text key={o.id} x={px} y={py} fontSize={9} fill="#94a3b8">
+              <text key={o.id} x={px} y={py} fontSize={9} fill="var(--viz-label)">
                 {o.label}
               </text>
             );
@@ -166,16 +166,16 @@ export function RoomSpatialCanvas({
               <Link to={`/racks/${rack.id}`} aria-label={`Rack ${rack.name}, ${fp.width} by ${fp.depth} millimetres${item ? `, ${describeOverlay(overlay as OverlayKind, item)}` : ""}`}>
                 <rect x={px} y={py} width={w} height={d} fill={color} fillOpacity={item ? 0.55 : 0.8} stroke={item ? color : "#93c5fd"} strokeWidth={item ? 2 : 1} />
                 {/* front edge (toward +Y at 0 degrees) so orientation is readable */}
-                <line x1={px} x2={px + w} y1={py + d} y2={py + d} stroke="#f8fafc" strokeWidth={2} />
+                <line x1={px} x2={px + w} y1={py + d} y2={py + d} stroke="var(--viz-strong)" strokeWidth={2} />
                 {w > 26 && d > 12 && (
-                  <text x={px + w / 2} y={py + d / 2 + 3} fontSize={Math.min(10, w / 5)} fill="#f8fafc" textAnchor="middle" pointerEvents="none">
+                  <text x={px + w / 2} y={py + d / 2 + 3} fontSize={Math.min(10, w / 5)} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} textAnchor="middle" pointerEvents="none">
                     {rack.name}
                   </text>
                 )}
                 {item && (
                   <g pointerEvents="none">
-                    <circle cx={px + w - 2} cy={py + 2} r={6} fill="#020617" stroke={color} strokeWidth={1.5} />
-                    <text x={px + w - 2} y={py + 5} fontSize={8} fill={color} textAnchor="middle" fontWeight={700}>
+                    <circle cx={px + w - 2} cy={py + 2} r={6} fill="var(--viz-halo)" stroke={color} strokeWidth={1.5} />
+                    <text x={px + w - 2} y={py + 5} fontSize={8} fill="var(--viz-strong)" textAnchor="middle" fontWeight={700}>
                       {STATE_SYMBOL[item.state]}
                     </text>
                   </g>
@@ -207,8 +207,8 @@ export function RoomSpatialCanvas({
           return (
             <g key={eq.id} data-asset-id={eq.id} data-asset-kind="equipment" data-footprint="unknown">
               <Link to={`/equipment/${eq.id}`} aria-label={`Equipment ${eq.hostname ?? eq.asset_tag}, footprint unknown`}>
-                <path d={`M ${px} ${py - 8} L ${px + 8} ${py} L ${px} ${py + 8} L ${px - 8} ${py} Z`} fill="none" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="2 2" />
-                <text x={px} y={py + 3} fontSize={9} fill="#fbbf24" textAnchor="middle">
+                <path d={`M ${px} ${py - 8} L ${px + 8} ${py} L ${px} ${py + 8} L ${px - 8} ${py} Z`} fill="none" stroke="var(--viz-warn)" strokeWidth={1.5} strokeDasharray="2 2" />
+                <text x={px} y={py + 3} fontSize={9} fill="var(--viz-warn)" textAnchor="middle">
                   ?
                 </text>
                 <title>{`${eq.hostname ?? eq.asset_tag}: position known, catalog dimensions unknown (not drawn to scale)`}</title>

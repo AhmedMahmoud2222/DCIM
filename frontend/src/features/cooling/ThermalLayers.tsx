@@ -32,19 +32,19 @@ export type ThermalSelection =
   | null;
 
 const ZONE_STYLE: Record<CoolingLayoutZone["zone_kind"], { stroke: string; fill: string; dash?: string; label: string }> = {
-  cold_aisle: { stroke: "#38bdf8", fill: "rgb(56 189 248 / .10)", dash: "6 3", label: "Cold aisle" },
-  hot_aisle: { stroke: "#fb923c", fill: "rgb(251 146 60 / .10)", dash: "6 3", label: "Hot aisle" },
-  served_zone: { stroke: "#94a3b8", fill: "none", dash: "2 4", label: "Served zone" },
-  supply_region: { stroke: "#67e8f9", fill: "rgb(103 232 249 / .06)", dash: "8 2 2 2", label: "Supply region" },
-  return_region: { stroke: "#fca5a5", fill: "rgb(252 165 165 / .06)", dash: "8 2 2 2", label: "Return region" },
+  cold_aisle: { stroke: "var(--viz-accent)", fill: "color-mix(in srgb, var(--viz-accent) 12%, transparent)", dash: "6 3", label: "Cold aisle" },
+  hot_aisle: { stroke: "var(--viz-orange)", fill: "color-mix(in srgb, var(--viz-orange) 12%, transparent)", dash: "6 3", label: "Hot aisle" },
+  served_zone: { stroke: "var(--viz-label)", fill: "none", dash: "2 4", label: "Served zone" },
+  supply_region: { stroke: "var(--viz-cyan)", fill: "color-mix(in srgb, var(--viz-cyan) 8%, transparent)", dash: "8 2 2 2", label: "Supply region" },
+  return_region: { stroke: "var(--viz-rose)", fill: "color-mix(in srgb, var(--viz-rose) 8%, transparent)", dash: "8 2 2 2", label: "Return region" },
 };
 
 const UNIT_STATUS: Record<string, { colour: string; glyph: string }> = {
   online: { colour: "#16a34a", glyph: "▶" },
   standby: { colour: "#2563eb", glyph: "❚❚" },
-  offline: { colour: "#64748b", glyph: "■" },
+  offline: { colour: "var(--viz-muted)", glyph: "■" },
   fault: { colour: "#dc2626", glyph: "✕" },
-  unknown: { colour: "#475569", glyph: "?" },
+  unknown: { colour: "var(--viz-edge-strong)", glyph: "?" },
 };
 
 const keyActivate = (action: () => void) => (event: KeyboardEvent<SVGElement>) => {
@@ -71,7 +71,7 @@ export function ThermalHeatLayer({
   const warnId = `thermal-hatch-warning-${uid}`;
   const critId = `thermal-hatch-critical-${uid}`;
   const bounds = map ? scaleBounds(map) : null;
-  const colour = (value: number) => (map && bounds ? heatColour(map.metric, normalise(value, bounds.min, bounds.max)) : "#94a3b8");
+  const colour = (value: number) => (map && bounds ? heatColour(map.metric, normalise(value, bounds.min, bounds.max)) : "var(--viz-label)");
   const grid = map?.grid ?? null;
 
   const onGridClick = (event: MouseEvent<SVGRectElement>) => {
@@ -137,7 +137,7 @@ export function ThermalHeatLayer({
           {selection?.kind === "cell" && (() => {
             const [px, py] = mmToPx(vp, grid.origin_x_mm + selection.column * grid.cell_mm, grid.origin_y_mm + selection.row * grid.cell_mm);
             const size = grid.cell_mm * vp.scale;
-            return <rect x={px} y={py} width={size} height={size} fill="none" stroke="#f8fafc" strokeWidth={2} strokeDasharray="3 2" data-testid="cell-cursor" pointerEvents="none" />;
+            return <rect x={px} y={py} width={size} height={size} fill="none" stroke="var(--viz-strong)" strokeWidth={2} strokeDasharray="3 2" data-testid="cell-cursor" pointerEvents="none" />;
           })()}
         </g>
       )}
@@ -161,7 +161,7 @@ export function ThermalMarkerLayers({
   const uid = useId().replace(/:/g, "");
   const arrowId = `thermal-arrow-${uid}`;
   const bounds = map ? scaleBounds(map) : null;
-  const colour = (value: number) => (map && bounds ? heatColour(map.metric, normalise(value, bounds.min, bounds.max)) : "#94a3b8");
+  const colour = (value: number) => (map && bounds ? heatColour(map.metric, normalise(value, bounds.min, bounds.max)) : "var(--viz-label)");
   const sensors = (map?.sensors ?? []).filter((s) => s.x_mm != null && s.y_mm != null);
   const units = (layout?.cooling_units ?? []).filter((u) => u.x_mm != null && u.y_mm != null);
   const arrows = (airflow?.elements ?? []).filter((e) => e.drawable && e.x_mm != null && e.y_mm != null && e.direction_deg != null);
@@ -187,7 +187,7 @@ export function ThermalMarkerLayers({
             return (
               <g key={zone.id} data-zone-id={zone.id} data-zone-kind={zone.zone_kind} data-containment={zone.containment}>
                 <polygon points={px} fill={style.fill} stroke={style.stroke} strokeWidth={contained ? 3 : 1.5} strokeDasharray={contained ? undefined : style.dash} />
-                <text x={lx} y={ly} fontSize={10} fill={style.stroke} textAnchor="middle" pointerEvents="none" paintOrder="stroke" stroke="#020617" strokeWidth={3}>
+                <text x={lx} y={ly} fontSize={10} fill="var(--viz-strong)" textAnchor="middle" pointerEvents="none" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3}>
                   {style.label}
                   {contained ? " · contained" : ""}
                 </text>
@@ -196,7 +196,7 @@ export function ThermalMarkerLayers({
                   const [x1, y1] = mmToPx(vp, el.x1_mm, el.y1_mm);
                   const [x2, y2] = mmToPx(vp, el.x2_mm, el.y2_mm);
                   return (
-                    <line key={el.id} x1={x1} y1={y1} x2={x2} y2={y2} stroke={el.element_kind === "boundary" ? "#e2e8f0" : "#fde047"} strokeWidth={el.element_kind === "boundary" ? 4 : 3} strokeDasharray={el.element_kind === "opening" ? "3 5" : undefined} data-containment-element={el.element_kind}>
+                    <line key={el.id} x1={x1} y1={y1} x2={x2} y2={y2} stroke={el.element_kind === "boundary" ? "var(--viz-axis)" : "var(--viz-warn)"} strokeWidth={el.element_kind === "boundary" ? 4 : 3} strokeDasharray={el.element_kind === "opening" ? "3 5" : undefined} data-containment-element={el.element_kind}>
                       <title>{`Containment ${el.element_kind}${el.label ? ` · ${el.label}` : ""}`}</title>
                     </line>
                   );
@@ -216,7 +216,7 @@ export function ThermalMarkerLayers({
             const label = `${unit.unit_kind.toUpperCase()} ${unit.name}, ${unit.operating_status}, ${unit.rated_cooling_capacity_kw != null ? `${unit.rated_cooling_capacity_kw} kW rated` : "rated capacity unknown"}. Footprint is not modelled, so this marker is not to scale.`;
             return (
               <g key={unit.id} role="button" tabIndex={0} aria-label={label} aria-pressed={selected} data-unit-id={unit.id} data-unit-kind={unit.unit_kind} data-status={unit.operating_status} onClick={() => onSelect({ kind: "unit", id: unit.id })} onKeyDown={keyActivate(() => onSelect({ kind: "unit", id: unit.id }))} style={{ cursor: "pointer" }}>
-                <rect x={px - 17} y={py - 11} width={34} height={22} rx={3} fill={status.colour} fillOpacity={0.9} stroke={selected ? "#f8fafc" : "#cbd5e1"} strokeWidth={selected ? 3 : 1} strokeDasharray="3 2" />
+                <rect x={px - 17} y={py - 11} width={34} height={22} rx={3} fill={status.colour} fillOpacity={0.9} stroke={selected ? "var(--viz-strong)" : "var(--viz-axis)"} strokeWidth={selected ? 3 : 1} strokeDasharray="3 2" />
                 <text x={px} y={py + 3} fontSize={9} fill="#f8fafc" textAnchor="middle" pointerEvents="none" fontWeight={700}>
                   {unit.unit_kind.toUpperCase()} {status.glyph}
                 </text>
@@ -234,7 +234,7 @@ export function ThermalMarkerLayers({
             const [dx, dy] = bearingToVector(e.direction_deg as number, 44);
             const measured = e.magnitude_provenance === "measured";
             const stale = e.state === "measured_stale";
-            const stroke = measured ? (stale ? "#f59e0b" : "#0ea5e9") : "#a3e635";
+            const stroke = measured ? (stale ? "#f59e0b" : "var(--viz-accent)") : "var(--viz-lime)";
             const selected = selection?.kind === "airflow" && selection.id === e.id;
             const magnitude = measured
               ? formatQuantity(e.volume_flow?.presentation_value ?? e.velocity?.presentation_value ?? null, e.volume_flow ? e.volume_flow.presentation_unit : e.velocity?.presentation_unit)
@@ -244,7 +244,7 @@ export function ThermalMarkerLayers({
               <g key={e.id} role="button" tabIndex={0} aria-label={`Airflow at ${e.name}: ${text}, direction ${e.direction_deg} degrees (configured)`} data-airflow-id={e.id} data-provenance={measured ? "measured" : "configured"} onClick={() => onSelect({ kind: "airflow", id: e.id })} onKeyDown={keyActivate(() => onSelect({ kind: "airflow", id: e.id }))} style={{ cursor: "pointer" }}>
                 <line x1={px} y1={py} x2={px + dx} y2={py + dy} stroke="transparent" strokeWidth={14} data-hit-area="airflow" />
                 <line x1={px} y1={py} x2={px + dx} y2={py + dy} stroke={stroke} strokeWidth={selected ? 4 : 2.5} strokeDasharray={measured && !stale ? undefined : "6 3"} markerEnd={`url(#${arrowId})`} />
-                <text x={px + dx / 2 + 4} y={py + dy / 2 - 4} fontSize={9} fill={stroke} paintOrder="stroke" stroke="#020617" strokeWidth={3} pointerEvents="none">
+                <text x={px + dx / 2 + 4} y={py + dy / 2 - 4} fontSize={9} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} pointerEvents="none">
                   {text}
                 </text>
                 <title>{`${e.name}: ${text}; direction is the configured orientation, not a measured flow path`}</title>
@@ -274,17 +274,17 @@ export function ThermalMarkerLayers({
                 <text x={px} y={py + 3} fontSize={9} fill={p.state === "measured_fresh" ? "#0f172a" : meta.colour} textAnchor="middle" pointerEvents="none" fontWeight={700}>
                   {p.state === "measured_fresh" ? "" : meta.glyph}
                 </text>
-                {!p.position_exact && <circle cx={px} cy={py} r={11} fill="none" stroke="#94a3b8" strokeWidth={1} strokeDasharray="1 3" />}
+                {!p.position_exact && <circle cx={px} cy={py} r={11} fill="none" stroke="var(--viz-label)" strokeWidth={1} strokeDasharray="1 3" />}
                 {(p.active_alarm_count ?? 0) > 0 && (
                   <g pointerEvents="none">
                     <circle cx={px + 8} cy={py - 8} r={5} fill="#7f1d1d" stroke="#ef4444" />
                     <text x={px + 8} y={py - 5} fontSize={8} fill="#fecaca" textAnchor="middle">!</text>
                   </g>
                 )}
-                <text x={px + 11} y={py + 3} fontSize={10} fill={meta.colour} paintOrder="stroke" stroke="#020617" strokeWidth={3} pointerEvents="none">
+                <text x={px + 11} y={py + 3} fontSize={10} fill="var(--viz-strong)" paintOrder="stroke" stroke="var(--viz-halo)" strokeWidth={3} pointerEvents="none">
                   {p.presentation_value != null ? formatQuantity(p.presentation_value, p.presentation_unit) : meta.label}
                 </text>
-                {selected && <circle cx={px} cy={py} r={13} fill="none" stroke="#f8fafc" strokeWidth={2} />}
+                {selected && <circle cx={px} cy={py} r={13} fill="none" stroke="var(--viz-strong)" strokeWidth={2} />}
                 <title>{label}</title>
               </g>
             );

@@ -403,7 +403,7 @@ export function Layout3DPage() {
                     <span className="layout3d-origin" aria-hidden="true" style={{ left: -scene.floor.boundsMm.minX * scene.scale - 1, top: -scene.floor.boundsMm.minY * scene.scale - 1 }} />
                     {scene.boundaryPx && (
                       <svg className="layout3d-boundary" width={scene.floor.width} height={scene.floor.height} aria-hidden="true" data-testid="scene-boundary">
-                        <polygon points={scene.boundaryPx.map((p) => p.join(",")).join(" ")} fill="rgb(56 189 248 / .06)" stroke="#38bdf8" strokeWidth={2} />
+                        <polygon points={scene.boundaryPx.map((p) => p.join(",")).join(" ")} fill="color-mix(in srgb, var(--viz-accent) 8%, transparent)" stroke="var(--viz-accent)" strokeWidth={2} />
                       </svg>
                     )}
                     {thermal !== "none" && <ThermalFloor3D scene={scene} map={thermalMap.data} layout={thermalLayout.data} />}
