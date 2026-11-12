@@ -14,6 +14,7 @@ import {
   scaleBounds,
   zonePoints,
 } from "./thermalMath";
+import { BREACH_STYLE } from "./breachStyle";
 import { assessThermal } from "./thermalState";
 
 export interface ThermalLayerToggles {
@@ -30,12 +31,6 @@ export type ThermalSelection =
   | { kind: "unit"; id: string }
   | { kind: "airflow"; id: string }
   | null;
-
-/** Shared by the heat layer and the legend swatches so the legend always shows what the map draws. */
-export const BREACH_STYLE = {
-  warning: { hatch: "#fb923c", hatchSize: 6, hatchWidth: 2, hatchAngle: 45, outline: "#fed7aa", outlineWidth: 1.5, dash: "4 2", label: "Warning" },
-  critical: { hatch: "#fecaca", hatchSize: 4, hatchWidth: 2.2, hatchAngle: -45, outline: "#fee2e2", outlineWidth: 2, dash: undefined, label: "Critical" },
-} as const;
 
 const ZONE_STYLE: Record<CoolingLayoutZone["zone_kind"], { stroke: string; fill: string; dash?: string; label: string }> = {
   cold_aisle: { stroke: "var(--viz-accent)", fill: "color-mix(in srgb, var(--viz-accent) 12%, transparent)", dash: "6 3", label: "Cold aisle" },

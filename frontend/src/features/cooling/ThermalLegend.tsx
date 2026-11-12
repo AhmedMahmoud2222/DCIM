@@ -1,7 +1,7 @@
 import { useId } from "react";
 
 import type { HeatMap, ThermalMetric } from "@/types";
-import { BREACH_STYLE } from "./ThermalLayers";
+import { BREACH_STYLE } from "./breachStyle";
 import { SENSOR_STATE_META, legendTicks, metricLabel, ramp, scaleBounds } from "./thermalMath";
 import { BAND_META, ENVELOPES, bandExplanation, type ThermalBand } from "./thermalState";
 
