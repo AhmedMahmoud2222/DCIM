@@ -1,6 +1,7 @@
 """End-to-end proof of the local demo loader against a synthetic stand-in for the demo database."""
 
 import argparse
+import os
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
@@ -21,7 +22,7 @@ from tests.demo_world import PLAN_HEIGHT_MM, PLAN_WIDTH_MM, build_world
 def args(**overrides) -> argparse.Namespace:
     base = {
         "command": "apply", "site_prefix": "DEMO-SITE-", "integration": [], "steps": list(cli.STEPS), "history_hours": 24.0,
-        "device_history_hours": 1.0, "actor_email": None, "no_sandbox": True, "no_verify": False, "expect_racks": None,
+        "device_history_hours": float(os.environ.get("DEMO_TEST_DEVICE_HOURS", "1")), "actor_email": None, "no_sandbox": True, "no_verify": False, "expect_racks": None,
         "expect_devices": None, "confirm_local_demo": True,
     }
     base.update(overrides)
