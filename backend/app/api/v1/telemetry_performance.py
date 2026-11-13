@@ -52,28 +52,31 @@ class PerformanceWindow(BaseModel):
     series: list[PerformanceSeries]
 
 
-# Mirrors telemetry_series_key() for rows whose stored key is missing (rows written before migration 0012
-# or by tooling that bypassed it). An unresolved key must never reach the response model, and rows with and
-# without a stored key for one series must still aggregate together.
-_SERIES_KEY = """coalesce(series_key,
-           CASE WHEN registry_version IS NOT NULL THEN 'registry:' || registry_version || ':' ELSE '' END
-           || integration_id::text || ':' || coalesce(managed_asset_id::text, 'unmanaged') || ':'
-           || external_identifier || ':' || metric || ':' || unit)"""
-
 # Both retention tiers and both levels of aggregation must share one MVCC snapshot.
 # Only whole daily buckets contribute. An overlapping partial day remains visible as
 # missing evidence, including when that is the sole evidence for the series.
-_WINDOW = f"""
+# series_key is coalesced to the telemetry_series_key() formula (written out literally in both branches) for rows
+# stored before migration 0012 or by tooling that bypassed it: a missing key must never reach the response
+# model, and keyed and unkeyed rows of one series must still aggregate together.
+_WINDOW = """
 (
 WITH evidence AS (
-    SELECT {_SERIES_KEY} AS series_key, integration_id, external_identifier, unit, registry_version,
+    SELECT coalesce(series_key,
+           CASE WHEN registry_version IS NOT NULL THEN 'registry:' || registry_version || ':' ELSE '' END
+           || integration_id::text || ':' || coalesce(managed_asset_id::text, 'unmanaged') || ':'
+           || external_identifier || ':' || metric || ':' || unit) AS series_key,
+           integration_id, external_identifier, unit, registry_version,
            occurred_at AS instant, value AS low, value AS high, value AS total,
            1 AS samples, false AS daily, false AS partial
       FROM telemetry_reading
      WHERE managed_asset_id IN (SELECT id FROM selected_asset) AND metric = :metric
        AND occurred_at >= :start AND occurred_at < :end
     UNION ALL
-    SELECT {_SERIES_KEY} AS series_key, integration_id, external_identifier, unit, registry_version,
+    SELECT coalesce(series_key,
+           CASE WHEN registry_version IS NOT NULL THEN 'registry:' || registry_version || ':' ELSE '' END
+           || integration_id::text || ':' || coalesce(managed_asset_id::text, 'unmanaged') || ':'
+           || external_identifier || ':' || metric || ':' || unit) AS series_key,
+           integration_id, external_identifier, unit, registry_version,
            day::timestamp AT TIME ZONE 'UTC', minimum_value, maximum_value,
            coalesce(sum_value, average_value * sample_count), sample_count, true,
            day::timestamp AT TIME ZONE 'UTC' < :start OR (day + 1)::timestamp AT TIME ZONE 'UTC' > :end

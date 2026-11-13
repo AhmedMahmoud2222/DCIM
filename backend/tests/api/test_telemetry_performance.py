@@ -297,14 +297,14 @@ async def test_partial_leading_daily_evidence_with_only_raw_points(client, auth_
 @pytest.fixture
 async def nullable_series_key(db_session):
     """Lift NOT NULL (set by migration 0012) so legacy rows without a key can be reproduced."""
-    tables = ("telemetry_reading", "daily_telemetry_aggregate")
-    for table in tables:
-        await db_session.execute(text(f"ALTER TABLE {table} ALTER COLUMN series_key DROP NOT NULL"))
+    await db_session.execute(text("ALTER TABLE telemetry_reading ALTER COLUMN series_key DROP NOT NULL"))
+    await db_session.execute(text("ALTER TABLE daily_telemetry_aggregate ALTER COLUMN series_key DROP NOT NULL"))
     await db_session.commit()
     yield
-    for table in tables:
-        await db_session.execute(text(f"DELETE FROM {table} WHERE series_key IS NULL"))
-        await db_session.execute(text(f"ALTER TABLE {table} ALTER COLUMN series_key SET NOT NULL"))
+    await db_session.execute(text("DELETE FROM telemetry_reading WHERE series_key IS NULL"))
+    await db_session.execute(text("DELETE FROM daily_telemetry_aggregate WHERE series_key IS NULL"))
+    await db_session.execute(text("ALTER TABLE telemetry_reading ALTER COLUMN series_key SET NOT NULL"))
+    await db_session.execute(text("ALTER TABLE daily_telemetry_aggregate ALTER COLUMN series_key SET NOT NULL"))
     await db_session.commit()
 
 
