@@ -37,6 +37,7 @@ import { RacksPage } from "@/features/racks/RacksPage";
 import { Layout3DPage } from "@/features/spatial3d/Layout3DPage";
 import { AlarmRulesPage } from "@/features/telemetry/AlarmRulesPage";
 import { EventsPage } from "@/features/telemetry/EventsPage";
+import { TelemetryPage } from "@/features/telemetry/TelemetryPage";
 
 import { queryClient } from "./queryClient";
 
@@ -63,6 +64,7 @@ export function App() {
               <Route path="/floor-plans/room/:roomId" element={<RoomFloorPlanPage />} />
               <Route path="/floor-plans/3d-layout" element={<Layout3DPage />} />
               <Route path="/events" element={<EventsPage />} />
+              <Route path="/telemetry" element={<TelemetryPage />} />
               <Route path="/alarm-rules" element={<AlarmRulesPage />} />
               <Route path="/power" element={<PowerTopologyPage />} />
               <Route path="/power/analytics" element={<PowerAnalyticsPage />} />

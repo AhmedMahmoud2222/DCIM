@@ -27,6 +27,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: "Monitoring",
     items: [
       { to: "/events", label: "Events" },
+      { to: "/telemetry", label: "Telemetry", permission: "telemetry:read" },
       { to: "/alarm-rules", label: "Alarm Rules", permission: "alarm:read" },
       { to: "/power/analytics", label: "Power & Forecast", permission: "power:read" },
     ],

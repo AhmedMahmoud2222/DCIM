@@ -23,6 +23,7 @@ const ALL_LINKS_USER: CurrentUser = {
   permission_codes: [
     "location:read",
     "alarm:read",
+    "telemetry:read",
     "discovery:read",
     "network_profile:read",
     "cable:read",
@@ -40,6 +41,7 @@ const EXPECTED_GROUPS: ReadonlyArray<[group: string, links: ReadonlyArray<[label
     "Monitoring",
     [
       ["Events", "/events"],
+      ["Telemetry", "/telemetry"],
       ["Alarm Rules", "/alarm-rules"],
       ["Power & Forecast", "/power/analytics"],
     ],

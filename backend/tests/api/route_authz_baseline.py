@@ -372,6 +372,7 @@ BASELINE: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
     ('GET', '/api/v1/telemetry/mappings'): ('permission', ('telemetry:read',)),
     ('POST', '/api/v1/telemetry/mappings'): ('permission', ('telemetry:manage',)),
     ('GET', '/api/v1/telemetry/metric-registry'): ('permission', ('telemetry:read',)),
+    ('GET', '/api/v1/telemetry/performance'): ('permission', ('telemetry:read',)),
     ('POST', '/api/v1/telemetry/port-status/ingest'): ('permission', ('telemetry:manage',)),
     ('GET', '/api/v1/telemetry/port-status/latest'): ('permission', ('telemetry:read',)),
     ('GET', '/api/v1/telemetry/replay-ledger'): ('permission', ('telemetry:read',)),

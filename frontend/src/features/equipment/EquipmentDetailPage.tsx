@@ -498,6 +498,7 @@ export function EquipmentDetailPage() {
 
       <div className="mt-6 rounded-sm border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-300">Live metrics</h2>
+        {equipmentId && <Link className="text-action-primary underline" to={`/telemetry?${new URLSearchParams({ equipment: equipmentId, ...(metric ? { metric } : {}) })}`}>Open telemetry history and export</Link>}
         {latestTelemetryQuery.isLoading && <p className="text-sm text-slate-400">Loading telemetry…</p>}
         {latestTelemetryQuery.isError && <p className="text-sm text-red-400">Telemetry is currently unavailable.</p>}
         {latestTelemetryQuery.data?.length === 0 && <p className="text-sm italic text-slate-400">No telemetry is associated with this equipment.</p>}

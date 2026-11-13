@@ -507,6 +507,12 @@ def equipment_visible_clause(scope: AccessScope, equipment_id_col) -> ColumnElem
     return equipment_id_col.in_(in_visible_rack)
 
 
+def equipment_in_site_clause(site_id: uuid.UUID, equipment_id_col) -> ColumnElement[bool]:
+    """Apply the same current-placement rules as full-site equipment visibility."""
+    sites = frozenset({site_id})
+    return equipment_visible_clause(AccessScope(unrestricted=False, site_ids=sites, full_site_ids=sites), equipment_id_col)
+
+
 def site_visible_clause(scope: AccessScope, site_id_col) -> ColumnElement[bool]:
     if scope.unrestricted:
         return true()

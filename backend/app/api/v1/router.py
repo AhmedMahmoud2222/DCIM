@@ -31,6 +31,7 @@ from app.api.v1 import (
     settings,
     spatial,
     telemetry,
+    telemetry_performance,
     thermal,
     users,
 )
@@ -66,5 +67,6 @@ api_router.include_router(cables.router)
 api_router.include_router(network_profiles.router)
 api_router.include_router(discovery.router)
 api_router.include_router(telemetry.router)
+api_router.include_router(telemetry_performance.router)
 api_router.include_router(impact.router)
 api_router.include_router(settings.router)
