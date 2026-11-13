@@ -137,6 +137,12 @@ services:
         condition: service_completed_successfully
       bootstrap-privileges:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.infrastructure.celery_app inspect ping --destination \"celery@$$HOSTNAME\" --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance,extraction,reports,notifications"]
 
   celery-beat:
@@ -163,6 +169,12 @@ services:
     # read-only to that user. Keep Celery's local schedule database in writable
     # container-local storage instead of failing at startup with EACCES.
     command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib, sys; sys.exit(0 if b'beat' in pathlib.Path('/proc/1/cmdline').read_bytes().split(bytes([0])) else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # Malware scanning for uploaded catalog datasheets (CATALOG_PDF_SCAN_MODE=required fails
   # closed while this service is unreachable). The first start downloads signatures, which

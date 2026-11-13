@@ -18,8 +18,43 @@ smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 
+def compose_service_block(service):
+    config = SCRIPT.parents[2] / 'docker-compose.yml'
+    match = re.search(
+        rf'(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)',
+        config.read_text(),
+    )
+    if not match:
+        raise AssertionError(f'Compose service {service!r} is missing')
+    return match.group(1)
+
+
 def done(stdout='', stderr='', code=0):
     return subprocess.CompletedProcess([], code, stdout, stderr)
+
+
+class ComposeHealthcheckConfigTests(unittest.TestCase):
+    def test_worker_healthcheck_pings_its_celery_node(self):
+        block = compose_service_block('celery-worker')
+        self.assertIn('healthcheck:', block)
+        self.assertIn('inspect ping', block)
+        self.assertIn('$$HOSTNAME', block)
+        self.assertIn('grep -q pong', block)
+        self.assertNotIn('health/live', block)
+
+    def test_beat_healthcheck_checks_the_beat_process(self):
+        block = compose_service_block('celery-beat')
+        self.assertIn('healthcheck:', block)
+        self.assertIn('/proc/1/cmdline', block)
+        self.assertIn("b'beat'", block)
+        self.assertNotIn('health/live', block)
+
+    def test_compose_smoke_requires_celery_healthchecks(self):
+        healthy = {service: 'healthy' for service in smoke.HEALTH_CHECKED_SERVICES}
+        self.assertTrue(smoke.healthchecks_healthy(healthy))
+        for service in ('celery-worker', 'celery-beat'):
+            unhealthy = dict(healthy, **{service: 'unhealthy'})
+            self.assertFalse(smoke.healthchecks_healthy(unhealthy), service)
 
 
 class ClamavHealthTests(unittest.TestCase):

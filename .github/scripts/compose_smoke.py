@@ -39,6 +39,11 @@ OCR_EXIT_MESSAGES = {
     26: "OCR SANDBOX FAILURE: a sandboxed child could still signal other processes or modify other files",
 }
 ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend", "clamav")
+HEALTH_CHECKED_SERVICES = ("postgres", "redis", "backend", "celery-worker", "celery-beat")
+
+
+def healthchecks_healthy(health):
+    return all(health.get(service) == "healthy" for service in HEALTH_CHECKED_SERVICES)
 
 
 def prepare():
@@ -144,16 +149,18 @@ def verify():
             time.sleep(3)
             continue
         states = {service: state(cid, env, ".State.Status") for service, cid in ids.items()}
-        health = {service: state(ids[service], env, ".State.Health.Status") for service in ("postgres", "redis", "backend")}
+        health = {service: state(ids[service], env, ".State.Health.Status") for service in HEALTH_CHECKED_SERVICES}
         one_shots = all(states[s] == "exited" and state(ids[s], env, ".State.ExitCode") == "0" for s in ("migrate", "bootstrap-privileges"))
         running = all(states[s] == "running" for s in ("backend", "celery-worker", "celery-beat", "frontend"))
-        if one_shots and running and all(health[s] == "healthy" for s in ("postgres", "redis", "backend")):
+        if one_shots and running and healthchecks_healthy(health):
             if http_ok("http://127.0.0.1:8000/api/v1/health/ready") and http_ok("http://127.0.0.1:8080/api/v1/health/ready") and http_ok("http://127.0.0.1:8080/"):
                 time.sleep(10)
-                if all(state(ids[s], env, ".State.Status") == "running" for s in ("celery-worker", "celery-beat")):
+                worker_services_running = all(state(ids[s], env, ".State.Status") == "running" for s in ("celery-worker", "celery-beat"))
+                health = {service: state(ids[service], env, ".State.Health.Status") for service in HEALTH_CHECKED_SERVICES}
+                if worker_services_running and healthchecks_healthy(health):
                     print("PASS: PostgreSQL and Redis healthy; migrations and privileged bootstrap exited 0")
                     print("PASS: backend and frontend-proxied readiness HTTP 200; frontend HTTP 200")
-                    print("PASS: Celery worker and beat remain running")
+                    print("PASS: Celery worker and beat are healthy")
                     return
         if any(states[s] == "exited" for s in ("backend", "celery-worker", "celery-beat", "frontend")):
             break
