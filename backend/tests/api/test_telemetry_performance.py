@@ -225,3 +225,68 @@ async def test_validation_empty_and_independent_series(client, auth_headers, sou
         await source(asset, external=f"extra-{index}")
     overflow = await client.get(PATH, headers=admin, params=window(asset))
     assert overflow.status_code == 422 and "32" in overflow.json()["detail"]
+
+
+async def test_live_latest_per_series_keeps_slow_sensor(client, auth_headers, source):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    slow = await source(asset, external="slow")
+    fast = await source(asset, at=START + timedelta(minutes=1), count=101, seconds=1, external="fast")
+    params = {"managed_asset_id": asset, "metric": "temperature_c", "limit": 3}
+    path = "/api/v1/telemetry/latest"
+    legacy = await client.get(path, headers=admin, params=params)
+    assert legacy.status_code == 200
+    assert [row["series_key"] for row in legacy.json()] == [fast] * 3
+    params["per_series"] = "true"
+    latest = await client.get(path, headers=admin, params=params)
+    assert latest.status_code == 200, latest.text
+    rows = latest.json()
+    assert [(r["series_key"], r["value"]) for r in rows] == [(fast, 100), (slow, 0)]
+    assert all(r["expected_poll_interval_seconds"] == 300 for r in rows)
+    params["site_id"] = str(uuid.uuid4())
+    assert (await client.get(path, headers=admin, params=params)).json() == []
+    _, denied = await _user(client, admin, [])
+    assert (await client.get(path, headers=denied, params=params)).status_code == 403
+
+
+async def test_multiday_buckets_conserve_raw_and_daily_evidence(client, auth_headers, db_session, source):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    await source(asset, count=4, seconds=86400)
+    await compact_eligible_raw(db_session, now=START + timedelta(days=730))
+    await db_session.commit()
+    # The first two-day bucket contains two daily samples and two late raw samples.
+    await source(asset, at=START + timedelta(hours=12), count=2)
+    response = await client.get(PATH, headers=admin, params=window(asset, days=366))
+    assert response.status_code == 200, response.text
+    [series] = response.json()["series"]
+    first, second = series["points"]
+    assert [p["resolution"] for p in (first, second)] == ["mixed", "daily"]
+    assert [p["sample_count"] for p in (first, second)] == [4, 2]
+    assert [p["average"] for p in (first, second)] == [0.5, 2.5]
+    assert datetime.fromisoformat(first["start"]) == START
+    assert datetime.fromisoformat(first["end"]) == datetime.fromisoformat(second["start"]) == START + timedelta(days=2)
+    assert datetime.fromisoformat(second["end"]) == START + timedelta(days=4)
+    assert series["sample_count"] == 6 and series["average"] == pytest.approx(7 / 6)
+    assert series["p50"] is None and series["p95"] is None
+
+
+async def test_partial_leading_daily_evidence_with_only_raw_points(client, auth_headers, db_session, source):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    await source(asset, count=4)
+    await compact_eligible_raw(db_session, now=START + timedelta(days=730))
+    await db_session.commit()
+    start = START + timedelta(hours=12)
+    await source(asset, at=start, count=3, seconds=1800)
+    response = await client.get(PATH, headers=admin, params=window(asset, start, days=1))
+    assert response.status_code == 200, response.text
+    [series] = response.json()["series"]
+    assert series["partial_days"] == 1
+    assert series["sample_count"] == 3 and series["average"] == 1
+    assert series["p50"] is None and series["p95"] is None
+    points = series["points"]
+    assert [p["average"] for p in points] == [0, 1, 2]
+    assert all(p["resolution"] == "raw" and p["sample_count"] == 1 for p in points)
+    assert datetime.fromisoformat(points[0]["start"]) == start
+    assert all(start <= datetime.fromisoformat(p["start"]) < datetime.fromisoformat(p["end"]) for p in points)

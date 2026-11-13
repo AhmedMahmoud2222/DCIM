@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,7 @@ async def test_history_filters_are_applied_before_one_shared_bounded_statement()
     from sqlalchemy.dialects import postgresql
 
     from app.api.v1.telemetry import metric_history
+    from app.application.access_control import UNRESTRICTED
 
     class EmptyResult:
         def all(self):
@@ -66,7 +68,7 @@ async def test_history_filters_are_applied_before_one_shared_bounded_statement()
     await metric_history(metric="temperature_c", start=datetime(2026, 1, 1, tzinfo=UTC),
         end=datetime(2026, 1, 2, tzinfo=UTC), integration_id=uuid.uuid4(),
         series_key="specific-series", registry_version="1", provenance_status=["pinned", "inferred"],
-        limit=5, db=db)
+        limit=5, db=db, ctx=SimpleNamespace(scope=UNRESTRICTED))
     assert len(db.statements) == 1
     sql = str(db.statements[0].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "CASE WHEN" in sql

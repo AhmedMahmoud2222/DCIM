@@ -654,6 +654,7 @@ async def latest_readings(
     integration_id: uuid.UUID | None = None,
     managed_asset_id: uuid.UUID | None = None,
     metric: str | None = None,
+    per_series: bool = False,
     limit: int = Query(default=100, ge=1, le=MAX_HISTORY_POINTS),
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("telemetry:read")),
@@ -664,8 +665,6 @@ async def latest_readings(
         select(TelemetryReading, Integration.poll_interval_seconds)
         .join(Integration, Integration.id == TelemetryReading.integration_id)
         .where(equipment_visible_clause(ctx.scope, TelemetryReading.managed_asset_id))
-        .order_by(TelemetryReading.occurred_at.desc())
-        .limit(limit)
     )
     if site_id is not None:
         stmt = stmt.where(equipment_in_site_clause(site_id, TelemetryReading.managed_asset_id))
@@ -675,6 +674,19 @@ async def latest_readings(
         stmt = stmt.where(TelemetryReading.managed_asset_id == managed_asset_id)
     if metric is not None:
         stmt = stmt.where(TelemetryReading.metric == metric)
+    newest = (TelemetryReading.occurred_at.desc(), TelemetryReading.id.desc())
+    if per_series:
+        # Filter before ranking so hidden or unrelated rows cannot displace a visible series.
+        identity = (
+            TelemetryReading.integration_id, TelemetryReading.managed_asset_id, TelemetryReading.external_identifier,
+            TelemetryReading.metric, TelemetryReading.unit, TelemetryReading.registry_version, TelemetryReading.series_key,
+        )
+        winners = (
+            stmt.with_only_columns(TelemetryReading.id, Integration.poll_interval_seconds)
+            .distinct(*identity).order_by(*identity, *newest).subquery()
+        )
+        stmt = select(TelemetryReading, winners.c.poll_interval_seconds).join(winners, winners.c.id == TelemetryReading.id)
+    stmt = stmt.order_by(*newest).limit(limit)
     rows = (await db.execute(stmt)).all()
     return [_out(row, poll_interval_seconds=interval) for row, interval in rows]
 

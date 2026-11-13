@@ -17,7 +17,7 @@ async function integrationRules(integrationId: string) {
   return rules;
 }
 
-export function PerformanceChart({ series, start, end }: { series: PerformanceSeries; start: string; end: string }) {
+export function PerformanceChart({ series, start, end, pollSeconds }: { series: PerformanceSeries; start: string; end: string; pollSeconds?: number | null }) {
   const canReadRules = useHasPermission("alarm:read");
   const rules = useQuery({ queryKey: ["telemetry-thresholds", series.integration_id], queryFn: () => integrationRules(series.integration_id), enabled: canReadRules });
   const applicable = (rules.data ?? []).filter(r => r.enabled && !r.needs_attention && r.metric === series.metric && r.unit === series.unit &&
@@ -35,15 +35,18 @@ export function PerformanceChart({ series, start, end }: { series: PerformanceSe
     <dl className="flex flex-wrap gap-5">{stats.map(([name,value]) => <div key={name}><dt className="text-sm font-medium text-fg-secondary">{name}</dt><dd className="font-semibold">{display(value)}</dd></div>)}</dl>
     {series.p95 !== null && <p className="text-sm">P50 and P95 use linear interpolation across raw samples in the full window.</p>}
     {series.partial_days > 0 && <p>{series.partial_days} partially covered UTC day(s) have retained aggregates excluded from these statistics.</p>}
-    {series.p95 == null && <p>Exact percentiles are unavailable for this selection.</p>}
+    {series.p95 == null && <p>Exact percentiles are unavailable when retained daily aggregates overlap the window, including partially covered days.</p>}
     {series.points.length > 0 && <figure>
-      <figcaption>Average by time bucket ({series.unit}). Blank intervals have no eligible readings.</figcaption>
+      <figcaption>Average by time bucket ({series.unit}). Each dot represents an observed bucket.</figcaption>
       <svg viewBox="0 0 1000 100" preserveAspectRatio="none" role="img" aria-label={`Time series of ${series.metric} in ${series.unit}; average by UTC time bucket`} className="h-36 w-full bg-surface-inset">
         {series.points.map((p,i) => {
           const prev = series.points[i-1];
           const center = (x(p.start) + x(p.end)) / 2;
+          const gap = prev ? Date.parse(p.start) - Date.parse(prev.end) : Infinity;
+          const rawCadence = prev?.resolution === "raw" && p.resolution === "raw" && pollSeconds && pollSeconds > 0;
+          const connect = gap === 0 || (rawCadence && Date.parse(p.start) - Date.parse(prev.start) <= 2_000 * pollSeconds);
           return <g key={p.start}>
-            {prev && Date.parse(prev.end) === Date.parse(p.start) && <line x1={(x(prev.start)+x(prev.end))/2} y1={y(prev.average)} x2={center} y2={y(p.average)} stroke="var(--viz-accent)" strokeWidth="2" vectorEffect="non-scaling-stroke" />}
+            {prev && connect && <line x1={(x(prev.start)+x(prev.end))/2} y1={y(prev.average)} x2={center} y2={y(p.average)} stroke="var(--viz-accent)" strokeWidth="2" vectorEffect="non-scaling-stroke" />}
             <circle cx={center} cy={y(p.average)} r="2.5" fill="var(--viz-accent)"><title>{p.start} — {display(p.average)} {series.unit}</title></circle>
           </g>;
         })}
@@ -53,10 +56,11 @@ export function PerformanceChart({ series, start, end }: { series: PerformanceSe
     <p className="text-sm">{!canReadRules ? "Thresholds require alarm read access." : rules.isPending ? "Loading thresholds…" : rules.isError ? "Thresholds unavailable." : applicable.length ? "Compared with current configured thresholds. Historical rule settings are unavailable." : "No comparable current thresholds."}</p>
     {applicable.map(r => {
       const breached = r.rule_type === "threshold_high" ? high > r.threshold! : low < r.threshold!;
-      return <p key={r.id}>{r.name} · {r.rule_type === "threshold_high" ? "Above" : "Below"} {r.threshold} {series.unit} · {series.sample_count ? breached ? "Breached in window" : "No observed breach" : "No samples"}</p>;
+      const clear = series.partial_days ? `No breach in eligible samples (${series.partial_days} partial UTC days excluded)` : "No observed breach";
+      return <p key={r.id}>{r.name} · {r.rule_type === "threshold_high" ? "Above" : "Below"} {r.threshold} {series.unit} · {series.sample_count ? breached ? "Breached in window" : clear : "No eligible samples"}</p>;
     })}
     <details><summary>View {series.points.length} observed buckets</summary>
-      <div role="region" aria-label="Telemetry bucket values" tabIndex={0} className="max-h-80 overflow-auto"><table className="w-full text-left text-sm"><caption className="sr-only">UTC bucket values in {series.unit}</caption><thead><tr>{["UTC start","UTC end","Resolution","Count","Min","Max","Average"].map(h => <th scope="col" key={h}>{h}</th>)}</tr></thead>
+      <div role="region" aria-label="Telemetry bucket values" tabIndex={0} className="max-h-80 overflow-auto"><table className="w-full min-w-[48rem] text-left text-sm"><caption className="sr-only">UTC bucket values in {series.unit}</caption><thead><tr>{["UTC start","UTC end","Resolution","Count","Min","Max","Average"].map(h => <th scope="col" key={h}>{h}</th>)}</tr></thead>
         <tbody>{series.points.map(p => <tr key={p.start}><td>{p.start}</td><td>{p.end}</td><td>{p.resolution}</td><td>{p.sample_count}</td><td>{display(p.minimum)}</td><td>{display(p.maximum)}</td><td>{display(p.average)}</td></tr>)}</tbody>
       </table></div>
     </details>

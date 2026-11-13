@@ -52,7 +52,7 @@ function PerformanceViewer() {
   const equipmentOptions = equipment.data?.pages.flatMap(p => p.items) ?? [];
   const live = useQuery({
     queryKey: ["performance-live",asset,site], enabled: !!asset, refetchInterval: 5_000,
-    queryFn: () => apiFetch<TelemetryReading[]>(`/telemetry/latest?${new URLSearchParams({ managed_asset_id: asset, ...(site ? {site_id:site} : {}), limit:"100" })}`),
+    queryFn: () => apiFetch<TelemetryReading[]>(`/telemetry/latest?${new URLSearchParams({ managed_asset_id: asset, ...(site ? {site_id:site} : {}), per_series:"true", limit:"100" })}`),
   });
   const recent = new Map<string, TelemetryReading>();
   for (const r of live.data ?? []) {
@@ -61,8 +61,8 @@ function PerformanceViewer() {
   }
   const liveMetrics = Array.from(new Set(Array.from(recent.values(), r => r.metric)));
   const currentMetric = metric || liveMetrics[0] || "";
-  const start = preset === "custom" ? Date.parse(customStart + "Z") : Date.parse(window.start);
-  const end = preset === "custom" ? Date.parse(customEnd + "Z") : Date.parse(window.end);
+  const start = preset === "custom" ? Date.parse(customStart + ":00Z") : Date.parse(window.start);
+  const end = preset === "custom" ? Date.parse(customEnd + ":00Z") : Date.parse(window.end);
   const valid = Number.isFinite(start) && Number.isFinite(end) && start < end && end - start <= 366 * DAY;
   const from = valid ? new Date(start).toISOString() : "";
   const to = valid ? new Date(end).toISOString() : "";
@@ -118,7 +118,8 @@ function PerformanceViewer() {
         {live.isError && <p role="alert">Live readings could not be refreshed.</p>}
         {live.data && <p className="text-sm">Updated {new Date(live.dataUpdatedAt).toISOString()} · refreshes every 5 seconds</p>}
         {live.data?.length === 0 && <p>No live readings for this equipment.</p>}
-        <div className="flex flex-wrap gap-2">{Array.from(recent, ([key,r]) => <button key={key} aria-pressed={selectedSeries === key} className={control + " text-left"} onClick={() => {setMetric(r.metric); setSelectedSeries(key);}}>
+        {live.data?.length === 100 && <p>Showing the 100 most recently updated series. Older series may be omitted.</p>}
+        <div className="flex flex-wrap gap-2">{Array.from(recent, ([key,r]) => <button key={key} aria-pressed={selectedSeries === key} className={control + " text-left aria-pressed:ring-2 aria-pressed:ring-focus"} onClick={() => {setMetric(r.metric); setSelectedSeries(key);}}>
           <span className="block">{r.metric} · {r.external_identifier}</span>
           <strong>{r.value} {r.unit}</strong>
           <span className="block text-sm">{r.occurred_at} · <MeasurementFreshness result={deriveFreshness({ sourceType:"equipment_live_metric", measuredAt:r.occurred_at, expectedIntervalSeconds:r.expected_poll_interval_seconds, now })} /></span>
@@ -127,7 +128,11 @@ function PerformanceViewer() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Performance history</h2>
         <div className="flex flex-wrap items-end gap-3">
-          <div className="grid gap-1"><label htmlFor="history-metric">Metric</label><input id="history-metric" aria-describedby="metric-hint" className={control} list="telemetry-metrics" value={metric} placeholder={liveMetrics[0]} onChange={e => {setMetric(e.target.value);setSelectedSeries("");}} /><small id="metric-hint">Select a live metric or enter a historical metric name.</small></div>
+          <div className="grid gap-1">
+            <label htmlFor="history-metric">Metric</label>
+            <input id="history-metric" aria-describedby="metric-hint" className={control} list="telemetry-metrics" value={metric} placeholder={liveMetrics[0]} onChange={e => {setMetric(e.target.value);setSelectedSeries("");}} />
+            <small id="metric-hint">Select a live metric or enter a historical metric name.</small>
+          </div>
           <datalist id="telemetry-metrics">{liveMetrics.map(m => <option key={m} value={m}/>)}</datalist>
           <label className="grid gap-1">Range<select className={control} value={preset} onChange={e => {
             setPreset(e.target.value);
@@ -135,6 +140,7 @@ function PerformanceViewer() {
             if (choice) setWindow(presetWindow(choice.days));
             else {setCustomStart(window.start.slice(0,16));setCustomEnd(window.end.slice(0,16));}
           }}>{ranges.map(r => <option key={r.label}>{r.label}</option>)}<option value="custom">Custom</option></select></label>
+          {preset !== "custom" && <button className={control} onClick={() => setWindow(presetWindow(ranges.find(r => r.label === preset)!.days))}>Update window to now</button>}
           {preset === "custom" && <><label className="grid gap-1">Start (UTC)<input type="datetime-local" className={control} value={customStart} onChange={e => setCustomStart(e.target.value)}/></label>
             <label className="grid gap-1">End (UTC)<input type="datetime-local" className={control} value={customEnd} onChange={e => setCustomEnd(e.target.value)}/></label></>}
           {selectedSeries && <button className={control} onClick={() => setSelectedSeries("")}>Show all series for {currentMetric}</button>}
@@ -146,7 +152,7 @@ function PerformanceViewer() {
         {history.isFetching && <p role="status">Loading performance history…</p>}
         {history.isError && <div><p role="alert">{history.error.message}</p><button className={control} onClick={() => void history.refetch()}>Retry history</button></div>}
         {history.data && !history.isError && !matching.length && <p>No history for this selection.</p>}
-        {!history.isError && matching.map(s => <PerformanceChart key={identity(s)} series={s} start={from} end={to}/>)}
+        {!history.isError && matching.map(s => <PerformanceChart key={identity(s)} series={s} start={from} end={to} pollSeconds={recent.get(identity(s))?.expected_poll_interval_seconds}/>)}
       </section>
     </>}
   </div>;
