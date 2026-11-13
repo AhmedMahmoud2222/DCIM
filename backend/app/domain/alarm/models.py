@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -15,7 +16,7 @@ RULE_TYPES = ("threshold_high", "threshold_low", "availability_unavailable")
 ALARM_STATUSES = ("ACTIVE", "ACKNOWLEDGED", "CLEARED")
 # Severity is its own dimension: it says how serious a condition is, never where it is in its handling.
 ALARM_SEVERITIES = ("critical", "warning", "info")
-DEFAULT_ALARM_SEVERITY = "warning"
+DEFAULT_ALARM_SEVERITY: Literal["critical", "warning", "info"] = "warning"
 
 
 class AlarmRule(Base, UUIDPkMixin, TimestampMixin):

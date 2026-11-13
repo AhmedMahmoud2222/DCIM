@@ -29,7 +29,7 @@ python -m app.application.demo_loader verify
 python -m app.application.demo_loader purge   --confirm-local-demo [--dry-run]
 ```
 
-Useful options: `--steps existing,sensors,floorplans,devices`, `--history-hours 24`, `--device-history-hours 24`, `--integration DEMO-SITE-01="<integration name>"` (only when the loader cannot pick a site's integration by `site_id` or by the site code in its name), `--actor-email you@example.com` (user recorded on the floor-plan import and calibration; default is the oldest active user), `--expect-racks 100 --expect-devices 500`.
+Useful options: `--steps existing,sensors,floorplans,devices`, `--history-hours 24`, `--device-history-hours 24`, `--as-of 2026-11-13T12:00:00Z` (timezone-aware ISO 8601, not in the future, apply only; refresh always uses the live clock), `--sequential`, `--site-prefix`, `--protect-prefix`, `--integration DEMO-SITE-01="<integration name>"` (only when the loader cannot pick a site's integration by `site_id` or by the site code in its name), `--actor-email you@example.com` (user recorded on the floor-plan import and calibration; default is the oldest active user), `--expect-racks 100 --expect-devices 500`.
 
 Every command prints one JSON document on stdout and exits 0 only when everything passed.
 
@@ -74,12 +74,48 @@ Confirm three `DEMO-SITE-0n` sites, 100 racks, 500 devices, one integration and 
 
 ### 4. Seed
 
+**Pilot first.** One site, two hours of device history, to prove the pipeline on your data before the long run (a few minutes):
+
 ```powershell
-docker compose exec backend python -m app.application.demo_loader apply --confirm-local-demo --actor-email you@example.com `
-  --expect-racks 100 --expect-devices 500 | Tee-Object -FilePath ".\backups\demo-loader-apply-$stamp.json"
+docker compose exec backend python -m app.application.demo_loader apply --confirm-local-demo --site-prefix DEMO-SITE-01 `
+  --actor-email you@example.com --device-history-hours 2 --sequential
+docker compose exec backend python -m app.application.demo_loader verify --site-prefix DEMO-SITE-01
 ```
 
-The first run creates about 200 mappings and 1,000 device mappings and ingests roughly 350,000 readings; expect it to take a while (see the measured throughput in the PR). Progress is written to stderr. If it is interrupted, run it again: finished work is skipped.
+A pilot leaves real, correctly flagged data in place; the full run below reuses it and fills the rest (the loader skips every slot already stored).
+
+**Full run, 24 hours for every series.** The work is Python-CPU bound, so run one process per site; each changes only its own site, and the three are independent:
+
+```powershell
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$asOf  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')     # one clock for all three, explicit UTC
+$jobs = 'DEMO-SITE-01','DEMO-SITE-02','DEMO-SITE-03' | ForEach-Object {
+  Start-Job -Name $_ -ArgumentList $_, $asOf, $stamp -ScriptBlock {
+    param($site, $asOf, $stamp)
+    Set-Location $using:PWD
+    docker compose exec -T backend python -m app.application.demo_loader apply --confirm-local-demo --site-prefix $site `
+      --actor-email you@example.com --as-of $asOf --sequential --no-verify 2>$null |
+      Out-File -Encoding utf8 ".\backups\demo-loader-apply-$site-$stamp.json"
+    $LASTEXITCODE
+  }
+}
+$jobs | Wait-Job | Out-Null
+$jobs | ForEach-Object { '{0}: exit {1}' -f $_.Name, ((Receive-Job $_) | Select-Object -Last 1) }
+```
+
+Every job must print `exit 0`. If one does not, read its JSON file (`failed_collectors` and `rejected` say what went wrong) and run that site's command again: finished slots are skipped, nothing is duplicated.
+
+A single-process run (`apply --confirm-local-demo --actor-email ...`, no `--site-prefix`) does the same work in one process and is simpler; it is about three times slower.
+
+**Measured throughput** (4-core Linux, PostgreSQL 16, same 18,297 readings in each mode, 0 rejected, 0 duplicates; see `backend/tests/integration/test_demo_loader_benchmark.py` and the table in the PR):
+
+| Mode | Elapsed | Readings/s |
+| --- | --- | --- |
+| one process, one collector at a time | 169.7 s | 108 |
+| one process, one session per collector | 128.8 s | 142 |
+| three processes, one per site | 57.4 s | 319 |
+
+The client Python process, not PostgreSQL, is the bottleneck (134 s of client CPU against 29 s of database CPU in the sequential run), which is why separate processes scale and extra sessions inside one process do not. A full seed is about 349,000 readings (1,000 device series + 200 sensor series + 9 existing series, 289 slots each): about **54 minutes** in one process or about **18 minutes** with three. These are projections from the measured rates, not a run against your database; your hardware and Docker Desktop's resource limits will change them.
 
 ### 5. Keep readings fresh
 

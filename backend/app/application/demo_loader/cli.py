@@ -238,8 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name in ("apply", "refresh"):
             p.add_argument("--sequential", action="store_true", help="ingest one collector at a time instead of one session per collector")
         if name in ("apply", "verify"):
-            p.add_argument("--expect-racks", type=int, default=100)
-            p.add_argument("--expect-devices", type=int, default=500)
+            p.add_argument("--expect-racks", type=int, default=None, help="fail unless exactly this many demo racks are in scope (the demo has 100)")
+            p.add_argument("--expect-devices", type=int, default=None, help="fail unless exactly this many devices are in scope (the demo has 500)")
             p.add_argument("--history-hours", type=float, default=DEFAULT_HISTORY_HOURS)
         if name == "apply":
             p.add_argument("--steps", type=lambda v: [s.strip() for s in v.split(",")], default=list(STEPS), help=f"comma list of {','.join(STEPS)}")
