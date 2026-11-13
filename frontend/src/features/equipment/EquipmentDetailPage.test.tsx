@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -157,6 +157,35 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     expect(await screen.findByText("100%")).toBeInTheDocument();
     expect(screen.getByText("25 degC")).toBeInTheDocument();
     expect(screen.queryByText("77")).not.toBeInTheDocument();
+  });
+
+  describe("live metric polling", () => {
+    const setVisibility = (state: "visible" | "hidden") => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      setVisibility("visible");
+    });
+    afterEach(() => {
+      setVisibility("visible");
+      vi.useRealTimers();
+    });
+
+    it("refetches the live metrics every 5 s while visible and stops while the tab is hidden", async () => {
+      vi.mocked(telemetryApi.getLatestTelemetry).mockClear();
+      renderWithProviders(<EquipmentDetailPage />, routeOptions);
+      await waitFor(() => expect(telemetryApi.getLatestTelemetry).toHaveBeenCalledTimes(1));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_100); });
+      await waitFor(() => expect(telemetryApi.getLatestTelemetry).toHaveBeenCalledTimes(2));
+
+      await act(async () => { setVisibility("hidden"); });
+      const whileHidden = vi.mocked(telemetryApi.getLatestTelemetry).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(telemetryApi.getLatestTelemetry).toHaveBeenCalledTimes(whileHidden);
+    });
   });
 
   describe("live metric freshness", () => {
