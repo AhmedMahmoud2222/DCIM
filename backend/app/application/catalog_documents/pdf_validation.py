@@ -162,8 +162,6 @@ def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
 
     Returns `(file offset of the object, raw payload)` for every stream object, for
     `_outside_stream_payloads()`."""
-    from pypdf.generic import IndirectObject, StreamObject
-
     xref = cast(dict, reader.xref)
     compressed = cast(dict, reader.xref_objStm)
     payloads: list[tuple[int, bytes]] = []
@@ -172,18 +170,9 @@ def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
     while True:
         # Loading an object can make the parser add entries (it repairs as it reads), so the
         # table is read again until a pass finds nothing new, for at most _MAX_WALK_PASSES.
-        # A number listed both directly and as an object-stream member counts as a member.
-        entries: dict[tuple[int, int], object] = {}
-        for generation, table in list(xref.items()):
-            for number, offset in list(table.items()):
-                entries[(number, generation)] = offset
-        for number in list(compressed):
-            entries[(number, 0)] = None
-        references = [
-            (number, generation, offset) for (number, generation), offset in entries.items() if (number, generation) not in seen
-        ]
+        references = _unseen_references(xref, compressed, seen)
         if not references:
-            break
+            return payloads
         passes += 1
         if passes > _MAX_WALK_PASSES:
             raise _reject("too_complex", "The PDF cross-reference table keeps changing while it is read.")
@@ -192,23 +181,47 @@ def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
         containers = {entry[0] for entry in list(compressed.values())}
         for number, generation, offset in references:
             seen.add((number, generation))
-            is_container = generation == 0 and number in containers
-            try:
-                obj = IndirectObject(number, generation, reader).get_object()
-            except Exception as exc:  # noqa: BLE001  whatever the parser raised, the entry was not inspected
-                if offset is None or is_container:
-                    raise _reject("invalid_structure", "The PDF holds an object stream that could not be read.") from exc
-                continue
-            if is_container and not isinstance(obj, StreamObject):
-                raise _reject("invalid_structure", "The PDF holds an object stream that could not be read.")
-            if isinstance(obj, StreamObject):
-                raw = getattr(obj, "_data", None)
-                if isinstance(raw, bytes) and raw and isinstance(offset, int) and offset >= 0:
-                    payloads.append((offset, raw))
-                if is_container or _declared_type(obj) == "/ObjStm":
-                    _scan_decoded_object_stream(obj)
-            _scan_object(obj)
-    return payloads
+            payload = _inspect_reference(reader, number, generation, offset, generation == 0 and number in containers)
+            if payload is not None:
+                payloads.append(payload)
+
+
+def _unseen_references(xref: dict, compressed: dict, seen: set[tuple[int, int]]) -> list[tuple[int, int, object]]:
+    """Cross-reference entries not yet inspected. A number listed both directly and as an
+    object-stream member counts as a member (offset `None`), the stricter rule."""
+    entries: dict[tuple[int, int], object] = {}
+    for generation, table in list(xref.items()):
+        for number, offset in list(table.items()):
+            entries[(number, generation)] = offset
+    for number in list(compressed):
+        entries[(number, 0)] = None
+    return [(number, generation, offset) for (number, generation), offset in entries.items() if (number, generation) not in seen]
+
+
+def _inspect_reference(
+    reader: "PdfReader", number: int, generation: int, offset: object, is_container: bool
+) -> tuple[int, bytes] | None:
+    """Loads and checks one entry. Returns `(offset, raw payload)` when it is a stream the byte
+    scan may skip, else `None`."""
+    from pypdf.generic import IndirectObject, StreamObject
+
+    try:
+        obj = IndirectObject(number, generation, reader).get_object()
+    except Exception as exc:  # noqa: BLE001  whatever the parser raised, the entry was not inspected
+        if offset is None or is_container:
+            raise _reject("invalid_structure", "The PDF holds an object stream that could not be read.") from exc
+        return None
+    if is_container and not isinstance(obj, StreamObject):
+        raise _reject("invalid_structure", "The PDF holds an object stream that could not be read.")
+    payload = None
+    if isinstance(obj, StreamObject):
+        raw = getattr(obj, "_data", None)
+        if isinstance(raw, bytes) and raw and isinstance(offset, int) and offset >= 0:
+            payload = (offset, raw)
+        if is_container or _declared_type(obj) == "/ObjStm":
+            _scan_decoded_object_stream(obj)
+    _scan_object(obj)
+    return payload
 
 
 def _declared_type(stream: object) -> object:
@@ -282,6 +295,40 @@ def _outside_stream_payloads(content: bytes, payloads: list[tuple[int, bytes]]) 
     return b"".join(pieces)
 
 
+def _check_catalog(root: object) -> None:
+    """Document-level actions, name-tree scripts and attachments, and XFA forms."""
+    if "/OpenAction" in root or "/AA" in root:  # type: ignore[operator]
+        raise _reject("active_content", "PDF defines document-level actions.")
+    names = root.get("/Names")  # type: ignore[attr-defined]
+    if names is not None:
+        names_dict = names.get_object()
+        if "/JavaScript" in names_dict or "/EmbeddedFiles" in names_dict:
+            raise _reject("active_content", "PDF contains scripts or embedded files.")
+    acro_form = root.get("/AcroForm")  # type: ignore[attr-defined]
+    if acro_form is not None and "/XFA" in acro_form.get_object():
+        raise _reject("active_content", "PDF contains XFA forms.")
+
+
+def _check_pages(reader: "PdfReader") -> None:
+    """Page-level and annotation-level actions."""
+    scanned = 0
+    for index, page in enumerate(reader.pages):
+        if "/AA" in page:
+            raise _reject("active_content", f"PDF page {index + 1} defines page actions.")
+        annotations = page.get("/Annots")
+        if annotations is None:
+            continue
+        for annotation_ref in cast(list, annotations.get_object()):
+            scanned += 1
+            if scanned > _MAX_ANNOTATIONS_SCANNED:
+                raise _reject("too_complex", "The PDF contains too many annotations to inspect safely.")
+            annotation = annotation_ref.get_object()
+            if "/AA" in annotation:
+                raise _reject("active_content", f"PDF annotation on page {index + 1} defines actions.")
+            if "/A" in annotation:
+                _scan_action(annotation["/A"], f"page {index + 1}")
+
+
 def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
     """Raises PdfRejected. Runs in the current process; API callers use
     `validate_pdf_isolated()`."""
@@ -307,36 +354,9 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
         if page_count > max_pages:
             raise _reject("too_many_pages", f"The PDF has {page_count} pages; the maximum allowed is {max_pages}.")
 
-        root = cast(DictionaryObject, reader.trailer["/Root"])
-        if "/OpenAction" in root or "/AA" in root:
-            raise _reject("active_content", "PDF defines document-level actions.")
-        names = root.get("/Names")
-        if names is not None:
-            names_dict = cast(DictionaryObject, names.get_object())
-            if "/JavaScript" in names_dict or "/EmbeddedFiles" in names_dict:
-                raise _reject("active_content", "PDF contains scripts or embedded files.")
-        acro_form = root.get("/AcroForm")
-        if acro_form is not None and "/XFA" in cast(DictionaryObject, acro_form.get_object()):
-            raise _reject("active_content", "PDF contains XFA forms.")
-
+        _check_catalog(cast(DictionaryObject, reader.trailer["/Root"]))
         stream_payloads = _scan_all_objects(reader)
-
-        scanned = 0
-        for index, page in enumerate(reader.pages):
-            if "/AA" in page:
-                raise _reject("active_content", f"PDF page {index + 1} defines page actions.")
-            annotations = page.get("/Annots")
-            if annotations is None:
-                continue
-            for annotation_ref in cast(list, annotations.get_object()):
-                scanned += 1
-                if scanned > _MAX_ANNOTATIONS_SCANNED:
-                    raise _reject("too_complex", "The PDF contains too many annotations to inspect safely.")
-                annotation = cast(DictionaryObject, annotation_ref.get_object())
-                if "/AA" in annotation:
-                    raise _reject("active_content", f"PDF annotation on page {index + 1} defines actions.")
-                if "/A" in annotation:
-                    _scan_action(annotation["/A"], f"page {index + 1}")
+        _check_pages(reader)
     except PdfRejected:
         raise
     except Exception as exc:  # noqa: BLE001  the parser raises more than its own error types (AssertionError, for one)
