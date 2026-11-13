@@ -66,7 +66,10 @@ _MAX_WALK_PASSES = 5
 # to deleted objects) because each is cheap, and a large file few. At most 96 MB of scanning in
 # total (about 1.3 s for the largest accepted file here, a few seconds on slow hardware), at most
 # 1000 lookups (the parser's fixed cost per lookup), and never fewer than 4. The cap of 1000 holds
-# up to about 100 KB and the floor of 4 from about 24 MB (above 64 MB the floor exceeds the budget).
+# up to about 100 KB and the floor of 4 takes over from about 24 MB, where 4 lookups already cost
+# the whole budget (above that the floor exceeds it: 100 MB at 25 MB, 256 MB at 64 MB).
+# The parser repairs two ways: an unlisted reference, and a listed entry whose offset does not
+# lead to the expected header. Both cost a whole-file search and both are charged.
 _MAX_UNLISTED_LOOKUPS = 1000
 _MIN_UNLISTED_LOOKUPS = 4
 _LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
@@ -126,9 +129,11 @@ class _LookupBudget:
     `install()` wraps `reader.get_object`, the one function every resolution goes through (the
     page tree, `/Annots` arrays and members, actions and their `/Next` links, stream `/Type`
     values, the object walk), so no call site has to remember to charge. A reference is free when
-    the table lists it, when an earlier lookup already added it, or when it names an object-stream
-    member with generation 0 (members always have generation 0, so a nonzero generation of the
-    same number is a different, unlisted object). Once the budget is spent every further unlisted
+    the table lists it and its offset leads to the object, when an earlier lookup already added it,
+    or when it names an object-stream member with generation 0 (members always have generation 0,
+    so a nonzero generation of the same number is a different, unlisted object). A listed entry
+    whose offset is wrong makes the parser search the whole file and rewrite the entry, so a
+    changed offset is charged after the lookup. Once the budget is spent every further charged
     lookup raises, and `check()` repeats the verdict in case the parser swallowed the exception."""
 
     def __init__(self, reader: "PdfReader", file_size: int) -> None:
@@ -145,19 +150,35 @@ class _LookupBudget:
         original = self._reader.get_object
 
         def counted(reference: object) -> object:
+            self.check()  # a spent budget refuses every resolution, so no repair scan starts
             self._charge(reference)
-            return original(reference)  # type: ignore[arg-type]
+            before = self._listed_offset(reference)
+            result = original(reference)  # type: ignore[arg-type]
+            if before is not None and self._listed_offset(reference) != before:
+                self._spend()
+            return result
 
         self._reader.get_object = counted  # type: ignore[method-assign, assignment]
 
-    def _charge(self, reference: object) -> None:
+    @staticmethod
+    def _identify(reference: object) -> tuple[int | None, int]:
         number: int | None = reference if isinstance(reference, int) else getattr(reference, "idnum", None)
-        generation: int = 0 if isinstance(reference, int) else getattr(reference, "generation", 0)
+        return number, 0 if isinstance(reference, int) else getattr(reference, "generation", 0)
+
+    def _listed_offset(self, reference: object) -> int | None:
+        number, generation = self._identify(reference)
+        return cast(dict, self._reader.xref).get(generation, {}).get(number)
+
+    def _charge(self, reference: object) -> None:
+        number, generation = self._identify(reference)
         if number is None:
             return
         listed = cast(dict, self._reader.xref).get(generation, {})
         if number in listed or (generation == 0 and number in cast(dict, self._reader.xref_objStm)):
             return
+        self._spend()
+
+    def _spend(self) -> None:
         self._spent += 1
         if self._spent > self.limit:
             raise self._exceeded()

@@ -391,7 +391,7 @@ def _one_lookup_seconds(content: bytes) -> float:
     best = float("inf")
     for _ in range(3):
         started = time.perf_counter()
-        pattern.search(bytes(bytearray(content)))
+        pattern.search(bytes(memoryview(content)))
         best = min(best, time.perf_counter() - started)
     return best
 
@@ -557,6 +557,27 @@ def test_xref_entries_with_wrong_offsets_in_a_small_file_are_accepted(shift):
     if any(PdfReader(io.BytesIO(content), strict=False).xref.values()):
         pytest.skip("this pypdf repairs the table when it opens the file, so the premise does not hold")
     assert validate_pdf(content, **LIMITS).page_count == 1
+
+
+def _misdirected_xref_pdf(count: int, padding: int = 0) -> bytes:
+    """Every in-use entry points at the next object's header. pypdf keeps the table, then repairs
+    each entry on first use with a whole-file search, although the table lists the object."""
+    content = _annotated_page_pdf(count, listed=True, padding=padding)
+    offsets = [int(m.group(1)) for m in re.finditer(rb"(\d{10}) 00000 n ", content)]
+    following = dict(zip(offsets, offsets[1:] + offsets[:1], strict=True))
+    return re.sub(rb"(\d{10}) 00000 n ", lambda m: b"%010d 00000 n " % following[int(m.group(1))], content)
+
+
+def test_listed_entries_with_wrong_offsets_are_charged_when_the_parser_repairs_them():
+    """The second repair path: the table lists the object, the offset leads elsewhere, and pypdf
+    searches the whole file to fix it. 24 MB of file with 16 such entries took 3.7 s unbudgeted."""
+    content = _misdirected_xref_pdf(12, padding=24 * 1024 * 1024)
+    assert any(PdfReader(io.BytesIO(content), strict=False).xref.values()), "pypdf must keep the table"
+    assert _assert_refused_within_the_allowance(content) == 4
+
+
+def test_listed_entries_with_wrong_offsets_in_a_small_file_are_accepted():
+    assert validate_pdf(_misdirected_xref_pdf(200), **LIMITS).page_count == 1
 
 
 def test_many_references_to_deleted_objects_in_a_small_file_are_accepted():
