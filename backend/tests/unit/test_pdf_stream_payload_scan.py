@@ -285,7 +285,6 @@ def _timed(function, payload: bytes) -> float:
         ("digit_then_tabs", 1.5),
         ("digit_space_repeated", 1.5),
         ("two_digits_in_long_whitespace", 1.5),
-        ("comment_lines_repeated", 6.0),
     ],
 )
 def test_object_syntax_rule_is_linear_on_a_25_mb_payload(shape, limit):
@@ -297,9 +296,21 @@ def test_object_syntax_rule_is_linear_on_a_25_mb_payload(shape, limit):
         "digit_then_tabs": b"9" + b"\t" * size,
         "digit_space_repeated": b"1 " * (size // 2),
         "two_digits_in_long_whitespace": b"9" + b" " * (size // 2) + b"9" + b" " * (size // 2),
-        "comment_lines_repeated": b"%x\n" * (size // 3),
     }[shape]
     assert _timed(pdf_validation._carries_object_syntax, payload + b"obj") < limit
+
+
+def test_object_syntax_rule_scales_linearly_on_comment_lines():
+    """Comment lines are the costliest shape. Compare sizes on the same machine so the check does
+    not depend on its speed: five times the payload may cost about five times as much, a
+    quadratic rule would cost twenty-five times."""
+    def payload(megabytes: int) -> bytes:
+        return b"%x\n" * (megabytes * 1024 * 1024 // 3) + b"obj"
+
+    small, large = payload(5), payload(25)
+    small_time = min(_timed(pdf_validation._carries_object_syntax, small) for _ in range(3))
+    large_time = _timed(pdf_validation._carries_object_syntax, large)
+    assert large_time < 12 * small_time
 
 
 def _chain_of_unlisted_objects(length: int) -> bytes:
@@ -318,4 +329,103 @@ def test_long_chain_of_unlisted_objects_is_rejected_by_the_pass_cap(monkeypatch)
     content = _chain_of_unlisted_objects(60)
     assert _reject_code(content) == "too_complex"
     monkeypatch.setattr(pdf_validation, "_MAX_WALK_PASSES", 1000)
-    assert validate_pdf(content, **LIMITS).page_count == 1  # only the cap refuses it
+    assert _reject_code(content) == "too_complex"  # the lookup budget refuses it without the pass cap
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the caps refuse it
+
+
+_ANNOTATION = b"<</Type/Annot/Subtype/Text/Rect[0 0 1 1]>>"
+
+
+def _annotated_page_pdf(count: int, *, listed: bool = False, padding: int = 0) -> bytes:
+    """A page whose /Annots lists `count` annotations. Unlisted ones are in the file body but not
+    in the cross-reference table, so resolving each makes pypdf search the whole file."""
+    first = 10
+    references = b" ".join(b"%d 0 R" % (first + index) for index in range(count))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[" + references + b"]>>",
+        4: _stream(b"q Q" + b" " * padding),
+    }
+    if listed:
+        objects.update({first + index: _ANNOTATION for index in range(count)})
+        return _classic_pdf(objects)
+    body = b"".join(b"%d 0 obj\n" % (first + index) + _ANNOTATION + b"\nendobj\n" for index in range(count))
+    return _classic_pdf(objects, after=body)
+
+
+@pytest.mark.parametrize("count", [1, 8, 32])
+def test_a_few_unlisted_annotations_are_accepted(count):
+    assert validate_pdf(_annotated_page_pdf(count), **LIMITS).page_count == 1
+
+
+def test_listed_annotations_cost_no_budget():
+    assert validate_pdf(_annotated_page_pdf(500, listed=True), **LIMITS).page_count == 1
+
+
+def test_many_unlisted_annotations_are_rejected_by_the_lookup_budget(monkeypatch):
+    content = _annotated_page_pdf(200)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+def test_unlisted_annotations_on_a_large_file_are_refused_quickly():
+    """800 unlisted annotations in a 2 MB file took 19 s: one whole-file search each."""
+    content = _annotated_page_pdf(800, padding=2 * 1024 * 1024)
+    started = time.perf_counter()
+    assert _reject_code(content) == "too_complex"
+    assert time.perf_counter() - started < 6.0
+
+
+def _action_chain_pdf(length: int) -> bytes:
+    """A link annotation whose /A points at an unlisted action, each with a /Next to the next."""
+    chain = b"".join(
+        b"%d 0 obj\n<</S/URI/URI(https://example.com)/Next %d 0 R>>\nendobj\n" % (20 + index, 21 + index) for index in range(length)
+    )
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[10 0 R]>>",
+        4: _stream(b"q Q"),
+        10: b"<</Type/Annot/Subtype/Link/Rect[0 0 1 1]/A 20 0 R>>",
+    }
+    return _classic_pdf(objects, after=chain)
+
+
+def test_short_chain_of_unlisted_actions_is_accepted():
+    assert validate_pdf(_action_chain_pdf(3), **LIMITS).page_count == 1
+
+
+def test_long_chain_of_unlisted_actions_is_rejected_by_the_lookup_budget(monkeypatch):
+    content = _action_chain_pdf(80)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+def _action_fan_out_pdf(width: int) -> bytes:
+    """An action whose /Next is an array of `width` references to unlisted actions."""
+    members = b" ".join(b"%d 0 R" % (21 + index) for index in range(width))
+    body = b"20 0 obj\n<</S/URI/URI(https://example.com)/Next[" + members + b"]>>\nendobj\n"
+    body += b"".join(b"%d 0 obj\n<</S/URI/URI(https://example.com)>>\nendobj\n" % (21 + index) for index in range(width))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[10 0 R]>>",
+        4: _stream(b"q Q"),
+        10: b"<</Type/Annot/Subtype/Link/Rect[0 0 1 1]/A 20 0 R>>",
+    }
+    return _classic_pdf(objects, after=body)
+
+
+def test_small_fan_out_of_unlisted_actions_is_accepted():
+    assert validate_pdf(_action_fan_out_pdf(4), **LIMITS).page_count == 1
+
+
+def test_wide_fan_out_of_unlisted_actions_is_rejected_by_the_lookup_budget(monkeypatch):
+    content = _action_fan_out_pdf(100)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it

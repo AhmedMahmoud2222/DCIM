@@ -58,6 +58,11 @@ _MAX_NODES_PER_OBJECT = 50000
 # adding entries after this many passes is a chain built to make the walk cost a file scan per
 # object.
 _MAX_WALK_PASSES = 5
+# Resolving a reference the cross-reference table does not list makes the parser copy the file
+# and search it for the object header, once per reference, so a page that lists hundreds of such
+# annotations costs one file scan each (19 s for 800 on a 2 MB file). The references a whole
+# validation may resolve this way are capped; legitimate files list their objects.
+_MAX_UNLISTED_LOOKUPS = 32
 # The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
 _FORBIDDEN_NAMES = frozenset(
     {
@@ -108,18 +113,44 @@ def _names_normalized(content: bytes) -> bytes:
     return _NAME_HEX_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), content)
 
 
-def _scan_action(action: object, where: str) -> None:
+class _LookupBudget:
+    """Counts references resolved although the cross-reference table does not list them.
+
+    `charge()` is called with a raw value before it is resolved. A reference whose object the
+    table lists, or that an earlier lookup already added to the table, is free."""
+
+    def __init__(self, reader: "PdfReader") -> None:
+        self._xref = cast(dict, reader.xref)
+        self._compressed = cast(dict, reader.xref_objStm)
+        self._spent = 0
+
+    def charge(self, value: object) -> None:
+        from pypdf.generic import IndirectObject
+
+        if not isinstance(value, IndirectObject):
+            return
+        if value.idnum in self._xref.get(value.generation, {}) or value.idnum in self._compressed:
+            return
+        self._spent += 1
+        if self._spent > _MAX_UNLISTED_LOOKUPS:
+            raise _reject("too_complex", "The PDF refers to too many objects its cross-reference table does not list.")
+
+
+def _scan_action(action: object, where: str, budget: _LookupBudget) -> None:
+    budget.charge(action)
     resolved = action.get_object() if hasattr(action, "get_object") else action
     if not hasattr(resolved, "get"):
         return
+    budget.charge(dict.get(cast(dict, resolved), "/S"))
     action_type = resolved.get("/S")
     if action_type is not None and str(action_type) in _FORBIDDEN_ACTION_TYPES:
         raise _reject("active_content", f"PDF contains a {action_type} action ({where}).")
+    budget.charge(dict.get(cast(dict, resolved), "/Next"))
     following = resolved.get("/Next")
     if following is not None:
         following = following.get_object()
         for item in following if isinstance(following, list) else [following]:
-            _scan_action(item, where)
+            _scan_action(item, where, budget)
 
 
 def _has_forbidden_name(data: bytes) -> bool:
@@ -148,7 +179,7 @@ def _scan_decoded_object_stream(stream: object) -> None:
         raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
 
 
-def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
+def _scan_all_objects(reader: "PdfReader", budget: _LookupBudget) -> list[tuple[int, bytes]]:
     """Checks every parsed object, including those stored in compressed object streams that
     the raw byte scan cannot see and the page/catalog walk may not reach (outlines, fields no
     page references). Dictionary keys, name values and `/S` action types are compared to the
@@ -181,7 +212,9 @@ def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
         containers = {entry[0] for entry in list(compressed.values())}
         for number, generation, offset in references:
             seen.add((number, generation))
-            payload = _inspect_reference(reader, number, generation, offset, generation == 0 and number in containers)
+            payload = _inspect_reference(
+                reader, number, generation, offset, generation == 0 and number in containers, budget
+            )
             if payload is not None:
                 payloads.append(payload)
 
@@ -199,7 +232,7 @@ def _unseen_references(xref: dict, compressed: dict, seen: set[tuple[int, int]])
 
 
 def _inspect_reference(
-    reader: "PdfReader", number: int, generation: int, offset: object, is_container: bool
+    reader: "PdfReader", number: int, generation: int, offset: object, is_container: bool, budget: _LookupBudget
 ) -> tuple[int, bytes] | None:
     """Loads and checks one entry. Returns `(offset, raw payload)` when it is a stream the byte
     scan may skip, else `None`."""
@@ -220,7 +253,7 @@ def _inspect_reference(
             payload = (offset, raw)
         if is_container or _declared_type(obj) == "/ObjStm":
             _scan_decoded_object_stream(obj)
-    _scan_object(obj)
+    _scan_object(obj, budget)
     return payload
 
 
@@ -233,7 +266,7 @@ def _declared_type(stream: object) -> object:
         return None
 
 
-def _scan_object(obj: object) -> None:
+def _scan_object(obj: object, budget: _LookupBudget) -> None:
     """Walks one object and its direct children for forbidden keys, names and action types."""
     from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject
 
@@ -254,6 +287,7 @@ def _scan_object(obj: object) -> None:
             continue
         if _FORBIDDEN_KEYS.intersection(candidate.keys()):
             raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
+        budget.charge(dict.get(candidate, "/S"))
         action_type = candidate.get("/S")
         if action_type is not None and str(action_type) in _FORBIDDEN_ACTION_TYPES:
             raise _reject("active_content", f"PDF contains a {action_type} action.")
@@ -309,7 +343,7 @@ def _check_catalog(root: object) -> None:
         raise _reject("active_content", "PDF contains XFA forms.")
 
 
-def _check_pages(reader: "PdfReader") -> None:
+def _check_pages(reader: "PdfReader", budget: _LookupBudget) -> None:
     """Page-level and annotation-level actions."""
     scanned = 0
     for index, page in enumerate(reader.pages):
@@ -322,11 +356,13 @@ def _check_pages(reader: "PdfReader") -> None:
             scanned += 1
             if scanned > _MAX_ANNOTATIONS_SCANNED:
                 raise _reject("too_complex", "The PDF contains too many annotations to inspect safely.")
+            budget.charge(annotation_ref)
             annotation = annotation_ref.get_object()
             if "/AA" in annotation:
                 raise _reject("active_content", f"PDF annotation on page {index + 1} defines actions.")
             if "/A" in annotation:
-                _scan_action(annotation["/A"], f"page {index + 1}")
+                budget.charge(dict.get(annotation, "/A"))
+                _scan_action(annotation["/A"], f"page {index + 1}", budget)
 
 
 def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
@@ -355,8 +391,9 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
             raise _reject("too_many_pages", f"The PDF has {page_count} pages; the maximum allowed is {max_pages}.")
 
         _check_catalog(cast(DictionaryObject, reader.trailer["/Root"]))
-        stream_payloads = _scan_all_objects(reader)
-        _check_pages(reader)
+        budget = _LookupBudget(reader)
+        stream_payloads = _scan_all_objects(reader, budget)
+        _check_pages(reader, budget)
     except PdfRejected:
         raise
     except Exception as exc:  # noqa: BLE001  the parser raises more than its own error types (AssertionError, for one)
