@@ -73,8 +73,14 @@ _MAX_WALK_PASSES = 5
 _MAX_UNLISTED_LOOKUPS = 1000
 _MIN_UNLISTED_LOOKUPS = 4
 _LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
+# What the parser accepts at a listed offset before it falls back to searching the file: one
+# comment, then whitespace as the parser defines it (NUL, tab, line feed, form feed, carriage
+# return, space; not vertical tab), then the numbers with any leading zeros, then `obj`.
+_HEADER_AT_OFFSET = (
+    rb"(?:%%[^\r\n]*[\r\n])?[\x00\t\n\x0c\r ]*0*%d[\x00\t\n\x0c\r ]+0*%d[\x00\t\n\x0c\r ]+obj"
+)
 # How much of the file at a listed offset is read to see whether it starts the object's header.
-_HEADER_PROBE_BYTES = 64
+_HEADER_PROBE_BYTES = 256
 # The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
 _FORBIDDEN_NAMES = frozenset(
     {
@@ -177,7 +183,7 @@ class _LookupBudget:
             head = stream.read(_HEADER_PROBE_BYTES)
         finally:
             stream.seek(position)
-        return re.match(rb"\s*%d\s+%d\s+obj" % (number, generation), head) is not None
+        return re.match(_HEADER_AT_OFFSET % (number, generation), head) is not None
 
     def _charge(self, reference: object) -> None:
         number, generation = self._identify(reference)

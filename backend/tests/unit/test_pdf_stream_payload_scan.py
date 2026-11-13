@@ -633,6 +633,39 @@ def test_the_acceptance_edge_at_the_production_size_limit_is_four_stale_referenc
     assert caught.value.code == "too_complex"
 
 
+@pytest.mark.parametrize(
+    ("before_the_header", "expected"),
+    [
+        (b"", True),
+        (b"\n", True),
+        (b"\n\n\n\n", True),
+        (b"\x00", True),
+        (b"\x0c", True),
+        (b"% a comment\n", True),
+        (b"\x0b", False),  # vertical tab is not whitespace to the parser, so it searches the file
+        (b"x", False),
+    ],
+)
+def test_the_header_probe_matches_where_the_parser_reads_in_place(before_the_header, expected):
+    data = b"." * 10 + before_the_header + b"5 0 obj\n<<>>\nendobj"
+    reader = SimpleNamespace(xref={0: {5: 10}}, xref_objStm={}, stream=io.BytesIO(data))
+    budget = pdf_validation._LookupBudget(reader, 1000)
+    assert budget._leads_to_header(5, 0, 10) is expected
+
+
+def test_the_header_probe_accepts_leading_zeros_in_the_numbers():
+    reader = SimpleNamespace(xref={0: {5: 0}}, xref_objStm={}, stream=io.BytesIO(b"0005 00 obj\n<<>>\nendobj"))
+    assert pdf_validation._LookupBudget(reader, 1000)._leads_to_header(5, 0, 0)
+
+
+def test_a_reader_without_a_stream_is_charged():
+    reader = SimpleNamespace(xref={0: {5: 0}}, xref_objStm={})
+    budget = pdf_validation._LookupBudget(reader, 1000)
+    budget.limit = 0
+    with pytest.raises(PdfRejected):
+        budget._charge(_Reference(idnum=5, generation=0))
+
+
 def _stub_reader() -> SimpleNamespace:
     body = bytearray(b" " * 300)
     body[100:107] = b"1 0 obj"
