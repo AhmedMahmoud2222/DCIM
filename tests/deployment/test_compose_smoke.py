@@ -21,7 +21,28 @@ smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 
-COMPOSE_CONFIG = yaml.safe_load((SCRIPT.parents[2] / 'docker-compose.yml').read_text())
+COMPOSE_ROOT = SCRIPT.parents[2]
+
+
+def construct_override(loader, node):
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return loader.construct_scalar(node)
+
+
+class ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+ComposeLoader.add_constructor('!override', construct_override)
+
+
+COMPOSE_CONFIGS = {
+    'development': yaml.load((COMPOSE_ROOT / 'docker-compose.yml').read_text(), Loader=ComposeLoader),
+    'production': yaml.load((COMPOSE_ROOT / 'docker-compose.production.yml').read_text(), Loader=ComposeLoader),
+}
 BACKEND_CONFIG = tomllib.loads((SCRIPT.parents[2] / 'backend' / 'pyproject.toml').read_text())
 
 
@@ -31,29 +52,32 @@ def done(stdout='', stderr='', code=0):
 
 class ComposeHealthcheckConfigTests(unittest.TestCase):
     def test_worker_healthcheck_pings_its_celery_node(self):
-        worker = COMPOSE_CONFIG['services']['celery-worker']
-        healthcheck = worker['healthcheck']
-        self.assertEqual(healthcheck['test'][0], 'CMD-SHELL')
-        self.assertIn('inspect ping', healthcheck['test'][1])
-        self.assertIn('celery@$$HOSTNAME', healthcheck['test'][1])
-        self.assertIn('--timeout=3', healthcheck['test'][1])
-        self.assertIn('grep -q pong', healthcheck['test'][1])
-        self.assertEqual(healthcheck['interval'], '10s')
-        self.assertEqual(healthcheck['timeout'], '15s')
-        self.assertNotIn('-n', worker['command'])
-        self.assertNotIn('--hostname', worker['command'])
+        for compose_name, config in COMPOSE_CONFIGS.items():
+            with self.subTest(compose=compose_name):
+                worker = config['services']['celery-worker']
+                healthcheck = worker['healthcheck']
+                self.assertEqual(healthcheck['test'][0], 'CMD-SHELL')
+                self.assertIn('inspect ping', healthcheck['test'][1])
+                self.assertIn('celery@$$HOSTNAME', healthcheck['test'][1])
+                self.assertIn('--timeout=3', healthcheck['test'][1])
+                self.assertIn('grep -q pong', healthcheck['test'][1])
+                self.assertEqual(healthcheck['interval'], '10s')
+                self.assertEqual(healthcheck['timeout'], '15s')
+                self.assertFalse(any(arg == '-n' or arg.startswith('--hostname') for arg in worker['command']))
 
     def test_beat_healthcheck_checks_the_beat_process(self):
-        beat = COMPOSE_CONFIG['services']['celery-beat']
-        healthcheck = beat['healthcheck']
-        self.assertEqual(healthcheck['test'][0], 'CMD-SHELL')
-        self.assertIn('--enable-remote-control', beat['command'])
-        self.assertIn('inspect ping', healthcheck['test'][1])
-        self.assertIn('celerybeat@$$HOSTNAME', healthcheck['test'][1])
-        self.assertIn('--timeout=3', healthcheck['test'][1])
-        self.assertIn('grep -q pong', healthcheck['test'][1])
-        self.assertEqual(healthcheck['interval'], '10s')
-        self.assertEqual(healthcheck['timeout'], '15s')
+        for compose_name, config in COMPOSE_CONFIGS.items():
+            with self.subTest(compose=compose_name):
+                beat = config['services']['celery-beat']
+                healthcheck = beat['healthcheck']
+                self.assertEqual(healthcheck['test'][0], 'CMD-SHELL')
+                self.assertIn('--enable-remote-control', beat['command'])
+                self.assertIn('inspect ping', healthcheck['test'][1])
+                self.assertIn('celerybeat@$$HOSTNAME', healthcheck['test'][1])
+                self.assertIn('--timeout=3', healthcheck['test'][1])
+                self.assertIn('grep -q pong', healthcheck['test'][1])
+                self.assertEqual(healthcheck['interval'], '10s')
+                self.assertEqual(healthcheck['timeout'], '15s')
         self.assertIn('celery[redis]>=5.7.0', BACKEND_CONFIG['project']['dependencies'])
 
     def test_compose_smoke_requires_celery_healthchecks(self):
