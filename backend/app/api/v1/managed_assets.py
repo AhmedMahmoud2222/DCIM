@@ -24,6 +24,7 @@ from app.application.idempotency import (
     get_or_claim,
     hash_request_body,
     release_claim,
+    user_principal,
 )
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
@@ -78,7 +79,10 @@ async def create_managed_asset(
     claim = None
     if idempotency_key is not None:
         try:
-            outcome = await get_or_claim(db, key=idempotency_key, endpoint="POST:/managed-assets", request_hash=request_hash)
+            outcome = await get_or_claim(
+                db, principal=user_principal(ctx.user.id), key=idempotency_key,
+                endpoint="POST:/managed-assets", request_hash=request_hash,
+            )
         except IdempotencyConflict as exc:
             raise ApiError(
                 status_code=422,

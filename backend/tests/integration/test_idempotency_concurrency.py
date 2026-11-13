@@ -165,12 +165,12 @@ async def test_stale_processing_claim_is_reclaimed(make_user, db_session, per_re
     stale_time = datetime.now(UTC) - timedelta(seconds=60)
     await db_session.execute(
         text(
-            "INSERT INTO idempotency_key (id, key, endpoint, request_hash, status, response_status, "
+            "INSERT INTO idempotency_key (id, principal, key, endpoint, request_hash, status, response_status, "
             "response_body, expires_at, created_at, updated_at) "
-            "VALUES (gen_random_uuid(), :key, 'POST:/managed-assets', :hash, 'processing', NULL, NULL, "
+            "VALUES (gen_random_uuid(), :principal, :key, 'POST:/managed-assets', :hash, 'processing', NULL, NULL, "
             "now() + interval '1 day', :t, :t)"
         ),
-        {"key": key, "hash": request_hash, "t": stale_time},
+        {"principal": f"user:{user.id}", "key": key, "hash": request_hash, "t": stale_time},
     )
     await db_session.commit()
 

@@ -23,8 +23,8 @@ def _run(connection, direction):
 
 
 _INSERT = """
-    INSERT INTO idempotency_key (id, key, endpoint, request_hash, status, response_status, response_body, expires_at)
-    VALUES (:id, :key, 'POST:/migration-test', :hash, :status, :rs, CAST(:rb AS jsonb), now() + interval '1 day')"""
+    INSERT INTO idempotency_key (id, principal, key, endpoint, request_hash, status, response_status, response_body, expires_at)
+    VALUES (:id, 'user:fencing-migration-test', :key, 'POST:/migration-test', :hash, :status, :rs, CAST(:rb AS jsonb), now() + interval '1 day')"""
 
 
 async def _seed(conn):

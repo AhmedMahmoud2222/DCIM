@@ -23,11 +23,14 @@ from app.db.base import Base, TimestampMixin, UUIDPkMixin
 class IdempotencyKey(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "idempotency_key"
     __table_args__ = (
-        Index("ix_idempotency_key_key_endpoint", "key", "endpoint", unique=True),
+        Index("ix_idempotency_key_principal_key_endpoint", "principal", "key", "endpoint", unique=True),
         CheckConstraint("status IN ('processing', 'completed')", name="status_allowed"),
         CheckConstraint("claim_generation >= 1", name="claim_generation_positive"),
     )
 
+    # Issue #337: server-derived authenticated identity ("user:<uuid>" / "collector:<uuid>").
+    # Pre-migration rows that cannot be attributed carry "legacy:unscoped", which matches no caller.
+    principal: Mapped[str] = mapped_column(String(100), nullable=False)
     key: Mapped[str] = mapped_column(String(255), nullable=False)
     endpoint: Mapped[str] = mapped_column(String(255), nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
