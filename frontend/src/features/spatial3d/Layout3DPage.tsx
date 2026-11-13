@@ -602,7 +602,7 @@ export function Layout3DPage() {
                   </ul>
                 </div>
               )}
-              <p className="mt-4 text-xs text-slate-600">
+              <p className="mt-4 text-xs text-fg-secondary">
                 Layers: room boundary · racks · floor-standing equipment · rack-mounted equipment on rack faces · optional thermal layer (interpolated
                 heat map, sensors, cooling units; not CFD). Racks with no room placement anywhere are not listed; check the{" "}
                 <Link to="/racks" className="text-blue-400 hover:underline">
