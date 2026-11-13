@@ -521,3 +521,39 @@ def test_object_stream_members_are_listed_only_with_generation_zero():
     assert caught.value.code == "too_complex"
     with pytest.raises(PdfRejected):
         budget.check()  # the verdict repeats even if the parser swallowed the exception above
+
+
+def _indirect_annots_pdf(pages: int, *, listed: bool = False) -> bytes:
+    """`pages` pages, each with /Annots as an indirect reference to its own (empty) array. The
+    reference is to the array itself, not to its members, so resolving it is one lookup per page.
+    With `listed` False the arrays are in the file body but not in the cross-reference table."""
+    kids = b" ".join(b"%d 0 R" % (10 + index) for index in range(pages))
+    objects = {1: b"<</Type/Catalog/Pages 2 0 R>>", 2: b"<</Type/Pages/Kids[" + kids + b"]/Count %d>>" % pages}
+    unlisted = b""
+    for index in range(pages):
+        array = 1000 + index
+        objects[10 + index] = b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]/Annots %d 0 R>>" % array
+        if listed:
+            objects[array] = b"[]"
+        else:
+            unlisted += b"%d 0 obj\n[]\nendobj\n" % array
+    return _classic_pdf(objects, after=unlisted)
+
+
+@pytest.mark.parametrize("pages", [1, 8, 32])
+def test_a_few_unlisted_annots_arrays_are_accepted(pages):
+    assert validate_pdf(_indirect_annots_pdf(pages), max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == pages
+
+
+def test_listed_annots_arrays_cost_no_budget():
+    assert validate_pdf(_indirect_annots_pdf(300, listed=True), max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 300
+
+
+def test_many_unlisted_annots_arrays_are_rejected_by_the_lookup_budget(monkeypatch):
+    """Resolving the /Annots value itself is a parser lookup, separate from its members."""
+    content = _indirect_annots_pdf(200)
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000)
+    assert caught.value.code == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 200  # only the budget refuses
