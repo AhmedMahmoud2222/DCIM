@@ -26,7 +26,8 @@ Forbidden names are looked for in three places, and a file must pass all three:
    which `/JS` or `/AA` appear by chance (ASCII85 uses `/` and letters), so scanning it
    rejects benign files. Only the exact bytes the parser itself consumed as a stream's data
    are skipped, never a span guessed from the `stream`/`endstream` keywords, and a payload
-   that carries object syntax (`endobj`, `endstream`, an `N G obj` header) is not skipped."""
+   that carries object syntax (`endobj`, `endstream`, an `N G obj` header, with comments of any
+   length between its parts) is not skipped."""
 
 import io
 import json
@@ -52,6 +53,11 @@ _FORBIDDEN_ACTION_TYPES = frozenset(
 _MAX_ANNOTATIONS_SCANNED = 20000
 _MAX_OBJECTS_SCANNED = 200000
 _MAX_NODES_PER_OBJECT = 50000
+# Loading an object can make the parser add cross-reference entries (resolving a reference to
+# an unlisted object makes it search the whole file for the header). A repair that is still
+# adding entries after this many passes is a chain built to make the walk cost a file scan per
+# object.
+_MAX_WALK_PASSES = 5
 # The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
 _FORBIDDEN_NAMES = frozenset(
     {
@@ -64,10 +70,11 @@ _PDF_WHITESPACE = rb"[\x00\t\n\x0c\r ]"
 # Object syntax inside a stream payload. Compressed or binary data does not spell these by
 # chance (six or more fixed bytes), so a payload that contains one is scanned like the rest
 # of the file: it may be a second set of objects aimed at a reader that rebuilds a broken
-# cross-reference table by searching the file for `N G obj`. The parts of a header may be
-# separated by comments as well as whitespace; a comment is bounded so the match stays linear.
-_PDF_SEPARATOR = rb"(?:" + _PDF_WHITESPACE + rb"|%[^\r\n]{0,256}[\r\n])+"
-_OBJECT_SYNTAX_IN_PAYLOAD = re.compile(rb"endobj|endstream|\d" + _PDF_SEPARATOR + rb"\d+" + _PDF_SEPARATOR + rb"obj")
+# cross-reference table by searching the file for `N G obj`. A comment may sit between the
+# parts of a header, whatever its length, so comments are cut out first (one linear pass) and
+# the header pattern uses possessive quantifiers so no input makes it backtrack.
+_COMMENT = re.compile(rb"%[^\r\n]*")
+_OBJECT_HEADER = re.compile(rb"\d" + _PDF_WHITESPACE + rb"++\d++" + _PDF_WHITESPACE + rb"++obj")
 _STREAM_KEYWORD_BEFORE_PAYLOAD = re.compile(rb"(?<!end)stream(?:\r\n|\n|\r)\Z")
 _ENDSTREAM_AFTER_PAYLOAD = re.compile(_PDF_WHITESPACE + rb"{0,4}endstream")
 _TRAILER_WINDOW = 1024
@@ -119,6 +126,16 @@ def _has_forbidden_name(data: bytes) -> bool:
     return _FORBIDDEN_NAME.search(_names_normalized(data)) is not None
 
 
+def _carries_object_syntax(payload: bytes) -> bool:
+    """True when a stream payload holds `endobj`, `endstream` or an `N G obj` header, with
+    whitespace or comments of any length between the parts. Linear in the payload size."""
+    if b"endobj" in payload or b"endstream" in payload:
+        return True
+    if b"obj" not in payload:
+        return False
+    return _OBJECT_HEADER.search(_COMMENT.sub(b" ", payload)) is not None
+
+
 def _scan_decoded_object_stream(stream: object) -> None:
     """An object stream holds dictionaries, so its decoded bytes get the same name scan as the
     file itself. This sees members the cross-reference table does not list, which the object
@@ -151,16 +168,25 @@ def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
     compressed = cast(dict, reader.xref_objStm)
     payloads: list[tuple[int, bytes]] = []
     seen: set[tuple[int, int]] = set()
+    passes = 0
     while True:
         # Loading an object can make the parser add entries (it repairs as it reads), so the
-        # table is read again until a pass finds nothing new.
-        references: list[tuple[int, int, object]] = [
-            (number, generation, offset) for generation, entries in list(xref.items()) for number, offset in list(entries.items())
+        # table is read again until a pass finds nothing new, for at most _MAX_WALK_PASSES.
+        # A number listed both directly and as an object-stream member counts as a member.
+        entries: dict[tuple[int, int], object] = {}
+        for generation, table in list(xref.items()):
+            for number, offset in list(table.items()):
+                entries[(number, generation)] = offset
+        for number in list(compressed):
+            entries[(number, 0)] = None
+        references = [
+            (number, generation, offset) for (number, generation), offset in entries.items() if (number, generation) not in seen
         ]
-        references += [(number, 0, None) for number in list(compressed)]
-        references = [reference for reference in references if reference[:2] not in seen]
         if not references:
             break
+        passes += 1
+        if passes > _MAX_WALK_PASSES:
+            raise _reject("too_complex", "The PDF cross-reference table keeps changing while it is read.")
         if len(seen) + len(references) > _MAX_OBJECTS_SCANNED:
             raise _reject("too_complex", "The PDF contains too many objects to inspect safely.")
         containers = {entry[0] for entry in list(compressed.values())}
@@ -232,11 +258,11 @@ def _outside_stream_payloads(content: bytes, payloads: list[tuple[int, bytes]]) 
       `stream` + end-of-line and directly before `endstream`. That occurrence is either the
       real payload or a copy of it inside the object's own dictionary. A copy leaves the real
       payload, with the same bytes, in the scan, and the object walk covers the dictionary;
-    - they contain no object syntax (see `_OBJECT_SYNTAX_IN_PAYLOAD`), which also covers a
+    - they contain no object syntax (see `_carries_object_syntax`), which also covers a
       `/Length` that reaches past the stream's own `endstream` to swallow a later object."""
     spans: list[tuple[int, int]] = []
     for offset, payload in payloads:
-        if _OBJECT_SYNTAX_IN_PAYLOAD.search(payload):
+        if _carries_object_syntax(payload):
             continue
         start = content.find(payload, offset)
         if start < 0:

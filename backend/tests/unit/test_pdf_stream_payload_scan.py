@@ -9,6 +9,7 @@ Fixtures are benign: markers only, never a working payload."""
 
 import base64
 import io
+import time
 import zlib
 
 import pytest
@@ -130,6 +131,13 @@ SKIP_EVASIONS = {
     ),
     "object_header_inside_a_payload": _page_pdf(_stream(b"9 0 obj\n" + SCRIPT)),
     "object_header_split_by_comments_inside_a_payload": _page_pdf(_stream(b"9 %x\n0 %x\nobj\n" + SCRIPT)),
+    "object_header_split_by_a_257_byte_comment": _page_pdf(
+        _stream(b"9 %" + b"x" * 257 + b"\n0 %" + b"x" * 257 + b"\nobj\n" + SCRIPT)
+    ),
+    "object_header_split_by_a_100000_byte_comment": _page_pdf(
+        _stream(b"9 %" + b"x" * 100_000 + b"\n0 %" + b"x" * 100_000 + b"\nobj\n" + SCRIPT)
+    ),
+    "object_header_split_by_carriage_return_comments": _page_pdf(_stream(b"9\r%x\r0\r%x\robj\r" + SCRIPT)),
     "object_header_inside_a_declared_flate_payload": _page_pdf(_stream(b"9 0 obj\n" + SCRIPT, b"/Filter/FlateDecode")),
     "payload_equal_to_the_tail_of_a_name_in_its_own_dictionary": _page_pdf(_stream(b"h", b"/Kind/Launch")),
     "payload_equal_to_the_tail_of_a_key_in_its_own_dictionary": _page_pdf(_stream(b"S 1", b"/JS 1")),
@@ -262,3 +270,52 @@ def test_object_stream_member_that_cannot_be_loaded_is_refused_not_skipped(name)
     """Fail closed: the member holds nothing forbidden here, but the walk could not inspect it.
     The parser raises AssertionError for these, which must come out as a rejection."""
     assert _reject_code(_malformed(name, _PLAIN_FIELD)) == "invalid_structure"
+
+
+def _timed(function, payload: bytes) -> float:
+    started = time.perf_counter()
+    function(payload)
+    return time.perf_counter() - started
+
+
+@pytest.mark.parametrize(
+    ("shape", "limit"),
+    [
+        ("digit_then_spaces", 1.5),
+        ("digit_then_tabs", 1.5),
+        ("digit_space_repeated", 1.5),
+        ("two_digits_in_long_whitespace", 1.5),
+        ("comment_lines_repeated", 6.0),
+    ],
+)
+def test_object_syntax_rule_is_linear_on_a_25_mb_payload(shape, limit):
+    """The rule runs on every stream payload of an upload, so no payload shape may make it
+    expensive. The pattern this replaced took 3 to 10 seconds on the first four shapes."""
+    size = 25 * 1024 * 1024
+    payload = {
+        "digit_then_spaces": b"9" + b" " * size,
+        "digit_then_tabs": b"9" + b"\t" * size,
+        "digit_space_repeated": b"1 " * (size // 2),
+        "two_digits_in_long_whitespace": b"9" + b" " * (size // 2) + b"9" + b" " * (size // 2),
+        "comment_lines_repeated": b"%x\n" * (size // 3),
+    }[shape]
+    assert _timed(pdf_validation._carries_object_syntax, payload + b"obj") < limit
+
+
+def _chain_of_unlisted_objects(length: int) -> bytes:
+    """Object 4 lists an `/S` that points at object 5, which the cross-reference table does not
+    list; each unlisted object points at the next. Resolving one makes pypdf search the whole file
+    and add an entry, so the walk finds one new entry per pass."""
+    chain = b"".join(b"%d 0 obj\n<</S %d 0 R>>\nendobj\n" % (number, number + 1) for number in range(5, 5 + length))
+    return _page_pdf(b"<</S 5 0 R>>", after=chain)
+
+
+def test_short_chain_of_unlisted_objects_is_accepted():
+    assert validate_pdf(_chain_of_unlisted_objects(2), **LIMITS).page_count == 1
+
+
+def test_long_chain_of_unlisted_objects_is_rejected_by_the_pass_cap(monkeypatch):
+    content = _chain_of_unlisted_objects(60)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_WALK_PASSES", 1000)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the cap refuses it
