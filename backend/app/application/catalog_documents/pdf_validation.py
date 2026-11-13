@@ -17,9 +17,11 @@ rejection, never a hung request.
 Forbidden names are looked for in three places, and a file must pass all three:
 
 1. Every object the parser reaches through the cross-reference table, including objects in
-   compressed object streams: dictionary keys, name values and `/S` action types.
+   compressed object streams: dictionary keys, name values and `/S` action types. A member of
+   an object stream that the parser cannot load is a rejection, never a skipped entry.
 2. The decoded bytes of every object stream, so a member the cross-reference table does not
-   list is still seen.
+   list is still seen. A stream counts as an object stream when the cross-reference table
+   uses it as one or when its `/Type` says so; the parser's own opinion of it is not asked.
 3. The raw file bytes, minus stream payloads. A payload is compressed or binary data in
    which `/JS` or `/AA` appear by chance (ASCII85 uses `/` and letters), so scanning it
    rejects benign files. Only the exact bytes the parser itself consumed as a stream's data
@@ -62,8 +64,10 @@ _PDF_WHITESPACE = rb"[\x00\t\n\x0c\r ]"
 # Object syntax inside a stream payload. Compressed or binary data does not spell these by
 # chance (six or more fixed bytes), so a payload that contains one is scanned like the rest
 # of the file: it may be a second set of objects aimed at a reader that rebuilds a broken
-# cross-reference table by searching the file for `N G obj`.
-_OBJECT_SYNTAX_IN_PAYLOAD = re.compile(rb"endobj|endstream|\d" + _PDF_WHITESPACE + rb"+\d+" + _PDF_WHITESPACE + rb"+obj")
+# cross-reference table by searching the file for `N G obj`. The parts of a header may be
+# separated by comments as well as whitespace; a comment is bounded so the match stays linear.
+_PDF_SEPARATOR = rb"(?:" + _PDF_WHITESPACE + rb"|%[^\r\n]{0,256}[\r\n])+"
+_OBJECT_SYNTAX_IN_PAYLOAD = re.compile(rb"endobj|endstream|\d" + _PDF_SEPARATOR + rb"\d+" + _PDF_SEPARATOR + rb"obj")
 _STREAM_KEYWORD_BEFORE_PAYLOAD = re.compile(rb"(?<!end)stream(?:\r\n|\n|\r)\Z")
 _ENDSTREAM_AFTER_PAYLOAD = re.compile(_PDF_WHITESPACE + rb"{0,4}endstream")
 _TRAILER_WINDOW = 1024
@@ -134,52 +138,87 @@ def _scan_all_objects(reader: "PdfReader") -> list[tuple[int, bytes]]:
     forbidden sets, so a forbidden name in any dictionary the parser read is refused here
     without relying on the byte scan.
 
+    An entry the parser cannot load is handled by where its bytes are. An object written
+    directly in the file stays in the byte scan, so it is skipped here. A member of an object
+    stream is visible nowhere else, so the file is refused. The parser declines an object
+    stream for reasons another reader may not share (a `/Type` it does not like, for one).
+
     Returns `(file offset of the object, raw payload)` for every stream object, for
     `_outside_stream_payloads()`."""
-    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject, StreamObject
+    from pypdf.generic import IndirectObject, StreamObject
 
     xref = cast(dict, reader.xref)
     compressed = cast(dict, reader.xref_objStm)
-    references: list[tuple[int, int, object]] = [
-        (number, generation, offset) for generation, entries in xref.items() for number, offset in entries.items()
-    ]
-    references += [(number, 0, None) for number in compressed]
-    if len(references) > _MAX_OBJECTS_SCANNED:
-        raise _reject("too_complex", "The PDF contains too many objects to inspect safely.")
     payloads: list[tuple[int, bytes]] = []
-    for number, generation, offset in references:
-        try:
-            obj = IndirectObject(number, generation, reader).get_object()
-        except Exception:  # noqa: BLE001  unreadable free or broken entries are the parser's concern
-            continue
-        if isinstance(obj, StreamObject):
-            raw = getattr(obj, "_data", None)
-            if isinstance(raw, bytes) and raw and isinstance(offset, int) and offset >= 0:
-                payloads.append((offset, raw))
-            if obj.get("/Type") == "/ObjStm":
-                _scan_decoded_object_stream(obj)
-        pending = [obj]
-        visited = 0
-        while pending:
-            candidate = pending.pop()
-            visited += 1
-            if visited > _MAX_NODES_PER_OBJECT:
-                raise _reject("too_complex", "The PDF contains too deeply nested objects to inspect safely.")
-            if isinstance(candidate, ArrayObject):
-                # Indirect members are visited as objects of their own; only direct ones nest here.
-                pending.extend(item for item in candidate if not isinstance(item, IndirectObject))
+    seen: set[tuple[int, int]] = set()
+    while True:
+        # Loading an object can make the parser add entries (it repairs as it reads), so the
+        # table is read again until a pass finds nothing new.
+        references: list[tuple[int, int, object]] = [
+            (number, generation, offset) for generation, entries in list(xref.items()) for number, offset in list(entries.items())
+        ]
+        references += [(number, 0, None) for number in list(compressed)]
+        references = [reference for reference in references if reference[:2] not in seen]
+        if not references:
+            break
+        if len(seen) + len(references) > _MAX_OBJECTS_SCANNED:
+            raise _reject("too_complex", "The PDF contains too many objects to inspect safely.")
+        containers = {entry[0] for entry in list(compressed.values())}
+        for number, generation, offset in references:
+            seen.add((number, generation))
+            is_container = generation == 0 and number in containers
+            try:
+                obj = IndirectObject(number, generation, reader).get_object()
+            except Exception as exc:  # noqa: BLE001  whatever the parser raised, the entry was not inspected
+                if offset is None or is_container:
+                    raise _reject("invalid_structure", "The PDF holds an object stream that could not be read.") from exc
                 continue
-            if isinstance(candidate, NameObject) and candidate in _FORBIDDEN_NAMES:
-                raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
-            if not isinstance(candidate, DictionaryObject):
-                continue
-            if _FORBIDDEN_KEYS.intersection(candidate.keys()):
-                raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
-            action_type = candidate.get("/S")
-            if action_type is not None and str(action_type) in _FORBIDDEN_ACTION_TYPES:
-                raise _reject("active_content", f"PDF contains a {action_type} action.")
-            pending.extend(value for value in candidate.values() if not isinstance(value, IndirectObject))
+            if is_container and not isinstance(obj, StreamObject):
+                raise _reject("invalid_structure", "The PDF holds an object stream that could not be read.")
+            if isinstance(obj, StreamObject):
+                raw = getattr(obj, "_data", None)
+                if isinstance(raw, bytes) and raw and isinstance(offset, int) and offset >= 0:
+                    payloads.append((offset, raw))
+                if is_container or _declared_type(obj) == "/ObjStm":
+                    _scan_decoded_object_stream(obj)
+            _scan_object(obj)
     return payloads
+
+
+def _declared_type(stream: object) -> object:
+    """The stream's `/Type`, followed through an indirect reference."""
+    try:
+        declared = stream.get("/Type")  # type: ignore[attr-defined]
+        return declared.get_object() if hasattr(declared, "get_object") else declared
+    except Exception:  # noqa: BLE001  an unreadable /Type is not an object-stream declaration
+        return None
+
+
+def _scan_object(obj: object) -> None:
+    """Walks one object and its direct children for forbidden keys, names and action types."""
+    from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NameObject
+
+    pending = [obj]
+    visited = 0
+    while pending:
+        candidate = pending.pop()
+        visited += 1
+        if visited > _MAX_NODES_PER_OBJECT:
+            raise _reject("too_complex", "The PDF contains too deeply nested objects to inspect safely.")
+        if isinstance(candidate, ArrayObject):
+            # Indirect members are visited as objects of their own; only direct ones nest here.
+            pending.extend(item for item in candidate if not isinstance(item, IndirectObject))
+            continue
+        if isinstance(candidate, NameObject) and candidate in _FORBIDDEN_NAMES:
+            raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
+        if not isinstance(candidate, DictionaryObject):
+            continue
+        if _FORBIDDEN_KEYS.intersection(candidate.keys()):
+            raise _reject("active_content", "PDF contains active or embedded content (scripts, actions or attachments).")
+        action_type = candidate.get("/S")
+        if action_type is not None and str(action_type) in _FORBIDDEN_ACTION_TYPES:
+            raise _reject("active_content", f"PDF contains a {action_type} action.")
+        pending.extend(value for value in candidate.values() if not isinstance(value, IndirectObject))
 
 
 def _outside_stream_payloads(content: bytes, payloads: list[tuple[int, bytes]]) -> bytes:
@@ -230,7 +269,6 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
         raise _reject("truncated", "The PDF is truncated or malformed (no end-of-file marker).")
 
     from pypdf import PdfReader
-    from pypdf.errors import PyPdfError
     from pypdf.generic import DictionaryObject
 
     try:
@@ -275,7 +313,7 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
                     _scan_action(annotation["/A"], f"page {index + 1}")
     except PdfRejected:
         raise
-    except (PyPdfError, ValueError, KeyError, TypeError, AttributeError, RecursionError, OSError) as exc:
+    except Exception as exc:  # noqa: BLE001  the parser raises more than its own error types (AssertionError, for one)
         # A file the parser cannot read is refused either way; one that also names active
         # content keeps the more specific reason. No payload is skipped here.
         if _has_forbidden_name(content):

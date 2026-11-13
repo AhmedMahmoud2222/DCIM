@@ -14,6 +14,7 @@ import zlib
 import pytest
 from pypdf import PdfReader
 
+from app.application.catalog_documents import pdf_validation
 from app.application.catalog_documents.pdf_validation import _FORBIDDEN_NAME, PdfRejected, validate_pdf
 from tests.api._document_helpers import make_pdf
 from tests.unit.test_pr70_pdf_hostile import _PAGES, _objstm_pdf
@@ -128,6 +129,7 @@ SKIP_EVASIONS = {
         _stream(b"q Q\nendstream\nendobj\n" + HIDDEN_OBJECT + b"%", length=len(b"q Q\nendstream\nendobj\n" + HIDDEN_OBJECT + b"%"))
     ),
     "object_header_inside_a_payload": _page_pdf(_stream(b"9 0 obj\n" + SCRIPT)),
+    "object_header_split_by_comments_inside_a_payload": _page_pdf(_stream(b"9 %x\n0 %x\nobj\n" + SCRIPT)),
     "object_header_inside_a_declared_flate_payload": _page_pdf(_stream(b"9 0 obj\n" + SCRIPT, b"/Filter/FlateDecode")),
     "payload_equal_to_the_tail_of_a_name_in_its_own_dictionary": _page_pdf(_stream(b"h", b"/Kind/Launch")),
     "payload_equal_to_the_tail_of_a_key_in_its_own_dictionary": _page_pdf(_stream(b"S 1", b"/JS 1")),
@@ -164,3 +166,99 @@ def test_object_streams_are_scanned_for_forbidden_names(name):
 
 def test_control_uncompressed_object_stream_pdf_is_accepted():
     assert validate_pdf(_objstm_pdf(_CATALOG, compress=False), **LIMITS).page_count == 1
+
+
+@pytest.mark.parametrize("name", ["forbidden_name_as_a_value", "forbidden_name_in_an_array"])
+def test_object_walk_alone_refuses_forbidden_name_values(name, monkeypatch):
+    """With both byte scans switched off, only the object walk can refuse a forbidden name used
+    as a value or an array member."""
+    monkeypatch.setattr(pdf_validation, "_has_forbidden_name", lambda data: False)
+    assert _reject_code(OBJECT_STREAM_EVASIONS[name]) == "active_content"
+
+
+def test_unparseable_file_gets_the_whole_file_scan():
+    """Nothing is skipped when the parser fails, so a forbidden name keeps its specific reason."""
+    assert _reject_code(b"%PDF-1.4 garbage <</JS(/* benign marker */)>> %%EOF") == "active_content"
+    assert _reject_code(b"%PDF-1.4 garbage <</Kind/Benign>> %%EOF") == "invalid_structure"
+
+
+def _hybrid_pdf(classic: dict[int, bytes], compressed: dict[int, bytes], *, stream_type: bytes = b"/Type/ObjStm", count: int | None = None) -> bytes:
+    """Catalog and pages written directly in the file, other objects in one compressed object
+    stream, all indexed by a cross-reference stream. The page tree stays readable when the
+    object stream's own dictionary is malformed."""
+    numbers = sorted(compressed)
+    offsets, running = [], 0
+    for number in numbers:
+        offsets.append(b"%d %d" % (number, running))
+        running += len(compressed[number]) + 1
+    header = b" ".join(offsets) + b"\n"
+    payload = zlib.compress(header + b"".join(compressed[number] + b"\n" for number in numbers))
+    stream_number = max([*classic, *numbers]) + 1
+    xref_number = stream_number + 1
+    out = bytearray(b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n")
+    where = {}
+    for number, body in classic.items():
+        where[number] = len(out)
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    where[stream_number] = len(out)
+    out += b"%d 0 obj\n<<%s/N %d/First %d/Filter/FlateDecode/Length %d>>\nstream\n" % (
+        stream_number, stream_type, len(numbers) if count is None else count, len(header), len(payload),
+    )
+    out += payload + b"\nendstream\nendobj\n"
+    where[xref_number] = len(out)
+    rows = bytearray()
+    for number in range(xref_number + 1):
+        if number in compressed:
+            rows += bytes([2]) + stream_number.to_bytes(4, "big") + numbers.index(number).to_bytes(2, "big")
+        elif number in where:
+            rows += bytes([1]) + where[number].to_bytes(4, "big") + bytes(2)
+        else:
+            rows += bytes(7)
+    xref_payload = zlib.compress(bytes(rows))
+    out += b"%d 0 obj\n<</Type/XRef/Size %d/W[1 4 2]/Root 1 0 R/Filter/FlateDecode/Length %d>>\nstream\n" % (
+        xref_number, xref_number + 1, len(xref_payload),
+    )
+    out += xref_payload + b"\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n" % where[xref_number]
+    return bytes(out)
+
+
+_FORM = {
+    1: b"<</Type/Catalog/Pages 2 0 R/AcroForm<</Fields[4 0 R]/CO[4 0 R]>>>>",
+    2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+    3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>",
+}
+_SCRIPTED_FIELD = {4: b"<</FT/Tx/T(f)/V(1)/AA<</C" + SCRIPT + b">>>>"}
+_PLAIN_FIELD = {4: b"<</FT/Tx/T(f)/V(1)>>"}
+# Object-stream dictionaries the parser declines or reads as empty. Another reader may load
+# the members anyway, so the calculate script in the field must still be found.
+MALFORMED_OBJECT_STREAMS = {
+    "type_is_an_indirect_reference": {"classic": {**_FORM, 8: b"/ObjStm"}, "stream_type": b"/Type 8 0 R"},
+    "type_is_a_dangling_reference": {"stream_type": b"/Type 7 0 R"},
+    "type_is_another_name": {"stream_type": b"/Type/ObjStX"},
+    "type_is_missing": {"stream_type": b""},
+    "member_count_is_negative": {"count": -1},
+    "member_count_is_zero": {"count": 0},
+    "member_count_is_too_large": {"count": 99},
+}
+
+
+def _malformed(name: str, field: dict[int, bytes]) -> bytes:
+    options = dict(MALFORMED_OBJECT_STREAMS[name])
+    return _hybrid_pdf(options.pop("classic", _FORM), field, **options)
+
+
+def test_control_form_field_in_a_well_formed_object_stream():
+    assert validate_pdf(_hybrid_pdf(_FORM, _PLAIN_FIELD), **LIMITS).page_count == 1
+    assert _reject_code(_hybrid_pdf(_FORM, _SCRIPTED_FIELD)) == "active_content"
+
+
+@pytest.mark.parametrize("name", sorted(MALFORMED_OBJECT_STREAMS))
+def test_script_in_an_object_stream_the_parser_declines_is_rejected(name):
+    assert _reject_code(_malformed(name, _SCRIPTED_FIELD)) == "active_content"
+
+
+@pytest.mark.parametrize("name", ["type_is_a_dangling_reference", "type_is_another_name", "type_is_missing"])
+def test_object_stream_member_that_cannot_be_loaded_is_refused_not_skipped(name):
+    """Fail closed: the member holds nothing forbidden here, but the walk could not inspect it.
+    The parser raises AssertionError for these, which must come out as a rejection."""
+    assert _reject_code(_malformed(name, _PLAIN_FIELD)) == "invalid_structure"
