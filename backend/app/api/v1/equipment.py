@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
-from app.application.access_control import ensure_equipment_access, equipment_visible_clause
+from app.application.access_control import ensure_equipment_access, equipment_in_site_clause, equipment_visible_clause
 from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_equipment_template
@@ -245,6 +245,7 @@ async def create_equipment(
 @router.get("", response_model=Page[EquipmentOut])
 async def list_equipment(
     rack_id: uuid.UUID | None = None,
+    site_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     pagination: Pagination = Depends(pagination_params),
     ctx=Depends(require_permission("equipment:read")),
@@ -252,6 +253,8 @@ async def list_equipment(
     from app.domain.placement.models import EquipmentPlacement
 
     visible = equipment_visible_clause(ctx.scope, Equipment.id)
+    if site_id is not None:
+        visible = visible & equipment_in_site_clause(site_id, Equipment.id)
     stmt = select(Equipment, ManagedAsset).join(ManagedAsset, ManagedAsset.id == Equipment.id).where(visible)
     count_stmt = select(func.count()).select_from(Equipment).where(visible)
     if rack_id is not None:

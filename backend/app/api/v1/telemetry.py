@@ -22,6 +22,7 @@ from sqlalchemy import DateTime, and_, case, cast, func, literal, select, text, 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.application.access_control import equipment_in_site_clause, equipment_visible_clause
 from app.application.alarm_service import AlarmUnitCompatibilityError, lock_collector_batch_rules, lock_operator_hold_rules
 from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
@@ -176,6 +177,7 @@ class TelemetryOut(BaseModel):
     raw_value_text: str | None = None
     occurred_at: datetime
     received_at: datetime
+    series_key: str | None = None
     expected_poll_interval_seconds: int | None = None
 
 
@@ -648,9 +650,11 @@ async def _resolve_prelocked_contract_hold(
 
 @router.get("/latest", response_model=list[TelemetryOut])
 async def latest_readings(
+    site_id: uuid.UUID | None = None,
     integration_id: uuid.UUID | None = None,
     managed_asset_id: uuid.UUID | None = None,
     metric: str | None = None,
+    per_series: bool = False,
     limit: int = Query(default=100, ge=1, le=MAX_HISTORY_POINTS),
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("telemetry:read")),
@@ -660,15 +664,29 @@ async def latest_readings(
     stmt = (
         select(TelemetryReading, Integration.poll_interval_seconds)
         .join(Integration, Integration.id == TelemetryReading.integration_id)
-        .order_by(TelemetryReading.occurred_at.desc())
-        .limit(limit)
+        .where(equipment_visible_clause(ctx.scope, TelemetryReading.managed_asset_id))
     )
+    if site_id is not None:
+        stmt = stmt.where(equipment_in_site_clause(site_id, TelemetryReading.managed_asset_id))
     if integration_id is not None:
         stmt = stmt.where(TelemetryReading.integration_id == integration_id)
     if managed_asset_id is not None:
         stmt = stmt.where(TelemetryReading.managed_asset_id == managed_asset_id)
     if metric is not None:
         stmt = stmt.where(TelemetryReading.metric == metric)
+    newest = (TelemetryReading.occurred_at.desc(), TelemetryReading.id.desc())
+    if per_series:
+        # Filter before ranking so hidden or unrelated rows cannot displace a visible series.
+        identity = (
+            TelemetryReading.integration_id, TelemetryReading.managed_asset_id, TelemetryReading.external_identifier,
+            TelemetryReading.metric, TelemetryReading.unit, TelemetryReading.registry_version, TelemetryReading.series_key,
+        )
+        winners = (
+            stmt.with_only_columns(TelemetryReading.id, Integration.poll_interval_seconds)
+            .distinct(*identity).order_by(*identity, *newest).subquery()
+        )
+        stmt = select(TelemetryReading, winners.c.poll_interval_seconds).join(winners, winners.c.id == TelemetryReading.id)
+    stmt = stmt.order_by(*newest).limit(limit)
     rows = (await db.execute(stmt)).all()
     return [_out(row, poll_interval_seconds=interval) for row, interval in rows]
 
@@ -701,6 +719,7 @@ async def metric_history(
             literal("raw").label("resolution"),
         )
         .where(
+            equipment_visible_clause(ctx.scope, TelemetryReading.managed_asset_id),
             TelemetryReading.metric == metric,
             TelemetryReading.occurred_at >= start,
             TelemetryReading.occurred_at <= end,
@@ -723,6 +742,7 @@ async def metric_history(
             literal("daily").label("resolution"),
         )
         .where(
+            equipment_visible_clause(ctx.scope, DailyTelemetryAggregate.managed_asset_id),
             DailyTelemetryAggregate.metric == metric,
             DailyTelemetryAggregate.day >= utc_day(start),
             DailyTelemetryAggregate.day <= utc_day(end),
@@ -823,6 +843,7 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
         managed_asset_id=row.managed_asset_id,
         external_identifier=row.external_identifier,
         metric=row.metric,
+        series_key=row.series_key,
         unit=row.unit,
         value=float(row.value),
         presentation_unit=presentation.unit if presentation is not None else row.unit,
@@ -843,7 +864,7 @@ def _out(row: TelemetryReading, *, poll_interval_seconds: int | None = None) -> 
 
 def _history_raw(row: TelemetryReading) -> TelemetryHistoryOut:
     return TelemetryHistoryOut(
-        **_out(row).model_dump(), resolution="raw", series_key=row.series_key,
+        **_out(row).model_dump(), resolution="raw",
         mapping_revision_id=row.mapping_revision_id, contract_evidence=row.contract_evidence,
         provenance_status=reading_provenance_status(row),
     )
