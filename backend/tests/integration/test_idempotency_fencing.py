@@ -27,6 +27,7 @@ from app.core.errors import register_exception_handlers
 from tests.conftest import TEST_DATABASE_URL
 
 ENDPOINT = "POST:/fencing-test"
+PRINCIPAL = "user:00000000-0000-0000-0000-000000000337"
 
 
 @pytest_asyncio.fixture
@@ -67,7 +68,9 @@ async def _row(session, key: str):
 
 
 async def _claim(session, key: str, request_hash: str = "h"):
-    return await idem.get_or_claim(session, key=key, endpoint=ENDPOINT, request_hash=request_hash)
+    return await idem.get_or_claim(
+        session, principal=PRINCIPAL, key=key, endpoint=ENDPOINT, request_hash=request_hash
+    )
 
 
 async def test_normal_claim_then_complete_then_replay(sessions):

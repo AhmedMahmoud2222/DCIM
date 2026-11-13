@@ -25,13 +25,15 @@ def test_resolution_migration_follows_aggregate_lineage_as_single_head():
     # Issue #150 B7: 0055_pdu_catalog_outlet_template follows 0055_alarm_rule_resolution;
     # the vertical-placement uniqueness migration (0056) follows the PDU migration,
     # the FK-index migration (0057) follows 0056, and alarm subject-key migration 0058
-    # follows 0057, so 0058 is the single head.
-    assert directory.get_heads() == ["0058_alarm_subject_key"]
+    # follows 0057, and the idempotency principal-scope migration 0059 (issue #337) follows 0058,
+    # so 0059 is the single head.
+    assert directory.get_heads() == ["0059_idempotency_principal"]
     assert directory.get_revision("0055_alarm_rule_resolution").down_revision == "0051_aggregate_lineage"
     assert directory.get_revision("0055_pdu_catalog_outlet_template").down_revision == "0055_alarm_rule_resolution"
     assert directory.get_revision("0056_pdu_vertical_placement").down_revision == "0055_pdu_catalog_outlet_template"
     assert directory.get_revision("0057_fk_indexes").down_revision == "0056_pdu_vertical_placement"
     assert directory.get_revision("0058_alarm_subject_key").down_revision == "0057_fk_indexes"
+    assert directory.get_revision("0059_idempotency_principal").down_revision == "0058_alarm_subject_key"
 
 
 def test_upgrade_is_nullable_without_backfill():

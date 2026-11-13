@@ -35,6 +35,7 @@ from app.application.idempotency import (
     get_or_claim,
     hash_request_body,
     release_claim,
+    user_principal,
 )
 from app.application.outbox_service import write_outbox_event
 from app.application.placement_service import PlacementConflict, get_current_rack_placement, move_rack, retire_rack_placement
@@ -151,7 +152,10 @@ async def create_rack(
     claim = None
     if idempotency_key is not None:
         try:
-            outcome = await get_or_claim(db, key=idempotency_key, endpoint="POST:/racks", request_hash=request_hash)
+            outcome = await get_or_claim(
+                db, principal=user_principal(ctx.user.id), key=idempotency_key,
+                endpoint="POST:/racks", request_hash=request_hash,
+            )
         except IdempotencyConflict as exc:
             raise ApiError(
                 status_code=422, title="Idempotency Key Reused",

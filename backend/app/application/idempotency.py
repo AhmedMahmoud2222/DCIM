@@ -10,10 +10,10 @@ check and the store, so N genuinely concurrent identical requests all passed the
 check, all attempted the write, and N-1 of them surfaced the resulting database conflict
 as an incorrect client-facing error instead of replaying the one write that succeeded.
 
-The corrected flow uses `idempotency_key`'s existing unique `(key, endpoint)` index as an
-atomic claim, not just a cache:
+The corrected flow uses `idempotency_key`'s unique `(principal, key, endpoint)` index as an
+atomic claim, not just a cache (issue #337: the authenticated principal scopes every record):
 
-1. Attempt `INSERT ... ON CONFLICT (key, endpoint) DO NOTHING RETURNING id`, committed
+1. Attempt `INSERT ... ON CONFLICT (principal, key, endpoint) DO NOTHING RETURNING id`, committed
    immediately (so the claim is visible to other transactions under MVCC, not just at the
    end of the caller's own transaction). PostgreSQL's unique index serializes this
    correctly across true concurrency — exactly one concurrent INSERT can win.
@@ -109,12 +109,25 @@ def hash_request_body(body: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-async def _try_claim(db: AsyncSession, *, key: str, endpoint: str, request_hash: str) -> uuid.UUID | None:
+def user_principal(user_id: uuid.UUID) -> str:
+    """Namespaced principal for an authenticated end user (server-derived, never client-supplied)."""
+    return f"user:{user_id}"
+
+
+def collector_principal(collector_id: uuid.UUID) -> str:
+    """Namespaced principal for a signature-authenticated collector."""
+    return f"collector:{collector_id}"
+
+
+async def _try_claim(
+    db: AsyncSession, *, principal: str, key: str, endpoint: str, request_hash: str
+) -> uuid.UUID | None:
     table = _TABLE
     stmt = (
         pg_insert(table)
         .values(
             id=uuid.uuid4(),
+            principal=principal,
             key=key,
             endpoint=endpoint,
             request_hash=request_hash,
@@ -123,7 +136,7 @@ async def _try_claim(db: AsyncSession, *, key: str, endpoint: str, request_hash:
             response_body=None,
             expires_at=datetime.now(UTC) + _DEFAULT_TTL,
         )
-        .on_conflict_do_nothing(index_elements=["key", "endpoint"])
+        .on_conflict_do_nothing(index_elements=["principal", "key", "endpoint"])
         .returning(table.c.id)
     )
     result = await db.execute(stmt)
@@ -153,9 +166,17 @@ async def _try_reclaim_stale(db: AsyncSession, record: IdempotencyKey) -> uuid.U
     return reclaimed_id
 
 
-async def get_or_claim(db: AsyncSession, *, key: str, endpoint: str, request_hash: str) -> IdempotencyOutcome:
-    """Returns either a completed record to replay, or a claim this caller now owns."""
-    claimed_id = await _try_claim(db, key=key, endpoint=endpoint, request_hash=request_hash)
+async def get_or_claim(
+    db: AsyncSession, *, principal: str, key: str, endpoint: str, request_hash: str
+) -> IdempotencyOutcome:
+    """Returns either a completed record to replay, or a claim this caller now owns.
+
+    `principal` is the server-derived authenticated identity (user_principal / collector_principal).
+    Every claim, lookup, replay and stale reclaim is scoped to it, so two principals sharing a key
+    and endpoint can neither replay nor block each other (issue #337)."""
+    if not principal or not principal.strip():
+        raise ValueError("an idempotency claim requires a non-empty authenticated principal")
+    claimed_id = await _try_claim(db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash)
     if claimed_id is not None:
         claim = await db.get(IdempotencyKey, claimed_id)
         assert claim is not None
@@ -164,14 +185,18 @@ async def get_or_claim(db: AsyncSession, *, key: str, endpoint: str, request_has
     deadline = datetime.now(UTC) + timedelta(seconds=_POLL_MAX_WAIT_SECONDS)
     select_stmt = (
         select(IdempotencyKey)
-        .where(IdempotencyKey.key == key, IdempotencyKey.endpoint == endpoint)
+        .where(
+            IdempotencyKey.principal == principal, IdempotencyKey.key == key, IdempotencyKey.endpoint == endpoint
+        )
         .execution_options(populate_existing=True)
     )
     while True:
         record = (await db.execute(select_stmt)).scalar_one_or_none()
         if record is None:
             # The prior claimant released it (its write failed) — try to claim it fresh.
-            claimed_id = await _try_claim(db, key=key, endpoint=endpoint, request_hash=request_hash)
+            claimed_id = await _try_claim(
+                db, principal=principal, key=key, endpoint=endpoint, request_hash=request_hash
+            )
             if claimed_id is not None:
                 claim = await db.get(IdempotencyKey, claimed_id)
                 assert claim is not None
