@@ -11,6 +11,7 @@ import base64
 import io
 import time
 import zlib
+from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfReader
@@ -429,3 +430,94 @@ def test_wide_fan_out_of_unlisted_actions_is_rejected_by_the_lookup_budget(monke
     assert _reject_code(content) == "too_complex"
     monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
     assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+def _page_tree_pdf(count: int) -> bytes:
+    """A page tree whose /Kids lists `count` pages that the cross-reference table does not list."""
+    kids = b" ".join(b"%d 0 R" % (10 + index) for index in range(count))
+    objects = {1: b"<</Type/Catalog/Pages 2 0 R>>", 2: b"<</Type/Pages/Kids[" + kids + b"]/Count %d>>" % count}
+    pages = b"".join(
+        b"%d 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>\nendobj\n" % (10 + index) for index in range(count)
+    )
+    return _classic_pdf(objects, after=pages)
+
+
+def test_a_few_unlisted_pages_are_accepted():
+    assert validate_pdf(_page_tree_pdf(3), max_bytes=LIMITS["max_bytes"], max_pages=10).page_count == 3
+
+
+def test_many_unlisted_pages_are_rejected_by_the_lookup_budget_before_pages_are_counted(monkeypatch):
+    """The page count walks the whole tree, so the budget has to apply there too."""
+    content = _page_tree_pdf(200)
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000)
+    assert caught.value.code == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 200  # only the budget refuses
+
+
+def _dangling_type_pdf(count: int) -> bytes:
+    """`count` streams whose /Type is a reference to an object the file does not contain."""
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>",
+    }
+    objects.update({10 + index: b"<</Type %d 0 R/Length 0>>\nstream\n\nendstream" % (5000 + index) for index in range(count)})
+    return _classic_pdf(objects)
+
+
+def test_a_few_streams_with_a_dangling_type_are_accepted():
+    assert validate_pdf(_dangling_type_pdf(3), **LIMITS).page_count == 1
+
+
+def test_many_streams_with_a_dangling_type_are_rejected_by_the_lookup_budget(monkeypatch):
+    """Resolving a stream's /Type is a parser lookup like any other."""
+    content = _dangling_type_pdf(200)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 1000)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+@pytest.mark.parametrize(
+    ("file_size", "limit"),
+    [(1, 32), (1024 * 1024, 32), (8 * 1024 * 1024, 32), (24 * 1024 * 1024, 10), (25 * 1024 * 1024, 10), (10**9, 4)],
+)
+def test_lookup_allowance_shrinks_as_the_file_grows(file_size, limit):
+    """Each lookup scans the whole file, so a larger file gets fewer lookups."""
+    assert pdf_validation._LookupBudget.limit_for(file_size) == limit
+
+
+def test_large_file_with_unlisted_annotations_is_refused_within_the_time_limit():
+    """24 MB allows 10 lookups (about 3 s); 32 lookups would take about 10 s."""
+    content = _annotated_page_pdf(12, padding=24 * 1024 * 1024)
+    started = time.perf_counter()
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(content, max_bytes=64 * 1024 * 1024, max_pages=10)
+    assert caught.value.code == "too_complex"
+    assert time.perf_counter() - started < 8.0
+
+
+def _stub_reader() -> SimpleNamespace:
+    return SimpleNamespace(xref={0: {1: 100}, 1: {7: 200}}, xref_objStm={5: (8, 0)})
+
+
+class _Reference(SimpleNamespace):
+    pass
+
+
+def test_object_stream_members_are_listed_only_with_generation_zero():
+    """Members always have generation 0, so `5 1 R` is a different object from member `5 0 R`."""
+    budget = pdf_validation._LookupBudget(_stub_reader(), 1000)
+    for _ in range(budget.limit * 3):
+        budget._charge(_Reference(idnum=5, generation=0))  # a member: free however often it is asked for
+        budget._charge(_Reference(idnum=1, generation=0))  # listed directly
+        budget._charge(_Reference(idnum=7, generation=1))  # listed under generation 1
+    budget.check()
+    for _ in range(budget.limit):
+        budget._charge(_Reference(idnum=5, generation=1))  # nonzero generation: not a member, not listed
+    with pytest.raises(PdfRejected) as caught:
+        budget._charge(_Reference(idnum=5, generation=1))
+    assert caught.value.code == "too_complex"
+    with pytest.raises(PdfRejected):
+        budget.check()  # the verdict repeats even if the parser swallowed the exception above
