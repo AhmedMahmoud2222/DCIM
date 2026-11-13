@@ -53,8 +53,12 @@ def done(stdout='', stderr='', code=0):
 
 class ComposeHealthcheckConfigTests(unittest.TestCase):
     def test_frontend_image_healthcheck_uses_ipv4_loopback(self):
-        dockerfile = FRONTEND_DOCKERFILE.read_text()
-        self.assertIn('wget -q -O- http://127.0.0.1:80/', dockerfile)
+        lines = FRONTEND_DOCKERFILE.read_text().splitlines()
+        healthcheck_index = next((index for index, line in enumerate(lines) if line.startswith('HEALTHCHECK ')), None)
+        self.assertIsNotNone(healthcheck_index)
+        healthcheck = '\n'.join(lines[healthcheck_index:healthcheck_index + 2])
+        self.assertIn('http://127.0.0.1:80/', healthcheck)
+        self.assertNotIn('localhost', healthcheck)
 
     def test_worker_healthcheck_pings_its_celery_node(self):
         for compose_name, config in COMPOSE_CONFIGS.items():
@@ -85,7 +89,7 @@ class ComposeHealthcheckConfigTests(unittest.TestCase):
                 self.assertEqual(healthcheck['timeout'], '15s')
         self.assertIn('celery[redis]>=5.7.0', BACKEND_CONFIG['project']['dependencies'])
 
-    def test_compose_smoke_requires_celery_healthchecks(self):
+    def test_compose_smoke_requires_all_service_healthchecks(self):
         healthy = {service: 'healthy' for service in smoke.HEALTH_CHECKED_SERVICES}
         self.assertTrue(smoke.healthchecks_healthy(healthy))
         for service in ('celery-worker', 'celery-beat', 'frontend'):
