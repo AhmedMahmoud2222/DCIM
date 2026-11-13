@@ -1,53 +1,51 @@
-# Documentation index
+# DCIM documentation index
 
-**Purpose:** navigate the *current* DCIM implementation without confusing historical design documents with the source now present in the repository. Updated 2026-09-26 for the PR #29 integration snapshot.
+**Navigation edition:** 2026-11-13, based on the Markdown inventory of `main@1e00e227039a4fb08c09ae46f565430678f6d55d`.
 
-## Start here
+**How to read this index:** “Primary guide” means the preferred entry point, **not** that every implementation or status claim has been revalidated at this commit. Many underlying pages give an earlier exact SHA and are snapshots. Check live source, GitHub PR/CI evidence and deployment records before making a current-state claim. No production deployment is authorized here.
 
-| Reader / question | Document | What it covers |
-|---|---|---|
-| New contributor or project stakeholder | [README](../README.md) | What the platform currently implements, status, technology, quick-start and key limitations |
-| Product owner / release reviewer | [Project status](PROJECT_STATUS.md) | Phase-by-phase source ledger, PR links, current CI evidence and remaining decisions |
-| Architect / engineer | [Architecture overview](ARCHITECTURE_OVERVIEW.md) | Current modular monolith, core domain boundaries, telemetry models and API/UI entry points |
-| Developer / CI maintainer | [Development and testing](DEVELOPMENT_AND_TESTING.md) | PostgreSQL/Redis bootstrap, frontend/Edge/Playwright suites, runtime matrix and migrations |
-| Operations / deployment team | [Operations](OPERATIONS.md) | Security, configuration, backup/restore, monitoring, health checks, rollback rehearsals and incident entry points |
-| Independent reviewer / auditor | [Audit status](AUDIT_STATUS.md) | Distinguishes original Phase 10 findings from PR #29 fixes, verified CI and pending review evidence |
-| Administrator / security reviewer | [User & group management](USER_GROUP_MANAGEMENT.md) | Users, groups, allow/deny permissions, site and rack access, effective-permission rules and safeguards |
-| Catalog administrator / security reviewer | [Catalog datasheet storage](CATALOG_DOCUMENTS.md) | Secure PDF upload, scanning, versioning and download of manufacturer datasheets |
-| Catalog administrator / security reviewer | [Catalog datasheet extraction](CATALOG_DATASHEET_EXTRACTION.md) | Sandboxed native and OCR extraction, candidate values with provenance, multi-model handling, job semantics and review |
-| Operations / security reviewer | [SEC-06 edge storage encryption](SEC06_EDGE_STORAGE_ENCRYPTION.md) | LUKS/dm-crypt full-disk encryption runbook for the Edge Collector's durable queue: deployment steps, boot/unlock handling, reimage/recovery procedures and the verification checklist/script |
+## Start here — one entry point per question
 
-## Product roadmap
+| Reader or question | Primary guide | Supporting detail |
+| --- | --- | --- |
+| New contributor / stakeholder | [Repository README](../README.md) | [Project status](PROJECT_STATUS.md), [roadmap](PRODUCT_ROADMAP.md) |
+| What exists, what is proposed and what is verified? | [Project status](PROJECT_STATUS.md) | [Architecture overview](ARCHITECTURE_OVERVIEW.md); GitHub history and current CI |
+| What are the component and domain boundaries? | [Architecture overview](ARCHITECTURE_OVERVIEW.md) | [Historical architecture and decisions](HISTORY_AND_EVIDENCE.md); [architecture ADRs](architecture/) |
+| How do I run and test locally? | [Development and testing](DEVELOPMENT_AND_TESTING.md) | [Edge collector](../edge_collector/README.md); [CI routing](ci/ROUTING_MATRIX.md) |
+| How do I operate, investigate and recover? | [Operations](OPERATIONS.md) | [Staging VM runbook](STAGING_VM_RUNBOOK.md) |
+| How do staging, releases and approvals work? | [Release and deployment guide](RELEASE_AND_DEPLOYMENT.md) | [Deployment implementation](DEPLOYMENT_IMPLEMENTATION.md), [governance](DEPLOYMENT_GOVERNANCE.md) |
+| Where are original findings, corrections and audits? | [Historical evidence guide](HISTORY_AND_EVIDENCE.md) | [Phase 10 audit status](AUDIT_STATUS.md), [security acceptance gate](security/ACCEPTANCE_GATE.md) |
+| What is the intended R1–R5 direction? | [Product roadmap](PRODUCT_ROADMAP.md) | Issue-specific architecture/contracts below |
 
-- [Consolidated product roadmap](PRODUCT_ROADMAP.md) — original scope, Phase 10/11 additions and proposed R1–R5 releases; distinguish planned from implemented and deployed.
+## Feature and engineering documentation
 
-## Historical architecture and phase records
+- **Identity and permissions:** [User/group management](USER_GROUP_MANAGEMENT.md), [scoped authorization architecture](architecture/), [atomic optimistic concurrency](implementation/ATOMIC_OPTIMISTIC_CONCURRENCY.md).
+- **Asset catalog and documents:** [PDF datasheet storage](CATALOG_DOCUMENTS.md), [datasheet extraction](CATALOG_DATASHEET_EXTRACTION.md), [decommission constraint](ASSET_DECOMMISSION_CONSTRAINT.md).
+- **Monitoring and telemetry:** [Edge Collector](../edge_collector/README.md), [Edge interop](../edge_collector/interop/README.md), [telemetry metric semantics](implementation/TELEMETRY_METRIC_SEMANTICS_V2.md), [replay ledger](implementation/TELEMETRY_REPLAY_LEDGER.md), [mapping revisions](implementation/TELEMETRY_MAPPING_REVISIONS.md).
+- **Network discovery:** [Issue #101 profile/discovery implementation](implementation/ISSUE_101_NETWORK_PROFILES_DISCOVERY.md), [supported profile contract](implementation/ISSUE_101_SUPPORTED_PROFILES.md).
+- **Cooling, digital twin and CFD:** [Cooling/thermal implementation](implementation/ISSUE_105_COOLING_THERMAL.md), [CFD implementation scope](implementation/ISSUE_106_CFD_THERMAL_ANALYSIS.md), [solver ADR](architecture/ADR-0013-cfd-solver-selection.md), [CFD input contract](architecture/CFD_INPUT_CONTRACT_V1.md), [verification policy](architecture/CFD_VERIFICATION_VALIDATION_POLICY.md).
+- **AI operations:** [Issue #107 implementation overview](implementation/ISSUE_107_AI_OPERATIONS.md), [data-quality/predictive design](implementation/ISSUE_107_DATA_QUALITY_AND_PREDICTIVE.md), [read-only assistant contract](implementation/ISSUE_107_M2_READONLY_ASSISTANT.md). **Design contracts must not be presented as deployed capabilities.**
+- **Architecture and CI decisions:** [Physical-units ADR](architecture/ADR-0012-canonical-physical-units.md), [orchestration controller reliability](architecture/ORCHESTRATION_CONTROLLER_RELIABILITY_SPEC.md), [CI architecture ADR](ci/CI_ARCHITECTURE_ADR.md).
 
-The documents below are useful **historical evidence**. Their dates and baseline SHAs matter: a sentence saying a later phase "does not exist" may have been true when it was written and false for today's code. Do not silently rewrite those dated conclusions.
+## Operations and security — authoritative detail
 
-| Document | Intended use |
-|---|---|
-| [Architecture review](../ARCHITECTURE_REVIEW.md) | Canonical historical architecture §§1–50; Phase 10A addendum §4d and Phase 10B/C addendum §51; later implementation status is recorded here in the current guide |
-| [Phase 1 implementation](../PHASE1_IMPLEMENTATION.md) | Foundation implementation and historical scope |
-| [Phase 1 correction report](../PHASE1_CORRECTION_REPORT.md) | Corrective work on database ownership, audit retention, security/concurrency |
-| [Phase 8 architecture clarification](../PHASE8_ARCHITECTURE_CLARIFICATION.md) | Framework versus persistent vendor/device/profile/metric layers and associated historical decisions |
-| [Phase 10 independent audit report](../PHASE10_INDEPENDENT_AUDIT_REPORT.md) | Jules' original audit of the `d96676c` baseline — read alongside [audit status](AUDIT_STATUS.md) for the subsequent corrections |
-| [Phase 10 integration report](../PHASE10_INTEGRATION_REPORT.md) | PR #27/#28 reconciliation, Phase 10 ordering and BER fixes, CI evidence and merge gate |
+- [Release and deployment overview](RELEASE_AND_DEPLOYMENT.md) → [Operations](OPERATIONS.md) → [Staging plan](STAGING_VM_DEPLOYMENT_PLAN.md) / [VM runbook](STAGING_VM_RUNBOOK.md).
+- **Migration 0057 — production hold:** [preflight](FK_INDEX_PREFLIGHT_0057.md), [benchmark](FK_INDEX_BENCHMARK_0057.md), [rollout](FK_INDEX_ROLLOUT_0057.md), [benchmarked results](benchmark-results/0057/README.md). No production execution without staging qualification and written owner and DBA approval.
+- **Security and agents:** [Acceptance gate](security/ACCEPTANCE_GATE.md), [OpenCode authority](security/OPENCODE_AGENT_AUTHORITY.md), [Claude authority](security/CLAUDE_AGENT_AUTHORITY.md), [collaboration](security/AGENT_COLLABORATION.md), and [reviewer rules](../AGENTS.md). Do not merge or amend authority documents under a general docs-cleanup pretext.
+- **Edge storage protection:** [SEC-06 LUKS/dm-crypt runbook](SEC06_EDGE_STORAGE_ENCRYPTION.md), [SEC-05 retention](SEC05_COLLECTOR_RETENTION.md).
+- **Older security and validation evidence:** [Phase 11 findings and remediation plan](../PHASE11_SECURITY_REMEDIATION_PLAN.md), [Phase 10 audit addendum](AUDIT_STATUS.md), [dated independent audit records](HISTORY_AND_EVIDENCE.md).
 
-Other original architecture review and phase implementation artifacts are preserved at the repository root; the current index does not assert that all of them were revalidated on the newest branch.
+## Historical evidence vs living guidance
 
-## Source and issue links
+The [historical evidence guide](HISTORY_AND_EVIDENCE.md) consolidates the *reading order* for original architecture/phase documents without rewriting their audit results. Their baseline SHAs, negative findings, revalidation and correction records are distinct evidence and should not be deleted merely because two titles address the same phase.
 
-- [Registered FastAPI routers](../backend/app/api/v1/router.py) and [React routes](../frontend/src/app/App.tsx).
-- [Current CI workflow](../.github/workflows/ci.yml), [Phase 10 integration PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29) and [verified reviewed-head CI run #80](https://github.com/AhmedMahmoud2222/DCIM/actions/runs/36141826654).
-- [Original independent audit issue #24](https://github.com/AhmedMahmoud2222/DCIM/issues/24), [CI/docs issue #25](https://github.com/AhmedMahmoud2222/DCIM/issues/25), [browser/runtime issue #26](https://github.com/AhmedMahmoud2222/DCIM/issues/26).
-- Implementation source PRs: [10A backend #16](https://github.com/AhmedMahmoud2222/DCIM/pull/16), [10A UI #20](https://github.com/AhmedMahmoud2222/DCIM/pull/20), [10A graphics #21](https://github.com/AhmedMahmoud2222/DCIM/pull/21), [10B #22](https://github.com/AhmedMahmoud2222/DCIM/pull/22), [10C #23](https://github.com/AhmedMahmoud2222/DCIM/pull/23).
+Files under `.claude/skills/archify/` are bundled skill, renderer and third-party notice documents, **not** duplicate DCIM technical specifications. Files in `docs/benchmark-results/` are individual benchmark records, not summaries to collapse into one untraceable result.
 
-## Documentation maintenance rules
+## Maintenance rules
 
-1. **Label the baseline:** include the date, exact GitHub SHA and which branch or deployed release is being described.
-2. **Separate implementation from assurance:** code present, merged to `main`, tested on CI, independently audited, deployed and production-validated are separate states.
-3. **Update this index and the README** when adding a new phase/module, public API, CLI command or operational requirement.
-4. **Write dated addenda** rather than silently changing historic audit evidence. If a historical audit missed a defect, retain the original baseline and record the later finding with the introducing and fixing commits.
-5. **Verify commands** against the workflow, Compose services and scripts at the same commit; do not invent paths, service names, test counts or future roadmap completion dates.
-6. After PR #29 merges, **change the current-status pointers to the new main merge SHA and post-merge CI run**. Until then, the README and this index document the PR integration branch, not the default branch's released state.
+1. Keep this index and the README short; put procedures and technical claims in their named canonical guide.
+2. Specify branch, SHA, date and evidence when asserting a current implementation or review result. Do not copy a dated CI or PR status into multiple landing pages.
+3. Separate **proposed**, **implemented**, **merged**, **independently accepted**, **staging-qualified**, and **production-authorized** states.
+4. Preserve dated audits, findings, benchmark results, ADRs and security/agent authority verbatim. Add a dated correction or cross-reference rather than silently revising historical conclusions.
+5. Validate relative links and affected operational commands when moving a file. Do not delete or relocate a linked report until its inbound and outbound references are reconciled.
+6. Never interpret this documentation consolidation as an approval to deploy, run production migrations, weaken CI, or resolve active security findings.
