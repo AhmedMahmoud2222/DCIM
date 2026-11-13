@@ -22,6 +22,7 @@ spec.loader.exec_module(smoke)
 
 
 COMPOSE_ROOT = SCRIPT.parents[2]
+FRONTEND_DOCKERFILE = COMPOSE_ROOT / 'frontend' / 'Dockerfile'
 
 
 def construct_override(loader, node):
@@ -51,6 +52,10 @@ def done(stdout='', stderr='', code=0):
 
 
 class ComposeHealthcheckConfigTests(unittest.TestCase):
+    def test_frontend_image_healthcheck_uses_ipv4_loopback(self):
+        dockerfile = FRONTEND_DOCKERFILE.read_text()
+        self.assertIn('wget -q -O- http://127.0.0.1:80/', dockerfile)
+
     def test_worker_healthcheck_pings_its_celery_node(self):
         for compose_name, config in COMPOSE_CONFIGS.items():
             with self.subTest(compose=compose_name):
@@ -83,7 +88,7 @@ class ComposeHealthcheckConfigTests(unittest.TestCase):
     def test_compose_smoke_requires_celery_healthchecks(self):
         healthy = {service: 'healthy' for service in smoke.HEALTH_CHECKED_SERVICES}
         self.assertTrue(smoke.healthchecks_healthy(healthy))
-        for service in ('celery-worker', 'celery-beat'):
+        for service in ('celery-worker', 'celery-beat', 'frontend'):
             unhealthy = dict(healthy, **{service: 'unhealthy'})
             self.assertFalse(smoke.healthchecks_healthy(unhealthy), service)
 
@@ -96,7 +101,7 @@ class ComposeHealthcheckConfigTests(unittest.TestCase):
             'celery-beat': 'running',
             'frontend': 'running',
         }
-        for service in ('celery-worker', 'celery-beat'):
+        for service in ('celery-worker', 'celery-beat', 'frontend'):
             for status in ('starting', 'unhealthy'):
                 with self.subTest(service=service, status=status):
                     health = {name: 'healthy' for name in smoke.HEALTH_CHECKED_SERVICES}
