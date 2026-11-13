@@ -21,20 +21,25 @@ down_revision = "0059_idempotency_principal"
 branch_labels = None
 depends_on = None
 
-SEVERITIES = ("critical", "warning", "info")
-
 
 def upgrade() -> None:
-    for table in ("alarm_rule", "alarm"):
-        op.add_column(table, sa.Column("severity", sa.String(length=16), nullable=False, server_default="warning"))
-        op.execute(
-            f"ALTER TABLE {table} ADD CONSTRAINT ck_{table}_severity_allowed "
-            f"CHECK (severity IN {SEVERITIES!r}) NOT VALID"
-        )
-        op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT ck_{table}_severity_allowed")
+    op.add_column("alarm_rule", sa.Column("severity", sa.String(length=16), nullable=False, server_default="warning"))
+    op.add_column("alarm", sa.Column("severity", sa.String(length=16), nullable=False, server_default="warning"))
+    # NOT VALID first so the table is not scanned under the ADD lock; VALIDATE then checks existing rows.
+    op.execute(
+        "ALTER TABLE alarm_rule ADD CONSTRAINT ck_alarm_rule_severity_allowed "
+        "CHECK (severity IN ('critical', 'warning', 'info')) NOT VALID"
+    )
+    op.execute("ALTER TABLE alarm_rule VALIDATE CONSTRAINT ck_alarm_rule_severity_allowed")
+    op.execute(
+        "ALTER TABLE alarm ADD CONSTRAINT ck_alarm_severity_allowed "
+        "CHECK (severity IN ('critical', 'warning', 'info')) NOT VALID"
+    )
+    op.execute("ALTER TABLE alarm VALIDATE CONSTRAINT ck_alarm_severity_allowed")
 
 
 def downgrade() -> None:
-    for table in ("alarm", "alarm_rule"):
-        op.execute(f"ALTER TABLE {table} DROP CONSTRAINT ck_{table}_severity_allowed")
-        op.drop_column(table, "severity")
+    op.execute("ALTER TABLE alarm DROP CONSTRAINT ck_alarm_severity_allowed")
+    op.drop_column("alarm", "severity")
+    op.execute("ALTER TABLE alarm_rule DROP CONSTRAINT ck_alarm_rule_severity_allowed")
+    op.drop_column("alarm_rule", "severity")
