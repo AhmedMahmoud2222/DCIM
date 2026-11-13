@@ -1,0 +1,23 @@
+# LOCAL DEMONSTRATION ONLY. Keeps the simulated readings fresh so the heat maps stay populated.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d demo-refresh
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml stop demo-refresh
+#
+# Not for production: the loader refuses ENVIRONMENT=production. See docs/DEMO_LOCAL_LOADER.md.
+services:
+  demo-refresh:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dcim_app:${DCIM_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-dcim}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY to one shared Fernet key in .env}
+      CREDENTIAL_ENCRYPTION_KEYS: ${CREDENTIAL_ENCRYPTION_KEYS:-}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["python", "-m", "app.application.demo_loader", "refresh", "--confirm-local-demo", "--watch"]
+    restart: unless-stopped
