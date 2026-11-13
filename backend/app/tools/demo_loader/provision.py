@@ -9,16 +9,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
-from app.application.demo_loader import LOADER_VERSION
-from app.application.demo_loader.constants import (
-    DEVICE_METRICS,
-    MAPPING_LABEL,
-    SENSOR_MARKER_KEY,
-    SENSOR_METRICS,
-    SENSOR_TAG_PREFIX,
-    SOURCE_PREFIX,
-)
-from app.application.demo_loader.selection import DeviceInfo, IntegrationRoute, LoaderError, RackInfo, Targets
 from app.application.placement_service import get_current_equipment_placement, move_equipment
 from app.application.spatial_validation import validate_u_range_against_rack_capacity
 from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
@@ -26,6 +16,16 @@ from app.domain.identity.models import ALLOWED_LIFECYCLE_TRANSITIONS, ManagedAss
 from app.domain.placement.models import EquipmentPlacement
 from app.domain.telemetry.models import IntegrationMetricMapping
 from app.domain.telemetry.registry import METRIC_REGISTRY, validate_metric_unit
+from app.tools.demo_loader import LOADER_VERSION
+from app.tools.demo_loader.constants import (
+    DEVICE_METRICS,
+    MAPPING_LABEL,
+    SENSOR_MARKER_KEY,
+    SENSOR_METRICS,
+    SENSOR_TAG_PREFIX,
+    SOURCE_PREFIX,
+)
+from app.tools.demo_loader.selection import DeviceInfo, IntegrationRoute, LoaderError, RackInfo, Targets
 
 AUDIT_REASON = f"demo_loader {LOADER_VERSION}"
 SENSOR_ELEVATION_PER_U_MM = 44.45

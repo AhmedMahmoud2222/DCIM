@@ -1,11 +1,11 @@
 # ruff: noqa: E501
 """Command line for the local demo loader.
 
-    python -m app.application.demo_loader plan
-    python -m app.application.demo_loader apply  --confirm-local-demo [--steps ...] [--history-hours 24]
-    python -m app.application.demo_loader refresh --confirm-local-demo [--watch]
-    python -m app.application.demo_loader verify
-    python -m app.application.demo_loader purge  --confirm-local-demo [--dry-run]
+    python -m app.tools.demo_loader plan
+    python -m app.tools.demo_loader apply  --confirm-local-demo [--steps ...] [--history-hours 24]
+    python -m app.tools.demo_loader refresh --confirm-local-demo [--watch]
+    python -m app.tools.demo_loader verify
+    python -m app.tools.demo_loader purge  --confirm-local-demo [--dry-run]
 
 Mutating commands need `--confirm-local-demo` and refuse to run when ENVIRONMENT=production. Output is one JSON
 document per command on stdout (progress goes to stderr); the exit code is 0 only when every check passed."""
@@ -21,24 +21,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db.models  # noqa: F401  (registers every ORM model; a foreign key to an unloaded table fails at first flush)
-from app.application.demo_loader import LOADER_VERSION
-from app.application.demo_loader.constants import (
+from app.core.config import get_settings
+from app.domain.auth.models import User
+from app.domain.telemetry.models import IntegrationMetricMapping
+from app.tools.demo_loader import LOADER_VERSION
+from app.tools.demo_loader.constants import (
     DEFAULT_DEVICE_HISTORY_HOURS,
     DEFAULT_HISTORY_HOURS,
     DEMO_SITE_PREFIX,
     MAPPING_LABEL,
     SOURCE_PREFIX,
 )
-from app.application.demo_loader.floorplans import calibrate_demo_plans
-from app.application.demo_loader.provision import ensure_device_mappings, ensure_sensors
-from app.application.demo_loader.purge import purge
-from app.application.demo_loader.selection import LoaderError, Targets, discover, outside_fingerprint
-from app.application.demo_loader.series import Series, build_series, routes_by_integration, simulate
-from app.application.demo_loader.signals import next_slot_after
-from app.application.demo_loader.verify import verify
-from app.core.config import get_settings
-from app.domain.auth.models import User
-from app.domain.telemetry.models import IntegrationMetricMapping
+from app.tools.demo_loader.floorplans import calibrate_demo_plans
+from app.tools.demo_loader.provision import ensure_device_mappings, ensure_sensors
+from app.tools.demo_loader.purge import purge
+from app.tools.demo_loader.selection import LoaderError, Targets, discover, outside_fingerprint
+from app.tools.demo_loader.series import Series, build_series, routes_by_integration, simulate
+from app.tools.demo_loader.signals import next_slot_after
+from app.tools.demo_loader.verify import verify
 
 STEPS = ("existing", "sensors", "floorplans", "devices")
 
@@ -224,7 +224,7 @@ def parse_pair(value: str) -> tuple[str, str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m app.application.demo_loader", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(prog="python -m app.tools.demo_loader", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("plan", "apply", "refresh", "verify", "purge"):
         p = sub.add_parser(name)

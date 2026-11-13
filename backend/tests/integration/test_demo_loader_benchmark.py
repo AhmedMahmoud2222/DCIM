@@ -12,9 +12,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.application.demo_loader import cli
-from app.application.demo_loader.purge import purge
-from app.application.demo_loader.selection import discover
+from app.tools.demo_loader import cli
+from app.tools.demo_loader.purge import purge
+from app.tools.demo_loader.selection import discover
 from tests.demo_world import build_world
 from tests.integration.test_demo_loader import args
 

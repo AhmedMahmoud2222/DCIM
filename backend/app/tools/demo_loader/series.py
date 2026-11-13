@@ -14,18 +14,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.telemetry import TelemetryBatchIn, TelemetryRecordIn, ingest_collector_telemetry
-from app.application.demo_loader.constants import (
+from app.domain.integration.models import Collector
+from app.domain.telemetry.models import IntegrationMetricMapping, IntegrationMetricMappingRevision, TelemetryReading
+from app.domain.telemetry.registry import convert_value, normalize_unit, registry_snapshot
+from app.tools.demo_loader.constants import (
     DEDUP_PREFIX,
     MAX_BATCH,
     POLL_INTERVAL_FALLBACK_SECONDS,
     SOURCE_PREFIX,
     reading_attributes,
 )
-from app.application.demo_loader.selection import IntegrationRoute, LoaderError, Targets
-from app.application.demo_loader.signals import canonical_value, slot_grid, to_decimal
-from app.domain.integration.models import Collector
-from app.domain.telemetry.models import IntegrationMetricMapping, IntegrationMetricMappingRevision, TelemetryReading
-from app.domain.telemetry.registry import convert_value, normalize_unit, registry_snapshot
+from app.tools.demo_loader.selection import IntegrationRoute, LoaderError, Targets
+from app.tools.demo_loader.signals import canonical_value, slot_grid, to_decimal
 
 
 @dataclass

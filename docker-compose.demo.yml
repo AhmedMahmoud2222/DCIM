@@ -19,5 +19,5 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    command: ["python", "-m", "app.application.demo_loader", "refresh", "--confirm-local-demo", "--watch"]
+    command: ["python", "-m", "app.tools.demo_loader", "refresh", "--confirm-local-demo", "--watch"]
     restart: unless-stopped

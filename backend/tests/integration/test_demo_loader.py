@@ -8,14 +8,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select, text
 
-from app.application.demo_loader import cli
-from app.application.demo_loader.constants import DEDUP_PREFIX
-from app.application.demo_loader.selection import discover, outside_fingerprint
-from app.application.demo_loader.verify import verify
 from app.domain.cooling.models import EnvironmentalSensor
 from app.domain.physical.models import Equipment, Rack
 from app.domain.spatial.models import FloorPlan
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
+from app.tools.demo_loader import cli
+from app.tools.demo_loader.constants import DEDUP_PREFIX
+from app.tools.demo_loader.selection import discover, outside_fingerprint
+from app.tools.demo_loader.verify import verify
 from tests.demo_world import PLAN_HEIGHT_MM, PLAN_WIDTH_MM, build_world
 
 
@@ -163,7 +163,7 @@ async def test_purge_removes_only_what_the_loader_created(db_session, world):
     baseline = await counts(db_session)
     await cli.run_apply(db_session, args())
     targets = await discover(db_session)
-    from app.application.demo_loader.purge import purge
+    from app.tools.demo_loader.purge import purge
 
     dry = await purge(db_session, targets, dry_run=True)
     assert dry.sensors == 12 and dry.mappings == 12 * 2 + 60 * 2 and dry.readings > 0
@@ -179,7 +179,7 @@ async def test_purge_removes_only_what_the_loader_created(db_session, world):
 
 
 async def test_production_and_unconfirmed_runs_are_refused(monkeypatch):
-    from app.application.demo_loader.selection import LoaderError
+    from app.tools.demo_loader.selection import LoaderError
 
     with pytest.raises(LoaderError, match="--confirm-local-demo"):
         cli.guard(args(confirm_local_demo=False))
@@ -237,7 +237,7 @@ async def _fingerprint(db):
 async def test_independently_seeded_parallel_and_sequential_runs_store_identical_data(db_session, db_engine, world):
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.application.demo_loader.purge import purge
+    from app.tools.demo_loader.purge import purge
 
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
     as_of = datetime.now(UTC)
@@ -255,7 +255,7 @@ async def test_independently_seeded_parallel_and_sequential_runs_store_identical
 async def test_a_failing_collector_is_reported_and_a_rerun_resumes_without_duplicates(db_session, db_engine, world, monkeypatch):
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from app.application.demo_loader import series as series_module
+    from app.tools.demo_loader import series as series_module
 
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
     as_of = datetime.now(UTC)
@@ -294,7 +294,7 @@ async def test_an_unassigned_integration_is_rejected_per_record_and_reported(db_
     await db_session.execute(text("UPDATE collector_assignment SET effective_to = now() WHERE integration_id = :i"),
                              {"i": world.sites[0].integration_id})
     await db_session.commit()
-    from app.application.demo_loader.selection import LoaderError
+    from app.tools.demo_loader.selection import LoaderError
 
     # Without a current assignment the loader cannot choose a collector: it stops before ingesting anything.
     with pytest.raises(LoaderError, match="no current collector assignment"):

@@ -7,14 +7,14 @@ from uuid import uuid4
 
 import pytest
 
-from app.application.demo_loader.floorplans import build_dxf, validate_geometry
-from app.application.demo_loader.provision import free_front_slot
-from app.application.demo_loader.selection import RackInfo
-from app.application.demo_loader.series import raw_value_for
-from app.application.demo_loader.signals import canonical_value, next_slot_after, slot_grid
 from app.application.spatial_import.calibration import calibrate_declared_units
 from app.application.spatial_import.dxf_parser import parse_dxf
 from app.application.telemetry_service import canonical_storage_value
+from app.tools.demo_loader.floorplans import build_dxf, validate_geometry
+from app.tools.demo_loader.provision import free_front_slot
+from app.tools.demo_loader.selection import RackInfo
+from app.tools.demo_loader.series import raw_value_for
+from app.tools.demo_loader.signals import canonical_value, next_slot_after, slot_grid
 
 NOW = datetime(2026, 11, 13, 12, 7, 31, tzinfo=UTC)
 

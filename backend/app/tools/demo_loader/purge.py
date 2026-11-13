@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from sqlalchemy import ColumnElement, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.demo_loader.constants import DEDUP_PREFIX, MAPPING_LABEL, SENSOR_MARKER_KEY, SENSOR_TAG_PREFIX, SOURCE_PREFIX
-from app.application.demo_loader.selection import Targets
 from app.domain.alarm.models import Alarm
 from app.domain.cooling.models import EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.placement.models import EquipmentPlacement
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
+from app.tools.demo_loader.constants import DEDUP_PREFIX, MAPPING_LABEL, SENSOR_MARKER_KEY, SENSOR_TAG_PREFIX, SOURCE_PREFIX
+from app.tools.demo_loader.selection import Targets
 
 
 @dataclass

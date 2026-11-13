@@ -2,7 +2,7 @@
 
 **Scope:** a local demonstration database only. The loader refuses to run when `ENVIRONMENT=production`, needs `--confirm-local-demo` for every command that changes data, and selects only sites whose code starts with `DEMO-SITE-`. It does not deploy anything and it does not touch the HRC site. Production deployment is not authorized by this document.
 
-The loader is version-controlled code in `backend/app/application/demo_loader/`. It is idempotent: a second run finds every object it needs already present and writes nothing.
+The loader is version-controlled code in `backend/app/tools/demo_loader/`. It is idempotent: a second run finds every object it needs already present and writes nothing.
 
 ## What it does
 
@@ -22,11 +22,11 @@ Every simulated reading carries `attributes = {"synthetic": true, "provenance": 
 ## Commands
 
 ```text
-python -m app.application.demo_loader plan                       # read-only: sites, racks, devices, integration and collector per site
-python -m app.application.demo_loader apply   --confirm-local-demo
-python -m app.application.demo_loader refresh --confirm-local-demo [--watch]
-python -m app.application.demo_loader verify
-python -m app.application.demo_loader purge   --confirm-local-demo [--dry-run]
+python -m app.tools.demo_loader plan                       # read-only: sites, racks, devices, integration and collector per site
+python -m app.tools.demo_loader apply   --confirm-local-demo
+python -m app.tools.demo_loader refresh --confirm-local-demo [--watch]
+python -m app.tools.demo_loader verify
+python -m app.tools.demo_loader purge   --confirm-local-demo [--dry-run]
 ```
 
 Useful options: `--steps existing,sensors,floorplans,devices`, `--history-hours 24`, `--device-history-hours 24`, `--as-of 2026-11-13T12:00:00Z` (timezone-aware ISO 8601, not in the future, apply only; refresh always uses the live clock), `--sequential`, `--site-prefix`, `--protect-prefix`, `--integration DEMO-SITE-01="<integration name>"` (only when the loader cannot pick a site's integration by `site_id` or by the site code in its name), `--actor-email you@example.com` (user recorded on the floor-plan import and calibration; default is the oldest active user), `--expect-racks 100 --expect-devices 500`.
@@ -67,7 +67,7 @@ Migration `0060_alarm_severity` adds `severity` to `alarm_rule` and `alarm` (def
 ### 3. Check what the loader will use (read-only)
 
 ```powershell
-docker compose exec backend python -m app.application.demo_loader plan
+docker compose exec backend python -m app.tools.demo_loader plan
 ```
 
 Confirm three `DEMO-SITE-0n` sites, 100 racks, 500 devices, one integration and one collector per site, and `poll_interval_seconds` 300. If a site's integration is ambiguous the command says so and tells you the `--integration` argument to add.
@@ -77,9 +77,9 @@ Confirm three `DEMO-SITE-0n` sites, 100 racks, 500 devices, one integration and 
 **Pilot first.** One site, two hours of device history, to prove the pipeline on your data before the long run (a few minutes):
 
 ```powershell
-docker compose exec backend python -m app.application.demo_loader apply --confirm-local-demo --site-prefix DEMO-SITE-01 `
+docker compose exec backend python -m app.tools.demo_loader apply --confirm-local-demo --site-prefix DEMO-SITE-01 `
   --actor-email you@example.com --device-history-hours 2 --sequential
-docker compose exec backend python -m app.application.demo_loader verify --site-prefix DEMO-SITE-01
+docker compose exec backend python -m app.tools.demo_loader verify --site-prefix DEMO-SITE-01
 ```
 
 A pilot leaves real, correctly flagged data in place; the full run below reuses it and fills the rest (the loader skips every slot already stored).
@@ -93,7 +93,7 @@ $jobs = 'DEMO-SITE-01','DEMO-SITE-02','DEMO-SITE-03' | ForEach-Object {
   Start-Job -Name $_ -ArgumentList $_, $asOf, $stamp -ScriptBlock {
     param($site, $asOf, $stamp)
     Set-Location $using:PWD
-    docker compose exec -T backend python -m app.application.demo_loader apply --confirm-local-demo --site-prefix $site `
+    docker compose exec -T backend python -m app.tools.demo_loader apply --confirm-local-demo --site-prefix $site `
       --actor-email you@example.com --as-of $asOf --sequential --no-verify 2>$null |
       Out-File -Encoding utf8 ".\backups\demo-loader-apply-$site-$stamp.json"
     $LASTEXITCODE
@@ -122,13 +122,13 @@ The client Python process, not PostgreSQL, is the bottleneck (134 s of client CP
 One catch-up cycle:
 
 ```powershell
-docker compose exec backend python -m app.application.demo_loader refresh --confirm-local-demo
+docker compose exec backend python -m app.tools.demo_loader refresh --confirm-local-demo
 ```
 
 Continuous (leave the window open, or use the compose override):
 
 ```powershell
-docker compose exec backend python -m app.application.demo_loader refresh --confirm-local-demo --watch
+docker compose exec backend python -m app.tools.demo_loader refresh --confirm-local-demo --watch
 # or, detached:
 docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d demo-refresh
 ```
@@ -136,7 +136,7 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d demo-refre
 ### 6. Verify
 
 ```powershell
-docker compose exec backend python -m app.application.demo_loader verify --expect-racks 100 --expect-devices 500
+docker compose exec backend python -m app.tools.demo_loader verify --expect-racks 100 --expect-devices 500
 if ($LASTEXITCODE -ne 0) { Write-Warning 'verification failed; read the checks above' }
 ```
 
@@ -156,8 +156,8 @@ Then open **Telemetry** for a device or sensor (the chart shows a day of points)
 Remove only what the loader created (readings, loader mappings, loader sensors and their alarms):
 
 ```powershell
-docker compose exec backend python -m app.application.demo_loader purge --dry-run
-docker compose exec backend python -m app.application.demo_loader purge --confirm-local-demo
+docker compose exec backend python -m app.tools.demo_loader purge --dry-run
+docker compose exec backend python -m app.tools.demo_loader purge --confirm-local-demo
 ```
 
 Floor-plan calibrations are immutable by database trigger, and the audit log is append-only, so `purge` leaves both. To undo those, or to return to the exact earlier state (including removing migration `0060`), restore the backup:

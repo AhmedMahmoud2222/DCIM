@@ -11,13 +11,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.collector_service import current_assignment
-from app.application.demo_loader.constants import DEMO_SITE_PREFIX
 from app.domain.catalog.models import RackModelRevision
 from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Collector, Integration
 from app.domain.location.models import Building, Floor, Room, Site
 from app.domain.physical.models import Equipment, Rack
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
+from app.tools.demo_loader.constants import DEMO_SITE_PREFIX
 
 
 class LoaderError(Exception):

@@ -1,6 +1,6 @@
 """Names, markers and defaults shared by the demo loader. Changing a marker changes what `purge` can recognise."""
 
-from app.application.demo_loader import LOADER_VERSION
+from app.tools.demo_loader import LOADER_VERSION
 
 DEMO_SITE_PREFIX = "DEMO-SITE-"
 POLL_INTERVAL_FALLBACK_SECONDS = 300

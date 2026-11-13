@@ -9,9 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.access_control import UNRESTRICTED
-from app.application.demo_loader.constants import DEDUP_PREFIX, DEFAULT_HISTORY_HOURS, SENSOR_METRICS, SENSOR_TAG_PREFIX
-from app.application.demo_loader.floorplans import validate_geometry
-from app.application.demo_loader.selection import Targets
 from app.application.thermal.environment import MEASURED_FRESH
 from app.application.thermal.heatmap import HEATMAP_METRICS, build_heat_map
 from app.domain.cooling.models import EnvironmentalSensor
@@ -20,6 +17,9 @@ from app.domain.physical.models import Equipment, Rack
 from app.domain.placement.models import EquipmentPlacement
 from app.domain.spatial.models import FloorPlan
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
+from app.tools.demo_loader.constants import DEDUP_PREFIX, DEFAULT_HISTORY_HOURS, SENSOR_METRICS, SENSOR_TAG_PREFIX
+from app.tools.demo_loader.floorplans import validate_geometry
+from app.tools.demo_loader.selection import Targets
 
 
 @dataclass

@@ -22,8 +22,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.audit_service import write_audit_log
-from app.application.demo_loader import LOADER_VERSION
-from app.application.demo_loader.selection import LoaderError, RackInfo, Targets
 from app.application.outbox_service import write_outbox_event
 from app.application.spatial_import import calibration as cal
 from app.application.spatial_import import service as spatial_service
@@ -33,6 +31,8 @@ from app.application.spatial_import.sir import SirDocument
 from app.domain.floorplan_import.models import FloorPlanImportJob
 from app.domain.location.models import Room
 from app.domain.spatial.models import FloorPlan, FloorPlanCalibration
+from app.tools.demo_loader import LOADER_VERSION
+from app.tools.demo_loader.selection import LoaderError, RackInfo, Targets
 
 LAYER_ROOM = "ROOM-OUTLINE"
 LAYER_RACKS = "RACKS"
