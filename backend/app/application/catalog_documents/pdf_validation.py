@@ -61,12 +61,14 @@ _MAX_WALK_PASSES = 5
 # Resolving a reference the cross-reference table does not list makes the parser copy the file
 # and search it for the object header, once per reference, so a page that lists hundreds of such
 # annotations costs one file scan each (19 s for 800 on a 2 MB file). The references a whole
-# validation may resolve this way are capped; legitimate files list their objects. Each lookup
-# scans the whole file, so the cap shrinks as the file grows: at most 32 lookups, and no more than
-# 256 MB of scanning in total, but never fewer than 4 (about 3 s for the largest accepted file).
-_MAX_UNLISTED_LOOKUPS = 32
+# validation may resolve this way are capped. The cost of a lookup is the size of the file, so the
+# cap is a byte budget: a small file may resolve many such references (damaged files, references
+# to deleted objects) because each is cheap, and a large file few. At most 96 MB of scanning in
+# total (about 1.3 s for the largest accepted file here, a few seconds on slow hardware), at most
+# 1000 lookups (the parser's fixed cost per lookup), and never fewer than 4.
+_MAX_UNLISTED_LOOKUPS = 1000
 _MIN_UNLISTED_LOOKUPS = 4
-_LOOKUP_SCAN_BYTES = 256 * 1024 * 1024
+_LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
 # The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
 _FORBIDDEN_NAMES = frozenset(
     {
@@ -165,7 +167,7 @@ class _LookupBudget:
 
     @staticmethod
     def _exceeded() -> PdfRejected:
-        return _reject("too_complex", "The PDF refers to too many objects its cross-reference table does not list.")
+        return _reject("too_complex", "Resolving the PDF's references would take too much repair work to inspect it safely.")
 
 
 def _scan_action(action: object, where: str) -> None:
