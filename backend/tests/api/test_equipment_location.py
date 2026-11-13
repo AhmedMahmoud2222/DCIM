@@ -1,0 +1,82 @@
+"""Equipment responses carry the Site > Building > Floor > Room > Rack path of the current placement."""
+
+import uuid
+from types import SimpleNamespace
+
+from app.api.v1.equipment import _location_out
+from app.application.access_control import EMPTY_SCOPE, UNRESTRICTED
+from tests.api._phase2_helpers import create_equipment, create_rack_model_revision
+from tests.api.test_user_groups import _make_site
+
+
+async def _rack(client, admin, auth_headers, room_id, name):
+    revision = await create_rack_model_revision(client, auth_headers)
+    resp = await client.post(
+        "/api/v1/racks", json={"asset_tag": f"RK-{uuid.uuid4().hex[:8]}", "model_revision_id": revision, "name": name, "room_id": room_id},
+        headers=admin,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _mount(client, headers, equipment_id, room_id, rack_id):
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment_id}/move",
+        json={"placement_type": "rack_mounted", "room_id": room_id, "rack_id": rack_id, "u_start": 1, "u_end": 2, "side": "front"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_get_list_and_move_return_the_full_location_path(client, auth_headers):
+    admin = await auth_headers("Administrator")
+    world = await _make_site(client, admin)
+    rack = await _rack(client, admin, auth_headers, world["room"], "Rack-A1")
+    equipment = await create_equipment(client, admin, auth_headers)
+    assert equipment["location"] is None  # unplaced equipment has no location
+
+    moved = await _mount(client, admin, equipment["id"], world["room"], rack["id"])
+    expected = {
+        "site": world["site"], "building": world["building"], "floor": world["floor"], "room": world["room"], "rack": rack["id"],
+    }
+    for payload in (
+        moved,
+        (await client.get(f"/api/v1/equipment/{equipment['id']}", headers=admin)).json(),
+        next(i for i in (await client.get("/api/v1/equipment", headers=admin)).json()["items"] if i["id"] == equipment["id"]),
+    ):
+        location = payload["location"]
+        assert {key: location[key]["id"] for key in expected} == expected
+        assert location["site"]["name"] == "Site"
+        assert location["building"]["name"] == "B"
+        assert location["floor"]["name"] == "F"
+        assert location["room"]["name"] == "Room"
+        assert location["rack"]["name"] == "Rack-A1"
+
+
+async def test_floor_standing_equipment_has_room_but_no_rack(client, auth_headers):
+    admin = await auth_headers("Administrator")
+    world = await _make_site(client, admin)
+    equipment = await create_equipment(client, admin, auth_headers)
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment['id']}/move", json={"placement_type": "floor_standing", "room_id": world["room"]}, headers=admin,
+    )
+    location = resp.json()["location"]
+    assert location["rack"] is None
+    assert location["room"]["id"] == world["room"]
+    assert location["site"]["id"] == world["site"]
+
+
+def test_site_building_floor_are_withheld_outside_the_callers_scope():
+    ids = {key: uuid.uuid4() for key in ("room", "floor", "building", "site", "rack")}
+    row = SimpleNamespace(
+        room_id=ids["room"], room_name="R", room_code="r", floor_id=ids["floor"], floor_name="F", building_id=ids["building"],
+        building_name="B", building_code="b", site_id=ids["site"], site_name="S", site_code="s",
+    )
+    placement = SimpleNamespace(room_id=ids["room"], rack_id=ids["rack"])
+    hidden = _location_out(placement, {ids["room"]: row}, {ids["rack"]: "K"}, EMPTY_SCOPE)
+    assert hidden is not None and hidden.site is None and hidden.building is None and hidden.floor is None
+    assert hidden.room.name == "R" and hidden.rack.name == "K"
+    shown = _location_out(placement, {ids["room"]: row}, {ids["rack"]: "K"}, UNRESTRICTED)
+    assert shown is not None and shown.site.name == "S" and shown.building.name == "B" and shown.floor.name == "F"
+    assert _location_out(None, {}, {}, UNRESTRICTED) is None

@@ -11,6 +11,7 @@ export interface AlarmRule {
   registry_version: string | null;
   enabled: boolean;
   name: string;
+  severity: "critical" | "warning" | "info";
   updated_at: string;
   unit_status: "unresolved" | "inferred_legacy" | "explicit" | "invalid_contract";
   needs_attention: boolean;
@@ -58,10 +59,12 @@ export interface CreateAlarmRuleInput {
   rule_type: string;
   threshold: number | null;
   name: string;
+  severity: "critical" | "warning" | "info";
 }
 
 export interface EditAlarmRuleInput {
   name?: string;
+  severity?: "critical" | "warning" | "info";
   threshold?: number;
   reason: string;
   expected_updated_at: string;

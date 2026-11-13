@@ -232,6 +232,7 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 managed_asset_id=reading.managed_asset_id,
                 subject_key=subject_key,
                 status="ACTIVE",
+                severity=rule.severity,
                 opened_at=reading.occurred_at,
                 last_value=comparison_value,
                 details=comparison_details,
@@ -326,11 +327,14 @@ async def disable_rule(
 async def update_rule(
     db: AsyncSession, *, rule: AlarmRule, name: str | None, threshold: Decimal | None,
     threshold_set: bool, reason: str, expected_updated_at: datetime, actor_user_id: uuid.UUID,
+    severity: str | None = None,
 ) -> AlarmRule:
-    """Edit an alarm rule's label or threshold without replaying historical readings."""
+    """Edit an alarm rule's label, severity or threshold without replaying historical readings.
+
+    A severity change applies to alarms opened afterwards; an alarm already open keeps the severity it opened with."""
     _validate_rule_update(rule, reason, expected_updated_at)
-    if name is None and not threshold_set:
-        raise ApiError(status_code=422, title="No rule changes", detail="Provide a name or threshold to update.")
+    if name is None and severity is None and not threshold_set:
+        raise ApiError(status_code=422, title="No rule changes", detail="Provide a name, severity or threshold to update.")
 
     before: dict = {}
     after: dict = {}
@@ -338,6 +342,9 @@ async def update_rule(
     if name is not None and name != rule.name:
         before["name"] = rule.name
         after["name"] = name
+    if severity is not None and severity != rule.severity:
+        before["severity"] = rule.severity
+        after["severity"] = severity
     if threshold_set:
         if rule.rule_type == "availability_unavailable":
             if threshold is not None:
@@ -363,6 +370,8 @@ async def update_rule(
 
     if "name" in after:
         rule.name = after["name"]
+    if "severity" in after:
+        rule.severity = after["severity"]
     if "threshold" in after:
         rule.threshold = new_threshold
     rule.updated_at = datetime.now(UTC)

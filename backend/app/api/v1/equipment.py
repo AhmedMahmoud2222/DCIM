@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
 from app.api.v1.bulk_import import BulkImportJobOut, dispatch_parse_job_or_fail
-from app.application.access_control import ensure_equipment_access, equipment_in_site_clause, equipment_visible_clause
+from app.application.access_control import (
+    AccessScope,
+    ensure_equipment_access,
+    equipment_in_site_clause,
+    equipment_visible_clause,
+)
 from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_equipment_template
@@ -55,6 +60,7 @@ from app.application.spatial_validation import validate_rotation_degrees, valida
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.catalog.models import EquipmentModelRevision, RackModelRevision
 from app.domain.identity.models import ManagedAsset
+from app.domain.location.models import Building, Floor, Room, Site
 from app.domain.physical.models import Equipment, Rack
 from app.domain.physical.ports import PORT_CONNECTION_STATUSES, EquipmentPort
 from app.domain.placement.models import PLACEMENT_TYPES, SIDES
@@ -98,6 +104,24 @@ class EquipmentPlacementOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NamedRef(BaseModel):
+    id: uuid.UUID
+    name: str
+    code: str | None = None
+
+
+class EquipmentLocationOut(BaseModel):
+    """Where the equipment physically is: Site > Building > Floor > Room > Rack. Site, building and floor are
+    withheld (null) from callers whose scope does not include the site; room and rack are always present for a
+    placed item the caller can already read."""
+
+    site: NamedRef | None = None
+    building: NamedRef | None = None
+    floor: NamedRef | None = None
+    room: NamedRef | None = None
+    rack: NamedRef | None = None
+
+
 class EquipmentOut(BaseModel):
     id: uuid.UUID
     asset_tag: str
@@ -114,6 +138,7 @@ class EquipmentOut(BaseModel):
     version: int
     created_at: datetime
     placement: EquipmentPlacementOut | None = None
+    location: EquipmentLocationOut | None = None
 
 
 class EquipmentMoveIn(BaseModel):
@@ -154,8 +179,55 @@ def _out_placement(placement) -> EquipmentPlacementOut | None:
     )
 
 
-async def _serialize_equipment(db: AsyncSession, equipment: Equipment, asset: ManagedAsset) -> EquipmentOut:
-    placement = await get_current_equipment_placement(db, equipment.id)
+async def _location_lookup(db: AsyncSession, placements: list) -> tuple[dict, dict]:
+    """Room hierarchy rows and rack names for a set of placements, in two queries regardless of how many items."""
+    room_ids = {p.room_id for p in placements}
+    rack_ids = {p.rack_id for p in placements if p.rack_id is not None}
+    rooms: dict = {}
+    racks: dict = {}
+    if room_ids:
+        rows = await db.execute(
+            select(
+                Room.id.label("room_id"), Room.name.label("room_name"), Room.code.label("room_code"),
+                Floor.id.label("floor_id"), Floor.name.label("floor_name"),
+                Building.id.label("building_id"), Building.name.label("building_name"), Building.code.label("building_code"),
+                Site.id.label("site_id"), Site.name.label("site_name"), Site.code.label("site_code"),
+            )
+            .join(Floor, Floor.id == Room.floor_id)
+            .join(Building, Building.id == Floor.building_id)
+            .join(Site, Site.id == Building.site_id)
+            .where(Room.id.in_(room_ids))
+        )
+        rooms = {row.room_id: row for row in rows.all()}
+    if rack_ids:
+        racks = {rid: name for rid, name in (await db.execute(select(Rack.id, Rack.name).where(Rack.id.in_(rack_ids)))).all()}
+    return rooms, racks
+
+
+def _location_out(placement, rooms: dict, racks: dict, scope: AccessScope | None) -> EquipmentLocationOut | None:
+    if placement is None:
+        return None
+    row = rooms.get(placement.room_id)
+    out = EquipmentLocationOut()
+    if row is not None:
+        out.room = NamedRef(id=row.room_id, name=row.room_name, code=row.room_code)
+        if scope is None or scope.allows_site(row.site_id):
+            out.floor = NamedRef(id=row.floor_id, name=row.floor_name)
+            out.building = NamedRef(id=row.building_id, name=row.building_name, code=row.building_code)
+            out.site = NamedRef(id=row.site_id, name=row.site_name, code=row.site_code)
+    if placement.rack_id is not None:
+        out.rack = NamedRef(id=placement.rack_id, name=racks.get(placement.rack_id, str(placement.rack_id)))
+    return out
+
+
+async def _serialize_equipment(
+    db: AsyncSession, equipment: Equipment, asset: ManagedAsset, *, scope: AccessScope | None = None,
+    lookup: tuple[dict, dict] | None = None, placement=None, placement_loaded: bool = False,
+) -> EquipmentOut:
+    if not placement_loaded:
+        placement = await get_current_equipment_placement(db, equipment.id)
+    if lookup is None:
+        lookup = await _location_lookup(db, [placement] if placement is not None else [])
     return EquipmentOut(
         id=equipment.id,
         asset_tag=asset.asset_tag,
@@ -170,6 +242,7 @@ async def _serialize_equipment(db: AsyncSession, equipment: Equipment, asset: Ma
         version=equipment.version,
         created_at=equipment.created_at,
         placement=_out_placement(placement),
+        location=_location_out(placement, lookup[0], lookup[1], scope),
     )
 
 
@@ -230,7 +303,7 @@ async def create_equipment(
             payload={"asset_tag": asset.asset_tag}, correlation_id=correlation_id,
         )
 
-        out = await _serialize_equipment(db, equipment, asset)
+        out = await _serialize_equipment(db, equipment, asset, scope=ctx.scope)
         if claim is not None:
             await complete_claim(db, claim, response_status=201, response_body=out.model_dump(mode="json"))
         await db.commit()
@@ -268,7 +341,14 @@ async def list_equipment(
         ).where(EquipmentPlacement.rack_id == rack_id)
     total = (await db.execute(count_stmt)).scalar_one()
     rows = (await db.execute(stmt.order_by(Equipment.created_at.desc()).offset(pagination.offset).limit(pagination.limit))).all()
-    items = [await _serialize_equipment(db, equipment, asset) for equipment, asset in rows]
+    placements = [await get_current_equipment_placement(db, equipment.id) for equipment, _ in rows]
+    lookup = await _location_lookup(db, [p for p in placements if p is not None])
+    items = [
+        await _serialize_equipment(
+            db, equipment, asset, scope=ctx.scope, lookup=lookup, placement=placement, placement_loaded=True,
+        )
+        for (equipment, asset), placement in zip(rows, placements, strict=True)
+    ]
     return Page(items=items, total=total, limit=pagination.limit, offset=pagination.offset)
 
 
@@ -327,7 +407,7 @@ async def get_equipment(
         raise NotFoundError(f"Equipment {equipment_id} not found.")
     asset = await db.get(ManagedAsset, equipment_id)
     assert asset is not None
-    return await _serialize_equipment(db, equipment, asset)
+    return await _serialize_equipment(db, equipment, asset, scope=ctx.scope)
 
 
 @router.patch("/{equipment_id}", response_model=EquipmentOut)
@@ -362,7 +442,7 @@ async def update_equipment(
     await db.commit()
     asset = await db.get(ManagedAsset, equipment_id)
     assert asset is not None
-    return await _serialize_equipment(db, equipment, asset)
+    return await _serialize_equipment(db, equipment, asset, scope=ctx.scope)
 
 
 @router.post("/{equipment_id}/move", response_model=EquipmentOut)
@@ -426,7 +506,7 @@ async def move_equipment_endpoint(
     await db.commit()
     asset = await db.get(ManagedAsset, equipment_id)
     assert asset is not None
-    return await _serialize_equipment(db, equipment, asset)
+    return await _serialize_equipment(db, equipment, asset, scope=ctx.scope)
 
 
 @router.post("/{equipment_id}/retire", response_model=EquipmentOut)
@@ -454,7 +534,7 @@ async def retire_equipment_endpoint(
     await db.commit()
     asset = await db.get(ManagedAsset, equipment_id)
     assert asset is not None
-    return await _serialize_equipment(db, equipment, asset)
+    return await _serialize_equipment(db, equipment, asset, scope=ctx.scope)
 
 
 # ------------------------------------------------------------- Phase 10B: instantiation
@@ -648,7 +728,7 @@ async def instantiate_equipment_endpoint(
 
         asset = await db.get(ManagedAsset, equipment.id)
         assert asset is not None
-        base = await _serialize_equipment(db, equipment, asset)
+        base = await _serialize_equipment(db, equipment, asset, scope=ctx.scope)
         ports = await _serialize_ports(db, equipment.id)
         power_inlets = await list_equipment_power_inlets(db, equipment_id=equipment.id)
         inlets = [EquipmentPowerInletOut.model_validate(inlet) for inlet in power_inlets]

@@ -15,6 +15,7 @@ import {
 } from "@/features/telemetry/alarmRulesApi";
 import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ExceptionSeverity } from "@/features/status/StatusBadges";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { listIntegrations } from "@/features/integrations/api";
 import { ApiError } from "@/lib/apiClient";
@@ -203,6 +204,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
   const [integrationId, setIntegrationId] = useState(integrations[0]?.id ?? "");
   const [metric, setMetric] = useState("power_kw");
   const [ruleType, setRuleType] = useState("threshold_high");
+  const [severity, setSeverity] = useState<CreateAlarmRuleInput["severity"]>("warning");
   const [threshold, setThreshold] = useState("");
   const submitting = useRef(false);
   const mutation = useMutation({ mutationFn: (input: CreateAlarmRuleInput) => createAlarmRule(input), onSuccess: (result) => onCreated(result.id) });
@@ -213,7 +215,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
     if (submitting.current) return;
     submitting.current = true;
     mutation.mutate({
-      name: name.trim(), integration_id: integrationId, metric, rule_type: ruleType,
+      name: name.trim(), integration_id: integrationId, metric, rule_type: ruleType, severity,
       threshold: ruleType === "availability_unavailable" ? null : Number(threshold),
     }, {
       onSettled: () => { submitting.current = false; },
@@ -240,6 +242,9 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
             else if (metric === "availability") setMetric("power_kw");
           }} className={field}>
             <option value="threshold_high">Above threshold</option><option value="threshold_low">Below threshold</option><option value="availability_unavailable">Unavailable</option>
+          </select></label>
+          <label className="text-xs text-slate-400">Severity<select aria-label="Severity" value={severity} onChange={(event) => setSeverity(event.target.value as CreateAlarmRuleInput["severity"])} className={field}>
+            <option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option>
           </select></label>
           {ruleType !== "availability_unavailable" && <label className="text-xs text-slate-400">Threshold ({selectedMetric?.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className={field} /></label>}
           {mutation.isError && <p role="alert" className="text-sm text-red-400 md:col-span-2">{errorText(mutation.error)}</p>}
@@ -374,6 +379,7 @@ export function AlarmRulesPage() {
                   <tr>
                     <th scope="col" className="px-3 py-2">Rule</th>
                     <th scope="col" className="px-3 py-2">Metric</th>
+                    <th scope="col" className="px-3 py-2">Severity</th>
                     <th scope="col" className="px-3 py-2">Status</th>
                     <th scope="col" className="px-3 py-2">Blocked since</th>
                   </tr>
@@ -405,6 +411,7 @@ export function AlarmRulesPage() {
                         {rule.metric}
                         <span className="text-fg-secondary"> · {rule.rule_type}</span>
                       </td>
+                      <td className="px-3 py-2"><ExceptionSeverity severity={rule.severity} size="sm" /></td>
                       <td className="px-3 py-2">
                         <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${UNIT_STATUS_BADGE[rule.unit_status]}`}>
                           {UNIT_STATUS_LABEL[rule.unit_status]}
