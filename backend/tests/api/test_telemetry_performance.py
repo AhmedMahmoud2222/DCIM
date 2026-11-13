@@ -51,15 +51,16 @@ async def source(db_session):
     db_session.add_all([collector, integration, mapping])
     await db_session.flush()
 
-    async def seed(asset_id, at=START, count=1, seconds=300, external="sensor"):
-        key = telemetry_series_key(integration.id, uuid.UUID(asset_id), external, "temperature_c", "degC", "1")
+    async def seed(asset_id, at=START, count=1, seconds=300, external="sensor", null_key=False, version="1"):
+        key = telemetry_series_key(integration.id, uuid.UUID(asset_id), external, "temperature_c", "degC", version)
+        stored = None if null_key else key
         await db_session.execute(
             text("""
             INSERT INTO telemetry_reading (collector_id, integration_id, mapping_id, managed_asset_id,
                 external_identifier, series_key, dedup_key, metric, unit, value, registry_version,
                 occurred_at, received_at, attributes)
             SELECT :collector, :integration, :mapping, :asset, :external, :key, gen_random_uuid()::text,
-                'temperature_c', 'degC', i, '1', CAST(:at AS timestamptz) + i * CAST(:seconds AS integer)
+                'temperature_c', 'degC', i, CAST(:version AS text), CAST(:at AS timestamptz) + i * CAST(:seconds AS integer)
                 * interval '1 second', CAST(:at AS timestamptz), '{}'::jsonb
             FROM generate_series(0, CAST(:count AS integer) - 1) AS i
         """),
@@ -69,10 +70,11 @@ async def source(db_session):
                 mapping=mapping.id,
                 asset=uuid.UUID(asset_id),
                 external=external,
-                key=key,
+                key=stored,
                 at=at,
                 seconds=seconds,
                 count=count,
+                version=version,
             ),
         )
         await db_session.commit()
@@ -290,3 +292,93 @@ async def test_partial_leading_daily_evidence_with_only_raw_points(client, auth_
     assert all(p["resolution"] == "raw" and p["sample_count"] == 1 for p in points)
     assert datetime.fromisoformat(points[0]["start"]) == start
     assert all(start <= datetime.fromisoformat(p["start"]) < datetime.fromisoformat(p["end"]) for p in points)
+
+
+@pytest.fixture
+async def nullable_series_key(db_session):
+    """Lift NOT NULL (set by migration 0012) so legacy rows without a key can be reproduced."""
+    tables = ("telemetry_reading", "daily_telemetry_aggregate")
+    for table in tables:
+        await db_session.execute(text(f"ALTER TABLE {table} ALTER COLUMN series_key DROP NOT NULL"))
+    await db_session.commit()
+    yield
+    for table in tables:
+        await db_session.execute(text(f"DELETE FROM {table} WHERE series_key IS NULL"))
+        await db_session.execute(text(f"ALTER TABLE {table} ALTER COLUMN series_key SET NOT NULL"))
+    await db_session.commit()
+
+
+async def _null_daily_keys(db_session):
+    await db_session.execute(text("UPDATE daily_telemetry_aggregate SET series_key = NULL"))
+    await db_session.commit()
+
+
+async def test_null_raw_series_key_returns_derived_identity(client, auth_headers, source, nullable_series_key):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    expected = await source(asset, count=4, null_key=True)
+    response = await client.get(PATH, headers=admin, params=window(asset, days=1))
+    assert response.status_code == 200, response.text
+    [series] = response.json()["series"]
+    assert series["series_key"] == expected
+    assert series["sample_count"] == 4 and series["average"] == pytest.approx(1.5)
+    assert series["minimum"] == 0 and series["maximum"] == 3
+    assert series["p50"] == pytest.approx(1.5)
+
+
+async def test_null_legacy_unversioned_key_matches_legacy_namespace(client, auth_headers, source, nullable_series_key):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    await source(asset, count=2, null_key=True, version=None)
+    response = await client.get(PATH, headers=admin, params=window(asset, days=1))
+    assert response.status_code == 200, response.text
+    [series] = response.json()["series"]
+    assert series["registry_version"] is None and not series["series_key"].startswith("registry:")
+    assert series["sample_count"] == 2
+
+
+async def test_null_daily_series_key_returns_derived_identity(client, auth_headers, db_session, source, nullable_series_key):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    expected = await source(asset, count=3)
+    await compact_eligible_raw(db_session, now=START + timedelta(days=730))
+    await db_session.commit()
+    await _null_daily_keys(db_session)
+    response = await client.get(PATH, headers=admin, params=window(asset, days=2))
+    assert response.status_code == 200, response.text
+    [series] = response.json()["series"]
+    assert series["series_key"] == expected
+    assert series["sample_count"] == 3 and series["average"] == pytest.approx(1)
+    assert series["minimum"] == 0 and series["maximum"] == 2
+    assert series["p50"] is None and series["p95"] is None
+    assert all(p["resolution"] == "daily" for p in series["points"])
+
+
+async def test_mixed_null_and_keyed_rows_aggregate_as_one_series(client, auth_headers, db_session, source, nullable_series_key):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    key = await source(asset, count=3)
+    await compact_eligible_raw(db_session, now=START + timedelta(days=730))
+    await db_session.commit()
+    await _null_daily_keys(db_session)  # legacy daily rollup
+    await source(asset, at=START + timedelta(days=1), count=1)  # retained, keyed
+    await source(asset, at=START + timedelta(days=1, hours=1), count=1, null_key=True)  # retained, unkeyed
+    response = await client.get(PATH, headers=admin, params=window(asset, days=2))
+    assert response.status_code == 200, response.text
+    [series] = response.json()["series"]
+    assert series["series_key"] == key
+    assert series["sample_count"] == 5 and series["average"] == pytest.approx(3 / 5)
+    assert series["minimum"] == 0 and series["maximum"] == 2
+
+
+async def test_null_keys_keep_distinct_series_separate(client, auth_headers, source, nullable_series_key):
+    admin = await auth_headers()
+    asset = (await create_equipment(client, admin, auth_headers))["id"]
+    a = await source(asset, count=2, external="a", null_key=True)
+    b = await source(asset, count=3, external="b", null_key=True)
+    response = await client.get(PATH, headers=admin, params=window(asset, days=1))
+    assert response.status_code == 200, response.text
+    series = {s["series_key"]: s for s in response.json()["series"]}
+    assert set(series) == {a, b}
+    assert series[a]["sample_count"] == 2 and series[b]["sample_count"] == 3
+    assert all(isinstance(s["series_key"], str) and s["series_key"] for s in series.values())
