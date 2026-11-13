@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.db.models  # noqa: F401  (registers every ORM model; a foreign key to an unloaded table fails at first flush)
 from app.application.demo_loader import LOADER_VERSION
 from app.application.demo_loader.constants import (
     DEFAULT_DEVICE_HISTORY_HOURS,
@@ -92,6 +93,10 @@ async def loader_series(db: AsyncSession, targets: Targets) -> list[Series]:
     return await build_series(db, mappings, routes)
 
 
+def protect_prefix(args: argparse.Namespace) -> str:
+    return getattr(args, "protect_prefix", DEMO_SITE_PREFIX)
+
+
 def clock(args: argparse.Namespace) -> datetime | None:
     """`--as-of` pins the sample clock (reproducible seeding, deterministic tests); default is the current time."""
     return getattr(args, "as_of", None)
@@ -115,7 +120,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
     factory = getattr(args, "session_factory", None)
     steps = [s for s in STEPS if s in args.steps]
     targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-    before = await outside_fingerprint(db, args.site_prefix)
+    before = await outside_fingerprint(db, protect_prefix(args))
     out: dict = {"loader_version": LOADER_VERSION, "steps": steps,
                  "targets": {"sites": [s.code for s in targets.sites], "racks": len(targets.racks), "devices": len(targets.devices)}}
     failed = False
@@ -149,7 +154,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
         out["devices"] = {"devices": devices.devices, "mappings_created": devices.mappings_created, "mappings_total": devices.mappings_total,
                           "telemetry": {"series": len(series), **report.as_dict()}}
         failed |= not report.clean
-    after = await outside_fingerprint(db, args.site_prefix)
+    after = await outside_fingerprint(db, protect_prefix(args))
     out["outside_demo_sites"] = {"unchanged": before["digest"] == after["digest"], "before": before["digest"], "after": after["digest"], "counts": after["counts"]}
     failed |= before["digest"] != after["digest"]
     out["ok"] = not failed
@@ -183,7 +188,7 @@ async def run(args: argparse.Namespace) -> tuple[dict, int]:
                 "loader_version": LOADER_VERSION, "sites": [s.code for s in targets.sites], "racks": len(targets.racks), "devices": len(targets.devices),
                 "routes": {s.code: {"integration": targets.routes[s.id].integration.name, "collector": targets.routes[s.id].collector.name,
                                     "poll_interval_seconds": targets.routes[s.id].integration.poll_interval_seconds} for s in targets.sites},
-                "outside_demo_sites": await outside_fingerprint(db, args.site_prefix),
+                "outside_demo_sites": await outside_fingerprint(db, protect_prefix(args)),
             }
             return result, 0
         if args.command == "apply":
@@ -204,9 +209,9 @@ async def run(args: argparse.Namespace) -> tuple[dict, int]:
             return report.as_dict(), 0 if report.ok else 1
         if args.command == "purge":
             targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-            before = await outside_fingerprint(db, args.site_prefix)
+            before = await outside_fingerprint(db, protect_prefix(args))
             purged = await purge(db, targets, dry_run=args.dry_run)
-            after = await outside_fingerprint(db, args.site_prefix)
+            after = await outside_fingerprint(db, protect_prefix(args))
             return {**purged.as_dict(), "outside_demo_sites_unchanged": before["digest"] == after["digest"]}, 0
     raise LoaderError(f"Unknown command {args.command!r}")
 
@@ -223,7 +228,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("plan", "apply", "refresh", "verify", "purge"):
         p = sub.add_parser(name)
-        p.add_argument("--site-prefix", default=DEMO_SITE_PREFIX, help="only sites whose code starts with this are touched")
+        p.add_argument("--site-prefix", default=DEMO_SITE_PREFIX, help="only sites whose code starts with this are touched (e.g. DEMO-SITE-01 for one site)")
+        p.add_argument("--protect-prefix", default=DEMO_SITE_PREFIX, help="sites NOT starting with this are fingerprinted before/after and must be unchanged")
         p.add_argument("--integration", action="append", default=[], type=parse_pair, metavar="SITE=NAME", help="choose a site's integration explicitly")
         if name in ("apply", "refresh", "purge"):
             p.add_argument("--confirm-local-demo", action="store_true", help="required: this database is a local demonstration database")

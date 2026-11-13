@@ -300,3 +300,29 @@ async def test_an_unassigned_integration_is_rejected_per_record_and_reported(db_
     with pytest.raises(LoaderError, match="no current collector assignment"):
         await cli.run_apply(db_session, args(steps=["existing"], no_verify=True))
     assert await db_session.scalar(select(func.count()).select_from(TelemetryReading).where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX))) == 0
+
+
+async def test_one_process_per_site_can_run_concurrently_without_touching_the_other_sites(db_session, db_engine, world):
+    """The PowerShell runbook starts one loader process per site (`--site-prefix DEMO-SITE-0n`). Each must change only
+    its own site, report the HRC site and the other demo sites as unchanged by the protected prefix, and together they
+    must produce exactly what one run over all sites produces."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    as_of = datetime.now(UTC)
+    fingerprint = await outside_fingerprint(db_session)
+
+    async def one_site(code: str):
+        async with factory() as session:
+            return await cli.run_apply(session, args(site_prefix=code, steps=["existing", "sensors"], as_of=as_of, no_verify=True))
+
+    results = await asyncio.gather(*(one_site(s.code) for s in world.sites))
+    assert all(r["ok"] and r["outside_demo_sites"]["unchanged"] is True for r in results)
+    assert [r["targets"]["sites"] for r in results] == [[s.code] for s in world.sites]
+    rows = (await db_session.execute(select(func.count()).select_from(TelemetryReading)
+                                     .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    assert rows == (9 + 24) * 289
+    assert await outside_fingerprint(db_session) == fingerprint
+    assert await db_session.scalar(select(func.count()).select_from(EnvironmentalSensor)) == 12
