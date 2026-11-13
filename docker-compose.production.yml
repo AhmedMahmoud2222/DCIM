@@ -167,6 +167,12 @@ services:
         condition: service_completed_successfully
       bootstrap-privileges:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.infrastructure.celery_app inspect ping --destination \"celery@$$HOSTNAME\" --timeout=3 | grep -q pong"]
+      interval: 10s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance,extraction,reports,notifications", "--prefetch-multiplier=1", "--max-tasks-per-child=100"]
     restart: unless-stopped
     networks:
@@ -197,7 +203,13 @@ services:
         condition: service_completed_successfully
       bootstrap-privileges:
         condition: service_completed_successfully
-    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--enable-remote-control", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.infrastructure.celery_app inspect ping --destination \"celerybeat@$$HOSTNAME\" --timeout=3 | grep -q pong"]
+      interval: 10s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     networks:
       - dcim-internal
