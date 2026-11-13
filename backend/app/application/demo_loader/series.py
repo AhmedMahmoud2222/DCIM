@@ -2,6 +2,7 @@
 collector contract (`ingest_collector_telemetry`): the same function the signed collector endpoint calls, so
 collector assignment, pinned mapping revisions, unit conversion, de-duplication and alarm evaluation all apply."""
 
+import asyncio
 import uuid
 from collections import Counter
 from collections.abc import Callable
@@ -145,11 +146,47 @@ class IngestReport:
                 "rejected": dict(self.rejected or {})}
 
 
+async def _ingest_group(
+    db: AsyncSession, collector: Collector, records: list[TelemetryRecordIn], progress: Callable[[str], None] | None,
+) -> IngestReport:
+    report = IngestReport()
+    records.sort(key=lambda r: r.occurred_at)  # oldest first, so alarm open/clear transitions replay in order
+    for start in range(0, len(records), MAX_BATCH):
+        chunk = records[start:start + MAX_BATCH]
+        result = await ingest_collector_telemetry(db, collector=collector, body=TelemetryBatchIn(records=chunk))
+        for ack in result.results:
+            if ack.status == "accepted":
+                report.accepted += 1
+            elif ack.status == "duplicate":
+                report.duplicate += 1
+            else:
+                assert report.rejected is not None
+                report.rejected[ack.error or "REJECTED"] += 1
+        if progress:
+            progress(f"  {collector.name}: {min(start + MAX_BATCH, len(records))}/{len(records)} records")
+    return report
+
+
+async def _ingest_group_in_own_session(
+    factory: Callable[[], AsyncSession], collector_id: uuid.UUID, records: list[TelemetryRecordIn],
+    progress: Callable[[str], None] | None,
+) -> IngestReport:
+    async with factory() as session:
+        collector = await session.get(Collector, collector_id)
+        assert collector is not None
+        return await _ingest_group(session, collector, records, progress)
+
+
 async def simulate(
     db: AsyncSession, series: list[Series], *, hours: float, now: datetime | None = None,
-    progress: Callable[[str], None] | None = None,
+    progress: Callable[[str], None] | None = None, session_factory: Callable[[], AsyncSession] | None = None,
 ) -> IngestReport:
-    """Generate and ingest every missing slot of the last `hours` hours for each series, oldest first."""
+    """Generate and ingest every missing slot of the last `hours` hours for each series, oldest first.
+
+    Each record goes through `ingest_collector_telemetry`. With a `session_factory`, the records of different
+    collectors are ingested concurrently, one session per collector. That is safe by construction: the contract
+    locks only the alarm rules of the integrations assigned to the calling collector, and an integration has one
+    collector, so two concurrent groups never contend for the same rule, reading key or mapping."""
     now = now or datetime.now(UTC)
     report = IngestReport()
     if not series:
@@ -165,21 +202,15 @@ async def simulate(
                 continue
             collector = item.route.collector
             pending.setdefault(collector.id, (collector, []))[1].append(record)
-    for collector, records in pending.values():
-        records.sort(key=lambda r: r.occurred_at)  # oldest first, so alarm open/clear transitions replay in order
-        for start in range(0, len(records), MAX_BATCH):
-            chunk = records[start:start + MAX_BATCH]
-            result = await ingest_collector_telemetry(db, collector=collector, body=TelemetryBatchIn(records=chunk))
-            for ack in result.results:
-                if ack.status == "accepted":
-                    report.accepted += 1
-                elif ack.status == "duplicate":
-                    report.duplicate += 1
-                else:
-                    assert report.rejected is not None
-                    report.rejected[ack.error or "REJECTED"] += 1
-            if progress:
-                progress(f"  {collector.name}: {min(start + MAX_BATCH, len(records))}/{len(records)} records")
+    if session_factory is not None and len(pending) > 1:
+        await db.commit()  # release this session's snapshot; the workers read committed rows
+        reports = await asyncio.gather(
+            *(_ingest_group_in_own_session(session_factory, cid, records, progress) for cid, (_, records) in pending.items())
+        )
+    else:
+        reports = [await _ingest_group(db, collector, records, progress) for collector, records in pending.values()]
+    for part in reports:
+        report.merge(part)
     return report
 
 

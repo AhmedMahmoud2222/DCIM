@@ -24,6 +24,7 @@ def args(**overrides) -> argparse.Namespace:
         "command": "apply", "site_prefix": "DEMO-SITE-", "integration": [], "steps": list(cli.STEPS), "history_hours": 24.0,
         "device_history_hours": float(os.environ.get("DEMO_TEST_DEVICE_HOURS", "1")), "actor_email": None, "no_sandbox": True, "no_verify": False, "expect_racks": None,
         "expect_devices": None, "confirm_local_demo": True,
+        "as_of": None, "session_factory": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -47,7 +48,10 @@ async def counts(db):
 
 async def test_apply_builds_everything_and_a_second_run_changes_nothing(db_session, world):
     before = await counts(db_session)
-    first = await cli.run_apply(db_session, args(expect_racks=12, expect_devices=60))
+    # Pin the clock: a long first run must not make the second run's "newest slot" a new slot (that is correct
+    # behaviour, but not what this test is about; see test_refresh_backfills_only_missing_slots_and_is_repeatable).
+    as_of = datetime.now(UTC).isoformat()
+    first = await cli.run_apply(db_session, args(expect_racks=12, expect_devices=60, as_of=as_of))
     assert first["ok"], first
     assert first["outside_demo_sites"]["unchanged"] is True
 
@@ -62,7 +66,7 @@ async def test_apply_builds_everything_and_a_second_run_changes_nothing(db_sessi
     assert after_first["racks"] == before["racks"] and after_first["equipment"] == before["equipment"]
     assert after_first["sensors"] == racks
 
-    second = await cli.run_apply(db_session, args())
+    second = await cli.run_apply(db_session, args(as_of=as_of))
     assert second["ok"], second
     assert second["sensors"]["created"] == 0 and second["sensors"]["placed"] == 0 and second["sensors"]["commissioned"] == 0
     assert second["devices"]["mappings_created"] == 0
@@ -71,6 +75,26 @@ async def test_apply_builds_everything_and_a_second_run_changes_nothing(db_sessi
         telemetry = second[key] if key == "existing" else second[key]["telemetry"]
         assert telemetry["accepted"] == 0 and telemetry["duplicate"] == 0 and telemetry["skipped_existing"] > 0
     assert await counts(db_session) == after_first
+
+
+async def test_one_session_per_collector_gives_the_same_rows_as_sequential_ingest(db_session, db_engine, world):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    as_of = datetime.now(UTC).isoformat()
+    parallel = await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=as_of, session_factory=factory, no_verify=True))
+    assert parallel["ok"], parallel
+    assert not parallel["existing"]["rejected"] and not parallel["sensors"]["telemetry"]["rejected"]
+    series = 9 + 24
+    rows = (await db_session.execute(select(func.count()).select_from(TelemetryReading)
+                                     .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    assert rows == series * 289
+    distinct = (await db_session.execute(select(func.count(func.distinct(TelemetryReading.dedup_key)))
+                                         .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    assert distinct == rows
+    sequential = await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=as_of, no_verify=True))
+    assert sequential["existing"]["accepted"] == 0 and sequential["sensors"]["telemetry"]["accepted"] == 0
+    assert sequential["existing"]["skipped_existing"] == 9 * 289
 
 
 async def test_history_is_pinned_synthetic_and_converted_through_mapping_units(db_session, world):

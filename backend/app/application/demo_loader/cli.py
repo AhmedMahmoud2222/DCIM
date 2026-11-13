@@ -92,7 +92,14 @@ async def loader_series(db: AsyncSession, targets: Targets) -> list[Series]:
     return await build_series(db, mappings, routes)
 
 
+def clock(args: argparse.Namespace) -> datetime | None:
+    """`--as-of` pins the sample clock (reproducible seeding, deterministic tests); default is the current time."""
+    value = getattr(args, "as_of", None)
+    return datetime.fromisoformat(value).astimezone(UTC) if value else None
+
+
 async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
+    factory = getattr(args, "session_factory", None)
     steps = [s for s in STEPS if s in args.steps]
     targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
     before = await outside_fingerprint(db, args.site_prefix)
@@ -102,7 +109,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
     if "existing" in steps:
         log("Simulating history for the existing mappings ...")
         series = await existing_series(db, targets)
-        report = await simulate(db, series, hours=args.history_hours, progress=log)
+        report = await simulate(db, series, hours=args.history_hours, progress=log, now=clock(args), session_factory=factory)
         out["existing"] = {"series": len(series), **report.as_dict()}
         failed |= bool(report.rejected)
     if "sensors" in steps:
@@ -112,7 +119,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
                           "mappings_created": sensors.mappings_created, "problems": sensors.problems}
         failed |= bool(sensors.problems)
         series = await build_series(db, sensors.mappings, routes_by_integration(targets))
-        report = await simulate(db, series, hours=args.history_hours, progress=log)
+        report = await simulate(db, series, hours=args.history_hours, progress=log, now=clock(args), session_factory=factory)
         out["sensors"]["telemetry"] = {"series": len(series), **report.as_dict()}
         failed |= bool(report.rejected)
     if "floorplans" in steps:
@@ -125,7 +132,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
         log("Creating device mappings and simulating device telemetry ...")
         devices, mappings = await ensure_device_mappings(db, targets)
         series = await build_series(db, mappings, routes_by_integration(targets))
-        report = await simulate(db, series, hours=args.device_history_hours, progress=log)
+        report = await simulate(db, series, hours=args.device_history_hours, progress=log, now=clock(args), session_factory=factory)
         out["devices"] = {"devices": devices.devices, "mappings_created": devices.mappings_created, "mappings_total": devices.mappings_total,
                           "telemetry": {"series": len(series), **report.as_dict()}}
         failed |= bool(report.rejected)
@@ -141,7 +148,7 @@ async def run_refresh(db: AsyncSession, args: argparse.Namespace) -> dict:
     last: dict = {}
     while True:
         series = await existing_series(db, targets) + await loader_series(db, targets)
-        report = await simulate(db, series, hours=args.catch_up_hours)
+        report = await simulate(db, series, hours=args.catch_up_hours, now=clock(args), session_factory=getattr(args, "session_factory", None))
         last = {"at": datetime.now(UTC).isoformat(), "series": len(series), **report.as_dict(), "ok": not report.rejected}
         if not args.watch:
             return last
@@ -155,6 +162,7 @@ async def run(args: argparse.Namespace) -> tuple[dict, int]:
     from app.db.session import AsyncSessionLocal
 
     guard(args)
+    args.session_factory = None if getattr(args, "sequential", False) else AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         if args.command == "plan":
             targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
@@ -206,6 +214,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--integration", action="append", default=[], type=parse_pair, metavar="SITE=NAME", help="choose a site's integration explicitly")
         if name in ("apply", "refresh", "purge"):
             p.add_argument("--confirm-local-demo", action="store_true", help="required: this database is a local demonstration database")
+        if name in ("apply", "refresh"):
+            p.add_argument("--as-of", default=None, metavar="ISO8601", help="pin the sample clock (default: now)")
+            p.add_argument("--sequential", action="store_true", help="ingest one collector at a time instead of one session per collector")
         if name in ("apply", "verify"):
             p.add_argument("--expect-racks", type=int, default=100)
             p.add_argument("--expect-devices", type=int, default=500)
