@@ -32,6 +32,8 @@ def tight_budget(monkeypatch):
     tests refuse a few hundred references, so they cap the count at 32. The default allowance is
     covered by the size-scaling, large-file and small-file acceptance tests."""
     monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 32)
+
+
 SCRIPT = b"<</S/JavaScript/JS(/* benign marker */)>>"
 
 
@@ -321,7 +323,7 @@ def test_object_syntax_rule_scales_linearly_on_comment_lines():
 
     small, large = payload(5), payload(25)
     small_time = min(_timed(pdf_validation._carries_object_syntax, small) for _ in range(3))
-    large_time = _timed(pdf_validation._carries_object_syntax, large)
+    large_time = min(_timed(pdf_validation._carries_object_syntax, large) for _ in range(2))
     assert large_time < 12 * small_time
 
 
@@ -545,10 +547,13 @@ def _bend_xref_entries(content: bytes, shift: int) -> bytes:
     return re.sub(rb"(\d{10}) (\d{5}) n ", lambda m: b"%010d %s n " % (int(m.group(1)) + shift, m.group(2)), content)
 
 
-def test_xref_entries_with_wrong_offsets_in_a_small_file_are_accepted():
+@pytest.mark.parametrize("shift", [7, 13])
+def test_xref_entries_with_wrong_offsets_in_a_small_file_are_accepted(shift):
     """Repairing a 4 KB file costs milliseconds, so it is not refused. With a flat cap of 32 a file
-    with 50 such annotations was refused though the merged validator accepted it in 5 ms."""
-    content = _bend_xref_entries(_annotated_page_pdf(200, listed=True), 13)
+    with 50 such annotations was refused though the merged validator accepted it in 5 ms. The test
+    needs pypdf to discard the table at open (true for 5.0.1, 6.17, 6.19 and 7.0.1) and skips on a
+    version that repairs it instead."""
+    content = _bend_xref_entries(_annotated_page_pdf(200, listed=True), shift)
     if any(PdfReader(io.BytesIO(content), strict=False).xref.values()):
         pytest.skip("this pypdf repairs the table when it opens the file, so the premise does not hold")
     assert validate_pdf(content, **LIMITS).page_count == 1
@@ -619,3 +624,20 @@ def test_many_unlisted_annots_arrays_are_rejected_by_the_lookup_budget(monkeypat
     assert caught.value.code == "too_complex"
     monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
     assert validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 200  # only the budget refuses
+
+
+def _repeated_reference_pdf(repeats: int) -> bytes:
+    """One unlisted annotation referenced `repeats` times from the same /Annots array."""
+    references = b" ".join(b"10 0 R" for _ in range(repeats))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]/Annots[" + references + b"]>>",
+    }
+    return _classic_pdf(objects, after=b"10 0 obj\n" + _ANNOTATION + b"\nendobj\n")
+
+
+def test_repeated_references_to_one_unlisted_object_are_charged_once(tight_budget):
+    """The first lookup adds the object to the table, so asking for it again is free. Charging each
+    reference would refuse 33 references to one object under the cap of 32."""
+    assert validate_pdf(_repeated_reference_pdf(100), **LIMITS).page_count == 1

@@ -65,7 +65,8 @@ _MAX_WALK_PASSES = 5
 # cap is a byte budget: a small file may resolve many such references (damaged files, references
 # to deleted objects) because each is cheap, and a large file few. At most 96 MB of scanning in
 # total (about 1.3 s for the largest accepted file here, a few seconds on slow hardware), at most
-# 1000 lookups (the parser's fixed cost per lookup), and never fewer than 4.
+# 1000 lookups (the parser's fixed cost per lookup), and never fewer than 4. The cap of 1000 holds
+# up to about 100 KB and the floor of 4 from about 24 MB (above 64 MB the floor exceeds the budget).
 _MAX_UNLISTED_LOOKUPS = 1000
 _MIN_UNLISTED_LOOKUPS = 4
 _LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
