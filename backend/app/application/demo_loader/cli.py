@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--history-hours", type=float, default=DEFAULT_HISTORY_HOURS)
         if name == "apply":
             p.add_argument("--steps", type=lambda v: [s.strip() for s in v.split(",")], default=list(STEPS), help=f"comma list of {','.join(STEPS)}")
-            p.add_argument("--device-history-hours", type=float, default=DEFAULT_DEVICE_HISTORY_HOURS, help="history for the device mappings (default 6; 24 takes several times longer)")
+            p.add_argument("--device-history-hours", type=float, default=DEFAULT_DEVICE_HISTORY_HOURS, help="history for the device mappings (default 24; use a smaller value for a pilot run)")
             p.add_argument("--actor-email", default=None, help="user the floor-plan import/calibration is attributed to (default: oldest active user)")
             p.add_argument("--no-sandbox", action="store_true", help="parse the generated DXF in-process instead of the sandboxed child")
             p.add_argument("--no-verify", action="store_true")

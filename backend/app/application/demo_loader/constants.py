@@ -33,7 +33,7 @@ DEVICE_METRICS = ("power_kw", "load_percent")
 SENSOR_METRICS = ("temperature_c", "humidity_percent")
 
 DEFAULT_HISTORY_HOURS = 24
-# Devices are 1,000 series; each reading costs one full pass through the ingestion contract (about 8 ms), so the
-# default history is shorter. It is still 72 points per chart at a 300 s poll interval.
-DEFAULT_DEVICE_HISTORY_HOURS = 6
+# The requirement is 24 hours for every series, devices included. Devices are 1,000 series, so a full run is long
+# (see docs/DEMO_LOCAL_LOADER.md for the measured throughput); `--device-history-hours` lets a pilot use less.
+DEFAULT_DEVICE_HISTORY_HOURS = 24
 MAX_BATCH = 500
