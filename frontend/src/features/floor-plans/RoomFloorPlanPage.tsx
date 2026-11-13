@@ -348,7 +348,7 @@ export function RoomFloorPlanPage() {
                 />
               </label>
               {uploadMutation.isPending && <p role="status" className="text-xs text-slate-400">Uploading…</p>}
-              <p className="text-xs text-slate-600">Files are checked by content, parsed in an isolated sandbox, and never change inventory until you accept a shape.</p>
+              <p className="text-xs text-fg-secondary">Files are checked by content, parsed in an isolated sandbox, and never change inventory until you accept a shape.</p>
 
               <form onSubmit={submitBoundary} className="rounded-sm bg-slate-800/40 p-2 text-xs text-slate-400" aria-label="Set rectangular room boundary">
                 <p className="mb-1 font-medium text-slate-300">Room boundary (manual)</p>

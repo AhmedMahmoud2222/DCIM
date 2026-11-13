@@ -478,7 +478,7 @@ export function BulkImportPanel({
                           </td>
                           <td className="py-2 text-slate-400">{row.action ?? "—"}</td>
                           <td className="py-2">
-                            {row.errors.length === 0 && row.warnings.length === 0 && <span className="text-slate-600">—</span>}
+                            {row.errors.length === 0 && row.warnings.length === 0 && <span className="text-fg-secondary">—</span>}
                             {row.errors.length > 0 && (
                               <ul className="space-y-0.5 text-xs text-red-400">
                                 {row.errors.map((err, i) => (
