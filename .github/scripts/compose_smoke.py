@@ -38,7 +38,7 @@ OCR_EXIT_MESSAGES = {
     26: "OCR SANDBOX FAILURE: a sandboxed child could still signal other processes or modify other files",
 }
 ALL_SERVICES = ("postgres", "redis", "migrate", "bootstrap-privileges", "backend", "celery-worker", "celery-beat", "frontend", "clamav")
-HEALTH_CHECKED_SERVICES = ("postgres", "redis", "backend", "celery-worker", "celery-beat")
+HEALTH_CHECKED_SERVICES = ("postgres", "redis", "backend", "celery-worker", "celery-beat", "frontend")
 
 
 def healthchecks_healthy(health):
