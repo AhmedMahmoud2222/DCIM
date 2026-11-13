@@ -7,6 +7,7 @@ HTTP tests use two real logged-in users and a fresh AsyncSession per request (as
 get_db does); service tests drive get_or_claim directly with one session per actor."""
 
 import asyncio
+import secrets
 import uuid
 
 import pytest
@@ -20,7 +21,7 @@ from app.application import idempotency as idem
 from app.main import app
 from tests.conftest import TEST_DATABASE_URL
 
-PASSWORD = "correct horse battery staple"
+PASSWORD = secrets.token_urlsafe(24)  # random per test run, never a fixed credential
 ENDPOINT = "POST:/principal-scope-test"
 
 
