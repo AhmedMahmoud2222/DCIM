@@ -128,7 +128,7 @@ function EntityForm({
             onChange={(e) => setValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
             className="mt-1 w-44 rounded-sm border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus:border-blue-500 focus:outline-hidden"
           />
-          {field.help && <span className="mt-0.5 text-[10px] text-slate-600">{field.help}</span>}
+          {field.help && <span className="mt-0.5 text-[10px] text-fg-secondary">{field.help}</span>}
         </label>
       ))}
       <button
@@ -496,7 +496,7 @@ export function LocationsPage() {
           <span className="text-fg-secondary">Path:</span>
           {breadcrumb.map((crumb, i) => (
             <span key={`${crumb.label}-${i}`} className="flex items-center gap-1">
-              {i > 0 && <span className="text-slate-600">/</span>}
+              {i > 0 && <span className="text-fg-secondary">/</span>}
               <button type="button" onClick={crumb.onClick} className="text-blue-400 hover:underline">
                 {crumb.label}
               </button>

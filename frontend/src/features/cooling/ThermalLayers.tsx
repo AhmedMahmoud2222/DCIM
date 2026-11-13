@@ -15,6 +15,7 @@ import {
   zonePoints,
 } from "./thermalMath";
 import { BREACH_STYLE } from "./breachStyle";
+import { UNIT_STATUS } from "./unitStatus";
 import { assessThermal } from "./thermalState";
 
 export interface ThermalLayerToggles {
@@ -38,14 +39,6 @@ const ZONE_STYLE: Record<CoolingLayoutZone["zone_kind"], { stroke: string; fill:
   served_zone: { stroke: "var(--viz-label)", fill: "none", dash: "2 4", label: "Served zone" },
   supply_region: { stroke: "var(--viz-cyan)", fill: "color-mix(in srgb, var(--viz-cyan) 8%, transparent)", dash: "8 2 2 2", label: "Supply region" },
   return_region: { stroke: "var(--viz-rose)", fill: "color-mix(in srgb, var(--viz-rose) 8%, transparent)", dash: "8 2 2 2", label: "Return region" },
-};
-
-const UNIT_STATUS: Record<string, { colour: string; glyph: string }> = {
-  online: { colour: "#16a34a", glyph: "▶" },
-  standby: { colour: "#2563eb", glyph: "❚❚" },
-  offline: { colour: "var(--viz-muted)", glyph: "■" },
-  fault: { colour: "#dc2626", glyph: "✕" },
-  unknown: { colour: "var(--viz-edge-strong)", glyph: "?" },
 };
 
 const keyActivate = (action: () => void) => (event: KeyboardEvent<SVGElement>) => {
@@ -219,7 +212,7 @@ export function ThermalMarkerLayers({
             const label = `${unit.unit_kind.toUpperCase()} ${unit.name}, ${unit.operating_status}, ${unit.rated_cooling_capacity_kw != null ? `${unit.rated_cooling_capacity_kw} kW rated` : "rated capacity unknown"}. Footprint is not modelled, so this marker is not to scale.`;
             return (
               <g key={unit.id} role="button" tabIndex={0} aria-label={label} aria-pressed={selected} data-unit-id={unit.id} data-unit-kind={unit.unit_kind} data-status={unit.operating_status} onClick={() => onSelect({ kind: "unit", id: unit.id })} onKeyDown={keyActivate(() => onSelect({ kind: "unit", id: unit.id }))} style={{ cursor: "pointer" }}>
-                <rect x={px - 17} y={py - 11} width={34} height={22} rx={3} fill={status.colour} fillOpacity={0.9} stroke={selected ? "var(--viz-strong)" : "var(--viz-axis)"} strokeWidth={selected ? 3 : 1} strokeDasharray="3 2" />
+                <rect x={px - 17} y={py - 11} width={34} height={22} rx={3} fill={status.colour} stroke={selected ? "var(--viz-strong)" : "var(--viz-axis)"} strokeWidth={selected ? 3 : 1} strokeDasharray="3 2" />
                 <text x={px} y={py + 3} fontSize={9} fill="#f8fafc" textAnchor="middle" pointerEvents="none" fontWeight={700}>
                   {unit.unit_kind.toUpperCase()} {status.glyph}
                 </text>

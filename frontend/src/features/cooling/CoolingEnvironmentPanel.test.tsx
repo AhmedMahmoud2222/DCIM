@@ -72,6 +72,61 @@ describe("CoolingEnvironmentPanel", () => {
     }
   });
 
+  it("shows the thermal band chip and its reason for the selected cell", async () => {
+    const base = heatMap();
+    const values = base.grid!.values.map((v) => (v == null ? v : 33));
+    mockAll({ map: heatMap({ grid: { ...base.grid!, values, min: 33, max: 33 } }) });
+    renderPanel();
+    const field = await screen.findByTestId("heat-cells");
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowRight" });
+    const band = await screen.findByTestId("detail-band");
+    expect(band).toHaveTextContent("Thermal state: Critical");
+    expect(within(band).getByTestId("detail-band-reason")).toHaveTextContent("at or above the 32 °C A1 allowable maximum");
+  });
+
+  it.each([
+    [22, "Normal"],
+    [17, "Caution"],
+    [29, "Warning"],
+    [33, "Critical"],
+  ])("a selected cell at %s degC shows the %s chip with its reason", async (value, label) => {
+    const base = heatMap();
+    const values = base.grid!.values.map((v) => (v == null ? v : value));
+    mockAll({ map: heatMap({ grid: { ...base.grid!, values, min: value, max: value } }) });
+    renderPanel();
+    const field = await screen.findByTestId("heat-cells");
+    field.focus();
+    fireEvent.keyDown(field, { key: "ArrowRight" });
+    const band = await screen.findByTestId("detail-band");
+    expect(band).toHaveTextContent(`Thermal state: ${label}`);
+    expect(within(band).getByTestId("detail-band-reason")).toHaveTextContent(`${value} °C`);
+  });
+
+  it("shows the thermal band for a fresh sensor reading", async () => {
+    mockAll();
+    renderPanel();
+    const user = userEvent.setup();
+    const layer = await screen.findByTestId("sensor-layer");
+    await waitFor(() => expect(layer.querySelector('[data-sensor-id="s2"]')).toBeTruthy());
+    await user.click(layer.querySelector('[data-sensor-id="s2"]') as Element);
+    const band = await screen.findByTestId("detail-band");
+    expect(band).toHaveTextContent("Thermal state: Warning");
+    expect(within(band).getByTestId("detail-band-reason")).toHaveTextContent("crossed “High inlet” at 27");
+  });
+
+  it("does not assess a stale sensor reading: it shows Unknown and says why", async () => {
+    mockAll({ map: partialMap() });
+    renderPanel();
+    const user = userEvent.setup();
+    const layer = await screen.findByTestId("sensor-layer");
+    await waitFor(() => expect(layer.querySelector('[data-state="measured_stale"]')).toBeTruthy());
+    await user.click(layer.querySelector('[data-state="measured_stale"]') as Element);
+    const band = await screen.findByTestId("detail-band");
+    expect(band).toHaveTextContent("Thermal state: Unknown");
+    expect(within(band).getByTestId("detail-band-reason")).toHaveTextContent("the reading is measured, stale");
+  });
+
   it("shows legend swatches that tell warning hatching from critical hatching", async () => {
     renderPanel();
     const warning = await screen.findByTestId("legend-breach-warning");
