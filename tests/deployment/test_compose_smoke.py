@@ -12,21 +12,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import tomllib
+import yaml
+
 SCRIPT = Path(__file__).resolve().parents[2] / '.github' / 'scripts' / 'compose_smoke.py'
 spec = importlib.util.spec_from_file_location('compose_smoke', SCRIPT)
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 
-def compose_service_block(service):
-    config = SCRIPT.parents[2] / 'docker-compose.yml'
-    match = re.search(
-        rf'(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [a-z0-9-]+:\n|\Z)',
-        config.read_text(),
-    )
-    if not match:
-        raise AssertionError(f'Compose service {service!r} is missing')
-    return match.group(1)
+COMPOSE_CONFIG = yaml.safe_load((SCRIPT.parents[2] / 'docker-compose.yml').read_text())
+BACKEND_CONFIG = tomllib.loads((SCRIPT.parents[2] / 'backend' / 'pyproject.toml').read_text())
 
 
 def done(stdout='', stderr='', code=0):
@@ -35,19 +31,30 @@ def done(stdout='', stderr='', code=0):
 
 class ComposeHealthcheckConfigTests(unittest.TestCase):
     def test_worker_healthcheck_pings_its_celery_node(self):
-        block = compose_service_block('celery-worker')
-        self.assertIn('healthcheck:', block)
-        self.assertIn('inspect ping', block)
-        self.assertIn('$$HOSTNAME', block)
-        self.assertIn('grep -q pong', block)
-        self.assertNotIn('health/live', block)
+        worker = COMPOSE_CONFIG['services']['celery-worker']
+        healthcheck = worker['healthcheck']
+        self.assertEqual(healthcheck['test'][0], 'CMD-SHELL')
+        self.assertIn('inspect ping', healthcheck['test'][1])
+        self.assertIn('celery@$$HOSTNAME', healthcheck['test'][1])
+        self.assertIn('--timeout=3', healthcheck['test'][1])
+        self.assertIn('grep -q pong', healthcheck['test'][1])
+        self.assertEqual(healthcheck['interval'], '10s')
+        self.assertEqual(healthcheck['timeout'], '15s')
+        self.assertNotIn('-n', worker['command'])
+        self.assertNotIn('--hostname', worker['command'])
 
     def test_beat_healthcheck_checks_the_beat_process(self):
-        block = compose_service_block('celery-beat')
-        self.assertIn('healthcheck:', block)
-        self.assertIn('/proc/1/cmdline', block)
-        self.assertIn("b'beat'", block)
-        self.assertNotIn('health/live', block)
+        beat = COMPOSE_CONFIG['services']['celery-beat']
+        healthcheck = beat['healthcheck']
+        self.assertEqual(healthcheck['test'][0], 'CMD-SHELL')
+        self.assertIn('--enable-remote-control', beat['command'])
+        self.assertIn('inspect ping', healthcheck['test'][1])
+        self.assertIn('celerybeat@$$HOSTNAME', healthcheck['test'][1])
+        self.assertIn('--timeout=3', healthcheck['test'][1])
+        self.assertIn('grep -q pong', healthcheck['test'][1])
+        self.assertEqual(healthcheck['interval'], '10s')
+        self.assertEqual(healthcheck['timeout'], '15s')
+        self.assertIn('celery[redis]>=5.7.0', BACKEND_CONFIG['project']['dependencies'])
 
     def test_compose_smoke_requires_celery_healthchecks(self):
         healthy = {service: 'healthy' for service in smoke.HEALTH_CHECKED_SERVICES}
@@ -55,6 +62,37 @@ class ComposeHealthcheckConfigTests(unittest.TestCase):
         for service in ('celery-worker', 'celery-beat'):
             unhealthy = dict(healthy, **{service: 'unhealthy'})
             self.assertFalse(smoke.healthchecks_healthy(unhealthy), service)
+
+    def test_verify_rejects_unhealthy_worker_and_beat(self):
+        states = {
+            'migrate': 'exited',
+            'bootstrap-privileges': 'exited',
+            'backend': 'running',
+            'celery-worker': 'running',
+            'celery-beat': 'running',
+            'frontend': 'running',
+        }
+        for service in ('celery-worker', 'celery-beat'):
+            for status in ('starting', 'unhealthy'):
+                with self.subTest(service=service, status=status):
+                    health = {name: 'healthy' for name in smoke.HEALTH_CHECKED_SERVICES}
+                    health[service] = status
+
+                    def fake_state(container_id, _env, field, current_health=health, current_states=states):
+                        if field == '.State.Health.Status':
+                            return current_health.get(container_id, '<no value>')
+                        if field == '.State.ExitCode':
+                            return '0'
+                        return current_states.get(container_id, 'running')
+
+                    with mock.patch.object(smoke, 'context', return_value=([], {}, None, None)), \
+                            mock.patch.object(smoke, 'container', side_effect=lambda _cmd, _env, service: service), \
+                            mock.patch.object(smoke, 'state', side_effect=fake_state), \
+                            mock.patch.object(smoke, 'http_ok', return_value=True), \
+                            mock.patch.object(smoke.time, 'monotonic', side_effect=(0.0, 0.0, 181.0)), \
+                            mock.patch.object(smoke.time, 'sleep'), \
+                            self.assertRaisesRegex(RuntimeError, 'Timed out'):
+                        smoke.verify()
 
 
 class ClamavHealthTests(unittest.TestCase):
@@ -145,17 +183,17 @@ class ScannerMessageTests(unittest.TestCase):
         with mock.patch.object(smoke, 'context', return_value=(['docker'], {}, None, 'p')), \
                 mock.patch.object(smoke, 'wait_for_clamav_healthy', return_value='cid'), \
                 mock.patch.object(smoke, 'container_ips', return_value=['10.0.0.5']), \
-                mock.patch.object(smoke, 'compose_exec', return_value=done(stdout='scanner: unreachable', code=12)):
-            with self.assertRaisesRegex(RuntimeError, 'SCANNER NETWORK FAILURE'):
-                smoke.verify_clamav()
+                mock.patch.object(smoke, 'compose_exec', return_value=done(stdout='scanner: unreachable', code=12)), \
+                self.assertRaisesRegex(RuntimeError, 'SCANNER NETWORK FAILURE'):
+            smoke.verify_clamav()
 
     def test_verify_clamav_reports_host_clamd_impostor(self):
         with mock.patch.object(smoke, 'context', return_value=(['docker'], {}, None, 'p')), \
                 mock.patch.object(smoke, 'wait_for_clamav_healthy', return_value='cid'), \
                 mock.patch.object(smoke, 'container_ips', return_value=['10.0.0.5']), \
-                mock.patch.object(smoke, 'compose_exec', return_value=done(code=11)):
-            with self.assertRaisesRegex(RuntimeError, 'not the Compose clamav container'):
-                smoke.verify_clamav()
+                mock.patch.object(smoke, 'compose_exec', return_value=done(code=11)), \
+                self.assertRaisesRegex(RuntimeError, 'not the Compose clamav container'):
+            smoke.verify_clamav()
 
 
 class OcrSandboxMessageTests(unittest.TestCase):

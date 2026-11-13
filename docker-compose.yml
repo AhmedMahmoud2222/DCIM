@@ -138,9 +138,9 @@ services:
       bootstrap-privileges:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.infrastructure.celery_app inspect ping --destination \"celery@$$HOSTNAME\" --timeout=5 | grep -q pong"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "celery -A app.infrastructure.celery_app inspect ping --destination \"celery@$$HOSTNAME\" --timeout=3 | grep -q pong"]
+      interval: 10s
+      timeout: 15s
       retries: 3
       start_period: 30s
     command: ["celery", "-A", "app.infrastructure.celery_app", "worker", "--loglevel=info", "-Q", "default,maintenance,extraction,reports,notifications"]
@@ -168,11 +168,11 @@ services:
     # The backend image runs as an unprivileged user; its application workdir is
     # read-only to that user. Keep Celery's local schedule database in writable
     # container-local storage instead of failing at startup with EACCES.
-    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
+    command: ["celery", "-A", "app.infrastructure.celery_app", "beat", "--enable-remote-control", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import pathlib, sys; sys.exit(0 if b'beat' in pathlib.Path('/proc/1/cmdline').read_bytes().split(bytes([0])) else 1)"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD-SHELL", "celery -A app.infrastructure.celery_app inspect ping --destination \"celerybeat@$$HOSTNAME\" --timeout=3 | grep -q pong"]
+      interval: 10s
+      timeout: 15s
       retries: 3
       start_period: 30s
 

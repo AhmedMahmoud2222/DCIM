@@ -12,7 +12,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_TEMP = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
 PYTHON_SERVICES = ("migrate", "backend", "celery-worker", "celery-beat")
@@ -152,16 +151,22 @@ def verify():
         health = {service: state(ids[service], env, ".State.Health.Status") for service in HEALTH_CHECKED_SERVICES}
         one_shots = all(states[s] == "exited" and state(ids[s], env, ".State.ExitCode") == "0" for s in ("migrate", "bootstrap-privileges"))
         running = all(states[s] == "running" for s in ("backend", "celery-worker", "celery-beat", "frontend"))
-        if one_shots and running and healthchecks_healthy(health):
-            if http_ok("http://127.0.0.1:8000/api/v1/health/ready") and http_ok("http://127.0.0.1:8080/api/v1/health/ready") and http_ok("http://127.0.0.1:8080/"):
-                time.sleep(10)
-                worker_services_running = all(state(ids[s], env, ".State.Status") == "running" for s in ("celery-worker", "celery-beat"))
-                health = {service: state(ids[service], env, ".State.Health.Status") for service in HEALTH_CHECKED_SERVICES}
-                if worker_services_running and healthchecks_healthy(health):
-                    print("PASS: PostgreSQL and Redis healthy; migrations and privileged bootstrap exited 0")
-                    print("PASS: backend and frontend-proxied readiness HTTP 200; frontend HTTP 200")
-                    print("PASS: Celery worker and beat are healthy")
-                    return
+        ready_urls = (
+            "http://127.0.0.1:8000/api/v1/health/ready",
+            "http://127.0.0.1:8080/api/v1/health/ready",
+            "http://127.0.0.1:8080/",
+        )
+        if one_shots and running and healthchecks_healthy(health) and all(http_ok(url) for url in ready_urls):
+            time.sleep(10)
+            worker_services_running = all(
+                state(ids[s], env, ".State.Status") == "running" for s in ("celery-worker", "celery-beat")
+            )
+            health = {service: state(ids[service], env, ".State.Health.Status") for service in HEALTH_CHECKED_SERVICES}
+            if worker_services_running and healthchecks_healthy(health):
+                print("PASS: PostgreSQL and Redis healthy; migrations and privileged bootstrap exited 0")
+                print("PASS: backend and frontend-proxied readiness HTTP 200; frontend HTTP 200")
+                print("PASS: Celery worker and beat are healthy")
+                return
         if any(states[s] == "exited" for s in ("backend", "celery-worker", "celery-beat", "frontend")):
             break
         time.sleep(3)
@@ -296,7 +301,7 @@ def diagnose():
             print(f"{service}: status={state(cid, env, '.State.Status')} exit={state(cid, env, '.State.ExitCode')} health={state(cid, env, '.State.Health.Status')} failures={state(cid, env, '.State.Health.FailingStreak')}")
             result = run(["docker", "logs", "--tail", "60", cid], env, timeout=20)
             lines = (result.stdout + result.stderr).splitlines()
-            relevant = [line for line in lines if re.search(r"ERROR|FATAL|WARN|Traceback|Exception|Running upgrade|startup|ready|connected", line, re.I)]
+            relevant = [line for line in lines if re.search(r"ERROR|FATAL|WARN|Traceback|Exception|Running upgrade|startup|ready|connected", line, re.IGNORECASE)]
             for line in relevant[-10:]:
                 for secret in secrets_to_mask:
                     line = line.replace(secret, "[REDACTED]")
