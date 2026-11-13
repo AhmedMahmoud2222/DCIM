@@ -50,7 +50,7 @@ async def test_apply_builds_everything_and_a_second_run_changes_nothing(db_sessi
     before = await counts(db_session)
     # Pin the clock: a long first run must not make the second run's "newest slot" a new slot (that is correct
     # behaviour, but not what this test is about; see test_refresh_backfills_only_missing_slots_and_is_repeatable).
-    as_of = datetime.now(UTC).isoformat()
+    as_of = datetime.now(UTC)
     first = await cli.run_apply(db_session, args(expect_racks=12, expect_devices=60, as_of=as_of))
     assert first["ok"], first
     assert first["outside_demo_sites"]["unchanged"] is True
@@ -81,7 +81,7 @@ async def test_one_session_per_collector_gives_the_same_rows_as_sequential_inges
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
-    as_of = datetime.now(UTC).isoformat()
+    as_of = datetime.now(UTC)
     parallel = await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=as_of, session_factory=factory, no_verify=True))
     assert parallel["ok"], parallel
     assert not parallel["existing"]["rejected"] and not parallel["sensors"]["telemetry"]["rejected"]
@@ -190,3 +190,113 @@ async def test_production_and_unconfirmed_runs_are_refused(monkeypatch):
         cli.guard(args())
     assert Counter  # keep import used for readability of failures
     assert datetime.now(UTC) - timedelta(seconds=1) < datetime.now(UTC)
+
+
+def test_as_of_must_be_timezone_aware_iso_8601_and_not_in_the_future():
+
+    assert cli.parse_as_of("2026-11-13T12:00:00Z") == datetime(2026, 11, 13, 12, tzinfo=UTC)
+    assert cli.parse_as_of("2026-11-13T14:00:00+02:00") == datetime(2026, 11, 13, 12, tzinfo=UTC)
+    assert cli.parse_as_of("2026-11-13T12:00:00+00:00").tzinfo in (UTC, UTC)
+    for bad in ("2026-11-13T12:00:00", "2026-11-13", "yesterday", "2999-01-01T00:00:00Z"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            cli.parse_as_of(bad)
+    parsed = cli.build_parser().parse_args(["apply", "--confirm-local-demo", "--as-of", "2026-11-13T12:00:00Z"])
+    assert parsed.as_of == datetime(2026, 11, 13, 12, tzinfo=UTC)
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["apply", "--confirm-local-demo", "--as-of", "2026-11-13T12:00:00"])
+    with pytest.raises(SystemExit):  # refresh has no --as-of: continuous refresh always uses the live clock
+        cli.build_parser().parse_args(["refresh", "--confirm-local-demo", "--as-of", "2026-11-13T12:00:00Z"])
+
+
+async def test_refresh_uses_the_live_clock(db_session, world, monkeypatch):
+    seen = {}
+    real = cli.simulate
+
+    async def spy(db, series, **kwargs):
+        seen.update(kwargs)
+        return await real(db, series, **kwargs)
+
+    monkeypatch.setattr(cli, "simulate", spy)
+    await cli.run_refresh(db_session, argparse.Namespace(site_prefix="DEMO-SITE-", integration=[], watch=False, catch_up_hours=1.0,
+                                                         as_of=datetime(2020, 1, 1, tzinfo=UTC), session_factory=None))
+    assert seen["now"] is None  # even a stray as_of attribute cannot freeze a refresh
+    newest = (await db_session.execute(select(func.max(TelemetryReading.occurred_at))
+                                       .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    assert datetime.now(UTC) - newest < timedelta(minutes=6)
+
+
+async def _fingerprint(db):
+    rows = (await db.execute(
+        select(IntegrationMetricMapping.source_identifier, TelemetryReading.occurred_at, TelemetryReading.value, TelemetryReading.unit,
+               TelemetryReading.raw_value_text, TelemetryReading.contract_evidence)
+        .join(IntegrationMetricMapping, IntegrationMetricMapping.id == TelemetryReading.mapping_id)
+        .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).all()
+    return sorted((str(r[0]), r[1], str(r[2]), r[3], r[4], r[5]) for r in rows)
+
+
+async def test_independently_seeded_parallel_and_sequential_runs_store_identical_data(db_session, db_engine, world):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.application.demo_loader.purge import purge
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    as_of = datetime.now(UTC)
+    steps = ["existing", "sensors", "devices"]
+    await cli.run_apply(db_session, args(steps=steps, as_of=as_of, session_factory=factory, no_verify=True, device_history_hours=2.0))
+    parallel = await _fingerprint(db_session)
+    assert len(parallel) == (9 + 24) * 289 + 120 * 25  # devices: 2 h of 5-minute slots, both ends included
+    # Roll everything the loader created back, then seed again from scratch, one collector at a time.
+    await purge(db_session, await discover(db_session), dry_run=False)
+    assert await _fingerprint(db_session) == []
+    await cli.run_apply(db_session, args(steps=steps, as_of=as_of, session_factory=None, no_verify=True, device_history_hours=2.0))
+    assert await _fingerprint(db_session) == parallel
+
+
+async def test_a_failing_collector_is_reported_and_a_rerun_resumes_without_duplicates(db_session, db_engine, world, monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.application.demo_loader import series as series_module
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
+    as_of = datetime.now(UTC)
+    real = series_module.ingest_collector_telemetry
+    calls = {"n": 0}
+
+    async def flaky(db, *, collector, body):
+        if collector.name == "collector-DEMO-SITE-02":
+            calls["n"] += 1
+            if calls["n"] == 2:  # the first batch commits, the second fails
+                raise RuntimeError("simulated database outage")
+        return await real(db, collector=collector, body=body)
+
+    monkeypatch.setattr(series_module, "ingest_collector_telemetry", flaky)
+    broken = await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=as_of, session_factory=factory, no_verify=True))
+    assert broken["ok"] is False
+    failures = {**broken["existing"]["failed_collectors"], **broken["sensors"]["telemetry"]["failed_collectors"]}
+    assert set(failures) == {"collector-DEMO-SITE-02"} and "simulated database outage" in failures["collector-DEMO-SITE-02"]
+    per_collector = dict((await db_session.execute(
+        select(TelemetryReading.collector_id, func.count()).where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX))
+        .group_by(TelemetryReading.collector_id))).all())
+    healthy = [c for c in world.sites if c.code != "DEMO-SITE-02"]
+    assert all(per_collector[c.collector_id] > 0 for c in healthy)
+    assert per_collector[world.sites[1].collector_id] < per_collector[healthy[0].collector_id]  # the failed one is incomplete
+    monkeypatch.setattr(series_module, "ingest_collector_telemetry", real)
+    resumed = await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=as_of, session_factory=factory, no_verify=True))
+    assert resumed["ok"], resumed
+    total = (await db_session.execute(select(func.count()).select_from(TelemetryReading)
+                                      .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    distinct = (await db_session.execute(select(func.count(func.distinct(TelemetryReading.dedup_key)))
+                                         .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    assert total == distinct == (9 + 24) * 289
+
+
+async def test_an_unassigned_integration_is_rejected_per_record_and_reported(db_session, world):
+    await db_session.execute(text("UPDATE collector_assignment SET effective_to = now() WHERE integration_id = :i"),
+                             {"i": world.sites[0].integration_id})
+    await db_session.commit()
+    from app.application.demo_loader.selection import LoaderError
+
+    # Without a current assignment the loader cannot choose a collector: it stops before ingesting anything.
+    with pytest.raises(LoaderError, match="no current collector assignment"):
+        await cli.run_apply(db_session, args(steps=["existing"], no_verify=True))
+    assert await db_session.scalar(select(func.count()).select_from(TelemetryReading).where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX))) == 0

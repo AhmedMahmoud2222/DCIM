@@ -94,7 +94,7 @@ async def build_series(
                 if snapshot.metrics[revision.canonical_metric].canonical_unit == latest.unit:
                     base = float(latest.value)
         series.append(Series(mapping=mapping, revision=revision, route=route, external_identifier=external,
-                             signal_key=str(mapping.id), base=base))
+                             signal_key=f"{route.integration.name}|{mapping.source_identifier}", base=base))
     return series
 
 
@@ -129,10 +129,15 @@ class IngestReport:
     duplicate: int = 0
     skipped_existing: int = 0
     rejected: Counter | None = None
+    # collector name -> exception type, for a collector whose ingest raised part-way. Batches it had already
+    # committed stay; the rest were not sent. Re-running resumes from what is stored.
+    failed_collectors: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.rejected is None:
             self.rejected = Counter()
+        if self.failed_collectors is None:
+            self.failed_collectors = {}
 
     def merge(self, other: "IngestReport") -> None:
         self.accepted += other.accepted
@@ -140,10 +145,17 @@ class IngestReport:
         self.skipped_existing += other.skipped_existing
         assert self.rejected is not None and other.rejected is not None
         self.rejected.update(other.rejected)
+        assert self.failed_collectors is not None and other.failed_collectors is not None
+        self.failed_collectors.update(other.failed_collectors)
+
+    @property
+    def clean(self) -> bool:
+        return not self.rejected and not self.failed_collectors
 
     def as_dict(self) -> dict:
         return {"accepted": self.accepted, "duplicate": self.duplicate, "skipped_existing": self.skipped_existing,
-                "rejected": dict(self.rejected or {})}
+                "rejected": dict(self.rejected or {}),
+                "failed_collectors": dict(self.failed_collectors or {})}
 
 
 async def _ingest_group(
@@ -153,7 +165,15 @@ async def _ingest_group(
     records.sort(key=lambda r: r.occurred_at)  # oldest first, so alarm open/clear transitions replay in order
     for start in range(0, len(records), MAX_BATCH):
         chunk = records[start:start + MAX_BATCH]
-        result = await ingest_collector_telemetry(db, collector=collector, body=TelemetryBatchIn(records=chunk))
+        try:
+            result = await ingest_collector_telemetry(db, collector=collector, body=TelemetryBatchIn(records=chunk))
+        except Exception as error:  # noqa: BLE001 - one collector's failure must not hide the others' results
+            await db.rollback()
+            assert report.failed_collectors is not None
+            report.failed_collectors[collector.name] = f"{type(error).__name__}: {str(error)[:200]}"
+            if progress:
+                progress(f"  {collector.name}: FAILED after {start} records ({type(error).__name__}); a re-run resumes")
+            return report
         for ack in result.results:
             if ack.status == "accepted":
                 report.accepted += 1

@@ -94,8 +94,21 @@ async def loader_series(db: AsyncSession, targets: Targets) -> list[Series]:
 
 def clock(args: argparse.Namespace) -> datetime | None:
     """`--as-of` pins the sample clock (reproducible seeding, deterministic tests); default is the current time."""
-    value = getattr(args, "as_of", None)
-    return datetime.fromisoformat(value).astimezone(UTC) if value else None
+    return getattr(args, "as_of", None)
+
+
+def parse_as_of(value: str) -> datetime:
+    """Explicit, timezone-aware ISO 8601 only (for example 2026-11-13T12:00:00Z or ...+02:00), never in the future."""
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00") if value.endswith("Z") else value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an ISO 8601 timestamp") from error
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise argparse.ArgumentTypeError(f"{value!r} has no timezone; write an explicit offset such as 'Z' or '+00:00'")
+    moment = moment.astimezone(UTC)
+    if moment > datetime.now(UTC):
+        raise argparse.ArgumentTypeError(f"{value!r} is in the future")
+    return moment
 
 
 async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
@@ -111,7 +124,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
         series = await existing_series(db, targets)
         report = await simulate(db, series, hours=args.history_hours, progress=log, now=clock(args), session_factory=factory)
         out["existing"] = {"series": len(series), **report.as_dict()}
-        failed |= bool(report.rejected)
+        failed |= not report.clean
     if "sensors" in steps:
         log("Creating and commissioning the rack inlet sensors ...")
         sensors = await ensure_sensors(db, targets)
@@ -121,7 +134,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
         series = await build_series(db, sensors.mappings, routes_by_integration(targets))
         report = await simulate(db, series, hours=args.history_hours, progress=log, now=clock(args), session_factory=factory)
         out["sensors"]["telemetry"] = {"series": len(series), **report.as_dict()}
-        failed |= bool(report.rejected)
+        failed |= not report.clean
     if "floorplans" in steps:
         log("Calibrating the demo floor plans ...")
         actor = await resolve_actor(db, args.actor_email)
@@ -135,7 +148,7 @@ async def run_apply(db: AsyncSession, args: argparse.Namespace) -> dict:
         report = await simulate(db, series, hours=args.device_history_hours, progress=log, now=clock(args), session_factory=factory)
         out["devices"] = {"devices": devices.devices, "mappings_created": devices.mappings_created, "mappings_total": devices.mappings_total,
                           "telemetry": {"series": len(series), **report.as_dict()}}
-        failed |= bool(report.rejected)
+        failed |= not report.clean
     after = await outside_fingerprint(db, args.site_prefix)
     out["outside_demo_sites"] = {"unchanged": before["digest"] == after["digest"], "before": before["digest"], "after": after["digest"], "counts": after["counts"]}
     failed |= before["digest"] != after["digest"]
@@ -148,8 +161,8 @@ async def run_refresh(db: AsyncSession, args: argparse.Namespace) -> dict:
     last: dict = {}
     while True:
         series = await existing_series(db, targets) + await loader_series(db, targets)
-        report = await simulate(db, series, hours=args.catch_up_hours, now=clock(args), session_factory=getattr(args, "session_factory", None))
-        last = {"at": datetime.now(UTC).isoformat(), "series": len(series), **report.as_dict(), "ok": not report.rejected}
+        report = await simulate(db, series, hours=args.catch_up_hours, now=None, session_factory=getattr(args, "session_factory", None))  # refresh always uses the live clock
+        last = {"at": datetime.now(UTC).isoformat(), "series": len(series), **report.as_dict(), "ok": report.clean}
         if not args.watch:
             return last
         print(json.dumps(last), flush=True)
@@ -214,8 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--integration", action="append", default=[], type=parse_pair, metavar="SITE=NAME", help="choose a site's integration explicitly")
         if name in ("apply", "refresh", "purge"):
             p.add_argument("--confirm-local-demo", action="store_true", help="required: this database is a local demonstration database")
+        if name == "apply":
+            p.add_argument("--as-of", default=None, type=parse_as_of, metavar="ISO8601", help="pin the sample clock to a timezone-aware, non-future ISO 8601 time (default: the live clock)")
         if name in ("apply", "refresh"):
-            p.add_argument("--as-of", default=None, metavar="ISO8601", help="pin the sample clock (default: now)")
             p.add_argument("--sequential", action="store_true", help="ingest one collector at a time instead of one session per collector")
         if name in ("apply", "verify"):
             p.add_argument("--expect-racks", type=int, default=100)
