@@ -117,18 +117,21 @@ async def test_hrc_site_is_never_touched(db_session, world):
     assert hrc_plan.current_calibration_id is None
 
 
-async def test_refresh_adds_the_newest_slot_only_and_is_repeatable(db_session, world):
+async def test_refresh_backfills_only_missing_slots_and_is_repeatable(db_session, world):
     await cli.run_apply(db_session, args(steps=["existing", "sensors"]))
-    one = await cli.run_refresh(db_session, argparse.Namespace(site_prefix="DEMO-SITE-", integration=[], watch=False, catch_up_hours=24.0))
-    assert one["ok"] and one["accepted"] == 0  # nothing new within the same slot
-    # Age every simulated reading by one hour: the next refresh must backfill exactly that hour.
-    await db_session.execute(text("UPDATE telemetry_reading SET occurred_at = occurred_at - interval '1 hour', dedup_key = dedup_key || 'x' "
-                                  "WHERE dedup_key LIKE 'demo-sim:v1:%'"))
+    ns = argparse.Namespace(site_prefix="DEMO-SITE-", integration=[], watch=False, catch_up_hours=24.0)
+    first = await cli.run_refresh(db_session, ns)  # may add a slot if the apply crossed a 5-minute boundary
+    assert first["ok"] and not first["rejected"]
+    settled = await cli.run_refresh(db_session, ns)
+    assert settled["ok"] and settled["accepted"] == 0 and settled["duplicate"] == 0
+    # Remove the newest hour (12 slots) of every simulated series: refresh must restore exactly those slots.
+    removed = (await db_session.execute(text(
+        "DELETE FROM telemetry_reading WHERE dedup_key LIKE 'demo-sim:v1:%' AND occurred_at > now() - interval '1 hour'"))).rowcount
     await db_session.commit()
-    again = await cli.run_refresh(db_session, argparse.Namespace(site_prefix="DEMO-SITE-", integration=[], watch=False, catch_up_hours=24.0))
-    assert again["ok"] and again["accepted"] > 0
-    # Not asserting an exact figure: it depends on the wall clock; the contract is "new slots only, no rejections".
-    assert not again["rejected"]
+    assert removed > 0
+    restored = await cli.run_refresh(db_session, ns)
+    assert restored["ok"] and restored["accepted"] == removed and not restored["rejected"]
+    assert (await cli.run_refresh(db_session, ns))["accepted"] == 0
 
 
 async def test_purge_removes_only_what_the_loader_created(db_session, world):
