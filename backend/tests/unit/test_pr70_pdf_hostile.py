@@ -13,24 +13,31 @@ from app.application.catalog_documents.pdf_validation import PdfRejected, valida
 MAX_BYTES, MAX_PAGES = 25 * 1024 * 1024, 100
 
 
-def _objstm_pdf(objects: dict[int, bytes], root: int = 1) -> bytes:
-    """PDF 1.5 whose dictionaries live in one compressed object stream, plus an xref stream."""
+def _objstm_pdf(
+    objects: dict[int, bytes], root: int = 1, *, unlisted: frozenset[int] = frozenset(), compress: bool = True
+) -> bytes:
+    """PDF 1.5 whose dictionaries live in one compressed object stream, plus an xref stream.
+    `unlisted` members sit in the object stream but have no cross-reference entry; `compress=False`
+    stores the object stream as plain bytes."""
     nums = sorted(objects)
     offsets, running = [], 0
     for n in nums:
         offsets.append(f"{n} {running}")
         running += len(objects[n]) + 1
     header = (" ".join(offsets) + "\n").encode()
-    stream = zlib.compress(header + b"".join(objects[n] + b"\n" for n in nums))
+    stream = header + b"".join(objects[n] + b"\n" for n in nums)
+    stream_filter = ""
+    if compress:
+        stream, stream_filter = zlib.compress(stream), "/Filter/FlateDecode"
     stm, xref = max(nums) + 1, max(nums) + 2
     out = bytearray(b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n")
     stm_off = len(out)
-    out += f"{stm} 0 obj\n<</Type/ObjStm/N {len(nums)}/First {len(header)}/Filter/FlateDecode/Length {len(stream)}>>\nstream\n".encode()
+    out += f"{stm} 0 obj\n<</Type/ObjStm/N {len(nums)}/First {len(header)}{stream_filter}/Length {len(stream)}>>\nstream\n".encode()
     out += stream + b"\nendstream\nendobj\n"
     xref_off = len(out)
     rows = bytearray()
     for n in range(xref + 1):
-        if n in objects:
+        if n in objects and n not in unlisted:
             rows += bytes([2]) + stm.to_bytes(4, "big") + nums.index(n).to_bytes(2, "big")
         elif n == stm:
             rows += bytes([1]) + stm_off.to_bytes(4, "big") + (0).to_bytes(2, "big")
