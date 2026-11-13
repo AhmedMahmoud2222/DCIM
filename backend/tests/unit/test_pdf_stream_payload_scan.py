@@ -576,6 +576,26 @@ def test_listed_entries_with_wrong_offsets_are_charged_when_the_parser_repairs_t
     assert _assert_refused_within_the_allowance(content) == 4
 
 
+def _absent_objects_xref_pdf(count: int, padding: int = 0) -> bytes:
+    """The table lists annotations 10 to 9+count and each offset leads to a real header, but of another
+    object number (the same width, so every offset stays right). pypdf cannot find the listed object
+    anywhere, so each lookup is a failed whole-file search that neither repairs nor rewrites an entry."""
+    content = _annotated_page_pdf(count, listed=True, padding=padding)
+    return re.sub(rb"\n(\d)(\d) 0 obj\n<</Type/Annot", lambda m: b"\n%d%s 0 obj\n<</Type/Annot" % (int(m.group(1)) + 4, m.group(2)), content)
+
+
+def test_listed_entries_whose_object_cannot_be_found_are_charged():
+    """OpenCode's shape: nothing is repaired and nothing raises, so only the header check at the
+    listed offset sees the search coming. 12 entries in 24 MB of file took 3.5 s unbudgeted."""
+    content = _absent_objects_xref_pdf(12, padding=24 * 1024 * 1024)
+    assert any(PdfReader(io.BytesIO(content), strict=False).xref.values()), "pypdf must keep the table"
+    assert _assert_refused_within_the_allowance(content) == 4
+
+
+def test_listed_entries_whose_object_cannot_be_found_in_a_small_file_are_accepted():
+    assert validate_pdf(_absent_objects_xref_pdf(12), **LIMITS).page_count == 1
+
+
 def test_listed_entries_with_wrong_offsets_in_a_small_file_are_accepted():
     assert validate_pdf(_misdirected_xref_pdf(200), **LIMITS).page_count == 1
 

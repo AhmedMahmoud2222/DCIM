@@ -73,6 +73,8 @@ _MAX_WALK_PASSES = 5
 _MAX_UNLISTED_LOOKUPS = 1000
 _MIN_UNLISTED_LOOKUPS = 4
 _LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
+# How much of the file at a listed offset is read to see whether it starts the object's header.
+_HEADER_PROBE_BYTES = 64
 # The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
 _FORBIDDEN_NAMES = frozenset(
     {
@@ -129,12 +131,13 @@ class _LookupBudget:
     `install()` wraps `reader.get_object`, the one function every resolution goes through (the
     page tree, `/Annots` arrays and members, actions and their `/Next` links, stream `/Type`
     values, the object walk), so no call site has to remember to charge. A reference is free when
-    the table lists it and its offset leads to the object, when an earlier lookup already added it,
-    or when it names an object-stream member with generation 0 (members always have generation 0,
-    so a nonzero generation of the same number is a different, unlisted object). A listed entry
-    whose offset is wrong makes the parser search the whole file and rewrite the entry, so a
-    changed offset is charged after the lookup. Once the budget is spent every further charged
-    lookup raises, and `check()` repeats the verdict in case the parser swallowed the exception."""
+    the table lists it and its offset starts the object's header, when the parser already holds the
+    object, or when it names an object-stream member with generation 0 (members always have
+    generation 0, so a nonzero generation of the same number is a different, unlisted object). A
+    listed entry whose offset starts another header makes the parser search the whole file, found
+    or not, so it is charged before the lookup like an unlisted one. Once the budget is spent every
+    further resolution raises, and `check()` repeats the verdict in case the parser swallowed the
+    exception."""
 
     def __init__(self, reader: "PdfReader", file_size: int) -> None:
         self._reader = reader
@@ -152,11 +155,7 @@ class _LookupBudget:
         def counted(reference: object) -> object:
             self.check()  # a spent budget refuses every resolution, so no repair scan starts
             self._charge(reference)
-            before = self._listed_offset(reference)
-            result = original(reference)  # type: ignore[arg-type]
-            if before is not None and self._listed_offset(reference) != before:
-                self._spend()
-            return result
+            return original(reference)  # type: ignore[arg-type]
 
         self._reader.get_object = counted  # type: ignore[method-assign, assignment]
 
@@ -165,18 +164,41 @@ class _LookupBudget:
         number: int | None = reference if isinstance(reference, int) else getattr(reference, "idnum", None)
         return number, 0 if isinstance(reference, int) else getattr(reference, "generation", 0)
 
-    def _listed_offset(self, reference: object) -> int | None:
-        number, generation = self._identify(reference)
-        return cast(dict, self._reader.xref).get(generation, {}).get(number)
+    def _leads_to_header(self, number: int, generation: int, offset: int) -> bool:
+        """True when the listed offset starts `number generation obj`, so the parser reads the object
+        in place. A different header, or none, makes it search the whole file, and it does so whether
+        or not the object exists, so the check cannot wait for the parser's answer."""
+        stream = getattr(self._reader, "stream", None)
+        if stream is None:
+            return True
+        position = stream.tell()
+        try:
+            stream.seek(offset)
+            head = stream.read(_HEADER_PROBE_BYTES)
+        finally:
+            stream.seek(position)
+        return re.match(rb"\s*%d\s+%d\s+obj" % (number, generation), head) is not None
 
     def _charge(self, reference: object) -> None:
         number, generation = self._identify(reference)
         if number is None:
             return
         listed = cast(dict, self._reader.xref).get(generation, {})
-        if number in listed or (generation == 0 and number in cast(dict, self._reader.xref_objStm)):
+        if number in listed:
+            if self._resolves_without_a_search(number, generation, listed[number]):
+                return
+        elif generation == 0 and number in cast(dict, self._reader.xref_objStm):
             return
         self._spend()
+
+    def _resolves_without_a_search(self, number: int, generation: int, offset: int) -> bool:
+        reader = self._reader
+        cached = getattr(reader, "cache_get_indirect_object", None)
+        if cached is not None and cached(generation, number) is not None:
+            return True
+        if getattr(reader, "xref_free_entry", {}).get(generation, {}).get(number, False):
+            return True
+        return self._leads_to_header(number, generation, offset)
 
     def _spend(self) -> None:
         self._spent += 1
