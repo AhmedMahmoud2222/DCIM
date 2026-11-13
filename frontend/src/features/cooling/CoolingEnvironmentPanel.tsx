@@ -9,7 +9,7 @@ import { getCoolingLayout, getHeatMap, getRoomAirflow, getRoomCapacity, getRoomE
 import { ThermalHeatLayer, ThermalMarkerLayers, type ThermalLayerToggles, type ThermalSelection } from "./ThermalLayers";
 import { ThermalBandChip } from "./ThermalBandChip";
 import { ThermalLegend } from "./ThermalLegend";
-import { assessThermal } from "./thermalState";
+import { assessThermal, type ThermalAssessment } from "./thermalState";
 import { MAP_STATE_META, SENSOR_STATE_META, cellAt, describeSensor, explainExclusion, explainReason, formatAge, formatQuantity, metricLabel } from "./thermalMath";
 
 const REFRESH_MS = 30_000;
@@ -108,12 +108,18 @@ function Details({ selection, map, layout, airflow, capacity }: { selection: The
     const p = map?.sensors.find((s) => s.sensor_id === selection.id);
     if (p) {
       const meta = SENSOR_STATE_META[p.state];
+      // Only a fresh reading is assessed: a stale, missing or invalid value says nothing about the room now.
+      const assessment: ThermalAssessment = p.state === "measured_fresh" && p.value != null
+        ? assessThermal(map!, p.value)
+        : { band: "unknown", reason: `No thermal state: the reading is ${meta.label.toLowerCase()}.` };
       body = (
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="detail-sensor">
           <dt className="text-fg-secondary">Sensor</dt><dd>{p.name} ({p.asset_tag})</dd>
           <dt className="text-fg-secondary">Provenance</dt><dd data-testid="detail-provenance">Measured</dd>
           <dt className="text-fg-secondary">State</dt><dd data-testid="detail-state"><span aria-hidden="true">{meta.glyph}</span> {meta.label}</dd>
           <dt className="text-fg-secondary">Value</dt><dd data-testid="detail-value">{p.presentation_value != null ? formatQuantity(p.presentation_value, p.presentation_unit, 2) : "No value"}{p.state === "measured_stale" && " (stale: not current)"}</dd>
+          <dt className="text-fg-secondary">Thermal state</dt>
+          <dd data-testid="detail-band"><ThermalBandChip band={assessment.band} reason={assessment.reason} /> <span data-testid="detail-band-reason">{assessment.reason}</span></dd>
           <dt className="text-fg-secondary">Timestamp</dt><dd>{p.occurred_at ? `${new Date(p.occurred_at).toLocaleString()} (${formatAge(p.age_seconds)})` : "never"}</dd>
           <dt className="text-fg-secondary">Poll interval</dt><dd>{p.expected_poll_interval_seconds != null ? `${p.expected_poll_interval_seconds} s` : "unknown"}</dd>
           <dt className="text-fg-secondary">Position</dt><dd>{p.x_mm != null ? `${Math.round(p.x_mm)}, ${Math.round(p.y_mm ?? 0)} mm${p.position_exact ? "" : " · approximate (rack footprint)"}` : "not recorded"}</dd>
