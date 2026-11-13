@@ -606,8 +606,38 @@ def test_many_references_to_deleted_objects_in_a_small_file_are_accepted():
     assert validate_pdf(_dangling_type_pdf(200), **LIMITS).page_count == 1
 
 
+def _dangling_type_pdf_of_size(count: int, padding: int) -> bytes:
+    """`_dangling_type_pdf` with a filler stream so the file reaches `padding` bytes."""
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>",
+        4: _stream(b" " * padding),
+    }
+    objects.update({10 + index: b"<</Type %d 0 R/Length 0>>\nstream\n\nendstream" % (5000 + index) for index in range(count)})
+    return _classic_pdf(objects)
+
+
+def test_the_acceptance_edge_at_the_production_size_limit_is_four_stale_references():
+    """A 25 MB file may resolve 4 unlisted references and is refused at the 5th (floor of 4, from
+    96 MB // 25 MB = 3). The line is deliberate: each lookup scans the whole file (about 0.35 s here)
+    and the in-process extraction workers have no time limit. Moving it takes a decision, so a test
+    pins it."""
+    size = 25 * 1024 * 1024
+    at_the_edge = _dangling_type_pdf_of_size(4, size - 2048)
+    assert len(at_the_edge) <= size
+    assert pdf_validation._LookupBudget.limit_for(len(at_the_edge)) == 4
+    assert validate_pdf(at_the_edge, max_bytes=size, max_pages=10).page_count == 1
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(_dangling_type_pdf_of_size(5, size - 2048), max_bytes=size, max_pages=10)
+    assert caught.value.code == "too_complex"
+
+
 def _stub_reader() -> SimpleNamespace:
-    return SimpleNamespace(xref={0: {1: 100}, 1: {7: 200}}, xref_objStm={5: (8, 0)})
+    body = bytearray(b" " * 300)
+    body[100:107] = b"1 0 obj"
+    body[200:207] = b"7 1 obj"
+    return SimpleNamespace(xref={0: {1: 100}, 1: {7: 200}}, xref_objStm={5: (8, 0)}, stream=io.BytesIO(bytes(body)))
 
 
 class _Reference(SimpleNamespace):

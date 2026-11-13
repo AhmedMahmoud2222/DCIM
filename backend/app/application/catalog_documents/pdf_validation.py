@@ -152,10 +152,10 @@ class _LookupBudget:
     def install(self) -> None:
         original = self._reader.get_object
 
-        def counted(reference: object) -> object:
+        def counted(*args: object, **kwargs: object) -> object:
             self.check()  # a spent budget refuses every resolution, so no repair scan starts
-            self._charge(reference)
-            return original(reference)  # type: ignore[arg-type]
+            self._charge(args[0] if args else kwargs.get("indirect_reference"))
+            return original(*args, **kwargs)  # type: ignore[arg-type]
 
         self._reader.get_object = counted  # type: ignore[method-assign, assignment]
 
@@ -170,7 +170,7 @@ class _LookupBudget:
         or not the object exists, so the check cannot wait for the parser's answer."""
         stream = getattr(self._reader, "stream", None)
         if stream is None:
-            return True
+            return False  # no probe, no proof that the offset is right: charge it
         position = stream.tell()
         try:
             stream.seek(offset)
