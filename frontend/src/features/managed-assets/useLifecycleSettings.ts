@@ -19,7 +19,7 @@ export const DEFAULT_LIFECYCLE_STATES: LifecycleStateConfig[] = [
     description: "Asset is physically installed in its location or rack.",
     badge_color: "info",
     display_order: 2,
-    allowed_transitions: ["active", "maintenance", "decommissioned"],
+    allowed_transitions: ["active", "maintenance", "removed"],
   },
   {
     status: "active",
@@ -59,7 +59,7 @@ export const DEFAULT_LIFECYCLE_SETTINGS: LifecycleSettingsResponse = {
   states: DEFAULT_LIFECYCLE_STATES,
   mandatory_allowed_transitions: {
     planned: ["installed", "removed"],
-    installed: ["active", "maintenance", "decommissioned"],
+    installed: ["active", "maintenance", "removed"],
     active: ["maintenance", "decommissioned"],
     maintenance: ["active", "decommissioned"],
     decommissioned: ["removed"],
