@@ -20,21 +20,19 @@ export function useLifecycleSettings() {
   const query = useQuery<LifecycleSettingsResponse>({
     queryKey: LIFECYCLE_SETTINGS_QUERY_KEY,
     queryFn: async () => {
-      try {
-        const result = await getLifecycleSettings();
-        if (result && Array.isArray(result.states) && result.states.length > 0) {
-          return result;
-        }
-      } catch {
-        // Fall back to default lifecycle settings when offline or in unit tests that do not mock /settings/lifecycle.
+      // Failures are never cached as data: the shared query key is also read by the administrator
+      // settings page, which must only ever see an authoritative successful response.
+      const result = await getLifecycleSettings();
+      if (!result || !Array.isArray(result.states) || result.states.length === 0) {
+        throw new Error("Lifecycle settings response was empty.");
       }
-      return FALLBACK_LIFECYCLE_SETTINGS;
+      return result;
     },
     staleTime: 30_000,
   });
 
-  const settings = query.data ?? DEFAULT_LIFECYCLE_SETTINGS;
-  const isAuthoritative = query.data !== undefined && query.data !== FALLBACK_LIFECYCLE_SETTINGS;
+  const settings = query.data ?? FALLBACK_LIFECYCLE_SETTINGS;
+  const isAuthoritative = query.data !== undefined;
 
   const sortedStates = useMemo(
     () => [...settings.states].sort((a, b) => a.display_order - b.display_order),

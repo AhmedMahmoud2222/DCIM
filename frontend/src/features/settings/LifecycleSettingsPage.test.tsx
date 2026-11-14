@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as managedAssetApi from "@/features/managed-assets/api";
-import { DEFAULT_LIFECYCLE_SETTINGS } from "@/features/managed-assets/useLifecycleSettings";
+import {
+  DEFAULT_LIFECYCLE_SETTINGS,
+  useLifecycleSettings,
+} from "@/features/managed-assets/useLifecycleSettings";
 import { LifecycleSettingsPage } from "@/features/settings/LifecycleSettingsPage";
 import { ApiError } from "@/lib/apiClient";
 import { CurrentUser } from "@/lib/authStore";
@@ -31,7 +34,9 @@ describe("LifecycleSettingsPage", () => {
   it("displays the six visible states, excludes reserved from configuration rows, and shows legacy reserved notice", async () => {
     renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
 
-    expect(await screen.findByRole("heading", { name: "Lifecycle Settings" })).toBeInTheDocument();
+    // The loading view also renders the heading, so wait for authoritative content before asserting it.
+    await screen.findByTestId("lifecycle-state-card-planned");
+    expect(screen.getByRole("heading", { name: "Lifecycle Settings" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Settings breadcrumb" })).toHaveTextContent(
       "Settings → Asset Management → Lifecycle Settings",
     );
@@ -227,5 +232,53 @@ describe("LifecycleSettingsPage", () => {
     await screen.findByRole("button", { name: "Discard my edits and reload" });
     expect(screen.getByRole("button", { name: "Save Lifecycle Settings" })).toBeDisabled();
     expect(managedAssetApi.updateLifecycleSettings).not.toHaveBeenCalled();
+  });
+
+  it("never exposes an editable form from display-only fallback settings cached by another view", async () => {
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockRejectedValue(new Error("network down"));
+
+    function EquipmentViewProbe() {
+      const { isAuthoritative } = useLifecycleSettings();
+      return <span data-testid="probe">{isAuthoritative ? "authoritative" : "fallback"}</span>;
+    }
+
+    renderWithProviders(
+      <>
+        <EquipmentViewProbe />
+        <LifecycleSettingsPage />
+      </>,
+      { user: LIFECYCLE_ADMIN_USER },
+    );
+
+    expect(await screen.findByText("Could not load lifecycle settings.")).toBeInTheDocument();
+    expect(screen.getByTestId("probe")).toHaveTextContent("fallback");
+    expect(screen.queryByTestId("lifecycle-state-card-planned")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Lifecycle Settings" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the dirty draft and conflict state when a reload fails", async () => {
+    const first = { ...cloneDefaultSettings(), version: 1 };
+    const changed = { ...cloneDefaultSettings(), version: 2 };
+    vi.mocked(managedAssetApi.getLifecycleSettings)
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(changed)
+      .mockRejectedValue(new Error("network down"));
+
+    const user = userEvent.setup();
+    const { queryClient } = renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    const card = await screen.findByTestId("lifecycle-state-card-planned");
+    const labelInput = within(card).getByLabelText("Display label for planned");
+    await user.clear(labelInput);
+    await user.type(labelInput, "My Draft");
+    await queryClient.invalidateQueries({ queryKey: ["lifecycle-settings"] });
+
+    await user.click(await screen.findByRole("button", { name: "Discard my edits and reload" }));
+
+    expect(await screen.findByText(/Could not reload the latest lifecycle settings/)).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("lifecycle-state-card-planned")).getByLabelText("Display label for planned"),
+    ).toHaveValue("My Draft");
+    expect(screen.getByRole("button", { name: "Save Lifecycle Settings" })).toBeDisabled();
   });
 });

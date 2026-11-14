@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -99,6 +99,34 @@ describe("LifecycleTransitionAction", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mark installed: server-01" })).toHaveFocus();
+  });
+
+  it("moves focus into the full lifecycle dialog, closes on Escape and returns focus to the trigger", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <LifecycleTransitionAction assetId="equipment-1" assetName="server-01" status="active" assetLabel="equipment" />,
+      { user: LIFECYCLE_MANAGER },
+    );
+    await user.click(await screen.findByRole("button", { name: "Change lifecycle state: server-01" }));
+    const dialog = await screen.findByRole("dialog", { name: "Change lifecycle state for server-01" });
+    expect(within(dialog).getByLabelText("Target lifecycle state")).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change lifecycle state: server-01" })).toHaveFocus();
+  });
+
+  it("returns focus to the trigger when the full lifecycle dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <LifecycleTransitionAction assetId="equipment-1" assetName="server-01" status="active" assetLabel="equipment" />,
+      { user: LIFECYCLE_MANAGER },
+    );
+    await user.click(await screen.findByRole("button", { name: "Change lifecycle state: server-01" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change lifecycle state: server-01" })).toHaveFocus();
   });
 
   it("keeps and focuses a conflict alert after refreshed status is no longer planned", async () => {

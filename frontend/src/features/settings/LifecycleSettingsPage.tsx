@@ -52,6 +52,7 @@ export function LifecycleSettingsPage() {
   // keep the draft and offer an explicit reload/discard instead.
   const [dirty, setDirty] = useState(false);
   const [serverChanged, setServerChanged] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
   const baseVersion = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -116,10 +117,14 @@ export function LifecycleSettingsPage() {
 
   const handleReload = async () => {
     const result = await settingsQuery.refetch();
-    if (result.data?.states) {
-      baseVersion.current = result.data.version;
-      setDraftStates([...result.data.states].sort((a, b) => a.display_order - b.display_order));
+    if (result.isError || !result.data?.states) {
+      // Keep the draft and the conflict state; only a fresh successful fetch may replace them.
+      setReloadError("Could not reload the latest lifecycle settings. Your edits are kept; try again.");
+      return;
     }
+    setReloadError(null);
+    baseVersion.current = result.data.version;
+    setDraftStates([...result.data.states].sort((a, b) => a.display_order - b.display_order));
     setDirty(false);
     setServerChanged(false);
     setValidationError(null);
@@ -288,6 +293,12 @@ export function LifecycleSettingsPage() {
               Reload latest configuration
             </button>
           )}
+        </p>
+      )}
+
+      {reloadError && (
+        <p role="alert" className="mb-4 rounded-md border border-tone-danger-fg bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
+          {reloadError}
         </p>
       )}
 
