@@ -182,8 +182,7 @@ async def _calibrate(db: AsyncSession, plan: FloorPlan, job: FloorPlanImportJob,
     db.add(row)
     await db.flush()
     plan.current_calibration_id = row.id
-    plan.calibration_scale_mm_per_px = None
-    plan.version += 1
+    plan.version += 1  # `calibration_scale_mm_per_px` is never touched: a plan that has one is skipped before this point
     await db.flush()
     return row
 
@@ -212,6 +211,13 @@ async def calibrate_demo_plans(db: AsyncSession, targets: Targets, actor_id: uui
             result.calibration_id = plan.current_calibration_id
             if calibration is not None:
                 result.method, result.scale_mm_per_unit, result.confidence = calibration.method, float(calibration.mm_per_unit), calibration.confidence
+            continue
+        if plan.calibration_scale_mm_per_px is not None:
+            result.state = "skipped"
+            result.problems.append(
+                f"plan has a legacy pixel scale ({plan.calibration_scale_mm_per_px} mm/px) and no calibration record; the loader will not "
+                "overwrite it. Calibrate this plan through the floor-plan import, or clear the legacy value deliberately."
+            )
             continue
         if not plan.room_width_mm or not plan.room_height_mm:
             result.state = "skipped"

@@ -4,7 +4,7 @@ import uuid
 from types import SimpleNamespace
 
 from app.api.v1.equipment import _location_out
-from app.application.access_control import EMPTY_SCOPE, UNRESTRICTED
+from app.application.access_control import EMPTY_SCOPE, UNRESTRICTED, AccessScope
 from tests.api._phase2_helpers import create_equipment, create_rack_model_revision
 from tests.api.test_user_groups import _make_site
 
@@ -67,19 +67,51 @@ async def test_floor_standing_equipment_has_room_but_no_rack(client, auth_header
     assert location["site"]["id"] == world["site"]
 
 
-def test_site_building_floor_are_withheld_outside_the_callers_scope():
-    ids = {key: uuid.uuid4() for key in ("room", "floor", "building", "site", "rack")}
+def test_the_whole_location_is_withheld_when_the_caller_may_not_see_the_equipment():
+    ids = {key: uuid.uuid4() for key in ("room", "floor", "building", "site", "rack", "other_rack")}
     row = SimpleNamespace(
         room_id=ids["room"], room_name="R", room_code="r", floor_id=ids["floor"], floor_name="F", building_id=ids["building"],
         building_name="B", building_code="b", site_id=ids["site"], site_name="S", site_code="s",
     )
     placement = SimpleNamespace(room_id=ids["room"], rack_id=ids["rack"])
-    hidden = _location_out(placement, {ids["room"]: row}, {ids["rack"]: "K"}, EMPTY_SCOPE)
-    assert hidden is not None and hidden.site is None and hidden.building is None and hidden.floor is None
-    assert hidden.room.name == "R" and hidden.rack.name == "K"
-    shown = _location_out(placement, {ids["room"]: row}, {ids["rack"]: "K"}, UNRESTRICTED)
+    rooms, racks = {ids["room"]: row}, {ids["rack"]: "K"}
+    for scope in (EMPTY_SCOPE, AccessScope(unrestricted=False, site_ids=frozenset({ids["site"]}), rack_ids=frozenset({ids["other_rack"]}))):
+        hidden = _location_out(placement, rooms, racks, scope)
+        assert hidden is not None and not any((hidden.site, hidden.building, hidden.floor, hidden.room, hidden.rack)), scope
+    own_rack = AccessScope(unrestricted=False, site_ids=frozenset({ids["site"]}), rack_ids=frozenset({ids["rack"]}))
+    granted = _location_out(placement, rooms, racks, own_rack)
+    assert granted.rack.name == "K" and granted.room.name == "R"
+    whole_site = AccessScope(unrestricted=False, site_ids=frozenset({ids["site"]}), full_site_ids=frozenset({ids["site"]}))
+    assert _location_out(placement, rooms, racks, whole_site).site.name == "S"
+    shown = _location_out(placement, rooms, racks, UNRESTRICTED)
     assert shown is not None and shown.site.name == "S" and shown.building.name == "B" and shown.floor.name == "F"
     assert _location_out(None, {}, {}, UNRESTRICTED) is None
+
+
+async def test_a_scoped_caller_who_moves_equipment_into_a_foreign_site_is_not_told_where_it_went(client, auth_headers):
+    """The move endpoint checks the permission, not the caller's site scope (that gap is older than this feature). Whatever it
+    allows, its response must not carry the foreign room, rack or site names."""
+    from tests.api.test_user_groups import _group, _group_user
+
+    admin = await auth_headers("Administrator")
+    a = await _make_site(client, admin)
+    b = await _make_site(client, admin)
+    rack_a = await _rack(client, admin, auth_headers, a["room"], "A-ONE")
+    rack_b = await _rack(client, admin, auth_headers, b["room"], "SECRET-B-RACK")
+    mine = await create_equipment(client, admin, auth_headers)
+    await _mount(client, admin, mine["id"], a["room"], rack_a["id"])
+    gid = await _group(client, admin, allow=["equipment:read", "equipment:place", "rack:read", "location:read"],
+                       sites=[{"site_id": a["site"], "rack_scope": "all"}])
+    _, headers = await _group_user(client, admin, [gid])
+    resp = await client.post(
+        f"/api/v1/equipment/{mine['id']}/move",
+        json={"placement_type": "rack_mounted", "room_id": b["room"], "rack_id": rack_b["id"], "u_start": 5, "u_end": 7, "side": "front"},
+        headers=headers,
+    )
+    assert resp.status_code in (200, 403, 404), resp.text
+    assert "SECRET-B-RACK" not in resp.text and b["site"] not in resp.text
+    if resp.status_code == 200:
+        assert resp.json()["location"] == {"site": None, "building": None, "floor": None, "room": None, "rack": None}
 
 
 async def test_a_rack_scoped_caller_sees_locations_only_for_equipment_in_their_racks(client, auth_headers):

@@ -204,17 +204,27 @@ async def _location_lookup(db: AsyncSession, placements: list) -> tuple[dict, di
     return rooms, racks
 
 
+def caller_may_see_location(placement, site_id: uuid.UUID, scope: AccessScope | None) -> bool:
+    """The same rule `equipment_visible_clause` applies in SQL, for one placed item: an unrestricted caller, a caller with
+    the whole site, or a caller granted the item's rack. Anything else sees no location at all, not even the room or rack
+    name, because a mutation response can concern equipment the caller was never allowed to read."""
+    if scope is None or scope.unrestricted or site_id in scope.full_site_ids:
+        return True
+    return placement.rack_id is not None and placement.rack_id in scope.rack_ids
+
+
 def _location_out(placement, rooms: dict, racks: dict, scope: AccessScope | None) -> EquipmentLocationOut | None:
     if placement is None:
         return None
     row = rooms.get(placement.room_id)
     out = EquipmentLocationOut()
-    if row is not None:
-        out.room = NamedRef(id=row.room_id, name=row.room_name, code=row.room_code)
-        if scope is None or scope.allows_site(row.site_id):
-            out.floor = NamedRef(id=row.floor_id, name=row.floor_name)
-            out.building = NamedRef(id=row.building_id, name=row.building_name, code=row.building_code)
-            out.site = NamedRef(id=row.site_id, name=row.site_name, code=row.site_code)
+    if row is None or not caller_may_see_location(placement, row.site_id, scope):
+        return out
+    out.room = NamedRef(id=row.room_id, name=row.room_name, code=row.room_code)
+    if scope is None or scope.allows_site(row.site_id):
+        out.floor = NamedRef(id=row.floor_id, name=row.floor_name)
+        out.building = NamedRef(id=row.building_id, name=row.building_name, code=row.building_code)
+        out.site = NamedRef(id=row.site_id, name=row.site_name, code=row.site_code)
     if placement.rack_id is not None:
         out.rack = NamedRef(id=placement.rack_id, name=racks.get(placement.rack_id, str(placement.rack_id)))
     return out

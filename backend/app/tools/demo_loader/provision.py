@@ -5,6 +5,7 @@ look-up-first, so a second run changes nothing."""
 import hashlib
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,7 @@ from app.application.spatial_validation import validate_u_range_against_rack_cap
 from app.domain.cooling.models import SENSOR_KIND_METRICS, EnvironmentalSensor
 from app.domain.identity.models import ALLOWED_LIFECYCLE_TRANSITIONS, ManagedAsset
 from app.domain.placement.models import EquipmentPlacement
-from app.domain.telemetry.models import IntegrationMetricMapping
+from app.domain.telemetry.models import IntegrationMetricMapping, IntegrationMetricMappingRevision
 from app.domain.telemetry.registry import METRIC_REGISTRY, validate_metric_unit
 from app.tools.demo_loader import LOADER_VERSION
 from app.tools.demo_loader.constants import (
@@ -84,6 +85,42 @@ async def ensure_mappings(
     return result, created
 
 
+async def preflight_existing_mappings(db: AsyncSession, targets: Targets) -> None:
+    """Refuse, before any write, to reuse a mapping that merely carries a loader-style source identifier.
+
+    A mapping named `demo-sim:...` on a routed integration must be this loader's: the "Demo simulator" label, the metric
+    that its source identifier names, the canonical unit with scale 1, and a current revision that says the same. Anything
+    else could route synthetic readings into an unrelated series."""
+    integration_ids = [route.integration.id for route in targets.routes.values()]
+    rows = (
+        await db.execute(
+            select(IntegrationMetricMapping, IntegrationMetricMappingRevision)
+            .outerjoin(IntegrationMetricMappingRevision, IntegrationMetricMappingRevision.id == IntegrationMetricMapping.current_revision_id)
+            .where(IntegrationMetricMapping.integration_id.in_(integration_ids), IntegrationMetricMapping.source_identifier.startswith(SOURCE_PREFIX))
+        )
+    ).all()
+    problems: list[str] = []
+    for mapping, revision in rows:
+        metric = mapping.source_identifier.rsplit(":", 1)[-1]
+        canonical_unit = METRIC_REGISTRY[metric].canonical_unit if metric in METRIC_REGISTRY else None
+        wrong = []
+        if mapping.label != MAPPING_LABEL:
+            wrong.append("label")
+        if metric not in (*DEVICE_METRICS, *SENSOR_METRICS) or mapping.canonical_metric != metric:
+            wrong.append("metric")
+        if canonical_unit is None or mapping.unit != canonical_unit or Decimal(str(mapping.scale)) != 1:
+            wrong.append("unit/scale")
+        if revision is None or revision.canonical_metric != mapping.canonical_metric or revision.source_unit != mapping.unit or Decimal(str(revision.source_scale)) != Decimal(str(mapping.scale)):
+            wrong.append("revision")
+        if wrong:
+            problems.append(f"{mapping.source_identifier} ({', '.join(wrong)})")
+    if problems:
+        raise LoaderError(
+            f"{len(problems)} existing mapping(s) use a loader source identifier but are not this loader's: {problems[:5]}. "
+            "Nothing was written. Rename or remove them first."
+        )
+
+
 @dataclass
 class DeviceReport:
     devices: int = 0
@@ -92,6 +129,7 @@ class DeviceReport:
 
 
 async def ensure_device_mappings(db: AsyncSession, targets: Targets) -> tuple[DeviceReport, list[IntegrationMetricMapping]]:
+    await preflight_existing_mappings(db, targets)
     report = DeviceReport()
     mappings: list[IntegrationMetricMapping] = []
     for index, device in enumerate(targets.devices, start=1):
@@ -240,6 +278,7 @@ async def preflight_sensors(db: AsyncSession, racks: list[RackInfo]) -> None:
 
 async def ensure_sensors(db: AsyncSession, targets: Targets) -> SensorReport:
     await preflight_sensors(db, targets.racks)
+    await preflight_existing_mappings(db, targets)
     report = SensorReport()
     for index, rack in enumerate(targets.racks, start=1):
         await ensure_sensor(db, rack, targets.routes[rack.site_id], report)

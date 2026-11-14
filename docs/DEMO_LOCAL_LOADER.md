@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | Loader version | **1.1.0** (`backend/app/tools/demo_loader/`) |
-| Runbook revision | **2**, 2026-11-14. Revision 1 was the first draft on PR #351; revision 2 answers the owner review of `3579e3af` (backup and restore safety, image rebuild, rollback with a running refresher, site and ownership boundaries, stronger verification). |
+| Runbook revision | **3**, 2026-11-14. Revision 1: first draft on PR #351. Revision 2: owner review of `3579e3af` (backup and restore safety, image rebuild, rollback with a running refresher, site and ownership boundaries, stronger verification). Revision 3: Codacy AI review (catch-up before live verification, legacy calibration is never overwritten, mapping reuse is validated, equipment location is withheld from callers who cannot see the equipment). |
 | Applies to | PR #351 branch `claude/elegant-dijkstra-qry27c` |
 
 **Scope:** a local demonstration database only. The loader refuses to run when `ENVIRONMENT=production`, needs `--confirm-local-demo` for every command that changes data, and selects only sites whose code starts with `DEMO-SITE-`. It does not deploy anything and it does not touch the HRC site. Production deployment is not authorized by this document, and migration `0060` must not be run anywhere that is not a disposable or explicitly approved environment.
@@ -136,11 +136,14 @@ $jobs | Wait-Job | Out-Null
 $jobs | ForEach-Object { '{0}: exit {1}' -f $_.Name, (Receive-Job $_ | Select-Object -Last 1) }
 ```
 
-Every job must print `exit 0`. If one does not, read its JSON file (`failed_collectors`, `rejected` and `error` say what went wrong) and run that site's command again: completed slots are skipped and nothing is duplicated. Then check the whole result with the same clock:
+Every job must print `exit 0`. If one does not, read its JSON file (`failed_collectors`, `rejected` and `error` say what went wrong) and run that site's command again: completed slots are skipped and nothing is duplicated. The full run takes longer than the 15-minute freshness window, so catch up on the live clock and then check the whole result against the same seed clock:
 
 ```powershell
+docker compose @compose exec -T backend python -m app.tools.demo_loader refresh --confirm-local-demo
 docker compose @compose exec -T backend python -m app.tools.demo_loader verify --expect-racks 100 --expect-devices 500 --as-of $asOf
 ```
+
+(A single-process `apply` without `--as-of` does this catch-up itself before its own verification. With `--as-of` it never replaces your clock with the live one, so run `refresh` and then `verify` as above.)
 
 A single-process run (`apply --confirm-local-demo --actor-email ...` with no `--site-prefix`) does the same work in one process and takes about three times as long.
 
@@ -220,7 +223,9 @@ docker compose @compose up -d backend celery-worker celery-beat frontend
 ## Known limits
 
 - Simulated values are plausible, not measured. Do not use them for capacity or compliance decisions.
-- Calibration declares that the drawing's millimetres equal room millimetres with the origin at the room corner. Existing rack positions keep their meaning because they are already room-local millimetres.
+- Calibration declares that the drawing's millimetres equal room millimetres with the origin at the room corner. Existing rack positions keep their meaning because they are already room-local millimetres. A plan that already carries a legacy pixel scale (`calibration_scale_mm_per_px`) but no calibration record is skipped and reported, never overwritten.
+- An existing mapping whose source identifier starts `demo-sim:` is reused only if it is provably this loader's (label, metric, canonical unit, scale 1, matching current revision); otherwise the run stops before writing.
+- The API's equipment `move` endpoint checks the permission but not the caller's site scope. That predates this work and is not changed here; the new `location` field in its response is withheld unless the caller can see the equipment.
 - A rack with no free front U gets no sensor; the loader reports it as a problem instead of moving equipment. A sensor tag too long for the 64-character column keeps its start and gains a hash suffix.
 - Simulated readings can open alarms if a rule threshold is crossed; their severity is the rule's severity.
 - Provisioning commits in chunks, so `apply` is not atomic. It is safe to interrupt and run again.

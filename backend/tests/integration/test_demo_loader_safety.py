@@ -390,3 +390,86 @@ def test_apply_is_not_given_a_protect_prefix_option():
 
 def namespace_defaults() -> argparse.Namespace:  # keeps the import used for readers of failures
     return args()
+
+
+# ----------------------------------------------------------------------------------------------- Codacy AI review follow-ups
+
+
+async def test_purge_never_selects_an_asset_that_belongs_to_a_site_that_is_not_selected(db_session, world):
+    """If a site-less integration was reassigned after seeding, purging one site must not delete another site's data."""
+    as_of = datetime.now(UTC)
+    await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=as_of, no_verify=True))
+    moved = (await db_session.execute(
+        select(IntegrationMetricMapping).join(EnvironmentalSensor, EnvironmentalSensor.id == IntegrationMetricMapping.managed_asset_id)
+        .where(EnvironmentalSensor.site_id == world.sites[1].site_id, IntegrationMetricMapping.integration_id == world.sites[1].integration_id).limit(1)
+    )).scalar_one()
+    moved_id = moved.id
+    # Simulate the reassignment: the site-02 sensor's mapping and readings now sit on site 01's integration.
+    await db_session.execute(text("UPDATE integration_metric_mapping SET integration_id = :i WHERE id = :m"), {"i": world.sites[0].integration_id, "m": moved_id})
+    await db_session.execute(text("UPDATE telemetry_reading SET integration_id = :i WHERE mapping_id = :m"), {"i": world.sites[0].integration_id, "m": moved_id})
+    await db_session.commit()
+    readings_before = await loader_readings(db_session, mapping_id=moved_id)
+    assert readings_before == 289
+
+    one = await discover(db_session, prefix="DEMO-SITE-01")
+    dry = await purge(db_session, one, dry_run=True)
+    done = await purge(db_session, one, dry_run=False)
+    assert done.readings == dry.readings and dry.readings > 0
+    assert await loader_readings(db_session, mapping_id=moved_id) == readings_before  # the moved series survived
+    assert await db_session.get(IntegrationMetricMapping, moved_id) is not None
+    # on site 01's integration only the moved series is left: everything that really belonged to site 01 was removed
+    assert await loader_readings(db_session, integration_id=world.sites[0].integration_id) == readings_before
+
+
+async def test_a_mapping_that_only_looks_like_the_loaders_is_never_reused(db_session, world):
+    device_tag = f"{world.sites[0].code}-EQ-001-1"
+    db_session.add(IntegrationMetricMapping(
+        integration_id=world.sites[0].integration_id, managed_asset_id=world.sites[0].device_ids[0], source_identifier=f"demo-sim:{device_tag}:power_kw",
+        canonical_metric="power_kw", unit="W", scale=1, label="someone else's mapping",
+    ))
+    await db_session.commit()
+    with pytest.raises(LoaderError, match="not this loader's"):
+        await cli.run_apply(db_session, args(steps=["devices"], no_verify=True, device_history_hours=1.0))
+    assert await loader_readings(db_session) == 0
+    assert await db_session.scalar(select(func.count()).select_from(IntegrationMetricMapping).where(
+        IntegrationMetricMapping.label == "Demo simulator")) == 0  # the preflight stopped everything before any mapping was created
+
+
+async def test_a_plan_with_a_legacy_pixel_scale_is_left_alone(db_session, world):
+    from app.domain.spatial.models import FloorPlan
+
+    plan = await db_session.get(FloorPlan, world.sites[0].plan_id)
+    plan.calibration_scale_mm_per_px = Decimal("2.5")
+    await db_session.commit()
+    result = await cli.run_apply(db_session, args(steps=["floorplans"], no_verify=True))
+    states = {p["site"]: p for p in result["floorplans"]}
+    assert states["DEMO-SITE-01"]["state"] == "skipped" and "legacy pixel scale" in states["DEMO-SITE-01"]["problems"][0]
+    assert states["DEMO-SITE-02"]["state"] == "calibrated" and states["DEMO-SITE-03"]["state"] == "calibrated"
+    assert result["ok"] is False  # a skipped plan is reported, never silently fine
+    await db_session.refresh(plan)
+    assert plan.current_calibration_id is None and plan.calibration_scale_mm_per_px == Decimal("2.5")
+
+
+async def test_live_freshness_fails_after_a_long_apply_and_a_catch_up_repairs_it(db_session, world):
+    """A seed that took longer than the freshness window must not be reported as fresh; the catch-up that `apply` now runs
+    before its own verification (and `refresh`) brings the live data up to date."""
+    stale_clock = datetime.now(UTC) - timedelta(minutes=40)
+    await cli.run_apply(db_session, args(steps=["existing", "sensors"], as_of=stale_clock, no_verify=True))
+    parts = frozenset({"existing", "sensors"})
+    before = await verify(db_session, await discover(db_session), VerifyOptions(as_of=stale_clock, parts=parts, device_hours=DEVICE_HOURS))
+    assert "both metrics of every sensor are fresh (<= 3 poll intervals, live clock)" in failed(before)
+    assert "every expected series has every slot of its window" not in failed(before)  # the pinned history itself is complete
+
+    ns = argparse.Namespace(site_prefix="DEMO-SITE-", integration=[], watch=False, catch_up_hours=24.0, session_factory=None)
+    refreshed = await cli.run_refresh(db_session, ns)
+    assert refreshed["ok"] and refreshed["accepted"] > 0
+    after = await verify(db_session, await discover(db_session), VerifyOptions(parts=parts, device_hours=DEVICE_HOURS))
+    assert "both metrics of every sensor are fresh (<= 3 poll intervals, live clock)" not in failed(after)
+    assert "every expected series has every slot of its window" not in failed(after)
+
+
+async def test_apply_without_a_pinned_clock_catches_up_before_it_verifies(db_session, world):
+    result, code = await cli.dispatch(db_session, args(command="apply", steps=["existing", "sensors"], no_verify=False))
+    assert "catch_up" in result and result["catch_up"]["ok"]
+    pinned, _ = await cli.dispatch(db_session, args(command="apply", steps=["existing"], as_of=datetime.now(UTC) - timedelta(minutes=1), no_verify=False))
+    assert "catch_up" not in pinned  # a pinned clock is never silently replaced by the live one

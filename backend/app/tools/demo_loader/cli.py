@@ -256,6 +256,16 @@ async def dispatch(db: AsyncSession, args: argparse.Namespace) -> tuple[dict, in
     if args.command == "apply":
         result = await run_apply(db, args)
         if not args.no_verify:
+            if clock(args) is None:
+                # A long seed outlives the freshness window. Catch up on the live clock first so the live-clock freshness check
+                # judges the data a viewer would see now. With a pinned --as-of this is skipped on purpose: run `refresh`, then `verify`.
+                catch_up = argparse.Namespace(
+                    site_prefix=args.site_prefix, integration=args.integration, watch=False, session_factory=getattr(args, "session_factory", None),
+                    catch_up_hours=max(args.history_hours, args.device_history_hours),
+                )
+                refreshed = await run_refresh(db, catch_up)
+                result["catch_up"] = refreshed
+                result["ok"] = bool(result["ok"]) and bool(refreshed["ok"])
             targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
             report = await verify(db, targets, verify_options(args, steps=args.steps))
             result["verify"] = report.as_dict()
