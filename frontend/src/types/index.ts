@@ -89,6 +89,7 @@ export interface LifecycleSettingsResponse {
   mandatory_allowed_transitions: Record<string, string[]>;
   legacy_states: string[];
   badge_colors: LifecycleBadgeColor[];
+  version?: number;
 }
 
 export interface LifecycleHistoryEntry {

@@ -125,7 +125,9 @@ export function LifecycleTransitionAction({
 
   if (!canUpdate) return null;
 
-  const canQuickInstall = status === "planned" && targets.some((t) => t.status === "installed");
+  const canQuickInstall =
+    status === "planned" &&
+    (assetLabel === "rack" || targets.some((t) => t.status === "installed"));
   const showFullLifecycle = assetLabel === "equipment" && targets.length > 0;
   const activeTargetConfig = stateByStatus(selectedTarget);
   const currentConfig = stateByStatus(status);

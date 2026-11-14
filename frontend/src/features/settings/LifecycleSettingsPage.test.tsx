@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as managedAssetApi from "@/features/managed-assets/api";
 import { DEFAULT_LIFECYCLE_SETTINGS } from "@/features/managed-assets/useLifecycleSettings";
 import { LifecycleSettingsPage } from "@/features/settings/LifecycleSettingsPage";
+import { ApiError } from "@/lib/apiClient";
 import { CurrentUser } from "@/lib/authStore";
 import { ADMINISTRATOR_TEST_USER, renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
 import { LifecycleSettingsResponse } from "@/types";
@@ -118,5 +119,27 @@ describe("LifecycleSettingsPage", () => {
     expect(await screen.findByRole("heading", { name: "Access restricted" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Lifecycle Settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Restore Default Settings" })).not.toBeInTheDocument();
+  });
+
+  it("passes the configuration version and exposes a clear conflict alert on HTTP 409 stale submission", async () => {
+    const initial = { ...cloneDefaultSettings(), version: 4 };
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValue(initial);
+    vi.mocked(managedAssetApi.updateLifecycleSettings).mockRejectedValue(
+      new ApiError(409, "Conflict", "LifecycleSettings 1 was modified concurrently (current version 5).", null),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    await screen.findByTestId("lifecycle-state-card-planned");
+    await user.click(screen.getByRole("button", { name: "Save Lifecycle Settings" }));
+
+    await waitFor(() =>
+      expect(managedAssetApi.updateLifecycleSettings).toHaveBeenCalledWith(expect.any(Array), 4),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Lifecycle settings were modified by another administrator — reload the latest configuration and try again.",
+    );
   });
 });

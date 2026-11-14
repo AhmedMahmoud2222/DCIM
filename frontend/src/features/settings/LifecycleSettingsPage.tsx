@@ -13,6 +13,7 @@ import {
   LIFECYCLE_SETTINGS_QUERY_KEY,
 } from "@/features/managed-assets/useLifecycleSettings";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
+import { ApiError } from "@/lib/apiClient";
 import {
   LIFECYCLE_BADGE_COLORS,
   LifecycleBadgeColor,
@@ -21,6 +22,9 @@ import {
 } from "@/types";
 
 function errorMessage(err: unknown, fallback = "Request failed."): string {
+  if (err instanceof ApiError && err.status === 409) {
+    return "Lifecycle settings were modified by another administrator — reload the latest configuration and try again.";
+  }
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
@@ -60,7 +64,8 @@ export function LifecycleSettingsPage() {
   }, [settingsQuery.data]);
 
   const saveMutation = useMutation({
-    mutationFn: (states: LifecycleStateConfig[]) => updateLifecycleSettings(states),
+    mutationFn: (states: LifecycleStateConfig[]) =>
+      updateLifecycleSettings(states, data.version),
     onSuccess: (updated) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, updated);
       setValidationError(null);
@@ -69,7 +74,7 @@ export function LifecycleSettingsPage() {
   });
 
   const restoreMutation = useMutation({
-    mutationFn: () => restoreDefaultLifecycleSettings(),
+    mutationFn: () => restoreDefaultLifecycleSettings(data.version),
     onSuccess: (restored) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, restored);
       setDraftStates([...restored.states].sort((a, b) => a.display_order - b.display_order));

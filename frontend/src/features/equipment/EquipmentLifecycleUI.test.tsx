@@ -257,9 +257,12 @@ describe("Equipment Lifecycle UI (Listing, Details, Editing, History, Legacy Res
     ).not.toBeInTheDocument();
   });
 
-  it("shows an error, not an empty-history message, when history fails to load", async () => {
+  it("shows an error, not an empty-history message, when history fails to load, and recovers on retry", async () => {
     vi.mocked(equipmentApi.getEquipment).mockResolvedValue(baseEquipment);
-    vi.mocked(managedAssetApi.getManagedAssetLifecycleHistory).mockRejectedValue(new Error("500"));
+    vi.mocked(managedAssetApi.getManagedAssetLifecycleHistory)
+      .mockRejectedValueOnce(new Error("500"))
+      .mockResolvedValueOnce({ items: [] });
+    const user = userEvent.setup();
     renderWithProviders(<EquipmentDetailPage />, {
       route: `/equipment/${baseEquipment.id}`,
       path: "/equipment/:equipmentId",
@@ -268,5 +271,138 @@ describe("Equipment Lifecycle UI (Listing, Details, Editing, History, Legacy Res
     const section = await screen.findByRole("region", { name: "Lifecycle transition history" });
     expect(await within(section).findByRole("alert")).toHaveTextContent(/could not be loaded/i);
     expect(within(section).queryByText(/No lifecycle transitions recorded/)).not.toBeInTheDocument();
+
+    await user.click(within(section).getByRole("button", { name: "Retry" }));
+    expect(await within(section).findByText("No lifecycle transitions recorded yet.")).toBeInTheDocument();
+  });
+
+  it.each([
+    { fromStatus: "planned", expectedTargets: ["installed", "removed"] },
+    { fromStatus: "installed", expectedTargets: ["active", "maintenance", "removed"] },
+    { fromStatus: "active", expectedTargets: ["maintenance", "decommissioned"] },
+    { fromStatus: "maintenance", expectedTargets: ["active", "decommissioned"] },
+    { fromStatus: "decommissioned", expectedTargets: ["removed"] },
+  ])(
+    "offers exact permitted target states for source state '$fromStatus'",
+    async ({ fromStatus, expectedTargets }) => {
+      vi.mocked(equipmentApi.listEquipment).mockResolvedValue(
+        mockPage([{ ...baseEquipment, lifecycle_status: fromStatus }]),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<EquipmentPage />, { user: FULL_EQUIPMENT_MANAGER });
+      await user.click(
+        await screen.findByRole("button", { name: "Change lifecycle state: srv-prod-01" }),
+      );
+      const dialog = await screen.findByRole("dialog", {
+        name: "Change lifecycle state for srv-prod-01",
+      });
+      const select = within(dialog).getByLabelText("Target lifecycle state") as HTMLSelectElement;
+      expect(Array.from(select.options).map((o) => o.value)).toEqual(expectedTargets);
+    },
+  );
+
+  it("hides transition actions for terminal 'removed' state", async () => {
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(
+      mockPage([{ ...baseEquipment, lifecycle_status: "removed" }]),
+    );
+    renderWithProviders(<EquipmentPage />, { user: FULL_EQUIPMENT_MANAGER });
+    await screen.findByText("srv-prod-01");
+    expect(
+      screen.queryByRole("button", { name: "Change lifecycle state: srv-prod-01" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("preserves unsaved dirty metadata edits across equipment refetch, lifecycle transition, and query invalidation, and resets when switching equipment", async () => {
+    let currentEq: Equipment = { ...baseEquipment };
+    vi.mocked(equipmentApi.getEquipment).mockImplementation(async () => currentEq);
+    vi.mocked(managedAssetApi.transitionManagedAssetLifecycle).mockImplementation(
+      async (_id, toStatus) => {
+        currentEq = {
+          ...currentEq,
+          lifecycle_status: toStatus,
+          notes: "Server-side background note update",
+          version: currentEq.version + 1,
+        };
+        return {
+          id: currentEq.id,
+          asset_type: "equipment",
+          asset_tag: currentEq.asset_tag,
+          serial_number: null,
+          lifecycle_status: toStatus,
+          created_at: currentEq.created_at,
+        };
+      },
+    );
+
+    const user = userEvent.setup();
+    const { queryClient } = renderWithProviders(<EquipmentDetailPage />, {
+      route: `/equipment/${baseEquipment.id}`,
+      path: "/equipment/:equipmentId",
+      user: FULL_EQUIPMENT_MANAGER,
+    });
+
+    await user.click(await screen.findByRole("button", { name: /Edit equipment/i }));
+    const editPanel = await screen.findByRole("region", {
+      name: `Edit equipment ${baseEquipment.hostname}`,
+    });
+
+    const hostnameInput = within(editPanel).getByLabelText("Edit hostname") as HTMLInputElement;
+    const ownerInput = within(editPanel).getByLabelText("Edit owner") as HTMLInputElement;
+    const notesInput = within(editPanel).getByLabelText("Edit notes") as HTMLTextAreaElement;
+
+    // Make hostname and owner dirty while leaving notes clean
+    await user.clear(hostnameInput);
+    await user.type(hostnameInput, "srv-dirty-unsaved");
+    await user.clear(ownerInput);
+    await user.type(ownerInput, "Dirty Owner Team");
+
+    // 1. Trigger a lifecycle transition inside the edit panel (which invalidates and refetches equipment)
+    await user.click(
+      await within(editPanel).findByRole("button", { name: "Change lifecycle state: srv-prod-01" }),
+    );
+    const dialog = await within(editPanel).findByRole("dialog", {
+      name: "Change lifecycle state for srv-prod-01",
+    });
+    await user.selectOptions(within(dialog).getByLabelText("Target lifecycle state"), "maintenance");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirm lifecycle transition for srv-prod-01" }),
+    );
+
+    await waitFor(() =>
+      expect(managedAssetApi.transitionManagedAssetLifecycle).toHaveBeenCalledWith(
+        baseEquipment.id,
+        "maintenance",
+        undefined,
+      ),
+    );
+    // Clean field synced with server update, dirty fields preserved!
+    await waitFor(() => expect(notesInput.value).toBe("Server-side background note update"));
+    expect(hostnameInput.value).toBe("srv-dirty-unsaved");
+    expect(ownerInput.value).toBe("Dirty Owner Team");
+
+    // 2. Trigger an explicit background query invalidation & refetch with another server-side change to a clean field
+    currentEq = { ...currentEq, service: "Updated Background Service", version: currentEq.version + 1 };
+    await queryClient.invalidateQueries({ queryKey: ["equipment", baseEquipment.id] });
+    const serviceInput = within(editPanel).getByLabelText("Edit service") as HTMLInputElement;
+    await waitFor(() => expect(serviceInput.value).toBe("Updated Background Service"));
+    expect(hostnameInput.value).toBe("srv-dirty-unsaved");
+    expect(ownerInput.value).toBe("Dirty Owner Team");
+
+    // 3. Verify form resets when switching to a different equipment item (different equipment.id)
+    currentEq = {
+      ...baseEquipment,
+      id: "eq-second",
+      asset_tag: "SRV-200",
+      hostname: "srv-second-node",
+      owner: "Storage Team",
+      service: "Object Storage",
+      environment: "staging",
+      notes: "Second node notes",
+    };
+    await queryClient.invalidateQueries({ queryKey: ["equipment", baseEquipment.id] });
+    await waitFor(() =>
+      expect((screen.getByLabelText("Edit hostname") as HTMLInputElement).value).toBe("srv-second-node"),
+    );
+    expect((screen.getByLabelText("Edit owner") as HTMLInputElement).value).toBe("Storage Team");
   });
 });

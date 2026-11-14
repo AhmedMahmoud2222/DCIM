@@ -31,6 +31,11 @@ class LifecycleStateConfigItem(BaseModel):
 
 class LifecycleSettingsUpdate(BaseModel):
     states: list[LifecycleStateConfigItem]
+    version: int | None = Field(default=None, ge=1)
+
+
+class LifecycleSettingsRestoreRequest(BaseModel):
+    version: int | None = Field(default=None, ge=1)
 
 
 class LifecycleSettingsRead(BaseModel):
@@ -38,6 +43,7 @@ class LifecycleSettingsRead(BaseModel):
     mandatory_allowed_transitions: dict[str, list[str]]
     legacy_states: list[str]
     badge_colors: list[str]
+    version: int = 1
 
 
 def validate_lifecycle_states_update(states: list[LifecycleStateConfigItem]) -> list[dict[str, Any]]:
@@ -142,7 +148,7 @@ async def lock_lifecycle_settings_row(db: AsyncSession) -> LifecycleSettings:
     """Ensure the singleton row exists and return it locked (FOR UPDATE) so concurrent writers serialize."""
     await db.execute(
         pg_insert(LifecycleSettings)
-        .values(id=1, states_config=default_lifecycle_states_config())
+        .values(id=1, states_config=default_lifecycle_states_config(), version=1)
         .on_conflict_do_nothing(index_elements=["id"])
     )
     return (
@@ -168,12 +174,19 @@ async def get_effective_lifecycle_states(db: AsyncSession) -> list[dict[str, Any
     return effective_states_from_row(row)
 
 
-def build_lifecycle_settings_read(states: list[dict[str, Any]]) -> LifecycleSettingsRead:
+async def get_effective_lifecycle_settings_and_version(db: AsyncSession) -> tuple[list[dict[str, Any]], int]:
+    row = (await db.execute(select(LifecycleSettings).where(LifecycleSettings.id == 1))).scalar_one_or_none()
+    version = int(row.version) if row is not None and row.version is not None else 1
+    return effective_states_from_row(row), version
+
+
+def build_lifecycle_settings_read(states: list[dict[str, Any]], *, version: int = 1) -> LifecycleSettingsRead:
     return LifecycleSettingsRead(
         states=[LifecycleStateConfigItem(**item) for item in states],
         mandatory_allowed_transitions=copy.deepcopy(MANDATORY_VISIBLE_LIFECYCLE_TRANSITIONS),
         legacy_states=list(LEGACY_LIFECYCLE_STATUSES),
         badge_colors=list(LIFECYCLE_BADGE_COLORS),
+        version=version,
     )
 
 

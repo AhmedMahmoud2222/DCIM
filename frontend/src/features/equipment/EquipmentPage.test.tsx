@@ -6,6 +6,7 @@ import { EquipmentPage } from "@/features/equipment/EquipmentPage";
 import * as equipmentApi from "@/features/equipment/api";
 import * as racksApi from "@/features/racks/api";
 import * as managedAssetApi from "@/features/managed-assets/api";
+import { DEFAULT_LIFECYCLE_SETTINGS } from "@/features/managed-assets/useLifecycleSettings";
 import { CurrentUser } from "@/lib/authStore";
 import { ADMINISTRATOR_TEST_USER, renderWithProviders, VIEWER_TEST_USER } from "@/test/renderWithProviders";
 import { Equipment, Page, Rack } from "@/types";
@@ -57,6 +58,7 @@ describe("EquipmentPage lifecycle feedback", () => {
       notes: null, version: 1, created_at: "2026-01-01T00:00:00Z", placement: null,
     };
     vi.mocked(equipmentApi.listEquipment).mockResolvedValue(mockPage([eq]));
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValue(DEFAULT_LIFECYCLE_SETTINGS);
     vi.mocked(managedAssetApi.transitionManagedAssetLifecycle).mockResolvedValue({
       id: eq.id, asset_type: "equipment", asset_tag: eq.asset_tag, serial_number: null, lifecycle_status: "installed",
       created_at: eq.created_at,
