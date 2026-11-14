@@ -99,7 +99,7 @@ def check_rack_overlap_in_room(
     already have a drawn (x_mm/y_mm not NULL) position — the caller filters those first.
     Rotation is intentionally not modeled here (would require full polygon intersection
     for a 90/180/270-rotated footprint); flagged as a documented limitation, not silently
-    assumed correct — see PHASE2_IMPLEMENTATION_REPORT.md Known Issues."""
+    assumed correct — see docs/history/PHASE2_IMPLEMENTATION_REPORT.md Known Issues."""
     warnings: list[ValidationWarning] = []
     cx, cy, cw, cd = candidate
     for ox, oy, ow, od in others:

@@ -1,4 +1,4 @@
-"""Correctness oracle for the N+1 batch-loading correction (PHASE3_N1_CORRECTION_REPORT.md).
+"""Correctness oracle for the N+1 batch-loading correction (docs/history/PHASE3_N1_CORRECTION_REPORT.md).
 
 Every test below builds one topology, then asserts the NEW snapshot-based batch path
 (`load_power_graph_snapshot` + `*_from_snapshot`) produces IDENTICAL results to the
@@ -287,7 +287,7 @@ async def test_oracle_equipment_fed_only_through_retired_upstream_bridge(db_sess
 # old bound (monkeypatched low here, exactly like
 # tests/unit/test_power_capacity.py's own F-H1 regression test) does NOT trip the new
 # bound at all, and the batch path correctly resolves a value the old path could not.
-# This is the exact, intentional semantic change PHASE3_INDEPENDENT_VALIDATION_REPORT.md
+# This is the exact, intentional semantic change docs/history/PHASE3_INDEPENDENT_VALIDATION_REPORT.md
 # Section 17 named in advance ("converting today's per-node bound into a whole-dashboard
 # bound"), not a silent behavior change discovered after the fact.
 @pytest.mark.asyncio
@@ -326,7 +326,7 @@ async def test_oracle_bounded_traversal_documented_divergence(db_session, monkey
 # DELIBERATE DIVERGENCE (documented, not a defect): F-C1's advisory lock prevents any
 # API-driven mutation from ever creating a cycle; this constructs one directly via the
 # ORM session (bypassing the API entirely, the same "direct SQL bypass" class of attack
-# PHASE3_CORRECTION_HOSTILE_REAUDIT.md already exercised for the cycle-prevention check
+# docs/history/PHASE3_CORRECTION_HOSTILE_REAUDIT.md already exercised for the cycle-prevention check
 # itself) specifically to prove the batch path's explicit cycle guard does not hang or
 # crash on data the application itself would never produce, but a bulk-import or manual
 # repair script conceivably could.

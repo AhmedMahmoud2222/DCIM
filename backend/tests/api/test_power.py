@@ -1,7 +1,7 @@
 """API-level tests for Phase 3 power topology + capacity + dashboard endpoints:
 CRUD, authorization, optimistic concurrency (If-Match), pagination/filtering, errors,
 and the adversarial power-graph matrix (master prompt §34, Graphs A-L, a reduced but
-independently meaningful subset). PHASE3_GAP_ANALYSIS.md / PHASE3_TRACEABILITY_MATRIX.md."""
+independently meaningful subset). docs/history/PHASE3_GAP_ANALYSIS.md / PHASE3_TRACEABILITY_MATRIX.md."""
 
 import asyncio
 import uuid
@@ -364,7 +364,7 @@ async def test_dashboard_requires_permission(client, auth_headers):
 
 
 # ------------------------------------------------------------ N+1 performance regression guard
-# PHASE3_N1_CORRECTION_REPORT.md: proves the batch-loading correction actually removed the
+# docs/history/PHASE3_N1_CORRECTION_REPORT.md: proves the batch-loading correction actually removed the
 # N+1 pattern, as an ordinary, always-run regression test -- not a one-off measurement
 # script. Asserts query count stays *bounded* as node count grows (not a fragile exact
 # number, which would break on the next unrelated schema/query change) rather than
@@ -424,7 +424,7 @@ async def _count_queries(db_engine, coro):
 async def test_dashboard_summary_query_count_does_not_grow_linearly_with_scale(client, auth_headers, db_session, db_engine):
     """The core N+1 regression guard: query count at 1,000 capacity-bearing-adjacent
     nodes must not be anywhere near proportional to query count at 100 -- the old
-    per-node loop grew ~1:1 with capacity-record count (PHASE3_N1_CORRECTION_REPORT.md
+    per-node loop grew ~1:1 with capacity-record count (docs/history/PHASE3_N1_CORRECTION_REPORT.md
     Section 2's fresh baseline measured this directly); the batch path's query count is
     dominated by a small, fixed number of whole-graph queries per request, so a 10x
     increase in node count must not translate into anywhere near a 10x increase in
@@ -447,7 +447,7 @@ async def test_dashboard_summary_query_count_does_not_grow_linearly_with_scale(c
 
 
 # --------------------------------------------------------------------- F-C1 correction
-# PHASE3_HOSTILE_SELF_AUDIT.md F-C1 / PHASE3_CORRECTION_DESIGN.md Parts 4-6: the global
+# docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-C1 / docs/history/PHASE3_CORRECTION_DESIGN.md Parts 4-6: the global
 # advisory lock must make it impossible for two concurrent connection-creation requests
 # to jointly close a cycle, even on completely disjoint node pairs.
 
@@ -491,7 +491,7 @@ async def _post_connection(make_client, headers, source_id, target_id):
 
 
 async def test_hostile_f_c1_independent_pair_race_cannot_create_cycle(client, auth_headers, db_session):
-    """The exact PHASE3_HOSTILE_SELF_AUDIT.md F-C1 reproduction, through the real API:
+    """The exact docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-C1 reproduction, through the real API:
     pre-existing N2->N3, N4->N1; concurrent POSTs create N1->N2 and N3->N4, which
     together would close a 4-cycle. Before the F-C1 correction this was demonstrated to
     let both commit. After the correction (a global advisory lock serializing every
@@ -644,7 +644,7 @@ async def test_f_c1_rollback_on_rejected_cycle_leaves_no_partial_edge(client, au
 
 
 async def test_malformed_if_match_on_capacity_put_is_a_clean_400_not_a_500(client, auth_headers):
-    """PHASE3_HOSTILE_SELF_AUDIT.md F-M1: a malformed (non-integer) If-Match header on
+    """docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-M1: a malformed (non-integer) If-Match header on
     the capacity PUT endpoint must produce the same clean 400 every other If-Match
     consumer already produces, never an unhandled exception."""
     headers = await auth_headers("DCIM Manager")

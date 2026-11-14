@@ -1,5 +1,5 @@
 """Collector identity, capability, assignment, health, and the WAN-buffered ingestion
-contract (ARCHITECTURE_REVIEW.md §18/§19). Two distinct trust boundaries in this one
+contract (docs/history/ARCHITECTURE_REVIEW.md §18/§19). Two distinct trust boundaries in this one
 router, never confused: registration/administration endpoints are user-authenticated
 (`require_permission`, the normal RBAC path); heartbeat/ingest endpoints are
 collector-authenticated (`get_current_collector`, HMAC-signed, master prompt §9 --
@@ -306,7 +306,7 @@ async def trigger_poll_cycle(
     """Manual trigger for this phase's foundation -- NOT a scheduled production polling
     loop (wiring `run_polling_cycle` into Celery beat on a per-integration
     `poll_interval_seconds` cadence is explicitly deferred; see
-    PHASE8_EDGE_COLLECTOR_CONTRACT.md's open decisions). Exists so the polling
+    docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md's open decisions). Exists so the polling
     orchestrator, driver abstraction, and discovery ingestion can be exercised through
     the real API, not only via direct service-layer calls in tests."""
     if await db.get(Collector, collector_id) is None:
@@ -331,7 +331,7 @@ class HeartbeatIn(BaseModel):
     # max_length matches CollectorHeartbeat.status's actual column width
     # (String(16)) -- an oversized value is rejected as a clean 422 at the API
     # boundary instead of reaching Postgres and surfacing as an unhandled 500
-    # (the same class of bug as Finding M1, PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md).
+    # (the same class of bug as Finding M1, docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md).
     status: str = Field(default="ok", max_length=16)
 
 
@@ -351,7 +351,7 @@ async def heartbeat(
 MAX_BATCH_RECORDS = 500
 # Bounds total ingest payload size alongside MAX_BATCH_RECORDS: the record count cap
 # alone does not stop a single record from carrying an arbitrarily large
-# `raw_attributes` blob (PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S1 -- "oversized
+# `raw_attributes` blob (docs/history/PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S1 -- "oversized
 # payload" was previously only checked by record count, not per-record size).
 MAX_RAW_ATTRIBUTES_BYTES = 8192
 
@@ -507,7 +507,7 @@ async def ingest_batch(
             )
             continue
         request_hash = idem.hash_request_body(record.model_dump(mode="json"))
-        # Findings I2/I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): `get_or_claim` itself
+        # Findings I2/I4 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): `get_or_claim` itself
         # can raise (a reused dedup_key with a different payload, or a claim still
         # genuinely in flight) -- that must be isolated to THIS record exactly like
         # every other per-record failure, never allowed to escape and fail sibling
@@ -558,7 +558,7 @@ async def ingest_batch(
                 # sending this batch, never that this collector is authorized to report
                 # for `record.integration_id` -- a registered collector is semi-trusted,
                 # not an implicitly-authoritative source for any integration it names
-                # (PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S2). Per-record, not
+                # (docs/history/PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S2). Per-record, not
                 # per-batch, so one record naming an unassigned integration doesn't cost
                 # the whole batch.
                 assignment = await current_assignment(db, record.integration_id)

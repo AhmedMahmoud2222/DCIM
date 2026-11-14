@@ -43,7 +43,7 @@ async def _distinct_equipment_ids(db: AsyncSession) -> list[uuid.UUID]:
 
 
 async def _build_batch_context(db: AsyncSession, capacity_rows: Sequence[PowerCapacity]):
-    """PHASE3_N1_CORRECTION_REPORT.md: builds the one shared `PowerGraphSnapshot` +
+    """docs/history/PHASE3_N1_CORRECTION_REPORT.md: builds the one shared `PowerGraphSnapshot` +
     equipment feed batch both dashboard endpoints need, instead of each endpoint
     re-deriving capacity/redundancy per node/per equipment item via its own repeated
     queries. Returns `None` when the snapshot reports `truncated=True` (the active
@@ -130,7 +130,7 @@ async def get_dashboard_summary(
     organization as a filter dimension) — deliberately deferred, not silently dropped:
     the location hierarchy already gives site/building/floor/room drill-down, and
     Organization -> Site is a simple one-hop join a future iteration can add without
-    changing this endpoint's shape. Disclosed in PHASE3_IMPLEMENTATION_REPORT.md."""
+    changing this endpoint's shape. Disclosed in docs/history/PHASE3_IMPLEMENTATION_REPORT.md."""
     room_ids = await _filtered_room_ids(db, site_id=site_id, building_id=building_id, floor_id=floor_id, room_id=room_id)
 
     # --------------------------------------------------------------- site summary
@@ -241,7 +241,7 @@ async def get_dashboard_summary(
             elif any(not f["has_upstream_path"] for f in summary.feed_nodes):
                 missing_path += 1
     else:
-        # Fallback (PHASE3_N1_CORRECTION_REPORT.md): the active graph exceeded the
+        # Fallback (docs/history/PHASE3_N1_CORRECTION_REPORT.md): the active graph exceeded the
         # batch path's whole-graph bound -- preserve the original per-node behavior
         # exactly (including its own per-node MAX_TRAVERSAL_NODES/DEPTH bound) rather
         # than compute anything from an intentionally-incomplete snapshot.
@@ -324,7 +324,7 @@ async def get_dashboard_exceptions(
                 )
         return out
 
-    # Fallback (PHASE3_N1_CORRECTION_REPORT.md): preserve original per-node behavior
+    # Fallback (docs/history/PHASE3_N1_CORRECTION_REPORT.md): preserve original per-node behavior
     # exactly, same rationale as get_dashboard_summary's own fallback branch.
     for cap in capacity_rows:
         node = await db.get(PowerNode, cap.power_node_id)

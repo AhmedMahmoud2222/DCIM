@@ -17,7 +17,7 @@ os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", "eHTZ8u6qF3v2N1oQwL9pR7sT4yU6
 
 # Test-harness-only superuser connection, distinct from the application's own dcim_app
 # credentials above. Needed because of the Finding C1 correction
-# (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md): dcim_app no
+# (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / docs/history/PHASE1_CORRECTION_REPORT.md): dcim_app no
 # longer owns audit_log and no longer holds TRUNCATE/DELETE on it (by design — that is
 # the fix), so resetting audit_log between tests requires a connection that isn't
 # subject to those restrictions. The application itself never uses this connection.

@@ -22,7 +22,7 @@ from app.application.access_control import EMPTY_SCOPE, AccessScope, load_effect
 from app.core.errors import ForbiddenError
 from app.domain.auth.models import User
 
-# Default role -> permission-code seed, per ARCHITECTURE_REVIEW.md v1.0 §6.1 role list.
+# Default role -> permission-code seed, per docs/history/ARCHITECTURE_REVIEW.md v1.0 §6.1 role list.
 # Custom roles remain fully supported (Role is a normal table); this is only the seed set
 # a fresh Phase 1 database bootstraps with.
 DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {

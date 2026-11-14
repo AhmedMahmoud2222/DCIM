@@ -110,7 +110,7 @@ def test_sanitize_svg_caps_element_count_without_hanging():
 
 
 # --------------------------------------------------------------------------- nested-SVG
-# regression (PHASE2_NESTED_SVG_CORRECTION_REPORT.md): a deeply nested SVG (~960+ levels
+# regression (docs/history/PHASE2_NESTED_SVG_CORRECTION_REPORT.md): a deeply nested SVG (~960+ levels
 # of <g>) previously crashed the (then-recursive) walk with an uncaught RecursionError.
 # `_walk` is now iterative and enforces an explicit, deterministic MAX_NESTING_DEPTH.
 
@@ -134,7 +134,7 @@ def test_sanitize_svg_rejects_one_level_beyond_the_maximum_allowed_depth():
 
 
 def test_sanitize_svg_rejects_the_independently_reported_red_team_depth_without_recursionerror():
-    """The literal attack PHASE2_INDEPENDENT_RED_TEAM_REVALIDATION_REPORT.md
+    """The literal attack docs/history/PHASE2_INDEPENDENT_RED_TEAM_REVALIDATION_REPORT.md
     independently reproduced: ~960-970 levels of nested <g>, previously an uncaught
     RecursionError. Must now be a clean, deterministic SvgRejected."""
     try:

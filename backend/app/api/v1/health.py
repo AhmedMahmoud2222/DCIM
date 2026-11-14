@@ -25,7 +25,7 @@ async def readiness(response: Response, db: AsyncSession = Depends(get_db)) -> d
     db_ok = await check_database(db)
     redis_ok = await check_redis()
     overall = "ready" if (db_ok and redis_ok) else "degraded"
-    # Finding L3 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md):
+    # Finding L3 (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / docs/history/PHASE1_CORRECTION_REPORT.md):
     # a degraded response must not be HTTP 200 — orchestrator/load-balancer readiness
     # probes conventionally act on status code, not response body, so a 200 here would
     # keep routing traffic to an instance that just reported itself not ready.

@@ -1,0 +1,33 @@
+{
+  "markdown_files": 167,
+  "checked_documents": 143,
+  "excluded_documents": [
+    ".claude/skills/archify/SKILL.md",
+    ".claude/skills/archify/THIRD_PARTY_NOTICES.md",
+    ".claude/skills/archify/brand-marks/README.md",
+    ".claude/skills/archify/explainer/vendor/pele/README.md",
+    ".claude/skills/archify/locales/README.md",
+    ".claude/skills/archify/references/architecture-layout-repair.md",
+    ".claude/skills/archify/references/authoring-contract.md",
+    ".claude/skills/archify/references/authoring-defaults.md",
+    ".claude/skills/archify/references/brand-marks.md",
+    ".claude/skills/archify/references/delivery-contract.md",
+    ".claude/skills/archify/references/explainer-authoring.md",
+    ".claude/skills/archify/references/repository-authoring.md",
+    ".claude/skills/archify/references/update-awareness.md",
+    ".claude/skills/archify/references/viewer-runtime.md",
+    ".claude/skills/archify/renderers/class/README.md",
+    ".claude/skills/archify/renderers/dataflow/README.md",
+    ".claude/skills/archify/renderers/erd/README.md",
+    ".claude/skills/archify/renderers/lifecycle/README.md",
+    ".claude/skills/archify/renderers/sequence/README.md",
+    ".claude/skills/archify/renderers/timeline/README.md",
+    ".claude/skills/archify/renderers/tree/README.md",
+    ".claude/skills/archify/renderers/waterfall/README.md",
+    ".claude/skills/archify/renderers/workflow/README.md",
+    ".claude/skills/archify/schemas/README.md"
+  ],
+  "local_references_checked": 225,
+  "external_references_skipped": 80,
+  "errors": []
+}

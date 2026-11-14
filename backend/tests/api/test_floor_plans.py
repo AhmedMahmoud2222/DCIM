@@ -1,4 +1,4 @@
-"""FloorPlan CRUD, upload/import pipeline, and candidate review queue (ARCHITECTURE_REVIEW.md
+"""FloorPlan CRUD, upload/import pipeline, and candidate review queue (docs/history/ARCHITECTURE_REVIEW.md
 §8/§9/§10/§10a/§11; Phase 2 prompt's adversarial import matrix). Celery tasks are invoked
 synchronously via `.run()` (the same pattern tests/integration/test_outbox.py uses for
 `dispatch_pending_outbox_events`) rather than `.delay()`, since no worker consumes the
@@ -278,7 +278,7 @@ async def test_svg_over_the_svg_specific_cap_is_accepted_then_fails_async_with_a
 
 
 # --------------------------------------------------------------------------- nested-SVG
-# regression (PHASE2_NESTED_SVG_CORRECTION_REPORT.md): a deeply nested SVG previously
+# regression (docs/history/PHASE2_NESTED_SVG_CORRECTION_REPORT.md): a deeply nested SVG previously
 # crashed the sanitizer's (then-recursive) tree walk with an uncaught RecursionError,
 # which app.infrastructure.tasks.floorplan_import's `except SvgRejected` did not catch —
 # the job was left permanently stuck at status='parsing', never reaching 'failed', with
@@ -612,8 +612,8 @@ async def test_get_nonexistent_floor_plan_is_404(client, auth_headers):
 
 
 # --------------------------------------------------------------------------- RT-1 regression
-# (PHASE2_INDEPENDENT_RED_TEAM_REPORT.md finding RT-1: the SpatialLayer lookup-then-create
-# race in accept_import_candidate — see PHASE2_CORRECTION_REPORT.md for the full fix.)
+# (docs/history/PHASE2_INDEPENDENT_RED_TEAM_REPORT.md finding RT-1: the SpatialLayer lookup-then-create
+# race in accept_import_candidate — see docs/history/PHASE2_CORRECTION_REPORT.md for the full fix.)
 
 
 def _svg_with_n_shapes(n: int) -> bytes:
@@ -723,7 +723,7 @@ async def test_rt1_20_concurrent_accepts_of_different_candidates_no_duplicate_la
     """Test C (and the core reproduction of RT-1 itself): 20 genuinely concurrent accept
     requests for 20 DIFFERENT candidates of the same import job, each on its own
     database session/connection — the exact attack
-    PHASE2_INDEPENDENT_RED_TEAM_REPORT.md's attack_r7_spatiallayer_race.py used to prove
+    docs/history/PHASE2_INDEPENDENT_RED_TEAM_REPORT.md's attack_r7_spatiallayer_race.py used to prove
     the original defect (17/20 requests failed with 500 before this fix)."""
     import asyncio
 

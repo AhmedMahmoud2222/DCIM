@@ -10,7 +10,7 @@ real SNMP agent).
 poll against, so nothing here has been exercised against real network SNMP traffic
 (GETBULK, real ASN.1/BER encoding, a real device's MIB). Wiring a real transport (e.g.
 `pysnmp`'s asyncio API) is a documented, deferred follow-up
-(`PHASE8_EDGE_COLLECTOR_CONTRACT.md`'s open decisions), not implemented here -- doing
+(`docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md`'s open decisions), not implemented here -- doing
 so is exactly the kind of "attempt every vendor's MIB" scope the master prompt
 explicitly says to avoid for this phase. What IS real and tested: the abstraction
 boundary itself (`SNMPTransport` protocol, `MetricMapping`, `SNMPDriver`'s own
@@ -98,7 +98,7 @@ class SNMPDriver(ProtocolDriver):
                 reason=(
                     "No SNMP transport configured -- this phase ships the SNMP driver's "
                     "abstraction only, not a real network transport. See "
-                    "PHASE8_EDGE_COLLECTOR_CONTRACT.md."
+                    "docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md."
                 ),
             )
         transport_credential: str | SnmpV3Credential | None = credential

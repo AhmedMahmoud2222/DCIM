@@ -35,7 +35,7 @@ router = APIRouter(prefix="/managed-assets", tags=["managed-assets"])
 
 
 class ManagedAssetIn(BaseModel):
-    # Finding M1 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md):
+    # Finding M1 (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / docs/history/PHASE1_CORRECTION_REPORT.md):
     # max_length here matches each column's actual width (app/domain/identity/models.py)
     # so an oversized field is rejected as a clean 422 at the API boundary, instead of
     # reaching the database and surfacing as an unhandled 500 when Postgres rejects it.

@@ -118,7 +118,7 @@ async def accept_reconciliation(
     ALREADY-EXISTING `ManagedAsset` (never creates one) -- linking to a nonexistent
     asset is rejected, not silently accepted as a dangling reference.
 
-    Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): a plain `db.get()` followed by
+    Finding I3 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): a plain `db.get()` followed by
     an app-level `if diff.status != "pending"` check does not serialize two concurrent
     decisions (e.g. accept and reject) on the same diff -- under READ COMMITTED both
     requests can read `status == "pending"` before either commits, so both proceed,
@@ -169,7 +169,7 @@ async def reject_reconciliation(
     db: AsyncSession, *, diff_id: uuid.UUID, actor_user_id: uuid.UUID, request_id: str | None,
     correlation_id: str | None, reason: str | None = None,
 ) -> ReconciliationDiff:
-    """Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): same `SELECT ... FOR UPDATE`
+    """Finding I3 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): same `SELECT ... FOR UPDATE`
     fix as `accept_reconciliation` -- see that function's docstring for the full
     rationale. The row lock is what serializes a concurrent accept-vs-reject (or
     reject-vs-reject) race on the same diff, not the `status` check by itself."""

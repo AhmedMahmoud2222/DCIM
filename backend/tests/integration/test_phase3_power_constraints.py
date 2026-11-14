@@ -1,5 +1,5 @@
 """Direct DB-level verification of Phase 3's power topology/capacity invariants
-(ARCHITECTURE_REVIEW.md §13/§13a/§14; migration 0006) — bypasses the API/application
+(docs/history/ARCHITECTURE_REVIEW.md §13/§13a/§14; migration 0006) — bypasses the API/application
 layer entirely, inserting through the ORM so each constraint is proven to be enforced by
 PostgreSQL itself. Mirrors test_phase2_placement_constraints.py's style."""
 
@@ -183,7 +183,7 @@ async def test_invalid_percentage_threshold_rejected(db_session):
 
 
 # ------------------------------------------------------------------------- F-M3 correction
-# PHASE3_HOSTILE_SELF_AUDIT.md F-M3 / PHASE3_CORRECTION_DESIGN.md Part 11 (migration 0007):
+# docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-M3 / docs/history/PHASE3_CORRECTION_DESIGN.md Part 11 (migration 0007):
 # pdu_outlet.pdu_asset_id must reference a managed_asset whose asset_type is literally
 # 'pdu' -- proven here by attempting a direct ORM/SQL bypass of the API's own subtype
 # check (create_pdu_outlet's `db.get(PDU, ...)` guard), which this test deliberately

@@ -1,4 +1,4 @@
-"""User/Role/Permission per ARCHITECTURE_REVIEW.md v1.0 §6.1 (git show 4a39e1b) plus
+"""User/Role/Permission per docs/history/ARCHITECTURE_REVIEW.md v1.0 §6.1 (git show 4a39e1b) plus
 v1.1's RoleAssignment generalization (replacing UserRole, adding scope_type/scope_id,
 §32/§32a). H7 = Option B (recorded): scope_type exists and defaults to 'global', but no
 query in this codebase filters by site — enforcement is deliberately not built in Phase 1.

@@ -1,9 +1,9 @@
 """Location hierarchy: Organization -> Country -> City -> Site -> Building -> Floor -> Room.
 
-Schema per ARCHITECTURE_REVIEW.md v1.0 §6.2 (git show 4a39e1b), reaffirmed by AD1 (§46,
+Schema per docs/history/ARCHITECTURE_REVIEW.md v1.0 §6.2 (git show 4a39e1b), reaffirmed by AD1 (§46,
 unchanged through v1.1-v1.3) but never re-published after v1.1's rewrite — see
-PHASE1_BASELINE.md for why this is treated as a documentation gap, not a contradiction,
-and PHASE1_DEVIATIONS.md item D1 for the recommended follow-up.
+docs/history/PHASE1_BASELINE.md for why this is treated as a documentation gap, not a contradiction,
+and docs/history/PHASE1_DEVIATIONS.md item D1 for the recommended follow-up.
 """
 
 import uuid
@@ -16,7 +16,7 @@ from app.db.base import Base, TimestampMixin, UUIDPkMixin
 
 class LocationType(Base, UUIDPkMixin):
     """Metadata registry driving frontend breadcrumb/tree navigation generically
-    (ARCHITECTURE_REVIEW.md AD1) — not a polymorphic replacement for the tables below."""
+    (docs/history/ARCHITECTURE_REVIEW.md AD1) — not a polymorphic replacement for the tables below."""
 
     __tablename__ = "location_type"
 
@@ -108,7 +108,7 @@ class Room(Base, UUIDPkMixin, TimestampMixin):
     raised_floor: Mapped[bool] = mapped_column(nullable=False, default=False)
 
     version: Mapped[int] = mapped_column(nullable=False, default=1)
-    """Phase 1 concurrency-foundation demonstration entity (ARCHITECTURE_REVIEW.md §17 of
+    """Phase 1 concurrency-foundation demonstration entity (docs/history/ARCHITECTURE_REVIEW.md §17 of
     the Phase 1 prompt: "do not build future domain models merely to demonstrate it" —
     Room already exists as a real Phase 1 entity, so it carries the reusable version/
     If-Match pattern that RackPlacement/EquipmentPlacement/PowerConnection will use later)."""
