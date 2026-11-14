@@ -187,4 +187,45 @@ describe("LifecycleSettingsPage", () => {
       "My Draft",
     );
   });
+
+  it("renders no editable form until settings load, then bases the draft on the loaded version", async () => {
+    let resolve!: (v: LifecycleSettingsResponse) => void;
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockReturnValue(
+      new Promise<LifecycleSettingsResponse>((r) => {
+        resolve = r;
+      }),
+    );
+    vi.mocked(managedAssetApi.updateLifecycleSettings).mockResolvedValue({ ...cloneDefaultSettings(), version: 8 });
+
+    const user = userEvent.setup();
+    renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    expect(await screen.findByText("Loading lifecycle settings…")).toBeInTheDocument();
+    expect(screen.queryByTestId("lifecycle-state-card-planned")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Lifecycle Settings" })).not.toBeInTheDocument();
+
+    resolve({ ...cloneDefaultSettings(), version: 7 });
+    await screen.findByTestId("lifecycle-state-card-planned");
+    await user.click(screen.getByRole("button", { name: "Save Lifecycle Settings" }));
+    await waitFor(() => expect(managedAssetApi.updateLifecycleSettings).toHaveBeenCalledWith(expect.any(Array), 7));
+  });
+
+  it("disables saving after a concurrent server change so a stale draft is never submitted", async () => {
+    const first = { ...cloneDefaultSettings(), version: 1 };
+    const changed = { ...cloneDefaultSettings(), version: 2 };
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValueOnce(first).mockResolvedValue(changed);
+
+    const user = userEvent.setup();
+    const { queryClient } = renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    const card = await screen.findByTestId("lifecycle-state-card-planned");
+    const labelInput = within(card).getByLabelText("Display label for planned");
+    await user.clear(labelInput);
+    await user.type(labelInput, "My Draft");
+    await queryClient.invalidateQueries({ queryKey: ["lifecycle-settings"] });
+
+    await screen.findByRole("button", { name: "Discard my edits and reload" });
+    expect(screen.getByRole("button", { name: "Save Lifecycle Settings" })).toBeDisabled();
+    expect(managedAssetApi.updateLifecycleSettings).not.toHaveBeenCalled();
+  });
 });

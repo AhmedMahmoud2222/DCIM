@@ -8,10 +8,7 @@ import {
   updateLifecycleSettings,
 } from "@/features/managed-assets/api";
 import { useIsLifecycleAdministrator } from "@/features/auth/useAuthorization";
-import {
-  DEFAULT_LIFECYCLE_SETTINGS,
-  LIFECYCLE_SETTINGS_QUERY_KEY,
-} from "@/features/managed-assets/useLifecycleSettings";
+import { LIFECYCLE_SETTINGS_QUERY_KEY } from "@/features/managed-assets/useLifecycleSettings";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 import { ApiError } from "@/lib/apiClient";
 import {
@@ -44,13 +41,11 @@ export function LifecycleSettingsPage() {
   const settingsQuery = useQuery<LifecycleSettingsResponse>({
     queryKey: LIFECYCLE_SETTINGS_QUERY_KEY,
     queryFn: async () => {
-      const res = await getLifecycleSettings();
-      return res ?? DEFAULT_LIFECYCLE_SETTINGS;
+      return await getLifecycleSettings();
     },
   });
 
-  const data = settingsQuery.data ?? DEFAULT_LIFECYCLE_SETTINGS;
-  const [draftStates, setDraftStates] = useState<LifecycleStateConfig[]>(data.states);
+  const [draftStates, setDraftStates] = useState<LifecycleStateConfig[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   // Unsaved edits are never replaced silently: when the server copy changes under a dirty draft we
@@ -59,27 +54,36 @@ export function LifecycleSettingsPage() {
   const [serverChanged, setServerChanged] = useState(false);
   const baseVersion = useRef<number | undefined>(undefined);
 
-  const loadedVersion = settingsQuery.data?.version;
-
   useEffect(() => {
     const server = settingsQuery.data;
     if (!server?.states) return;
-    if (dirty && baseVersion.current !== undefined && server.version !== baseVersion.current) {
-      setServerChanged(true);
+    const sorted = [...server.states].sort((a, b) => a.display_order - b.display_order);
+    if (baseVersion.current === undefined) {
+      // First load: the draft is based on this server version regardless of any prior state.
+      baseVersion.current = server.version;
+      setDraftStates(sorted);
       return;
     }
-    if (!dirty) {
-      setDraftStates([...server.states].sort((a, b) => a.display_order - b.display_order));
+    if (server.version !== baseVersion.current) {
+      if (dirty) {
+        setServerChanged(true);
+        return;
+      }
       baseVersion.current = server.version;
+      setDraftStates(sorted);
+      return;
     }
+    if (!dirty) setDraftStates(sorted);
   }, [settingsQuery.data, dirty]);
 
   const saveMutation = useMutation({
     mutationFn: (states: LifecycleStateConfig[]) => {
-      if (loadedVersion === undefined) {
+      const base = baseVersion.current;
+      if (base === undefined) {
         return Promise.reject(new Error("Lifecycle settings have not loaded yet; reload and try again."));
       }
-      return updateLifecycleSettings(states, loadedVersion);
+      // Precondition is the version the draft was based on, never the latest fetched version.
+      return updateLifecycleSettings(states, base);
     },
     onSuccess: (updated) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, updated);
@@ -93,10 +97,11 @@ export function LifecycleSettingsPage() {
 
   const restoreMutation = useMutation({
     mutationFn: () => {
-      if (loadedVersion === undefined) {
+      const base = baseVersion.current;
+      if (base === undefined) {
         return Promise.reject(new Error("Lifecycle settings have not loaded yet; reload and try again."));
       }
-      return restoreDefaultLifecycleSettings(loadedVersion);
+      return restoreDefaultLifecycleSettings(base);
     },
     onSuccess: (restored) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, restored);
@@ -144,6 +149,29 @@ export function LifecycleSettingsPage() {
             settings.
           </p>
         </div>
+      </div>
+    );
+  }
+
+  const data = settingsQuery.data;
+  if (!data) {
+    return (
+      <div>
+        <PageHeader title="Lifecycle Settings" description="Loading the current lifecycle configuration…" />
+        {settingsQuery.isError ? (
+          <p role="alert" className="rounded-md border border-tone-danger-fg bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg">
+            Could not load lifecycle settings.
+            <button
+              type="button"
+              onClick={() => void settingsQuery.refetch()}
+              className="ml-3 rounded-sm border border-tone-danger-fg px-2 py-0.5 text-xs font-medium"
+            >
+              Retry
+            </button>
+          </p>
+        ) : (
+          <p role="status" className="text-sm text-fg-secondary">Loading lifecycle settings…</p>
+        )}
       </div>
     );
   }
@@ -220,7 +248,7 @@ export function LifecycleSettingsPage() {
         actions={
           <button
             type="button"
-            disabled={restoreMutation.isPending || saveMutation.isPending}
+            disabled={restoreMutation.isPending || saveMutation.isPending || serverChanged}
             onClick={() => restoreMutation.mutate()}
             className="rounded-md border border-line-default bg-surface-raised px-3 py-1.5 text-sm font-medium text-fg-primary hover:bg-surface-hover disabled:opacity-50"
           >
@@ -266,7 +294,7 @@ export function LifecycleSettingsPage() {
       {serverChanged && !isConflict && (
         <p role="alert" className="mb-4 rounded-md border border-line-default bg-surface-panel px-3 py-2 text-sm text-fg-primary">
           Another administrator changed the lifecycle settings while you were editing. Your unsaved edits are kept;
-          saving will be rejected until you reload.
+          saving is disabled until you reload.
           <button
             type="button"
             onClick={() => void handleReload()}
@@ -425,7 +453,7 @@ export function LifecycleSettingsPage() {
         <div className="flex items-center gap-3 pt-2">
           <button
             type="submit"
-            disabled={saveMutation.isPending || restoreMutation.isPending}
+            disabled={saveMutation.isPending || restoreMutation.isPending || serverChanged}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             {saveMutation.isPending ? "Saving…" : "Save Lifecycle Settings"}
