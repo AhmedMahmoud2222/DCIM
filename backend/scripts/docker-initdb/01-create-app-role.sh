@@ -11,7 +11,7 @@
 # official postgres image grants full superuser rights to — silently defeating the
 # least-privilege audit_log protection in scripts/bootstrap_privileged_roles.sql, since a
 # superuser bypasses every GRANT/REVOKE/ownership check. See
-# PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md Finding C1 and PHASE1_CORRECTION_REPORT.md.
+# docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md Finding C1 and PHASE1_CORRECTION_REPORT.md.
 
 set -euo pipefail
 

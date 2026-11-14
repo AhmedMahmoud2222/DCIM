@@ -1,4 +1,4 @@
-"""AuditLog per ARCHITECTURE_REVIEW.md §30/§30a. Partitioned by month on `timestamp`
+"""AuditLog per docs/history/ARCHITECTURE_REVIEW.md §30/§30a. Partitioned by month on `timestamp`
 (H6, resolved in v1.2) — the partition DDL lives in the Alembic migration as raw SQL
 since SQLAlchemy's ORM layer maps to the partitioned parent table transparently; Postgres
 routes inserts to the correct child partition on its own. The application's DB role has

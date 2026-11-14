@@ -55,7 +55,7 @@ POLICY_CASES = (
     (["README.md"], "fast", set()),
     (["backend/README.md"], "component", {"backend-suite", "browser-e2e"}),
     (["edge_collector/interop/README.md"], "component", {"edge-collector", "edge-interop", "backend-suite"}),
-    (["docs/ci/ROUTING_MATRIX.md", "PHASE1_BASELINE.md"], "fast", set()),
+    (["docs/ci/ROUTING_MATRIX.md", "docs/history/PHASE1_BASELINE.md"], "fast", set()),
     (["frontend/src/App.tsx"], "component", {"frontend-suite", "browser-e2e"}),
     (["backend/app/application/alarm_service.py"], "component", {"backend-suite", "browser-e2e"}),
     (["backend/tests/unit/test_drivers.py"], "component", {"backend-suite", "browser-e2e"}),

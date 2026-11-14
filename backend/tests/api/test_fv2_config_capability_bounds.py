@@ -1,6 +1,6 @@
 """Pre-MVP consolidation hardening: FV2 -- collector capability declaration and
 integration config now have explicit, documented size/nesting bounds (previously
-unbounded, a real gap `PHASE8_FINAL_CLOSURE_VALIDATION.md` discovered and
+unbounded, a real gap `docs/history/PHASE8_FINAL_CLOSURE_VALIDATION.md` discovered and
 `test_phase8_final_closure_validation.py::test_security_sweep_capability_declaration_has_no_payload_size_bound`
 documented as accepted-with-no-bound). That earlier test's own docstring says to
 update it once a bound exists -- this file is that update, plus the new config bound."""

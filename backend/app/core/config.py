@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
-    # Pre-MVP consolidation hardening (Codex H1 / SSRF, PRE_MVP_CONSOLIDATION_REPORT.md):
+    # Pre-MVP consolidation hardening (Codex H1 / SSRF, docs/history/PRE_MVP_CONSOLIDATION_REPORT.md):
     # the DCIM-specific allowlist of network ranges a REST integration is permitted to
     # poll -- e.g. ["10.10.0.0/16", "172.20.10.0/24"]. Deliberately empty by default
     # (deny-by-default): an operator must explicitly configure the private ranges

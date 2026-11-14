@@ -1,4 +1,4 @@
-"""Correction-cycle validation for PHASE8_BLOCKING_CORRECTION_REPORT.md (findings I2, I3
+"""Correction-cycle validation for docs/history/PHASE8_BLOCKING_CORRECTION_REPORT.md (findings I2, I3
 and I4).
 
 I2/I4 section: extends the independent audit's own reproductions with the exact

@@ -1,4 +1,4 @@
-"""Spatial query endpoints (Phase 2 prompt §2 item 17 "Spatial APIs"; ARCHITECTURE_REVIEW.md
+"""Spatial query endpoints (Phase 2 prompt §2 item 17 "Spatial APIs"; docs/history/ARCHITECTURE_REVIEW.md
 §40: "every renderer consumes the same query result — the 2D floor-plan view, the rack
 elevation view, and any future 3D view are all projections of the same authoritative
 data, never independent stores"). This module is read-only: it composes data already

@@ -241,7 +241,7 @@ async def test_default_thresholds_apply_when_node_has_none_configured(db_session
 
 
 # ------------------------------------------------------------------------- F-H1 regression
-# PHASE3_HOSTILE_SELF_AUDIT.md F-H1 / PHASE3_CORRECTION_DESIGN.md Part 7: a node whose OWN
+# docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-H1 / docs/history/PHASE3_CORRECTION_DESIGN.md Part 7: a node whose OWN
 # capacity is known but whose ALLOCATION is unknown (bounded traversal) must never produce
 # an empty exception list -- it must produce CAPACITY_UNKNOWN.
 
@@ -300,7 +300,7 @@ async def test_capacity_unknown_does_not_also_report_overload_or_near_limit(db_s
 
 
 # ------------------------------------------------------------------------- F-H2 regression
-# PHASE3_HOSTILE_SELF_AUDIT.md F-H2 / PHASE3_CORRECTION_DESIGN.md Part 8 (Model A): a
+# docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-H2 / docs/history/PHASE3_CORRECTION_DESIGN.md Part 8 (Model A): a
 # retired node's own capacity must not contribute to an ancestor's allocated_kw roll-up.
 
 

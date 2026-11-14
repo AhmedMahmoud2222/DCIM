@@ -1,6 +1,6 @@
 """Focused adversarial review (§43 of the Phase 1 prompt): tries to break login,
 authorization, object access, and error handling. Reported findings are in
-PHASE1_IMPLEMENTATION_REPORT.md's Security section — this is not a claim of external
+docs/history/PHASE1_IMPLEMENTATION_REPORT.md's Security section — this is not a claim of external
 penetration testing."""
 
 import uuid

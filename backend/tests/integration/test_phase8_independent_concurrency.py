@@ -1,4 +1,4 @@
-"""Independent additional concurrency reproductions (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md
+"""Independent additional concurrency reproductions (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md
 §9). Extends tests/integration/test_phase8_concurrency.py's own genuine-concurrency
 pattern (dedicated per-request engine/session, not a shared session) to scenarios that
 file does not cover: simultaneous duplicate ingest delivery of the identical record.

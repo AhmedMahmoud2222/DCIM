@@ -1,6 +1,6 @@
-"""Power-graph traversal and topology-mutation safety (ARCHITECTURE_REVIEW.md §13/§13a;
-PHASE3_GAP_ANALYSIS.md §6; PHASE3_HOSTILE_SELF_AUDIT.md F-C1/F-H2;
-PHASE3_CORRECTION_DESIGN.md Parts 4/6/8). Three concerns live here, deliberately
+"""Power-graph traversal and topology-mutation safety (docs/history/ARCHITECTURE_REVIEW.md §13/§13a;
+docs/history/PHASE3_GAP_ANALYSIS.md §6; docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-C1/F-H2;
+docs/history/PHASE3_CORRECTION_DESIGN.md Parts 4/6/8). Three concerns live here, deliberately
 together since all three guard the same invariant — the power distribution graph is a
 DAG, never a cycle, and its operational (as opposed to historical) shape excludes
 retired nodes:
@@ -13,10 +13,10 @@ retired nodes:
    repeated here), bounded by both `MAX_TRAVERSAL_DEPTH` (levels) and
    `MAX_TRAVERSAL_NODES` (total nodes visited) so a pathological or maliciously
    constructed graph cannot force unbounded work — the same "iterative, explicitly
-   bounded" discipline PHASE2_NESTED_SVG_CORRECTION_REPORT.md established for
+   bounded" discipline docs/history/PHASE2_NESTED_SVG_CORRECTION_REPORT.md established for
    `svg_sanitizer._walk`, applied here to a different traversal.
 
-   F-H2 correction (Model A, PHASE3_CORRECTION_DESIGN.md Part 8): a retired `PowerNode`
+   F-H2 correction (Model A, docs/history/PHASE3_CORRECTION_DESIGN.md Part 8): a retired `PowerNode`
    is excluded from the *operational* traversal it would otherwise participate in as a
    bridge. Concretely, once BFS expansion reaches a candidate next-level node, that node
    is dropped (not added to `visited`, never expanded further) if its `retired_at` is
@@ -34,9 +34,9 @@ retired nodes:
    single-row fact, so it cannot be a `CHECK` constraint (self-loops *can* be, and are —
    see `power_connection`'s `no_self_loop` constraint — a cycle needs a traversal).
 
-   F-C1 correction (PHASE3_CORRECTION_DESIGN.md Parts 4/6): the original implementation
+   F-C1 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Parts 4/6): the original implementation
    relied solely on `lock_node_pair_in_canonical_order` locking the two endpoint
-   `PowerNode` rows before the cycle check. PHASE3_HOSTILE_SELF_AUDIT.md's F-C1 proved
+   `PowerNode` rows before the cycle check. docs/history/PHASE3_HOSTILE_SELF_AUDIT.md's F-C1 proved
    experimentally that this is insufficient — two concurrent transactions creating
    *different* edges on *disjoint* endpoint pairs (e.g. N1->N2 and N3->N4, with
    pre-existing N2->N3 and N4->N1) never contend for the same locked rows, so each can
@@ -50,7 +50,7 @@ retired nodes:
    other one, system-wide, regardless of which nodes they touch — so no cycle check
    can ever run concurrently with another transaction's uncommitted insert, and each
    check is always evaluated against a fully-committed, ground-truth graph. This was
-   verified experimentally in PHASE3_CORRECTION_DESIGN.md Part 5 (Experiment 3, 5/5
+   verified experimentally in docs/history/PHASE3_CORRECTION_DESIGN.md Part 5 (Experiment 3, 5/5
    trials: no cycle committed, and the losing transaction failed with the ordinary,
    already-handled `WouldCreateCycle` exception rather than a new database-level error
    class). `lock_node_pair_in_canonical_order`'s per-pair locking is retained
@@ -62,7 +62,7 @@ retired nodes:
    `PowerConnection` graph acyclicity is an *application-enforced transactional
    invariant*, upheld by every supported application mutation path (today, exactly
    one: `create_power_connection` in `app/api/v1/power.py`, confirmed by a repository-
-   wide search — see PHASE3_CORRECTION_IMPLEMENTATION.md). It is not, and cannot be,
+   wide search — see docs/history/PHASE3_CORRECTION_IMPLEMENTATION.md). It is not, and cannot be,
    a database-level constraint (a cycle is a whole-graph property no single-row CHECK
    can express), so a direct SQL write that bypasses this transaction protocol
    entirely (an ad hoc `INSERT INTO power_connection`, a future bulk-import script, a
@@ -86,7 +86,7 @@ from app.domain.power.models import PowerConnection, PowerNode
 
 logger = get_logger(__name__)
 
-# F-M5 observability (PHASE3_CORRECTION_DESIGN.md Part 12): an advisory-lock wait longer
+# F-M5 observability (docs/history/PHASE3_CORRECTION_DESIGN.md Part 12): an advisory-lock wait longer
 # than this is logged as a leading indicator of real contention on connection-creation,
 # worth watching before it becomes a measured bottleneck -- not itself an error.
 _NOTABLE_LOCK_WAIT_SECONDS = 0.5
@@ -95,7 +95,7 @@ MAX_TRAVERSAL_DEPTH = 500
 MAX_TRAVERSAL_NODES = 5000
 
 # F-C1 correction: a single, fixed 64-bit-safe constant identifying the one lock every
-# active-PowerConnection mutation path must acquire (PHASE3_CORRECTION_DESIGN.md Part 6
+# active-PowerConnection mutation path must acquire (docs/history/PHASE3_CORRECTION_DESIGN.md Part 6
 # item 15). Arbitrary value, chosen once and never reused for any other advisory-lock
 # purpose in this codebase.
 POWER_TOPOLOGY_MUTATION_LOCK_KEY = 918_273_645
@@ -176,7 +176,7 @@ async def _traverse(db: AsyncSession, root_id: uuid.UUID, *, forward: bool) -> s
 
 @asynccontextmanager
 async def with_connection_mutation_lock(db: AsyncSession) -> AsyncIterator[None]:
-    """F-C1 correction (PHASE3_CORRECTION_DESIGN.md Parts 4/6). Every application code
+    """F-C1 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Parts 4/6). Every application code
     path that can insert an active `PowerConnection` row MUST run its
     lock-canonical-pair -> cycle-check -> insert -> commit sequence inside this context
     manager, as the *first statement of the route's own critical section* (before

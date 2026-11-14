@@ -1,6 +1,6 @@
 """Unit-level (direct application-layer calls, real PostgreSQL session, no HTTP) tests
 for app/application/power_graph.py — iterative traversal and cycle prevention.
-PHASE3_GAP_ANALYSIS.md / PHASE3_IMPLEMENTATION_REPORT.md."""
+docs/history/PHASE3_GAP_ANALYSIS.md / PHASE3_IMPLEMENTATION_REPORT.md."""
 
 import uuid
 
@@ -163,7 +163,7 @@ async def test_traversal_bounded_on_pathological_depth(db_session, monkeypatch):
 
 
 # --------------------------------------------------------------------- F-H2 regression
-# PHASE3_HOSTILE_SELF_AUDIT.md F-H2 / PHASE3_CORRECTION_DESIGN.md Part 8 (Model A):
+# docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-H2 / docs/history/PHASE3_CORRECTION_DESIGN.md Part 8 (Model A):
 # retired nodes are excluded from operational traversal, and must not act as a bridge.
 
 

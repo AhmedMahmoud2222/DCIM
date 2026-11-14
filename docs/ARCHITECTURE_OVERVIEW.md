@@ -2,6 +2,8 @@
 
 **Source baseline:** `main` at `4a9980bd22dc058850d3106dd329cb208076d37a` (2026-10-23). This is a map of the code at that commit, not a substitute for the detailed historical architecture specification or proof of production deployment. **Later commits can change any statement here; re-verify against the source and tests before relying on it** (see [Architecture document provenance](#architecture-document-provenance)).
 
+**Purpose and scope:** use this page for component boundaries and domain invariants. [User/group management](USER_GROUP_MANAGEMENT.md) owns the detailed authorization contract; [project status](PROJECT_STATUS.md) separates dated implementation evidence from release qualification; [release guidance](RELEASE_AND_DEPLOYMENT.md) owns deployment gates. The source baseline above remains historical. The authorization constants and runtime references were spot-checked at `b6947782571d07c84c3fbd899ef5f28f484cdb04` on 2026-11-13; this was not a complete feature or security re-audit.
+
 ## System structure
 
 ```text
@@ -26,7 +28,7 @@ Python modular-monolith application services
            ^
            |
 Central collectors/drivers and separately packaged Edge Collector
-(Edge scheduler + supported SNMP v2c acquisition / store-forward flow)
+(Edge scheduler + supported acquisition / store-forward flow)
 ```
 
 ## Source-of-truth boundaries
@@ -65,7 +67,7 @@ Site/rack-scoped access is implemented, in `backend/app/application/access_contr
 
 **What this section does not claim.** It does not claim that every endpoint is site-scoped (most data families are deliberately unreachable through site/rack-scoped grants), that endpoint coverage has been exhaustively audited, or that cross-site behavior has been independently penetration-tested. There is no tenant entity. A route-by-route coverage audit with database-backed hostile tests is a proposed, not yet authorized, follow-up tracked in [#195](https://github.com/AhmedMahmoud2222/DCIM/issues/195) (P2).
 
-External device transport follows its configured target allowlists. SNMP v2c communities and test fixtures do not imply SNMPv3 or unrestricted production access. Backups, credentials, TLS/ingress, secret-manager selection, data retention and network segmentation require environment-specific deployment decisions.
+External device transport follows its configured target allowlists. The [Edge Collector guide](../edge_collector/README.md) and [supported profile contract](implementation/ISSUE_101_SUPPORTED_PROFILES.md) describe supported SNMP transports and vendor scope; the original Phase 10 SNMP v2c fixtures alone are not evidence of later SNMPv3 interoperability or unrestricted production access. Backups, credentials, TLS/ingress, secret-manager selection, data retention and network segmentation require environment-specific deployment decisions.
 
 ## Architecture document provenance
 
