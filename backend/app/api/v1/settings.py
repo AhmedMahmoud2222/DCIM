@@ -8,7 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.application.audit_service import write_audit_log
-from app.application.rbac import require_permission
+from app.application.lifecycle_settings import (
+    LifecycleSettingsRead,
+    LifecycleSettingsUpdate,
+    build_lifecycle_settings_read,
+    get_effective_lifecycle_states,
+    validate_lifecycle_states_update,
+)
+from app.application.rbac import require_catalog_administrator, require_permission
+from app.domain.identity.models import LifecycleSettings, default_lifecycle_states_config
 from app.domain.telemetry.models import MonitoringPolicy
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -83,3 +91,69 @@ async def update_monitoring_policy(
     )
     await db.commit()
     return policy
+
+
+@router.get("/lifecycle", response_model=LifecycleSettingsRead)
+async def get_lifecycle_settings(
+    db: AsyncSession = Depends(get_db),
+    _ctx=Depends(require_permission("managed_asset:read")),
+) -> LifecycleSettingsRead:
+    states = await get_effective_lifecycle_states(db)
+    return build_lifecycle_settings_read(states)
+
+
+@router.put("/lifecycle", response_model=LifecycleSettingsRead)
+async def update_lifecycle_settings(
+    body: LifecycleSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_catalog_administrator("managed_asset:manage")),
+) -> LifecycleSettingsRead:
+    validated_states = validate_lifecycle_states_update(body.states)
+    before_states = await get_effective_lifecycle_states(db)
+    row = await db.get(LifecycleSettings, 1)
+    if row is None:
+        row = LifecycleSettings(id=1, states_config=validated_states)
+        db.add(row)
+    else:
+        row.states_config = validated_states
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="settings.lifecycle.update",
+        entity_type="lifecycle_settings",
+        entity_id=None,
+        request_id=None,
+        correlation_id=None,
+        before={"states": before_states},
+        after={"states": validated_states},
+    )
+    await db.commit()
+    return build_lifecycle_settings_read(validated_states)
+
+
+@router.post("/lifecycle/restore-defaults", response_model=LifecycleSettingsRead)
+async def restore_default_lifecycle_settings(
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_catalog_administrator("managed_asset:manage")),
+) -> LifecycleSettingsRead:
+    before_states = await get_effective_lifecycle_states(db)
+    default_states = default_lifecycle_states_config()
+    row = await db.get(LifecycleSettings, 1)
+    if row is None:
+        row = LifecycleSettings(id=1, states_config=default_states)
+        db.add(row)
+    else:
+        row.states_config = default_states
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="settings.lifecycle.restore_defaults",
+        entity_type="lifecycle_settings",
+        entity_id=None,
+        request_id=None,
+        correlation_id=None,
+        before={"states": before_states},
+        after={"states": default_states},
+    )
+    await db.commit()
+    return build_lifecycle_settings_read(default_states)

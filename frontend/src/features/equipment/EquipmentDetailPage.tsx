@@ -4,9 +4,12 @@ import { Link, useParams } from "react-router-dom";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { connectEquipmentPort, getEquipment, getEquipmentPorts, moveEquipment, retireEquipment } from "@/features/equipment/api";
+import { EquipmentEditPanel } from "@/features/equipment/EquipmentEditPanel";
 import { ImpactAnalysisModal, ImpactTarget } from "@/features/impact/ImpactAnalysisModal";
+import { LifecycleHistorySection } from "@/features/managed-assets/LifecycleHistorySection";
 import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
+import { useLifecycleSettings } from "@/features/managed-assets/useLifecycleSettings";
 import { createEquipmentFeed, getEquipmentPowerSummary } from "@/features/power/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import {
@@ -44,7 +47,10 @@ export function EquipmentDetailPage() {
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [historyHours, setHistoryHours] = useState(24);
   const [impactTarget, setImpactTarget] = useState<ImpactTarget | null>(null);
+  const [editing, setEditing] = useState(false);
   const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
+  const { stateByStatus } = useLifecycleSettings();
+  const canUpdateLifecycle = useHasPermission("managed_asset:update_lifecycle");
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", equipmentId],
@@ -155,7 +161,25 @@ export function EquipmentDetailPage() {
           <p className="font-mono text-sm text-slate-400">{equipment.asset_tag}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <LifecycleStatus value={equipment.lifecycle_status} />
+          <div className="flex flex-wrap items-center gap-2">
+            <LifecycleStatus
+              value={equipment.lifecycle_status}
+              labelOverride={stateByStatus(equipment.lifecycle_status)?.label}
+              toneOverride={stateByStatus(equipment.lifecycle_status)?.badge_color}
+              description={stateByStatus(equipment.lifecycle_status)?.description}
+              showLegacyNotice
+            />
+            {(canManageCabling || canUpdateLifecycle) && (
+              <button
+                type="button"
+                onClick={() => setEditing((v) => !v)}
+                aria-label="Edit equipment"
+                className="rounded-sm border border-line-subtle bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg-primary hover:bg-surface-hover"
+              >
+                {editing ? "Close Edit" : "Edit Equipment"}
+              </button>
+            )}
+          </div>
           <LifecycleTransitionAction
             assetId={equipment.id}
             assetName={equipment.hostname ?? equipment.asset_tag}
@@ -168,6 +192,14 @@ export function EquipmentDetailPage() {
       </div>
 
       {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
+
+      {editing && (
+        <EquipmentEditPanel
+          equipment={equipment}
+          onClose={() => setEditing(false)}
+          onNotice={showNotice}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-6">
         <div className="rounded-sm border border-slate-800 bg-slate-900 p-4">
@@ -551,6 +583,11 @@ export function EquipmentDetailPage() {
           <div className="space-y-2">{alarmHistoryQuery.data?.items.map((alarm) => <div key={alarm.id} className="rounded-sm bg-slate-800/50 p-2 text-xs"><div className="flex justify-between"><span className={alarm.status === "ACTIVE" ? "text-red-400" : alarm.status === "ACKNOWLEDGED" ? "text-yellow-400" : "text-green-400"}>{alarm.status}</span><span>{alarm.presentation_value}{alarm.presentation_unit === "%" ? "%" : ` ${alarm.presentation_unit ?? ""}`}</span></div><p className="text-slate-400">Occurred {new Date(alarm.opened_at).toLocaleString()}</p>{alarm.acknowledged_at && <p className="text-slate-400">Acknowledged {new Date(alarm.acknowledged_at).toLocaleString()}</p>}{alarm.cleared_at && <p className="text-slate-400">Cleared {new Date(alarm.cleared_at).toLocaleString()}</p>}{alarm.status === "ACTIVE" && <button onClick={() => acknowledgeMutation.mutate(alarm.id)} disabled={acknowledgeMutation.isPending} className="mt-2 rounded-sm bg-yellow-800 px-2 py-1 text-xs text-yellow-100">Acknowledge</button>}</div>)}</div>
         </div>
       </div>
+
+      <div className="mt-6">
+        <LifecycleHistorySection assetId={equipment.id} />
+      </div>
+
       <ImpactAnalysisModal target={impactTarget} onClose={() => setImpactTarget(null)} />
     </div>
   );

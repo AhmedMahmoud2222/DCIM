@@ -17,3 +17,9 @@ export function useIsCatalogAdministrator(): boolean {
   const isAdministrator = useHasRole("Administrator");
   return hasManage && isAdministrator;
 }
+
+export function useIsLifecycleAdministrator(): boolean {
+  const hasManage = useHasPermission("managed_asset:manage");
+  const isAdministrator = useHasRole("Administrator");
+  return hasManage && isAdministrator;
+}

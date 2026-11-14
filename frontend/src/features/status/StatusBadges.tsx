@@ -79,8 +79,28 @@ function Chip({ tone, size, icon, label, dimension, title, testId, children }: C
 }
 
 // --- Asset lifecycle: square -------------------------------------------------------------------
-export function LifecycleStatus({ value, size = "md" }: { value: string | null | undefined; size?: ChipSize }) {
+export function LifecycleStatus({
+  value,
+  size = "md",
+  labelOverride,
+  toneOverride,
+  description,
+  showLegacyNotice = false,
+}: {
+  value: string | null | undefined;
+  size?: ChipSize;
+  labelOverride?: string;
+  toneOverride?: Tone;
+  description?: string;
+  showLegacyNotice?: boolean;
+}) {
   const model = lifecycleModel(value);
+  const isReservedLegacy = value === "reserved";
+  const effectiveTone = toneOverride ?? model.tone;
+  const effectiveLabel = labelOverride ?? model.label;
+  const titleText = isReservedLegacy
+    ? "Legacy 'reserved' status — read-only until a migration policy is approved."
+    : description || (model.known ? undefined : "Lifecycle value not recognised by this version of the application");
   const icon = (
     <Icon>
       <rect x="3" y="3" width="10" height="10" rx="1.5" strokeDasharray={model.known ? undefined : "2 2"} />
@@ -89,15 +109,31 @@ export function LifecycleStatus({ value, size = "md" }: { value: string | null |
       {model.variant === "removed" && <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" />}
     </Icon>
   );
-  return (
+  const chip = (
     <Chip
-      tone={model.tone}
+      tone={effectiveTone}
       size={size}
       icon={icon}
-      label={model.label}
+      label={effectiveLabel}
       dimension="Lifecycle"
-      title={model.known ? undefined : "Lifecycle value not recognised by this version of the application"}
-    />
+      title={titleText}
+    >
+      {effectiveLabel !== model.label ? <span className="sr-only">{model.label}</span> : null}
+    </Chip>
+  );
+  if (!isReservedLegacy || !showLegacyNotice) {
+    return chip;
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {chip}
+      <span
+        className="rounded-sm border border-tone-caution-fg bg-tone-caution-bg px-1.5 py-0.5 text-[11px] text-tone-caution-fg"
+        data-testid="legacy-reserved-notice"
+      >
+        Legacy read-only state (migration policy pending)
+      </span>
+    </span>
   );
 }
 

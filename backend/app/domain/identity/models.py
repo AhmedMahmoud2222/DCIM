@@ -6,11 +6,13 @@ extensible string column (not a fixed Postgres ENUM) so a future subtype can be 
 inserting a new allowed value, not by altering a type — the CHECK constraint below is the
 one place that list of allowed values lives until a subtype table needs it."""
 
+import copy
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
@@ -27,6 +29,29 @@ LIFECYCLE_STATUSES = (
     "removed",
 )
 
+# Visible states in the equipment lifecycle UI and administrator settings.
+# `reserved` is retained internally in LIFECYCLE_STATUSES for backward compatibility
+# and historical/legacy records, and is excluded from UI selection.
+VISIBLE_LIFECYCLE_STATUSES: tuple[str, ...] = (
+    "planned",
+    "installed",
+    "active",
+    "maintenance",
+    "decommissioned",
+    "removed",
+)
+
+LEGACY_LIFECYCLE_STATUSES: tuple[str, ...] = ("reserved",)
+
+LIFECYCLE_BADGE_COLORS: tuple[str, ...] = (
+    "neutral",
+    "info",
+    "ok",
+    "caution",
+    "serious",
+    "danger",
+)
+
 # Phase 2+ will refine this per-subtype; Phase 1 enforces only the universal shape every
 # asset_type shares (§10 of the Phase 1 prompt: lifecycle transitions must be auditable
 # and not invent states beyond what the architecture defines).
@@ -39,6 +64,70 @@ ALLOWED_LIFECYCLE_TRANSITIONS: dict[str, set[str]] = {
     "decommissioned": {"removed"},
     "removed": set(),
 }
+
+MANDATORY_VISIBLE_LIFECYCLE_TRANSITIONS: dict[str, list[str]] = {
+    status: [
+        target
+        for target in VISIBLE_LIFECYCLE_STATUSES
+        if target in ALLOWED_LIFECYCLE_TRANSITIONS[status]
+    ]
+    for status in VISIBLE_LIFECYCLE_STATUSES
+}
+
+DEFAULT_LIFECYCLE_STATES: list[dict[str, Any]] = [
+    {
+        "status": "planned",
+        "label": "Planned",
+        "description": "Equipment is planned or procured and awaiting physical installation.",
+        "badge_color": "neutral",
+        "display_order": 1,
+        "allowed_transitions": ["installed", "removed"],
+    },
+    {
+        "status": "installed",
+        "label": "Installed",
+        "description": "Equipment is physically mounted or placed and ready for commissioning.",
+        "badge_color": "info",
+        "display_order": 2,
+        "allowed_transitions": ["active", "maintenance", "removed"],
+    },
+    {
+        "status": "active",
+        "label": "Active",
+        "description": "Equipment is commissioned and in production service.",
+        "badge_color": "ok",
+        "display_order": 3,
+        "allowed_transitions": ["maintenance", "decommissioned"],
+    },
+    {
+        "status": "maintenance",
+        "label": "Maintenance",
+        "description": "Equipment is undergoing scheduled or corrective maintenance.",
+        "badge_color": "caution",
+        "display_order": 4,
+        "allowed_transitions": ["active", "decommissioned"],
+    },
+    {
+        "status": "decommissioned",
+        "label": "Decommissioned",
+        "description": "Equipment is permanently retired from service and awaiting physical removal.",
+        "badge_color": "serious",
+        "display_order": 5,
+        "allowed_transitions": ["removed"],
+    },
+    {
+        "status": "removed",
+        "label": "Removed",
+        "description": "Equipment has been physically removed from the facility.",
+        "badge_color": "danger",
+        "display_order": 6,
+        "allowed_transitions": [],
+    },
+]
+
+
+def default_lifecycle_states_config() -> list[dict[str, Any]]:
+    return copy.deepcopy(DEFAULT_LIFECYCLE_STATES)
 
 
 class ManagedAsset(Base, UUIDPkMixin, TimestampMixin):
@@ -78,3 +167,18 @@ class ManagedAsset(Base, UUIDPkMixin, TimestampMixin):
         ForeignKey("managed_asset.id", ondelete="RESTRICT"), nullable=True
     )
     replaces_asset: Mapped["ManagedAsset"] = relationship(remote_side="ManagedAsset.id")
+
+
+class LifecycleSettings(Base):
+    """Singleton persisted administrator configuration for the six visible lifecycle states."""
+
+    __tablename__ = "lifecycle_settings"
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    states_config: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=default_lifecycle_states_config
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

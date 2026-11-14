@@ -9,6 +9,8 @@ export interface NavItem {
   permission?: string;
   /** Link is shown only to catalog administrators (`catalog:manage` and the Administrator role). */
   catalogAdmin?: boolean;
+  /** Link is shown only to lifecycle administrators (`managed_asset:manage` and the Administrator role). */
+  lifecycleAdmin?: boolean;
   /** Extra route prefixes whose pages (such as detail pages) belong under this link. */
   alsoActiveFor?: ReadonlyArray<string>;
 }
@@ -71,6 +73,12 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
     items: [
       { to: "/locations", label: "Location Hierarchy", permission: "location:read" },
       { to: "/admin/catalog", label: "Asset Catalog", catalogAdmin: true },
+      {
+        to: "/settings/asset-management/lifecycle",
+        label: "Lifecycle Settings",
+        lifecycleAdmin: true,
+        alsoActiveFor: ["/admin/settings/lifecycle"],
+      },
       { to: "/admin/users", label: "Users", permission: "user:read" },
       { to: "/admin/groups", label: "Groups", permission: "group:read" },
     ],
@@ -80,10 +88,12 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
 export interface NavViewer {
   permissions: ReadonlyArray<string> | undefined;
   isCatalogAdministrator: boolean;
+  isLifecycleAdministrator?: boolean;
 }
 
 export function isNavItemVisible(item: NavItem, viewer: NavViewer): boolean {
   if (item.catalogAdmin) return viewer.isCatalogAdministrator;
+  if (item.lifecycleAdmin) return Boolean(viewer.isLifecycleAdministrator);
   return !item.permission || (viewer.permissions?.includes(item.permission) ?? false);
 }
 

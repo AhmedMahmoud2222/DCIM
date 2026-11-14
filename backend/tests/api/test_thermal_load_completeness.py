@@ -50,7 +50,8 @@ async def set_lifecycle(world, asset_id: str, lifecycle: str) -> None:
         await world["db"].commit()
         return
     for status in LIFECYCLE_PATH[lifecycle]:
-        r = await world["client"].post(f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": status}, headers=world["admin"])
+        payload = {"to_status": status, "reason": "test decommission"} if status in ("decommissioned", "removed") else {"to_status": status}
+        r = await world["client"].post(f"/api/v1/managed-assets/{asset_id}/lifecycle-transition", json=payload, headers=world["admin"])
         assert r.status_code == 200, r.text
 
 

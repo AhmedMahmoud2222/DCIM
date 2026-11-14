@@ -34,6 +34,7 @@ import { PowerAnalyticsPage } from "@/features/power/PowerAnalyticsPage";
 import { PowerTopologyPage } from "@/features/power/PowerTopologyPage";
 import { RackDetailPage } from "@/features/racks/RackDetailPage";
 import { RacksPage } from "@/features/racks/RacksPage";
+import { LifecycleSettingsPage } from "@/features/settings/LifecycleSettingsPage";
 import { Layout3DPage } from "@/features/spatial3d/Layout3DPage";
 import { AlarmRulesPage } from "@/features/telemetry/AlarmRulesPage";
 import { EventsPage } from "@/features/telemetry/EventsPage";
@@ -83,6 +84,8 @@ export function App() {
               <Route path="/admin/catalog/models/:modelId" element={<ModelDetailPage />} />
               <Route path="/admin/catalog/revisions/compare" element={<RevisionCompareView />} />
               <Route path="/admin/catalog/revisions/:revisionId" element={<RevisionEditorPage />} />
+              <Route path="/settings/asset-management/lifecycle" element={<LifecycleSettingsPage />} />
+              <Route path="/admin/settings/lifecycle" element={<LifecycleSettingsPage />} />
             </Route>
           </Route>
         </Routes>

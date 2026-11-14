@@ -2,7 +2,7 @@ import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/features/auth/useAuth";
-import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
+import { useIsCatalogAdministrator, useIsLifecycleAdministrator } from "@/features/auth/useAuthorization";
 import { APP_TITLE } from "@/lib/appTitle";
 import { useAuthStore } from "@/lib/authStore";
 
@@ -47,11 +47,12 @@ function navLinkClass(isActive: boolean): string {
 export function AppShell() {
   const { user, logout } = useAuth();
   const isCatalogAdministrator = useIsCatalogAdministrator();
+  const isLifecycleAdministrator = useIsLifecycleAdministrator();
   const permissions = useAuthStore((s) => s.user?.permission_codes);
   const navigate = useNavigate();
   const location = useLocation();
 
-  const viewer = { permissions, isCatalogAdministrator };
+  const viewer = { permissions, isCatalogAdministrator, isLifecycleAdministrator };
   const groups = visibleNavGroups(viewer);
   const showDashboard = isNavItemVisible(DASHBOARD_ITEM, viewer);
   const activeLink = activeNavLink(location.pathname, [DASHBOARD_ITEM, ...groups.flatMap((group) => group.items)]);

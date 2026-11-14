@@ -27,8 +27,11 @@ from app.application.idempotency import (
     user_principal,
 )
 from app.application.outbox_service import write_outbox_event
+from app.application.lifecycle_settings import get_configured_allowed_transitions
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
+from app.domain.audit.models import AuditLog
+from app.domain.auth.models import User
 from app.domain.identity.models import ALLOWED_LIFECYCLE_TRANSITIONS, ASSET_TYPES, ManagedAsset
 
 router = APIRouter(prefix="/managed-assets", tags=["managed-assets"])
@@ -57,7 +60,22 @@ class ManagedAssetOut(BaseModel):
 
 class LifecycleTransitionIn(BaseModel):
     to_status: str
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class LifecycleHistoryEntryOut(BaseModel):
+    id: uuid.UUID
+    asset_id: uuid.UUID
+    from_status: str | None
+    to_status: str
+    reason: str | None
+    actor_user_id: uuid.UUID | None
+    actor_name: str | None
+    timestamp: datetime
+
+
+class LifecycleHistoryListOut(BaseModel):
+    items: list[LifecycleHistoryEntryOut]
 
 
 def _request_ids(request: Request) -> tuple[str | None, str | None]:
@@ -202,6 +220,32 @@ async def transition_lifecycle(
             detail=f"Cannot transition from {asset.lifecycle_status!r} to {body.to_status!r}. Allowed: {sorted(allowed)}",
         )
 
+    configured_allowed = await get_configured_allowed_transitions(db, asset.lifecycle_status)
+    if body.to_status not in configured_allowed:
+        raise ApiError(
+            status_code=422,
+            title="Invalid Lifecycle Transition",
+            detail=(
+                f"Transition from {asset.lifecycle_status!r} to {body.to_status!r} is disabled by "
+                f"lifecycle settings. Allowed: {sorted(configured_allowed)}"
+            ),
+        )
+
+    clean_reason = body.reason.strip() if body.reason is not None else None
+    if body.to_status in ("decommissioned", "removed"):
+        if asset.asset_type == "equipment" and not clean_reason:
+            raise ApiError(
+                status_code=422,
+                title="Reason Required",
+                detail=f"A reason is required when transitioning equipment to {body.to_status!r}.",
+            )
+        if "reason" in body.model_fields_set and not clean_reason:
+            raise ApiError(
+                status_code=422,
+                title="Reason Required",
+                detail=f"A non-empty reason is required when transitioning to {body.to_status!r}.",
+            )
+
     before_status = asset.lifecycle_status
     asset.lifecycle_status = body.to_status
     if body.to_status == "decommissioned":
@@ -228,7 +272,7 @@ async def transition_lifecycle(
         correlation_id=correlation_id,
         before={"lifecycle_status": before_status},
         after={"lifecycle_status": asset.lifecycle_status},
-        reason=body.reason,
+        reason=clean_reason,
     )
     await write_outbox_event(
         db,
@@ -241,3 +285,40 @@ async def transition_lifecycle(
     await db.commit()
     await db.refresh(asset)
     return asset
+
+
+@router.get("/{asset_id}/lifecycle-history", response_model=LifecycleHistoryListOut)
+async def get_managed_asset_lifecycle_history(
+    asset_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_permission("managed_asset:read")),
+) -> LifecycleHistoryListOut:
+    asset = await db.get(ManagedAsset, asset_id)
+    if asset is None:
+        raise NotFoundError(f"ManagedAsset {asset_id} not found.")
+    rows = (
+        await db.execute(
+            select(AuditLog, User)
+            .outerjoin(User, AuditLog.actor_user_id == User.id)
+            .where(
+                AuditLog.entity_type == "managed_asset",
+                AuditLog.entity_id == asset_id,
+                AuditLog.action == "managed_asset.lifecycle_transition",
+            )
+            .order_by(AuditLog.timestamp.desc(), AuditLog.audit_id.desc())
+        )
+    ).all()
+    items = [
+        LifecycleHistoryEntryOut(
+            id=audit_row.audit_id,
+            asset_id=asset_id,
+            from_status=(audit_row.before or {}).get("lifecycle_status") if isinstance(audit_row.before, dict) else None,
+            to_status=((audit_row.after or {}).get("lifecycle_status") if isinstance(audit_row.after, dict) else None) or "",
+            reason=audit_row.reason,
+            actor_user_id=audit_row.actor_user_id,
+            actor_name=(actor.full_name or actor.email) if actor is not None else None,
+            timestamp=audit_row.timestamp,
+        )
+        for audit_row, actor in rows
+    ]
+    return LifecycleHistoryListOut(items=items)
