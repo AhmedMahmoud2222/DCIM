@@ -39,5 +39,5 @@ if ($hostHash -ne $containerHash.ToLowerInvariant()) { throw "Checksum mismatch 
 
 "$hostHash  $fileName" | Set-Content -LiteralPath "$hostPath.sha256" -Encoding ascii
 Invoke-Postgres -What 'remove the temporary dump in the container' -ComposeFile $ComposeFile -Script ('rm -f ' + $inContainer) | Out-Null
-Write-Host "Backup verified: $hostPath ($($item.Length) bytes, sha256 $hostHash)"
+Write-Information "Backup verified: $hostPath ($($item.Length) bytes, sha256 $hostHash)" -InformationAction Continue
 $hostPath

@@ -3,14 +3,15 @@
 DISPOSABLE DATABASES ONLY. Run from backend/ with PYTHONPATH=backend:repo-root. Used by run.sh."""
 
 import asyncio
+import importlib
 
-import app.db.models  # noqa: F401  (register every ORM model)
 from app.db.session import AsyncSessionLocal
 from app.domain.auth.models import User
 from tests.demo_world import build_world
 
 
 async def main() -> None:
+    importlib.import_module("app.db.models")  # register every ORM model on the shared metadata
     async with AsyncSessionLocal() as db:
         db.add(User(email="bench@example.com", password_hash="x", full_name="Bench"))
         await db.commit()

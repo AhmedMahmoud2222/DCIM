@@ -15,7 +15,7 @@ from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReadi
 from app.tools.demo_loader import cli
 from app.tools.demo_loader.constants import DEDUP_PREFIX
 from app.tools.demo_loader.selection import discover, outside_fingerprint
-from app.tools.demo_loader.verify import verify
+from app.tools.demo_loader.verify import VerifyOptions, verify
 from tests.demo_world import PLAN_HEIGHT_MM, PLAN_WIDTH_MM, build_world
 
 
@@ -121,8 +121,8 @@ async def test_sensors_floor_plans_and_heat_maps(db_session, world):
     as_of = datetime.now(UTC)
     await cli.run_apply(db_session, args(as_of=as_of))
     targets = await discover(db_session)
-    report = await verify(db_session, targets, expected_racks=12, expected_devices=60, as_of=as_of,
-                          device_hours=float(os.environ.get("DEMO_TEST_DEVICE_HOURS", "1")))
+    report = await verify(db_session, targets, VerifyOptions(
+        expected_racks=12, expected_devices=60, as_of=as_of, device_hours=float(os.environ.get("DEMO_TEST_DEVICE_HOURS", "1"))))
     failed = [c for c in report.checks if not c.ok]
     assert not failed, failed
     for plan in report.data["plans"]:

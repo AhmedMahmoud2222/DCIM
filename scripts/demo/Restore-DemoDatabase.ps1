@@ -66,5 +66,5 @@ Invoke-Postgres -What 'remove the temporary dump in the container' -ComposeFile 
 $revision = Invoke-Postgres -What 'read the restored schema revision' -ComposeFile $ComposeFile -Script 'psql -U postgres -d "$POSTGRES_DB" -Atc "select version_num from alembic_version"'
 $rackCount = Invoke-Postgres -What 'count racks' -ComposeFile $ComposeFile -Script 'psql -U postgres -d "$POSTGRES_DB" -Atc "select count(*) from rack"'
 $equipmentCount = Invoke-Postgres -What 'count equipment' -ComposeFile $ComposeFile -Script 'psql -U postgres -d "$POSTGRES_DB" -Atc "select count(*) from equipment"'
-Write-Host "Restored $($backup.Name). Schema revision: $($revision | Select-Object -First 1). $($rackCount | Select-Object -First 1) racks, $($equipmentCount | Select-Object -First 1) equipment."
-Write-Host 'Services are stopped. Check out the commit that matches this revision, rebuild ALL images (docker compose build), then start them.'
+Write-Information "Restored $($backup.Name). Schema revision: $($revision | Select-Object -First 1). $($rackCount | Select-Object -First 1) racks, $($equipmentCount | Select-Object -First 1) equipment." -InformationAction Continue
+Write-Information 'Services are stopped. Check out the commit that matches this revision, rebuild ALL images (docker compose build), then start them.' -InformationAction Continue

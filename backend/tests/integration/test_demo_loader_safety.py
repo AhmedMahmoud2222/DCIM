@@ -25,7 +25,7 @@ from app.tools.demo_loader.constants import DEDUP_PREFIX
 from app.tools.demo_loader.provision import sensor_tag
 from app.tools.demo_loader.purge import purge
 from app.tools.demo_loader.selection import LoaderError, discover, outside_fingerprint, validate_site_prefix
-from app.tools.demo_loader.verify import verify
+from app.tools.demo_loader.verify import VerifyOptions, verify
 from tests.demo_world import build_world
 from tests.integration.test_demo_loader import args
 
@@ -276,8 +276,8 @@ async def seeded(db_session, world, **overrides):
 
 async def run_verify(db_session, as_of, **kw):
     targets = await discover(db_session, prefix=kw.pop("prefix", "DEMO-SITE-"))
-    return await verify(db_session, targets, as_of=as_of, hours=24.0, device_hours=kw.pop("device_hours", DEVICE_HOURS),
-                        parts=frozenset({"existing", "sensors", "devices"}), **kw)
+    return await verify(db_session, targets, VerifyOptions(
+        as_of=as_of, hours=24.0, device_hours=kw.pop("device_hours", DEVICE_HOURS), parts=frozenset({"existing", "sensors", "devices"}), **kw))
 
 
 def failed(report):

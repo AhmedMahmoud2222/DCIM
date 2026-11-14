@@ -46,13 +46,17 @@ from app.tools.demo_loader.selection import (
 )
 from app.tools.demo_loader.series import Series, build_series, routes_by_integration, simulate
 from app.tools.demo_loader.signals import next_slot_after
-from app.tools.demo_loader.verify import verify
+from app.tools.demo_loader.verify import VerifyOptions, verify
 
 STEPS = ("existing", "sensors", "floorplans", "devices")
 # One PostgreSQL advisory lock key for "a demo-loader process is writing". Writers (apply, refresh, including
 # `refresh --watch`) hold it shared for their whole run; a real purge needs it exclusive, so it refuses to start while any
 # writer is alive and no writer can start while a purge runs. Session-level, so it vanishes with the process.
 WRITER_LOCK_KEY = 7_227_437_402_541_777
+TAKE_EXCLUSIVE = text("SELECT pg_try_advisory_lock(:key)")
+TAKE_SHARED = text("SELECT pg_try_advisory_lock_shared(:key)")
+RELEASE_EXCLUSIVE = text("SELECT pg_advisory_unlock(:key)")
+RELEASE_SHARED = text("SELECT pg_advisory_unlock_shared(:key)")
 
 
 def log(message: str) -> None:
@@ -63,10 +67,10 @@ def log(message: str) -> None:
 async def writer_lock(*, exclusive: bool):
     from app.db.session import engine
 
-    function = "pg_try_advisory_lock" if exclusive else "pg_try_advisory_lock_shared"
-    unlock = "pg_advisory_unlock" if exclusive else "pg_advisory_unlock_shared"
+    take = TAKE_EXCLUSIVE if exclusive else TAKE_SHARED
+    release = RELEASE_EXCLUSIVE if exclusive else RELEASE_SHARED
     async with engine.connect() as connection:
-        got = (await connection.execute(text(f"SELECT {function}(:key)"), {"key": WRITER_LOCK_KEY})).scalar_one()
+        got = (await connection.execute(take, {"key": WRITER_LOCK_KEY})).scalar_one()
         if not got:
             what = "another demo-loader process is writing (an apply, or a refresh / demo-refresh service that is still running)" if exclusive \
                 else "a purge is running"
@@ -75,7 +79,7 @@ async def writer_lock(*, exclusive: bool):
             yield
         finally:
             with contextlib.suppress(Exception):
-                await connection.execute(text(f"SELECT {unlock}(:key)"), {"key": WRITER_LOCK_KEY})
+                await connection.execute(release, {"key": WRITER_LOCK_KEY})
 
 
 def guard(args: argparse.Namespace) -> None:
@@ -137,6 +141,16 @@ def protect_prefix(args: argparse.Namespace) -> str:
 def clock(args: argparse.Namespace) -> datetime | None:
     """`--as-of` pins the sample clock (reproducible seeding, deterministic tests); default is the current time."""
     return getattr(args, "as_of", None)
+
+
+def verify_options(args: argparse.Namespace, steps: list[str] | None = None) -> VerifyOptions:
+    """`verify` after an `apply` checks only the steps that ran; a standalone `verify` checks everything."""
+    chosen = frozenset(steps) if steps is not None else frozenset({"existing", "sensors", "devices", "floorplans"})
+    return VerifyOptions(
+        expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours,
+        device_hours=args.device_history_hours, as_of=clock(args), require_sensors="sensors" in chosen,
+        parts=chosen & {"existing", "sensors", "devices", "floorplans"},
+    )
 
 
 def parse_as_of(value: str) -> datetime:
@@ -243,9 +257,7 @@ async def dispatch(db: AsyncSession, args: argparse.Namespace) -> tuple[dict, in
         result = await run_apply(db, args)
         if not args.no_verify:
             targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-            report = await verify(db, targets, expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours,
-                                  device_hours=args.device_history_hours, as_of=clock(args), require_sensors="sensors" in args.steps,
-                                  parts=frozenset(args.steps) & {"existing", "sensors", "devices", "floorplans"})
+            report = await verify(db, targets, verify_options(args, steps=args.steps))
             result["verify"] = report.as_dict()
             result["ok"] = result["ok"] and report.ok
         return result, 0 if result["ok"] else 1
@@ -254,8 +266,7 @@ async def dispatch(db: AsyncSession, args: argparse.Namespace) -> tuple[dict, in
         return result, 0 if result["ok"] else 1
     if args.command == "verify":
         targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-        report = await verify(db, targets, expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours,
-                              device_hours=args.device_history_hours, as_of=clock(args))
+        report = await verify(db, targets, verify_options(args))
         return report.as_dict(), 0 if report.ok else 1
     if args.command == "purge":
         targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
