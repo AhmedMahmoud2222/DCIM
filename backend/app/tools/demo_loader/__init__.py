@@ -5,4 +5,4 @@ workers, only run explicitly through ``python -m app.tools.demo_loader`` with a 
 refuses to run when ``ENVIRONMENT=production``.
 """
 
-LOADER_VERSION = "1.0.0"
+LOADER_VERSION = "1.1.0"

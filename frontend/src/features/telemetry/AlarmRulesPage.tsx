@@ -261,6 +261,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
 
 function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: () => void; onCancel: () => void }) {
   const [name, setName] = useState(rule.name);
+  const [severity, setSeverity] = useState<AlarmRule["severity"]>(rule.severity);
   const [threshold, setThreshold] = useState(rule.threshold === null ? "" : String(rule.threshold));
   const [reason, setReason] = useState("");
   const mutation = useMutation({ mutationFn: (input: EditAlarmRuleInput) => editAlarmRule(rule.id, input), onSuccess: onSaved });
@@ -269,6 +270,7 @@ function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: (
     event.preventDefault();
     mutation.mutate({
       name: name.trim(),
+      severity,
       ...(rule.rule_type !== "availability_unavailable" && rule.unit !== null ? { threshold: Number(threshold) } : {}),
       reason: reason.trim(), expected_updated_at: rule.updated_at,
     });
@@ -278,6 +280,10 @@ function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: (
     <form onSubmit={submit} aria-label={`Edit ${rule.name}`} className="mt-4 space-y-3 border-t border-slate-800 pt-3">
       {!rule.enabled && <p role="status" className="text-sm text-amber-300">This rule is disabled. Editing it will not re-enable it.</p>}
       <label className="block text-xs text-slate-400">Rule name<input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
+      <label className="block text-xs text-slate-400">Severity<select aria-label="Severity" value={severity} onChange={(event) => setSeverity(event.target.value as AlarmRule["severity"])} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100">
+        <option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option>
+      </select></label>
+      <p className="text-xs text-fg-secondary">A new severity applies to alarms opened afterwards. An alarm that is already open keeps the severity it opened with.</p>
       {rule.rule_type !== "availability_unavailable" && rule.unit !== null ? (
         <label className="block text-xs text-slate-400">Threshold ({rule.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
       ) : rule.unit === null && <p className="text-sm text-amber-300">Resolve the threshold unit before editing this legacy rule's threshold.</p>}

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Finds the demo data the loader may touch, and nothing else.
 
 Scope rule: a site is in scope only when its code starts with `DEMO_SITE_PREFIX`. Every query below filters on that
@@ -22,6 +23,22 @@ from app.tools.demo_loader.constants import DEMO_SITE_PREFIX
 
 class LoaderError(Exception):
     """A condition the operator must fix; the message says what and how."""
+
+
+_PREFIX_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-")
+
+
+def validate_site_prefix(prefix: str) -> str:
+    """The demo-site boundary is fixed: a selector must be `DEMO-SITE-` or longer, made of letters, digits and hyphens.
+
+    `--site-prefix HRC`, an empty selector and anything containing LIKE wildcards (`%`, `_`) are refused before any
+    query, so no selector can reach a site outside the demo sites."""
+    if not prefix.startswith(DEMO_SITE_PREFIX) or not set(prefix) <= _PREFIX_CHARS:
+        raise LoaderError(
+            f"--site-prefix {prefix!r} is not allowed: it must start with {DEMO_SITE_PREFIX!r} and contain only letters, "
+            "digits and hyphens (for example DEMO-SITE-02)."
+        )
+    return prefix
 
 
 @dataclass(frozen=True)
@@ -53,12 +70,29 @@ class DeviceInfo:
     site_id: uuid.UUID
 
 
-@dataclass
+@dataclass(frozen=True)
+class IntegrationRef:
+    """Plain copy of the integration fields the loader needs. A rollback expires ORM instances, and an AsyncSession cannot
+    reload them lazily, so nothing that must outlive a failed batch is kept as an ORM object."""
+
+    id: uuid.UUID
+    name: str
+    site_id: uuid.UUID | None
+    poll_interval_seconds: int
+
+
+@dataclass(frozen=True)
+class CollectorRef:
+    id: uuid.UUID
+    name: str
+
+
+@dataclass(frozen=True)
 class IntegrationRoute:
     """Where a site's synthetic series are ingested: the integration and the collector currently assigned to it."""
 
-    integration: Integration
-    collector: Collector
+    integration: IntegrationRef
+    collector: CollectorRef
 
 
 @dataclass
@@ -70,6 +104,7 @@ class Targets:
 
 
 async def demo_sites(db: AsyncSession, prefix: str = DEMO_SITE_PREFIX) -> list[SiteInfo]:
+    validate_site_prefix(prefix)
     rows = (await db.execute(select(Site.id, Site.code, Site.name).where(Site.code.startswith(prefix)).order_by(Site.code))).all()
     return [SiteInfo(*row) for row in rows]
 
@@ -113,35 +148,151 @@ async def route_for_integration(db: AsyncSession, integration: Integration) -> I
         raise LoaderError(f"Integration {integration.name!r} has no current collector assignment; assign a collector first.")
     collector = await db.get(Collector, assignment.collector_id)
     assert collector is not None
-    return IntegrationRoute(integration=integration, collector=collector)
+    return IntegrationRoute(
+        integration=IntegrationRef(integration.id, integration.name, integration.site_id, integration.poll_interval_seconds),
+        collector=CollectorRef(collector.id, collector.name),
+    )
 
 
 async def resolve_routes(
     db: AsyncSession, sites: list[SiteInfo], overrides: dict[str, str] | None = None,
 ) -> dict[uuid.UUID, IntegrationRoute]:
-    """One integration per demo site: by `integration.site_id`, else by the site code appearing in the integration
-    name, else the explicit `--integration SITE=NAME` override. Ambiguity is an error, never a guess."""
+    """Exactly one integration per selected demo site, and each integration serves exactly one selected site.
+
+    An integration is compatible with a site when its `site_id` is that site, or when it has no site at all and is
+    chosen unambiguously: by an explicit `--integration SITE=NAME`, or because its name contains this demo site's code
+    and no other demo site's code. An integration that belongs to another site (HRC, or a different demo site) is never
+    compatible, whether it was found by name or named on the command line. Anything ambiguous is an error."""
     overrides = overrides or {}
+    for code in overrides:
+        if code not in {s.code for s in sites}:
+            raise LoaderError(f"--integration names site {code!r}, which is not one of the selected demo sites.")
     enabled = select(Integration).where(Integration.enabled.is_(True)).order_by(Integration.name)
     integrations = list((await db.execute(enabled)).scalars())
-    routes: dict[uuid.UUID, IntegrationRoute] = {}
+    site_codes = {sid: code for sid, code in (await db.execute(select(Site.id, Site.code))).all()}
+    demo_codes = [code for code in site_codes.values() if code.startswith(DEMO_SITE_PREFIX)]
+    chosen: dict[uuid.UUID, Integration] = {}
     for site in sites:
         if site.code in overrides:
-            matches = [i for i in integrations if i.name == overrides[site.code]]
+            named = [i for i in integrations if i.name == overrides[site.code]]
+            if len(named) != 1:
+                raise LoaderError(f"--integration {site.code}={overrides[site.code]!r}: no single enabled integration has that name.")
+            owner = named[0].site_id
+            if owner is not None and owner != site.id:
+                raise LoaderError(
+                    f"Integration {named[0].name!r} belongs to site {site_codes.get(owner, owner)}, not {site.code}; refusing to route "
+                    f"{site.code} through it."
+                )
+            matches = named
         else:
             by_site = [i for i in integrations if i.site_id == site.id]
-            matches = by_site or [i for i in integrations if site.code.lower() in i.name.lower()]
+            others = [c for c in demo_codes if c != site.code]
+            by_name = [
+                i for i in integrations
+                if i.site_id is None and site.code.lower() in i.name.lower() and not any(o.lower() in i.name.lower() for o in others)
+            ]
+            matches = by_site or by_name
         if len(matches) != 1:
             raise LoaderError(
                 f"Cannot choose one enabled integration for {site.code}: {len(matches)} candidates "
                 f"({', '.join(i.name for i in matches) or 'none'}). Pass --integration {site.code}=<integration name>."
             )
-        routes[site.id] = await route_for_integration(db, matches[0])
-    return routes
+        chosen[site.id] = matches[0]
+    seen: dict[uuid.UUID, str] = {}
+    for site in sites:
+        integration = chosen[site.id]
+        if integration.id in seen:
+            raise LoaderError(f"Integration {integration.name!r} would serve both {seen[integration.id]} and {site.code}; each site needs its own.")
+        seen[integration.id] = site.code
+    return {site.id: await route_for_integration(db, chosen[site.id]) for site in sites}
+
+
+async def asset_site_ids(db: AsyncSession, asset_ids: set[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:
+    """The site of every asset whose site can be determined (sensor, cooling unit, rack and equipment placements)."""
+    from app.domain.cooling.models import CoolingUnit, EnvironmentalSensor
+
+    found: dict[uuid.UUID, uuid.UUID] = {}
+    if not asset_ids:
+        return found
+    ids = list(asset_ids)
+    for model in (EnvironmentalSensor, CoolingUnit):
+        for asset_id, site_id in (await db.execute(select(model.id, model.site_id).where(model.id.in_(ids)))).all():
+            found[asset_id] = site_id
+    room_site = (
+        select(Room.id.label("room_id"), Building.site_id.label("site_id"))
+        .join(Floor, Floor.id == Room.floor_id).join(Building, Building.id == Floor.building_id).subquery()
+    )
+    for asset_id, site_id in (
+        await db.execute(
+            select(EquipmentPlacement.equipment_id, room_site.c.site_id)
+            .join(room_site, room_site.c.room_id == EquipmentPlacement.room_id)
+            .where(EquipmentPlacement.equipment_id.in_(ids), EquipmentPlacement.effective_to.is_(None))
+        )
+    ).all():
+        found.setdefault(asset_id, site_id)
+    for asset_id, site_id in (
+        await db.execute(
+            select(RackPlacement.rack_id, room_site.c.site_id)
+            .join(room_site, room_site.c.room_id == RackPlacement.room_id)
+            .where(RackPlacement.rack_id.in_(ids), RackPlacement.effective_to.is_(None))
+        )
+    ).all():
+        found.setdefault(asset_id, site_id)
+    return found
+
+
+@dataclass
+class MappingOwnership:
+    """Which mappings on the routed integrations the loader may simulate."""
+
+    allowed: set[uuid.UUID] = field(default_factory=set)
+    unresolved: dict[uuid.UUID, str] = field(default_factory=dict)  # mapping id -> source identifier (skipped, reported)
+
+
+async def check_mapping_ownership(db: AsyncSession, targets: "Targets") -> MappingOwnership:
+    """Fail closed if any mapping on a routed integration points at an asset that positively belongs to another site.
+
+    A mapping with no asset, or whose asset is in a selected site, is allowed. An asset whose site cannot be determined
+    (for example a power node) is allowed only when its integration belongs to the demo site by `site_id`; on a site-less
+    integration it is skipped and reported instead of guessed at."""
+    from app.domain.telemetry.models import IntegrationMetricMapping
+
+    selected = {s.id for s in targets.sites}
+    by_integration = {route.integration.id: (site_id, route) for site_id, route in targets.routes.items()}
+    rows = (
+        await db.execute(
+            select(IntegrationMetricMapping.id, IntegrationMetricMapping.integration_id, IntegrationMetricMapping.managed_asset_id,
+                   IntegrationMetricMapping.source_identifier)
+            .where(IntegrationMetricMapping.integration_id.in_(list(by_integration)))
+        )
+    ).all()
+    sites = await asset_site_ids(db, {r.managed_asset_id for r in rows if r.managed_asset_id is not None})
+    result = MappingOwnership()
+    foreign: list[str] = []
+    for mapping_id, integration_id, asset_id, source in rows:
+        site_id, route = by_integration[integration_id]
+        if asset_id is None:
+            result.allowed.add(mapping_id)
+        elif asset_id in sites:
+            if sites[asset_id] in selected:
+                result.allowed.add(mapping_id)
+            else:
+                foreign.append(f"{source} (integration {route.integration.name})")
+        elif route.integration.site_id == site_id:
+            result.allowed.add(mapping_id)
+        else:
+            result.unresolved[mapping_id] = source
+    if foreign:
+        raise LoaderError(
+            f"{len(foreign)} mapping(s) on the routed integrations point at assets in sites that are not selected, for example "
+            f"{foreign[:3]}. Nothing was written. Fix the integration/site assignment or choose different integrations."
+        )
+    return result
 
 
 async def discover(db: AsyncSession, *, prefix: str = DEMO_SITE_PREFIX, overrides: dict[str, str] | None = None,
                    need_routes: bool = True) -> Targets:
+    validate_site_prefix(prefix)
     sites = await demo_sites(db, prefix)
     if not sites:
         raise LoaderError(f"No site with a code starting {prefix!r} exists. Nothing to do.")
@@ -191,6 +342,20 @@ async def outside_fingerprint(db: AsyncSession, prefix: str = DEMO_SITE_PREFIX) 
     mappings = select(IntegrationMetricMapping).where(IntegrationMetricMapping.integration_id.in_(mapping_ids))
     parts["mappings"] = sorted(
         str((r.id, r.source_identifier, r.current_revision_id)) for r in (await db.execute(mappings)).scalars()
+    )
+    from app.domain.alarm.models import Alarm
+    from app.domain.telemetry.models import TelemetryReading
+
+    readings = (
+        await db.execute(
+            select(func.count(), func.max(TelemetryReading.received_at), func.max(TelemetryReading.occurred_at))
+            .where(TelemetryReading.integration_id.in_(mapping_ids))
+        )
+    ).one()
+    parts["readings"] = [f"{readings[0]}|{readings[1]}|{readings[2]}"]
+    parts["alarms"] = sorted(
+        str((r.id, r.status, r.severity, r.telemetry_reading_id, r.last_value, r.acknowledged_at, r.cleared_at))
+        for r in (await db.execute(select(Alarm).where(Alarm.integration_id.in_(mapping_ids)))).scalars()
     )
     digest = hashlib.sha256(repr(sorted(parts.items(), key=lambda kv: kv[0])).encode()).hexdigest()
     return {"digest": digest, "counts": {k: (v if isinstance(v, int) else len(v)) for k, v in parts.items()}}

@@ -1,23 +1,38 @@
 # ruff: noqa: E501
-"""Rollback: removes what the loader created, and only that.
+"""Rollback: removes what the loader created in the selected demo sites, and only that.
 
-Recognised by markers the loader writes itself: readings by their `demo-sim:v1:` dedup key, mappings by the
-`demo-sim:` source prefix and the "Demo simulator" label, sensors by the `DEMO-ENV-` asset tag together with the
-`demo_loader` marker in `external_ids`. Pre-existing mappings, equipment, racks, plans and everything at the HRC site
-are never selected. Floor-plan calibrations are immutable by database trigger and stay (restore the backup to remove
-them); the audit log is append-only and keeps its record of the run."""
+One ownership-and-site predicate drives both the dry-run counts and the deletes:
+
+* readings: dedup key `demo-sim:v1:` AND an integration routed to a selected site;
+* mappings: `demo-sim:` source prefix AND the "Demo simulator" label AND a routed integration;
+* sensors: `DEMO-ENV-` tag AND the `demo_loader` marker in `external_ids` AND a selected site;
+* alarms: opened by a loader reading (`details.origin_provenance == demo_loader`, written by the alarm service when it
+  opens the alarm), on a routed integration, and whose latest reading is still synthetic. A pre-existing alarm that a
+  simulated reading later retained or cleared has no origin marker and is preserved, with its acknowledgement history.
+  Its `last_value` and latest-reading link did change while the simulation ran; that is not reversible here.
+
+Floor-plan calibrations are immutable by database trigger and stay (restore the backup to remove them); the audit log
+is append-only and keeps its record of the run."""
 
 from dataclasses import dataclass
 
-from sqlalchemy import ColumnElement, delete, func, or_, select
+from sqlalchemy import ColumnElement, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.alarm_service import ORIGIN_KEY
 from app.domain.alarm.models import Alarm
 from app.domain.cooling.models import EnvironmentalSensor
 from app.domain.identity.models import ManagedAsset
 from app.domain.placement.models import EquipmentPlacement
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
-from app.tools.demo_loader.constants import DEDUP_PREFIX, MAPPING_LABEL, SENSOR_MARKER_KEY, SENSOR_TAG_PREFIX, SOURCE_PREFIX
+from app.tools.demo_loader.constants import (
+    DEDUP_PREFIX,
+    MAPPING_LABEL,
+    PROVENANCE,
+    SENSOR_MARKER_KEY,
+    SENSOR_TAG_PREFIX,
+    SOURCE_PREFIX,
+)
 from app.tools.demo_loader.selection import Targets
 
 
@@ -33,41 +48,52 @@ class PurgeReport:
         return self.__dict__.copy()
 
 
+@dataclass
+class Predicates:
+    readings: ColumnElement[bool]
+    alarms: ColumnElement[bool]
+    mappings: ColumnElement[bool]
+    sensors: ColumnElement[bool]
+
+
+def predicates(targets: Targets) -> Predicates:
+    integration_ids = [route.integration.id for route in targets.routes.values()]
+    site_ids = [site.id for site in targets.sites]
+    readings = TelemetryReading.dedup_key.startswith(DEDUP_PREFIX) & TelemetryReading.integration_id.in_(integration_ids)
+    synthetic_in_scope = select(TelemetryReading.id).where(readings)
+    alarms = (
+        Alarm.integration_id.in_(integration_ids)
+        & (Alarm.details[ORIGIN_KEY].astext == PROVENANCE)
+        & (Alarm.telemetry_reading_id.is_(None) | Alarm.telemetry_reading_id.in_(synthetic_in_scope))
+    )
+    mappings = (
+        IntegrationMetricMapping.source_identifier.startswith(SOURCE_PREFIX)
+        & (IntegrationMetricMapping.label == MAPPING_LABEL)
+        & IntegrationMetricMapping.integration_id.in_(integration_ids)
+    )
+    sensors = (
+        ManagedAsset.asset_tag.startswith(SENSOR_TAG_PREFIX)
+        & ManagedAsset.external_ids.has_key(SENSOR_MARKER_KEY)
+        & EnvironmentalSensor.site_id.in_(site_ids)
+    )
+    return Predicates(readings=readings, alarms=alarms, mappings=mappings, sensors=sensors)
+
+
 async def purge(db: AsyncSession, targets: Targets, *, dry_run: bool) -> PurgeReport:
     report = PurgeReport(dry_run=dry_run)
-    site_ids = [s.id for s in targets.sites]
+    pred = predicates(targets)
     sensor_ids = list(
-        (
-            await db.execute(
-                select(EnvironmentalSensor.id).join(ManagedAsset, ManagedAsset.id == EnvironmentalSensor.id).where(
-                    ManagedAsset.asset_tag.startswith(SENSOR_TAG_PREFIX), ManagedAsset.external_ids.has_key(SENSOR_MARKER_KEY),
-                    EnvironmentalSensor.site_id.in_(site_ids),
-                )
-            )
-        ).scalars()
+        (await db.execute(select(EnvironmentalSensor.id).join(ManagedAsset, ManagedAsset.id == EnvironmentalSensor.id).where(pred.sensors))).scalars()
     )
-    mapping_ids = list(
-        (
-            await db.execute(
-                select(IntegrationMetricMapping.id).where(
-                    IntegrationMetricMapping.source_identifier.startswith(SOURCE_PREFIX), IntegrationMetricMapping.label == MAPPING_LABEL,
-                    IntegrationMetricMapping.integration_id.in_([r.integration.id for r in targets.routes.values()]),
-                )
-            )
-        ).scalars()
-    )
-    synthetic = select(TelemetryReading.id).where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX))
-    alarm_filter: ColumnElement[bool] = Alarm.telemetry_reading_id.in_(synthetic)
-    if sensor_ids:
-        alarm_filter = or_(alarm_filter, Alarm.managed_asset_id.in_(sensor_ids))
-    report.alarms = (await db.execute(select(func.count()).select_from(Alarm).where(alarm_filter))).scalar_one()
-    report.readings = (await db.execute(select(func.count()).select_from(TelemetryReading).where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))).scalar_one()
+    mapping_ids = list((await db.execute(select(IntegrationMetricMapping.id).where(pred.mappings))).scalars())
+    report.alarms = (await db.execute(select(func.count()).select_from(Alarm).where(pred.alarms))).scalar_one()
+    report.readings = (await db.execute(select(func.count()).select_from(TelemetryReading).where(pred.readings))).scalar_one()
     report.mappings = len(mapping_ids)
     report.sensors = len(sensor_ids)
     if dry_run:
         return report
-    await db.execute(delete(Alarm).where(alarm_filter))
-    await db.execute(delete(TelemetryReading).where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX)))
+    await db.execute(delete(Alarm).where(pred.alarms))  # before the readings they reference
+    await db.execute(delete(TelemetryReading).where(pred.readings))
     if mapping_ids:
         await db.execute(delete(IntegrationMetricMapping).where(IntegrationMetricMapping.id.in_(mapping_ids)))
     if sensor_ids:

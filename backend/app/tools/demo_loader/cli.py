@@ -12,13 +12,14 @@ document per command on stdout (progress goes to stderr); the exit code is 0 onl
 
 import argparse
 import asyncio
+import contextlib
 import importlib
 import json
 import sys
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -35,19 +36,50 @@ from app.tools.demo_loader.constants import (
 from app.tools.demo_loader.floorplans import calibrate_demo_plans
 from app.tools.demo_loader.provision import ensure_device_mappings, ensure_sensors
 from app.tools.demo_loader.purge import purge
-from app.tools.demo_loader.selection import LoaderError, Targets, discover, outside_fingerprint
+from app.tools.demo_loader.selection import (
+    LoaderError,
+    Targets,
+    check_mapping_ownership,
+    discover,
+    outside_fingerprint,
+    validate_site_prefix,
+)
 from app.tools.demo_loader.series import Series, build_series, routes_by_integration, simulate
 from app.tools.demo_loader.signals import next_slot_after
 from app.tools.demo_loader.verify import verify
 
 STEPS = ("existing", "sensors", "floorplans", "devices")
+# One PostgreSQL advisory lock key for "a demo-loader process is writing". Writers (apply, refresh, including
+# `refresh --watch`) hold it shared for their whole run; a real purge needs it exclusive, so it refuses to start while any
+# writer is alive and no writer can start while a purge runs. Session-level, so it vanishes with the process.
+WRITER_LOCK_KEY = 7_227_437_402_541_777
 
 
 def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+@contextlib.asynccontextmanager
+async def writer_lock(*, exclusive: bool):
+    from app.db.session import engine
+
+    function = "pg_try_advisory_lock" if exclusive else "pg_try_advisory_lock_shared"
+    unlock = "pg_advisory_unlock" if exclusive else "pg_advisory_unlock_shared"
+    async with engine.connect() as connection:
+        got = (await connection.execute(text(f"SELECT {function}(:key)"), {"key": WRITER_LOCK_KEY})).scalar_one()
+        if not got:
+            what = "another demo-loader process is writing (an apply, or a refresh / demo-refresh service that is still running)" if exclusive \
+                else "a purge is running"
+            raise LoaderError(f"Cannot start: {what}. Stop it first (docker compose stop demo-refresh) and run this again.")
+        try:
+            yield
+        finally:
+            with contextlib.suppress(Exception):
+                await connection.execute(text(f"SELECT {unlock}(:key)"), {"key": WRITER_LOCK_KEY})
+
+
 def guard(args: argparse.Namespace) -> None:
+    validate_site_prefix(args.site_prefix)
     if get_settings().environment == "production":
         raise LoaderError("ENVIRONMENT is 'production'. The demo loader never runs against production.")
     if args.command in ("apply", "refresh", "purge") and not getattr(args, "dry_run", False) and not args.confirm_local_demo:
@@ -66,15 +98,19 @@ async def resolve_actor(db: AsyncSession, email: str | None) -> uuid.UUID:
 
 async def existing_series(db: AsyncSession, targets: Targets) -> list[Series]:
     routes = routes_by_integration(targets)
+    ownership = await check_mapping_ownership(db, targets)  # raises before any write if a mapping points at a foreign site
     mappings = list(
         (
             await db.execute(
                 select(IntegrationMetricMapping)
-                .where(IntegrationMetricMapping.integration_id.in_(list(routes)), ~IntegrationMetricMapping.source_identifier.startswith(SOURCE_PREFIX))
+                .where(IntegrationMetricMapping.integration_id.in_(list(routes)), ~IntegrationMetricMapping.source_identifier.startswith(SOURCE_PREFIX),
+                       IntegrationMetricMapping.id.in_(ownership.allowed))
                 .order_by(IntegrationMetricMapping.created_at, IntegrationMetricMapping.id)
             )
         ).scalars()
     )
+    if ownership.unresolved:
+        log(f"  skipped {len(ownership.unresolved)} existing mapping(s) whose asset site cannot be determined: {sorted(ownership.unresolved.values())[:5]}")
     return await build_series(db, mappings, routes, anchored=True)
 
 
@@ -94,7 +130,8 @@ async def loader_series(db: AsyncSession, targets: Targets) -> list[Series]:
 
 
 def protect_prefix(args: argparse.Namespace) -> str:
-    return getattr(args, "protect_prefix", DEMO_SITE_PREFIX)
+    """Sites outside this prefix are fingerprinted. Fixed: a weaker value could hide a change, so it is not an option."""
+    return DEMO_SITE_PREFIX
 
 
 def clock(args: argparse.Namespace) -> datetime | None:
@@ -184,38 +221,49 @@ async def run(args: argparse.Namespace) -> tuple[dict, int]:
 
     guard(args)
     args.session_factory = None if getattr(args, "sequential", False) else AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        if args.command == "plan":
+    mutates = args.command in ("apply", "refresh") or (args.command == "purge" and not args.dry_run)
+    async with contextlib.AsyncExitStack() as stack:
+        if mutates:
+            await stack.enter_async_context(writer_lock(exclusive=args.command == "purge"))
+        db = await stack.enter_async_context(AsyncSessionLocal())
+        return await dispatch(db, args)
+
+
+async def dispatch(db: AsyncSession, args: argparse.Namespace) -> tuple[dict, int]:
+    if args.command == "plan":
+        targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
+        result = {
+            "loader_version": LOADER_VERSION, "sites": [s.code for s in targets.sites], "racks": len(targets.racks), "devices": len(targets.devices),
+            "routes": {s.code: {"integration": targets.routes[s.id].integration.name, "collector": targets.routes[s.id].collector.name,
+                                "poll_interval_seconds": targets.routes[s.id].integration.poll_interval_seconds} for s in targets.sites},
+            "outside_demo_sites": await outside_fingerprint(db, protect_prefix(args)),
+        }
+        return result, 0
+    if args.command == "apply":
+        result = await run_apply(db, args)
+        if not args.no_verify:
             targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-            result = {
-                "loader_version": LOADER_VERSION, "sites": [s.code for s in targets.sites], "racks": len(targets.racks), "devices": len(targets.devices),
-                "routes": {s.code: {"integration": targets.routes[s.id].integration.name, "collector": targets.routes[s.id].collector.name,
-                                    "poll_interval_seconds": targets.routes[s.id].integration.poll_interval_seconds} for s in targets.sites},
-                "outside_demo_sites": await outside_fingerprint(db, protect_prefix(args)),
-            }
-            return result, 0
-        if args.command == "apply":
-            result = await run_apply(db, args)
-            if not args.no_verify:
-                targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-                report = await verify(db, targets, expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours,
-                                      require_sensors="sensors" in args.steps)
-                result["verify"] = report.as_dict()
-                result["ok"] = result["ok"] and report.ok
-            return result, 0 if result["ok"] else 1
-        if args.command == "refresh":
-            result = await run_refresh(db, args)
-            return result, 0 if result["ok"] else 1
-        if args.command == "verify":
-            targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-            report = await verify(db, targets, expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours)
-            return report.as_dict(), 0 if report.ok else 1
-        if args.command == "purge":
-            targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
-            before = await outside_fingerprint(db, protect_prefix(args))
-            purged = await purge(db, targets, dry_run=args.dry_run)
-            after = await outside_fingerprint(db, protect_prefix(args))
-            return {**purged.as_dict(), "outside_demo_sites_unchanged": before["digest"] == after["digest"]}, 0
+            report = await verify(db, targets, expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours,
+                                  device_hours=args.device_history_hours, as_of=clock(args), require_sensors="sensors" in args.steps,
+                                  parts=frozenset(args.steps) & {"existing", "sensors", "devices", "floorplans"})
+            result["verify"] = report.as_dict()
+            result["ok"] = result["ok"] and report.ok
+        return result, 0 if result["ok"] else 1
+    if args.command == "refresh":
+        result = await run_refresh(db, args)
+        return result, 0 if result["ok"] else 1
+    if args.command == "verify":
+        targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
+        report = await verify(db, targets, expected_racks=args.expect_racks, expected_devices=args.expect_devices, hours=args.history_hours,
+                              device_hours=args.device_history_hours, as_of=clock(args))
+        return report.as_dict(), 0 if report.ok else 1
+    if args.command == "purge":
+        targets = await discover(db, prefix=args.site_prefix, overrides=dict(args.integration))
+        before = await outside_fingerprint(db, protect_prefix(args))
+        purged = await purge(db, targets, dry_run=args.dry_run)
+        after = await outside_fingerprint(db, protect_prefix(args))
+        unchanged = before["digest"] == after["digest"]
+        return {**purged.as_dict(), "outside_demo_sites_unchanged": unchanged}, 0 if unchanged else 1
     raise LoaderError(f"Unknown command {args.command!r}")
 
 
@@ -232,21 +280,20 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("plan", "apply", "refresh", "verify", "purge"):
         p = sub.add_parser(name)
         p.add_argument("--site-prefix", default=DEMO_SITE_PREFIX, help="only sites whose code starts with this are touched (e.g. DEMO-SITE-01 for one site)")
-        p.add_argument("--protect-prefix", default=DEMO_SITE_PREFIX, help="sites NOT starting with this are fingerprinted before/after and must be unchanged")
         p.add_argument("--integration", action="append", default=[], type=parse_pair, metavar="SITE=NAME", help="choose a site's integration explicitly")
         if name in ("apply", "refresh", "purge"):
             p.add_argument("--confirm-local-demo", action="store_true", help="required: this database is a local demonstration database")
-        if name == "apply":
+        if name in ("apply", "verify"):
             p.add_argument("--as-of", default=None, type=parse_as_of, metavar="ISO8601", help="pin the sample clock to a timezone-aware, non-future ISO 8601 time (default: the live clock)")
         if name in ("apply", "refresh"):
             p.add_argument("--sequential", action="store_true", help="ingest one collector at a time instead of one session per collector")
         if name in ("apply", "verify"):
+            p.add_argument("--device-history-hours", type=float, default=DEFAULT_DEVICE_HISTORY_HOURS, help="history window for the device mappings (default 24)")
             p.add_argument("--expect-racks", type=int, default=None, help="fail unless exactly this many demo racks are in scope (the demo has 100)")
             p.add_argument("--expect-devices", type=int, default=None, help="fail unless exactly this many devices are in scope (the demo has 500)")
             p.add_argument("--history-hours", type=float, default=DEFAULT_HISTORY_HOURS)
         if name == "apply":
             p.add_argument("--steps", type=lambda v: [s.strip() for s in v.split(",")], default=list(STEPS), help=f"comma list of {','.join(STEPS)}")
-            p.add_argument("--device-history-hours", type=float, default=DEFAULT_DEVICE_HISTORY_HOURS, help="history for the device mappings (default 24; use a smaller value for a pilot run)")
             p.add_argument("--actor-email", default=None, help="user the floor-plan import/calibration is attributed to (default: oldest active user)")
             p.add_argument("--no-sandbox", action="store_true", help="parse the generated DXF in-process instead of the sandboxed child")
             p.add_argument("--no-verify", action="store_true")

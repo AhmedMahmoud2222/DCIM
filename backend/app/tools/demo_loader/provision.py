@@ -2,6 +2,7 @@
 """Creates the objects the simulator needs: device metric mappings and the 100 inlet sensors. Every create is
 look-up-first, so a second run changes nothing."""
 
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 
@@ -32,8 +33,19 @@ SENSOR_ELEVATION_PER_U_MM = 44.45
 AUDIT_SOURCE = "system"  # the audit table only allows ui/api/system/import; `reason` names the loader
 
 
+MAX_TAG = 64
+_HASH_CHARS = 10
+
+
 def sensor_tag(rack_tag: str) -> str:
-    return f"{SENSOR_TAG_PREFIX}{rack_tag}"[:64]
+    """`DEMO-ENV-<rack tag>`. A rack tag too long for the 64-character asset tag keeps its start and gains a hash of the whole
+    tag, so two long tags that share their first characters still get different sensor tags."""
+    full = f"{SENSOR_TAG_PREFIX}{rack_tag}"
+    if len(full) <= MAX_TAG:
+        return full
+    digest = hashlib.sha256(rack_tag.encode()).hexdigest()[:_HASH_CHARS]
+    keep = MAX_TAG - len(SENSOR_TAG_PREFIX) - 1 - _HASH_CHARS
+    return f"{SENSOR_TAG_PREFIX}{rack_tag[:keep]}-{digest}"
 
 
 def mapping_source(asset_tag: str, metric: str) -> str:
@@ -165,8 +177,8 @@ async def ensure_sensor(db: AsyncSession, rack: RackInfo, route: IntegrationRout
         report.created += 1
     else:
         sensor = await db.get(EnvironmentalSensor, asset.id)
-        if sensor is None or sensor.site_id != rack.site_id:
-            raise LoaderError(f"{tag} exists but is not a sensor of site {rack.site_id}; refusing to touch it.")
+        if sensor is None or sensor.site_id != rack.site_id or not owned_by_loader(asset, rack):
+            raise LoaderError(f"{tag} exists but is not this loader's sensor for rack {rack.asset_tag}; refusing to touch it.")
     assert sensor is not None
     for current, following in (("planned", "installed"), ("installed", "active")):
         if asset.lifecycle_status == current:
@@ -204,7 +216,30 @@ async def ensure_sensor(db: AsyncSession, rack: RackInfo, route: IntegrationRout
     report.mappings.extend(made)
 
 
+def owned_by_loader(asset: ManagedAsset, rack: RackInfo) -> bool:
+    marker = (asset.external_ids or {}).get(SENSOR_MARKER_KEY)
+    return asset.asset_type == "sensor" and isinstance(marker, dict) and marker.get("rack_id") == str(rack.id)
+
+
+async def preflight_sensors(db: AsyncSession, racks: list[RackInfo]) -> None:
+    """Refuse before any write if two racks would share a sensor tag, or a sensor with a wanted tag is not ours for that rack."""
+    by_tag: dict[str, RackInfo] = {}
+    for rack in racks:
+        tag = sensor_tag(rack.asset_tag)
+        if tag in by_tag:
+            raise LoaderError(f"Racks {by_tag[tag].asset_tag!r} and {rack.asset_tag!r} would share the sensor tag {tag!r}; nothing was written.")
+        by_tag[tag] = rack
+    existing = (await db.execute(select(ManagedAsset).where(ManagedAsset.asset_tag.in_(list(by_tag))))).scalars().all()
+    for asset in existing:
+        if not owned_by_loader(asset, by_tag[asset.asset_tag]):
+            raise LoaderError(
+                f"Asset {asset.asset_tag!r} already exists and is not this loader's sensor for rack {by_tag[asset.asset_tag].asset_tag!r}; "
+                "nothing was written. Rename or retire it first."
+            )
+
+
 async def ensure_sensors(db: AsyncSession, targets: Targets) -> SensorReport:
+    await preflight_sensors(db, targets.racks)
     report = SensorReport()
     for index, rack in enumerate(targets.racks, start=1):
         await ensure_sensor(db, rack, targets.routes[rack.site_id], report)

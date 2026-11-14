@@ -118,9 +118,11 @@ async def test_history_is_pinned_synthetic_and_converted_through_mapping_units(d
 
 
 async def test_sensors_floor_plans_and_heat_maps(db_session, world):
-    await cli.run_apply(db_session, args())
+    as_of = datetime.now(UTC)
+    await cli.run_apply(db_session, args(as_of=as_of))
     targets = await discover(db_session)
-    report = await verify(db_session, targets, expected_racks=12, expected_devices=60)
+    report = await verify(db_session, targets, expected_racks=12, expected_devices=60, as_of=as_of,
+                          device_hours=float(os.environ.get("DEMO_TEST_DEVICE_HOURS", "1")))
     failed = [c for c in report.checks if not c.ok]
     assert not failed, failed
     for plan in report.data["plans"]:

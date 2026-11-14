@@ -109,8 +109,25 @@ describe("AlarmRulesPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(alarmRules.editAlarmRule).toHaveBeenCalledWith("r-2", {
-      name: "Rack-B limit", threshold: 9, reason: "Revised operating limit", expected_updated_at: "2026-10-08T10:00:00Z",
+      name: "Rack-B limit", severity: "warning", threshold: 9, reason: "Revised operating limit", expected_updated_at: "2026-10-08T10:00:00Z",
     }));
+  });
+
+  it("reclassifies a migrated warning rule as critical from the edit form, and says open alarms keep their severity", async () => {
+    vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([resolvedRule]);
+    vi.mocked(alarmRules.editAlarmRule).mockResolvedValue({ ...resolvedRule, severity: "critical" });
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Edit rule" }));
+    const severity = screen.getByLabelText("Severity");
+    expect(severity).toHaveValue("warning"); // initialised from the rule, not defaulted
+    expect(screen.getByText(/already open keeps the severity it opened with/i)).toBeInTheDocument();
+    await userEvent.selectOptions(severity, "critical");
+    await userEvent.type(screen.getByLabelText("Reason for change"), "Inlet limit is a critical condition");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(alarmRules.editAlarmRule).toHaveBeenCalledWith("r-2", expect.objectContaining({
+      severity: "critical", threshold: 5, reason: "Inlet limit is a critical condition",
+    })));
   });
 
   it("explains that editing a disabled rule does not enable it", async () => {

@@ -1,113 +1,150 @@
-# Local demonstration loader (v1.0.0)
+# Local demonstration loader
 
-**Scope:** a local demonstration database only. The loader refuses to run when `ENVIRONMENT=production`, needs `--confirm-local-demo` for every command that changes data, and selects only sites whose code starts with `DEMO-SITE-`. It does not deploy anything and it does not touch the HRC site. Production deployment is not authorized by this document.
+| | |
+| --- | --- |
+| Loader version | **1.1.0** (`backend/app/tools/demo_loader/`) |
+| Runbook revision | **2**, 2026-11-14. Revision 1 was the first draft on PR #351; revision 2 answers the owner review of `3579e3af` (backup and restore safety, image rebuild, rollback with a running refresher, site and ownership boundaries, stronger verification). |
+| Applies to | PR #351 branch `claude/elegant-dijkstra-qry27c` |
 
-The loader is version-controlled code in `backend/app/tools/demo_loader/`. It is idempotent: a second run finds every object it needs already present and writes nothing.
+**Scope:** a local demonstration database only. The loader refuses to run when `ENVIRONMENT=production`, needs `--confirm-local-demo` for every command that changes data, and selects only sites whose code starts with `DEMO-SITE-`. It does not deploy anything and it does not touch the HRC site. Production deployment is not authorized by this document, and migration `0060` must not be run anywhere that is not a disposable or explicitly approved environment.
+
+The loader is version-controlled code. It is idempotent: a second run finds every object it needs already present and writes nothing.
 
 ## What it does
 
 | Step | Name | Result |
 | --- | --- | --- |
-| 1 | `existing` | 24 hours of readings (one per poll slot, 288 per series) for each mapping that already exists on a demo-site integration |
+| 1 | `existing` | 24 hours of readings (one per poll slot, 289 slots including both ends) for each mapping that already exists on a demo-site integration |
 | 2 | `sensors` | One combined temperature/humidity rack-inlet sensor per demo rack (`DEMO-ENV-<rack tag>`), commissioned to `active`, mounted on a free front U of its rack, mapped to `temperature_c` and `humidity_percent`, with 24 hours of readings |
 | 3 | `floorplans` | Each active demo plan that has no calibration gets a declared-units DXF import (millimetres) and an immutable `declared_units` calibration. Rack positions are validated first and never moved |
 | 4 | `devices` | Per equipment record, a `power_kw` and a `load_percent` mapping with an asset-specific source identifier (`demo-sim:<asset tag>:<metric>`), and 24 hours of readings |
 
-All readings go through the same function the collector endpoint calls (`ingest_collector_telemetry`). That gives you collector-assignment checks (a record for an integration not assigned to the collector is rejected), pinned mapping revisions (`contract_evidence = pinned`), unit conversion (a mapping in °F receives °F numbers and stores °C), de-duplication on `(collector, dedup_key)` and alarm evaluation.
+All readings go through the same function the collector endpoint calls (`ingest_collector_telemetry`): collector-assignment checks, pinned mapping revisions (`contract_evidence = pinned`), unit conversion (a mapping in °F receives °F numbers and stores °C), de-duplication on `(collector, dedup_key)` and alarm evaluation.
 
-Every simulated reading carries `attributes = {"synthetic": true, "provenance": "demo_loader", "generator": "dcim-demo-loader", "generator_version": "1.0.0", "profile": "diurnal-v1"}` and a dedup key starting `demo-sim:v1:`. The existing nine mappings continue their real series: the loader reuses the external identifier of the latest real reading and anchors the simulated values on it.
+Every simulated reading carries `attributes = {"synthetic": true, "provenance": "demo_loader", "generator": "dcim-demo-loader", "generator_version": "1.1.0", "profile": "diurnal-v1"}` and a dedup key starting `demo-sim:v1:`. The existing mappings continue their real series: the loader reuses the external identifier of the latest real reading and anchors the simulated values on it.
 
-`refresh` repeats the ingest for any slot newer than the last one stored. Run it with `--watch` (or the optional compose override below) to keep readings fresh; the heat maps treat a reading as fresh for three poll intervals (15 minutes at 300 s).
+`refresh` repeats the ingest for any slot that is missing in the last 24 hours. The heat maps treat a reading as fresh for three poll intervals (15 minutes at 300 s).
+
+### Boundaries the loader enforces
+
+- **Sites:** `--site-prefix` must start with `DEMO-SITE-` and contain only letters, digits and hyphens. `HRC`, an empty value and anything with a wildcard are refused before any query.
+- **Routing:** each selected site needs exactly one enabled integration whose `site_id` is that site, or (only if it has no site) one that you name explicitly with `--integration SITE=NAME` or whose name contains this site's code and no other demo site's code. An integration that belongs to another site is refused even if you name it. One integration cannot serve two sites.
+- **Ownership:** if any mapping on a routed integration points at an asset in a site that is not selected, the run stops before writing. A mapping whose asset's site cannot be determined is simulated only when its integration is owned by the demo site by `site_id`; otherwise it is skipped and listed.
+- **HRC:** before and after every `apply`, the loader fingerprints everything outside `DEMO-SITE-*` (racks, placements, sensors, plans, integrations, mappings, readings, alarms) and fails the run if it changed. That is detection after the fact; the routing and ownership rules above are what prevent the write.
+- **Writers:** `apply` and `refresh` (including `refresh --watch`) hold a shared PostgreSQL advisory lock; a real `purge` needs it exclusively, so a purge refuses to start while any loader or the `demo-refresh` service is still running, and no writer starts during a purge.
 
 ## Commands
 
 ```text
-python -m app.tools.demo_loader plan                       # read-only: sites, racks, devices, integration and collector per site
+python -m app.tools.demo_loader plan
 python -m app.tools.demo_loader apply   --confirm-local-demo
 python -m app.tools.demo_loader refresh --confirm-local-demo [--watch]
 python -m app.tools.demo_loader verify
 python -m app.tools.demo_loader purge   --confirm-local-demo [--dry-run]
 ```
 
-Useful options: `--steps existing,sensors,floorplans,devices`, `--history-hours 24`, `--device-history-hours 24`, `--as-of 2026-11-13T12:00:00Z` (timezone-aware ISO 8601, not in the future, apply only; refresh always uses the live clock), `--sequential`, `--site-prefix`, `--protect-prefix`, `--integration DEMO-SITE-01="<integration name>"` (only when the loader cannot pick a site's integration by `site_id` or by the site code in its name), `--actor-email you@example.com` (user recorded on the floor-plan import and calibration; default is the oldest active user), `--expect-racks 100 --expect-devices 500`.
+Options: `--steps existing,sensors,floorplans,devices`, `--history-hours 24`, `--device-history-hours 24`, `--as-of 2026-11-13T12:00:00Z` (timezone-aware ISO 8601, not in the future; `apply` and `verify` only, `refresh` always uses the live clock), `--sequential`, `--site-prefix DEMO-SITE-01`, `--integration DEMO-SITE-01="<integration name>"`, `--actor-email you@example.com` (user recorded on the floor-plan import and calibration; default is the oldest active user), `--expect-racks 100 --expect-devices 500`.
 
 Every command prints one JSON document on stdout and exits 0 only when everything passed.
 
 ## Windows PowerShell
 
-Run these from the repository root with Docker Desktop running. Replace the placeholders. The commands assume the Compose project in this repository (`postgres`, `backend`) and the values in your root `.env`.
+### 0. Prerequisites
 
-### 1. Back up first
-
-`>` redirection can corrupt a binary dump in Windows PowerShell 5.1, so dump inside the container and copy the file out.
+- Windows 10/11 with Docker Desktop running (Compose v2: `docker compose version`), Git, and PowerShell 5.1 or 7.
+- The repository checked out, the stack previously started from it (a root `.env` with `POSTGRES_PASSWORD`, `DCIM_APP_PASSWORD`, `JWT_SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`), and Docker allowed at least 4 GB of memory and 5 GB of free disk.
+- Allow the local scripts for this window only, from the repository root:
 
 ```powershell
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-New-Item -ItemType Directory -Force backups | Out-Null
-docker compose exec -T postgres sh -c 'pg_dump -U postgres -Fc -d "$POSTGRES_DB" -f /tmp/dcim-before-demo-loader.dump'
-docker compose cp postgres:/tmp/dcim-before-demo-loader.dump ".\backups\dcim-before-demo-loader-$stamp.dump"
-Get-Item ".\backups\dcim-before-demo-loader-$stamp.dump" | Select-Object Name, Length
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+docker compose version
+docker compose ps
 ```
 
-Keep the existing `dcim-before-ems.dump` as well.
+### 1. Back up first, and prove the backup
+
+```powershell
+$backup = .\scripts\demo\Backup-DemoDatabase.ps1
+Get-Item $backup, "$backup.sha256" | Select-Object Name, Length
+```
+
+The script dumps inside the container (so PowerShell never re-encodes the binary), checks that the archive is readable and lists table data, copies it out, proves the copy is byte-identical by SHA-256, and writes `<file>.sha256`. It stops with an error on any failed step and never overwrites an earlier backup. Keep `$backup` for step 7, and keep your existing `dcim-before-ems.dump` as well.
 
 ### 2. Install the code
+
+Rebuild **every** image from this commit. `migrate`, `celery-worker`, `celery-beat` and `demo-refresh` are separate Compose services; building only `backend` can leave an older migration set in `migrate` while the new backend expects the severity columns.
 
 ```powershell
 git fetch origin
 git checkout claude/elegant-dijkstra-qry27c
 git pull --ff-only
-docker compose build backend frontend
-docker compose run --rm migrate          # applies 0060_alarm_severity (adds alarm severity; nothing else)
-docker compose up -d backend celery-worker celery-beat frontend
+git rev-parse HEAD                                   # record this SHA in your change record
+
+$compose = '-f', 'docker-compose.yml', '-f', 'docker-compose.demo.yml'
+docker compose @compose build                        # all services, one commit
+if ($LASTEXITCODE -ne 0) { throw 'image build failed; nothing has been started' }
+
+docker compose @compose run --rm migrate             # applies 0060_alarm_severity
+if ($LASTEXITCODE -ne 0) { throw 'migration failed; do not start the new services' }
+
+$revision = docker compose @compose run --rm --no-deps migrate alembic current
+if ($LASTEXITCODE -ne 0 -or -not ($revision -match '0060_alarm_severity \(head\)')) { throw "database is not at 0060_alarm_severity (head): $revision" }
+
+docker compose @compose up -d backend celery-worker celery-beat frontend
+if ($LASTEXITCODE -ne 0) { throw 'service start failed' }
 ```
 
-Migration `0060_alarm_severity` adds `severity` to `alarm_rule` and `alarm` (default `warning`). Existing rules and alarms are stamped `warning` as a placeholder; set the real severity per rule in **Alarm rules**. Review the migration before running it against data you care about, and keep the backup from step 1.
+Migration `0060` adds `severity` to `alarm_rule` and `alarm` (default `warning`) and nothing else. Existing rules and alarms are stamped `warning` as a placeholder; set the real severity per rule in **Alarm rules → Edit**. The upgrade holds a strong table lock until it commits; run it only when nothing else is using the database, with the backup from step 1.
 
 ### 3. Check what the loader will use (read-only)
 
 ```powershell
-docker compose exec backend python -m app.tools.demo_loader plan
+docker compose @compose exec -T backend python -m app.tools.demo_loader plan
 ```
 
-Confirm three `DEMO-SITE-0n` sites, 100 racks, 500 devices, one integration and one collector per site, and `poll_interval_seconds` 300. If a site's integration is ambiguous the command says so and tells you the `--integration` argument to add.
+Confirm three `DEMO-SITE-0n` sites, 100 racks, 500 devices, one integration and one collector per site, and `poll_interval_seconds` 300. If a site's integration is ambiguous or belongs to another site the command says so and exits without writing.
 
 ### 4. Seed
 
-**Pilot first.** One site, two hours of device history, to prove the pipeline on your data before the long run (a few minutes):
+**Pilot first.** One site, two hours of device history, in one process (a few minutes):
 
 ```powershell
-docker compose exec backend python -m app.tools.demo_loader apply --confirm-local-demo --site-prefix DEMO-SITE-01 `
+docker compose @compose exec -T backend python -m app.tools.demo_loader apply --confirm-local-demo --site-prefix DEMO-SITE-01 `
   --actor-email you@example.com --device-history-hours 2 --sequential
-docker compose exec backend python -m app.tools.demo_loader verify --site-prefix DEMO-SITE-01
+docker compose @compose exec -T backend python -m app.tools.demo_loader verify --site-prefix DEMO-SITE-01 --device-history-hours 2
 ```
 
-A pilot leaves real, correctly flagged data in place; the full run below reuses it and fills the rest (the loader skips every slot already stored).
+A pilot leaves real, correctly flagged data in place. The full run below reuses it and fills the rest: the loader skips every slot that is already stored.
 
-**Full run, 24 hours for every series.** The work is Python-CPU bound, so run one process per site; each changes only its own site, and the three are independent:
+**Full run, 24 hours for every series.** The work is limited by the Python process, not by PostgreSQL, so run one process per site. Each changes only its own site and the three are independent:
 
 ```powershell
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$runId = Get-Date -Format 'yyyyMMdd-HHmmss'
 $asOf  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')     # one clock for all three, explicit UTC
-$jobs = 'DEMO-SITE-01','DEMO-SITE-02','DEMO-SITE-03' | ForEach-Object {
-  Start-Job -Name $_ -ArgumentList $_, $asOf, $stamp -ScriptBlock {
-    param($site, $asOf, $stamp)
-    Set-Location $using:PWD
-    docker compose exec -T backend python -m app.tools.demo_loader apply --confirm-local-demo --site-prefix $site `
-      --actor-email you@example.com --as-of $asOf --sequential --no-verify 2>$null |
-      Out-File -Encoding utf8 ".\backups\demo-loader-apply-$site-$stamp.json"
+New-Item -ItemType Directory -Force backups | Out-Null
+$jobs = 'DEMO-SITE-01', 'DEMO-SITE-02', 'DEMO-SITE-03' | ForEach-Object {
+  Start-Job -Name $_ -ArgumentList $_, $asOf, $runId, $PWD.Path -ScriptBlock {
+    param($site, $asOf, $runId, $dir)
+    Set-Location $dir
+    docker compose -f docker-compose.yml -f docker-compose.demo.yml exec -T backend python -m app.tools.demo_loader apply `
+      --confirm-local-demo --site-prefix $site --actor-email you@example.com --as-of $asOf --sequential --no-verify 2>$null |
+      Out-File -Encoding utf8 ".\backups\demo-loader-apply-$site-$runId.json"
     $LASTEXITCODE
   }
 }
 $jobs | Wait-Job | Out-Null
-$jobs | ForEach-Object { '{0}: exit {1}' -f $_.Name, ((Receive-Job $_) | Select-Object -Last 1) }
+$jobs | ForEach-Object { '{0}: exit {1}' -f $_.Name, (Receive-Job $_ | Select-Object -Last 1) }
 ```
 
-Every job must print `exit 0`. If one does not, read its JSON file (`failed_collectors` and `rejected` say what went wrong) and run that site's command again: finished slots are skipped, nothing is duplicated.
+Every job must print `exit 0`. If one does not, read its JSON file (`failed_collectors`, `rejected` and `error` say what went wrong) and run that site's command again: completed slots are skipped and nothing is duplicated. Then check the whole result with the same clock:
 
-A single-process run (`apply --confirm-local-demo --actor-email ...`, no `--site-prefix`) does the same work in one process and is simpler; it is about three times slower.
+```powershell
+docker compose @compose exec -T backend python -m app.tools.demo_loader verify --expect-racks 100 --expect-devices 500 --as-of $asOf
+```
 
-**Measured throughput** (4-core Linux, PostgreSQL 16, same 18,297 readings in each mode, 0 rejected, 0 duplicates; see `backend/tests/integration/test_demo_loader_benchmark.py` and the table in the PR):
+A single-process run (`apply --confirm-local-demo --actor-email ...` with no `--site-prefix`) does the same work in one process and takes about three times as long.
+
+**Measured throughput** (4-core Linux, PostgreSQL 16, the same 18,297 readings in each mode, 0 rejected, 0 duplicates; reproducible with `backend/scripts/demo_loader_benchmark/run.sh`):
 
 | Mode | Elapsed | Readings/s |
 | --- | --- | --- |
@@ -115,73 +152,75 @@ A single-process run (`apply --confirm-local-demo --actor-email ...`, no `--site
 | one process, one session per collector | 128.8 s | 142 |
 | three processes, one per site | 57.4 s | 319 |
 
-The client Python process, not PostgreSQL, is the bottleneck (134 s of client CPU against 29 s of database CPU in the sequential run), which is why separate processes scale and extra sessions inside one process do not. A full seed is about 349,000 readings (1,000 device series + 200 sensor series + 9 existing series, 289 slots each): about **54 minutes** in one process or about **18 minutes** with three. These are projections from the measured rates, not a run against your database; your hardware and Docker Desktop's resource limits will change them.
+The client Python process is the bottleneck (134 s of client CPU against 29 s of database CPU in the sequential run), which is why separate processes scale and extra sessions inside one process do not. A full seed is about 349,000 readings (1,000 device series + 200 sensor series + 9 existing series, 289 slots each): about **54 minutes** in one process or about **18 minutes** with three. **These are projections from the measured rates, not a run against your database or at 100 racks / 500 devices.** The benchmark fixture has no alarm rules, so it does not show the cost or the lock behaviour of an alarm-bearing workload; Docker Desktop's resource limits will also change the figures.
 
 ### 5. Keep readings fresh
 
 One catch-up cycle:
 
 ```powershell
-docker compose exec backend python -m app.tools.demo_loader refresh --confirm-local-demo
+docker compose @compose exec -T backend python -m app.tools.demo_loader refresh --confirm-local-demo
 ```
 
-Continuous (leave the window open, or use the compose override):
+Continuous, as a detached service from the demo override:
 
 ```powershell
-docker compose exec backend python -m app.tools.demo_loader refresh --confirm-local-demo --watch
-# or, detached:
-docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d demo-refresh
+docker compose @compose up -d demo-refresh
+docker compose @compose logs --tail 20 demo-refresh
+docker compose @compose stop demo-refresh        # stop it before any rollback (step 7)
 ```
+
+`demo-refresh` holds the shared writer lock for as long as it runs. A purge will refuse to start until it is stopped.
 
 ### 6. Verify
 
 ```powershell
-docker compose exec backend python -m app.tools.demo_loader verify --expect-racks 100 --expect-devices 500
+docker compose @compose exec -T backend python -m app.tools.demo_loader verify --expect-racks 100 --expect-devices 500
 if ($LASTEXITCODE -ne 0) { Write-Warning 'verification failed; read the checks above' }
 ```
 
-The checks cover: rack and equipment counts unchanged; history has many points per series; no slot stored twice; every simulated reading flagged synthetic and pinned; every device has readings; one active combined sensor per rack, placed in a rack of its own site and room, with two mappings and fresh data; each demo plan calibrated with valid rack geometry; and non-empty temperature and humidity heat-map grids per room.
+`verify` derives, for the selected sites, every series that should exist (each existing mapping, both metrics of each rack sensor, both metrics of each device) and checks that **every** slot of its window is stored under its loader key. It also checks that all simulated readings are flagged synthetic and pinned, rack and equipment counts, one active combined sensor per rack placed in a rack of its own site and room, both sensor metrics fresh on the live clock, each demo plan calibrated with valid rack geometry, and non-empty temperature and humidity heat-map grids per room.
 
-Row-level checks you can run yourself:
-
-```powershell
-docker compose exec -T postgres sh -c 'psql -U postgres -d "$POSTGRES_DB" -c "select s.code, count(*) from site s group by s.code order by 1;"'
-docker compose exec -T postgres sh -c 'psql -U postgres -d "$POSTGRES_DB" -c "select (select count(*) from rack) racks, (select count(*) from equipment) equipment, (select count(*) from environmental_sensor) sensors;"'
-```
-
-Then open **Telemetry** for a device or sensor (the chart shows a day of points), **Floor plans → room → Heat map** (temperature and humidity), **Events** (severity chips) and **Equipment** (Site, Building, Floor, Room, Rack columns).
+Then open **Telemetry** for a device or sensor (a day of points), **Floor plans → room → Heat map**, **Events** (severity chips) and **Equipment** (Site, Building, Floor, Room, Rack columns).
 
 ### 7. Roll back
 
-Remove only what the loader created (readings, loader mappings, loader sensors and their alarms):
+**A. Remove only what the loader created** (readings, loader mappings, loader sensors, and the alarms the loader opened). Stop the refresher first, then preview, then delete:
 
 ```powershell
-docker compose exec backend python -m app.tools.demo_loader purge --dry-run
-docker compose exec backend python -m app.tools.demo_loader purge --confirm-local-demo
+docker compose @compose stop demo-refresh
+docker compose @compose exec -T backend python -m app.tools.demo_loader purge --dry-run
+docker compose @compose exec -T backend python -m app.tools.demo_loader purge --confirm-local-demo
 ```
 
-Floor-plan calibrations are immutable by database trigger, and the audit log is append-only, so `purge` leaves both. To undo those, or to return to the exact earlier state (including removing migration `0060`), restore the backup:
+`purge` is scoped to the selected `--site-prefix` sites and refuses to run while any loader process is writing. It deletes an alarm only if it carries the loader origin marker written when the alarm was opened by a simulated reading and its latest reading is still simulated. **A real alarm that simulated readings later retained or cleared is kept, with its acknowledgement history,** but its latest reading and last value were changed while the simulation ran and are not restored; only the backup restores that. Floor-plan calibrations are immutable by database trigger and the audit log is append-only, so `purge` leaves both.
+
+**B. Return to the backup** (also removes calibrations and migration `0060`). The restore script stops every writer including `demo-refresh`, checks the backup file against its manifest, copies it into the container, re-checks the checksum there, test-restores it into a throwaway database, and only then drops and recreates the real one. Any failure before that point ends the script with your database untouched:
 
 ```powershell
-docker compose stop backend celery-worker celery-beat
-docker compose cp ".\backups\dcim-before-demo-loader-$stamp.dump" postgres:/tmp/restore.dump
-docker compose exec -T postgres sh -c 'dropdb -U postgres --if-exists "$POSTGRES_DB" && createdb -U postgres "$POSTGRES_DB" && pg_restore -U postgres -d "$POSTGRES_DB" --no-owner /tmp/restore.dump'
-docker compose run --rm bootstrap-privileges
-docker compose up -d backend celery-worker celery-beat
+.\scripts\demo\Restore-DemoDatabase.ps1 -BackupPath $backup -ConfirmDestroyLocalDemoDatabase
 ```
 
-Restoring a dump taken before the migration also restores the earlier schema; check out the earlier commit and rebuild the images so the code matches.
+The script does not restart anything. A pre-`0060` dump needs pre-`0060` code. Check out the commit the backup was taken from, rebuild **all** images, and start them; do not start the new images against the restored schema:
 
-## Safety properties (and how they are checked)
+```powershell
+git checkout <the commit you ran before this PR>
+docker compose @compose build
+docker compose @compose up -d backend celery-worker celery-beat frontend
+```
 
-- **HRC and every non-demo site are untouched.** `apply` takes a digest of all racks, equipment placements, sensors, plans, calibrations, integrations and mappings outside the `DEMO-SITE-` sites before and after, prints both, and fails if they differ.
-- **Counts do not change.** The loader creates no racks and no equipment, and `--expect-racks/--expect-devices` fail the run if they are not 100 and 500.
-- **No duplicates.** Sensors and mappings are looked up before creation (unique asset tag and unique `(integration, source_identifier)`), and readings are de-duplicated by the collector contract; `verify` checks that no slot is stored twice.
-- **Local only.** Refuses `ENVIRONMENT=production`; needs `--confirm-local-demo`.
+## What has and has not been tested
+
+| Tested in CI and on a disposable PostgreSQL 16 (Linux) | Not tested here |
+| --- | --- |
+| The loader end to end: seed, rerun, refresh, purge, routing and ownership refusals, site boundary, failure and resume (parallel and sequential), `verify` gap detection, writer lock, strict `--as-of`, HRC unchanged | The PowerShell scripts and every PowerShell block above were **not executed** (no PowerShell or Docker daemon in the build environment). `backend/tests/unit/test_demo_powershell_scripts.py` checks their structure only: native exit codes are checked, nothing destructive precedes the backup checks, no path or timestamp variable is reused. Run them against a disposable Compose project first |
+| Migration `0060` up, down, up on a clean database; `alembic check` | Upgrading an already-built previous stack; a rollback with `demo-refresh` already running on Docker Desktop (the writer lock is tested in-process) |
+| Compose override merges and lists `demo-refresh` (`docker compose config`) | Your dataset: real plan geometry, real integration/site assignment, the full 100-rack / 500-device seed, alarm-bearing workloads |
 
 ## Known limits
 
 - Simulated values are plausible, not measured. Do not use them for capacity or compliance decisions.
-- Calibration declares the drawing's millimetres equal to room millimetres with the origin at the room corner. Existing rack positions keep their meaning because they are already room-local millimetres.
-- A rack with no free front U gets no sensor; the loader reports it as a problem instead of moving equipment.
-- Simulated readings can open alarms if an alarm rule's threshold is crossed; their severity is the rule's severity.
+- Calibration declares that the drawing's millimetres equal room millimetres with the origin at the room corner. Existing rack positions keep their meaning because they are already room-local millimetres.
+- A rack with no free front U gets no sensor; the loader reports it as a problem instead of moving equipment. A sensor tag too long for the 64-character column keeps its start and gains a hash suffix.
+- Simulated readings can open alarms if a rule threshold is crossed; their severity is the rule's severity.
+- Provisioning commits in chunks, so `apply` is not atomic. It is safe to interrupt and run again.

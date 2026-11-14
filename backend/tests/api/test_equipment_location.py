@@ -80,3 +80,66 @@ def test_site_building_floor_are_withheld_outside_the_callers_scope():
     shown = _location_out(placement, {ids["room"]: row}, {ids["rack"]: "K"}, UNRESTRICTED)
     assert shown is not None and shown.site.name == "S" and shown.building.name == "B" and shown.floor.name == "F"
     assert _location_out(None, {}, {}, UNRESTRICTED) is None
+
+
+async def test_a_rack_scoped_caller_sees_locations_only_for_equipment_in_their_racks(client, auth_headers):
+    """Rack-only and foreign-site callers: equipment outside their grant is absent, and what they do see carries only
+    its own hierarchy (never another site's names)."""
+    from tests.api.test_user_groups import _group, _group_user
+
+    admin = await auth_headers("Administrator")
+    a = await _make_site(client, admin)
+    b = await _make_site(client, admin)
+    rack_a1 = await _rack(client, admin, auth_headers, a["room"], "A-ONE")
+    rack_a2 = await _rack(client, admin, auth_headers, a["room"], "A-TWO")
+    rack_b = await _rack(client, admin, auth_headers, b["room"], "B-ONE")
+    mine = await create_equipment(client, admin, auth_headers)
+    sibling = await create_equipment(client, admin, auth_headers)
+    foreign = await create_equipment(client, admin, auth_headers)
+    await _mount(client, admin, mine["id"], a["room"], rack_a1["id"])
+    await _mount(client, admin, sibling["id"], a["room"], rack_a2["id"])
+    await _mount(client, admin, foreign["id"], b["room"], rack_b["id"])
+
+    gid = await _group(client, admin, allow=["equipment:read", "rack:read", "location:read"],
+                       sites=[{"site_id": a["site"], "rack_scope": "selected", "rack_ids": [rack_a1["id"]]}])
+    _, headers = await _group_user(client, admin, [gid])
+    items = (await client.get("/api/v1/equipment", headers=headers)).json()["items"]
+    assert [i["id"] for i in items] == [mine["id"]]
+    assert items[0]["location"]["rack"]["name"] == "A-ONE" and items[0]["location"]["site"]["id"] == a["site"]
+    assert (await client.get(f"/api/v1/equipment/{foreign['id']}", headers=headers)).status_code == 404
+    assert (await client.get(f"/api/v1/equipment/{sibling['id']}", headers=headers)).status_code == 404
+    assert "B-ONE" not in (await client.get("/api/v1/equipment", headers=headers)).text
+
+
+async def test_the_hierarchy_lookup_runs_once_per_page_not_once_per_item(client, auth_headers, db_engine):
+    """Query-count assertion: the location lookup (room > floor > building > site join) must not grow with the page size."""
+    from sqlalchemy import event
+
+    admin = await auth_headers("Administrator")
+    world = await _make_site(client, admin)
+    rack = await _rack(client, admin, auth_headers, world["room"], "Q-ONE")
+    for _ in range(6):
+        eq = await create_equipment(client, admin, auth_headers)
+        await _mount_unique(client, admin, eq["id"], world["room"], rack["id"], _)
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(db_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        await client.get("/api/v1/equipment", headers=admin)
+    finally:
+        event.remove(db_engine.sync_engine, "before_cursor_execute", record)
+    hierarchy = [s for s in statements if "FROM room" in s and "JOIN floor" in s and "JOIN building" in s and "JOIN site" in s]
+    assert len(hierarchy) <= 1, f"{len(hierarchy)} hierarchy lookups for 6 items"
+
+
+async def _mount_unique(client, headers, equipment_id, room_id, rack_id, slot):
+    resp = await client.post(
+        f"/api/v1/equipment/{equipment_id}/move",
+        json={"placement_type": "rack_mounted", "room_id": room_id, "rack_id": rack_id, "u_start": 1 + slot * 2, "u_end": 3 + slot * 2, "side": "front"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
