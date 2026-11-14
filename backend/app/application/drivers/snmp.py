@@ -98,7 +98,7 @@ class SNMPDriver(ProtocolDriver):
                 reason=(
                     "No SNMP transport configured -- this phase ships the SNMP driver's "
                     "abstraction only, not a real network transport. See "
-                    "PHASE8_EDGE_COLLECTOR_CONTRACT.md."
+                    "docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md."
                 ),
             )
         transport_credential: str | SnmpV3Credential | None = credential

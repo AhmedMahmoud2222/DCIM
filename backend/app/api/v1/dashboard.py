@@ -130,7 +130,7 @@ async def get_dashboard_summary(
     organization as a filter dimension) — deliberately deferred, not silently dropped:
     the location hierarchy already gives site/building/floor/room drill-down, and
     Organization -> Site is a simple one-hop join a future iteration can add without
-    changing this endpoint's shape. Disclosed in PHASE3_IMPLEMENTATION_REPORT.md."""
+    changing this endpoint's shape. Disclosed in docs/history/PHASE3_IMPLEMENTATION_REPORT.md."""
     room_ids = await _filtered_room_ids(db, site_id=site_id, building_id=building_id, floor_id=floor_id, room_id=room_id)
 
     # --------------------------------------------------------------- site summary

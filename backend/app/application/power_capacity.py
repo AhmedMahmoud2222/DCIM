@@ -627,7 +627,7 @@ def _node_value_from_snapshot(
     much graph exists to traverse in the first place, once, for the whole request. This
     is a deliberate, documented semantic change from "each node's own downstream subtree
     is bounded to 5,000 nodes / 500 levels" to "the whole active graph loaded for one
-    dashboard request is bounded to 20,000 edges" -- see PHASE3_N1_CORRECTION_REPORT.md.
+    dashboard request is bounded to 20,000 edges" -- see docs/history/PHASE3_N1_CORRECTION_REPORT.md.
 
     Cycle safety (incidental fix, not separately required): the original recursive
     `node_value` closure has no protection of its own against a node revisited while

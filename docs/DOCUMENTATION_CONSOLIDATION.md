@@ -11,7 +11,7 @@
 This consolidation reorganizes the repository's dated historical Markdown evidence into `docs/history/`, reconciles every affected reference, and adds machine-readable documentation validation. No historical report is deleted; distinct documents are retained even where subjects overlap.
 
 Before: 167 tracked Markdown documents, all at their original locations.  
-After: 167 tracked Markdown documents (count unchanged — relocation only).  
+After: 170 tracked Markdown documents (55 historical reports relocated to `docs/history/` plus 3 new consolidation infrastructure Markdown files: `docs/history/README.md`, `docs/DOCUMENTATION_CONSOLIDATION.md` and `docs/DOCUMENTATION_VALIDATION.md`).  
 Historical documents relocated into `docs/history/`: **55**.  
 Documents deleted: **0**.  
 Exact/normalized whole-file duplicates: **0** (verified by Codex baseline; re-confirmed below).
@@ -26,10 +26,11 @@ Exact/normalized whole-file duplicates: **0** (verified by Codex baseline; re-co
 | Security evidence & agent authority | 9 | 9 | Retained in place (`docs/security/`) |
 | Third-party / bundled (archify) | 24 | 24 | Retained; excluded from validation |
 | CI / operations / other current docs | 41 | 41 | Retained in place |
-| Historical phase / architecture / review reports | 55 | 55 | **Relocated to `docs/history/`** |
-| **Total tracked Markdown** | **167** | **167** | |
+| Historical phase / architecture / review reports | 55 (at root) | 55 (relocated to `docs/history/`) | **Relocated** |
+| New consolidation infrastructure Markdown | 0 | 3 | `docs/history/README.md`, `docs/DOCUMENTATION_CONSOLIDATION.md`, `docs/DOCUMENTATION_VALIDATION.md` |
+| **Total tracked Markdown** | **167** | **170** | |
 
-The document count is unchanged because this is a relocation, not a deletion or addition of report content. Four new infrastructure files were added (`docs/history/README.md`, `docs/documentation-moves.json`, `docs/DOCUMENTATION_CONSOLIDATION.md`, `docs/DOCUMENTATION_VALIDATION.md`) — these are the consolidation's index, mapping, report and validation evidence.
+The net increase of three is solely the new consolidation infrastructure Markdown files; no historical report was deleted or added. `docs/documentation-moves.json` is the fourth infrastructure file (JSON, not Markdown) and is excluded from the Markdown counts.
 
 ## 2. Classification
 
@@ -61,6 +62,8 @@ Canonical navigation and guidance: `docs/DOCUMENTATION_INDEX.md`, `docs/HISTORY_
 | **Delete** | 0 | No document deleted. Distinct documents are not removed merely because subjects overlap. |
 | **Not relocated (active hold evidence)** | `docs/FK_INDEX_BENCHMARK_0057.md`, `docs/FK_INDEX_PREFLIGHT_0057.md`, `docs/FK_INDEX_ROLLOUT_0057.md`, `docs/benchmark-results/0057/` | Migration 0057 evidence tied to open Issue #214 production HOLD. Kept at current paths so the rollout contract and hold remain immediately visible; relocation would not lift the hold and is out of scope for this documentation pass. |
 
+**Link-only adjustments (3 files):** all 55 relocated reports are otherwise byte-identical, except `ARCHITECTURE_REVIEW.md` (line 1642), `PHASE10_INDEPENDENT_AUDIT_REPORT.md` (line 207) and `PHASE10_INTEGRATION_REPORT.md` (line 507), whose `docs/X.md` references to other root-level docs were rewritten to `../X.md` (or `../../README.md`) so they resolve from `docs/history/`. No findings, evidence or conclusions were altered.
+
 ## 4. Items explicitly NOT changed by this consolidation
 
 - **Migration 0057 remains on production HOLD** (Issue #214). This documentation pass does not run, approve, or lift any migration. Representative staging qualification and separate written owner **and** DBA approval are required before production execution.
@@ -82,10 +85,18 @@ Git commit permalinks remain unchanged. Original branch-relative URLs cannot be 
 ## 6. Verification
 
 - Offline Markdown link validation: `python scripts/check_docs.py --json` — 0 errors (see `docs/DOCUMENTATION_VALIDATION.md`).
-- Validator regression tests: `python -m unittest discover -s tests/ci -p test_check_docs.py -v` — 10 passing.
-- Path/literal-reference inventory: `python scripts/check_docs.py --path-report` — reviewed; code-comment citations to relocated reports were updated to their new `docs/history/` paths.
+- Validator regression tests: `python -m unittest discover -s tests/ci -p test_check_docs.py -v` — 11 passing (includes `test_path_report_loads_committed_mapping`, which loads the committed `docs/documentation-moves.json` and asserts `ARCHITECTURE_REVIEW.md` reports as relocated).
+- Path/literal-reference inventory: `python scripts/check_docs.py --path-report` — 139 REVIEW findings at the final HEAD, none are errors: 72 intentional test fixtures under `tests/`; 67 genuine citations (14 relocated-report citations correctly labeled `relocated literal path` with their `docs/history/` replacement; 53 references to non-tracked/link-text files, kept in the review category).
 
-## Limitations
+### Reference reconciliation
+
+All Markdown, source-code, test, script and workflow references to the 55 relocated reports were repointed to their `docs/history/` paths:
+
+- **80 files** had code-comment citations repointed (source, tests, scripts, config, workflows).
+- Reproducible diff metric: `git diff b6947782571d07c84c3fbd899ef5f28f484cdb04..HEAD --unified=0 | grep '^+' | grep -c 'docs/history/'` → **256 added lines** containing `docs/history/` (**273 total occurrences**; this includes the 55 rename path lines and the new consolidation docs). The consolidation scan counted **198 citation insertions** across the 80 pre-existing source files.
+- `docs/documentation-moves.json` is the machine-readable old-to-new mapping (55 entries, nested under `"mapping"`; read by `path_references()`).
+
+## 7. Limitations
 
 - Similar titles alone were not used as a deletion criterion; overlap in subject matter is not treated as duplication.
 - This consolidation does not re-certify any historical finding, re-baseline any dated SHA, or assert production readiness.

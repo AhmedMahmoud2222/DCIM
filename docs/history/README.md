@@ -8,6 +8,7 @@ This directory holds the original, dated architecture, phase, implementation, in
 - **Distinct documents are retained even where subjects overlap.** Overlapping titles are not treated as duplicates: each report carries its own baseline SHA, reviewer provenance, sequence, severity and correction chronology.
 - **Git commit permalinks remain unchanged.** Relocation does not alter history. Original branch-relative URLs cannot be redirected by GitHub; use the [old-to-new path mapping](../documentation-moves.json) or the original commit permalink.
 - **Relocation is not a status change.** Archiving a report here does not close a finding, lift a hold, or certify implementation. Migration 0057 remains on production HOLD (Issue #214): representative staging qualification and separate written owner **and** DBA approval are required before any production execution.
+- **Link-only adjustments (3 files).** All 55 reports were relocated with `git mv` and are otherwise byte-identical, except three whose relative links had to be re-pointed after the move: `ARCHITECTURE_REVIEW.md` (line 1642), `PHASE10_INDEPENDENT_AUDIT_REPORT.md` (line 207) and `PHASE10_INTEGRATION_REPORT.md` (line 507). In each, `docs/X.md` references to other root-level docs were rewritten to `../X.md` (or `../../README.md`) so they still resolve from `docs/history/`. No findings, evidence or conclusions were altered.
 
 ## Relocated reports (55)
 

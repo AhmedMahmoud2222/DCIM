@@ -77,7 +77,7 @@ class ICMPDriver(ProtocolDriver):
                 integration_id=self.integration_id,
                 reason=(
                     "Raw ICMP socket requires CAP_NET_RAW or root; this process does not have it. "
-                    "See PHASE8_EDGE_COLLECTOR_CONTRACT.md."
+                    "See docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md."
                 ),
             ) from exc
         except OSError as exc:

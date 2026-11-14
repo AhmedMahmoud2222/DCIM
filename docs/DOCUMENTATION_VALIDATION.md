@@ -26,16 +26,23 @@ Command: `python scripts/check_docs.py --json`
 
 | Metric | Value |
 |---|---|
-| Tracked Markdown documents | 167 |
-| Checked documents (excludes 24 archify vendor docs) | 143 |
-| Local references checked | 253 |
+| Tracked Markdown documents | 170 |
+| Checked documents (excludes 24 archify vendor docs) | 146 |
+| Local references checked | 258 |
 | External references skipped | 80 |
 | Confirmed broken internal links | **0** |
 | Exit code | 0 |
 
 Command: `python scripts/check_docs.py --path-report`
 
-The path/literal-reference inventory reports 0 unresolved literal `.md` paths in tracked text after the reconciliation; relocated reports are recorded in `docs/documentation-moves.json`. Any remaining literal citations are code-comment references that were updated to their new `docs/history/` paths.
+The path/literal-reference inventory prints **139 REVIEW findings** at the final HEAD. None are validation errors (all are `relocated literal path` or `unresolved literal path`, reported for review only). They split as:
+
+- **72 intentional test fixtures** under `tests/` (deliberate negative-test fixtures plus the new mapping-exercise test citing `ARCHITECTURE_REVIEW.md`). These name nonexistent files on purpose and are not production defects.
+- **67 genuine code/doc citations**:
+  - **14 `relocated literal path`** — citations to the 55 relocated reports, now correctly labeled via `docs/documentation-moves.json` with their `docs/history/` replacement (P2-1 fix).
+  - **53 `unresolved literal path`** — references to non-tracked or runtime-only files (e.g. `claude.md`, `design.md`, `RED_TEAM_SCOPE.md`, `docs/plans/...`, link-text false positives in Markdown links). These are prose references, not navigable links, and correctly stay in the review category.
+
+No confirmed broken internal links remain.
 
 Command: `python -m unittest discover -s tests/ci -p test_check_docs.py -v`
 
@@ -51,7 +58,8 @@ Command: `python -m unittest discover -s tests/ci -p test_check_docs.py -v`
 | test_untracked_file_cannot_hide_missing_tracked_target | pass |
 | test_cli_exit_status_fails_on_deliberate_break | pass |
 | test_source_path_report_finds_missing_and_moved_paths | pass |
-| **Total** | **10 / 10 passing** |
+| test_path_report_loads_committed_mapping | pass |
+| **Total** | **11 / 11 passing** |
 
 ## Review category (uncertain textual references)
 

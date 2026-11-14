@@ -1,5 +1,6 @@
 """Offline fixtures prove broken links fail without application dependencies."""
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -86,6 +87,28 @@ class DocumentationTests(unittest.TestCase):
             (root / 'code.py').write_text('# OLD.md and docs/missing.md; https://example.test/remote.md')
             result = checker.path_references(root, ['code.py', 'docs/documentation-moves.json'])
             self.assertEqual([x['reason'] for x in result], ['relocated literal path', 'unresolved literal path'])
+
+    def test_path_report_loads_committed_mapping(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        committed = repo_root / 'docs' / 'documentation-moves.json'
+        mapping = json.loads(committed.read_text(encoding='utf-8-sig'))
+        self.assertIsInstance(mapping, dict)
+        self.assertIn('mapping', mapping, 'committed mapping must nest entries under "mapping"')
+        expected = mapping['mapping']['ARCHITECTURE_REVIEW.md']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'docs').mkdir()
+            (root / 'docs' / 'documentation-moves.json').write_text(
+                committed.read_text(encoding='utf-8-sig'), encoding='utf-8'
+            )
+            (root / 'cite.txt').write_text('see ARCHITECTURE_REVIEW.md', encoding='utf-8')
+            result = checker.path_references(root, ['cite.txt', 'docs/documentation-moves.json'])
+            hits = [x for x in result if x['target'] == 'ARCHITECTURE_REVIEW.md']
+            self.assertTrue(hits, 'ARCHITECTURE_REVIEW.md should be reported by the path report')
+            self.assertTrue(
+                all(x['reason'] == 'relocated literal path' and x['replacement'] == expected for x in hits),
+                'every ARCHITECTURE_REVIEW.md hit must report as relocated',
+            )
 
 
 if __name__ == '__main__':

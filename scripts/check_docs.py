@@ -121,7 +121,10 @@ def path_references(root: Path, paths: list[str]) -> list[dict]:
     """
     tracked = set(paths)
     mapping_file = root / 'docs/documentation-moves.json'
-    moves = json.loads(mapping_file.read_text(encoding='utf-8-sig')) if mapping_file.exists() else {}
+    data = json.loads(mapping_file.read_text(encoding='utf-8-sig')) if mapping_file.exists() else {}
+    # The committed mapping nests entries under "mapping"; a flat mapping is
+    # accepted too so ad-hoc fixtures keep working.
+    moves = data.get('mapping', data) if isinstance(data, dict) else {}
     findings = []
     pattern = re.compile(r'(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.[mM][dD](?:#[\w-]+)?(?![\w.-])')
     for path in paths:
