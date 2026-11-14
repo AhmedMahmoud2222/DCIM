@@ -1,4 +1,4 @@
-"""Independent performance re-measurement for PHASE8_FINAL_CLOSURE_VALIDATION.md
+"""Independent performance re-measurement for docs/history/PHASE8_FINAL_CLOSURE_VALIDATION.md
 (master prompt: "Independently re-measure ... Report actual SQL query counts. Do not
 repeat old numbers without measuring them."). Reuses the SAME `before_cursor_execute`
 counting technique `tests/api/test_phase8_performance.py` established (there is only

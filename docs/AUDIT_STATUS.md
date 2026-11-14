@@ -2,7 +2,9 @@
 
 **Prepared:** 2026-09-26. **Source baseline:** PR #29 at `c2d60b34f0ccc546c809a1d3ff15c11befb79a26`, based on `main` `d96676c0534397c7320f09ca3fb4c5c3d72f86ba`. This file is a dated **post-audit status addendum**. It does not alter the historical report by Jules, `PHASE10_INDEPENDENT_AUDIT_REPORT.md`, which describes tests/findings from its original audit of the Phase 10 source.
 
-## Which evidence proves what
+This record preserves the September review context. Its pending decisions, source descriptions and job counts are historical, not current release requirements; use [Release and deployment](RELEASE_AND_DEPLOYMENT.md) for current gate navigation.
+
+## Which evidence proved what at that baseline
 
 | Artifact | Verified scope | Not proved |
 |---|---|---|
@@ -45,14 +47,14 @@ The final integration review reproduced a pre-existing Compose settings failure 
 
 The PR #29 integration report documents nine added ordering tests, including three independent-session concurrency cases and one API-contract regression. Six are reported to fail against the old implementation. Source and CI have been inspected; individual local reproductions are separately documented by the implementation author.
 
-## Review and merge requirements
+## Review and merge requirements recorded for PR #29
 
 - Recheck the live PR HEAD and base, not an older local `origin/main` snapshot.
 - Inspect the actual `binding_id` upsert and SQL conflict guard, the stale-sample fallback SELECT and ORM refresh, and the source-defined equal-timestamp rule.
 - Verify `edge_collector/snmp.py` checks `datagram.exhausted`, and verify the structural BER tests independently of that production parser.
-- Verify the current seven CI job conclusions and, when reviewing version support, the actual resolved Python patch version and committed blocking matrix configuration.
+- At that baseline, reviewers were required to verify the seven CI job conclusions and, when reviewing version support, the actual resolved Python patch version and committed blocking matrix configuration.
 - Distinguish handled record rejection from unexpected transaction failure. Do not introduce savepoints just to satisfy an earlier audit suggestion without a demonstrated protocol requirement.
 - Record an independent review with exact commit SHA and concrete findings in GitHub when that gate is required. External chat statements are not equivalent to a submitted GitHub PR review.
 - Do not treat a green PR branch or a successful local audit as authority to merge without the repository owner's decision.
 
-Historical source: [original audit report](../PHASE10_INDEPENDENT_AUDIT_REPORT.md). Subsequent changes and CI: [integration report](../PHASE10_INTEGRATION_REPORT.md). Live acceptance gate: [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29).
+Historical source: [original audit report](history/PHASE10_INDEPENDENT_AUDIT_REPORT.md). Subsequent changes and CI: [integration report](history/PHASE10_INTEGRATION_REPORT.md). Historical integration PR: [PR #29](https://github.com/AhmedMahmoud2222/DCIM/pull/29).

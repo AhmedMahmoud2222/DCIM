@@ -1,6 +1,6 @@
 """Pre-MVP consolidation hardening: end-to-end reproduction/regression tests for
 Codex H1 (REST outbound target / SSRF), reassessed against the CONSOLIDATED code
-(PRE_MVP_CONSOLIDATION_REPORT.md). Confirms the full path -- API-created REST
+(docs/history/PRE_MVP_CONSOLIDATION_REPORT.md). Confirms the full path -- API-created REST
 integration -> assignment -> `poll-now` -> `run_polling_cycle` ->
 `RESTDriver.connect` -> `network_policy.validate_target` -- actually rejects an
 unsafe target end-to-end, not only the driver in isolation

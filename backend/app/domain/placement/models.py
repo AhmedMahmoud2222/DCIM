@@ -1,4 +1,4 @@
-"""RackPlacement / EquipmentPlacement (ARCHITECTURE_REVIEW.md §7/§7a/§7b/§7c/§8): the
+"""RackPlacement / EquipmentPlacement (docs/history/ARCHITECTURE_REVIEW.md §7/§7a/§7b/§7c/§8): the
 authoritative location of every rack and every piece of equipment. Neither `Rack` nor
 `Equipment` carries a `room_id`/`rack_id`/`u_position` column — placement is owned
 entirely here, temporally (§29): "current" = `effective_to IS NULL`; moving something
@@ -61,7 +61,7 @@ class EquipmentPlacement(Base, UUIDPkMixin):
         CheckConstraint(f"side IS NULL OR side IN {SIDES!r}", name="side_allowed"),
         # v1.3 correction (finding F1, closes the NULL-bypass that would otherwise let a
         # rack-mounted row escape both partial exclusion constraints in the migration —
-        # see PHASE2_GAP_ANALYSIS.md §6). Carried forward exactly, not reintroduced.
+        # see docs/history/PHASE2_GAP_ANALYSIS.md §6). Carried forward exactly, not reintroduced.
         CheckConstraint(
             "placement_type != 'rack_mounted' OR (rack_id IS NOT NULL AND u_range IS NOT NULL AND side IS NOT NULL)",
             name="rack_mounted_requires_rack_u_range_and_side",

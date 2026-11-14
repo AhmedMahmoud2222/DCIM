@@ -1,4 +1,4 @@
-"""Locked close-then-open placement transaction (ARCHITECTURE_REVIEW.md §7c/§8) — the
+"""Locked close-then-open placement transaction (docs/history/ARCHITECTURE_REVIEW.md §7c/§8) — the
 mechanism protecting RackPlacement/EquipmentPlacement against concurrent moves of the
 same asset. Identical pattern applied to both tables:
 
@@ -55,7 +55,7 @@ def _require_unchanged_while_waiting(
 ) -> None:
     """A mover decided what to do from the placement it observed. If another writer replaced, created or closed that
     placement while this one waited for the per-asset lock, the decision is stale: the loser gets a conflict
-    (ARCHITECTURE_REVIEW.md 7c, "zero rows after unblock") instead of silently stacking a second move on top. The
+    (docs/history/ARCHITECTURE_REVIEW.md 7c, "zero rows after unblock") instead of silently stacking a second move on top. The
     same rule covers two concurrent first placements and a concurrent re-placement."""
     if (observed.id if observed else None) != (current.id if current else None):
         raise PlacementConflict(current=current)

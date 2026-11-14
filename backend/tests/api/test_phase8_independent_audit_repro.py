@@ -1,7 +1,7 @@
 """Independent reproduction scripts for PHASE8_INDEPENDENT_RED_TEAM_REPORT.md. Written
 by an independent auditor (not the Phase 8 implementer) against the actual code at HEAD
 fc5fd57e59f71836828decb66dcdfb669f44b47c. Each test reproduces one specific suspected
-defect found by direct source inspection, not by trusting PHASE8_IMPLEMENTATION_REPORT.md's
+defect found by direct source inspection, not by trusting docs/history/PHASE8_IMPLEMENTATION_REPORT.md's
 claims. No production code is modified by this file."""
 
 import asyncio
@@ -51,7 +51,7 @@ async def _heartbeat_with_raw_timestamp(client, collector, timestamp_header: str
     ],
 )
 async def test_I1_malformed_or_out_of_range_timestamp_rejected_cleanly(client, auth_headers, timestamp_header):
-    """Finding I1 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: every one of these
+    """Finding I1 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: every one of these
     previously either crashed with an unhandled OverflowError/ValueError (a 500) or was
     inconsistently handled. `verify_collector_request` now compares entirely in integer
     epoch-seconds space and bounds the header's length before parsing, so every
@@ -137,7 +137,7 @@ async def test_I1_invalid_timestamp_does_not_consume_the_nonce(client, auth_head
 
 
 async def test_I2_same_dedup_key_different_payload_no_longer_crashes_whole_batch(client, auth_headers):
-    """Finding I2 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: `idem.get_or_claim`
+    """Finding I2 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: `idem.get_or_claim`
     is now called inside its own try/except in `ingest_batch`, so an `IdempotencyConflict`
     (same dedup_key reused with a different payload) is caught and marks only that one
     record 'rejected' -- valid sibling records in the same batch are unaffected."""
@@ -190,7 +190,7 @@ async def test_I2_same_dedup_key_different_payload_no_longer_crashes_whole_batch
 
 
 async def test_I3_concurrent_accept_and_reject_race_no_longer_loses_a_decision(make_user, db_session):
-    """Corrected behavior for Finding I3 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md):
+    """Corrected behavior for Finding I3 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md):
     `accept_reconciliation`/`reject_reconciliation` now fetch the `ReconciliationDiff`
     via `SELECT ... FOR UPDATE`, so two genuinely concurrent requests -- one accept, one
     reject -- on the SAME diff are serialized on the row lock: the second request blocks

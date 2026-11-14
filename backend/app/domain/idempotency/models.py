@@ -4,7 +4,7 @@ Celery task) — this is specifically the client-supplied identity of one logica
 used to make a retried request return the original result instead of repeating the write.
 
 `status` was added in migration 0003 to close Finding H1
-(PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / PHASE1_CORRECTION_REPORT.md): the unique
+(docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md / docs/history/PHASE1_CORRECTION_REPORT.md): the unique
 `(key, endpoint)` index below is now used as an atomic claim — a request first INSERTs a
 'processing' row (INSERT ... ON CONFLICT DO NOTHING, committed immediately so concurrent
 requests observe it under MVCC) before doing any work, and only the request that won that

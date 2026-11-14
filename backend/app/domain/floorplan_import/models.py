@@ -1,4 +1,4 @@
-"""Floor-plan import pipeline state (ARCHITECTURE_REVIEW.md §10/§10a/§11). An import job
+"""Floor-plan import pipeline state (docs/history/ARCHITECTURE_REVIEW.md §10/§10a/§11). An import job
 never mutates authoritative inventory directly — its output is a queue of
 FloorPlanImportCandidate rows an operator explicitly accepts or rejects (§21 of the
 Phase 2 prompt: "Import should assist operators, not silently mutate authoritative

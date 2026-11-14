@@ -1,4 +1,4 @@
-"""Collector identity, capability, assignment, and health (ARCHITECTURE_REVIEW.md §18).
+"""Collector identity, capability, assignment, and health (docs/history/ARCHITECTURE_REVIEW.md §18).
 Reuses existing cross-cutting infrastructure throughout, per the master prompt's
 explicit "before adding authentication/authorization/idempotency/audit/outbox/retry/
 observability, search the repository and reuse the existing implementation":
@@ -40,7 +40,7 @@ from app.domain.integration.models import (
     Integration,
 )
 
-# OPEN DECISION (PHASE8_EDGE_COLLECTOR_CONTRACT.md): the exact heartbeat timeout is not
+# OPEN DECISION (docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md): the exact heartbeat timeout is not
 # yet an operations-approved production value -- these are reasoned defaults for this
 # phase's foundation, made explicit and named rather than buried as a magic number, so
 # a later decision can change them without a code archaeology exercise.
@@ -83,7 +83,7 @@ async def classify_collector_health_bulk(db: AsyncSession, collector_ids: list[u
     """Batch equivalent of `classify_collector_health` -- ONE query for every collector
     in `collector_ids`, never one query per collector in a loop (the exact N+1 shape
     Phase 3's own `PowerGraphSnapshot` batch-loading correction exists to prevent;
-    PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding N1). Uses PostgreSQL's
+    docs/history/PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding N1). Uses PostgreSQL's
     `DISTINCT ON` to fetch only the single latest heartbeat row per collector, not
     every heartbeat row ever recorded."""
     if not collector_ids:
@@ -205,7 +205,7 @@ async def assign_integration(
     a collector that cannot actually run it (master prompt §4: "Capabilities must be
     declarative rather than hardcoded... Avoid ambiguous ownership").
 
-    Also validates site association (PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding
+    Also validates site association (docs/history/PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding
     N2): an edge collector scoped to one site must never be assigned an integration
     explicitly scoped to a different site -- an edge collector's whole reason for
     existing is that it can reach devices on its own site's local network, so a

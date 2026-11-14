@@ -1,5 +1,5 @@
-"""Power topology + capacity endpoints (ARCHITECTURE_REVIEW.md §13/§13a/§14;
-PHASE3_GAP_ANALYSIS.md; PHASE3_HOSTILE_SELF_AUDIT.md; PHASE3_CORRECTION_DESIGN.md).
+"""Power topology + capacity endpoints (docs/history/ARCHITECTURE_REVIEW.md §13/§13a/§14;
+docs/history/PHASE3_GAP_ANALYSIS.md; docs/history/PHASE3_HOSTILE_SELF_AUDIT.md; docs/history/PHASE3_CORRECTION_DESIGN.md).
 Every mutation is audited and outboxed exactly like racks.py/equipment.py;
 `PowerConnection` create/disconnect follow §13a's concurrency recipe precisely
 (a system-wide advisory lock, then canonical node-lock ordering, then cycle check on
@@ -617,7 +617,7 @@ async def create_utility_intake(
 ) -> PowerNodeOut:
     """The one node type with neither `managed_asset_id` nor `owning_asset_id` — the
     utility company's own feed is not a DC-owned asset (module docstring, and this
-    phase's one documented addition beyond ARCHITECTURE_REVIEW.md §13's literal table)."""
+    phase's one documented addition beyond docs/history/ARCHITECTURE_REVIEW.md §13's literal table)."""
     node = PowerNode(node_type="utility_intake", label=body.label)
     db.add(node)
     await db.flush()
@@ -816,13 +816,13 @@ async def create_power_connection(
     body: PowerConnectionIn, request: Request, db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("power:manage")),
 ) -> PowerConnectionOut:
-    """F-C1 correction (PHASE3_CORRECTION_DESIGN.md Part 6): every statement below the
+    """F-C1 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Part 6): every statement below the
     advisory-lock acquisition runs while holding
     `power_graph.POWER_TOPOLOGY_MUTATION_LOCK_KEY` for the remainder of this
     transaction -- no other connection-creation transaction, anywhere in the graph, can
     be inside this same critical section concurrently. This is what makes the cycle
     check below trustworthy even for two edges on completely disjoint node pairs (the
-    exact race PHASE3_HOSTILE_SELF_AUDIT.md's F-C1 demonstrated the old per-pair-only
+    exact race docs/history/PHASE3_HOSTILE_SELF_AUDIT.md's F-C1 demonstrated the old per-pair-only
     locking could not prevent)."""
     request_id, correlation_id = _request_ids(request)
     try:
@@ -916,7 +916,7 @@ async def create_power_connection(
             await db.commit()
             return PowerConnectionOut.model_validate(connection)
     except OperationalError as exc:
-        # F-C1 correction (PHASE3_CORRECTION_DESIGN.md Part 6, item 3): the chosen
+        # F-C1 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Part 6, item 3): the chosen
         # advisory-lock design does not require automatic retry for its own expected
         # path (it fully serializes rather than racing and aborting), so this is a
         # defensive net for an unrelated PostgreSQL-level failure (e.g. a genuine
@@ -1160,7 +1160,7 @@ async def set_node_capacity(
     with none yet needs no precondition, matching create_rack's own optional-placement
     convention).
 
-    F-M1 correction (PHASE3_CORRECTION_DESIGN.md Part 9): `If-Match` is parsed via the
+    F-M1 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Part 9): `If-Match` is parsed via the
     shared `parse_if_match` helper (`app/application/concurrency.py`) rather than an ad
     hoc `int(...)` call, so a malformed value raises the same clean `400 Bad Request`
     every other If-Match-consuming endpoint already produces, instead of an unhandled

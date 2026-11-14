@@ -2,7 +2,7 @@
 
 An in-house Data Center Infrastructure Management (DCIM) platform with a FastAPI/PostgreSQL backend, React/TypeScript frontend, and separately packaged Edge Collector. Source code covers physical infrastructure, catalog and equipment models, power and monitoring capabilities; the exact implemented and accepted scope must be determined from the checked-out commit and its evidence.
 
-> **Documentation navigation refreshed 2026-11-13** against `main@1e00e227039a4fb08c09ae46f565430678f6d55d`. This page is a starting point, **not** a certification, deployment record, or continuously updated feature-status ledger. Historical phase reports are dated snapshots. A merged PR, passing CI, independent review, staging qualification and production authorization are different gates.
+Use the guides below for development, operations and technical contracts. Original phase and review records are organized under [history](docs/history/README.md); release evidence and authorization requirements are explained in the [release guide](docs/RELEASE_AND_DEPLOYMENT.md).
 
 ## Choose your starting point
 
@@ -26,7 +26,7 @@ An in-house Data Center Infrastructure Management (DCIM) platform with a FastAPI
 | `edge_collector/` | Edge polling/transport and independent tests |
 | `docs/` | Current navigation, operating guidance, contracts, architecture, historical evidence pointers |
 | `.github/` | CI, release/deployment workflows and validation scripts |
-| Root-level `PHASE*.md` / `ARCHITECTURE*.md` | Original **dated historical records**, not a current deployment or assurance verdict |
+| `docs/history/` | Original dated architecture, phase and review evidence, organized by delivery stream |
 | `.claude/skills/archify/` | Bundled tool/reference documentation; separate from DCIM project reports |
 
 ## Work with the code safely

@@ -1,4 +1,4 @@
-"""Phase 8: Integrations + Collectors (ARCHITECTURE_REVIEW.md §18/§19/§20; master prompt
+"""Phase 8: Integrations + Collectors (docs/history/ARCHITECTURE_REVIEW.md §18/§19/§20; master prompt
 "Phase 8 — Integrations + Edge Collectors"). Establishes the acquisition/transport
 foundation the future Telemetry domain (architecture Phase 9) will consume — this module
 owns identity, assignment, health, and the discovery/reconciliation boundary; it does
@@ -8,7 +8,7 @@ per the master prompt's explicit "do not build telemetry yet").
 **Central DCIM owns**: `Integration` configuration, `Collector` identity, collector
 assignment history, reconciliation decisions, and everything below in this file.
 **Edge Collector owns** (a separate, not-yet-built deployable — see
-`PHASE8_EDGE_COLLECTOR_CONTRACT.md`): local device acquisition, local protocol execution,
+`docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md`): local device acquisition, local protocol execution,
 temporary durable buffering, secure forwarding. **Edge does not own**: authoritative
 inventory, global asset identity, or the final reconciliation decision — a
 `DiscoveredDevice` row is never itself authoritative; only a human-approved
@@ -156,7 +156,7 @@ class Integration(Base, UUIDPkMixin, TimestampMixin):
     encrypted (app/core/secrets.py) — reversible, unlike the collector's own Argon2
     secret, because a driver must retrieve the plaintext to actually authenticate to the
     device being polled; the encryption key comes from settings, documented as an OPEN
-    DECISION for production KMS migration (PHASE8_EDGE_COLLECTOR_CONTRACT.md) rather than
+    DECISION for production KMS migration (docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md) rather than
     invented here. Never `site_id`-less by accident: nullable because a central-only
     deployment may poll a device without a formal Site record yet, but every real
     deployment is expected to set it (enforced at the application layer, not the schema,

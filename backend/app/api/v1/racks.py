@@ -1,4 +1,4 @@
-"""Rack endpoints (ARCHITECTURE_REVIEW.md §4b/§7c/§8). Create/update/list/retrieve the
+"""Rack endpoints (docs/history/ARCHITECTURE_REVIEW.md §4b/§7c/§8). Create/update/list/retrieve the
 `Rack` ManagedAsset subtype; `move`/`retire` own placement via the locked close-then-open
 transaction (app/application/placement_service.py); `elevation` is computed on every
 read from EquipmentPlacement, never stored (§12/§7c)."""

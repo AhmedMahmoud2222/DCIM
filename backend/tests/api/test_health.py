@@ -14,8 +14,8 @@ async def test_readiness_reports_database_and_redis(client):
 
 
 async def test_readiness_returns_503_when_a_dependency_is_down(client, monkeypatch):
-    """Finding L3 regression (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-    PHASE1_CORRECTION_REPORT.md): a degraded readiness response must not be HTTP 200 —
+    """Finding L3 regression (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+    docs/history/PHASE1_CORRECTION_REPORT.md): a degraded readiness response must not be HTTP 200 —
     orchestrator/load-balancer readiness probes act on status code, not body content."""
     import app.api.v1.health as health_module
 

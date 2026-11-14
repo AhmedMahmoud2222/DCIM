@@ -1,6 +1,6 @@
 """Phase 3: power topology + capacity domain (PDU/UPS/Generator/PowerPanel ManagedAsset
 subtypes, PowerNode, PowerConnection, PDUOutlet, PowerCapacity) and its RBAC permission
-additions (ARCHITECTURE_REVIEW.md §4b/§13/§13a/§14; PHASE3_GAP_ANALYSIS.md).
+additions (docs/history/ARCHITECTURE_REVIEW.md §4b/§13/§13a/§14; docs/history/PHASE3_GAP_ANALYSIS.md).
 
 Purely additive: no existing Phase 1/2 table, column, or constraint is modified. Follows
 migration 0004's own precedent — SQLAlchemy `op.create_table` for ordinary tables/columns/

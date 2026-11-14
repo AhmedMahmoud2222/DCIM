@@ -1,4 +1,4 @@
-"""Independent Edge Collector contract simulator (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md
+"""Independent Edge Collector contract simulator (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md
 §5). This is test-only code, never imported by the application, that plays the role of a
 real remote-site Edge Collector talking to Central over the documented HTTP contract --
 `Site Device -> simulated Edge Collector -> WAN-like delivery (real HTTP through the
@@ -26,7 +26,7 @@ class SimulatedEdgeCollector:
     secret (obtained once at registration, never re-derived from anything server-side),
     plus a tiny in-memory "local buffer" standing in for the not-yet-built real durable
     queue -- exercised here only to prove the central contract can support one, not to
-    claim this IS the real queue (PHASE8_EDGE_COLLECTOR_CONTRACT.md §4)."""
+    claim this IS the real queue (docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md §4)."""
 
     client: object
     collector_id: str
@@ -158,7 +158,7 @@ async def test_sim_10_out_of_order_delivery_last_write_wins_on_last_seen(client,
 
 
 async def test_sim_11_partial_ack_mixed_batch(client, auth_headers):
-    """Finding I4 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: `ingest_batch` now
+    """Finding I4 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md), CORRECTED: `ingest_batch` now
     isolates each record inside its own SAVEPOINT (`db.begin_nested()`) instead of
     rolling back the whole session on failure, so the request-scoped `collector` object
     (and every other record's own state) survives a sibling's rejection -- every record

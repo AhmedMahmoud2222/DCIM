@@ -1,5 +1,5 @@
-"""Phase 8: Integrations + Collectors (ARCHITECTURE_REVIEW.md §18/§19/§20;
-PHASE8_GAP_ANALYSIS.md). Purely additive: no existing Phase 1/2/3 table, column, or
+"""Phase 8: Integrations + Collectors (docs/history/ARCHITECTURE_REVIEW.md §18/§19/§20;
+docs/history/PHASE8_GAP_ANALYSIS.md). Purely additive: no existing Phase 1/2/3 table, column, or
 constraint is modified. Follows migration 0006's own precedent -- SQLAlchemy
 `op.create_table` for ordinary tables/columns/FKs/simple CHECKs, raw `op.execute` SQL
 for the one partial unique index (`collector_assignment`'s "at most one current
