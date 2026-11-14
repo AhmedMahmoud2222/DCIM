@@ -43,7 +43,7 @@ def test_scripts_stop_on_errors_and_check_every_native_exit_code():
 def test_nothing_destructive_precedes_the_backup_checks():
     drop = first(RESTORE, "'dropdb' -ComposeFile")
     must_precede = [
-        "-ConfirmDestroyLocalDemoDatabase) { throw",       # explicit confirmation
+        "if (-not $ConfirmDestroyLocalDemoDatabase) { throw",  # explicit confirmation
         "Test-Path -LiteralPath $BackupPath -PathType Leaf",  # the file exists
         "Get-FileHash -LiteralPath $backup.FullName",     # checksum against the manifest
         "'stop', 'demo-refresh'",                         # writers stopped (including the demo-refresh service)
@@ -83,10 +83,12 @@ def test_binary_dumps_are_not_moved_through_powershell_redirection():
 def test_the_runbook_uses_the_scripts_for_backup_and_restore():
     assert "Backup-DemoDatabase.ps1" in RUNBOOK and "Restore-DemoDatabase.ps1" in RUNBOOK
     assert "dropdb" not in RUNBOOK, "restore must go through the guarded script, not inline commands"
-    assert "docker compose build" in RUNBOOK and "migrate" in RUNBOOK.split("docker compose build", 1)[1][:200]
+    assert "docker compose @compose build" in RUNBOOK and "run --rm migrate" in RUNBOOK
 
 
 def test_the_runbook_names_every_service_image_it_rebuilds_and_checks_the_revision():
     section = RUNBOOK[first(RUNBOOK, "### 2. Install the code"):first(RUNBOOK, "### 3.")]
-    assert re.search(r"docker compose build\b(?!\s+(backend|frontend)\b)", section) or "migrate" in section
+    # every service is rebuilt from the one commit: no per-service build list that could leave migrate or the workers behind
+    assert re.search(r"docker compose @compose build[ ]*(#.*)?$", section, re.M) and not re.search(r"@compose build\s+\w", section)
+    assert "run --rm migrate" in section and "up -d backend celery-worker celery-beat frontend" in section
     assert "alembic current" in section and "0060_alarm_severity" in section

@@ -32,6 +32,17 @@ from tests.integration.test_demo_loader import args
 DEVICE_HOURS = float(os.environ.get("DEMO_TEST_DEVICE_HOURS", "1"))
 
 
+@pytest.fixture(autouse=True)
+async def _fresh_app_engine():
+    """`cli.run` and `writer_lock` use the application's global engine; pytest gives every test its own event loop, and a pooled
+    asyncpg connection cannot cross loops. The real CLI runs in one loop, so this is a test-only concern."""
+    from app.db.session import engine
+
+    await engine.dispose()
+    yield
+    await engine.dispose()
+
+
 @pytest.fixture
 async def world(db_session, make_user):
     await make_user("safety-admin@example.com", "Passw0rd!Passw0rd", "Administrator")
@@ -181,7 +192,7 @@ async def test_purge_keeps_a_real_alarm_that_simulated_readings_retained(db_sess
     dry = await purge(db_session, targets, dry_run=True)
     assert dry.alarms == len(loader_made)
     await purge(db_session, targets, dry_run=False)
-    survivors = {a.id: a for a in (await db_session.execute(select(Alarm))).scalars()}
+    survivors = {a.id: a for a in (await db_session.execute(select(Alarm).execution_options(populate_existing=True))).scalars()}
     assert real_id in survivors and survivors[real_id].status == "ACKNOWLEDGED" and survivors[real_id].acknowledged_at is not None
     assert not [a for a in survivors.values() if a.details.get("origin_provenance") == "demo_loader"]
     assert survivors[real_id].telemetry_reading_id is None  # its simulated latest reading was removed; the alarm itself was not
@@ -196,7 +207,7 @@ def make_flaky(series_module, real, *, collector_name, fail_on_call, after_sql):
     async def flaky(db, *, collector, body):
         if collector.name == collector_name:
             calls["n"] += 1
-            if calls["n"] == fail_on_call:
+            if calls["n"] >= fail_on_call:  # this collector keeps failing: the sensors step must not quietly succeed
                 if after_sql:  # SQL has started inside the batch's transaction when it fails
                     await db.execute(text("SELECT 1"))
                 raise RuntimeError("simulated failure inside a batch")
