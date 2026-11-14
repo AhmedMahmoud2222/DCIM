@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfReader
+from pypdf.generic import IndirectObject
 
 from app.application.catalog_documents import pdf_validation
 from app.application.catalog_documents.pdf_validation import _FORBIDDEN_NAME, PdfRejected, validate_pdf
@@ -664,6 +665,19 @@ def test_a_reader_without_a_stream_is_charged():
     budget.limit = 0
     with pytest.raises(PdfRejected):
         budget._charge(_Reference(idnum=5, generation=0))
+
+
+def test_a_spent_budget_refuses_every_resolution_even_of_an_object_the_table_lists_correctly():
+    """`counted` calls `check()` first, so once the budget is spent nothing resolves any more, whether
+    or not the lookup would cost a search. A parser that swallowed the first refusal cannot go on."""
+    reader = PdfReader(io.BytesIO(_annotated_page_pdf(2, listed=True)), strict=False)
+    budget = pdf_validation._LookupBudget(reader, 1000)
+    budget.install()
+    assert reader.get_object(IndirectObject(1, 0, reader)) is not None  # free while the budget holds
+    budget._spent = budget.limit + 1
+    with pytest.raises(PdfRejected) as caught:
+        reader.get_object(IndirectObject(1, 0, reader))
+    assert caught.value.code == "too_complex"
 
 
 def _stub_reader() -> SimpleNamespace:
