@@ -15,12 +15,33 @@ from urllib.parse import unquote, urlsplit
 # Bundled tool documentation is maintained upstream, not by this repository.
 EXCLUDED_PREFIXES = ('.claude/skills/',)
 
+# A bullet or ordered marker followed by whitespace (or nothing, for empty items).
+LIST_ITEM = re.compile(r'^( *)(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)')
+# Blocks that cannot be lazy continuations of a preceding list item paragraph.
+BLOCK_START = re.compile(r'^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|`{3,}|~{3,}|(?:[*_-][ \t]*){3,}$)')
+
 
 def visible_markdown(text: str) -> str:
     """Blank code blocks/comments while preserving offsets and line numbers."""
     lines = text.splitlines(keepends=True)
     fence = None
+    # Column where the active list item's content starts, or None outside a list.
+    # Four-space lines inside an item are paragraph continuations, not code.
+    list_content = None
+    blank_before = True
     for i, line in enumerate(lines):
+        expanded = line.expandtabs(4)
+        blank = not expanded.strip()
+        if not fence and not blank:
+            indent = len(expanded) - len(expanded.lstrip(' '))
+            item = LIST_ITEM.match(expanded)
+            if item and indent < 4:
+                list_content = item.end()
+            elif list_content is not None and indent < list_content and (
+                    blank_before or BLOCK_START.match(expanded)):
+                # A dedented paragraph after a blank line, or a new block, ends the list.
+                list_content = None
+        blank_before = blank
         match = re.match(r'^ {0,3}(`{3,}|~{3,})', line)
         if fence:
             lines[i] = re.sub(r'[^\n]', ' ', line)
@@ -29,7 +50,7 @@ def visible_markdown(text: str) -> str:
         elif match:
             fence = match[1]
             lines[i] = re.sub(r'[^\n]', ' ', line)
-        elif line.startswith(('    ', '\t')):
+        elif list_content is None and line.startswith(('    ', '\t')):
             lines[i] = re.sub(r'[^\n]', ' ', line)
     return re.sub(r'<!--[\s\S]*?-->', lambda m: re.sub(r'[^\n]', ' ', m[0]), ''.join(lines))
 

@@ -69,15 +69,49 @@ class DocumentationTests(unittest.TestCase):
             (root / 'untracked.md').write_text('# Exists locally only')
             self.assertEqual(len(checker.audit(root, ['README.md'])['errors']), 1)
 
+    def test_invalid_link_in_indented_bullet_continuation_fails(self):
+        for separator in ['\n', '\n\n', '\ncontinued paragraph\n\n']:
+            for indentation in ['    ', '\t']:
+                with self.subTest(separator=separator, indentation=indentation):
+                    result = self.audit({'README.md': f'- item{separator}{indentation}[guide](missing.md)'})
+                    self.assertEqual(result['local_references_checked'], 1)
+                    self.assertEqual([error['target'] for error in result['errors']], ['missing.md'])
+                    self.assertEqual(result['errors'][0]['line'], separator.count('\n') + 1)
+
+    def test_invalid_link_in_indented_numbered_continuation_fails(self):
+        for marker in ['1.', '1)']:
+            for separator in ['\n', '\n\n']:
+                with self.subTest(marker=marker, separator=separator):
+                    result = self.audit({'README.md': f'{marker} step{separator}    text [g2](missing2.md)'})
+                    self.assertEqual(result['local_references_checked'], 1)
+                    self.assertEqual([error['target'] for error in result['errors']], ['missing2.md'])
+
+    def test_real_indented_code_without_active_list_is_ignored(self):
+        for prefix in ['', 'Paragraph\n\n', '- item\n\nParagraph\n\n']:
+            for indentation in ['    ', '\t']:
+                with self.subTest(prefix=prefix, indentation=indentation):
+                    result = self.audit({'README.md': f'{prefix}{indentation}[code](missing.md)'})
+                    self.assertEqual(result['errors'], [])
+                    self.assertEqual(result['local_references_checked'], 0)
+
+    def test_valid_link_in_indented_continuation_passes(self):
+        result = self.audit({'README.md': '- item\n\n    [guide](guide.md#ok)\n\n1. step\n    [guide](guide.md)',
+                             'guide.md': '# Ok'})
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['local_references_checked'], 2)
+
     def test_cli_exit_status_fails_on_deliberate_break(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
-            (root / 'README.md').write_text('[bad](missing.md)')
+            (root / 'README.md').write_text('- item\n    [guide](missing.md)\n1. step\n    text [g2](missing2.md)')
             subprocess.run(['git', '-C', str(root), 'add', 'README.md'], check=True)
-            result = subprocess.run([sys.executable, str(SCRIPT), '--root', str(root), '--json'], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-I', str(SCRIPT), '--root', str(root), '--json'], capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn('missing tracked target', result.stdout)
+            report = json.loads(result.stdout)
+            self.assertEqual(report['local_references_checked'], 2)
+            self.assertEqual([error['target'] for error in report['errors']], ['missing.md', 'missing2.md'])
+            self.assertTrue(all('missing tracked target' in error['reason'] for error in report['errors']))
 
     def test_source_path_report_finds_missing_and_moved_paths(self):
         with tempfile.TemporaryDirectory() as directory:

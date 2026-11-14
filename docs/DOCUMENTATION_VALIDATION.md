@@ -1,6 +1,7 @@
 # DCIM documentation validation
 
-**Date:** 2026-11-13  
+**Date:** 2026-11-14
+
 **Baseline:** `main@b6947782571d07c84c3fbd899ef5f28f484cdb04`  
 **Branch:** `docs/history-link-integrity-20261113`
 
@@ -11,6 +12,7 @@
 Behavior:
 - Checks every tracked Markdown document's local links, images, heading anchors and HTML `href`/`src`.
 - Verifies path and case must match against `git ls-files`; confirms the target exists in the worktree.
+- Checks indented bullet and numbered list continuations, including after blank lines.
 - Detects undefined reference labels, paths escaping the repository, and missing tracked targets.
 - Skips external URLs (http/https/git/mailto) and code blocks / inline code / HTML comments (not navigable).
 - Excludes bundled third-party documentation under `.claude/skills/archify/` (maintained upstream).
@@ -22,29 +24,29 @@ Exit codes:
 
 ## Results — full-repository validation
 
-Command: `python scripts/check_docs.py --json`
+Command: `python3 -I scripts/check_docs.py --json --path-report`
 
 | Metric | Value |
 |---|---|
-| Tracked Markdown documents | 170 |
-| Checked documents (excludes 24 archify vendor docs) | 146 |
+| Tracked Markdown documents | 171 |
+| Checked documents (excludes 24 archify vendor docs) | 147 |
 | Local references checked | 258 |
 | External references skipped | 80 |
 | Confirmed broken internal links | **0** |
 | Exit code | 0 |
 
-Command: `python scripts/check_docs.py --path-report`
+The same JSON report supplies the literal-path counts below.
 
-The path/literal-reference inventory prints **139 REVIEW findings** at the final HEAD. None are validation errors (all are `relocated literal path` or `unresolved literal path`, reported for review only). They split as:
+The path/literal-reference inventory prints **163 REVIEW findings** at the final HEAD. None are validation errors (all are `relocated literal path` or `unresolved literal path`, reported for review only). They split as:
 
-- **72 intentional test fixtures** under `tests/` (deliberate negative-test fixtures plus the new mapping-exercise test citing `ARCHITECTURE_REVIEW.md`). These name nonexistent files on purpose and are not production defects.
-- **67 genuine code/doc citations**:
-  - **14 `relocated literal path`** — citations to the 55 relocated reports, now correctly labeled via `docs/documentation-moves.json` with their `docs/history/` replacement (P2-1 fix).
-  - **53 `unresolved literal path`** — references to non-tracked or runtime-only files (e.g. `claude.md`, `design.md`, `RED_TEAM_SCOPE.md`, `docs/plans/...`, link-text false positives in Markdown links). These are prose references, not navigable links, and correctly stay in the review category.
+- **83 intentional test fixtures** under `tests/` (deliberate negative-test fixtures plus the new mapping-exercise test citing `ARCHITECTURE_REVIEW.md`). These name nonexistent files on purpose and are not production defects.
+- **80 code/doc literal references**:
+  - **18 `relocated literal path`** — citations to the 55 relocated reports, now correctly labeled via `docs/documentation-moves.json` with their `docs/history/` replacement (P2-1 fix).
+  - **62 `unresolved literal path`** — references to non-tracked or runtime-only files (e.g. `claude.md`, `design.md`, `RED_TEAM_SCOPE.md`, `docs/plans/...`, link-text false positives in Markdown links). These are prose references, not navigable links, and correctly stay in the review category.
 
 No confirmed broken internal links remain.
 
-Command: `python -m unittest discover -s tests/ci -p test_check_docs.py -v`
+Command: `python3 -m unittest discover -s tests/ci -p test_check_docs.py -v`
 
 | Test | Result |
 |---|---|
@@ -59,7 +61,13 @@ Command: `python -m unittest discover -s tests/ci -p test_check_docs.py -v`
 | test_cli_exit_status_fails_on_deliberate_break | pass |
 | test_source_path_report_finds_missing_and_moved_paths | pass |
 | test_path_report_loads_committed_mapping | pass |
-| **Total** | **11 / 11 passing** |
+| test_invalid_link_in_indented_bullet_continuation_fails | pass |
+| test_invalid_link_in_indented_numbered_continuation_fails | pass |
+| test_real_indented_code_without_active_list_is_ignored | pass |
+| test_valid_link_in_indented_continuation_passes | pass |
+| **Validator tests** | **15 / 15 passing** |
+
+Full `tests/ci` suite (`python3 -m unittest discover -s tests/ci -v`): **73 / 73 passing**.
 
 ## Review category (uncertain textual references)
 
