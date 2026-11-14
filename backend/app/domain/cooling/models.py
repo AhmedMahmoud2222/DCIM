@@ -2,7 +2,7 @@
 """Cooling and environment domain (Issue #105).
 
 Cooling units (CRAC / CRAH / chiller) and environmental sensors are ManagedAsset subtypes that use the
-shared-primary-key pattern (ARCHITECTURE_REVIEW.md §4b): the subtype row's `id` IS the ManagedAsset id and
+shared-primary-key pattern (docs/history/ARCHITECTURE_REVIEW.md §4b): the subtype row's `id` IS the ManagedAsset id and
 never repeats asset_tag / serial / lifecycle. A generated type column plus a composite FK to
 `managed_asset (id, asset_type)` makes the database reject a subtype row whose ManagedAsset has the wrong type.
 

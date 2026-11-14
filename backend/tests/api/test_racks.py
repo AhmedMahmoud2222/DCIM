@@ -153,7 +153,7 @@ async def test_rack_move_with_wrong_if_match_version_is_409(client, auth_headers
 
 
 async def test_rack_move_concurrent_movers_only_one_wins_the_other_gets_409(client, auth_headers):
-    """A genuine two-session race for the same current placement (ARCHITECTURE_REVIEW.md
+    """A genuine two-session race for the same current placement (docs/history/ARCHITECTURE_REVIEW.md
     §7c's "zero rows after unblock" case): both requests target the same current
     placement with no If-Match at all, so exactly one must close it and open the new row,
     and the loser must observe it already gone rather than silently double-writing."""

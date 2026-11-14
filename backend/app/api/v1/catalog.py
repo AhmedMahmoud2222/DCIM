@@ -1,4 +1,4 @@
-"""Rack/Equipment model catalog (ARCHITECTURE_REVIEW.md §4b). Create + list only —
+"""Rack/Equipment model catalog (docs/history/ARCHITECTURE_REVIEW.md §4b). Create + list only —
 a `*ModelRevision` is immutable once created (a corrected spec is a new revision, never
 an edit), so there is no update endpoint for a revision; a `*Model`'s manufacturer/name
 identity is likewise not editable here (create a new catalog entry instead).

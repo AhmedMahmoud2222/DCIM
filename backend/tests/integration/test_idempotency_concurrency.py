@@ -1,5 +1,5 @@
-"""Finding H1 regression coverage (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-PHASE1_CORRECTION_REPORT.md): the original implementation's check-cache-then-write
+"""Finding H1 regression coverage (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+docs/history/PHASE1_CORRECTION_REPORT.md): the original implementation's check-cache-then-write
 sequence had no serialization between the check and the write, so genuinely concurrent
 identical requests mostly received an incorrect 409 instead of the idempotent replay.
 

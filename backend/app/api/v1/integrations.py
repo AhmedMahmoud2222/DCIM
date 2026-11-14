@@ -1,4 +1,4 @@
-"""Integration CRUD (ARCHITECTURE_REVIEW.md §20). Credentials are never returned in any
+"""Integration CRUD (docs/history/ARCHITECTURE_REVIEW.md §20). Credentials are never returned in any
 response body (write-only from the API's perspective, exactly like a password) --
 `credential_ciphertext` is Fernet-encrypted at write time (app/core/secrets.py) and
 only ever decrypted in-process by the polling orchestrator

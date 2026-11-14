@@ -1,7 +1,7 @@
-"""Rack/equipment model catalog (ARCHITECTURE_REVIEW.md §4b: `Rack.model_revision_id
+"""Rack/equipment model catalog (docs/history/ARCHITECTURE_REVIEW.md §4b: `Rack.model_revision_id
 FK→RackModelRevision NOT NULL`, `Equipment.model_revision_id FK→EquipmentModelRevision
 NOT NULL`). Column lists for these two catalog tables are not published anywhere in the
-architecture document (see PHASE2_GAP_ANALYSIS.md §3.2) — authored here from the
+architecture document (see docs/history/PHASE2_GAP_ANALYSIS.md §3.2) — authored here from the
 NOT-NULL-FK-to-a-*revision* requirement, which rules out collapsing manufacturer specs
 onto a single mutable row: a `*Model` catalog entry (manufacturer + model name) has one
 or more immutable `*ModelRevision` rows, and existing Rack/Equipment rows keep pointing

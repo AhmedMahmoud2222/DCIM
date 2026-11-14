@@ -1,7 +1,7 @@
-"""Independent FINAL closure validation for Phase 8 (PHASE8_FINAL_CLOSURE_VALIDATION.md).
+"""Independent FINAL closure validation for Phase 8 (docs/history/PHASE8_FINAL_CLOSURE_VALIDATION.md).
 
 Written from scratch against the corrected code at HEAD e4db1aaaa95cce26ec76fe7dc079403d81999bdd
-by an auditor treating PHASE8_BLOCKING_CORRECTION_REPORT.md's own claims as unproven.
+by an auditor treating docs/history/PHASE8_BLOCKING_CORRECTION_REPORT.md's own claims as unproven.
 Deliberately does NOT reuse assertions from tests/api/test_phase8_correction_validation.py
 or tests/api/test_phase8_independent_audit_repro.py -- new adversarial cases, new
 compositions, and (in the outer-commit section) genuine fault injection around the
@@ -609,7 +609,7 @@ async def test_stale_assignment_after_reassignment_is_cleanly_rejected(client, a
 
 
 async def test_security_sweep_capability_declaration_now_has_a_payload_size_bound(client, auth_headers):
-    """UPDATED for PRE_MVP_CONSOLIDATION_REPORT.md (finding FV2): this test originally
+    """UPDATED for docs/history/PRE_MVP_CONSOLIDATION_REPORT.md (finding FV2): this test originally
     documented (see git history) that `CapabilityDeclareIn.protocol_codes` had no
     `Field(...)` length bound at all, as this function's own prior docstring said to
     update once a bound existed. `protocol_codes` is now bounded to 64 entries -- see
@@ -785,7 +785,7 @@ async def test_outer_commit_raises_and_release_claim_itself_then_fails(client, a
         # any further try/except, so its failure propagates out of `ingest_batch`
         # uncaught, past the FastAPI exception handler and into to a bare 500 with no
         # `IngestBatchOut` body at all -- record B is never attempted. See
-        # PHASE8_FINAL_CLOSURE_VALIDATION.md's outer-commit analysis for the
+        # docs/history/PHASE8_FINAL_CLOSURE_VALIDATION.md's outer-commit analysis for the
         # classification of this finding.
         assert "simulated persistent connection loss" in str(escaped_exception)
     elif resp is not None and resp.status_code == 200:

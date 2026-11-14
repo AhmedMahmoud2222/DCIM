@@ -1,4 +1,4 @@
-"""Direct DB-level verification of Phase 2's placement invariants (ARCHITECTURE_REVIEW.md
+"""Direct DB-level verification of Phase 2's placement invariants (docs/history/ARCHITECTURE_REVIEW.md
 §7/§7a/§7b/§7c/§8; migration 0004) — bypasses the API/application layer entirely and
 inserts through the ORM so each constraint is proven to be enforced by PostgreSQL itself,
 not merely by application-level validation that could drift out of sync with the schema.
