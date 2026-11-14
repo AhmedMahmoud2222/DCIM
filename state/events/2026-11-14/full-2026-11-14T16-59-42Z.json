@@ -1,0 +1,22 @@
+{
+  "run_id": "full-2026-11-14T16-59-42Z",
+  "mode": "FULL",
+  "main": "6b67b89f3fa7a6ada6f211e70ef09142b54214e7",
+  "steps": [
+    "0 lease acquired; policy and changelog read; ruleset read",
+    "1 one open PR #355 and 15 open issues; seven Codacy inline findings",
+    "2 verified CI at bf98a23c446f: backend/frontend failed",
+    "3 priority #355; no competing PRs",
+    "4 seven inline findings remain unverified for resolution; none resolved",
+    "4a seven Codacy findings retained; Claude previously asked",
+    "5 existing Claude request 15:58 UTC, no duplicate; frontend Vitest failure identified",
+    "6 no other open PR supersession candidate",
+    "7 Claude request under stale threshold",
+    "8 no merge: required CI failed, no Codex/Copilot exact-head acceptance, threads open",
+    "9 no new class I decision",
+    "10 report prepared"
+  ],
+  "failure": "frontend-suite: TestingLibraryElementError Unable to find role button Mark installed: server-01 / Rack 01, LifecycleTransitionAction.test.tsx",
+  "merge_count": 0,
+  "production_hold_214": "intact"
+}
