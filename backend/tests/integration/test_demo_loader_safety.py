@@ -21,7 +21,7 @@ from app.domain.identity.models import ManagedAsset
 from app.domain.integration.models import Integration
 from app.domain.telemetry.models import IntegrationMetricMapping, TelemetryReading
 from app.tools.demo_loader import cli
-from app.tools.demo_loader.constants import DEDUP_PREFIX
+from app.tools.demo_loader.constants import DEDUP_PREFIX, MAPPING_LABEL
 from app.tools.demo_loader.provision import sensor_tag
 from app.tools.demo_loader.purge import purge
 from app.tools.demo_loader.selection import LoaderError, discover, outside_fingerprint, validate_site_prefix
@@ -473,3 +473,20 @@ async def test_apply_without_a_pinned_clock_catches_up_before_it_verifies(db_ses
     assert "catch_up" in result and result["catch_up"]["ok"]
     pinned, _ = await cli.dispatch(db_session, args(command="apply", steps=["existing"], as_of=datetime.now(UTC) - timedelta(minutes=1), no_verify=False))
     assert "catch_up" not in pinned  # a pinned clock is never silently replaced by the live one
+
+
+async def test_unpinned_apply_catch_up_keeps_device_history_to_its_own_window(db_session, world):
+    """The implicit catch-up must not widen device history to the longer sensor window (P3 from the PR 351 review)."""
+    result, _ = await cli.dispatch(db_session, args(command="apply", history_hours=2.0, device_history_hours=0.5, no_verify=False))
+    assert "catch_up" in result and result["catch_up"]["ok"]
+    per_series = (await db_session.execute(
+        select(TelemetryReading.mapping_id, TelemetryReading.metric, func.count())
+        .join(IntegrationMetricMapping, IntegrationMetricMapping.id == TelemetryReading.mapping_id)
+        .where(TelemetryReading.dedup_key.startswith(DEDUP_PREFIX), IntegrationMetricMapping.label == MAPPING_LABEL)  # the loader's own series
+        .group_by(TelemetryReading.mapping_id, TelemetryReading.metric)
+    )).all()
+    devices = [n for _, metric, n in per_series if metric in ("power_kw", "load_percent")]
+    sensors = [n for _, metric, n in per_series if metric in ("temperature_c", "humidity_percent")]
+    assert devices and sensors
+    assert max(devices) <= 0.5 * 12 + 2  # 5-minute slots over 0.5 h, plus slot-boundary slack
+    assert min(sensors) >= 2.0 * 12 - 2  # sensors keep their 2 h window
