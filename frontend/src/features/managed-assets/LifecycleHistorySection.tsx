@@ -15,15 +15,11 @@ export function LifecycleHistorySection({ assetId }: Props) {
   const historyQuery = useQuery<LifecycleHistoryResponse>({
     queryKey: ["lifecycle-history", assetId],
     queryFn: async () => {
-      try {
-        const res = await getManagedAssetLifecycleHistory(assetId);
-        if (res && Array.isArray(res.items)) {
-          return res;
-        }
-      } catch {
-        // Fallback for unit tests where lifecycle-history is not mocked
+      const res = await getManagedAssetLifecycleHistory(assetId);
+      if (!res || !Array.isArray(res.items)) {
+        throw new Error("Unexpected lifecycle history response.");
       }
-      return { items: [] };
+      return res;
     },
     enabled: Boolean(assetId),
   });
@@ -39,7 +35,18 @@ export function LifecycleHistorySection({ assetId }: Props) {
         Lifecycle Transition History
       </h2>
 
-      {items.length === 0 ? (
+      {historyQuery.isLoading ? (
+        <p className="text-sm text-fg-secondary" role="status">
+          Loading lifecycle history…
+        </p>
+      ) : historyQuery.isError ? (
+        <p className="text-sm text-status-danger" role="alert">
+          Lifecycle history could not be loaded.{" "}
+          <button type="button" className="underline" onClick={() => void historyQuery.refetch()}>
+            Retry
+          </button>
+        </p>
+      ) : items.length === 0 ? (
         <p className="text-sm text-fg-secondary">No lifecycle transitions recorded yet.</p>
       ) : (
         <ol className="divide-y divide-line-subtle text-sm" data-testid="lifecycle-history-list">

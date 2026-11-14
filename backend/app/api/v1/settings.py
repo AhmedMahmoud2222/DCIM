@@ -12,11 +12,13 @@ from app.application.lifecycle_settings import (
     LifecycleSettingsRead,
     LifecycleSettingsUpdate,
     build_lifecycle_settings_read,
+    effective_states_from_row,
     get_effective_lifecycle_states,
+    lock_lifecycle_settings_row,
     validate_lifecycle_states_update,
 )
 from app.application.rbac import require_catalog_administrator, require_permission
-from app.domain.identity.models import LifecycleSettings, default_lifecycle_states_config
+from app.domain.identity.models import default_lifecycle_states_config
 from app.domain.telemetry.models import MonitoringPolicy
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -109,13 +111,10 @@ async def update_lifecycle_settings(
     ctx=Depends(require_catalog_administrator("managed_asset:manage")),
 ) -> LifecycleSettingsRead:
     validated_states = validate_lifecycle_states_update(body.states)
-    before_states = await get_effective_lifecycle_states(db)
-    row = await db.get(LifecycleSettings, 1)
-    if row is None:
-        row = LifecycleSettings(id=1, states_config=validated_states)
-        db.add(row)
-    else:
-        row.states_config = validated_states
+    # Lock the singleton row so concurrent updates serialize and the audit "before" is the true prior state.
+    row = await lock_lifecycle_settings_row(db)
+    before_states = effective_states_from_row(row)
+    row.states_config = validated_states
     await write_audit_log(
         db,
         actor_user_id=ctx.user.id,
@@ -136,14 +135,10 @@ async def restore_default_lifecycle_settings(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_catalog_administrator("managed_asset:manage")),
 ) -> LifecycleSettingsRead:
-    before_states = await get_effective_lifecycle_states(db)
+    row = await lock_lifecycle_settings_row(db)
+    before_states = effective_states_from_row(row)
     default_states = default_lifecycle_states_config()
-    row = await db.get(LifecycleSettings, 1)
-    if row is None:
-        row = LifecycleSettings(id=1, states_config=default_states)
-        db.add(row)
-    else:
-        row.states_config = default_states
+    row.states_config = default_states
     await write_audit_log(
         db,
         actor_user_id=ctx.user.id,

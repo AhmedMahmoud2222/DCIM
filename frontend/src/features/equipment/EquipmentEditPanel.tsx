@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useEffect, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useEffect, useRef, useState } from "react";
 
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { updateEquipment } from "@/features/equipment/api";
@@ -31,12 +31,30 @@ export function EquipmentEditPanel({ equipment, onClose, onNotice }: Props) {
   const [environment, setEnvironment] = useState(equipment.environment ?? "");
   const [notes, setNotes] = useState(equipment.notes ?? "");
 
+  // Sync from the server without discarding unsaved edits: a field is overwritten only when it still
+  // equals the previously synced server value (i.e. is not dirty) or when a different equipment is shown.
+  const synced = useRef({ id: equipment.id, equipment });
   useEffect(() => {
-    setHostname(equipment.hostname ?? "");
-    setOwner(equipment.owner ?? "");
-    setService(equipment.service ?? "");
-    setEnvironment(equipment.environment ?? "");
-    setNotes(equipment.notes ?? "");
+    const prev = synced.current;
+    const switched = prev.id !== equipment.id;
+    const sync = (
+      set: Dispatch<SetStateAction<string>>,
+      key: "hostname" | "owner" | "service" | "environment" | "notes",
+    ) => {
+      const next = equipment[key] ?? "";
+      if (switched) {
+        set(next);
+        return;
+      }
+      const old = prev.equipment[key] ?? "";
+      set((current) => (current === old ? next : current));
+    };
+    sync(setHostname, "hostname");
+    sync(setOwner, "owner");
+    sync(setService, "service");
+    sync(setEnvironment, "environment");
+    sync(setNotes, "notes");
+    synced.current = { id: equipment.id, equipment };
   }, [equipment]);
 
   const updateMutation = useMutation({

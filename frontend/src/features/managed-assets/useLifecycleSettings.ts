@@ -71,6 +71,10 @@ export const DEFAULT_LIFECYCLE_SETTINGS: LifecycleSettingsResponse = {
 
 export const LIFECYCLE_SETTINGS_QUERY_KEY = ["lifecycle-settings"] as const;
 
+// Distinct object identity marks "settings failed to load": defaults are used for display only and are
+// never treated as authoritative for transition controls.
+const FALLBACK_LIFECYCLE_SETTINGS: LifecycleSettingsResponse = { ...DEFAULT_LIFECYCLE_SETTINGS };
+
 export function useLifecycleSettings() {
   const query = useQuery<LifecycleSettingsResponse>({
     queryKey: LIFECYCLE_SETTINGS_QUERY_KEY,
@@ -83,12 +87,13 @@ export function useLifecycleSettings() {
       } catch {
         // Fall back to default lifecycle settings when offline or in unit tests that do not mock /settings/lifecycle.
       }
-      return DEFAULT_LIFECYCLE_SETTINGS;
+      return FALLBACK_LIFECYCLE_SETTINGS;
     },
     staleTime: 30_000,
   });
 
   const settings = query.data ?? DEFAULT_LIFECYCLE_SETTINGS;
+  const isAuthoritative = query.data !== undefined && query.data !== FALLBACK_LIFECYCLE_SETTINGS;
 
   const sortedStates = useMemo(
     () => [...settings.states].sort((a, b) => a.display_order - b.display_order),
@@ -105,6 +110,7 @@ export function useLifecycleSettings() {
 
   const permittedTargets = (fromStatus: string): LifecycleStateConfig[] => {
     if (fromStatus === "reserved") return [];
+    if (!isAuthoritative) return [];
     const current = byStatus.get(fromStatus);
     if (!current) return [];
     const allowedSet = new Set(
@@ -116,6 +122,7 @@ export function useLifecycleSettings() {
   return {
     query,
     settings,
+    isAuthoritative,
     states: sortedStates,
     stateByStatus: (status: string) => byStatus.get(status),
     permittedTargets,

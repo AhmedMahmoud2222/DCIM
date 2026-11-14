@@ -26,13 +26,18 @@ from app.application.idempotency import (
     release_claim,
     user_principal,
 )
-from app.application.outbox_service import write_outbox_event
 from app.application.lifecycle_settings import get_configured_allowed_transitions
+from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import ApiError, ConflictError, NotFoundError
 from app.domain.audit.models import AuditLog
 from app.domain.auth.models import User
-from app.domain.identity.models import ALLOWED_LIFECYCLE_TRANSITIONS, ASSET_TYPES, ManagedAsset
+from app.domain.identity.models import (
+    ALLOWED_LIFECYCLE_TRANSITIONS,
+    ASSET_TYPES,
+    LEGACY_LIFECYCLE_STATUSES,
+    ManagedAsset,
+)
 
 router = APIRouter(prefix="/managed-assets", tags=["managed-assets"])
 
@@ -212,6 +217,17 @@ async def transition_lifecycle(
     if asset is None:
         raise NotFoundError(f"ManagedAsset {asset_id} not found.")
 
+    is_equipment = asset.asset_type == "equipment"
+    if is_equipment and asset.lifecycle_status in LEGACY_LIFECYCLE_STATUSES:
+        raise ApiError(
+            status_code=422,
+            title="Invalid Lifecycle Transition",
+            detail=(
+                f"Equipment in legacy lifecycle state {asset.lifecycle_status!r} is read-only; "
+                "transitions out of a legacy state are not permitted."
+            ),
+        )
+
     allowed = ALLOWED_LIFECYCLE_TRANSITIONS.get(asset.lifecycle_status, set())
     if body.to_status not in allowed:
         raise ApiError(
@@ -220,26 +236,31 @@ async def transition_lifecycle(
             detail=f"Cannot transition from {asset.lifecycle_status!r} to {body.to_status!r}. Allowed: {sorted(allowed)}",
         )
 
-    configured_allowed = await get_configured_allowed_transitions(db, asset.lifecycle_status)
-    if body.to_status not in configured_allowed:
-        raise ApiError(
-            status_code=422,
-            title="Invalid Lifecycle Transition",
-            detail=(
-                f"Transition from {asset.lifecycle_status!r} to {body.to_status!r} is disabled by "
-                f"lifecycle settings. Allowed: {sorted(configured_allowed)}"
-            ),
-        )
+    # Administrator lifecycle settings describe equipment only; racks, PDUs, cooling units and other
+    # asset types keep the universal domain transition table.
+    if is_equipment:
+        configured_allowed = await get_configured_allowed_transitions(db, asset.lifecycle_status)
+        if body.to_status not in configured_allowed:
+            raise ApiError(
+                status_code=422,
+                title="Invalid Lifecycle Transition",
+                detail=(
+                    f"Transition from {asset.lifecycle_status!r} to {body.to_status!r} is disabled by "
+                    f"lifecycle settings. Allowed: {sorted(configured_allowed)}"
+                ),
+            )
 
     clean_reason = body.reason.strip() if body.reason is not None else None
     if body.to_status in ("decommissioned", "removed"):
-        if asset.asset_type == "equipment" and not clean_reason:
+        if is_equipment and not clean_reason:
             raise ApiError(
                 status_code=422,
                 title="Reason Required",
                 detail=f"A reason is required when transitioning equipment to {body.to_status!r}.",
             )
-        if "reason" in body.model_fields_set and not clean_reason:
+        # Omitted or explicit-null reason stays accepted for non-equipment assets (client compatibility);
+        # only a supplied-but-blank string is rejected.
+        if body.reason is not None and not clean_reason:
             raise ApiError(
                 status_code=422,
                 title="Reason Required",

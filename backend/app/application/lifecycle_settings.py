@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.models import (
@@ -137,13 +138,34 @@ def validate_lifecycle_states_update(states: list[LifecycleStateConfigItem]) -> 
     return normalized
 
 
-async def get_effective_lifecycle_states(db: AsyncSession) -> list[dict[str, Any]]:
-    row = (await db.execute(select(LifecycleSettings).where(LifecycleSettings.id == 1))).scalar_one_or_none()
+async def lock_lifecycle_settings_row(db: AsyncSession) -> LifecycleSettings:
+    """Ensure the singleton row exists and return it locked (FOR UPDATE) so concurrent writers serialize."""
+    await db.execute(
+        pg_insert(LifecycleSettings)
+        .values(id=1, states_config=default_lifecycle_states_config())
+        .on_conflict_do_nothing(index_elements=["id"])
+    )
+    return (
+        await db.execute(
+            select(LifecycleSettings)
+            .where(LifecycleSettings.id == 1)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+
+def effective_states_from_row(row: LifecycleSettings | None) -> list[dict[str, Any]]:
     if row is None or not isinstance(row.states_config, list) or len(row.states_config) != len(VISIBLE_LIFECYCLE_STATUSES):
         return default_lifecycle_states_config()
     states = copy.deepcopy(row.states_config)
     states.sort(key=lambda entry: int(entry.get("display_order", 99)))
     return states
+
+
+async def get_effective_lifecycle_states(db: AsyncSession) -> list[dict[str, Any]]:
+    row = (await db.execute(select(LifecycleSettings).where(LifecycleSettings.id == 1))).scalar_one_or_none()
+    return effective_states_from_row(row)
 
 
 def build_lifecycle_settings_read(states: list[dict[str, Any]]) -> LifecycleSettingsRead:

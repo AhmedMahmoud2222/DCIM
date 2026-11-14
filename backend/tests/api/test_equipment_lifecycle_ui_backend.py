@@ -315,3 +315,61 @@ async def test_placement_and_metadata_updates_never_auto_transition_installed_to
     )
     assert moved.status_code == 200
     assert moved.json()["lifecycle_status"] == "installed"
+
+
+async def test_lifecycle_settings_do_not_restrict_non_equipment_and_accept_null_reason(client, auth_headers):
+    admin = await auth_headers("Administrator")
+    base = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
+    for s in base:
+        if s["status"] == "planned":
+            s["allowed_transitions"] = ["installed"]  # disable planned -> removed for equipment
+    assert (await client.put("/api/v1/settings/lifecycle", json={"states": base}, headers=admin)).status_code == 200
+
+    created = await client.post(
+        "/api/v1/managed-assets",
+        json={"asset_type": "rack", "asset_tag": f"RK-{uuid.uuid4().hex[:8]}"},
+        headers=admin,
+    )
+    assert created.status_code == 201, created.text
+    resp = await client.post(
+        f"/api/v1/managed-assets/{created.json()['id']}/lifecycle-transition",
+        json={"to_status": "removed", "reason": None},
+        headers=admin,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_transition_out_of_legacy_reserved_equipment_is_rejected(client, auth_headers, db_session):
+    admin = await auth_headers("Administrator")
+    eq = await create_equipment(client, admin, auth_headers)
+    await db_session.execute(
+        text("UPDATE managed_asset SET lifecycle_status = 'reserved' WHERE id = :id"),
+        {"id": uuid.UUID(eq["id"])},
+    )
+    await db_session.commit()
+    resp = await client.post(
+        f"/api/v1/managed-assets/{eq['id']}/lifecycle-transition",
+        json={"to_status": "installed"},
+        headers=admin,
+    )
+    assert resp.status_code == 422
+    assert "legacy" in resp.text.lower()
+
+
+async def test_lifecycle_settings_restore_audit_before_reflects_prior_update(client, auth_headers, db_session):
+    admin = await auth_headers("Administrator")
+    first = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
+    for s in first:
+        if s["status"] == "active":
+            s["label"] = "In Service"
+    assert (await client.put("/api/v1/settings/lifecycle", json={"states": first}, headers=admin)).status_code == 200
+    assert (await client.post("/api/v1/settings/lifecycle/restore-defaults", headers=admin)).status_code == 200
+    row = (
+        await db_session.execute(
+            select(AuditLog)
+            .where(AuditLog.action == "settings.lifecycle.restore_defaults")
+            .order_by(AuditLog.timestamp.desc())
+        )
+    ).scalars().first()
+    before_active = next(s for s in row.before["states"] if s["status"] == "active")
+    assert before_active["label"] == "In Service"

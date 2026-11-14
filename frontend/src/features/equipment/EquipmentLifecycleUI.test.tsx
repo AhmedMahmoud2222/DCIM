@@ -226,4 +226,47 @@ describe("Equipment Lifecycle UI (Listing, Details, Editing, History, Legacy Res
       await screen.findByRole("region", { name: `Edit equipment ${baseEquipment.hostname}` }),
     ).toBeInTheDocument();
   });
+
+  it("offers active, maintenance and removed (not decommissioned) for installed equipment", async () => {
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(
+      mockPage([{ ...baseEquipment, lifecycle_status: "installed" }]),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<EquipmentPage />, { user: FULL_EQUIPMENT_MANAGER });
+    await user.click(
+      await screen.findByRole("button", { name: "Change lifecycle state: srv-prod-01" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change lifecycle state for srv-prod-01",
+    });
+    const select = within(dialog).getByLabelText("Target lifecycle state") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value).sort()).toEqual([
+      "active",
+      "maintenance",
+      "removed",
+    ]);
+  });
+
+  it("does not offer transitions when lifecycle settings fail to load", async () => {
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockRejectedValue(new Error("boom"));
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(mockPage([baseEquipment]));
+    renderWithProviders(<EquipmentPage />, { user: FULL_EQUIPMENT_MANAGER });
+    await screen.findByText("srv-prod-01");
+    expect(
+      screen.queryByRole("button", { name: "Change lifecycle state: srv-prod-01" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an error, not an empty-history message, when history fails to load", async () => {
+    vi.mocked(equipmentApi.getEquipment).mockResolvedValue(baseEquipment);
+    vi.mocked(managedAssetApi.getManagedAssetLifecycleHistory).mockRejectedValue(new Error("500"));
+    renderWithProviders(<EquipmentDetailPage />, {
+      route: `/equipment/${baseEquipment.id}`,
+      path: "/equipment/:equipmentId",
+      user: FULL_EQUIPMENT_MANAGER,
+    });
+    const section = await screen.findByRole("region", { name: "Lifecycle transition history" });
+    expect(await within(section).findByRole("alert")).toHaveTextContent(/could not be loaded/i);
+    expect(within(section).queryByText(/No lifecycle transitions recorded/)).not.toBeInTheDocument();
+  });
 });
