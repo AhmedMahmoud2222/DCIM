@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { OperationsViews, OpsView } from "@/features/operations/OperationsViews";
-import { AlarmWorkflowStatus } from "@/features/status/StatusBadges";
+import { AlarmWorkflowStatus, ExceptionSeverity } from "@/features/status/StatusBadges";
 import { Alarm, acknowledgeAlarm, getOpenAlarms, listAlarmHistory } from "@/features/telemetry/api";
 
 type ViewMode = "active" | "history" | OpsView;
@@ -23,9 +23,9 @@ function csvCell(value: string | number | null | undefined) {
 }
 
 function exportCsv(alarms: Alarm[], fileName: string) {
-  const headings = ["opened_at", "acknowledged_at", "cleared_at", "status", "subject_key", "presentation_value", "presentation_unit", "last_value", "unit", "integration_id", "managed_asset_id", "rule_id"];
+  const headings = ["opened_at", "acknowledged_at", "cleared_at", "severity", "status", "subject_key", "presentation_value", "presentation_unit", "last_value", "unit", "integration_id", "managed_asset_id", "rule_id"];
   const rows = alarms.map((alarm) =>
-    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.status, alarm.subject_key, alarm.presentation_value, alarm.presentation_unit, alarm.last_value, alarm.unit, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
+    [alarm.opened_at, alarm.acknowledged_at, alarm.cleared_at, alarm.severity, alarm.status, alarm.subject_key, alarm.presentation_value, alarm.presentation_unit, alarm.last_value, alarm.unit, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id]
       .map(csvCell)
       .join(","),
   );
@@ -84,7 +84,7 @@ export function EventsPage() {
     const needle = search.trim().toLowerCase();
     if (!needle) return requestedAlarms;
     return requestedAlarms.filter((alarm) =>
-      [alarm.subject_key, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id, alarm.status].some((value) => value?.toLowerCase().includes(needle)),
+      [alarm.subject_key, alarm.integration_id, alarm.managed_asset_id, alarm.rule_id, alarm.status, alarm.severity].some((value) => value?.toLowerCase().includes(needle)),
     );
   }, [requestedAlarms, search]);
   const selected = visibleAlarms.find((alarm) => alarm.id === selectedId) ?? visibleAlarms[0] ?? null;
@@ -269,6 +269,7 @@ export function EventsPage() {
               <table aria-label="Events" className="w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-fg-secondary">
                   <tr>
+                    <th scope="col" className="px-3 py-2">Severity</th>
                     <th scope="col" className="px-3 py-2">State</th>
                     <th scope="col" className="px-3 py-2">Subject</th>
                     <th scope="col" className="px-3 py-2">Latest value</th>
@@ -291,6 +292,9 @@ export function EventsPage() {
                       aria-current={selected?.id === alarm.id ? "true" : undefined}
                       className={`cursor-pointer border-t border-slate-800 ${selected?.id === alarm.id ? "bg-slate-800/70" : "hover:bg-slate-800/40"}`}
                     >
+                      <td className="px-3 py-2">
+                        <ExceptionSeverity severity={alarm.severity} size="sm" />
+                      </td>
                       <td className="px-3 py-2">
                         <AlarmWorkflowStatus status={alarm.status} size="sm" />
                       </td>
@@ -329,7 +333,8 @@ export function EventsPage() {
           {selected && (
             <aside className="rounded-sm border border-slate-800 bg-slate-900 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-fg-secondary">Event detail</p>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <ExceptionSeverity severity={selected.severity} size="sm" />
                 <AlarmWorkflowStatus status={selected.status} size="sm" />
                 <span className="text-sm text-slate-400">last value {selected.presentation_value}{selected.presentation_unit === "%" ? "%" : ` ${selected.presentation_unit ?? ""}`}</span>
               </div>

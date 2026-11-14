@@ -17,6 +17,7 @@ import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
 const EQUIPMENT_PAGE_SIZE = 200;
+const NO_VALUE = "—";
 
 export function EquipmentPage() {
   const [offset, setOffset] = useState(0);
@@ -153,7 +154,7 @@ export function EquipmentPage() {
         </form>
       )}
 
-      {equipmentQuery.isLoading && <TableLoading label="equipment" columns={4} />}
+      {equipmentQuery.isLoading && <TableLoading label="equipment" columns={9} />}
       {equipmentQuery.error && (
         <TableError error={equipmentQuery.error} what="the equipment list" permission="equipment:read" onRetry={() => equipmentQuery.refetch()} />
       )}
@@ -175,6 +176,11 @@ export function EquipmentPage() {
                 <th scope="col" className={TH}>Hostname</th>
                 <th scope="col" className={TH}>Asset Tag</th>
                 <th scope="col" className={TH}>Status</th>
+                <th scope="col" className={TH}>Site</th>
+                <th scope="col" className={TH}>Building</th>
+                <th scope="col" className={TH}>Floor</th>
+                <th scope="col" className={TH}>Room</th>
+                <th scope="col" className={TH}>Rack</th>
                 <th scope="col" className={TH}>Placement</th>
               </tr>
             </thead>
@@ -200,6 +206,11 @@ export function EquipmentPage() {
                       />
                     </div>
                   </td>
+                  <td className={`${TD} text-fg-secondary`}>{eq.location?.site?.name ?? NO_VALUE}</td>
+                  <td className={`${TD} text-fg-secondary`}>{eq.location?.building?.name ?? NO_VALUE}</td>
+                  <td className={`${TD} text-fg-secondary`}>{eq.location?.floor?.name ?? NO_VALUE}</td>
+                  <td className={`${TD} text-fg-secondary`}>{eq.location?.room?.name ?? NO_VALUE}</td>
+                  <td className={`${TD} text-fg-secondary`}>{eq.location?.rack?.name ?? NO_VALUE}</td>
                   <td className={`${TD} text-fg-secondary`}>
                     {eq.placement ? (
                       eq.placement.placement_type === "rack_mounted" ? (
@@ -219,7 +230,7 @@ export function EquipmentPage() {
                   </td>
                 </tr>
               ))}
-              {equipmentQuery.data.items.length === 0 && <EmptyRow columns={4}>No equipment yet.</EmptyRow>}
+              {equipmentQuery.data.items.length === 0 && <EmptyRow columns={9}>No equipment yet.</EmptyRow>}
             </tbody>
           </DataTable>
           {equipmentQuery.data.total > currentPageSize && (

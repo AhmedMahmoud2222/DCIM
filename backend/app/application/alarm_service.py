@@ -232,9 +232,12 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
                 managed_asset_id=reading.managed_asset_id,
                 subject_key=subject_key,
                 status="ACTIVE",
+                severity=rule.severity,
                 opened_at=reading.occurred_at,
                 last_value=comparison_value,
-                details=comparison_details,
+                # Who created this alarm: the provenance of the reading that opened it (None for a real device reading).
+                # The demo loader's rollback deletes only alarms whose origin it can prove; see tools/demo_loader/purge.py.
+                details={**comparison_details, **_origin(reading)},
             )
             db.add(alarm)
             await db.flush()
@@ -242,14 +245,28 @@ async def evaluate_reading(db: AsyncSession, reading: TelemetryReading) -> None:
         elif matches and open_alarm is not None:
             open_alarm.telemetry_reading_id = reading.id
             open_alarm.last_value = comparison_value
-            open_alarm.details = comparison_details
+            open_alarm.details = {**comparison_details, **_kept_origin(open_alarm)}
         elif not matches and open_alarm is not None:
             open_alarm.status = "CLEARED"
             open_alarm.cleared_at = reading.occurred_at
             open_alarm.telemetry_reading_id = reading.id
             open_alarm.last_value = comparison_value
-            open_alarm.details = comparison_details
+            open_alarm.details = {**comparison_details, **_kept_origin(open_alarm)}
             await _record_transition(db, open_alarm, "alarm.clear", "AlarmCleared")
+
+
+ORIGIN_KEY = "origin_provenance"
+
+
+def _origin(reading: TelemetryReading) -> dict:
+    provenance = (reading.attributes or {}).get("provenance")
+    return {ORIGIN_KEY: provenance} if isinstance(provenance, str) else {}
+
+
+def _kept_origin(alarm: Alarm) -> dict:
+    """An alarm keeps the origin it was opened with; a later reading (real or simulated) never rewrites it."""
+    value = (alarm.details or {}).get(ORIGIN_KEY)
+    return {ORIGIN_KEY: value} if value is not None else {}
 
 
 def rule_unit_status(rule: AlarmRule) -> str:
@@ -326,11 +343,14 @@ async def disable_rule(
 async def update_rule(
     db: AsyncSession, *, rule: AlarmRule, name: str | None, threshold: Decimal | None,
     threshold_set: bool, reason: str, expected_updated_at: datetime, actor_user_id: uuid.UUID,
+    severity: str | None = None,
 ) -> AlarmRule:
-    """Edit an alarm rule's label or threshold without replaying historical readings."""
+    """Edit an alarm rule's label, severity or threshold without replaying historical readings.
+
+    A severity change applies to alarms opened afterwards; an alarm already open keeps the severity it opened with."""
     _validate_rule_update(rule, reason, expected_updated_at)
-    if name is None and not threshold_set:
-        raise ApiError(status_code=422, title="No rule changes", detail="Provide a name or threshold to update.")
+    if name is None and severity is None and not threshold_set:
+        raise ApiError(status_code=422, title="No rule changes", detail="Provide a name, severity or threshold to update.")
 
     before: dict = {}
     after: dict = {}
@@ -338,6 +358,9 @@ async def update_rule(
     if name is not None and name != rule.name:
         before["name"] = rule.name
         after["name"] = name
+    if severity is not None and severity != rule.severity:
+        before["severity"] = rule.severity
+        after["severity"] = severity
     if threshold_set:
         if rule.rule_type == "availability_unavailable":
             if threshold is not None:
@@ -363,6 +386,8 @@ async def update_rule(
 
     if "name" in after:
         rule.name = after["name"]
+    if "severity" in after:
+        rule.severity = after["severity"]
     if "threshold" in after:
         rule.threshold = new_threshold
     rule.updated_at = datetime.now(UTC)

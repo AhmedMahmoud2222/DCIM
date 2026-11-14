@@ -45,6 +45,8 @@ export interface Alarm {
   managed_asset_id: string | null;
   subject_key: string;
   status: "ACTIVE" | "ACKNOWLEDGED" | "CLEARED";
+  /** Explicit severity from the backend; independent of the workflow `status`. */
+  severity: "critical" | "warning" | "info";
   opened_at: string;
   acknowledged_at: string | null;
   cleared_at: string | null;
