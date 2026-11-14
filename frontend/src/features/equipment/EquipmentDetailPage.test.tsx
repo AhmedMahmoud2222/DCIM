@@ -73,6 +73,22 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     vi.mocked(telemetryApi.getLatestPortStatusForEquipment).mockResolvedValue([]);
   });
 
+  it("shows Site, Building, Floor, Room and Rack from the API location", async () => {
+    vi.mocked(equipmentApi.getEquipment).mockResolvedValue({
+      ...equipment,
+      placement: { ...equipment.placement!, placement_type: "rack_mounted", rack_id: "rack-1", u_start: 4, u_end: 5, side: "front" },
+      location: {
+        site: { id: "s", name: "DEMO-SITE-02" }, building: { id: "b", name: "Hall B" }, floor: { id: "f", name: "Floor 2" },
+        room: { id: "room-1", name: "Room 2" }, rack: { id: "rack-1", name: "RACK-042" },
+      },
+    });
+    renderWithProviders(<EquipmentDetailPage />, routeOptions);
+    const placement = (await screen.findByRole("heading", { name: "Placement" })).parentElement!;
+    for (const [label, value] of [["Site", "DEMO-SITE-02"], ["Building", "Hall B"], ["Floor", "Floor 2"], ["Room", "Room 2"], ["Rack", "RACK-042"]]) {
+      expect(within(placement).getByText(label).nextElementSibling).toHaveTextContent(value);
+    }
+  });
+
   it("announces a 409 move conflict immediately via role=alert, not silent red text", async () => {
     vi.mocked(equipmentApi.moveEquipment).mockRejectedValue(new ApiError(409, "Conflict", "U-range conflict.", null));
     const user = userEvent.setup();
@@ -142,13 +158,13 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     vi.mocked(telemetryApi.getAlarmHistory).mockResolvedValue({ items: [
       {
         id: "availability-alarm", rule_id: "rule-1", integration_id: "integration-1", managed_asset_id: "eq-1",
-        subject_key: "availability", status: "CLEARED", opened_at: "2026-01-01T00:00:00Z",
+        subject_key: "availability", status: "CLEARED", severity: "warning", opened_at: "2026-01-01T00:00:00Z",
         acknowledged_at: null, cleared_at: "2026-01-01T01:00:00Z",
         last_value: 1, unit: "1", presentation_value: 100, presentation_unit: "%",
       },
       {
         id: "temperature-alarm", rule_id: "rule-2", integration_id: "integration-1", managed_asset_id: "eq-1",
-        subject_key: "temperature", status: "CLEARED", opened_at: "2026-01-01T00:00:00Z",
+        subject_key: "temperature", status: "CLEARED", severity: "warning", opened_at: "2026-01-01T00:00:00Z",
         acknowledged_at: null, cleared_at: "2026-01-01T01:00:00Z",
         last_value: 77, unit: "degF", presentation_value: 25, presentation_unit: "degC",
       },

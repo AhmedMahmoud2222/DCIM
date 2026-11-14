@@ -40,7 +40,7 @@ def legacy_rule():
     now = datetime.now(UTC)
     return AlarmRule(id=uuid.uuid4(), integration_id=uuid.uuid4(), metric="power_kw", unit=None,
                      registry_version=None, threshold=1500, rule_type="threshold_high", enabled=True,
-                     name="legacy", created_at=now, updated_at=now, blocked_notified_at=now)
+                     name="legacy", severity="warning", created_at=now, updated_at=now, blocked_notified_at=now)
 
 
 async def test_attention_list_exposes_unresolved_contract_and_timestamp():
@@ -81,7 +81,7 @@ async def test_create_rule_is_available_to_managers(monkeypatch):
     rule = db.add.call_args.args[0]
     expected_config = {
         "integration_id": str(rule.integration_id), "metric": "power_kw", "rule_type": "threshold_high",
-        "threshold": "7", "unit": "kW", "name": "PDU load", "registry_version": rule.registry_version,
+        "threshold": "7", "unit": "kW", "name": "PDU load", "severity": "warning", "registry_version": rule.registry_version,
         "enabled": True,
     }
     audit.assert_awaited_once()
