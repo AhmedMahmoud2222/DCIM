@@ -654,9 +654,49 @@ def test_the_header_probe_matches_where_the_parser_reads_in_place(before_the_hea
     assert budget._leads_to_header(5, 0, 10) is expected
 
 
-def test_the_header_probe_accepts_leading_zeros_in_the_numbers():
-    reader = SimpleNamespace(xref={0: {5: 0}}, xref_objStm={}, stream=io.BytesIO(b"0005 00 obj\n<<>>\nendobj"))
-    assert pdf_validation._LookupBudget(reader, 1000)._leads_to_header(5, 0, 0)
+@pytest.mark.parametrize(("header", "expected"), [(b"0005 00 obj", True), (b"0" * 8 + b"5 0 obj", True), (b"0" * 9 + b"5 0 obj", False), (b"0" * 70 + b"5 0 obj", False)])
+def test_the_header_probe_accepts_a_few_leading_zeros_and_not_a_pypdf_token_overflow(header, expected):
+    """pypdf 6.x and 7.x cut a number token at 64 bytes and then search the whole file, so a header
+    with 64 or more leading zeros was free to the probe while the parser searched for it."""
+    reader = SimpleNamespace(xref={0: {5: 0}}, xref_objStm={}, stream=io.BytesIO(header + b"\n<<>>\nendobj"))
+    assert pdf_validation._LookupBudget(reader, 1000)._leads_to_header(5, 0, 0) is expected
+
+
+def _zero_padded_headers_pdf(count: int, zeros: int, padding: int) -> bytes:
+    """Annotations 10 to 9+count listed in the table, each header written with `zeros` leading zeros
+    and every offset right. pypdf 7 reads 63 or fewer in place and searches the file for more."""
+    first = 10
+    references = b" ".join(b"%d 0 R" % (first + index) for index in range(count))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[" + references + b"]>>",
+        4: _stream(b"q Q" + b" " * padding),
+        **{first + index: _ANNOTATION for index in range(count)},
+    }
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = {}
+    for number, body in objects.items():
+        offsets[number] = len(out)
+        out += (b"0" * zeros if number >= first else b"") + b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref_offset, size = len(out), max(objects) + 1
+    out += b"xref\n0 %d\n" % size
+    for number in range(size):
+        out += b"%010d 00000 n \n" % offsets[number] if number in offsets else b"0000000000 65535 f \n"
+    out += b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (size, xref_offset)
+    return bytes(out)
+
+
+@pytest.mark.parametrize("zeros", [63, 64, 70])
+def test_headers_with_many_leading_zeros_are_charged_whatever_the_pypdf_version(zeros):
+    """On pypdf 7.1 these 12 entries in a 24 MB file cost 12 whole-file searches and the probe
+    charged none; refused within the allowance, they cost about 4."""
+    content = _zero_padded_headers_pdf(12, zeros, 24 * 1024 * 1024)
+    assert _assert_refused_within_the_allowance(content) == 4
+
+
+def test_headers_with_a_few_leading_zeros_in_a_small_file_are_accepted():
+    assert validate_pdf(_zero_padded_headers_pdf(12, 3, 0), **LIMITS).page_count == 1
 
 
 def test_a_reader_without_a_stream_is_charged():

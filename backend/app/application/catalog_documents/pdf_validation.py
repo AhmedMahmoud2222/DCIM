@@ -75,9 +75,12 @@ _MIN_UNLISTED_LOOKUPS = 4
 _LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
 # What the parser accepts at a listed offset before it falls back to searching the file: one
 # comment, then whitespace as the parser defines it (NUL, tab, line feed, form feed, carriage
-# return, space; not vertical tab), then the numbers with any leading zeros, then `obj`.
+# return, space; not vertical tab), then the numbers with a few leading zeros, then `obj`. Newer
+# pypdf cuts a number token at 64 bytes and then searches the whole file, so a header spelled with
+# 64 or more leading zeros must not pass for one the parser reads in place: eight is far more
+# than any producer writes and far below the cut.
 _HEADER_AT_OFFSET = (
-    rb"(?:%%[^\r\n]*[\r\n])?[\x00\t\n\x0c\r ]*0*%d[\x00\t\n\x0c\r ]+0*%d[\x00\t\n\x0c\r ]+obj"
+    rb"(?:%%[^\r\n]*[\r\n])?[\x00\t\n\x0c\r ]*0{0,8}%d[\x00\t\n\x0c\r ]+0{0,8}%d[\x00\t\n\x0c\r ]+obj"
 )
 # How much of the file at a listed offset is read to see whether it starts the object's header.
 _HEADER_PROBE_BYTES = 256
