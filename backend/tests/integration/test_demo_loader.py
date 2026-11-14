@@ -212,9 +212,9 @@ async def test_refresh_uses_the_live_clock(db_session, world, monkeypatch):
     seen = {}
     real = cli.simulate
 
-    async def spy(db, series, **kwargs):
-        seen.update(kwargs)
-        return await real(db, series, **kwargs)
+    async def spy(db, series, *, hours, **kwargs):
+        seen.update(kwargs, hours=hours)
+        return await real(db, series, hours=hours, **kwargs)
 
     monkeypatch.setattr(cli, "simulate", spy)
     await cli.run_refresh(db_session, argparse.Namespace(site_prefix="DEMO-SITE-", integration=[], watch=False, catch_up_hours=1.0,

@@ -1,6 +1,6 @@
 """Throughput benchmark: sequential vs one-session-per-collector ingest on identical workloads.
 
-Skipped unless DEMO_BENCH=1. Writes a JSON report to DEMO_BENCH_OUT (default /tmp/demo_loader_bench.json)."""
+Skipped unless DEMO_BENCH=1. Writes a JSON report to DEMO_BENCH_OUT, or to pytest's private tmp_path when unset."""
 
 import json
 import os
@@ -55,7 +55,7 @@ async def measure(db, label, factory, as_of):
     }
 
 
-async def test_benchmark(db_session, db_engine, make_user):
+async def test_benchmark(db_session, db_engine, make_user, tmp_path):
     await make_user("bench@example.com", "Passw0rd!Passw0rd", "Administrator")
     await build_world(db_session, racks_per_site=4, devices_per_rack=5)
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
@@ -64,5 +64,7 @@ async def test_benchmark(db_session, db_engine, make_user):
     await purge(db_session, await discover(db_session), dry_run=False)
     runs.append(await measure(db_session, "parallel (one session per collector)", factory, as_of))
     out = {"cpu_count": os.cpu_count(), "workload": "3 collectors; 9 existing + 24 sensor series x 289 slots + 120 device series x 73 slots", "runs": runs}
-    Path(os.environ.get("DEMO_BENCH_OUT", "/tmp/demo_loader_bench.json")).write_text(json.dumps(out, indent=2))
+    target = Path(os.environ["DEMO_BENCH_OUT"]) if os.environ.get("DEMO_BENCH_OUT") else tmp_path / "demo_loader_bench.json"
+    target.write_text(json.dumps(out, indent=2))
+    print(f"benchmark report: {target}")
     assert runs[0]["records_accepted"] == runs[1]["records_accepted"] and runs[0]["rejected"] == runs[1]["rejected"] == 0

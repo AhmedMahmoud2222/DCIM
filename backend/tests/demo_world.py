@@ -55,8 +55,18 @@ class World:
         return sum(len(s.device_ids) for s in self.sites)
 
 
-async def _site(db: AsyncSession, city: City, code: str, *, poll: int, racks: int, per_rack: int, rev: tuple[uuid.UUID, uuid.UUID],
-                now: datetime, with_mappings: bool, x0: int = 1000) -> SiteWorld:
+@dataclass(frozen=True)
+class SiteSpec:
+    code: str
+    poll: int
+    racks: int
+    per_rack: int
+    with_mappings: bool = True
+    x0: int = 1000
+
+
+async def _site(db: AsyncSession, city: City, spec: SiteSpec, rev: tuple[uuid.UUID, uuid.UUID], now: datetime) -> SiteWorld:
+    code, poll, racks, per_rack, with_mappings, x0 = spec.code, spec.poll, spec.racks, spec.per_rack, spec.with_mappings, spec.x0
     site = Site(city_id=city.id, code=code, name=f"{code} name")
     db.add(site)
     await db.flush()
@@ -135,9 +145,8 @@ async def build_world(db: AsyncSession, *, sites: int = 3, racks_per_site: int =
     await db.commit()
     rev = (rack_rev.id, equipment_rev.id)
     demo = [
-        await _site(db, city, f"DEMO-SITE-{n + 1:02d}", poll=poll, racks=racks_per_site, per_rack=devices_per_rack, rev=rev, now=now,
-                    with_mappings=True)
+        await _site(db, city, SiteSpec(f"DEMO-SITE-{n + 1:02d}", poll, racks_per_site, devices_per_rack), rev, now)
         for n in range(sites)
     ]
-    hrc = await _site(db, city, "HRC", poll=60, racks=2, per_rack=1, rev=rev, now=now, with_mappings=True)
+    hrc = await _site(db, city, SiteSpec("HRC", 60, 2, 1), rev, now)
     return World(sites=demo, hrc=hrc, rack_revision_id=rack_rev.id, equipment_revision_id=equipment_rev.id)

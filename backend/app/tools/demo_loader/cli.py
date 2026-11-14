@@ -12,6 +12,7 @@ document per command on stdout (progress goes to stderr); the exit code is 0 onl
 
 import argparse
 import asyncio
+import importlib
 import json
 import sys
 import uuid
@@ -20,7 +21,6 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.db.models  # noqa: F401  (registers every ORM model; a foreign key to an unloaded table fails at first flush)
 from app.core.config import get_settings
 from app.domain.auth.models import User
 from app.domain.telemetry.models import IntegrationMetricMapping
@@ -177,6 +177,9 @@ async def run_refresh(db: AsyncSession, args: argparse.Namespace) -> dict:
 
 
 async def run(args: argparse.Namespace) -> tuple[dict, int]:
+    # Register every ORM model on the shared metadata first: a foreign key to a table whose model was never imported
+    # fails at the first flush (NoReferencedTableError). The application does this by importing app.main; a CLI must too.
+    importlib.import_module("app.db.models")
     from app.db.session import AsyncSessionLocal
 
     guard(args)
