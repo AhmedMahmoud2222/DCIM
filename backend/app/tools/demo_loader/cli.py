@@ -30,6 +30,7 @@ from app.tools.demo_loader.constants import (
     DEFAULT_DEVICE_HISTORY_HOURS,
     DEFAULT_HISTORY_HOURS,
     DEMO_SITE_PREFIX,
+    DEVICE_METRICS,
     MAPPING_LABEL,
     SOURCE_PREFIX,
 )
@@ -217,7 +218,16 @@ async def run_refresh(db: AsyncSession, args: argparse.Namespace) -> dict:
     last: dict = {}
     while True:
         series = await existing_series(db, targets) + await loader_series(db, targets)
-        report = await simulate(db, series, hours=args.catch_up_hours, now=None, session_factory=getattr(args, "session_factory", None))  # refresh always uses the live clock
+        factory = getattr(args, "session_factory", None)
+        device_hours = getattr(args, "device_catch_up_hours", None)  # None: every series uses catch_up_hours
+        if device_hours is None:
+            report = await simulate(db, series, hours=args.catch_up_hours, now=None, session_factory=factory)  # refresh always uses the live clock
+        else:
+            # Only the loader's own device series follow the device window; pre-existing mappings keep the history window.
+            devices = [s for s in series if s.mapping.source_identifier.startswith(SOURCE_PREFIX) and s.metric in DEVICE_METRICS]
+            others = [s for s in series if s not in devices]
+            report = await simulate(db, others, hours=args.catch_up_hours, now=None, session_factory=factory)
+            report.merge(await simulate(db, devices, hours=device_hours, now=None, session_factory=factory))
         last = {"at": datetime.now(UTC).isoformat(), "series": len(series), **report.as_dict(), "ok": report.clean}
         if not args.watch:
             return last
@@ -261,7 +271,7 @@ async def dispatch(db: AsyncSession, args: argparse.Namespace) -> tuple[dict, in
                 # judges the data a viewer would see now. With a pinned --as-of this is skipped on purpose: run `refresh`, then `verify`.
                 catch_up = argparse.Namespace(
                     site_prefix=args.site_prefix, integration=args.integration, watch=False, session_factory=getattr(args, "session_factory", None),
-                    catch_up_hours=max(args.history_hours, args.device_history_hours),
+                    catch_up_hours=args.history_hours, device_catch_up_hours=args.device_history_hours,
                 )
                 refreshed = await run_refresh(db, catch_up)
                 result["catch_up"] = refreshed
