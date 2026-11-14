@@ -27,8 +27,8 @@ async def test_invalid_asset_type_is_rejected(client, auth_headers):
 
 
 async def test_oversized_asset_tag_is_a_clean_validation_error_not_a_500(client, auth_headers):
-    """Finding M1 regression (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-    PHASE1_CORRECTION_REPORT.md): an asset_tag longer than the column's 64 characters
+    """Finding M1 regression (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+    docs/history/PHASE1_CORRECTION_REPORT.md): an asset_tag longer than the column's 64 characters
     previously reached the database and surfaced as an unhandled 500."""
     headers = await auth_headers("Engineer")
     resp = await client.post(

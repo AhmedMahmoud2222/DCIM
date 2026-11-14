@@ -1,6 +1,6 @@
 # DCIM documentation index
 
-**Navigation edition:** 2026-11-13, based on the Markdown inventory of `main@1e00e227039a4fb08c09ae46f565430678f6d55d`.
+**Navigation edition:** 2026-11-13, based on the Markdown inventory of `main@b6947782571d07c84c3fbd899ef5f28f484cdb04`.
 
 **How to read this index:** “Primary guide” means the preferred entry point, **not** that every implementation or status claim has been revalidated at this commit. Many underlying pages give an earlier exact SHA and are snapshots. Check live source, GitHub PR/CI evidence and deployment records before making a current-state claim. No production deployment is authorized here.
 
@@ -33,7 +33,7 @@
 - **Migration 0057 — production hold:** [preflight](FK_INDEX_PREFLIGHT_0057.md), [benchmark](FK_INDEX_BENCHMARK_0057.md), [rollout](FK_INDEX_ROLLOUT_0057.md), [benchmarked results](benchmark-results/0057/README.md). No production execution without staging qualification and written owner and DBA approval.
 - **Security and agents:** [Acceptance gate](security/ACCEPTANCE_GATE.md), [OpenCode authority](security/OPENCODE_AGENT_AUTHORITY.md), [Claude authority](security/CLAUDE_AGENT_AUTHORITY.md), [collaboration](security/AGENT_COLLABORATION.md), and [reviewer rules](../AGENTS.md). Do not merge or amend authority documents under a general docs-cleanup pretext.
 - **Edge storage protection:** [SEC-06 LUKS/dm-crypt runbook](SEC06_EDGE_STORAGE_ENCRYPTION.md), [SEC-05 retention](SEC05_COLLECTOR_RETENTION.md).
-- **Older security and validation evidence:** [Phase 11 findings and remediation plan](../PHASE11_SECURITY_REMEDIATION_PLAN.md), [Phase 10 audit addendum](AUDIT_STATUS.md), [dated independent audit records](HISTORY_AND_EVIDENCE.md).
+- **Older security and validation evidence:** [Phase 11 findings and remediation plan](history/PHASE11_SECURITY_REMEDIATION_PLAN.md), [Phase 10 audit addendum](AUDIT_STATUS.md), [dated independent audit records](HISTORY_AND_EVIDENCE.md).
 
 ## Historical evidence vs living guidance
 
@@ -49,3 +49,9 @@ Files under `.claude/skills/archify/` are bundled skill, renderer and third-part
 4. Preserve dated audits, findings, benchmark results, ADRs and security/agent authority verbatim. Add a dated correction or cross-reference rather than silently revising historical conclusions.
 5. Validate relative links and affected operational commands when moving a file. Do not delete or relocate a linked report until its inbound and outbound references are reconciled.
 6. Never interpret this documentation consolidation as an approval to deploy, run production migrations, weaken CI, or resolve active security findings.
+
+## Documentation maintenance evidence
+
+- [Complete classification and consolidation report](DOCUMENTATION_CONSOLIDATION.md)
+- [Historical archive index](history/README.md) and [old-to-new path mapping](documentation-moves.json)
+- [Local and CI documentation validation](DOCUMENTATION_VALIDATION.md)

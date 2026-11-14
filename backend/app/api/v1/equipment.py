@@ -1,4 +1,4 @@
-"""Equipment endpoints (ARCHITECTURE_REVIEW.md §4b/§7). Unlike Rack, Equipment's
+"""Equipment endpoints (docs/history/ARCHITECTURE_REVIEW.md §4b/§7). Unlike Rack, Equipment's
 placement is polymorphic (rack/floor/wall/ceiling/other — §7); `move` accepts whichever
 fields the chosen `placement_type` requires and leaves the rest NULL, matching
 EquipmentPlacement's own CHECK constraint."""

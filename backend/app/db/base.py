@@ -15,7 +15,7 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     """Every persisted timestamp in this codebase is TIMESTAMPTZ (UTC) — this is a
-    binding, universal convention (ARCHITECTURE_REVIEW.md §7/§9/§16/§25/§29), not a
+    binding, universal convention (docs/history/ARCHITECTURE_REVIEW.md §7/§9/§16/§25/§29), not a
     per-table choice. Nothing in this codebase should use a naive TIMESTAMP column."""
 
     metadata = MetaData(naming_convention=NAMING_CONVENTION)

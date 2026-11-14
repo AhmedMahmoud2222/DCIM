@@ -5,7 +5,7 @@ genuine raw ICMP socket built with the stdlib `socket` module.
 Requires `CAP_NET_RAW` (or root) to open `SOCK_RAW`/`IPPROTO_ICMP` -- a real
 operational requirement for wherever this driver actually runs (the central collector
 process, or eventually an edge collector), documented in
-`PHASE8_EDGE_COLLECTOR_CONTRACT.md` rather than silently assumed. When the raw socket
+`docs/history/PHASE8_EDGE_COLLECTOR_CONTRACT.md` rather than silently assumed. When the raw socket
 cannot be opened (`PermissionError`), this driver raises `DriverConnectionError` with
 that reason explicitly named -- it does NOT silently fall back to a different signal
 and call it "ICMP" (that would misrepresent what was actually measured); a genuinely

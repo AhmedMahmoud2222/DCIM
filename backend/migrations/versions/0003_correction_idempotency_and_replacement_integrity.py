@@ -4,7 +4,7 @@ defense-in-depth TRUNCATE revocation on audit_log (Finding C1 — the authoritat
 ownership transfer, lives in scripts/bootstrap_privileged_roles.sql since dcim_app,
 which runs this migration, cannot re-own a table to a role it isn't a member of).
 
-See PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md and PHASE1_CORRECTION_REPORT.md.
+See docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md and PHASE1_CORRECTION_REPORT.md.
 
 Revision ID: 0003_correction
 Revises: 0002_seed
@@ -101,7 +101,7 @@ def downgrade() -> None:
     # owner of relation audit_log". A superuser must run
     # `ALTER TABLE audit_log OWNER TO dcim_app;` (and each partition) first. This mirrors
     # the pre-existing, documented limitation that dcim_retention_admin's own creation is
-    # likewise outside Alembic's downgrade path (PHASE1_IMPLEMENTATION.md §14).
+    # likewise outside Alembic's downgrade path (docs/history/PHASE1_IMPLEMENTATION.md §14).
     op.execute("GRANT TRUNCATE ON audit_log TO dcim_app")
 
     op.execute("DROP TRIGGER IF EXISTS trg_managed_asset_replacement_acyclic ON managed_asset")

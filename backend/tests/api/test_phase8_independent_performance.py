@@ -1,5 +1,5 @@
-"""Independent performance re-measurement (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md §19).
-Does not trust PHASE8_IMPLEMENTATION_REPORT.md's "flat 4 queries" claim -- re-measures
+"""Independent performance re-measurement (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md §19).
+Does not trust docs/history/PHASE8_IMPLEMENTATION_REPORT.md's "flat 4 queries" claim -- re-measures
 from scratch using the same before_cursor_execute counting technique
 tests/api/test_power.py established, applied independently to GET /collectors,
 GET /integrations, and run_polling_cycle. Written by an independent auditor. No
@@ -79,7 +79,7 @@ async def test_independent_get_integrations_query_count_at_1_10_100_500(client, 
 async def test_independent_run_polling_cycle_query_count_does_not_grow_with_assigned_integrations(
     db_session, db_engine,
 ):
-    """PHASE8_IMPLEMENTATION_REPORT.md §14 explicitly admits this specific measurement
+    """docs/history/PHASE8_IMPLEMENTATION_REPORT.md §14 explicitly admits this specific measurement
     was "code-reviewed but not separately performance-tested" -- closing that gap here."""
     from app.application.collector_service import assign_integration, run_polling_cycle
 
@@ -116,12 +116,12 @@ async def test_independent_run_polling_cycle_query_count_does_not_grow_with_assi
         counts[target_total] = q
         print(f"\n[INDEPENDENT-PERF] run_polling_cycle at {target_total} assigned integrations: {q} queries")
 
-    # FINDING I5 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): unlike GET /collectors and
+    # FINDING I5 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): unlike GET /collectors and
     # GET /integrations (genuinely flat after their N1 fix), run_polling_cycle's query
     # count grows roughly LINEARLY with assigned-integration count (~5-6 queries per
     # integration: ingest_discovery's own SELECT+INSERT+2x-outbox-INSERT per new
     # device, plus one Integration UPDATE flushed at final commit) -- contradicting
-    # PHASE8_IMPLEMENTATION_REPORT.md §14's framing that this "mirrors the same,
+    # docs/history/PHASE8_IMPLEMENTATION_REPORT.md §14's framing that this "mirrors the same,
     # already-measured [flat] pattern." Some of this is inherent (each newly observed
     # device genuinely needs its own row), so this is not treated as a blocking defect,
     # but the prior report's claim was inaccurate and is corrected here. This assertion

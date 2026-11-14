@@ -1,4 +1,4 @@
-"""Protocol/Driver abstraction (ARCHITECTURE_REVIEW.md §20): "the interface contract
+"""Protocol/Driver abstraction (docs/history/ARCHITECTURE_REVIEW.md §20): "the interface contract
 (`connect/poll/disconnect/normalize`)". Every concrete driver (ICMP/SNMP/REST)
 implements exactly this interface -- nothing outside `app/application/drivers/`
 branches on protocol/vendor identity. The critical architectural rule the master

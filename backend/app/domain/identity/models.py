@@ -1,5 +1,5 @@
 """ManagedAsset: the identity + lifecycle anchor for every independently-lifecycled
-physical asset (ARCHITECTURE_REVIEW.md §4/§4a/§4b). Phase 1 implements this table alone,
+physical asset (docs/history/ARCHITECTURE_REVIEW.md §4/§4a/§4b). Phase 1 implements this table alone,
 as a bare identity anchor with no concrete subtype (Rack/Equipment/PDU/...) attached yet —
 those are Phase 2/3/7 (§9 of the Phase 1 prompt). asset_type is deliberately a plain,
 extensible string column (not a fixed Postgres ENUM) so a future subtype can be added by
@@ -56,8 +56,8 @@ class ManagedAsset(Base, UUIDPkMixin, TimestampMixin):
         # `(pdu_asset_id, pdu_asset_expected_type)` can only reference a ManagedAsset
         # whose own asset_type is 'pdu'.
         UniqueConstraint("id", "asset_type", name="uq_managed_asset_id_asset_type"),
-        # Findings M2/M3 (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-        # PHASE1_CORRECTION_REPORT.md): an asset cannot replace itself. Longer cycles
+        # Findings M2/M3 (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+        # docs/history/PHASE1_CORRECTION_REPORT.md): an asset cannot replace itself. Longer cycles
         # (A replaces B, B replaces A; or longer chains) cannot be expressed as a
         # single-row CHECK constraint — that invariant is enforced by the
         # trg_managed_asset_replacement_acyclic trigger added in migration 0003, which

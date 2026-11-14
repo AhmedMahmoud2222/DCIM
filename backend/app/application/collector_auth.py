@@ -116,7 +116,7 @@ async def verify_collector_request(
     if collector is None or collector.status != "active":
         raise CollectorAuthError("Unknown or inactive collector.")
 
-    # Finding I1 (PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): bound the header's length
+    # Finding I1 (docs/history/PHASE8_INDEPENDENT_RED_TEAM_REPORT.md): bound the header's length
     # before parsing (a real Unix-seconds timestamp is never more than ~11 digits for
     # millennia; this also keeps `int()` itself cheap, though CPython's own integer-
     # string-conversion limit already guards against a pathologically long digit

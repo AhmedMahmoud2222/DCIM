@@ -1,5 +1,5 @@
-"""FloorPlan / SpatialLayer / SpatialObject (ARCHITECTURE_REVIEW.md §8/§9/§12/§40).
-Column lists authored per PHASE2_GAP_ANALYSIS.md §3.1/§3.3 — not published verbatim
+"""FloorPlan / SpatialLayer / SpatialObject (docs/history/ARCHITECTURE_REVIEW.md §8/§9/§12/§40).
+Column lists authored per docs/history/PHASE2_GAP_ANALYSIS.md §3.1/§3.3 — not published verbatim
 anywhere in the architecture document, derived from §8's inline sketch, §9's coordinate
 model, and §40's renderer-agnostic requirement (every renderer consumes the same
 SpatialObject query result).

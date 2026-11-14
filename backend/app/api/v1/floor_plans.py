@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Floor-plan CRUD, secure upload/import (ARCHITECTURE_REVIEW.md §8/§9/§10/§10a/§11), and
+"""Floor-plan CRUD, secure upload/import (docs/history/ARCHITECTURE_REVIEW.md §8/§9/§10/§10a/§11), and
 the accept/reject review queue that keeps imported geometry from ever becoming
 authoritative inventory without an explicit human decision (§21 of the Phase 2 prompt)."""
 
@@ -926,7 +926,7 @@ class AcceptCandidateIn(BaseModel):
 
 
 async def _get_or_create_imported_layer(db: AsyncSession, floor_plan_id: uuid.UUID) -> SpatialLayer:
-    """RT-1 correction (PHASE2_INDEPENDENT_RED_TEAM_REPORT.md finding RT-1): the previous
+    """RT-1 correction (docs/history/PHASE2_INDEPENDENT_RED_TEAM_REPORT.md finding RT-1): the previous
     unlocked SELECT-then-INSERT here let concurrent accept requests for different
     candidates of the same job each observe no existing "Imported" layer and each create
     one, producing duplicate layers and — once duplicated — a permanent

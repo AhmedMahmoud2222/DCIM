@@ -1,5 +1,5 @@
 -- One-time, superuser-run bootstrap for the privileged AuditLog retention role
--- (ARCHITECTURE_REVIEW.md §30a — resolves H6). Run this once per environment, by a DBA
+-- (docs/history/ARCHITECTURE_REVIEW.md §30a — resolves H6). Run this once per environment, by a DBA
 -- connected as a superuser (or a role with CREATEROLE) — it must NEVER be run by the
 -- application's own migration role, which is deliberately not granted CREATEROLE
 -- (least privilege, §33/§40 of the Phase 1 prompt). Idempotent: safe to re-run.
@@ -7,7 +7,7 @@
 -- Usage: psql -U postgres -d dcim -f scripts/bootstrap_privileged_roles.sql
 --        psql -U postgres -d dcim_test -f scripts/bootstrap_privileged_roles.sql
 --
--- PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md Finding C1 (CRITICAL): revoking UPDATE/DELETE
+-- docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md Finding C1 (CRITICAL): revoking UPDATE/DELETE
 -- from dcim_app on audit_log (done in migration 0002) is not sufficient on its own,
 -- because dcim_app is the table's OWNER (it created audit_log while running Alembic),
 -- and PostgreSQL treats DROP/ALTER as inherent to ownership rather than a grantable,
@@ -126,6 +126,6 @@ GRANT EXECUTE ON FUNCTION dcim_create_audit_log_partition(text, date, date) TO d
 -- migration 0002 will fail on the steps that GRANT/DROP audit_log as dcim_app, because
 -- dcim_app is no longer its owner. This mirrors the pre-existing, documented limitation
 -- that dcim_retention_admin's own creation is likewise outside Alembic's downgrade path
--- (PHASE1_IMPLEMENTATION.md §14). To downgrade in an environment where this script has
+-- (docs/history/PHASE1_IMPLEMENTATION.md §14). To downgrade in an environment where this script has
 -- run, a superuser must first run: ALTER TABLE audit_log OWNER TO dcim_app; (and each
 -- partition), reversing the transfer above, before `alembic downgrade` is attempted.

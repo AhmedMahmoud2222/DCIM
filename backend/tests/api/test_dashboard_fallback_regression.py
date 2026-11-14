@@ -1,4 +1,4 @@
-"""PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md finding F-N1-FALLBACK-1 (HIGH, blocking,
+"""docs/history/PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md finding F-N1-FALLBACK-1 (HIGH, blocking,
 now corrected): when `load_power_graph_snapshot` reports `truncated=True` (the active
 graph exceeds `MAX_BATCH_GRAPH_EDGES`), both dashboard endpoints fall back to the
 original per-node functions (`derive_node_capacity_exceptions`/`equipment_power_
@@ -38,7 +38,7 @@ async def _build_bound_exceeding_chain_with_equipment_feed(db_session, chain_len
     """A backbone chain longer than MAX_TRAVERSAL_DEPTH (500) with an
     equipment_power_input feed node at the far end, so equipment_power_summary's own
     get_upstream_node_ids call for that feed walks (and exceeds) the whole chain --
-    the exact shape PHASE3_N1_CORRECTION_REPORT.md Section 2 used to find the original
+    the exact shape docs/history/PHASE3_N1_CORRECTION_REPORT.md Section 2 used to find the original
     n=5,000 crash."""
     prev = None
     for i in range(chain_len):

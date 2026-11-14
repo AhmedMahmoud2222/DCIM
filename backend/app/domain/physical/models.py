@@ -1,4 +1,4 @@
-"""Rack and Equipment: the first concrete `ManagedAsset` subtypes (ARCHITECTURE_REVIEW.md
+"""Rack and Equipment: the first concrete `ManagedAsset` subtypes (docs/history/ARCHITECTURE_REVIEW.md
 §4b). Shared-primary-key inheritance — `Rack.id`/`Equipment.id` *are* `ManagedAsset.id`,
 not a second independent identifier (§4). Per §4b's rule, stated once and followed
 exactly here: "`ManagedAsset` = identity + lifecycle anchor. A subtype table =
@@ -28,7 +28,7 @@ class Rack(Base, TimestampMixin):
     custom_attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     # Optimistic concurrency for the rack's own narrow fields (name/owner/notes) —
-    # ARCHITECTURE_REVIEW.md §36: placement/topology contention is protected by
+    # docs/history/ARCHITECTURE_REVIEW.md §36: placement/topology contention is protected by
     # RackPlacement's locked close-then-open transaction (§7c), not this column; this
     # column exists for ordinary field edits racing each other.
     version: Mapped[int] = mapped_column(nullable=False, default=1)

@@ -217,7 +217,7 @@ async def test_heartbeat_signed_identity_must_match_url_path(client, auth_header
 
 
 async def test_heartbeat_rejects_oversized_status_as_clean_422_not_500(client, auth_headers):
-    """Same class of bug as PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md Finding M1: an
+    """Same class of bug as docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md Finding M1: an
     API-boundary field must be bounded to match its column's actual width
     (CollectorHeartbeat.status is String(16)), so an oversized value is rejected as a
     clean validation error, never reaching Postgres and surfacing as an unhandled 500."""
@@ -286,7 +286,7 @@ async def test_ingest_batch_rejects_oversized_batch(client, auth_headers):
 
 
 async def test_ingest_batch_rejects_oversized_single_record_raw_attributes(client, auth_headers):
-    """PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S1: MAX_BATCH_RECORDS alone
+    """docs/history/PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S1: MAX_BATCH_RECORDS alone
     bounds record COUNT, not the size of any one record's `raw_attributes` blob -- a
     single record with a huge attribute payload must still be rejected, not silently
     accepted and written to the database."""
@@ -1371,7 +1371,7 @@ async def test_poll_now_one_failing_integration_does_not_prevent_a_sibling_from_
 
 
 async def test_ingest_rejects_a_record_for_an_integration_not_assigned_to_this_collector(client, auth_headers):
-    """PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S2: a valid collector signature
+    """docs/history/PHASE8_IMPLEMENTATION_RED_TEAM_SCOPE.md finding S2: a valid collector signature
     proves identity, never authorization to report for an arbitrary `integration_id`.
     A registered collector must not be treated as an authoritative source for an
     integration it was never assigned -- not even when the integration_id is real and

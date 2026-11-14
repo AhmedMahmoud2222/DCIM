@@ -1,9 +1,9 @@
-"""Power topology + capacity domain (ARCHITECTURE_REVIEW.md §4b/§13/§13a/§14). Phase 3
+"""Power topology + capacity domain (docs/history/ARCHITECTURE_REVIEW.md §4b/§13/§13a/§14). Phase 3
 implements exactly the schema those sections already specify, plus one additive node
 type (`utility_intake`) they did not need to discuss: a real DC's distribution graph
 starts above the generator (utility feed), and the master prompt's own examples
 ("utility input") name it explicitly. This is the one deliberate deviation from the
-architecture's literal table — documented here and in PHASE3_IMPLEMENTATION_REPORT.md,
+architecture's literal table — documented here and in docs/history/PHASE3_IMPLEMENTATION_REPORT.md,
 not silently introduced.
 
 `PDU`/`UPS`/`Generator`/`PowerPanel` are `ManagedAsset` subtypes (shared-PK inheritance,
@@ -188,7 +188,7 @@ class PDUOutlet(Base, TimestampMixin):
     lives entirely in its PowerNode row (node_type='pdu_outlet', owning_asset_id=the
     PDU's ManagedAsset.id); this table holds only the outlet-specific columns.
 
-    F-M3 correction (migration 0007; PHASE3_CORRECTION_DESIGN.md Part 11):
+    F-M3 correction (migration 0007; docs/history/PHASE3_CORRECTION_DESIGN.md Part 11):
     `pdu_asset_id` is no longer FK'd to `managed_asset.id` alone (satisfiable by any
     ManagedAsset subtype) — `pdu_asset_expected_type` is a generated column fixed to the
     literal `'pdu'`, and the composite FK `(pdu_asset_id, pdu_asset_expected_type) ->

@@ -1,4 +1,4 @@
-"""Power capacity, redundancy, and capacity-exception derivation (ARCHITECTURE_REVIEW.md
+"""Power capacity, redundancy, and capacity-exception derivation (docs/history/ARCHITECTURE_REVIEW.md
 §14; master prompt §7/§8/§11/§12/§13). Every unit is explicit in its own name
 (`_kw`/`_pct`) — never mixed (master prompt §7: "Do not mix electrical units"). Every
 value that cannot be computed from what is actually stored is returned as `None` with an
@@ -8,7 +8,7 @@ treated as zero (master prompt §29).
 **Capacity semantics, stated once (§8):**
 - `rated_capacity_kw` — nameplate capability, as entered for this `PowerNode`.
 - `configured_capacity_kw` — an operationally configured limit; falls back to
-  `rated_capacity_kw` when unset (ARCHITECTURE_REVIEW.md §14's own formula).
+  `rated_capacity_kw` when unset (docs/history/ARCHITECTURE_REVIEW.md §14's own formula).
   `effective_capacity_kw = COALESCE(configured_capacity_kw, rated_capacity_kw)`.
 - `allocated_kw` — **not** a stored column. It is this module's own topology-derived
   roll-up: the sum of this node's direct children's `effective_capacity_kw`, where a
@@ -59,7 +59,7 @@ logger = get_logger(__name__)
 DEFAULT_WARNING_THRESHOLD_PCT = 80.0
 DEFAULT_CRITICAL_THRESHOLD_PCT = 95.0
 
-# PHASE3_N1_CORRECTION_REPORT.md: batch-loading whole-graph bound for
+# docs/history/PHASE3_N1_CORRECTION_REPORT.md: batch-loading whole-graph bound for
 # `load_power_graph_snapshot`. This is a *different* bound than
 # `MAX_TRAVERSAL_NODES`/`MAX_TRAVERSAL_DEPTH` (which bound one node's own downstream/
 # upstream subtree, per call) -- it bounds the whole active graph the batch path is
@@ -221,7 +221,7 @@ async def compute_allocated_kw(db: AsyncSession, root_id: uuid.UUID) -> tuple[fl
     nothing to allocate), `"unknown"` when at least one branch bottoms out at a node with
     neither a capacity record nor further children carrying one, `"known"` otherwise.
 
-    F-H2 correction (PHASE3_CORRECTION_DESIGN.md Part 8, Model A): a retired node must
+    F-H2 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Part 8, Model A): a retired node must
     not act as an operational bridge for this roll-up either — its own capacity (if it
     still has a stale record) must not be counted into an ancestor's `allocated_kw`, and
     nothing further downstream of it may be discovered through it. Both pass 1's subtree
@@ -353,9 +353,9 @@ async def derive_node_capacity_exceptions(db: AsyncSession, power_node_id: uuid.
     module defaults only when the node's own `PowerCapacity` record doesn't specify one —
     never a silently-invented number with no fallback path documented.
 
-    F-H1 correction (PHASE3_CORRECTION_DESIGN.md Part 7): the precedence check below now
+    F-H1 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Part 7): the precedence check below now
     keys off `figures.data_quality == "unknown"` directly, not off
-    `figures.effective_capacity_kw is None` alone. PHASE3_HOSTILE_SELF_AUDIT.md's F-H1
+    `figures.effective_capacity_kw is None` alone. docs/history/PHASE3_HOSTILE_SELF_AUDIT.md's F-H1
     demonstrated the previous version: a node whose *own* rated/configured capacity was
     known, but whose *allocation* roll-up hit `compute_allocated_kw`'s bounded-traversal
     limit (entirely plausible at the master prompt's own target scale of 5,000+ power
@@ -402,7 +402,7 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
     upstream_sets: dict[uuid.UUID, set[uuid.UUID]] = {}
     upstream_unresolved = False
     for node in feed_nodes:
-        # F-H2 correction (PHASE3_CORRECTION_DESIGN.md Part 8): "has an upstream path"
+        # F-H2 correction (docs/history/PHASE3_CORRECTION_DESIGN.md Part 8): "has an upstream path"
         # must mean "reaches some live upstream node via the retirement-aware
         # traversal", not merely "an active connection row happens to point at this
         # node" -- the latter would still be true for `Utility -> Retired PDU ->
@@ -413,7 +413,7 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
         # so a feed fed only by a retired node now correctly yields an empty upstream
         # set here.
         #
-        # F-N1-FALLBACK-1 correction (PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md): a
+        # F-N1-FALLBACK-1 correction (docs/history/PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md): a
         # bound-exceeded upstream traversal must degrade this one feed's path status to
         # unknown, exactly like `compute_allocated_kw` already does for its own bound --
         # it never raises, only ever returns `(None, "unknown")`. This function was the
@@ -489,7 +489,7 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
         effective_demand = sum(known_capacities)
         data_quality = "known" if len(known_capacities) == len(feed_infos) else "unknown"
 
-    # F-N1-FALLBACK-1 (PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md): a feed whose
+    # F-N1-FALLBACK-1 (docs/history/PHASE3_FINAL_INDEPENDENT_REAUDIT_REPORT.md): a feed whose
     # upstream path could not be resolved makes this whole summary's data_quality
     # "unknown" too, regardless of how well-resolved the capacity side is --
     # `redundancy_classification` above may already have leaned conservative (toward
@@ -506,7 +506,7 @@ async def equipment_power_summary(db: AsyncSession, equipment_asset_id: uuid.UUI
 
 
 # --------------------------------------------------------------------------------------
-# Batch-loading path (PHASE3_N1_CORRECTION_REPORT.md). Everything above this line is
+# Batch-loading path (docs/history/PHASE3_N1_CORRECTION_REPORT.md). Everything above this line is
 # the original, per-call implementation -- unchanged, still the only code path used by
 # every non-dashboard caller (e.g. `GET /power/nodes/{id}/capacity`), and still the
 # fallback `dashboard.py` uses whenever `load_power_graph_snapshot` reports

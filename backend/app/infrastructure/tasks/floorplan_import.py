@@ -35,7 +35,7 @@ logger = get_logger(__name__)
 
 
 def _mark_job_failed_on_unexpected_error(db: Session, job_id: str, source_format: str, parser_name: str) -> None:
-    """PHASE2_NESTED_SVG_CORRECTION_REPORT.md: `except SvgRejected` below only ever
+    """docs/history/PHASE2_NESTED_SVG_CORRECTION_REPORT.md: `except SvgRejected` below only ever
     catches the *expected*, deliberate rejections `sanitize_svg`/`validate_raster_image`
     raise for input they've recognized as bad. Before this correction, any other
     exception — the concrete case found was an uncaught `RecursionError` from a

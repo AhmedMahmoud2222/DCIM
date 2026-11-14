@@ -1,5 +1,5 @@
 """Phase 3 correction: F-M3 subtype integrity for pdu_outlet.pdu_asset_id
-(PHASE3_HOSTILE_SELF_AUDIT.md F-M3; PHASE3_CORRECTION_DESIGN.md Part 11).
+(docs/history/PHASE3_HOSTILE_SELF_AUDIT.md F-M3; docs/history/PHASE3_CORRECTION_DESIGN.md Part 11).
 
 `pdu_outlet.pdu_asset_id` was a plain FK to `managed_asset.id` -- satisfied by ANY
 ManagedAsset row (a Rack, a piece of Equipment, a UPS, ...), not specifically a PDU. The
@@ -34,7 +34,7 @@ Only `pdu_outlet.pdu_asset_id` is corrected here. `power_node.owning_asset_id` (
 `power_circuit`/`equipment_power_input` node types) has the same class of gap but does
 not admit the same fixed-literal generated-column trick, because a single
 `owning_asset_id` column is shared across three different `node_type` values, each
-expecting a different target subtype -- PHASE3_CORRECTION_DESIGN.md Part 11 explicitly
+expecting a different target subtype -- docs/history/PHASE3_CORRECTION_DESIGN.md Part 11 explicitly
 classifies that half of F-M3 as `REQUIRES ARCHITECTURAL DECISION`, deferred, not
 implemented here.
 

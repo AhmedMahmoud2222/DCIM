@@ -1,4 +1,4 @@
-"""OutboxEvent per ARCHITECTURE_REVIEW.md §22. Written in the same transaction as the
+"""OutboxEvent per docs/history/ARCHITECTURE_REVIEW.md §22. Written in the same transaction as the
 domain mutation and audit row it accompanies; a separate dispatcher (app/infrastructure/
 tasks/outbox_dispatcher.py) reads pending rows and delivers them at-least-once to
 idempotent handlers. Never a replacement for the synchronous AuditLog write — see §22's

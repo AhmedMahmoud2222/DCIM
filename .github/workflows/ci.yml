@@ -122,7 +122,7 @@ jobs:
         # The shard indexes 0..2 must match --count 3 in the test step. tests/ci checks it.
         shard: [0, 1, 2]
     services:
-      # NOTE (Finding C1 / PHASE1_CORRECTION_REPORT.md): the bootstrap superuser here is
+      # NOTE (Finding C1 / docs/history/PHASE1_CORRECTION_REPORT.md): the bootstrap superuser here is
       # `postgres`, NOT `dcim_app`. Previously POSTGRES_USER was set to `dcim_app`, which
       # the official postgres image grants full superuser rights to — silently defeating
       # every least-privilege control this CI job is supposed to validate, since a

@@ -504,7 +504,7 @@ This section records the review before the Compose correction. Section 16 supers
 | The v1.5 documentation-merge paragraph linked run #80 to `5235f6c` | Corrected to run #82, whose API `head_sha` is `5235f6c2866b4831b5ef30db11d5d74028072359`. |
 | Earlier section 12 proposed closing constituent PRs and reviewing an obsolete SHA | Review the live final HEAD and obtain owner approval. Do not merge #29, close #27/#28 or modify `main` as part of this review. #30 is already merged into the integration branch. |
 
-The independent review executed all 55 Edge Collector tests locally and reproduced the Compose settings error described in [operations](docs/OPERATIONS.md). Backend database suites cannot run in that workspace; their evidence comes from the actual GitHub Actions job logs. This correction changes documentation only and makes no new production or external-security certification claim. GitHub had no submitted Jules review on PR #29 at review start; the baseline audit artifact remains separately attributable to PR #28.
+The independent review executed all 55 Edge Collector tests locally and reproduced the Compose settings error described in [operations](../OPERATIONS.md). Backend database suites cannot run in that workspace; their evidence comes from the actual GitHub Actions job logs. This correction changes documentation only and makes no new production or external-security certification claim. GitHub had no submitted Jules review on PR #29 at review start; the baseline audit artifact remains separately attributable to PR #28.
 
 ---
 

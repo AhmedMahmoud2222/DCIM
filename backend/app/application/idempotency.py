@@ -3,8 +3,8 @@ one HTTP call), event identity (OutboxEvent.event_id), job identity (Celery task
 this — the *client-supplied* identity of one logical write, used so a retried POST
 returns the original result instead of repeating the write.
 
-Finding H1 correction (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-PHASE1_CORRECTION_REPORT.md): the original implementation checked the idempotency cache,
+Finding H1 correction (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+docs/history/PHASE1_CORRECTION_REPORT.md): the original implementation checked the idempotency cache,
 then performed the write, then stored the response — with no serialization between the
 check and the store, so N genuinely concurrent identical requests all passed the cache
 check, all attempted the write, and N-1 of them surfaced the resulting database conflict

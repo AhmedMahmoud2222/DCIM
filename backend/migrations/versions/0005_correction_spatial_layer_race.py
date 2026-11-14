@@ -1,5 +1,5 @@
 """Phase 2 targeted correction: RT-1 (HIGH) — the SpatialLayer lookup-then-create race in
-accept_import_candidate. See PHASE2_INDEPENDENT_RED_TEAM_REPORT.md and
+accept_import_candidate. See docs/history/PHASE2_INDEPENDENT_RED_TEAM_REPORT.md and
 PHASE2_CORRECTION_REPORT.md.
 
 The business rule this enforces: at most one canonical `layer_type='imported'`

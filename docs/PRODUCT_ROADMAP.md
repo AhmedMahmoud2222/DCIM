@@ -6,13 +6,13 @@ This roadmap combines the original kickoff vision, MVP, Phase 10 extensions, Pha
 ## Delivered source baseline
 | Area | Scope | Evidence |
 |---|---|---|
-| Foundation | FastAPI, PostgreSQL, authentication, RBAC, audit, outbox, Alembic, CI | [Phase 1](../PHASE1_IMPLEMENTATION.md) |
+| Foundation | FastAPI, PostgreSQL, authentication, RBAC, audit, outbox, Alembic, CI | [Phase 1](history/PHASE1_IMPLEMENTATION.md) |
 | Operational DCIM | Locations, rooms, racks, equipment, 2D floor plans, rack elevations, power topology, alarms, dashboard | [Project status](PROJECT_STATUS.md) |
-| Monitoring MVP | Edge Collector, SNMP v2c, ICMP/REST, discovery, metric mappings, telemetry and alarm lifecycle | [MVP plan](../DCIM_MVP_V0_1_PLAN.md) |
+| Monitoring MVP | Edge Collector, SNMP v2c, ICMP/REST, discovery, metric mappings, telemetry and alarm lifecycle | [MVP plan](history/DCIM_MVP_V0_1_PLAN.md) |
 | Phase 10A | Versioned manufacturer/model catalog, graphics and marker editor, draft/publish/retire | PRs #16, #20, #21 merged |
 | Phase 10B | Equipment instantiation, immutable port/inlet snapshots, cabling, rack faceplates | PR #22 merged |
 | Phase 10C | Live telemetry overlays and bounded power/network failure-impact simulation | PR #23 merged |
-| Phase 11 | Security remediation, CI hardening, deployment governance and validation | Incremental; consult live PRs and [security plan](../PHASE11_SECURITY_REMEDIATION_PLAN.md) |
+| Phase 11 | Security remediation, CI hardening, deployment governance and validation | Incremental; consult live PRs and [security plan](history/PHASE11_SECURITY_REMEDIATION_PLAN.md) |
 
 ## R1 — Controlled staging and acceptance
 - Reconcile exact-head technical acceptance, required checks and merge status for [SEC-07 PR #49](https://github.com/AhmedMahmoud2222/DCIM/pull/49) and [Excel import PR #50](https://github.com/AhmedMahmoud2222/DCIM/pull/50). Keep SEC-07 compound-failure pool-recovery caveat as follow-up.

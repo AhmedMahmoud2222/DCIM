@@ -1,11 +1,11 @@
 """AuditLog partition maintenance (§30a — resolves H6). Only creates future monthly
 partitions ahead of time; it never archives or drops one — retention duration is an open,
-non-blocking organizational decision (ARCHITECTURE_REVIEW.md §49).
+non-blocking organizational decision (docs/history/ARCHITECTURE_REVIEW.md §49).
 
 Partition creation goes through the `dcim_create_audit_log_partition` SQL function
 (scripts/bootstrap_privileged_roles.sql), not a raw `CREATE TABLE ... PARTITION OF`, as of
-the Finding C1 correction (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-PHASE1_CORRECTION_REPORT.md): audit_log is now owned by the privileged
+the Finding C1 correction (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+docs/history/PHASE1_CORRECTION_REPORT.md): audit_log is now owned by the privileged
 `dcim_retention_admin` role, not by this task's own `dcim_app` credentials, so attaching a
 new partition (an implicit ALTER of the parent table) is no longer something dcim_app can
 do directly. The SQL function is SECURITY DEFINER, owned by dcim_retention_admin, and

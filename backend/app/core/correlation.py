@@ -39,7 +39,7 @@ def _safe_id(value: str | None) -> str:
 class CorrelationMiddleware(BaseHTTPMiddleware):
     """Binds request_id/correlation_id to structlog contextvars and the request state so
     every log line, audit row, and outbox event written during this request can be traced
-    back to it (§37/§25 of ARCHITECTURE_REVIEW.md)."""
+    back to it (§37/§25 of docs/history/ARCHITECTURE_REVIEW.md)."""
 
     async def dispatch(self, request: Request, call_next):
         started_at = time.perf_counter()

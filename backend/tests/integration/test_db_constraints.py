@@ -74,8 +74,8 @@ async def test_audit_log_is_append_only_at_the_database_level(db_session):
 
 
 async def test_audit_log_cannot_be_truncated_by_the_application_role(db_session):
-    """Finding C1 regression (PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
-    PHASE1_CORRECTION_REPORT.md): TRUNCATE is a distinct privilege from DELETE and was
+    """Finding C1 regression (docs/history/PHASE1_IMPLEMENTATION_RED_TEAM_REPORT.md /
+    docs/history/PHASE1_CORRECTION_REPORT.md): TRUNCATE is a distinct privilege from DELETE and was
     not revoked by the original migration — empirically, `dcim_app` could wipe the entire
     audit log with one statement. Both migration 0003 (REVOKE TRUNCATE) and
     scripts/bootstrap_privileged_roles.sql (ownership transfer to dcim_retention_admin,
