@@ -55,7 +55,7 @@ describe("Equipment table", () => {
     expect(region.className).toContain("overflow-x-auto");
 
     const headers = within(table).getAllByRole("columnheader");
-    expect(headers.map((h) => h.textContent)).toEqual(["Hostname", "Asset Tag", "Status", "Placement"]);
+    expect(headers.map((h) => h.textContent)).toEqual(["Hostname", "Asset Tag", "Status", "Site", "Building", "Floor", "Room", "Rack", "Placement"]);
     for (const header of headers) expect(header).toHaveAttribute("scope", "col");
   });
 
@@ -70,8 +70,30 @@ describe("Equipment table", () => {
     expect(within(row).getByText("AT-0001")).toHaveClass("font-mono");
     expect(within(row).getByText("active")).toBeInTheDocument();
     const cells = within(row).getAllByRole("cell");
-    expect(cells).toHaveLength(4);
-    expect(cells[3]).toHaveTextContent("Rack A1 — U12-15 (front)");
+    expect(cells).toHaveLength(9);
+    expect(cells[8]).toHaveTextContent("Rack A1 — U12-15 (front)");
+  });
+
+  it("shows Site, Building, Floor, Room and Rack for placed equipment and a dash where there is no location", async () => {
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(
+      page([
+        asset({
+          id: "e1", hostname: "placed", placement: rackedAt("r1", 2, 3, "front"),
+          location: {
+            site: { id: "s", name: "DEMO-SITE-01" }, building: { id: "b", name: "Hall A" }, floor: { id: "f", name: "Floor 1" },
+            room: { id: "rm", name: "Room 1" }, rack: { id: "r1", name: "RACK-007" },
+          },
+        }),
+        asset({ id: "e2", hostname: "loose", asset_tag: "AT-2", placement: null, location: null }),
+      ]),
+    );
+    renderWithProviders(<EquipmentPage />, { user: ADMINISTRATOR_TEST_USER });
+
+    const placed = (await screen.findByRole("link", { name: "placed" })).closest("tr")!;
+    const cells = within(placed).getAllByRole("cell").map((c) => c.textContent);
+    expect(cells.slice(3, 8)).toEqual(["DEMO-SITE-01", "Hall A", "Floor 1", "Room 1", "RACK-007"]);
+    const loose = screen.getByRole("link", { name: "loose" }).closest("tr")!;
+    expect(within(loose).getAllByRole("cell").slice(3, 8).map((c) => c.textContent)).toEqual(["—", "—", "—", "—", "—"]);
   });
 
   it("sets the U range in tabular figures that do not wrap, and shows non-rack placement and unplaced text", async () => {

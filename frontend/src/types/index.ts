@@ -161,6 +161,22 @@ export interface EquipmentPlacement {
   effective_from: string;
 }
 
+export interface NamedRef {
+  id: string;
+  name: string;
+  code?: string | null;
+}
+
+/** Site > Building > Floor > Room > Rack of the current placement. Site, building and floor are null
+ * when the caller's scope does not include the site. */
+export interface EquipmentLocation {
+  site: NamedRef | null;
+  building: NamedRef | null;
+  floor: NamedRef | null;
+  room: NamedRef | null;
+  rack: NamedRef | null;
+}
+
 export interface Equipment {
   id: string;
   asset_tag: string;
@@ -177,6 +193,7 @@ export interface Equipment {
   version: number;
   created_at: string;
   placement: EquipmentPlacement | null;
+  location?: EquipmentLocation | null;
 }
 
 // -------------------------------------------------------- Phase 10B: ports & cabling

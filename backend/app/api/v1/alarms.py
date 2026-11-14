@@ -5,6 +5,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
@@ -17,7 +18,7 @@ from app.application.audit_service import write_audit_log
 from app.application.outbox_service import write_outbox_event
 from app.application.rbac import require_permission
 from app.core.errors import NotFoundError
-from app.domain.alarm.models import ALARM_STATUSES, RULE_TYPES, Alarm, AlarmRule
+from app.domain.alarm.models import ALARM_STATUSES, DEFAULT_ALARM_SEVERITY, RULE_TYPES, Alarm, AlarmRule
 from app.domain.telemetry.models import TelemetryReading
 from app.domain.telemetry.registry import REGISTRY_VERSION, convert_to_presentation, registry_snapshot, validate_metric_rule
 
@@ -34,6 +35,7 @@ class AlarmRuleIn(BaseModel):
         ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
     )
     name: str = Field(min_length=1, max_length=128)
+    severity: Literal["critical", "warning", "info"] = DEFAULT_ALARM_SEVERITY
 
     @field_validator("name")
     @classmethod
@@ -61,6 +63,7 @@ class AlarmRuleResolveIn(AlarmRuleUpdateIn):
 
 class AlarmRuleEditIn(AlarmRuleUpdateIn):
     name: str | None = Field(default=None, min_length=1, max_length=128)
+    severity: Literal["critical", "warning", "info"] | None = None
     threshold: Decimal | None = Field(
         default=None, allow_inf_nan=False, max_digits=18, decimal_places=8,
         ge=Decimal("-9999999999.99999999"), le=Decimal("9999999999.99999999")
@@ -84,6 +87,7 @@ class AlarmRuleOut(BaseModel):
     registry_version: str | None
     enabled: bool
     name: str
+    severity: str
     updated_at: datetime
     unit_status: str
     needs_attention: bool
@@ -106,6 +110,8 @@ class AlarmOut(BaseModel):
     managed_asset_id: uuid.UUID | None
     subject_key: str
     status: str
+    # Explicit severity (critical / warning / info), independent of the workflow `status` above.
+    severity: str
     opened_at: datetime
     acknowledged_at: datetime | None
     cleared_at: datetime | None
@@ -159,6 +165,7 @@ async def create_alarm_rule(
             "threshold": str(rule.threshold) if rule.threshold is not None else None,
             "unit": rule.unit,
             "name": rule.name,
+            "severity": rule.severity,
             "registry_version": rule.registry_version,
             "enabled": rule.enabled,
         },
@@ -176,6 +183,7 @@ async def create_alarm_rule(
             "threshold": str(rule.threshold) if rule.threshold is not None else None,
             "unit": rule.unit,
             "name": rule.name,
+            "severity": rule.severity,
             "registry_version": rule.registry_version,
             "enabled": rule.enabled,
         },
@@ -250,7 +258,7 @@ async def update_alarm_rule(
 ) -> AlarmRuleOut:
     rule = await _locked_rule(db, rule_id)
     await update_rule(
-        db, rule=rule, name=body.name,
+        db, rule=rule, name=body.name, severity=body.severity,
         threshold=body.threshold,
         threshold_set="threshold" in body.model_fields_set,
         reason=body.reason, expected_updated_at=body.expected_updated_at, actor_user_id=ctx.user.id,
@@ -264,7 +272,7 @@ def _rule_out(rule: AlarmRule) -> AlarmRuleOut:
     return AlarmRuleOut(
         id=rule.id, integration_id=rule.integration_id, metric=rule.metric, rule_type=rule.rule_type,
         threshold=float(rule.threshold) if rule.threshold is not None else None,
-        unit=rule.unit, registry_version=rule.registry_version, enabled=rule.enabled, name=rule.name,
+        unit=rule.unit, registry_version=rule.registry_version, enabled=rule.enabled, name=rule.name, severity=rule.severity,
         updated_at=rule.updated_at, unit_status=rule_unit_status(rule),
         needs_attention=rule.enabled and rule.unit is None, blocked_notified_at=rule.blocked_notified_at,
         unit_resolved_by=rule.unit_resolved_by, unit_resolved_at=rule.unit_resolved_at,
@@ -361,6 +369,7 @@ def _out(row: Alarm) -> AlarmOut:
         managed_asset_id=row.managed_asset_id,
         subject_key=row.subject_key,
         status=row.status,
+        severity=row.severity,
         opened_at=row.opened_at,
         acknowledged_at=row.acknowledged_at,
         cleared_at=row.cleared_at,

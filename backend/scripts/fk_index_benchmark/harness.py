@@ -154,7 +154,24 @@ def alembic_ok(urls: Urls, db: str, *args: str, timeout: float = 7200) -> Alembi
     rc = run.wait(timeout)
     if rc != 0:
         raise RuntimeError(f"alembic {' '.join(args)} failed (rc={rc}):\n{run.output(4000)}")
+    if args == ("upgrade", PREVIOUS):
+        _add_orm_compat_columns(urls, db)
     return run
+
+
+# Columns the application's ORM has gained since 0056 (migration 0060: alarm severity). The `service` ingest mode runs the
+# current `ingest_reading()` against a scratch database that is deliberately held at 0056/0057, and that query selects
+# every mapped column. They are added here, outside the migration under test, so the benchmark keeps measuring 0057 only.
+ORM_COMPAT_SQL = (
+    "ALTER TABLE alarm_rule ADD COLUMN IF NOT EXISTS severity varchar(16) NOT NULL DEFAULT 'warning'",
+    "ALTER TABLE alarm ADD COLUMN IF NOT EXISTS severity varchar(16) NOT NULL DEFAULT 'warning'",
+)
+
+
+def _add_orm_compat_columns(urls: Urls, db: str) -> None:
+    with connect(urls, db) as conn:
+        for statement in ORM_COMPAT_SQL:
+            conn.execute(statement)
 
 
 VERIFY_SQL = """

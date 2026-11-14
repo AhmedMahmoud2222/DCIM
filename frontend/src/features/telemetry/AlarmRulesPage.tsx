@@ -15,6 +15,7 @@ import {
 } from "@/features/telemetry/alarmRulesApi";
 import { QueryStatus } from "@/components/data/QueryStatus";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { ExceptionSeverity } from "@/features/status/StatusBadges";
 import { useHasPermission } from "@/features/auth/useAuthorization";
 import { listIntegrations } from "@/features/integrations/api";
 import { ApiError } from "@/lib/apiClient";
@@ -203,6 +204,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
   const [integrationId, setIntegrationId] = useState(integrations[0]?.id ?? "");
   const [metric, setMetric] = useState("power_kw");
   const [ruleType, setRuleType] = useState("threshold_high");
+  const [severity, setSeverity] = useState<CreateAlarmRuleInput["severity"]>("warning");
   const [threshold, setThreshold] = useState("");
   const submitting = useRef(false);
   const mutation = useMutation({ mutationFn: (input: CreateAlarmRuleInput) => createAlarmRule(input), onSuccess: (result) => onCreated(result.id) });
@@ -213,7 +215,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
     if (submitting.current) return;
     submitting.current = true;
     mutation.mutate({
-      name: name.trim(), integration_id: integrationId, metric, rule_type: ruleType,
+      name: name.trim(), integration_id: integrationId, metric, rule_type: ruleType, severity,
       threshold: ruleType === "availability_unavailable" ? null : Number(threshold),
     }, {
       onSettled: () => { submitting.current = false; },
@@ -241,6 +243,9 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
           }} className={field}>
             <option value="threshold_high">Above threshold</option><option value="threshold_low">Below threshold</option><option value="availability_unavailable">Unavailable</option>
           </select></label>
+          <label className="text-xs text-slate-400">Severity<select aria-label="Severity" value={severity} onChange={(event) => setSeverity(event.target.value as CreateAlarmRuleInput["severity"])} className={field}>
+            <option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option>
+          </select></label>
           {ruleType !== "availability_unavailable" && <label className="text-xs text-slate-400">Threshold ({selectedMetric?.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className={field} /></label>}
           {mutation.isError && <p role="alert" className="text-sm text-red-400 md:col-span-2">{errorText(mutation.error)}</p>}
           <div className="flex gap-2 md:col-span-2">
@@ -256,6 +261,7 @@ function CreateRuleForm({ integrations, onCreated, onCancel }: { integrations: I
 
 function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: () => void; onCancel: () => void }) {
   const [name, setName] = useState(rule.name);
+  const [severity, setSeverity] = useState<AlarmRule["severity"]>(rule.severity);
   const [threshold, setThreshold] = useState(rule.threshold === null ? "" : String(rule.threshold));
   const [reason, setReason] = useState("");
   const mutation = useMutation({ mutationFn: (input: EditAlarmRuleInput) => editAlarmRule(rule.id, input), onSuccess: onSaved });
@@ -264,6 +270,7 @@ function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: (
     event.preventDefault();
     mutation.mutate({
       name: name.trim(),
+      severity,
       ...(rule.rule_type !== "availability_unavailable" && rule.unit !== null ? { threshold: Number(threshold) } : {}),
       reason: reason.trim(), expected_updated_at: rule.updated_at,
     });
@@ -273,6 +280,10 @@ function EditRuleForm({ rule, onSaved, onCancel }: { rule: AlarmRule; onSaved: (
     <form onSubmit={submit} aria-label={`Edit ${rule.name}`} className="mt-4 space-y-3 border-t border-slate-800 pt-3">
       {!rule.enabled && <p role="status" className="text-sm text-amber-300">This rule is disabled. Editing it will not re-enable it.</p>}
       <label className="block text-xs text-slate-400">Rule name<input required maxLength={128} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
+      <label className="block text-xs text-slate-400">Severity<select aria-label="Severity" value={severity} onChange={(event) => setSeverity(event.target.value as AlarmRule["severity"])} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100">
+        <option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option>
+      </select></label>
+      <p className="text-xs text-fg-secondary">A new severity applies to alarms opened afterwards. An alarm that is already open keeps the severity it opened with.</p>
       {rule.rule_type !== "availability_unavailable" && rule.unit !== null ? (
         <label className="block text-xs text-slate-400">Threshold ({rule.unit})<input aria-label="Threshold" type="number" step="any" min="-9999999999.99999999" max="9999999999.99999999" required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="mt-1 block w-full rounded-sm border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100" /></label>
       ) : rule.unit === null && <p className="text-sm text-amber-300">Resolve the threshold unit before editing this legacy rule's threshold.</p>}
@@ -374,6 +385,7 @@ export function AlarmRulesPage() {
                   <tr>
                     <th scope="col" className="px-3 py-2">Rule</th>
                     <th scope="col" className="px-3 py-2">Metric</th>
+                    <th scope="col" className="px-3 py-2">Severity</th>
                     <th scope="col" className="px-3 py-2">Status</th>
                     <th scope="col" className="px-3 py-2">Blocked since</th>
                   </tr>
@@ -405,6 +417,7 @@ export function AlarmRulesPage() {
                         {rule.metric}
                         <span className="text-fg-secondary"> · {rule.rule_type}</span>
                       </td>
+                      <td className="px-3 py-2"><ExceptionSeverity severity={rule.severity} size="sm" /></td>
                       <td className="px-3 py-2">
                         <span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${UNIT_STATUS_BADGE[rule.unit_status]}`}>
                           {UNIT_STATUS_LABEL[rule.unit_status]}

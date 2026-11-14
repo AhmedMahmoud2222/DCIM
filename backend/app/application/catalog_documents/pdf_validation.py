@@ -58,6 +58,29 @@ _MAX_NODES_PER_OBJECT = 50000
 # adding entries after this many passes is a chain built to make the walk cost a file scan per
 # object.
 _MAX_WALK_PASSES = 5
+# Resolving a reference the cross-reference table does not list makes the parser copy the file
+# and search it for the object header, once per reference, so a page that lists hundreds of such
+# annotations costs one file scan each (19 s for 800 on a 2 MB file). The references a whole
+# validation may resolve this way are capped. The cost of a lookup is the size of the file, so the
+# cap is a byte budget: a small file may resolve many such references (damaged files, references
+# to deleted objects) because each is cheap, and a large file few. At most 96 MB of scanning in
+# total (about 1.3 s for the largest accepted file here, a few seconds on slow hardware), at most
+# 1000 lookups (the parser's fixed cost per lookup), and never fewer than 4. The cap of 1000 holds
+# up to about 100 KB and the floor of 4 takes over from about 24 MB, where 4 lookups already cost
+# the whole budget (above that the floor exceeds it: 100 MB at 25 MB, 256 MB at 64 MB).
+# The parser repairs two ways: an unlisted reference, and a listed entry whose offset does not
+# lead to the expected header. Both cost a whole-file search and both are charged.
+_MAX_UNLISTED_LOOKUPS = 1000
+_MIN_UNLISTED_LOOKUPS = 4
+_LOOKUP_SCAN_BYTES = 96 * 1024 * 1024
+# What the parser accepts at a listed offset before it falls back to searching the file: one
+# comment, then whitespace as the parser defines it (NUL, tab, line feed, form feed, carriage
+# return, space; not vertical tab), then the numbers with any leading zeros, then `obj`.
+_HEADER_AT_OFFSET = (
+    rb"(?:%%[^\r\n]*[\r\n])?[\x00\t\n\x0c\r ]*0*%d[\x00\t\n\x0c\r ]+0*%d[\x00\t\n\x0c\r ]+obj"
+)
+# How much of the file at a listed offset is read to see whether it starts the object's header.
+_HEADER_PROBE_BYTES = 256
 # The names `_FORBIDDEN_NAME` matches, as the parser spells them (it decodes `#xx` escapes).
 _FORBIDDEN_NAMES = frozenset(
     {
@@ -106,6 +129,95 @@ def _reject(code: str, reason: str) -> PdfRejected:
 def _names_normalized(content: bytes) -> bytes:
     """Decodes `#4A`-style name escapes so `/Java#53cript` cannot hide from the byte scan."""
     return _NAME_HEX_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), content)
+
+
+class _LookupBudget:
+    """Counts references the parser resolves although the cross-reference table does not list them.
+
+    `install()` wraps `reader.get_object`, the one function every resolution goes through (the
+    page tree, `/Annots` arrays and members, actions and their `/Next` links, stream `/Type`
+    values, the object walk), so no call site has to remember to charge. A reference is free when
+    the table lists it and its offset starts the object's header, when the parser already holds the
+    object, or when it names an object-stream member with generation 0 (members always have
+    generation 0, so a nonzero generation of the same number is a different, unlisted object). A
+    listed entry whose offset starts another header makes the parser search the whole file, found
+    or not, so it is charged before the lookup like an unlisted one. Once the budget is spent every
+    further resolution raises, and `check()` repeats the verdict in case the parser swallowed the
+    exception."""
+
+    def __init__(self, reader: "PdfReader", file_size: int) -> None:
+        self._reader = reader
+        self._spent = 0
+        self.limit = self.limit_for(file_size)
+
+    @staticmethod
+    def limit_for(file_size: int) -> int:
+        by_size = _LOOKUP_SCAN_BYTES // max(file_size, 1)
+        return max(_MIN_UNLISTED_LOOKUPS, min(_MAX_UNLISTED_LOOKUPS, by_size))
+
+    def install(self) -> None:
+        original = self._reader.get_object
+
+        def counted(*args: object, **kwargs: object) -> object:
+            self.check()  # a spent budget refuses every resolution, so no repair scan starts
+            self._charge(args[0] if args else kwargs.get("indirect_reference"))
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+
+        self._reader.get_object = counted  # type: ignore[method-assign, assignment]
+
+    @staticmethod
+    def _identify(reference: object) -> tuple[int | None, int]:
+        number: int | None = reference if isinstance(reference, int) else getattr(reference, "idnum", None)
+        return number, 0 if isinstance(reference, int) else getattr(reference, "generation", 0)
+
+    def _leads_to_header(self, number: int, generation: int, offset: int) -> bool:
+        """True when the listed offset starts `number generation obj`, so the parser reads the object
+        in place. A different header, or none, makes it search the whole file, and it does so whether
+        or not the object exists, so the check cannot wait for the parser's answer."""
+        stream = getattr(self._reader, "stream", None)
+        if stream is None:
+            return False  # no probe, no proof that the offset is right: charge it
+        position = stream.tell()
+        try:
+            stream.seek(offset)
+            head = stream.read(_HEADER_PROBE_BYTES)
+        finally:
+            stream.seek(position)
+        return re.match(_HEADER_AT_OFFSET % (number, generation), head) is not None
+
+    def _charge(self, reference: object) -> None:
+        number, generation = self._identify(reference)
+        if number is None:
+            return
+        listed = cast(dict, self._reader.xref).get(generation, {})
+        if number in listed:
+            if self._resolves_without_a_search(number, generation, listed[number]):
+                return
+        elif generation == 0 and number in cast(dict, self._reader.xref_objStm):
+            return
+        self._spend()
+
+    def _resolves_without_a_search(self, number: int, generation: int, offset: int) -> bool:
+        reader = self._reader
+        cached = getattr(reader, "cache_get_indirect_object", None)
+        if cached is not None and cached(generation, number) is not None:
+            return True
+        if getattr(reader, "xref_free_entry", {}).get(generation, {}).get(number, False):
+            return True
+        return self._leads_to_header(number, generation, offset)
+
+    def _spend(self) -> None:
+        self._spent += 1
+        if self._spent > self.limit:
+            raise self._exceeded()
+
+    def check(self) -> None:
+        if self._spent > self.limit:
+            raise self._exceeded()
+
+    @staticmethod
+    def _exceeded() -> PdfRejected:
+        return _reject("too_complex", "Resolving the PDF's references would take too much repair work to inspect it safely.")
 
 
 def _scan_action(action: object, where: str) -> None:
@@ -346,6 +458,8 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
 
     try:
         reader = PdfReader(io.BytesIO(content), strict=False)
+        budget = _LookupBudget(reader, len(content))
+        budget.install()
         if reader.is_encrypted:
             raise _reject("encrypted", "Encrypted or password-protected PDFs are not accepted.")
         page_count = len(reader.pages)
@@ -357,6 +471,7 @@ def validate_pdf(content: bytes, *, max_bytes: int, max_pages: int) -> PdfInfo:
         _check_catalog(cast(DictionaryObject, reader.trailer["/Root"]))
         stream_payloads = _scan_all_objects(reader)
         _check_pages(reader)
+        budget.check()
     except PdfRejected:
         raise
     except Exception as exc:  # noqa: BLE001  the parser raises more than its own error types (AssertionError, for one)

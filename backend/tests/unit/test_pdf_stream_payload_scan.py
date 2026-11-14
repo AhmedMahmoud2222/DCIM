@@ -8,12 +8,16 @@ here tries to use that skip to hide a forbidden name and asserts the SECURE outc
 Fixtures are benign: markers only, never a working payload."""
 
 import base64
+import hashlib
 import io
+import re
 import time
 import zlib
+from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfReader
+from pypdf.generic import IndirectObject
 
 from app.application.catalog_documents import pdf_validation
 from app.application.catalog_documents.pdf_validation import _FORBIDDEN_NAME, PdfRejected, validate_pdf
@@ -21,6 +25,16 @@ from tests.api._document_helpers import make_pdf
 from tests.unit.test_pr70_pdf_hostile import _PAGES, _objstm_pdf
 
 LIMITS = {"max_bytes": 5 * 1024 * 1024, "max_pages": 10}
+
+
+@pytest.fixture
+def tight_budget(monkeypatch):
+    """A small file is allowed hundreds of unlisted lookups, because each is cheap. The mechanism
+    tests refuse a few hundred references, so they cap the count at 32. The default allowance is
+    covered by the size-scaling, large-file and small-file acceptance tests."""
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 32)
+
+
 SCRIPT = b"<</S/JavaScript/JS(/* benign marker */)>>"
 
 
@@ -63,20 +77,22 @@ def _reject_code(content: bytes) -> str:
     return caught.value.code
 
 
-def _ascii85_flate_payload_spelling_a_forbidden_name() -> tuple[bytes, bytes]:
-    """Searches page texts in a fixed order for one whose Flate + ASCII85 encoding spells a
-    forbidden name. Deterministic for a given zlib; about one text in ten thousand qualifies."""
-    for attempt in range(2_000_000):
-        plain = b"BT /F1 12 Tf 72 720 Td (Datasheet %d) Tj ET" % attempt
-        encoded = base64.a85encode(zlib.compress(plain)) + b"~>"
+def _ascii85_payload_spelling_a_forbidden_name() -> tuple[bytes, bytes]:
+    """Searches page texts in a fixed order for one whose ASCII85 encoding spells a forbidden name.
+    The text carries a hash of the attempt number, so every encoded group varies. No compression is
+    involved, so the result does not depend on the zlib in use; the first hit is near attempt 1700."""
+    for attempt in range(500_000):
+        token = base64.b64encode(hashlib.sha256(b"%d" % attempt).digest())
+        plain = b"BT /F1 12 Tf 72 720 Td (Datasheet " + token + b") Tj ET"
+        encoded = base64.a85encode(plain) + b"~>"
         if _FORBIDDEN_NAME.search(encoded):
             return plain, encoded
     raise AssertionError("no qualifying payload found")
 
 
 def test_ascii85_payload_that_spells_a_forbidden_name_by_chance_is_accepted():
-    plain, encoded = _ascii85_flate_payload_spelling_a_forbidden_name()
-    content = _page_pdf(_stream(encoded, b"/Filter[/ASCII85Decode/FlateDecode]"))
+    plain, encoded = _ascii85_payload_spelling_a_forbidden_name()
+    content = _page_pdf(_stream(encoded, b"/Filter/ASCII85Decode"))
     assert _FORBIDDEN_NAME.search(content)  # a whole-file byte scan rejects this benign file
     assert PdfReader(io.BytesIO(content)).pages[0].get_contents().get_data() == plain
     assert validate_pdf(content, **LIMITS).page_count == 1
@@ -279,27 +295,37 @@ def _timed(function, payload: bytes) -> float:
 
 
 @pytest.mark.parametrize(
-    ("shape", "limit"),
-    [
-        ("digit_then_spaces", 1.5),
-        ("digit_then_tabs", 1.5),
-        ("digit_space_repeated", 1.5),
-        ("two_digits_in_long_whitespace", 1.5),
-        ("comment_lines_repeated", 6.0),
-    ],
+    "shape", ["digit_then_spaces", "digit_then_tabs", "digit_space_repeated", "two_digits_in_long_whitespace"]
 )
-def test_object_syntax_rule_is_linear_on_a_25_mb_payload(shape, limit):
+def test_object_syntax_rule_is_linear_on_a_25_mb_payload(shape):
     """The rule runs on every stream payload of an upload, so no payload shape may make it
-    expensive. The pattern this replaced took 3 to 10 seconds on the first four shapes."""
+    expensive. The cost is compared with one plain linear scan of the same bytes on the same
+    machine, so the check does not depend on its speed: the rule costs 0.3 to 2.4 times the scan,
+    and the pattern it replaced cost 8 to 14 times."""
     size = 25 * 1024 * 1024
     payload = {
         "digit_then_spaces": b"9" + b" " * size,
         "digit_then_tabs": b"9" + b"\t" * size,
         "digit_space_repeated": b"1 " * (size // 2),
         "two_digits_in_long_whitespace": b"9" + b" " * (size // 2) + b"9" + b" " * (size // 2),
-        "comment_lines_repeated": b"%x\n" * (size // 3),
-    }[shape]
-    assert _timed(pdf_validation._carries_object_syntax, payload + b"obj") < limit
+    }[shape] + b"obj"
+    baseline = re.compile(rb"[a-z]{4}Q")
+    baseline_time = min(_timed(baseline.search, payload) for _ in range(3))
+    rule_time = min(_timed(pdf_validation._carries_object_syntax, payload) for _ in range(3))
+    assert rule_time < 5 * baseline_time
+
+
+def test_object_syntax_rule_scales_linearly_on_comment_lines():
+    """Comment lines are the costliest shape. Compare sizes on the same machine so the check does
+    not depend on its speed: five times the payload may cost about five times as much, a
+    quadratic rule would cost twenty-five times."""
+    def payload(megabytes: int) -> bytes:
+        return b"%x\n" * (megabytes * 1024 * 1024 // 3) + b"obj"
+
+    small, large = payload(5), payload(25)
+    small_time = min(_timed(pdf_validation._carries_object_syntax, small) for _ in range(3))
+    large_time = min(_timed(pdf_validation._carries_object_syntax, large) for _ in range(2))
+    assert large_time < 12 * small_time
 
 
 def _chain_of_unlisted_objects(length: int) -> bytes:
@@ -314,8 +340,422 @@ def test_short_chain_of_unlisted_objects_is_accepted():
     assert validate_pdf(_chain_of_unlisted_objects(2), **LIMITS).page_count == 1
 
 
-def test_long_chain_of_unlisted_objects_is_rejected_by_the_pass_cap(monkeypatch):
+def test_long_chain_of_unlisted_objects_is_rejected_by_the_pass_cap(monkeypatch, tight_budget):
     content = _chain_of_unlisted_objects(60)
     assert _reject_code(content) == "too_complex"
     monkeypatch.setattr(pdf_validation, "_MAX_WALK_PASSES", 1000)
-    assert validate_pdf(content, **LIMITS).page_count == 1  # only the cap refuses it
+    assert _reject_code(content) == "too_complex"  # the lookup budget refuses it without the pass cap
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the caps refuse it
+
+
+_ANNOTATION = b"<</Type/Annot/Subtype/Text/Rect[0 0 1 1]>>"
+
+
+def _annotated_page_pdf(count: int, *, listed: bool = False, padding: int = 0) -> bytes:
+    """A page whose /Annots lists `count` annotations. Unlisted ones are in the file body but not
+    in the cross-reference table, so resolving each makes pypdf search the whole file."""
+    first = 10
+    references = b" ".join(b"%d 0 R" % (first + index) for index in range(count))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[" + references + b"]>>",
+        4: _stream(b"q Q" + b" " * padding),
+    }
+    if listed:
+        objects.update({first + index: _ANNOTATION for index in range(count)})
+        return _classic_pdf(objects)
+    body = b"".join(b"%d 0 obj\n" % (first + index) + _ANNOTATION + b"\nendobj\n" for index in range(count))
+    return _classic_pdf(objects, after=body)
+
+
+@pytest.mark.parametrize("count", [1, 8, 32])
+def test_a_few_unlisted_annotations_are_accepted(count):
+    assert validate_pdf(_annotated_page_pdf(count), **LIMITS).page_count == 1
+
+
+def test_listed_annotations_cost_no_budget():
+    assert validate_pdf(_annotated_page_pdf(500, listed=True), **LIMITS).page_count == 1
+
+
+def test_many_unlisted_annotations_are_rejected_by_the_lookup_budget(monkeypatch, tight_budget):
+    content = _annotated_page_pdf(200)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+def _one_lookup_seconds(content: bytes) -> float:
+    """What pypdf spends on one unlisted lookup: copy the file, then search it for an object header."""
+    pattern = re.compile(rb"\s5\s+0\s+obj")
+    best = float("inf")
+    for _ in range(3):
+        started = time.perf_counter()
+        pattern.search(bytes(memoryview(content)))
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+def _assert_refused_within_the_allowance(content: bytes) -> int:
+    """The refusal must cost about the allowed number of lookups, measured in this machine's own
+    lookup time: three times (allowance + 3) lookups plus half a second for everything else."""
+    allowed = pdf_validation._LookupBudget.limit_for(len(content))
+    bound = 3 * (allowed + 3) * _one_lookup_seconds(content) + 0.5
+    started = time.perf_counter()
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(content, max_bytes=len(content) + 1, max_pages=10)
+    elapsed = time.perf_counter() - started
+    assert caught.value.code == "too_complex"
+    assert elapsed < bound, f"{elapsed:.2f} s against {bound:.2f} s for {allowed} lookups"
+    return allowed
+
+
+def test_unlisted_annotations_on_a_large_file_are_refused_quickly():
+    """800 unlisted annotations in a 2 MB file took 19 s: one whole-file search each."""
+    allowed = _assert_refused_within_the_allowance(_annotated_page_pdf(800, padding=2 * 1024 * 1024))
+    assert 40 <= allowed <= 48  # a 2 MB file gets about 48 lookups
+
+
+def _action_chain_pdf(length: int) -> bytes:
+    """A link annotation whose /A points at an unlisted action, each with a /Next to the next."""
+    chain = b"".join(
+        b"%d 0 obj\n<</S/URI/URI(https://example.com)/Next %d 0 R>>\nendobj\n" % (20 + index, 21 + index) for index in range(length)
+    )
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[10 0 R]>>",
+        4: _stream(b"q Q"),
+        10: b"<</Type/Annot/Subtype/Link/Rect[0 0 1 1]/A 20 0 R>>",
+    }
+    return _classic_pdf(objects, after=chain)
+
+
+def test_short_chain_of_unlisted_actions_is_accepted():
+    assert validate_pdf(_action_chain_pdf(3), **LIMITS).page_count == 1
+
+
+def test_long_chain_of_unlisted_actions_is_rejected_by_the_lookup_budget(monkeypatch, tight_budget):
+    content = _action_chain_pdf(80)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+def _action_fan_out_pdf(width: int) -> bytes:
+    """An action whose /Next is an array of `width` references to unlisted actions."""
+    members = b" ".join(b"%d 0 R" % (21 + index) for index in range(width))
+    body = b"20 0 obj\n<</S/URI/URI(https://example.com)/Next[" + members + b"]>>\nendobj\n"
+    body += b"".join(b"%d 0 obj\n<</S/URI/URI(https://example.com)>>\nendobj\n" % (21 + index) for index in range(width))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Annots[10 0 R]>>",
+        4: _stream(b"q Q"),
+        10: b"<</Type/Annot/Subtype/Link/Rect[0 0 1 1]/A 20 0 R>>",
+    }
+    return _classic_pdf(objects, after=body)
+
+
+def test_small_fan_out_of_unlisted_actions_is_accepted():
+    assert validate_pdf(_action_fan_out_pdf(4), **LIMITS).page_count == 1
+
+
+def test_wide_fan_out_of_unlisted_actions_is_rejected_by_the_lookup_budget(monkeypatch, tight_budget):
+    content = _action_fan_out_pdf(100)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+def _page_tree_pdf(count: int) -> bytes:
+    """A page tree whose /Kids lists `count` pages that the cross-reference table does not list."""
+    kids = b" ".join(b"%d 0 R" % (10 + index) for index in range(count))
+    objects = {1: b"<</Type/Catalog/Pages 2 0 R>>", 2: b"<</Type/Pages/Kids[" + kids + b"]/Count %d>>" % count}
+    pages = b"".join(
+        b"%d 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>\nendobj\n" % (10 + index) for index in range(count)
+    )
+    return _classic_pdf(objects, after=pages)
+
+
+def test_a_few_unlisted_pages_are_accepted():
+    assert validate_pdf(_page_tree_pdf(3), max_bytes=LIMITS["max_bytes"], max_pages=10).page_count == 3
+
+
+def test_many_unlisted_pages_are_rejected_by_the_lookup_budget_before_pages_are_counted(monkeypatch, tight_budget):
+    """The page count walks the whole tree, so the budget has to apply there too."""
+    content = _page_tree_pdf(200)
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000)
+    assert caught.value.code == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 200  # only the budget refuses
+
+
+def _dangling_type_pdf(count: int) -> bytes:
+    """`count` streams whose /Type is a reference to an object the file does not contain."""
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>",
+    }
+    objects.update({10 + index: b"<</Type %d 0 R/Length 0>>\nstream\n\nendstream" % (5000 + index) for index in range(count)})
+    return _classic_pdf(objects)
+
+
+def test_a_few_streams_with_a_dangling_type_are_accepted():
+    assert validate_pdf(_dangling_type_pdf(3), **LIMITS).page_count == 1
+
+
+def test_many_streams_with_a_dangling_type_are_rejected_by_the_lookup_budget(monkeypatch, tight_budget):
+    """Resolving a stream's /Type is a parser lookup like any other."""
+    content = _dangling_type_pdf(200)
+    assert _reject_code(content) == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, **LIMITS).page_count == 1  # only the budget refuses it
+
+
+@pytest.mark.parametrize(
+    ("file_size", "limit"),
+    [
+        (1, 1000),
+        (3715, 1000),
+        (102_400, 983),
+        (262_144, 384),
+        (1024 * 1024, 96),
+        (2 * 1024 * 1024, 48),
+        (8 * 1024 * 1024, 12),
+        (24 * 1024 * 1024, 4),
+        (25 * 1024 * 1024, 4),
+        (10**9, 4),
+    ],
+)
+def test_lookup_allowance_shrinks_as_the_file_grows(file_size, limit):
+    """Each lookup scans the whole file, so the allowance is a byte budget: hundreds of lookups for
+    a small file, a handful for a large one."""
+    assert pdf_validation._LookupBudget.limit_for(file_size) == limit
+
+
+def test_large_file_with_unlisted_annotations_is_refused_within_the_allowance():
+    """24 MB allows 4 lookups. A flat 32 would cost about 10 s here and far more on slower hardware."""
+    assert _assert_refused_within_the_allowance(_annotated_page_pdf(12, padding=24 * 1024 * 1024)) == 4
+
+
+def _bend_xref_entries(content: bytes, shift: int) -> bytes:
+    """Keep `startxref` correct and add `shift` to every in-use entry offset. pypdf then discards the
+    table when it opens the file, so every object looks unlisted."""
+    return re.sub(rb"(\d{10}) (\d{5}) n ", lambda m: b"%010d %s n " % (int(m.group(1)) + shift, m.group(2)), content)
+
+
+@pytest.mark.parametrize("shift", [7, 13])
+def test_xref_entries_with_wrong_offsets_in_a_small_file_are_accepted(shift):
+    """Repairing a 4 KB file costs milliseconds, so it is not refused. With a flat cap of 32 a file
+    with 50 such annotations was refused though the merged validator accepted it in 5 ms. The test
+    needs pypdf to discard the table at open (true for 5.0.1, 6.17, 6.19 and 7.0.1) and skips on a
+    version that repairs it instead."""
+    content = _bend_xref_entries(_annotated_page_pdf(200, listed=True), shift)
+    if any(PdfReader(io.BytesIO(content), strict=False).xref.values()):
+        pytest.skip("this pypdf repairs the table when it opens the file, so the premise does not hold")
+    assert validate_pdf(content, **LIMITS).page_count == 1
+
+
+def _misdirected_xref_pdf(count: int, padding: int = 0) -> bytes:
+    """Every in-use entry points at the next object's header. pypdf keeps the table, then repairs
+    each entry on first use with a whole-file search, although the table lists the object."""
+    content = _annotated_page_pdf(count, listed=True, padding=padding)
+    offsets = [int(m.group(1)) for m in re.finditer(rb"(\d{10}) 00000 n ", content)]
+    following = dict(zip(offsets, offsets[1:] + offsets[:1], strict=True))
+    return re.sub(rb"(\d{10}) 00000 n ", lambda m: b"%010d 00000 n " % following[int(m.group(1))], content)
+
+
+def test_listed_entries_with_wrong_offsets_are_charged_when_the_parser_repairs_them():
+    """The second repair path: the table lists the object, the offset leads elsewhere, and pypdf
+    searches the whole file to fix it. 24 MB of file with 16 such entries took 3.7 s unbudgeted."""
+    content = _misdirected_xref_pdf(12, padding=24 * 1024 * 1024)
+    assert any(PdfReader(io.BytesIO(content), strict=False).xref.values()), "pypdf must keep the table"
+    assert _assert_refused_within_the_allowance(content) == 4
+
+
+def _absent_objects_xref_pdf(count: int, padding: int = 0) -> bytes:
+    """The table lists annotations 10 to 9+count and each offset leads to a real header, but of another
+    object number (the same width, so every offset stays right). pypdf cannot find the listed object
+    anywhere, so each lookup is a failed whole-file search that neither repairs nor rewrites an entry."""
+    content = _annotated_page_pdf(count, listed=True, padding=padding)
+    return re.sub(rb"\n(\d)(\d) 0 obj\n<</Type/Annot", lambda m: b"\n%d%s 0 obj\n<</Type/Annot" % (int(m.group(1)) + 4, m.group(2)), content)
+
+
+def test_listed_entries_whose_object_cannot_be_found_are_charged():
+    """OpenCode's shape: nothing is repaired and nothing raises, so only the header check at the
+    listed offset sees the search coming. 12 entries in 24 MB of file took 3.5 s unbudgeted."""
+    content = _absent_objects_xref_pdf(12, padding=24 * 1024 * 1024)
+    assert any(PdfReader(io.BytesIO(content), strict=False).xref.values()), "pypdf must keep the table"
+    assert _assert_refused_within_the_allowance(content) == 4
+
+
+def test_listed_entries_whose_object_cannot_be_found_in_a_small_file_are_accepted():
+    assert validate_pdf(_absent_objects_xref_pdf(12), **LIMITS).page_count == 1
+
+
+def test_listed_entries_with_wrong_offsets_in_a_small_file_are_accepted():
+    assert validate_pdf(_misdirected_xref_pdf(200), **LIMITS).page_count == 1
+
+
+def test_many_references_to_deleted_objects_in_a_small_file_are_accepted():
+    """References to deleted objects are what an incremental save leaves behind, and each costs a
+    scan of a file this small, which is nothing."""
+    assert validate_pdf(_dangling_type_pdf(200), **LIMITS).page_count == 1
+
+
+def _dangling_type_pdf_of_size(count: int, padding: int) -> bytes:
+    """`_dangling_type_pdf` with a filler stream so the file reaches `padding` bytes."""
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]>>",
+        4: _stream(b" " * padding),
+    }
+    objects.update({10 + index: b"<</Type %d 0 R/Length 0>>\nstream\n\nendstream" % (5000 + index) for index in range(count)})
+    return _classic_pdf(objects)
+
+
+def test_the_acceptance_edge_at_the_production_size_limit_is_four_stale_references():
+    """A 25 MB file may resolve 4 unlisted references and is refused at the 5th (floor of 4, from
+    96 MB // 25 MB = 3). The line is deliberate: each lookup scans the whole file (about 0.35 s here)
+    and the in-process extraction workers have no time limit. Moving it takes a decision, so a test
+    pins it."""
+    size = 25 * 1024 * 1024
+    at_the_edge = _dangling_type_pdf_of_size(4, size - 2048)
+    assert len(at_the_edge) <= size
+    assert pdf_validation._LookupBudget.limit_for(len(at_the_edge)) == 4
+    assert validate_pdf(at_the_edge, max_bytes=size, max_pages=10).page_count == 1
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(_dangling_type_pdf_of_size(5, size - 2048), max_bytes=size, max_pages=10)
+    assert caught.value.code == "too_complex"
+
+
+@pytest.mark.parametrize(
+    ("before_the_header", "expected"),
+    [
+        (b"", True),
+        (b"\n", True),
+        (b"\n\n\n\n", True),
+        (b"\x00", True),
+        (b"\x0c", True),
+        (b"% a comment\n", True),
+        (b"\x0b", False),  # vertical tab is not whitespace to the parser, so it searches the file
+        (b"x", False),
+    ],
+)
+def test_the_header_probe_matches_where_the_parser_reads_in_place(before_the_header, expected):
+    data = b"." * 10 + before_the_header + b"5 0 obj\n<<>>\nendobj"
+    reader = SimpleNamespace(xref={0: {5: 10}}, xref_objStm={}, stream=io.BytesIO(data))
+    budget = pdf_validation._LookupBudget(reader, 1000)
+    assert budget._leads_to_header(5, 0, 10) is expected
+
+
+def test_the_header_probe_accepts_leading_zeros_in_the_numbers():
+    reader = SimpleNamespace(xref={0: {5: 0}}, xref_objStm={}, stream=io.BytesIO(b"0005 00 obj\n<<>>\nendobj"))
+    assert pdf_validation._LookupBudget(reader, 1000)._leads_to_header(5, 0, 0)
+
+
+def test_a_reader_without_a_stream_is_charged():
+    reader = SimpleNamespace(xref={0: {5: 0}}, xref_objStm={})
+    budget = pdf_validation._LookupBudget(reader, 1000)
+    budget.limit = 0
+    with pytest.raises(PdfRejected):
+        budget._charge(_Reference(idnum=5, generation=0))
+
+
+def test_a_spent_budget_refuses_every_resolution_even_of_an_object_the_table_lists_correctly():
+    """`counted` calls `check()` first, so once the budget is spent nothing resolves any more, whether
+    or not the lookup would cost a search. A parser that swallowed the first refusal cannot go on."""
+    reader = PdfReader(io.BytesIO(_annotated_page_pdf(2, listed=True)), strict=False)
+    budget = pdf_validation._LookupBudget(reader, 1000)
+    budget.install()
+    assert reader.get_object(IndirectObject(1, 0, reader)) is not None  # free while the budget holds
+    budget._spent = budget.limit + 1
+    with pytest.raises(PdfRejected) as caught:
+        reader.get_object(IndirectObject(1, 0, reader))
+    assert caught.value.code == "too_complex"
+
+
+def _stub_reader() -> SimpleNamespace:
+    body = bytearray(b" " * 300)
+    body[100:107] = b"1 0 obj"
+    body[200:207] = b"7 1 obj"
+    return SimpleNamespace(xref={0: {1: 100}, 1: {7: 200}}, xref_objStm={5: (8, 0)}, stream=io.BytesIO(bytes(body)))
+
+
+class _Reference(SimpleNamespace):
+    pass
+
+
+def test_object_stream_members_are_listed_only_with_generation_zero():
+    """Members always have generation 0, so `5 1 R` is a different object from member `5 0 R`."""
+    budget = pdf_validation._LookupBudget(_stub_reader(), 1000)
+    for _ in range(budget.limit * 3):
+        budget._charge(_Reference(idnum=5, generation=0))  # a member: free however often it is asked for
+        budget._charge(_Reference(idnum=1, generation=0))  # listed directly
+        budget._charge(_Reference(idnum=7, generation=1))  # listed under generation 1
+    budget.check()
+    for _ in range(budget.limit):
+        budget._charge(_Reference(idnum=5, generation=1))  # nonzero generation: not a member, not listed
+    with pytest.raises(PdfRejected) as caught:
+        budget._charge(_Reference(idnum=5, generation=1))
+    assert caught.value.code == "too_complex"
+    with pytest.raises(PdfRejected):
+        budget.check()  # the verdict repeats even if the parser swallowed the exception above
+
+
+def _indirect_annots_pdf(pages: int, *, listed: bool = False) -> bytes:
+    """`pages` pages, each with /Annots as an indirect reference to its own (empty) array. The
+    reference is to the array itself, not to its members, so resolving it is one lookup per page.
+    With `listed` False the arrays are in the file body but not in the cross-reference table."""
+    kids = b" ".join(b"%d 0 R" % (10 + index) for index in range(pages))
+    objects = {1: b"<</Type/Catalog/Pages 2 0 R>>", 2: b"<</Type/Pages/Kids[" + kids + b"]/Count %d>>" % pages}
+    unlisted = b""
+    for index in range(pages):
+        array = 1000 + index
+        objects[10 + index] = b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]/Annots %d 0 R>>" % array
+        if listed:
+            objects[array] = b"[]"
+        else:
+            unlisted += b"%d 0 obj\n[]\nendobj\n" % array
+    return _classic_pdf(objects, after=unlisted)
+
+
+@pytest.mark.parametrize("pages", [1, 8, 32])
+def test_a_few_unlisted_annots_arrays_are_accepted(pages):
+    assert validate_pdf(_indirect_annots_pdf(pages), max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == pages
+
+
+def test_listed_annots_arrays_cost_no_budget():
+    assert validate_pdf(_indirect_annots_pdf(300, listed=True), max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 300
+
+
+def test_many_unlisted_annots_arrays_are_rejected_by_the_lookup_budget(monkeypatch, tight_budget):
+    """Resolving the /Annots value itself is a parser lookup, separate from its members."""
+    content = _indirect_annots_pdf(200)
+    with pytest.raises(PdfRejected) as caught:
+        validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000)
+    assert caught.value.code == "too_complex"
+    monkeypatch.setattr(pdf_validation, "_MAX_UNLISTED_LOOKUPS", 10**6)
+    assert validate_pdf(content, max_bytes=LIMITS["max_bytes"], max_pages=1000).page_count == 200  # only the budget refuses
+
+
+def _repeated_reference_pdf(repeats: int) -> bytes:
+    """One unlisted annotation referenced `repeats` times from the same /Annots array."""
+    references = b" ".join(b"10 0 R" for _ in range(repeats))
+    objects = {
+        1: b"<</Type/Catalog/Pages 2 0 R>>",
+        2: b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        3: b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 9 9]/Annots[" + references + b"]>>",
+    }
+    return _classic_pdf(objects, after=b"10 0 obj\n" + _ANNOTATION + b"\nendobj\n")
+
+
+def test_repeated_references_to_one_unlisted_object_are_charged_once(tight_budget):
+    """The first lookup adds the object to the table, so asking for it again is free. Charging each
+    reference would refuse 33 references to one object under the cap of 32."""
+    assert validate_pdf(_repeated_reference_pdf(100), **LIMITS).page_count == 1

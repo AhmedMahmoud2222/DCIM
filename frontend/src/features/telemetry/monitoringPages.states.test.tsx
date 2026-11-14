@@ -16,7 +16,7 @@ vi.mock("@/features/telemetry/alarmRulesApi");
 
 const never = () => new Promise<never>(() => undefined);
 const alarm = (id: string, subject_key: string, status: Alarm["status"], opened_at: string): Alarm => ({
-  id, rule_id: "r", integration_id: "i", managed_asset_id: "a", subject_key, status, opened_at,
+  id, rule_id: "r", integration_id: "i", managed_asset_id: "a", subject_key, status, severity: "warning", opened_at,
   acknowledged_at: null, cleared_at: null, last_value: 1, unit: "%", presentation_value: 1, presentation_unit: "%",
 });
 const READER = { id: "u1", email: "r@example.test", full_name: "Reader", role_names: ["Viewer"], permission_codes: ["alarm:read"] };
@@ -129,7 +129,7 @@ describe("Alarm Rules list states", () => {
 
   const rule: alarmRules.AlarmRule = {
     id: "r-1", integration_id: "i-1", metric: "power_kw", rule_type: "threshold_high", threshold: 5, unit: null, registry_version: null,
-    enabled: true, name: "PDU-A over-limit", updated_at: "2026-10-08T10:00:00Z", unit_status: "unresolved", needs_attention: true,
+    enabled: true, name: "PDU-A over-limit", severity: "warning", updated_at: "2026-10-08T10:00:00Z", unit_status: "unresolved", needs_attention: true,
     blocked_notified_at: "2026-10-08T09:00:00Z", unit_resolved_by: null, unit_resolved_at: null, unit_resolution_reason: null,
   };
 

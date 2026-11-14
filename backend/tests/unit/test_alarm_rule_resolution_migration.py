@@ -26,8 +26,9 @@ def test_resolution_migration_follows_aggregate_lineage_as_single_head():
     # the vertical-placement uniqueness migration (0056) follows the PDU migration,
     # the FK-index migration (0057) follows 0056, and alarm subject-key migration 0058
     # follows 0057, and the idempotency principal-scope migration 0059 (issue #337) follows 0058,
-    # so 0059 is the single head.
-    assert directory.get_heads() == ["0059_idempotency_principal"]
+    # and the alarm severity migration 0060 follows 0059, so 0060 is the single head.
+    assert directory.get_heads() == ["0060_alarm_severity"]
+    assert directory.get_revision("0060_alarm_severity").down_revision == "0059_idempotency_principal"
     assert directory.get_revision("0055_alarm_rule_resolution").down_revision == "0051_aggregate_lineage"
     assert directory.get_revision("0055_pdu_catalog_outlet_template").down_revision == "0055_alarm_rule_resolution"
     assert directory.get_revision("0056_pdu_vertical_placement").down_revision == "0055_pdu_catalog_outlet_template"

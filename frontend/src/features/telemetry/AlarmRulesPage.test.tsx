@@ -20,7 +20,7 @@ const VIEWER = { ...MANAGER, id: "u2", role_names: ["Viewer"], permission_codes:
 
 const baseRule: alarmRules.AlarmRule = {
   id: "r-1", integration_id: "i-1", metric: "power_kw", rule_type: "threshold_high", threshold: 5,
-  unit: null, registry_version: null, enabled: true, name: "PDU-A over-limit", updated_at: "2026-10-08T10:00:00Z",
+  unit: null, registry_version: null, enabled: true, name: "PDU-A over-limit", severity: "warning", updated_at: "2026-10-08T10:00:00Z",
   unit_status: "unresolved", needs_attention: true, blocked_notified_at: "2026-10-08T09:00:00Z",
   unit_resolved_by: null, unit_resolved_at: null, unit_resolution_reason: null,
 };
@@ -48,8 +48,22 @@ describe("AlarmRulesPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save rule" }));
 
     await waitFor(() => expect(alarmRules.createAlarmRule).toHaveBeenCalledWith({
-      integration_id: "i-1", metric: "temperature_c", rule_type: "threshold_high", threshold: 30, name: "Room temperature high",
+      integration_id: "i-1", metric: "temperature_c", rule_type: "threshold_high", threshold: 30, name: "Room temperature high", severity: "warning",
     }));
+  });
+
+  it("sends the severity the operator selects and shows it in the rule table", async () => {
+    vi.mocked(alarmRules.createAlarmRule).mockResolvedValue({ id: "new-rule" });
+    vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([{ ...baseRule, severity: "critical" }]);
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    expect(await screen.findByText("Critical")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Add alarm rule" }));
+    await userEvent.type(await screen.findByLabelText("Rule name"), "Inlet too hot");
+    await userEvent.selectOptions(screen.getByLabelText("Metric"), "temperature_c");
+    await userEvent.selectOptions(screen.getByLabelText("Severity"), "critical");
+    await userEvent.type(screen.getByLabelText("Threshold"), "32");
+    await userEvent.click(screen.getByRole("button", { name: "Save rule" }));
+    await waitFor(() => expect(alarmRules.createAlarmRule).toHaveBeenCalledWith(expect.objectContaining({ severity: "critical", name: "Inlet too hot" })));
   });
 
   it("prevents duplicate rule submissions while the create request is pending", async () => {
@@ -80,7 +94,7 @@ describe("AlarmRulesPage", () => {
     await userEvent.type(screen.getByLabelText("Threshold"), "8");
     await userEvent.click(screen.getByRole("button", { name: "Save rule" }));
     await waitFor(() => expect(alarmRules.createAlarmRule).toHaveBeenCalledWith({
-      integration_id: "i-1", metric: "power_kw", rule_type: "threshold_high", threshold: 8, name: "Availability rule",
+      integration_id: "i-1", metric: "power_kw", rule_type: "threshold_high", threshold: 8, name: "Availability rule", severity: "warning",
     }));
   });
 
@@ -95,8 +109,25 @@ describe("AlarmRulesPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(alarmRules.editAlarmRule).toHaveBeenCalledWith("r-2", {
-      name: "Rack-B limit", threshold: 9, reason: "Revised operating limit", expected_updated_at: "2026-10-08T10:00:00Z",
+      name: "Rack-B limit", severity: "warning", threshold: 9, reason: "Revised operating limit", expected_updated_at: "2026-10-08T10:00:00Z",
     }));
+  });
+
+  it("reclassifies a migrated warning rule as critical from the edit form, and says open alarms keep their severity", async () => {
+    vi.mocked(alarmRules.listAlarmRules).mockResolvedValue([resolvedRule]);
+    vi.mocked(alarmRules.editAlarmRule).mockResolvedValue({ ...resolvedRule, severity: "critical" });
+    renderWithProviders(<AlarmRulesPage />, { user: MANAGER });
+    await userEvent.click(await screen.findByRole("button", { name: "Edit rule" }));
+    const severity = screen.getByLabelText("Severity");
+    expect(severity).toHaveValue("warning"); // initialised from the rule, not defaulted
+    expect(screen.getByText(/already open keeps the severity it opened with/i)).toBeInTheDocument();
+    await userEvent.selectOptions(severity, "critical");
+    await userEvent.type(screen.getByLabelText("Reason for change"), "Inlet limit is a critical condition");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(alarmRules.editAlarmRule).toHaveBeenCalledWith("r-2", expect.objectContaining({
+      severity: "critical", threshold: 5, reason: "Inlet limit is a critical condition",
+    })));
   });
 
   it("explains that editing a disabled rule does not enable it", async () => {

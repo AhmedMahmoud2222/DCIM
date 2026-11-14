@@ -178,15 +178,23 @@ export function EquipmentDetailPage() {
                 <dt className="text-slate-400">Type</dt>
                 <dd>{equipment.placement.placement_type}</dd>
               </div>
+              {([["Site", equipment.location?.site], ["Building", equipment.location?.building], ["Floor", equipment.location?.floor]] as const).map(
+                ([label, ref]) => (
+                  <div key={label} className="flex justify-between">
+                    <dt className="text-slate-400">{label}</dt>
+                    <dd>{ref?.name ?? "—"}</dd>
+                  </div>
+                ),
+              )}
               <div className="flex justify-between">
                 <dt className="text-slate-400">Room</dt>
-                <dd>{currentRoom?.name ?? equipment.placement.room_id}</dd>
+                <dd>{equipment.location?.room?.name ?? currentRoom?.name ?? equipment.placement.room_id}</dd>
               </div>
               {equipment.placement.placement_type === "rack_mounted" && (
                 <>
                   <div className="flex justify-between">
                     <dt className="text-slate-400">Rack</dt>
-                    <dd>{currentRack?.name ?? equipment.placement.rack_id}</dd>
+                    <dd>{equipment.location?.rack?.name ?? currentRack?.name ?? equipment.placement.rack_id}</dd>
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-slate-400">U-range</dt>

@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -13,12 +14,16 @@ from app.domain.telemetry.registry import REGISTRY_VERSION
 
 RULE_TYPES = ("threshold_high", "threshold_low", "availability_unavailable")
 ALARM_STATUSES = ("ACTIVE", "ACKNOWLEDGED", "CLEARED")
+# Severity is its own dimension: it says how serious a condition is, never where it is in its handling.
+ALARM_SEVERITIES = ("critical", "warning", "info")
+DEFAULT_ALARM_SEVERITY: Literal["critical", "warning", "info"] = "warning"
 
 
 class AlarmRule(Base, UUIDPkMixin, TimestampMixin):
     __tablename__ = "alarm_rule"
     __table_args__ = (
         CheckConstraint(f"rule_type IN {RULE_TYPES!r}", name="rule_type_allowed"),
+        CheckConstraint(f"severity IN {ALARM_SEVERITIES!r}", name="severity_allowed"),
         CheckConstraint("(rule_type = 'availability_unavailable' AND threshold IS NULL) OR "
                         "(rule_type != 'availability_unavailable' AND threshold IS NOT NULL)",
                         name="threshold_matches_rule_type"),
@@ -32,6 +37,9 @@ class AlarmRule(Base, UUIDPkMixin, TimestampMixin):
     unit: Mapped[str | None] = mapped_column(String(32))
     registry_version: Mapped[str | None] = mapped_column(String(16), nullable=True, default=REGISTRY_VERSION)
     enabled: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
+    severity: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=DEFAULT_ALARM_SEVERITY, server_default=DEFAULT_ALARM_SEVERITY
+    )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     unit_resolved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("app_user.id", ondelete="SET NULL"))
     unit_resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
@@ -43,6 +51,7 @@ class Alarm(Base, UUIDPkMixin):
     __tablename__ = "alarm"
     __table_args__ = (
         CheckConstraint(f"status IN {ALARM_STATUSES!r}", name="status_allowed"),
+        CheckConstraint(f"severity IN {ALARM_SEVERITIES!r}", name="severity_allowed"),
         Index("ix_alarm_integration_status_opened", "integration_id", "status", "opened_at"),
         # PostgreSQL partial unique index: one open lifecycle per rule/subject.
         Index("uq_alarm_open_rule_subject", "rule_id", "subject_key", unique=True,
@@ -55,6 +64,10 @@ class Alarm(Base, UUIDPkMixin):
     managed_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_asset.id", ondelete="SET NULL"), index=True)
     subject_key: Mapped[str] = mapped_column(String(512), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    # Snapshot of the rule's severity when the alarm opened; later rule edits do not rewrite it.
+    severity: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=DEFAULT_ALARM_SEVERITY, server_default=DEFAULT_ALARM_SEVERITY
+    )
     opened_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     acknowledged_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("app_user.id", ondelete="SET NULL"))

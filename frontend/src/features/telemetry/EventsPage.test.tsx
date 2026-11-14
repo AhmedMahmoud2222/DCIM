@@ -16,6 +16,7 @@ const activeAlarm: Alarm = {
   managed_asset_id: "asset-1",
   subject_key: "rack-3.power.utilization",
   status: "ACTIVE",
+  severity: "warning",
   opened_at: "2026-09-27T10:00:00Z",
   acknowledged_at: null,
   cleared_at: null,
@@ -59,6 +60,30 @@ describe("EventsPage", () => {
     expect(active.className).not.toMatch(/danger|red-/);
     expect(active).toHaveAttribute("title", expect.stringMatching(/does not indicate severity/i));
     expect(screen.getAllByText("ACKNOWLEDGED").length).toBeGreaterThan(0);
+  });
+
+  it("shows backend severity as Critical / Warning / Info text with a distinct icon, apart from workflow state", async () => {
+    const critical: Alarm = { ...activeAlarm, id: "alarm-c", severity: "critical", subject_key: "rack-9.inlet" };
+    const info: Alarm = { ...acknowledgedAlarm, id: "alarm-i", severity: "info", subject_key: "rack-8.humidity" };
+    vi.mocked(api.getOpenAlarms).mockImplementation(async (status?: "ACTIVE" | "ACKNOWLEDGED") =>
+      status === "ACTIVE" ? [critical, activeAlarm] : status === "ACKNOWLEDGED" ? [info] : [],
+    );
+    renderWithProviders(<EventsPage />);
+    const table = await screen.findByRole("table");
+    await within(table).findByText("rack-9.inlet");
+    expect(screen.getByRole("columnheader", { name: "Severity" })).toBeInTheDocument();
+    const shapes = ["Critical", "Warning", "Info"].map((label) => {
+      const chip = within(table).getByText(label).parentElement!;
+      expect(chip.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+      return chip.querySelector("svg")!.innerHTML;
+    });
+    expect(new Set(shapes).size).toBe(3);
+    // The ACTIVE alarms in rows 1 and 2 carry different severities: workflow state does not decide severity.
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(within(rows[0]).getByText("Critical")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("ACTIVE")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Warning")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("ACTIVE")).toBeInTheDocument();
   });
 
   it("filters visible events by the search box", async () => {
