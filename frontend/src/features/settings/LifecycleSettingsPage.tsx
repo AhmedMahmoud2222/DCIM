@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
@@ -53,35 +53,79 @@ export function LifecycleSettingsPage() {
   const [draftStates, setDraftStates] = useState<LifecycleStateConfig[]>(data.states);
   const [notice, setNotice] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // Unsaved edits are never replaced silently: when the server copy changes under a dirty draft we
+  // keep the draft and offer an explicit reload/discard instead.
+  const [dirty, setDirty] = useState(false);
+  const [serverChanged, setServerChanged] = useState(false);
+  const baseVersion = useRef<number | undefined>(undefined);
+
+  const loadedVersion = settingsQuery.data?.version;
 
   useEffect(() => {
-    if (settingsQuery.data?.states) {
-      const sorted = [...settingsQuery.data.states].sort(
-        (a, b) => a.display_order - b.display_order,
-      );
-      setDraftStates(sorted);
+    const server = settingsQuery.data;
+    if (!server?.states) return;
+    if (dirty && baseVersion.current !== undefined && server.version !== baseVersion.current) {
+      setServerChanged(true);
+      return;
     }
-  }, [settingsQuery.data]);
+    if (!dirty) {
+      setDraftStates([...server.states].sort((a, b) => a.display_order - b.display_order));
+      baseVersion.current = server.version;
+    }
+  }, [settingsQuery.data, dirty]);
 
   const saveMutation = useMutation({
-    mutationFn: (states: LifecycleStateConfig[]) =>
-      updateLifecycleSettings(states, data.version),
+    mutationFn: (states: LifecycleStateConfig[]) => {
+      if (loadedVersion === undefined) {
+        return Promise.reject(new Error("Lifecycle settings have not loaded yet; reload and try again."));
+      }
+      return updateLifecycleSettings(states, loadedVersion);
+    },
     onSuccess: (updated) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, updated);
+      baseVersion.current = updated.version;
+      setDirty(false);
+      setServerChanged(false);
       setValidationError(null);
       setNotice("Lifecycle settings saved.");
     },
   });
 
   const restoreMutation = useMutation({
-    mutationFn: () => restoreDefaultLifecycleSettings(data.version),
+    mutationFn: () => {
+      if (loadedVersion === undefined) {
+        return Promise.reject(new Error("Lifecycle settings have not loaded yet; reload and try again."));
+      }
+      return restoreDefaultLifecycleSettings(loadedVersion);
+    },
     onSuccess: (restored) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, restored);
+      baseVersion.current = restored.version;
       setDraftStates([...restored.states].sort((a, b) => a.display_order - b.display_order));
+      setDirty(false);
+      setServerChanged(false);
       setValidationError(null);
       setNotice("Default lifecycle settings restored.");
     },
   });
+
+  const handleReload = async () => {
+    const result = await settingsQuery.refetch();
+    if (result.data?.states) {
+      baseVersion.current = result.data.version;
+      setDraftStates([...result.data.states].sort((a, b) => a.display_order - b.display_order));
+    }
+    setDirty(false);
+    setServerChanged(false);
+    setValidationError(null);
+    setNotice(null);
+    saveMutation.reset();
+    restoreMutation.reset();
+  };
+
+  const isConflict =
+    (saveMutation.error ?? restoreMutation.error) instanceof ApiError &&
+    ((saveMutation.error ?? restoreMutation.error) as ApiError).status === 409;
 
   if (!isAdmin) {
     return (
@@ -111,6 +155,7 @@ export function LifecycleSettingsPage() {
   ) => {
     setNotice(null);
     setValidationError(null);
+    setDirty(true);
     setDraftStates((prev) =>
       prev.map((item) => (item.status === statusKey ? { ...item, [field]: value } : item)),
     );
@@ -121,6 +166,7 @@ export function LifecycleSettingsPage() {
     if (targetIndex < 0 || targetIndex >= draftStates.length) return;
     setNotice(null);
     setValidationError(null);
+    setDirty(true);
     setDraftStates((prev) => {
       const next = [...prev];
       const temp = next[index];
@@ -133,6 +179,7 @@ export function LifecycleSettingsPage() {
   const toggleAllowedTransition = (fromStatus: string, toStatus: string) => {
     setNotice(null);
     setValidationError(null);
+    setDirty(true);
     setDraftStates((prev) =>
       prev.map((item) => {
         if (item.status !== fromStatus) return item;
@@ -204,6 +251,29 @@ export function LifecycleSettingsPage() {
               saveMutation.error ?? restoreMutation.error,
               "Could not update lifecycle settings.",
             )}
+          {isConflict && (
+            <button
+              type="button"
+              onClick={() => void handleReload()}
+              className="ml-3 rounded-sm border border-tone-danger-fg px-2 py-0.5 text-xs font-medium"
+            >
+              Reload latest configuration
+            </button>
+          )}
+        </p>
+      )}
+
+      {serverChanged && !isConflict && (
+        <p role="alert" className="mb-4 rounded-md border border-line-default bg-surface-panel px-3 py-2 text-sm text-fg-primary">
+          Another administrator changed the lifecycle settings while you were editing. Your unsaved edits are kept;
+          saving will be rejected until you reload.
+          <button
+            type="button"
+            onClick={() => void handleReload()}
+            className="ml-3 rounded-sm border border-line-default px-2 py-0.5 text-xs font-medium"
+          >
+            Discard my edits and reload
+          </button>
         </p>
       )}
 

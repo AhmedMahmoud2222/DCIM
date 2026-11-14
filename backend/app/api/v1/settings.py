@@ -98,8 +98,10 @@ async def update_monitoring_policy(
     return policy
 
 
-def _resolve_expected_version(if_match: str | None, body_version: int | None) -> int | None:
-    """Resolve optional optimistic concurrency version from If-Match header and/or request body."""
+def _resolve_expected_version(if_match: str | None, body_version: int | None) -> int:
+    """Resolve the mandatory optimistic-concurrency precondition from If-Match and/or body `version`.
+
+    At least one must be supplied (428 otherwise); when both are supplied they must agree (400)."""
     header_version: int | None = None
     if if_match is not None and if_match.strip():
         header_version = parse_if_match(if_match)
@@ -109,7 +111,14 @@ def _resolve_expected_version(if_match: str | None, body_version: int | None) ->
             title="Bad Request",
             detail=f"If-Match header ({header_version}) does not match request body version ({body_version}).",
         )
-    return header_version if header_version is not None else body_version
+    expected = header_version if header_version is not None else body_version
+    if expected is None:
+        raise ApiError(
+            status_code=428,
+            title="Precondition Required",
+            detail="Lifecycle settings writes require an If-Match header (or body version) carrying the current version.",
+        )
+    return expected
 
 
 @router.get("/lifecycle", response_model=LifecycleSettingsRead)
@@ -134,8 +143,7 @@ async def update_lifecycle_settings(
     row = await lock_lifecycle_settings_row(db)
     before_states = effective_states_from_row(row)
     current_version = int(row.version) if row.version is not None else 1
-    if expected_version is not None:
-        check_version_match(expected=expected_version, actual=current_version)
+    check_version_match(expected=expected_version, actual=current_version)
     next_version = current_version + 1
     row.states_config = validated_states
     row.version = next_version
@@ -165,8 +173,7 @@ async def restore_default_lifecycle_settings(
     row = await lock_lifecycle_settings_row(db)
     before_states = effective_states_from_row(row)
     current_version = int(row.version) if row.version is not None else 1
-    if expected_version is not None:
-        check_version_match(expected=expected_version, actual=current_version)
+    check_version_match(expected=expected_version, actual=current_version)
     default_states = default_lifecycle_states_config()
     next_version = current_version + 1
     row.states_config = default_states

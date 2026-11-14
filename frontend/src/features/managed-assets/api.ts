@@ -35,21 +35,21 @@ export function getLifecycleSettings(): Promise<LifecycleSettingsResponse> {
 
 export function updateLifecycleSettings(
   states: LifecycleStateConfig[],
-  version?: number,
+  version: number,
 ): Promise<LifecycleSettingsResponse> {
   return apiFetch<LifecycleSettingsResponse>("/settings/lifecycle", {
     method: "PUT",
     ifMatch: version,
-    body: JSON.stringify(version !== undefined ? { states, version } : { states }),
+    body: JSON.stringify({ states, version }),
   });
 }
 
 export function restoreDefaultLifecycleSettings(
-  version?: number,
+  version: number,
 ): Promise<LifecycleSettingsResponse> {
   return apiFetch<LifecycleSettingsResponse>("/settings/lifecycle/restore-defaults", {
     method: "POST",
     ifMatch: version,
-    body: version !== undefined ? JSON.stringify({ version }) : undefined,
+    body: JSON.stringify({ version }),
   });
 }

@@ -19,7 +19,7 @@ const LIFECYCLE_ADMIN_USER: CurrentUser = {
 };
 
 function cloneDefaultSettings(): LifecycleSettingsResponse {
-  return JSON.parse(JSON.stringify(DEFAULT_LIFECYCLE_SETTINGS)) as LifecycleSettingsResponse;
+  return { ...(JSON.parse(JSON.stringify(DEFAULT_LIFECYCLE_SETTINGS)) as LifecycleSettingsResponse), version: 1 };
 }
 
 describe("LifecycleSettingsPage", () => {
@@ -140,6 +140,51 @@ describe("LifecycleSettingsPage", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(
       "Lifecycle settings were modified by another administrator — reload the latest configuration and try again.",
+    );
+  });
+
+  it("offers a reload control after a 409 that refetches the settings and clears the conflict", async () => {
+    const stale = { ...cloneDefaultSettings(), version: 4 };
+    const latest = { ...cloneDefaultSettings(), version: 5 };
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValueOnce(stale).mockResolvedValue(latest);
+    vi.mocked(managedAssetApi.updateLifecycleSettings).mockRejectedValueOnce(
+      new ApiError(409, "Conflict", "modified concurrently", null),
+    );
+    vi.mocked(managedAssetApi.updateLifecycleSettings).mockResolvedValueOnce({ ...latest, version: 6 });
+
+    const user = userEvent.setup();
+    renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    await screen.findByTestId("lifecycle-state-card-planned");
+    await user.click(screen.getByRole("button", { name: "Save Lifecycle Settings" }));
+    await user.click(await screen.findByRole("button", { name: "Reload latest configuration" }));
+
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Save Lifecycle Settings" }));
+    await waitFor(() =>
+      expect(managedAssetApi.updateLifecycleSettings).toHaveBeenLastCalledWith(expect.any(Array), 5),
+    );
+  });
+
+  it("keeps unsaved edits when the server copy changes and requires an explicit discard to reload", async () => {
+    const first = { ...cloneDefaultSettings(), version: 1 };
+    const changed = { ...cloneDefaultSettings(), version: 2 };
+    changed.states[0] = { ...changed.states[0], label: "Other Admin Label" };
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValueOnce(first).mockResolvedValue(changed);
+
+    const user = userEvent.setup();
+    const { queryClient } = renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    const card = await screen.findByTestId("lifecycle-state-card-planned");
+    const labelInput = within(card).getByLabelText("Display label for planned");
+    await user.clear(labelInput);
+    await user.type(labelInput, "My Draft");
+
+    await queryClient.invalidateQueries({ queryKey: ["lifecycle-settings"] });
+
+    expect(await screen.findByRole("button", { name: "Discard my edits and reload" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("lifecycle-state-card-planned")).getByLabelText("Display label for planned")).toHaveValue(
+      "My Draft",
     );
   });
 });

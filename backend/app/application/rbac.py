@@ -285,7 +285,10 @@ def require_catalog_administrator(code: str):
     product principle 8, unlike every other require_permission()-gated route in this
     codebase, which remains permission-only. Scoped to the four tightened legacy
     `app/api/v1/catalog.py` endpoints (PR-2) and PR-3's new `app/api/v1/catalog_designer.py`
-    router only — never a general RBAC mechanism, never used elsewhere.
+    router, plus the two lifecycle-settings writes (`PUT /settings/lifecycle` and
+    `POST /settings/lifecycle/restore-defaults`, which pass `managed_asset:manage`) —
+    never a general RBAC mechanism. The code argument is not catalog-specific; the
+    Administrator-role requirement is what this helper adds.
 
     Matching Role.name == "Administrator" by string is deliberate, not an oversight: there
     is no other stable marker for "the Administrator role" in this schema (`Role.is_system`

@@ -64,7 +64,7 @@ class ManagedAssetOut(BaseModel):
 
 
 class LifecycleTransitionIn(BaseModel):
-    to_status: str
+    to_status: str = Field(min_length=1, max_length=32)
     reason: str | None = Field(default=None, max_length=500)
 
 

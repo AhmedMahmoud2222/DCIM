@@ -44,6 +44,9 @@ export function LifecycleTransitionAction({
   const errorRef = useRef<HTMLSpanElement>(null);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const wasConfirming = useRef(false);
+  const targetSelectRef = useRef<HTMLSelectElement>(null);
+  const changeStateRef = useRef<HTMLButtonElement>(null);
+  const returnFocusToChange = useRef(false);
   const queryKey = [assetLabel === "rack" ? "racks" : "equipment"];
 
   useEffect(() => {
@@ -52,6 +55,17 @@ export function LifecycleTransitionAction({
     setReason("");
     setValidationError(null);
   }, [assetId, status]);
+
+  // Dialog focus management: move focus into the dialog when it opens and back to the
+  // "Change Lifecycle State" trigger when it is dismissed (Cancel / Escape).
+  useEffect(() => {
+    if (dialogOpen) {
+      targetSelectRef.current?.focus();
+    } else if (returnFocusToChange.current) {
+      returnFocusToChange.current = false;
+      changeStateRef.current?.focus();
+    }
+  }, [dialogOpen]);
 
   useEffect(() => {
     if (targets.length > 0 && !targets.some((t) => t.status === selectedTarget)) {
@@ -133,6 +147,14 @@ export function LifecycleTransitionAction({
   const currentConfig = stateByStatus(status);
   const reasonRequired = REASON_REQUIRED_TARGETS.has(selectedTarget);
 
+  const closeDialog = () => {
+    returnFocusToChange.current = true;
+    setDialogOpen(false);
+    setReason("");
+    setValidationError(null);
+    mutation.reset();
+  };
+
   const handleDialogConfirm = () => {
     setValidationError(null);
     const trimmed = reason.trim();
@@ -202,6 +224,7 @@ export function LifecycleTransitionAction({
         {showFullLifecycle && !confirming && !dialogOpen && !completed && (
           <button
             type="button"
+            ref={changeStateRef}
             onClick={() => {
               mutation.reset();
               setValidationError(null);
@@ -222,6 +245,12 @@ export function LifecycleTransitionAction({
           role="dialog"
           aria-modal="false"
           aria-label={`Change lifecycle state for ${assetName}`}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !mutation.isPending) {
+              e.stopPropagation();
+              closeDialog();
+            }
+          }}
           className="mt-1 w-full min-w-[18rem] max-w-md rounded-md border border-line-default bg-surface-panel p-3 shadow-sm"
         >
           <div className="mb-2 flex items-center justify-between gap-2">
@@ -246,6 +275,7 @@ export function LifecycleTransitionAction({
               </label>
               <select
                 id={`lifecycle-target-${assetId}`}
+                ref={targetSelectRef}
                 aria-label="Target lifecycle state"
                 value={selectedTarget}
                 onChange={(e) => {
@@ -317,12 +347,7 @@ export function LifecycleTransitionAction({
               <button
                 type="button"
                 disabled={mutation.isPending}
-                onClick={() => {
-                  setDialogOpen(false);
-                  setReason("");
-                  setValidationError(null);
-                  mutation.reset();
-                }}
+                onClick={closeDialog}
                 className="rounded-sm border border-line-subtle px-2.5 py-1 text-xs text-fg-primary hover:bg-surface-hover disabled:opacity-50"
               >
                 Cancel
