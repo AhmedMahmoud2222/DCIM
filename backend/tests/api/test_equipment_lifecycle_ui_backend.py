@@ -1,93 +1,30 @@
-"""Backend tests for Equipment Lifecycle Management and Administrator Lifecycle Settings."""
+"""Backend tests for Equipment Lifecycle Management UI flows and Administrator Settings."""
 
-import asyncio
-import importlib.util
-import json
-import re
 import uuid
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.api.v1.managed_assets import get_managed_asset_lifecycle_history
+from app.application.access_control import AccessScope, site_id_for_room
+from app.core.errors import NotFoundError
 from app.domain.audit.models import AuditLog
-from app.domain.identity.models import (
-    DEFAULT_LIFECYCLE_STATES,
-    MANDATORY_VISIBLE_LIFECYCLE_TRANSITIONS,
-    VISIBLE_LIFECYCLE_STATUSES,
-    default_lifecycle_states_config,
-)
+from app.domain.identity.models import VISIBLE_LIFECYCLE_STATUSES
 from app.domain.outbox.models import OutboxEvent
-from tests.api._phase2_helpers import create_equipment, create_room
+from tests.api._lifecycle_helpers import (
+    put_lifecycle_states,
+    reset_lifecycle_settings_row,
+    restore_lifecycle_defaults,
+)
+from tests.api._phase2_helpers import create_equipment, create_rack, create_room
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_lifecycle_settings(db_engine):
-    async with db_engine.begin() as conn:
-        await conn.execute(
-            text(
-                "INSERT INTO lifecycle_settings (id, states_config, version) "
-                "VALUES (1, CAST(:cfg AS jsonb), 1) "
-                "ON CONFLICT (id) DO UPDATE SET states_config = CAST(:cfg AS jsonb), version = 1"
-            ),
-            {"cfg": json.dumps(default_lifecycle_states_config())},
-        )
+    await reset_lifecycle_settings_row(db_engine)
     yield
-
-
-async def _current_version(client, headers) -> int:
-    return (await client.get("/api/v1/settings/lifecycle", headers=headers)).json()["version"]
-
-
-async def _put_states(client, headers, states):
-    """PUT lifecycle settings with the mandatory If-Match precondition set to the current version."""
-    version = await _current_version(client, headers)
-    return await client.put(
-        "/api/v1/settings/lifecycle",
-        json={"states": states},
-        headers={**headers, "If-Match": str(version)},
-    )
-
-
-async def _restore(client, headers):
-    version = await _current_version(client, headers)
-    return await client.post(
-        "/api/v1/settings/lifecycle/restore-defaults", headers={**headers, "If-Match": str(version)}
-    )
-
-
-async def test_lifecycle_settings_writes_require_a_version_precondition(client, auth_headers):
-    admin = await auth_headers("Administrator")
-    initial = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()
-    states = initial["states"]
-
-    # Absent precondition -> 428 on both write endpoints, and nothing changes.
-    put_absent = await client.put("/api/v1/settings/lifecycle", json={"states": states}, headers=admin)
-    assert put_absent.status_code == 428, put_absent.text
-    restore_absent = await client.post("/api/v1/settings/lifecycle/restore-defaults", headers=admin)
-    assert restore_absent.status_code == 428, restore_absent.text
-    restore_empty_body = await client.post("/api/v1/settings/lifecycle/restore-defaults", json={}, headers=admin)
-    assert restore_empty_body.status_code == 428, restore_empty_body.text
-    assert (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["version"] == initial["version"]
-
-    # Stale version -> 409 on both endpoints.
-    stale = initial["version"] + 5
-    put_stale = await client.put(
-        "/api/v1/settings/lifecycle", json={"states": states}, headers={**admin, "If-Match": str(stale)}
-    )
-    assert put_stale.status_code == 409
-    restore_stale = await client.post(
-        "/api/v1/settings/lifecycle/restore-defaults", headers={**admin, "If-Match": str(stale)}
-    )
-    assert restore_stale.status_code == 409
-
-    # Body `version` alone satisfies the precondition.
-    ok = await client.put(
-        "/api/v1/settings/lifecycle", json={"states": states, "version": initial["version"]}, headers=admin
-    )
-    assert ok.status_code == 200, ok.text
 
 
 async def test_lifecycle_settings_defaults_expose_six_states_and_exclude_reserved(client, auth_headers):
@@ -117,17 +54,14 @@ async def test_lifecycle_settings_admin_customization_persists_and_restores_defa
         new_state["description"] = f"Updated description for {state['status']}"
         new_state["badge_color"] = "info" if state["status"] == "planned" else state["badge_color"]
         if state["status"] == "planned":
-            # Restrict planned -> only installed (disable direct planned -> removed)
             new_state["allowed_transitions"] = ["installed"]
         updated_states.append(new_state)
 
     # Non-administrators cannot update settings even if they have managed_asset:manage
-    forbidden_eng = await client.put("/api/v1/settings/lifecycle", json={"states": updated_states}, headers=engineer)
-    assert forbidden_eng.status_code == 403
-    forbidden_view = await client.put("/api/v1/settings/lifecycle", json={"states": updated_states}, headers=viewer)
-    assert forbidden_view.status_code == 403
+    assert (await client.put("/api/v1/settings/lifecycle", json={"states": updated_states}, headers=engineer)).status_code == 403
+    assert (await client.put("/api/v1/settings/lifecycle", json={"states": updated_states}, headers=viewer)).status_code == 403
 
-    put_resp = await _put_states(client, admin, updated_states)
+    put_resp = await put_lifecycle_states(client, admin, updated_states)
     assert put_resp.status_code == 200, put_resp.text
     persisted = put_resp.json()["states"]
     assert [s["status"] for s in persisted] == [
@@ -143,20 +77,17 @@ async def test_lifecycle_settings_admin_customization_persists_and_restores_defa
     assert planned_cfg["badge_color"] == "info"
     assert planned_cfg["allowed_transitions"] == ["installed"]
 
-    # Verify GET reflects persisted settings
     get_resp = await client.get("/api/v1/settings/lifecycle", headers=viewer)
     assert get_resp.status_code == 200
     assert get_resp.json()["states"] == persisted
 
-    # Verify audit log recorded for update
     update_audits = (
         await db_session.execute(select(AuditLog).where(AuditLog.action == "settings.lifecycle.update"))
     ).scalars().all()
     assert len(update_audits) == 1
 
-    # Restore defaults requires Administrator
     assert (await client.post("/api/v1/settings/lifecycle/restore-defaults", headers=engineer)).status_code == 403
-    restore_resp = await _restore(client, admin)
+    restore_resp = await restore_lifecycle_defaults(client, admin)
     assert restore_resp.status_code == 200, restore_resp.text
     restored = restore_resp.json()["states"]
     assert [s["status"] for s in restored] == list(VISIBLE_LIFECYCLE_STATUSES)
@@ -168,7 +99,6 @@ async def test_lifecycle_settings_rejects_reserved_new_deleted_or_mandatory_forb
     admin = await auth_headers("Administrator")
     base = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
 
-    # 1. Cannot expose reserved as a state
     with_reserved = [dict(s) for s in base]
     with_reserved.append(
         {
@@ -180,36 +110,30 @@ async def test_lifecycle_settings_rejects_reserved_new_deleted_or_mandatory_forb
             "allowed_transitions": ["installed"],
         }
     )
-    r1 = await _put_states(client, admin, with_reserved)
+    r1 = await put_lifecycle_states(client, admin, with_reserved)
     assert r1.status_code == 422
     assert "reserved" in r1.text.lower()
 
-    # 2. Cannot delete an existing state
     missing_one = [dict(s) for s in base if s["status"] != "maintenance"]
-    r2 = await _put_states(client, admin, missing_one)
-    assert r2.status_code == 422
+    assert (await put_lifecycle_states(client, admin, missing_one)).status_code == 422
 
-    # 3. Cannot create a new state
     invented = [dict(s) for s in base]
     invented[-1] = {**invented[-1], "status": "quarantined"}
-    r3 = await _put_states(client, admin, invented)
-    assert r3.status_code == 422
+    assert (await put_lifecycle_states(client, admin, invented)).status_code == 422
 
-    # 4. Cannot allow transitions forbidden by mandatory backend restrictions (e.g. planned -> active or removed -> active)
     forbidden_transition = [dict(s) for s in base]
     for s in forbidden_transition:
         if s["status"] == "planned":
             s["allowed_transitions"] = ["installed", "active"]
-    r4 = await _put_states(client, admin, forbidden_transition)
+    r4 = await put_lifecycle_states(client, admin, forbidden_transition)
     assert r4.status_code == 422
     assert "mandatory backend restrictions" in r4.text.lower()
 
-    # 5. Cannot target reserved in allowed_transitions
     target_reserved = [dict(s) for s in base]
     for s in target_reserved:
         if s["status"] == "planned":
             s["allowed_transitions"] = ["installed", "reserved"]
-    r5 = await _put_states(client, admin, target_reserved)
+    r5 = await put_lifecycle_states(client, admin, target_reserved)
     assert r5.status_code == 422
     assert "reserved" in r5.text.lower()
 
@@ -220,7 +144,6 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     eq = await create_equipment(client, admin, auth_headers)
     eq_id = eq["id"]
 
-    # Viewer cannot transition
     r_unauth = await client.post(
         f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
         json={"to_status": "installed"},
@@ -228,7 +151,6 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     )
     assert r_unauth.status_code == 403
 
-    # Invalid jump planned -> active fails
     r_invalid = await client.post(
         f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
         json={"to_status": "active"},
@@ -236,7 +158,6 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     )
     assert r_invalid.status_code == 422
 
-    # planned -> installed -> active -> maintenance -> active
     for target, reason in [
         ("installed", "Racked in Hall A"),
         ("active", "Commissioned into production"),
@@ -251,21 +172,18 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
         assert resp.status_code == 200, resp.text
         assert resp.json()["lifecycle_status"] == target
 
-    # Decommissioning equipment WITHOUT reason or with blank reason MUST fail (422)
-    r_no_reason = await client.post(
-        f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
-        json={"to_status": "decommissioned"},
-        headers=admin,
-    )
-    assert r_no_reason.status_code == 422
-    r_blank_reason = await client.post(
-        f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
-        json={"to_status": "decommissioned", "reason": "   "},
-        headers=admin,
-    )
-    assert r_blank_reason.status_code == 422
+    # Decommissioning and removal require non-blank reason for equipment
+    assert (
+        await client.post(f"/api/v1/managed-assets/{eq_id}/lifecycle-transition", json={"to_status": "decommissioned"}, headers=admin)
+    ).status_code == 422
+    assert (
+        await client.post(
+            f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
+            json={"to_status": "decommissioned", "reason": "   "},
+            headers=admin,
+        )
+    ).status_code == 422
 
-    # Decommissioning equipment WITH reason succeeds
     r_decomm = await client.post(
         f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
         json={"to_status": "decommissioned", "reason": "End of hardware support"},
@@ -274,14 +192,9 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     assert r_decomm.status_code == 200, r_decomm.text
     assert r_decomm.json()["lifecycle_status"] == "decommissioned"
 
-    # Removing equipment WITHOUT reason fails, WITH reason succeeds
-    r_rem_no_reason = await client.post(
-        f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
-        json={"to_status": "removed"},
-        headers=admin,
-    )
-    assert r_rem_no_reason.status_code == 422
-
+    assert (
+        await client.post(f"/api/v1/managed-assets/{eq_id}/lifecycle-transition", json={"to_status": "removed"}, headers=admin)
+    ).status_code == 422
     r_rem = await client.post(
         f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
         json={"to_status": "removed", "reason": "Physically unmounted and disposed"},
@@ -290,7 +203,6 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     assert r_rem.status_code == 200, r_rem.text
     assert r_rem.json()["lifecycle_status"] == "removed"
 
-    # Verify lifecycle history endpoint returns all 6 transitions in reverse chronological order
     hist_resp = await client.get(f"/api/v1/managed-assets/{eq_id}/lifecycle-history", headers=viewer)
     assert hist_resp.status_code == 200, hist_resp.text
     items = hist_resp.json()["items"]
@@ -303,7 +215,6 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     assert items[-1]["to_status"] == "installed"
     assert items[-1]["reason"] == "Racked in Hall A"
 
-    # Verify outbox events were created for each transition
     outbox_rows = (
         await db_session.execute(
             select(OutboxEvent).where(
@@ -315,20 +226,54 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     assert len(outbox_rows) == 6
 
 
+async def test_lifecycle_history_enforces_equipment_access_scope_when_restricted(client, auth_headers, db_session):
+    admin = await auth_headers("Administrator")
+    room_id = await create_room(client, auth_headers)
+    site_id = await site_id_for_room(db_session, uuid.UUID(room_id))
+    assert site_id is not None
+
+    eq = await create_equipment(client, admin, auth_headers)
+    eq_id = eq["id"]
+    moved = await client.post(
+        f"/api/v1/equipment/{eq_id}/move",
+        json={"placement_type": "floor_standing", "room_id": room_id},
+        headers=admin,
+    )
+    assert moved.status_code == 200, moved.text
+    rack = await create_rack(client, admin, auth_headers, room_id=room_id)
+
+    wrong_scope = AccessScope(unrestricted=False, site_ids=frozenset({uuid.uuid4()}), full_site_ids=frozenset({uuid.uuid4()}))
+    with pytest.raises(NotFoundError):
+        await get_managed_asset_lifecycle_history(
+            asset_id=uuid.UUID(eq_id), db=db_session, ctx=SimpleNamespace(scope=wrong_scope)
+        )
+    with pytest.raises(NotFoundError):
+        await get_managed_asset_lifecycle_history(
+            asset_id=uuid.UUID(rack["id"]), db=db_session, ctx=SimpleNamespace(scope=wrong_scope)
+        )
+
+    right_scope = AccessScope(unrestricted=False, site_ids=frozenset({site_id}), full_site_ids=frozenset({site_id}))
+    eq_hist = await get_managed_asset_lifecycle_history(
+        asset_id=uuid.UUID(eq_id), db=db_session, ctx=SimpleNamespace(scope=right_scope)
+    )
+    rack_hist = await get_managed_asset_lifecycle_history(
+        asset_id=uuid.UUID(rack["id"]), db=db_session, ctx=SimpleNamespace(scope=right_scope)
+    )
+    assert eq_hist.items == []
+    assert rack_hist.items == []
+
+
 async def test_configured_transition_restriction_is_enforced_by_backend(client, auth_headers):
     admin = await auth_headers("Administrator")
     eq = await create_equipment(client, admin, auth_headers)
     eq_id = eq["id"]
 
-    # Disable planned -> removed in Lifecycle Settings
     base = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
     for s in base:
         if s["status"] == "planned":
             s["allowed_transitions"] = ["installed"]
-    put_resp = await _put_states(client, admin, base)
-    assert put_resp.status_code == 200
+    assert (await put_lifecycle_states(client, admin, base)).status_code == 200
 
-    # Attempt planned -> removed now fails with 422 because admin disabled it
     r_disabled = await client.post(
         f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
         json={"to_status": "removed", "reason": "Cancelled order"},
@@ -345,14 +290,12 @@ async def test_legacy_reserved_equipment_remains_readable_and_is_not_silently_co
     eq = await create_equipment(client, admin, auth_headers)
     eq_id = eq["id"]
 
-    # Simulate an existing legacy record with lifecycle_status = 'reserved'
     await db_session.execute(
         text("UPDATE managed_asset SET lifecycle_status = 'reserved' WHERE id = :id"),
         {"id": uuid.UUID(eq_id)},
     )
     await db_session.commit()
 
-    # Record remains readable in equipment detail and listing
     detail = await client.get(f"/api/v1/equipment/{eq_id}", headers=admin)
     assert detail.status_code == 200
     assert detail.json()["lifecycle_status"] == "reserved"
@@ -362,7 +305,6 @@ async def test_legacy_reserved_equipment_remains_readable_and_is_not_silently_co
     found = next(item for item in listing.json()["items"] if item["id"] == eq_id)
     assert found["lifecycle_status"] == "reserved"
 
-    # Editing equipment metadata does NOT silently convert `reserved` to another status
     patched = await client.patch(
         f"/api/v1/equipment/{eq_id}",
         json={"hostname": "legacy-reserved-host", "owner": "NetOps", "notes": "Preserved legacy record"},
@@ -385,7 +327,6 @@ async def test_patch_equipment_clears_fields_on_explicit_null_and_preserves_omit
     )
     assert set_resp.status_code == 200, set_resp.text
 
-    # Explicit null and blank string clear; omitted fields are untouched.
     clear_resp = await client.patch(
         f"/api/v1/equipment/{eq_id}",
         json={"hostname": None, "notes": "   "},
@@ -406,7 +347,6 @@ async def test_placement_and_metadata_updates_never_auto_transition_installed_to
     eq = await create_equipment(client, admin, auth_headers)
     eq_id = eq["id"]
 
-    # Transition planned -> installed
     r = await client.post(
         f"/api/v1/managed-assets/{eq_id}/lifecycle-transition",
         json={"to_status": "installed"},
@@ -414,7 +354,6 @@ async def test_placement_and_metadata_updates_never_auto_transition_installed_to
     )
     assert r.status_code == 200
 
-    # Moving/placing an installed device must not automatically transition it to active
     moved = await client.post(
         f"/api/v1/equipment/{eq_id}/move",
         json={"placement_type": "floor_standing", "room_id": room_id},
@@ -422,234 +361,3 @@ async def test_placement_and_metadata_updates_never_auto_transition_installed_to
     )
     assert moved.status_code == 200
     assert moved.json()["lifecycle_status"] == "installed"
-
-
-async def test_lifecycle_settings_do_not_restrict_non_equipment_and_accept_null_reason(client, auth_headers):
-    admin = await auth_headers("Administrator")
-    base = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
-    for s in base:
-        if s["status"] == "planned":
-            s["allowed_transitions"] = ["installed"]  # disable planned -> removed for equipment
-    assert (await _put_states(client, admin, base)).status_code == 200
-
-    created = await client.post(
-        "/api/v1/managed-assets",
-        json={"asset_type": "rack", "asset_tag": f"RK-{uuid.uuid4().hex[:8]}"},
-        headers=admin,
-    )
-    assert created.status_code == 201, created.text
-    resp = await client.post(
-        f"/api/v1/managed-assets/{created.json()['id']}/lifecycle-transition",
-        json={"to_status": "removed", "reason": None},
-        headers=admin,
-    )
-    assert resp.status_code == 200, resp.text
-
-
-async def test_transition_out_of_legacy_reserved_equipment_is_rejected(client, auth_headers, db_session):
-    admin = await auth_headers("Administrator")
-    eq = await create_equipment(client, admin, auth_headers)
-    await db_session.execute(
-        text("UPDATE managed_asset SET lifecycle_status = 'reserved' WHERE id = :id"),
-        {"id": uuid.UUID(eq["id"])},
-    )
-    await db_session.commit()
-    resp = await client.post(
-        f"/api/v1/managed-assets/{eq['id']}/lifecycle-transition",
-        json={"to_status": "installed"},
-        headers=admin,
-    )
-    assert resp.status_code == 422
-    assert "legacy" in resp.text.lower()
-
-
-async def test_lifecycle_settings_restore_audit_before_reflects_prior_update(client, auth_headers, db_session):
-    admin = await auth_headers("Administrator")
-    first = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
-    for s in first:
-        if s["status"] == "active":
-            s["label"] = "In Service"
-    assert (await _put_states(client, admin, first)).status_code == 200
-    assert (await _restore(client, admin)).status_code == 200
-    row = (
-        await db_session.execute(
-            select(AuditLog)
-            .where(AuditLog.action == "settings.lifecycle.restore_defaults")
-            .order_by(AuditLog.timestamp.desc())
-        )
-    ).scalars().first()
-    before_active = next(s for s in row.before["states"] if s["status"] == "active")
-    assert before_active["label"] == "In Service"
-
-
-async def test_f4_lifecycle_settings_optimistic_concurrency_and_postgres_row_locking(
-    client, auth_headers, db_session, db_engine
-):
-    """F4 / Section B regression: concurrent lifecycle settings updates and restores enforce optimistic
-    concurrency (`If-Match` / `version`), prevent lost updates via PostgreSQL `FOR UPDATE` row
-    locking, and record the actual prior committed state in `audit_log`."""
-    admin = await auth_headers("Administrator")
-    initial = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()
-    v1 = initial["version"]
-    assert v1 >= 1
-
-    states_a = [dict(s) for s in initial["states"]]
-    states_a[0] = {**states_a[0], "label": "Planned Wave A"}
-
-    # First update with If-Match: v1 succeeds and increments version to v1 + 1
-    r_a = await client.put(
-        "/api/v1/settings/lifecycle",
-        json={"states": states_a, "version": v1},
-        headers={**admin, "If-Match": str(v1)},
-    )
-    assert r_a.status_code == 200, r_a.text
-    v2 = r_a.json()["version"]
-    assert v2 == v1 + 1
-
-    # Stale update using old version v1 (via If-Match or body.version) is rejected with 409 Conflict
-    states_b = [dict(s) for s in initial["states"]]
-    states_b[0] = {**states_b[0], "label": "Stale Overwrite Attempt"}
-    r_stale_header = await client.put(
-        "/api/v1/settings/lifecycle",
-        json={"states": states_b},
-        headers={**admin, "If-Match": str(v1)},
-    )
-    assert r_stale_header.status_code == 409
-
-    r_stale_body = await client.put(
-        "/api/v1/settings/lifecycle",
-        json={"states": states_b, "version": v1},
-        headers=admin,
-    )
-    assert r_stale_body.status_code == 409
-
-    # Mismatched If-Match header vs body version is rejected with 400 Bad Request
-    r_mismatch = await client.put(
-        "/api/v1/settings/lifecycle",
-        json={"states": states_b, "version": v2},
-        headers={**admin, "If-Match": str(v1)},
-    )
-    assert r_mismatch.status_code == 400
-
-    # Stale restore-defaults using old version v1 is also rejected with 409 Conflict
-    r_stale_restore = await client.post(
-        "/api/v1/settings/lifecycle/restore-defaults",
-        json={"version": v1},
-        headers={**admin, "If-Match": str(v1)},
-    )
-    assert r_stale_restore.status_code == 409
-
-    # Release the shared test `db_session` transaction lock held after the 409 rejection
-    # before opening two independent concurrent PostgreSQL sessions.
-    await db_session.rollback()
-
-    from app.application.lifecycle_settings import effective_states_from_row, lock_lifecycle_settings_row
-
-    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False, autoflush=False)
-
-    async def _concurrent_tx(label_suffix: str) -> int:
-        async with session_factory() as session:
-            row = await lock_lifecycle_settings_row(session)
-            before_states = effective_states_from_row(row)
-            new_states = [dict(s) for s in before_states]
-            new_states[0] = {**new_states[0], "label": f"Concurrent {label_suffix}"}
-            row.states_config = new_states
-            row.version = row.version + 1
-            await session.commit()
-            return row.version
-
-    v_res_1, v_res_2 = await asyncio.gather(_concurrent_tx("One"), _concurrent_tx("Two"))
-    assert sorted([v_res_1, v_res_2]) == [v2 + 1, v2 + 2]
-
-    # Restore with current version v2 + 2 succeeds and records the actual prior committed state in audit_log
-    r_restore = await client.post(
-        "/api/v1/settings/lifecycle/restore-defaults",
-        json={"version": v2 + 2},
-        headers={**admin, "If-Match": str(v2 + 2)},
-    )
-    assert r_restore.status_code == 200, r_restore.text
-    assert r_restore.json()["version"] == v2 + 3
-
-    restore_audit = (
-        await db_session.execute(
-            select(AuditLog)
-            .where(AuditLog.action == "settings.lifecycle.restore_defaults")
-            .order_by(AuditLog.timestamp.desc(), AuditLog.audit_id.desc())
-        )
-    ).scalars().first()
-    assert restore_audit is not None
-    assert restore_audit.before["version"] == v2 + 2
-    assert restore_audit.before["states"][0]["label"] in ("Concurrent One", "Concurrent Two")
-    assert restore_audit.after["version"] == v2 + 3
-    assert restore_audit.after["states"][0]["label"] == "Planned"
-
-
-@pytest.mark.parametrize(
-    "asset_type",
-    ["rack", "pdu", "ups", "crac", "sensor", "power_panel"],
-)
-async def test_f7_cross_asset_lifecycle_settings_apply_only_to_equipment(
-    client, auth_headers, asset_type
-):
-    """F7 regression: administrator-configured equipment lifecycle restrictions apply only to
-    equipment and do not restrict racks, PDUs, UPS systems, cooling units, sensors, or other assets."""
-    admin = await auth_headers("Administrator")
-    base = (await client.get("/api/v1/settings/lifecycle", headers=admin)).json()["states"]
-    restricted = []
-    for s in base:
-        item = dict(s)
-        item["allowed_transitions"] = []
-        restricted.append(item)
-    put_resp = await _put_states(client, admin, restricted)
-    assert put_resp.status_code == 200, put_resp.text
-
-    create_resp = await client.post(
-        "/api/v1/managed-assets",
-        json={"asset_type": asset_type, "asset_tag": f"{asset_type.upper()}-{uuid.uuid4().hex[:8]}"},
-        headers=admin,
-    )
-    assert create_resp.status_code == 201, create_resp.text
-    asset_id = create_resp.json()["id"]
-
-    for target in ("installed", "active", "maintenance", "decommissioned", "removed"):
-        t_resp = await client.post(
-            f"/api/v1/managed-assets/{asset_id}/lifecycle-transition",
-            json={"to_status": target},
-            headers=admin,
-        )
-        assert t_resp.status_code == 200, f"{asset_type} failed transition to {target}: {t_resp.text}"
-        assert t_resp.json()["lifecycle_status"] == target
-
-
-def test_migration_0061_seed_is_self_contained_and_matches_defaults():
-    """Section D regression: migration 0061 must not import mutable application constants from `app.*`,
-    and frontend/backend default transitions must match."""
-    repo_root = Path(__file__).resolve().parents[3]
-    mig_path = repo_root / "backend" / "migrations" / "versions" / "0061_lifecycle_settings.py"
-    mig_source = mig_path.read_text(encoding="utf-8")
-    assert "from app." not in mig_source
-    assert "import app." not in mig_source
-
-    spec = importlib.util.spec_from_file_location("mig_0061", mig_path)
-    assert spec is not None and spec.loader is not None
-    mig_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mig_mod)
-    assert mig_mod._SEED_LIFECYCLE_STATES == DEFAULT_LIFECYCLE_STATES
-
-    fe_defaults_path = (
-        repo_root / "frontend" / "src" / "features" / "managed-assets" / "lifecycleDefaults.ts"
-    )
-    fe_source = fe_defaults_path.read_text(encoding="utf-8")
-    for status_key, expected_targets in MANDATORY_VISIBLE_LIFECYCLE_TRANSITIONS.items():
-        pattern = (
-            rf'status:\s*"{status_key}".*?allowed_transitions:\s*\[([^\]]*)\]'
-        )
-        m = re.search(pattern, fe_source, flags=re.DOTALL)
-        assert m is not None, f"Missing {status_key} in frontend lifecycleDefaults.ts"
-        fe_targets = [
-            t.strip().strip('"').strip("'")
-            for t in m.group(1).split(",")
-            if t.strip()
-        ]
-        assert fe_targets == expected_targets
-

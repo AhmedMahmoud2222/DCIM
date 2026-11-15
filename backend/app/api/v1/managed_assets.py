@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
+from app.application.access_control import ensure_equipment_access, ensure_rack_access
 from app.application.audit_service import write_audit_log
 from app.application.idempotency import (
     ClaimRef,
@@ -317,6 +318,11 @@ async def get_managed_asset_lifecycle_history(
     asset = await db.get(ManagedAsset, asset_id)
     if asset is None:
         raise NotFoundError(f"ManagedAsset {asset_id} not found.")
+    if not ctx.scope.unrestricted:
+        if asset.asset_type == "equipment":
+            await ensure_equipment_access(db, ctx.scope, asset_id)
+        elif asset.asset_type == "rack":
+            await ensure_rack_access(db, ctx.scope, asset_id)
     rows = (
         await db.execute(
             select(AuditLog, User)
