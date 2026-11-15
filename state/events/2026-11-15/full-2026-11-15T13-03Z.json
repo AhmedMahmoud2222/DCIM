@@ -1,0 +1,91 @@
+{
+  "run_id": "full-2026-11-15T13-03Z",
+  "mode": "FULL",
+  "at": "2026-11-15T13:06:00Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy and changelog read; no active state-branch PR"
+    },
+    {
+      "step": 1,
+      "result": "0 open PRs; 13 open issues; ruleset read; main head d76e1285"
+    },
+    {
+      "step": 2,
+      "result": "Main required checks independently verified successful; no open PR claims to verify"
+    },
+    {
+      "step": 3,
+      "result": "Issues prioritized; #214 hold remains; #329 Codex AI credits blocker"
+    },
+    {
+      "step": 4,
+      "result": "No open PR conversations"
+    },
+    {
+      "step": "4a",
+      "result": "No PR findings to update"
+    },
+    {
+      "step": 5,
+      "result": "No PR action; #329 agent unable to start due to AI credits; no repeated trigger"
+    },
+    {
+      "step": 6,
+      "result": "No open supersession candidates"
+    },
+    {
+      "step": 7,
+      "result": "No pending PR agent asks; #329 blocked by AI credits"
+    },
+    {
+      "step": 8,
+      "result": "No open PR eligible for merge"
+    },
+    {
+      "step": 9,
+      "result": "No new class I decision posted; owner DX answers unchanged since Nov 5"
+    },
+    {
+      "step": 10,
+      "result": "Report produced; Migration 0057 production hold preserved"
+    }
+  ],
+  "ruleset_bypass_modes": [
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request"
+  ],
+  "main_sha": "d76e1285a245e927b9e94f6f31f30634a33917e7",
+  "main_required_checks": {
+    "backend": "success",
+    "frontend": "success"
+  },
+  "open_prs": 0,
+  "open_issues": [
+    338,
+    330,
+    329,
+    300,
+    255,
+    225,
+    223,
+    220,
+    214,
+    195,
+    107,
+    106,
+    52
+  ],
+  "writes": [
+    "lease",
+    "event",
+    "index",
+    "lease release"
+  ],
+  "production_actions": []
+}
