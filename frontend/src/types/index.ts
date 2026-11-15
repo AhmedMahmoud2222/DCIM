@@ -55,6 +55,58 @@ export interface ManagedAsset {
   created_at: string;
 }
 
+export const VISIBLE_LIFECYCLE_STATUSES = [
+  "planned",
+  "installed",
+  "active",
+  "maintenance",
+  "decommissioned",
+  "removed",
+] as const;
+export type VisibleLifecycleStatus = (typeof VISIBLE_LIFECYCLE_STATUSES)[number];
+
+export const LIFECYCLE_BADGE_COLORS = [
+  "neutral",
+  "info",
+  "ok",
+  "caution",
+  "serious",
+  "danger",
+] as const;
+export type LifecycleBadgeColor = (typeof LIFECYCLE_BADGE_COLORS)[number];
+
+export interface LifecycleStateConfig {
+  status: string;
+  label: string;
+  description: string;
+  badge_color: LifecycleBadgeColor;
+  display_order: number;
+  allowed_transitions: string[];
+}
+
+export interface LifecycleSettingsResponse {
+  states: LifecycleStateConfig[];
+  mandatory_allowed_transitions: Record<string, string[]>;
+  legacy_states: string[];
+  badge_colors: LifecycleBadgeColor[];
+  version?: number;
+}
+
+export interface LifecycleHistoryEntry {
+  id: string;
+  asset_id: string;
+  from_status: string | null;
+  to_status: string;
+  reason: string | null;
+  actor_user_id: string | null;
+  actor_name: string | null;
+  timestamp: string;
+}
+
+export interface LifecycleHistoryResponse {
+  items: LifecycleHistoryEntry[];
+}
+
 export interface Room {
   id: string;
   floor_id: string;

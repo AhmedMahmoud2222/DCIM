@@ -8,6 +8,7 @@ import * as powerApi from "@/features/power/api";
 import * as racksApi from "@/features/racks/api";
 import * as telemetryApi from "@/features/telemetry/api";
 import * as managedAssetApi from "@/features/managed-assets/api";
+import { DEFAULT_LIFECYCLE_SETTINGS } from "@/features/managed-assets/useLifecycleSettings";
 import { CurrentUser } from "@/lib/authStore";
 import { ApiError } from "@/lib/apiClient";
 import { renderWithProviders } from "@/test/renderWithProviders";
@@ -71,6 +72,8 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
     vi.mocked(telemetryApi.getLatestTelemetry).mockResolvedValue([]);
     vi.mocked(telemetryApi.getAlarmHistory).mockResolvedValue({ items: [], next_cursor: null });
     vi.mocked(telemetryApi.getLatestPortStatusForEquipment).mockResolvedValue([]);
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValue(DEFAULT_LIFECYCLE_SETTINGS);
+    vi.mocked(managedAssetApi.getManagedAssetLifecycleHistory).mockResolvedValue({ items: [] });
   });
 
   it("shows Site, Building, Floor, Room and Rack from the API location", async () => {
@@ -308,6 +311,8 @@ describe("EquipmentDetailPage — move mutation error announcement", () => {
 describe("EquipmentDetailPage lifecycle feedback", () => {
   it("shows and focuses a page-level notice after the equipment is installed", async () => {
     vi.mocked(equipmentApi.getEquipment).mockResolvedValue({ ...equipment, lifecycle_status: "planned" });
+    vi.mocked(managedAssetApi.getLifecycleSettings).mockResolvedValue(DEFAULT_LIFECYCLE_SETTINGS);
+    vi.mocked(managedAssetApi.getManagedAssetLifecycleHistory).mockResolvedValue({ items: [] });
     vi.mocked(managedAssetApi.transitionManagedAssetLifecycle).mockResolvedValue({
       id: equipment.id, asset_type: "equipment", asset_tag: equipment.asset_tag, serial_number: null,
       lifecycle_status: "installed", created_at: equipment.created_at,

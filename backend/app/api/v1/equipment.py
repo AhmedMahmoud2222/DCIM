@@ -433,9 +433,13 @@ async def update_equipment(
 
     before = {"hostname": equipment.hostname, "owner": equipment.owner, "version": equipment.version}
     for field in ("hostname", "owner", "service", "environment", "notes"):
+        # Omitted fields are left unchanged; an explicit null (or blank string) clears the column.
+        if field not in body.model_fields_set:
+            continue
         value = getattr(body, field)
-        if value is not None:
-            setattr(equipment, field, value)
+        if isinstance(value, str) and not value.strip():
+            value = None
+        setattr(equipment, field, value)
     equipment.version += 1
     await db.flush()
 

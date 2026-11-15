@@ -51,7 +51,7 @@ from app.domain.floorplan_import.models import (  # noqa: F401
     FloorPlanImportSir,
 )
 from app.domain.idempotency.models import IdempotencyKey  # noqa: F401
-from app.domain.identity.models import ManagedAsset  # noqa: F401
+from app.domain.identity.models import LifecycleSettings, ManagedAsset  # noqa: F401
 from app.domain.integration.models import (  # noqa: F401
     Collector,
     CollectorAssignment,

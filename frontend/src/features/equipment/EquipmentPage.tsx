@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
-import { useHasPermission } from "@/features/auth/useAuthorization";
+import { useHasPermission, useIsLifecycleAdministrator } from "@/features/auth/useAuthorization";
 import { BulkImportPanel } from "@/features/bulk-import/BulkImportPanel";
 import {
   createEquipment,
@@ -11,8 +11,10 @@ import {
   createEquipmentModelRevision,
   listEquipment,
 } from "@/features/equipment/api";
+import { EquipmentEditPanel } from "@/features/equipment/EquipmentEditPanel";
 import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTransitionAction";
 import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
+import { useLifecycleSettings } from "@/features/managed-assets/useLifecycleSettings";
 import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
 
@@ -25,8 +27,12 @@ export function EquipmentPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [editingEquipmentId, setEditingEquipmentId] = useState<string | null>(null);
   const { notice: lifecycleNotice, noticeRef: lifecycleNoticeRef, noticeEventHandlers, showNotice, clearNotice } = useLifecycleNotice();
+  const { stateByStatus } = useLifecycleSettings();
   const canImport = useHasPermission("equipment:import");
+  const canManageEquipment = useHasPermission("equipment:manage");
+  const isLifecycleAdmin = useIsLifecycleAdministrator();
 
   const equipmentQuery = useQuery({
     queryKey: ["equipment", offset],
@@ -79,6 +85,14 @@ export function EquipmentPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">Equipment</h1>
         <div className="flex flex-wrap gap-2">
+          {isLifecycleAdmin && (
+            <Link
+              to="/settings/asset-management/lifecycle"
+              className="rounded-sm border border-line-subtle bg-surface-panel px-3 py-1.5 text-sm font-medium text-fg-primary hover:bg-surface-hover"
+            >
+              Lifecycle Settings
+            </Link>
+          )}
           <Link
             to="/equipment/instantiate"
             className="rounded-sm bg-slate-800 px-3 py-1.5 text-sm font-medium text-slate-100 hover:bg-slate-700"
@@ -112,6 +126,17 @@ export function EquipmentPage() {
           onCommitted={() => queryClient.invalidateQueries({ queryKey: ["equipment"] })}
         />
       )}
+
+      {editingEquipmentId && equipmentQuery.data && (() => {
+        const target = equipmentQuery.data.items.find((item) => item.id === editingEquipmentId);
+        return target ? (
+          <EquipmentEditPanel
+            equipment={target}
+            onClose={() => setEditingEquipmentId(null)}
+            onNotice={showNotice}
+          />
+        ) : null;
+      })()}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="mb-6 grid max-w-2xl grid-cols-2 gap-3 rounded-sm border border-slate-800 bg-slate-900 p-4">
@@ -195,7 +220,13 @@ export function EquipmentPage() {
                   <td className={`${TD} font-mono text-fg-secondary`}>{eq.asset_tag}</td>
                   <td className={TD}>
                     <div className="flex flex-wrap items-center gap-2">
-                      <LifecycleStatus value={eq.lifecycle_status} />
+                      <LifecycleStatus
+                        value={eq.lifecycle_status}
+                        labelOverride={stateByStatus(eq.lifecycle_status)?.label}
+                        toneOverride={stateByStatus(eq.lifecycle_status)?.badge_color}
+                        description={stateByStatus(eq.lifecycle_status)?.description}
+                        showLegacyNotice
+                      />
                       <LifecycleTransitionAction
                         assetId={eq.id}
                         assetName={eq.hostname ?? eq.asset_tag}
@@ -204,6 +235,16 @@ export function EquipmentPage() {
                         onCompleted={showNotice}
                         onStarted={clearNotice}
                       />
+                      {canManageEquipment && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingEquipmentId(eq.id)}
+                          aria-label={`Edit equipment: ${eq.hostname ?? eq.asset_tag}`}
+                          className="rounded-sm border border-line-subtle px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover"
+                        >
+                          Edit
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td className={`${TD} text-fg-secondary`}>{eq.location?.site?.name ?? NO_VALUE}</td>

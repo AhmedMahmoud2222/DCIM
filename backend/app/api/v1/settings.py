@@ -2,13 +2,26 @@
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.application.audit_service import write_audit_log
-from app.application.rbac import require_permission
+from app.application.concurrency import check_version_match, parse_if_match
+from app.application.lifecycle_settings import (
+    LifecycleSettingsRead,
+    LifecycleSettingsRestoreRequest,
+    LifecycleSettingsUpdate,
+    build_lifecycle_settings_read,
+    effective_states_from_row,
+    get_effective_lifecycle_settings_and_version,
+    lock_lifecycle_settings_row,
+    validate_lifecycle_states_update,
+)
+from app.application.rbac import require_catalog_administrator, require_permission
+from app.core.errors import ApiError
+from app.domain.identity.models import default_lifecycle_states_config
 from app.domain.telemetry.models import MonitoringPolicy
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -83,3 +96,98 @@ async def update_monitoring_policy(
     )
     await db.commit()
     return policy
+
+
+def _resolve_expected_version(if_match: str | None, body_version: int | None) -> int:
+    """Resolve the mandatory optimistic-concurrency precondition from If-Match and/or body `version`.
+
+    At least one must be supplied (428 otherwise); when both are supplied they must agree (400)."""
+    header_version: int | None = None
+    if if_match is not None and if_match.strip():
+        header_version = parse_if_match(if_match)
+    if header_version is not None and body_version is not None and header_version != body_version:
+        raise ApiError(
+            status_code=400,
+            title="Bad Request",
+            detail=f"If-Match header ({header_version}) does not match request body version ({body_version}).",
+        )
+    expected = header_version if header_version is not None else body_version
+    if expected is None:
+        raise ApiError(
+            status_code=428,
+            title="Precondition Required",
+            detail="Lifecycle settings writes require an If-Match header (or body version) carrying the current version.",
+        )
+    return expected
+
+
+@router.get("/lifecycle", response_model=LifecycleSettingsRead)
+async def get_lifecycle_settings(
+    db: AsyncSession = Depends(get_db),
+    _ctx=Depends(require_permission("managed_asset:read")),
+) -> LifecycleSettingsRead:
+    states, version = await get_effective_lifecycle_settings_and_version(db)
+    return build_lifecycle_settings_read(states, version=version)
+
+
+@router.put("/lifecycle", response_model=LifecycleSettingsRead)
+async def update_lifecycle_settings(
+    body: LifecycleSettingsUpdate,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_catalog_administrator("managed_asset:manage")),
+) -> LifecycleSettingsRead:
+    expected_version = _resolve_expected_version(if_match, body.version)
+    validated_states = validate_lifecycle_states_update(body.states)
+    # Lock the singleton row so concurrent updates serialize and the audit "before" is the true prior state.
+    row = await lock_lifecycle_settings_row(db)
+    before_states = effective_states_from_row(row)
+    current_version = int(row.version) if row.version is not None else 1
+    check_version_match(expected=expected_version, actual=current_version)
+    next_version = current_version + 1
+    row.states_config = validated_states
+    row.version = next_version
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="settings.lifecycle.update",
+        entity_type="lifecycle_settings",
+        entity_id=None,
+        request_id=None,
+        correlation_id=None,
+        before={"states": before_states, "version": current_version},
+        after={"states": validated_states, "version": next_version},
+    )
+    await db.commit()
+    return build_lifecycle_settings_read(validated_states, version=next_version)
+
+
+@router.post("/lifecycle/restore-defaults", response_model=LifecycleSettingsRead)
+async def restore_default_lifecycle_settings(
+    body: LifecycleSettingsRestoreRequest | None = Body(default=None),
+    if_match: str | None = Header(default=None, alias="If-Match"),
+    db: AsyncSession = Depends(get_db),
+    ctx=Depends(require_catalog_administrator("managed_asset:manage")),
+) -> LifecycleSettingsRead:
+    expected_version = _resolve_expected_version(if_match, body.version if body is not None else None)
+    row = await lock_lifecycle_settings_row(db)
+    before_states = effective_states_from_row(row)
+    current_version = int(row.version) if row.version is not None else 1
+    check_version_match(expected=expected_version, actual=current_version)
+    default_states = default_lifecycle_states_config()
+    next_version = current_version + 1
+    row.states_config = default_states
+    row.version = next_version
+    await write_audit_log(
+        db,
+        actor_user_id=ctx.user.id,
+        action="settings.lifecycle.restore_defaults",
+        entity_type="lifecycle_settings",
+        entity_id=None,
+        request_id=None,
+        correlation_id=None,
+        before={"states": before_states, "version": current_version},
+        after={"states": default_states, "version": next_version},
+    )
+    await db.commit()
+    return build_lifecycle_settings_read(default_states, version=next_version)

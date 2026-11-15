@@ -50,6 +50,17 @@ export const moveEquipment = (id: string, body: MoveEquipmentInput, ifMatch?: nu
 
 export const retireEquipment = (id: string) => apiFetch<Equipment>(`/equipment/${id}/retire`, { method: "POST" });
 
+export interface UpdateEquipmentInput {
+  hostname?: string | null;
+  owner?: string | null;
+  service?: string | null;
+  environment?: string | null;
+  notes?: string | null;
+}
+
+export const updateEquipment = (id: string, body: UpdateEquipmentInput, ifMatch: number) =>
+  apiFetch<Equipment>(`/equipment/${id}`, { method: "PATCH", body: JSON.stringify(body), ifMatch });
+
 // -------------------------------------------------------- Phase 10B: instantiation
 
 export interface InstantiateEquipmentInput {
