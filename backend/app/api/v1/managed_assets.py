@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import AccessScope, ensure_equipment_access, ensure_rack_access, equipment_visible_clause, rack_visible_clause
+from app.application.access_control import (
+    AccessScope,
+    ensure_equipment_access,
+    ensure_rack_access,
+    equipment_visible_clause,
+    rack_visible_clause,
+)
 from app.application.audit_service import write_audit_log
 from app.application.idempotency import (
     ClaimRef,
@@ -184,7 +190,22 @@ async def list_managed_assets(
         stmt = stmt.where(visibility)
         count_stmt = count_stmt.where(visibility)
 
+    # Apply AccessScope visibility filtering before pagination
+    if not ctx.scope.unrestricted:
+        from sqlalchemy import and_, or_
+        visibility = or_(
+            and_(ManagedAsset.asset_type == "equipment", equipment_visible_clause(ctx.scope, ManagedAsset.id)),
+            and_(ManagedAsset.asset_type == "rack", rack_visible_clause(ctx.scope, ManagedAsset.id)),
+        )
+        stmt = stmt.where(visibility)
+        count_stmt = count_stmt.where(visibility)
     # Existing filters
+    if asset_type is not None:
+        stmt = stmt.where(ManagedAsset.asset_type == asset_type)
+        count_stmt = count_stmt.where(ManagedAsset.asset_type == asset_type)
+    if lifecycle_status is not None:
+        stmt = stmt.where(ManagedAsset.lifecycle_status == lifecycle_status)
+        count_stmt = count_stmt.where(ManagedAsset.lifecycle_status == lifecycle_status)
 
     if asset_type is not None:
         stmt = stmt.where(ManagedAsset.asset_type == asset_type)

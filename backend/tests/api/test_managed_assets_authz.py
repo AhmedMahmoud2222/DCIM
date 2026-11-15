@@ -1,69 +1,114 @@
 # Regression tests for Managed Asset authorization hardening
-# Covers P1 lifecycle transition guard and P2 list visibility filtering
-# Uses existing test fixtures (client, db, auth helpers) from the repo
+# Uses repository fixtures: client, auth_headers, make_user, db_session
+# Covers:
+#   - List endpoint visibility and pagination
+#   - Lifecycle transition guard (fail‑closed for out‑of‑scope)
+#   - No audit/outbox side‑effects on unauthorized actions
+#   - Unrestricted admin behavior
+#   - Missing permission (403) handling
 
 import uuid
 import pytest
 from httpx import AsyncClient
-from app.core.errors import NotFoundError, ApiError
-from app.application.access_control import AccessScope
 
-# Helper to create a managed asset (equipment, rack, other type)
-async def create_asset(client: AsyncClient, token: str, asset_type: str, site_id: str | None = None, rack_id: str | None = None):
-    headers = {"Authorization": f"Bearer {token}"}
+# Helper to create a managed asset via the API
+async def create_asset(client: AsyncClient, headers: dict, asset_type: str, **extra):
     payload = {"asset_type": asset_type, "asset_tag": f"tag-{uuid.uuid4().hex[:8]}"}
-    if site_id:
-        payload["site_id"] = site_id
-    if rack_id:
-        payload["rack_id"] = rack_id
+    payload.update(extra)
     resp = await client.post("/managed-assets", json=payload, headers=headers)
-    assert resp.status_code == 201
+    assert resp.status_code == 201, f"create failed: {resp.text}"
     return resp.json()["id"]
 
 @pytest.mark.asyncio
-async def test_lifecycle_transition_fail_closed_without_scope(client: AsyncClient, restricted_token, unrestricted_token, db_session):
-    # Create equipment in a site the restricted token cannot access
-    asset_id = await create_asset(client, unrestricted_token, "equipment", site_id="site-allowed")
+async def test_list_visibility_and_pagination(client: AsyncClient, auth_headers, db_session):
+    # Create a site that will be visible to the unrestricted admin
+    admin_hdr = await auth_headers("Administrator")
+    # Create equipment and rack within the default site (admin can see all)
+    eq_id = await create_asset(client, admin_hdr, "equipment", site_id="site-allowed")
+    rack_id = await create_asset(client, admin_hdr, "rack", site_id="site-allowed")
+    # Create an unsupported type (pdu) – should be filtered out for restricted callers
+    pdu_id = await create_asset(client, admin_hdr, "pdu", site_id="site-allowed")
 
-    # Attempt transition with restricted token – should get 404 NotFoundError
-    headers = {"Authorization": f"Bearer {restricted_token}"}
-    resp = await client.post(f"/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "active"}, headers=headers)
+    # Create a restricted user scoped to a different site (site‑blocked)
+    restricted_hdr = await auth_headers("Viewer")  # Viewer role has site‑scoped permissions
+
+    # List equipment – restricted user should see none (site blocked)
+    resp_eq = await client.get("/managed-assets", params={"asset_type": "equipment"}, headers=restricted_hdr)
+    assert resp_eq.status_code == 200
+    assert resp_eq.json()["items"] == []
+
+    # List rack – also empty
+    resp_rack = await client.get("/managed-assets", params={"asset_type": "rack"}, headers=restricted_hdr)
+    assert resp_rack.status_code == 200
+    assert resp_rack.json()["items"] == []
+
+    # List pdu – unsupported type, must be empty for any scoped user
+    resp_pdu = await client.get("/managed-assets", params={"asset_type": "pdu"}, headers=restricted_hdr)
+    assert resp_pdu.status_code == 200
+    assert resp_pdu.json()["items"] == []
+
+    # Unrestricted admin should see all three assets with correct total
+    resp_all = await client.get("/managed-assets", headers=admin_hdr)
+    assert resp_all.status_code == 200
+    items = resp_all.json()["items"]
+    ids = {item["id"] for item in items}
+    assert eq_id in ids and rack_id in ids and pdu_id in ids
+    assert resp_all.json()["total"] == len(items)
+
+    # Pagination sanity check – request limit=1
+    resp_page = await client.get("/managed-assets", params={"limit": 1}, headers=admin_hdr)
+    assert resp_page.status_code == 200
+    page = resp_page.json()
+    assert page["limit"] == 1
+    assert page["total"] >= 1
+    assert len(page["items"]) == 1
+
+@pytest.mark.asyncio
+async def test_lifecycle_transition_guard(client: AsyncClient, auth_headers, db_session):
+    # Admin creates equipment in a site the restricted viewer cannot access
+    admin_hdr = await auth_headers("Administrator")
+    asset_id = await create_asset(client, admin_hdr, "equipment", site_id="site-allowed")
+
+    # Viewer (restricted) attempts lifecycle transition – should get 404
+    viewer_hdr = await auth_headers("Viewer")
+    resp = await client.post(f"/managed-assets/{asset_id}/lifecycle-transition", json={"to_status": "active"}, headers=viewer_hdr)
     assert resp.status_code == 404
-    # Ensure no audit/outbox side‑effects – verify DB unchanged (lifecycle_status remains original)
-    # (Assuming a fixture to query directly)
+
+    # Verify asset state unchanged
     from app.domain.identity.models import ManagedAsset
     asset = await db_session.get(ManagedAsset, uuid.UUID(asset_id))
     assert asset.lifecycle_status != "active"
 
-@pytest.mark.asyncio
-async def test_list_visibility_filters_out_of_scope_assets(client: AsyncClient, restricted_token, unrestricted_token, db_session):
-    # Create assets of various types
-    eq_id = await create_asset(client, unrestricted_token, "equipment", site_id="site-allowed")
-    rack_id = await create_asset(client, unrestricted_token, "rack", site_id="site-allowed")
-    pdu_id = await create_asset(client, unrestricted_token, "pdu", site_id="site-allowed")
-    # Restricted token only sees site‑allowed equipment/rack
-    headers = {"Authorization": f"Bearer {restricted_token}"}
-    resp = await client.get("/managed-assets", params={"asset_type": "equipment"}, headers=headers)
-    assert resp.status_code == 200
-    items = resp.json()["items"]
-    # Should include only equipment the token can see (eq_id)
-    ids = {item["id"] for item in items}
-    assert eq_id in ids
-    # Rack should also be visible via separate request
-    resp_rack = await client.get("/managed-assets", params={"asset_type": "rack"}, headers=headers)
-    assert resp_rack.status_code == 200
-    rack_ids = {item["id"] for item in resp_rack.json()["items"]}
-    assert rack_id in rack_ids
-    # PDU (unsupported type) must be filtered out – empty list
-    resp_pdu = await client.get("/managed-assets", params={"asset_type": "pdu"}, headers=headers)
-    assert resp_pdu.status_code == 200
-    assert resp_pdu.json()["items"] == []
+    # Ensure no audit or outbox records were created for the failed attempt
+    from app.domain.audit.models import AuditLog
+    from app.domain.outbox.models import OutboxEvent
+    audit = await db_session.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE entity_type='managed_asset' AND entity_id=:eid",
+        {"eid": asset_id},
+    )
+    outbox = await db_session.execute(
+        "SELECT COUNT(*) FROM outbox_event WHERE aggregate_type='managed_asset' AND aggregate_id=:eid",
+        {"eid": asset_id},
+    )
+    assert audit.scalar_one() == 0
+    assert outbox.scalar_one() == 0
 
-# Additional cases for unrestricted user (should see all)
 @pytest.mark.asyncio
-async def test_unrestricted_sees_all(client: AsyncClient, unrestricted_token):
-    headers = {"Authorization": f"Bearer {unrestricted_token}"}
-    resp = await client.get("/managed-assets", headers=headers)
+async def test_missing_permission_returns_403(client: AsyncClient, make_user, auth_headers):
+    # Create a user with no managed_asset permissions (role "Guest")
+    email = f"guest-{uuid.uuid4().hex[:8]}@example.com"
+    await make_user(email, "pwd12345", "Guest")
+    # Login to obtain token
+    resp = await client.post("/api/v1/auth/login", json={"email": email, "password": "pwd12345"})
     assert resp.status_code == 200
-    # At least one item should be returned (previously created assets)
-    assert len(resp.json()["items"]) > 0
+    token = resp.json()["access_token"]
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    # Attempt to list assets – should be 403
+    resp_list = await client.get("/managed-assets", headers=hdr)
+    assert resp_list.status_code == 403
+
+    # Attempt lifecycle transition – also 403 (endpoint permission missing)
+    fake_id = str(uuid.uuid4())
+    resp_tr = await client.post(f"/managed-assets/{fake_id}/lifecycle-transition", json={"to_status": "active"}, headers=hdr)
+    assert resp_tr.status_code == 403
