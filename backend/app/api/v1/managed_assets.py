@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -183,30 +183,15 @@ async def list_managed_assets(
 ) -> Page:
     stmt = select(ManagedAsset)
     count_stmt = select(func.count()).select_from(ManagedAsset)
-    # Build a visibility clause that restricts to equipment or rack assets the caller can see.
-    # For unsupported asset types we fail‑closed (clause evaluates to false).
     if not ctx.scope.unrestricted:
-        visibility = (equipment_visible_clause(ctx.scope) | rack_visible_clause(ctx.scope))
-        stmt = stmt.where(visibility)
-        count_stmt = count_stmt.where(visibility)
-
-    # Apply AccessScope visibility filtering before pagination
-    if not ctx.scope.unrestricted:
-        from sqlalchemy import and_, or_
+        # Restrict to equipment or rack assets visible under ctx.scope;
+        # unsupported asset types fail closed for restricted callers.
         visibility = or_(
             and_(ManagedAsset.asset_type == "equipment", equipment_visible_clause(ctx.scope, ManagedAsset.id)),
             and_(ManagedAsset.asset_type == "rack", rack_visible_clause(ctx.scope, ManagedAsset.id)),
         )
         stmt = stmt.where(visibility)
         count_stmt = count_stmt.where(visibility)
-    # Existing filters
-    if asset_type is not None:
-        stmt = stmt.where(ManagedAsset.asset_type == asset_type)
-        count_stmt = count_stmt.where(ManagedAsset.asset_type == asset_type)
-    if lifecycle_status is not None:
-        stmt = stmt.where(ManagedAsset.lifecycle_status == lifecycle_status)
-        count_stmt = count_stmt.where(ManagedAsset.lifecycle_status == lifecycle_status)
-
     if asset_type is not None:
         stmt = stmt.where(ManagedAsset.asset_type == asset_type)
         count_stmt = count_stmt.where(ManagedAsset.asset_type == asset_type)
@@ -218,6 +203,22 @@ async def list_managed_assets(
         await db.execute(stmt.order_by(ManagedAsset.created_at.desc()).offset(pagination.offset).limit(pagination.limit))
     ).scalars().all()
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)
+
+
+async def _ensure_managed_asset_scope(
+    db: AsyncSession, scope: AccessScope, asset: ManagedAsset
+) -> None:
+    if scope.unrestricted:
+        return
+    try:
+        if asset.asset_type == "equipment":
+            await ensure_equipment_access(db, scope, asset.id)
+        elif asset.asset_type == "rack":
+            await ensure_rack_access(db, scope, asset.id)
+        else:
+            raise NotFoundError(f"ManagedAsset {asset.id} not found.")
+    except NotFoundError:
+        raise NotFoundError(f"ManagedAsset {asset.id} not found.") from None
 
 
 async def _load_accessible_managed_asset(
@@ -232,16 +233,7 @@ async def _load_accessible_managed_asset(
     asset = await db.get(ManagedAsset, asset_id)
     if asset is None:
         raise NotFoundError(f"ManagedAsset {asset_id} not found.")
-    if not scope.unrestricted:
-        try:
-            if asset.asset_type == "equipment":
-                await ensure_equipment_access(db, scope, asset_id)
-            elif asset.asset_type == "rack":
-                await ensure_rack_access(db, scope, asset_id)
-            else:
-                raise NotFoundError(f"ManagedAsset {asset_id} not found.")
-        except NotFoundError:
-            raise NotFoundError(f"ManagedAsset {asset_id} not found.") from None
+    await _ensure_managed_asset_scope(db, scope, asset)
     return asset
 
 
@@ -260,9 +252,11 @@ async def transition_lifecycle(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("managed_asset:update_lifecycle")),
 ) -> ManagedAsset:
-    # Verify scope access before any mutation or row lock.
+    # Preliminary scope check before acquiring a row lock so unauthorized callers
+    # fail closed immediately without contending on locks.
     await _load_accessible_managed_asset(db, ctx.scope, asset_id)
-    # Lock the row after scope verification to ensure safe concurrent updates.
+    # Lock the row, then re-verify scope in case a concurrent placement change
+    # moved the asset out of scope before the lock was acquired.
     asset = (
         await db.execute(
             select(ManagedAsset).where(ManagedAsset.id == asset_id).with_for_update().execution_options(populate_existing=True)
@@ -270,6 +264,7 @@ async def transition_lifecycle(
     ).scalar_one_or_none()
     if asset is None:
         raise NotFoundError(f"ManagedAsset {asset_id} not found.")
+    await _ensure_managed_asset_scope(db, ctx.scope, asset)
 
     is_equipment = asset.asset_type == "equipment"
     if is_equipment and asset.lifecycle_status in LEGACY_LIFECYCLE_STATUSES:
