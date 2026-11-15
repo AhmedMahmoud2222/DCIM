@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import ensure_equipment_access, ensure_rack_access
+from app.application.access_control import AccessScope, ensure_equipment_access, ensure_rack_access
 from app.application.audit_service import write_audit_log
 from app.application.idempotency import (
     ClaimRef,
@@ -190,14 +190,36 @@ async def list_managed_assets(
     return Page(items=list(rows), total=total, limit=pagination.limit, offset=pagination.offset)
 
 
+async def _load_accessible_managed_asset(
+    db: AsyncSession, scope: AccessScope, asset_id: uuid.UUID
+) -> ManagedAsset:
+    """Load a ManagedAsset and enforce site/rack AccessScope fail-closed.
+
+    Raises an identical NotFoundError whether the asset does not exist, has no
+    resolvable placement, lies outside the caller's permitted sites/racks, or has an
+    asset_type without a verified scope-resolution path.
+    """
+    asset = await db.get(ManagedAsset, asset_id)
+    if asset is None:
+        raise NotFoundError(f"ManagedAsset {asset_id} not found.")
+    if not scope.unrestricted:
+        try:
+            if asset.asset_type == "equipment":
+                await ensure_equipment_access(db, scope, asset_id)
+            elif asset.asset_type == "rack":
+                await ensure_rack_access(db, scope, asset_id)
+            else:
+                raise NotFoundError(f"ManagedAsset {asset_id} not found.")
+        except NotFoundError:
+            raise NotFoundError(f"ManagedAsset {asset_id} not found.") from None
+    return asset
+
+
 @router.get("/{asset_id}", response_model=ManagedAssetOut)
 async def get_managed_asset(
     asset_id: uuid.UUID, db: AsyncSession = Depends(get_db), ctx=Depends(require_permission("managed_asset:read"))
 ) -> ManagedAsset:
-    asset = await db.get(ManagedAsset, asset_id)
-    if asset is None:
-        raise NotFoundError(f"ManagedAsset {asset_id} not found.")
-    return asset
+    return await _load_accessible_managed_asset(db, ctx.scope, asset_id)
 
 
 @router.post("/{asset_id}/lifecycle-transition", response_model=ManagedAssetOut)
@@ -315,14 +337,7 @@ async def get_managed_asset_lifecycle_history(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("managed_asset:read")),
 ) -> LifecycleHistoryListOut:
-    asset = await db.get(ManagedAsset, asset_id)
-    if asset is None:
-        raise NotFoundError(f"ManagedAsset {asset_id} not found.")
-    if not ctx.scope.unrestricted:
-        if asset.asset_type == "equipment":
-            await ensure_equipment_access(db, ctx.scope, asset_id)
-        elif asset.asset_type == "rack":
-            await ensure_rack_access(db, ctx.scope, asset_id)
+    await _load_accessible_managed_asset(db, ctx.scope, asset_id)
     rows = (
         await db.execute(
             select(AuditLog, User)

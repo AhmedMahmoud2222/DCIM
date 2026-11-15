@@ -7,8 +7,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 
-from app.api.v1.managed_assets import get_managed_asset_lifecycle_history
-from app.application.access_control import AccessScope, site_id_for_room
+from app.api.v1.managed_assets import get_managed_asset, get_managed_asset_lifecycle_history
+from app.application.access_control import UNRESTRICTED, AccessScope, site_id_for_room
 from app.core.errors import NotFoundError
 from app.domain.audit.models import AuditLog
 from app.domain.identity.models import VISIBLE_LIFECYCLE_STATUSES
@@ -226,41 +226,73 @@ async def test_equipment_lifecycle_transitions_mandatory_reason_and_history(clie
     assert len(outbox_rows) == 6
 
 
+async def _assert_both_fail_closed(db_session, scope: AccessScope, asset_id: uuid.UUID) -> None:
+    expected = f"ManagedAsset {asset_id} not found."
+    for call in (get_managed_asset, get_managed_asset_lifecycle_history):
+        with pytest.raises(NotFoundError) as exc_info:
+            await call(asset_id=asset_id, db=db_session, ctx=SimpleNamespace(scope=scope))
+        assert exc_info.value.detail == expected
+
+
 async def test_lifecycle_history_enforces_equipment_access_scope_when_restricted(client, auth_headers, db_session):
+    """F1 & F2 regression: restricted scope fails closed across equipment, racks, unplaced assets,
+    and non-equipment/rack asset types with identical 404 detail, while preserving authorized and
+    unrestricted access on GET /managed-assets/{id} and GET /managed-assets/{id}/lifecycle-history."""
     admin = await auth_headers("Administrator")
+    viewer = await auth_headers("Viewer")
     room_id = await create_room(client, auth_headers)
     site_id = await site_id_for_room(db_session, uuid.UUID(room_id))
     assert site_id is not None
 
-    eq = await create_equipment(client, admin, auth_headers)
-    eq_id = eq["id"]
+    placed_eq = await create_equipment(client, admin, auth_headers)
+    placed_eq_id = uuid.UUID(placed_eq["id"])
     moved = await client.post(
-        f"/api/v1/equipment/{eq_id}/move",
+        f"/api/v1/equipment/{placed_eq['id']}/move",
         json={"placement_type": "floor_standing", "room_id": room_id},
         headers=admin,
     )
     assert moved.status_code == 200, moved.text
-    rack = await create_rack(client, admin, auth_headers, room_id=room_id)
+    placed_rack = await create_rack(client, admin, auth_headers, room_id=room_id)
+    placed_rack_id = uuid.UUID(placed_rack["id"])
+    unplaced_eq_id = uuid.UUID((await create_equipment(client, admin, auth_headers))["id"])
+    unplaced_rack_id = uuid.UUID((await create_rack(client, admin, auth_headers))["id"])
 
     wrong_scope = AccessScope(unrestricted=False, site_ids=frozenset({uuid.uuid4()}), full_site_ids=frozenset({uuid.uuid4()}))
-    with pytest.raises(NotFoundError):
-        await get_managed_asset_lifecycle_history(
-            asset_id=uuid.UUID(eq_id), db=db_session, ctx=SimpleNamespace(scope=wrong_scope)
-        )
-    with pytest.raises(NotFoundError):
-        await get_managed_asset_lifecycle_history(
-            asset_id=uuid.UUID(rack["id"]), db=db_session, ctx=SimpleNamespace(scope=wrong_scope)
-        )
-
     right_scope = AccessScope(unrestricted=False, site_ids=frozenset({site_id}), full_site_ids=frozenset({site_id}))
-    eq_hist = await get_managed_asset_lifecycle_history(
-        asset_id=uuid.UUID(eq_id), db=db_session, ctx=SimpleNamespace(scope=right_scope)
-    )
-    rack_hist = await get_managed_asset_lifecycle_history(
-        asset_id=uuid.UUID(rack["id"]), db=db_session, ctx=SimpleNamespace(scope=right_scope)
-    )
-    assert eq_hist.items == []
-    assert rack_hist.items == []
+
+    # 1 & 2. Out-of-scope equipment and rack fail closed with identical 404 (no existence leak)
+    await _assert_both_fail_closed(db_session, wrong_scope, placed_eq_id)
+    await _assert_both_fail_closed(db_session, wrong_scope, placed_rack_id)
+    await _assert_both_fail_closed(db_session, right_scope, uuid.uuid4())
+
+    # 3. Assets with no resolvable placement fail closed even for a restricted user with site grants
+    await _assert_both_fail_closed(db_session, right_scope, unplaced_eq_id)
+    await _assert_both_fail_closed(db_session, right_scope, unplaced_rack_id)
+
+    # 4. Non-equipment/rack assets (PDU, UPS, generator, power_panel, sensor, cable, CRAC, CRAH, chiller)
+    other_ids: list[uuid.UUID] = []
+    for asset_type in ("pdu", "ups", "generator", "power_panel", "sensor", "cable", "crac", "crah", "chiller"):
+        created = await client.post(
+            "/api/v1/managed-assets",
+            json={"asset_type": asset_type, "asset_tag": f"{asset_type.upper()}-{uuid.uuid4().hex[:6]}"},
+            headers=admin,
+        )
+        assert created.status_code == 201, created.text
+        aid = uuid.UUID(created.json()["id"])
+        other_ids.append(aid)
+        await _assert_both_fail_closed(db_session, right_scope, aid)
+
+    # 5. Authorized restricted access succeeds for in-scope equipment and rack on both endpoints
+    assert (await get_managed_asset(asset_id=placed_eq_id, db=db_session, ctx=SimpleNamespace(scope=right_scope))).id == placed_eq_id
+    assert (await get_managed_asset(asset_id=placed_rack_id, db=db_session, ctx=SimpleNamespace(scope=right_scope))).id == placed_rack_id
+    assert (await get_managed_asset_lifecycle_history(asset_id=placed_eq_id, db=db_session, ctx=SimpleNamespace(scope=right_scope))).items == []
+    assert (await get_managed_asset_lifecycle_history(asset_id=placed_rack_id, db=db_session, ctx=SimpleNamespace(scope=right_scope))).items == []
+
+    # 6. Unrestricted users retain access across placed, unplaced, and non-equipment/rack assets
+    for aid in (placed_eq_id, placed_rack_id, unplaced_eq_id, unplaced_rack_id, other_ids[0]):
+        assert (await get_managed_asset(asset_id=aid, db=db_session, ctx=SimpleNamespace(scope=UNRESTRICTED))).id == aid
+        assert (await client.get(f"/api/v1/managed-assets/{aid}", headers=viewer)).status_code == 200
+        assert (await client.get(f"/api/v1/managed-assets/{aid}/lifecycle-history", headers=viewer)).status_code == 200
 
 
 async def test_configured_transition_restriction_is_enforced_by_backend(client, auth_headers):
