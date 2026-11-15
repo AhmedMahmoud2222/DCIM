@@ -142,8 +142,10 @@ export function EquipmentDetailPage() {
     moveMutation.mutate();
   }
 
-  if (equipmentQuery.isLoading) return <p className="text-sm text-slate-400">Loading…</p>;
-  if (equipmentQuery.error) return <p className="text-sm text-red-400">{(equipmentQuery.error as Error).message}</p>;
+  if (equipmentQuery.isLoading && !equipmentQuery.data) return <p className="text-sm text-slate-400">Loading…</p>;
+  if (equipmentQuery.error && !equipmentQuery.data) {
+    return <p className="text-sm text-red-400">{(equipmentQuery.error as Error).message}</p>;
+  }
   const equipment = equipmentQuery.data;
   if (!equipment) return null;
 
@@ -190,6 +192,22 @@ export function EquipmentDetailPage() {
           />
         </div>
       </div>
+
+      {equipmentQuery.isError && (
+        <div
+          role="alert"
+          className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-tone-danger-fg bg-tone-danger-bg px-3 py-2 text-sm text-tone-danger-fg"
+        >
+          <span>Could not refresh equipment details: {(equipmentQuery.error as Error).message}</span>
+          <button
+            type="button"
+            onClick={() => void equipmentQuery.refetch()}
+            className="rounded-sm border border-tone-danger-fg px-2 py-0.5 text-xs font-medium"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {lifecycleNotice && <p key={lifecycleNotice.id} ref={lifecycleNoticeRef} tabIndex={-1} role="status" {...noticeEventHandlers} className="mb-3 text-sm text-green-300">{lifecycleNotice.message}</p>}
 

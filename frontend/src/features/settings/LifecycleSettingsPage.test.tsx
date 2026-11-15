@@ -281,4 +281,46 @@ describe("LifecycleSettingsPage", () => {
     ).toHaveValue("My Draft");
     expect(screen.getByRole("button", { name: "Save Lifecycle Settings" })).toBeDisabled();
   });
+
+  it("disables configuration editing while save or restore is pending so responses cannot overwrite in-flight edits", async () => {
+    let resolveSave!: (v: LifecycleSettingsResponse) => void;
+    let resolveRestore!: (v: LifecycleSettingsResponse) => void;
+    vi.mocked(managedAssetApi.updateLifecycleSettings).mockImplementation(
+      () => new Promise<LifecycleSettingsResponse>((r) => { resolveSave = r; }),
+    );
+    vi.mocked(managedAssetApi.restoreDefaultLifecycleSettings).mockImplementation(
+      () => new Promise<LifecycleSettingsResponse>((r) => { resolveRestore = r; }),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<LifecycleSettingsPage />, { user: LIFECYCLE_ADMIN_USER });
+
+    const labelInput = within(await screen.findByTestId("lifecycle-state-card-planned")).getByLabelText(
+      "Display label for planned",
+    );
+    await user.clear(labelInput);
+    await user.type(labelInput, "Custom Pending");
+
+    await user.click(screen.getByRole("button", { name: "Save Lifecycle Settings" }));
+    await waitFor(() => expect(managedAssetApi.updateLifecycleSettings).toHaveBeenCalledTimes(1));
+    expect(labelInput).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move planned down" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restore Default Settings" })).toBeDisabled();
+
+    const saved = { ...cloneDefaultSettings(), version: 2 };
+    saved.states[0] = { ...saved.states[0], label: "Custom Pending" };
+    resolveSave(saved);
+    expect(await screen.findByText("Lifecycle settings saved.")).toBeInTheDocument();
+    expect(labelInput).not.toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Restore Default Settings" }));
+    await waitFor(() => expect(managedAssetApi.restoreDefaultLifecycleSettings).toHaveBeenCalledTimes(1));
+    expect(labelInput).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save Lifecycle Settings" })).toBeDisabled();
+
+    resolveRestore({ ...cloneDefaultSettings(), version: 3 });
+    expect(await screen.findByText("Default lifecycle settings restored.")).toBeInTheDocument();
+    expect(labelInput).toHaveValue("Planned");
+    expect(labelInput).not.toBeDisabled();
+  });
 });

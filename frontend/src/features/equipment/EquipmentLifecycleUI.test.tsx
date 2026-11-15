@@ -405,4 +405,38 @@ describe("Equipment Lifecycle UI (Listing, Details, Editing, History, Legacy Res
     );
     expect((screen.getByLabelText("Edit owner") as HTMLInputElement).value).toBe("Storage Team");
   });
+
+  it("keeps EquipmentEditPanel and dirty edits mounted during failed background refetch and recovers on retry", async () => {
+    vi.mocked(equipmentApi.getEquipment)
+      .mockResolvedValueOnce(baseEquipment)
+      .mockRejectedValueOnce(new Error("Temporary API outage"))
+      .mockResolvedValueOnce({ ...baseEquipment, notes: "Recovered note", version: 4 });
+
+    const user = userEvent.setup();
+    const { queryClient } = renderWithProviders(<EquipmentDetailPage />, {
+      route: `/equipment/${baseEquipment.id}`,
+      path: "/equipment/:equipmentId",
+      user: FULL_EQUIPMENT_MANAGER,
+    });
+
+    await user.click(await screen.findByRole("button", { name: /Edit equipment/i }));
+    const editPanel = await screen.findByRole("region", {
+      name: `Edit equipment ${baseEquipment.hostname}`,
+    });
+    const hostnameInput = within(editPanel).getByLabelText("Edit hostname") as HTMLInputElement;
+    await user.clear(hostnameInput);
+    await user.type(hostnameInput, "srv-dirty-refetch");
+
+    await queryClient.invalidateQueries({ queryKey: ["equipment", baseEquipment.id] });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not refresh equipment details: Temporary API outage");
+    expect(hostnameInput.value).toBe("srv-dirty-refetch");
+
+    await user.click(within(alert).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText(/Could not refresh equipment details/)).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect((within(editPanel).getByLabelText("Edit notes") as HTMLTextAreaElement).value).toBe("Recovered note"),
+    );
+    expect(hostnameInput.value).toBe("srv-dirty-refetch");
+  });
 });

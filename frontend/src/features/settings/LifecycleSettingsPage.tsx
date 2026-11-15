@@ -54,6 +54,7 @@ export function LifecycleSettingsPage() {
   const [serverChanged, setServerChanged] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
   const baseVersion = useRef<number | undefined>(undefined);
+  const draftRevision = useRef(0);
 
   useEffect(() => {
     const server = settingsQuery.data;
@@ -78,18 +79,22 @@ export function LifecycleSettingsPage() {
   }, [settingsQuery.data, dirty]);
 
   const saveMutation = useMutation({
-    mutationFn: (states: LifecycleStateConfig[]) => {
+    mutationFn: async (states: LifecycleStateConfig[]) => {
       const base = baseVersion.current;
       if (base === undefined) {
-        return Promise.reject(new Error("Lifecycle settings have not loaded yet; reload and try again."));
+        throw new Error("Lifecycle settings have not loaded yet; reload and try again.");
       }
+      const submittedRevision = draftRevision.current;
       // Precondition is the version the draft was based on, never the latest fetched version.
-      return updateLifecycleSettings(states, base);
+      const updated = await updateLifecycleSettings(states, base);
+      return { updated, submittedRevision };
     },
-    onSuccess: (updated) => {
+    onSuccess: ({ updated, submittedRevision }) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, updated);
       baseVersion.current = updated.version;
-      setDirty(false);
+      if (draftRevision.current === submittedRevision) {
+        setDirty(false);
+      }
       setServerChanged(false);
       setValidationError(null);
       setNotice("Lifecycle settings saved.");
@@ -97,23 +102,29 @@ export function LifecycleSettingsPage() {
   });
 
   const restoreMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const base = baseVersion.current;
       if (base === undefined) {
-        return Promise.reject(new Error("Lifecycle settings have not loaded yet; reload and try again."));
+        throw new Error("Lifecycle settings have not loaded yet; reload and try again.");
       }
-      return restoreDefaultLifecycleSettings(base);
+      const submittedRevision = draftRevision.current;
+      const restored = await restoreDefaultLifecycleSettings(base);
+      return { restored, submittedRevision };
     },
-    onSuccess: (restored) => {
+    onSuccess: ({ restored, submittedRevision }) => {
       queryClient.setQueryData(LIFECYCLE_SETTINGS_QUERY_KEY, restored);
       baseVersion.current = restored.version;
-      setDraftStates([...restored.states].sort((a, b) => a.display_order - b.display_order));
-      setDirty(false);
+      if (draftRevision.current === submittedRevision) {
+        setDraftStates([...restored.states].sort((a, b) => a.display_order - b.display_order));
+        setDirty(false);
+      }
       setServerChanged(false);
       setValidationError(null);
       setNotice("Default lifecycle settings restored.");
     },
   });
+
+  const isMutating = saveMutation.isPending || restoreMutation.isPending;
 
   const handleReload = async () => {
     const result = await settingsQuery.refetch();
@@ -124,6 +135,7 @@ export function LifecycleSettingsPage() {
     }
     setReloadError(null);
     baseVersion.current = result.data.version;
+    draftRevision.current += 1;
     setDraftStates([...result.data.states].sort((a, b) => a.display_order - b.display_order));
     setDirty(false);
     setServerChanged(false);
@@ -188,6 +200,7 @@ export function LifecycleSettingsPage() {
   ) => {
     setNotice(null);
     setValidationError(null);
+    draftRevision.current += 1;
     setDirty(true);
     setDraftStates((prev) =>
       prev.map((item) => (item.status === statusKey ? { ...item, [field]: value } : item)),
@@ -199,6 +212,7 @@ export function LifecycleSettingsPage() {
     if (targetIndex < 0 || targetIndex >= draftStates.length) return;
     setNotice(null);
     setValidationError(null);
+    draftRevision.current += 1;
     setDirty(true);
     setDraftStates((prev) => {
       const next = [...prev];
@@ -212,6 +226,7 @@ export function LifecycleSettingsPage() {
   const toggleAllowedTransition = (fromStatus: string, toStatus: string) => {
     setNotice(null);
     setValidationError(null);
+    draftRevision.current += 1;
     setDirty(true);
     setDraftStates((prev) =>
       prev.map((item) => {
@@ -227,6 +242,7 @@ export function LifecycleSettingsPage() {
 
   const handleSave = (e: FormEvent) => {
     e.preventDefault();
+    if (isMutating) return;
     setNotice(null);
     setValidationError(null);
     for (const s of draftStates) {
@@ -253,7 +269,7 @@ export function LifecycleSettingsPage() {
         actions={
           <button
             type="button"
-            disabled={restoreMutation.isPending || saveMutation.isPending || serverChanged}
+            disabled={isMutating || serverChanged}
             onClick={() => restoreMutation.mutate()}
             className="rounded-md border border-line-default bg-surface-raised px-3 py-1.5 text-sm font-medium text-fg-primary hover:bg-surface-hover disabled:opacity-50"
           >
@@ -317,48 +333,49 @@ export function LifecycleSettingsPage() {
       )}
 
       <form onSubmit={handleSave} className="space-y-4">
-        {draftStates.map((stateItem, index) => {
-          const mandatoryTargets = mandatoryMap[stateItem.status] ?? [];
-          return (
-            <div
-              key={stateItem.status}
-              data-testid={`lifecycle-state-card-${stateItem.status}`}
-              className="rounded-lg border border-line-default bg-surface-panel p-4"
-            >
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-line-subtle pb-3">
-                <div className="flex items-center gap-3">
-                  <span className="rounded bg-surface-raised px-2 py-0.5 font-mono text-xs text-fg-secondary">
-                    #{stateItem.display_order} · {stateItem.status}
-                  </span>
-                  <LifecycleStatus
-                    value={stateItem.status}
-                    labelOverride={stateItem.label}
-                    toneOverride={stateItem.badge_color}
-                    description={stateItem.description}
-                  />
-                </div>
+        <fieldset disabled={isMutating} className="space-y-4">
+          {draftStates.map((stateItem, index) => {
+            const mandatoryTargets = mandatoryMap[stateItem.status] ?? [];
+            return (
+              <div
+                key={stateItem.status}
+                data-testid={`lifecycle-state-card-${stateItem.status}`}
+                className="rounded-lg border border-line-default bg-surface-panel p-4"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-line-subtle pb-3">
+                  <div className="flex items-center gap-3">
+                    <span className="rounded bg-surface-raised px-2 py-0.5 font-mono text-xs text-fg-secondary">
+                      #{stateItem.display_order} · {stateItem.status}
+                    </span>
+                    <LifecycleStatus
+                      value={stateItem.status}
+                      labelOverride={stateItem.label}
+                      toneOverride={stateItem.badge_color}
+                      description={stateItem.description}
+                    />
+                  </div>
 
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    disabled={index === 0}
-                    onClick={() => moveOrder(index, -1)}
-                    aria-label={`Move ${stateItem.status} up`}
-                    className="rounded border border-line-default bg-surface-raised px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover disabled:opacity-40"
-                  >
-                    Move up
-                  </button>
-                  <button
-                    type="button"
-                    disabled={index === draftStates.length - 1}
-                    onClick={() => moveOrder(index, 1)}
-                    aria-label={`Move ${stateItem.status} down`}
-                    className="rounded border border-line-default bg-surface-raised px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover disabled:opacity-40"
-                  >
-                    Move down
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={index === 0 || isMutating}
+                      onClick={() => moveOrder(index, -1)}
+                      aria-label={`Move ${stateItem.status} up`}
+                      className="rounded border border-line-default bg-surface-raised px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover disabled:opacity-40"
+                    >
+                      Move up
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === draftStates.length - 1 || isMutating}
+                      onClick={() => moveOrder(index, 1)}
+                      aria-label={`Move ${stateItem.status} down`}
+                      className="rounded border border-line-default bg-surface-raised px-2 py-1 text-xs text-fg-primary hover:bg-surface-hover disabled:opacity-40"
+                    >
+                      Move down
+                    </button>
+                  </div>
                 </div>
-              </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
@@ -464,12 +481,13 @@ export function LifecycleSettingsPage() {
         <div className="flex items-center gap-3 pt-2">
           <button
             type="submit"
-            disabled={saveMutation.isPending || restoreMutation.isPending || serverChanged}
+            disabled={isMutating || serverChanged}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
           >
             {saveMutation.isPending ? "Saving…" : "Save Lifecycle Settings"}
           </button>
         </div>
+        </fieldset>
       </form>
     </div>
   );
