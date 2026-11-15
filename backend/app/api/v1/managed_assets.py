@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.pagination import Page, Pagination, pagination_params
-from app.application.access_control import AccessScope, ensure_equipment_access, ensure_rack_access
+from app.application.access_control import AccessScope, ensure_equipment_access, ensure_rack_access, equipment_visible_clause, rack_visible_clause
 from app.application.audit_service import write_audit_log
 from app.application.idempotency import (
     ClaimRef,
@@ -177,6 +177,15 @@ async def list_managed_assets(
 ) -> Page:
     stmt = select(ManagedAsset)
     count_stmt = select(func.count()).select_from(ManagedAsset)
+    # Build a visibility clause that restricts to equipment or rack assets the caller can see.
+    # For unsupported asset types we fail‑closed (clause evaluates to false).
+    if not ctx.scope.unrestricted:
+        visibility = (equipment_visible_clause(ctx.scope) | rack_visible_clause(ctx.scope))
+        stmt = stmt.where(visibility)
+        count_stmt = count_stmt.where(visibility)
+
+    # Existing filters
+
     if asset_type is not None:
         stmt = stmt.where(ManagedAsset.asset_type == asset_type)
         count_stmt = count_stmt.where(ManagedAsset.asset_type == asset_type)
@@ -230,8 +239,9 @@ async def transition_lifecycle(
     db: AsyncSession = Depends(get_db),
     ctx=Depends(require_permission("managed_asset:update_lifecycle")),
 ) -> ManagedAsset:
-    # Lock the row before validating the transition so concurrent transitions on one
-    # asset run one after the other and each validates against the committed status.
+    # Verify scope access before any mutation or row lock.
+    await _load_accessible_managed_asset(db, ctx.scope, asset_id)
+    # Lock the row after scope verification to ensure safe concurrent updates.
     asset = (
         await db.execute(
             select(ManagedAsset).where(ManagedAsset.id == asset_id).with_for_update().execution_options(populate_existing=True)
