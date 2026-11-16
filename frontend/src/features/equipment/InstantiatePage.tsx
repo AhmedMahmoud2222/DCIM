@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { useIsCatalogAdministrator } from "@/features/auth/useAuthorization";
@@ -7,6 +7,7 @@ import { getCatalogModel, listCatalogModels } from "@/features/catalog-designer/
 import { instantiateEquipment } from "@/features/equipment/api";
 import { listRacks, listRooms } from "@/features/racks/api";
 import { ApiError } from "@/lib/apiClient";
+import { newIdempotencyKey } from "@/lib/idempotencyKey";
 import { PlacementType, Side } from "@/types";
 
 /** Phase 10B: instantiate a physical Equipment (and its ports/power inlets) from a
@@ -44,9 +45,11 @@ export function InstantiatePage() {
   const roomsQuery = useQuery({ queryKey: ["rooms"], queryFn: listRooms, enabled: wantsPlacement });
   const racksQuery = useQuery({ queryKey: ["racks"], queryFn: listRacks, enabled: wantsPlacement });
 
+  const idempotencyKeyRef = useRef<string | null>(null);
   const instantiateMutation = useMutation({
-    mutationFn: () =>
-      instantiateEquipment(
+    mutationFn: () => {
+      if (idempotencyKeyRef.current === null) idempotencyKeyRef.current = newIdempotencyKey();
+      return instantiateEquipment(
         {
           asset_tag: assetTag.trim(),
           catalog_model_revision_id: revisionId,
@@ -62,9 +65,13 @@ export function InstantiatePage() {
               }
             : {}),
         },
-        crypto.randomUUID(),
-      ),
-    onSuccess: (equipment) => navigate(`/equipment/${equipment.id}`),
+        idempotencyKeyRef.current,
+      );
+    },
+    onSuccess: (equipment) => {
+      idempotencyKeyRef.current = null;
+      navigate(`/equipment/${equipment.id}`);
+    },
   });
 
   function handleSubmit(e: FormEvent) {

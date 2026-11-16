@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, TableError, TableLoading, TD, TH, TR } from "@/components/data/DataTable";
@@ -17,6 +17,7 @@ import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice
 import { useLifecycleSettings } from "@/features/managed-assets/useLifecycleSettings";
 import { listRacks } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
+import { newIdempotencyKey } from "@/lib/idempotencyKey";
 
 const EQUIPMENT_PAGE_SIZE = 200;
 const NO_VALUE = "—";
@@ -58,16 +59,20 @@ export function EquipmentPage() {
     }
   }, [equipmentQuery.data, offset, pageSize]);
 
+  const idempotencyKeyRef = useRef<string | null>(null);
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (idempotencyKeyRef.current === null) idempotencyKeyRef.current = newIdempotencyKey();
+      const idempotencyKey = idempotencyKeyRef.current;
       const model = await createEquipmentModel(manufacturer.trim(), modelName.trim());
       const revision = await createEquipmentModelRevision(model.id);
       return createEquipment(
         { asset_tag: assetTag.trim(), model_revision_id: revision.id, hostname: hostname.trim() || undefined },
-        crypto.randomUUID(),
+        idempotencyKey,
       );
     },
     onSuccess: () => {
+      idempotencyKeyRef.current = null;
       setAssetTag("");
       setHostname("");
       setShowForm(false);
