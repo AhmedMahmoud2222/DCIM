@@ -1,0 +1,88 @@
+{
+  "run_id": "full-2026-11-16-manual-1794848635032",
+  "mode": "FULL",
+  "started_at": "2026-11-16T17:03:55.032Z",
+  "steps": [
+    {
+      "step": 0,
+      "result": "lease acquired, policy/changelog/index loaded"
+    },
+    {
+      "step": 1,
+      "result": "0 open PRs; 12 open issues; ruleset verified"
+    },
+    {
+      "step": 2,
+      "result": "#356 merged; #338 acceptance on main not independently verified"
+    },
+    {
+      "step": 3,
+      "result": "issues prioritized; no merge candidates"
+    },
+    {
+      "step": 4,
+      "result": "no open PR threads"
+    },
+    {
+      "step": 5,
+      "result": "no eligible PR action; issue #338 prior Claude branch blocker"
+    },
+    {
+      "step": 6,
+      "result": "no historical open PRs"
+    },
+    {
+      "step": 7,
+      "result": "no fresh agent ask made; issue #338 blocked on branch access"
+    },
+    {
+      "step": 8,
+      "result": "no open PR to merge"
+    },
+    {
+      "step": 9,
+      "result": "no new class I decision queued"
+    },
+    {
+      "step": 10,
+      "result": "report compiled; no production actions"
+    }
+  ],
+  "open_prs": 0,
+  "open_issues": [
+    338,
+    330,
+    300,
+    255,
+    225,
+    223,
+    220,
+    214,
+    195,
+    107,
+    106,
+    52
+  ],
+  "main": "88641e6314b017464e6a1424feee85be4b5de02b",
+  "ruleset_bypass_modes": [
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request",
+    "pull_request"
+  ],
+  "recent_merge": {
+    "pr": 356,
+    "at": "2026-11-16T15:13:33Z",
+    "head": "42a929c93607bafa2c9123f03fbea36deb3d1570"
+  },
+  "limitations": [
+    "no full acceptance verification of #338 against main",
+    "no comprehensive 24h CI/gate retrospective",
+    "no issue-by-issue source verification",
+    "policy SHA-256 not calculated",
+    "schedule health not verified"
+  ],
+  "production_hold_214": "intact; no production execution requested"
+}
