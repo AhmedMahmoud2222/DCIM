@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { DataTable, EmptyRow, RowCount, TD, TH, TR } from "@/components/data/DataTable";
@@ -11,6 +11,7 @@ import { LifecycleTransitionAction } from "@/features/managed-assets/LifecycleTr
 import { useLifecycleNotice } from "@/features/managed-assets/useLifecycleNotice";
 import { createRack, createRackModel, createRackModelRevision, listRacks, listRooms } from "@/features/racks/api";
 import { LifecycleStatus } from "@/features/status/StatusBadges";
+import { newIdempotencyKey } from "@/lib/idempotencyKey";
 
 export function RacksPage() {
   const queryClient = useQueryClient();
@@ -31,8 +32,11 @@ export function RacksPage() {
   const [widthMm, setWidthMm] = useState("600");
   const [depthMm, setDepthMm] = useState("1000");
 
+  const idempotencyKeyRef = useRef<string | null>(null);
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (idempotencyKeyRef.current === null) idempotencyKeyRef.current = newIdempotencyKey();
+      const idempotencyKey = idempotencyKeyRef.current;
       const model = await createRackModel(manufacturer.trim(), modelName.trim());
       const revision = await createRackModelRevision(model.id, {
         height_u: Number(heightU),
@@ -46,10 +50,11 @@ export function RacksPage() {
           name: name.trim(),
           room_id: roomId || undefined,
         },
-        crypto.randomUUID(),
+        idempotencyKey,
       );
     },
     onSuccess: () => {
+      idempotencyKeyRef.current = null;
       setAssetTag("");
       setName("");
       setShowForm(false);

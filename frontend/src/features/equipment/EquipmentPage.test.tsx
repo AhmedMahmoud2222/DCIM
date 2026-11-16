@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EquipmentPage } from "@/features/equipment/EquipmentPage";
 import * as equipmentApi from "@/features/equipment/api";
@@ -71,5 +71,85 @@ describe("EquipmentPage lifecycle feedback", () => {
     const notice = await screen.findByRole("status", { name: "" });
     expect(notice).toHaveTextContent("srv-001 installation status saved.");
     expect(notice).toHaveFocus();
+  });
+});
+
+describe("EquipmentPage Idempotency-Key (issue #338)", () => {
+  const KEY_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const creator: CurrentUser = { ...ADMINISTRATOR_TEST_USER, permission_codes: ["equipment:read", "equipment:create"] };
+  const created: Equipment = {
+    id: "eq-new", asset_tag: "SRV-9", lifecycle_status: "planned", model_revision_id: "rev-1",
+    catalog_model_revision_id: null, hostname: null, owner: null, service: null, environment: null,
+    notes: null, version: 1, created_at: "2026-01-01T00:00:00Z", placement: null,
+  };
+
+  beforeEach(() => {
+    vi.mocked(equipmentApi.listEquipment).mockResolvedValue(mockPage<Equipment>([]));
+    vi.mocked(racksApi.listRacks).mockResolvedValue(mockPage<Rack>([]));
+    vi.mocked(equipmentApi.createEquipmentModel).mockResolvedValue({ id: "model-1" } as never);
+    vi.mocked(equipmentApi.createEquipmentModelRevision).mockResolvedValue({ id: "rev-1" } as never);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  async function submit(user: ReturnType<typeof userEvent.setup>) {
+    if (!screen.queryByPlaceholderText("Asset tag (e.g. SRV-0142)")) {
+      await user.click(await screen.findByRole("button", { name: "New Equipment" }));
+    }
+    for (const [placeholder, value] of [
+      ["Asset tag (e.g. SRV-0142)", "SRV-9"],
+      ["Manufacturer", "Acme"],
+      ["Model name", "X1"],
+    ]) {
+      await user.clear(screen.getByPlaceholderText(placeholder));
+      await user.type(screen.getByPlaceholderText(placeholder), value);
+    }
+    await user.click(screen.getByRole("button", { name: "Create Equipment" }));
+  }
+
+  it("reuses the key across a retry and rotates it after success", async () => {
+    const user = userEvent.setup();
+    vi.mocked(equipmentApi.createEquipment)
+      .mockRejectedValueOnce(new Error("Temporary failure."))
+      .mockResolvedValueOnce(created)
+      .mockResolvedValueOnce(created);
+    renderWithProviders(<EquipmentPage />, { user: creator });
+
+    await submit(user);
+    await screen.findByText("Temporary failure.");
+    await user.click(screen.getByRole("button", { name: "Create Equipment" }));
+    await waitFor(() => expect(equipmentApi.createEquipment).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(equipmentApi.createEquipment).mock.calls;
+    expect(calls[1][1]).toBe(calls[0][1]);
+
+    await submit(user);
+    await waitFor(() => expect(equipmentApi.createEquipment).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(equipmentApi.createEquipment).mock.calls[2][1]).not.toBe(calls[0][1]);
+  });
+
+  it("falls back to getRandomValues when crypto.randomUUID is missing", async () => {
+    const user = userEvent.setup();
+    const realGetRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    vi.stubGlobal("crypto", { getRandomValues: realGetRandomValues });
+    vi.mocked(equipmentApi.createEquipment).mockResolvedValue(created);
+    renderWithProviders(<EquipmentPage />, { user: creator });
+
+    await submit(user);
+    await waitFor(() => expect(equipmentApi.createEquipment).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(equipmentApi.createEquipment).mock.calls[0][1]).toMatch(KEY_PATTERN);
+  });
+
+  it("shows the actionable message and makes zero API calls without secure randomness", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("crypto", {});
+    renderWithProviders(<EquipmentPage />, { user: creator });
+
+    await submit(user);
+    expect(await screen.findByText(/cannot generate a secure request key/i)).toBeInTheDocument();
+    expect(equipmentApi.createEquipmentModel).not.toHaveBeenCalled();
+    expect(equipmentApi.createEquipmentModelRevision).not.toHaveBeenCalled();
+    expect(equipmentApi.createEquipment).not.toHaveBeenCalled();
   });
 });
