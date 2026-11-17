@@ -74,17 +74,19 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       FOCUS: ${{ github.event.comment.body }}
     steps:
-      - name: Checkout the reviewed commit
+      # The workspace is the default-branch commit this workflow came from, so AGENTS.md and
+      # any agent instruction files are trusted. The PR code reaches agy only as a diff file.
+      - name: Checkout trusted default-branch commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ needs.gate.outputs.sha }}
-          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Build review prompt
         run: |
           set -euo pipefail
-          base="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq .base.sha)"
-          git diff "${base}...${SHA}" > "${RUNNER_TEMP}/diff.patch"
+          [[ "$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq .head.sha)" == "$SHA" ]] \
+            || { echo "::error::PR head moved before the review started"; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" -H "Accept: application/vnd.github.diff" > "${RUNNER_TEMP}/diff.patch"
           {
             echo "You are an independent read-only code reviewer. Do not modify files."
             echo "Review pull request #${NUMBER} at head commit ${SHA}. The diff is in ${RUNNER_TEMP}/diff.patch."
@@ -139,10 +141,11 @@ jobs:
           set -euo pipefail
           head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUMBER}" --jq .head.sha)"
           {
+            echo "${SHA}"; echo
+            echo "**Antigravity review**"; echo
             if [[ "$head" != "$SHA" ]]; then
-              echo "> Stale: PR head moved to \`${head}\` after this review. It does not count for the current head."
+              echo "> Stale: PR head moved to \`${head}\` after this review. It does not count for the current head."; echo
             fi
-            echo "**Antigravity review of \`${SHA}\`**"; echo
             head -c 60000 review.md
           } > comment.md
           gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment.md
