@@ -22,6 +22,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.access_control import AccessScope, ensure_rack_access
 from app.application.authority_lock import acquire_placement_scope_lock
 from app.domain.placement.models import EquipmentPlacement, RackPlacement
 
@@ -70,6 +71,27 @@ async def _next_version(
 
 
 # --------------------------------------------------------------------------- Rack
+
+
+async def lock_rack_placement_and_recheck_scope(db: AsyncSession, scope: AccessScope, rack_id: uuid.UUID) -> None:
+    """DB-26 (#360): authorise a site-scoped rack mutation against the placement it will actually mutate.
+
+    `ensure_rack_access` reads the rack's CURRENT placement site without any lock, so a concurrent
+    `move_rack` can commit between that check and the mutation, leaving the caller authorised for the
+    OLD site. Call this after the cheap early check and BEFORE any mutation: it takes the same locks
+    every rack-placement writer takes (AUTHORITY shared, then the per-rack placement lock), waits for an
+    in-flight move/retire to commit, then re-evaluates scope. Under READ COMMITTED that statement sees the
+    committed placement, and no placement writer can change it until this transaction ends, so the
+    decision stays valid through commit. Fails closed with the same 404 as the first check.
+
+    Lock order is unchanged (AUTHORITY(S) -> per-rack placement lock -> row locks; see authority_lock.py);
+    `move_rack` / `retire_rack_placement` re-acquire both locks, which is a no-op for the holding session.
+    An unrestricted scope has no placement-dependent decision, so no lock is taken."""
+    if scope.unrestricted:
+        return
+    await acquire_placement_scope_lock(db)
+    await _lock_asset_placement(db, "rack", rack_id)
+    await ensure_rack_access(db, scope, rack_id)
 
 
 async def get_current_rack_placement(db: AsyncSession, rack_id: uuid.UUID) -> RackPlacement | None:

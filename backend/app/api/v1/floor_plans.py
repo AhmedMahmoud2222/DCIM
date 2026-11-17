@@ -27,6 +27,7 @@ from app.application.placement_service import (
     PlacementConflict,
     get_current_equipment_placement,
     get_current_rack_placement,
+    lock_rack_placement_and_recheck_scope,
     move_rack,
 )
 from app.application.rbac import require_permission
@@ -1091,6 +1092,7 @@ async def accept_import_candidate(
             raise ApiError(status_code=403, title="Forbidden", detail="Moving a rack requires the rack:place permission.")
         if body.apply_position:
             await ensure_rack_access(db, ctx.scope_for("rack:place"), matched_id)
+            await lock_rack_placement_and_recheck_scope(db, ctx.scope_for("rack:place"), matched_id)  # DB-26 (#360)
             await ensure_room_access(db, ctx.scope_for("rack:place"), floor_plan.room_id)
         if body.apply_position and placement is not None and body.placement_version is None:
             raise ApiError(status_code=428, title="Precondition Required", detail="placement_version is required to move an already-placed rack.")

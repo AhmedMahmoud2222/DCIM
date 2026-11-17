@@ -26,7 +26,7 @@ from app.application.audit_service import write_audit_log
 from app.application.bulk_import.service import create_job as create_bulk_import_job
 from app.application.bulk_import.templates import build_rack_template
 from app.application.bulk_import.upload import validate_mode, validate_upload_bytes
-from app.application.concurrency import lock_versioned_row, require_if_match
+from app.application.concurrency import check_version_match, require_if_match
 from app.application.idempotency import (
     ClaimRef,
     IdempotencyConflict,
@@ -38,7 +38,13 @@ from app.application.idempotency import (
     user_principal,
 )
 from app.application.outbox_service import write_outbox_event
-from app.application.placement_service import PlacementConflict, get_current_rack_placement, move_rack, retire_rack_placement
+from app.application.placement_service import (
+    PlacementConflict,
+    get_current_rack_placement,
+    lock_rack_placement_and_recheck_scope,
+    move_rack,
+    retire_rack_placement,
+)
 from app.application.rbac import require_permission
 from app.application.spatial_import.boundary import assert_rack_within_room_boundary
 from app.application.spatial_validation import validate_coordinate, validate_rotation_degrees
@@ -325,7 +331,14 @@ async def update_rack(
     ctx=Depends(require_permission("rack:manage")),
 ) -> RackOut:
     await ensure_rack_access(db, ctx.scope, rack_id)
-    rack = await lock_versioned_row(db, Rack, rack_id, expected_version=if_match_version)
+    # DB-26 (#360): row lock first (the order bulk import already uses), then the placement locks and a scope
+    # re-check, and only then the version compare, so a rack moved out of scope in the meantime is a 404 and
+    # never discloses its version. Same primitive as lock_versioned_row, split around the re-check.
+    rack = await db.get(Rack, rack_id, with_for_update=True, populate_existing=True)
+    if rack is None:
+        raise NotFoundError(f"Rack {rack_id} not found.")
+    await lock_rack_placement_and_recheck_scope(db, ctx.scope, rack_id)
+    check_version_match(expected=if_match_version, actual=rack.version)
 
     before = {"name": rack.name, "owner": rack.owner, "notes": rack.notes, "version": rack.version}
     if body.name is not None:
@@ -367,6 +380,7 @@ async def move_rack_endpoint(
     validate_rotation_degrees(body.rotation_deg)
 
     await ensure_rack_access(db, ctx.scope, rack_id)
+    await lock_rack_placement_and_recheck_scope(db, ctx.scope, rack_id)  # DB-26 (#360)
     await ensure_room_access(db, ctx.scope, body.room_id)
     rack = await db.get(Rack, rack_id)
     if rack is None:
@@ -422,6 +436,7 @@ async def retire_rack_endpoint(
     ctx=Depends(require_permission("rack:place")),
 ) -> RackOut:
     await ensure_rack_access(db, ctx.scope, rack_id)
+    await lock_rack_placement_and_recheck_scope(db, ctx.scope, rack_id)  # DB-26 (#360)
     rack = await db.get(Rack, rack_id)
     if rack is None:
         raise NotFoundError(f"Rack {rack_id} not found.")
