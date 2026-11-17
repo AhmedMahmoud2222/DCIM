@@ -64,9 +64,11 @@ jobs:
           # Fork PRs are refused: their code would run next to the Gemini key.
           [[ "$(jq -r .head.repo.full_name <<<"$pr")" == "$GITHUB_REPOSITORY" ]] \
             || { echo "::notice::Fork PRs are not reviewed."; exit 0; }
-          echo "sha=$(jq -r .head.sha <<<"$pr")" >> "$GITHUB_OUTPUT"
-          echo "number=${NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "authorized=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "sha=$(jq -r .head.sha <<<"$pr")"
+            echo "number=${NUMBER}"
+            echo "authorized=true"
+          } >> "$GITHUB_OUTPUT"
 
   review:
     name: Antigravity review (read-only)
