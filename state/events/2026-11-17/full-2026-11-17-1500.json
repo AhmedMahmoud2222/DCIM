@@ -1,0 +1,63 @@
+{
+  "run_id": "full-2026-11-17-1500",
+  "mode": "FULL",
+  "started_at": "2026-11-17T11:00:49Z",
+  "main": "88641e6314b017464e6a1424feee85be4b5de02b",
+  "steps": [
+    {
+      "step": 0,
+      "result": "Lease acquired; policy/changelog and ruleset read; no always bypass actors"
+    },
+    {
+      "step": 1,
+      "result": "0 open PRs, 14 open issues"
+    },
+    {
+      "step": 2,
+      "result": "Reviewed #357/#358 source-supported audit claims; no implementation authorization"
+    },
+    {
+      "step": 3,
+      "result": "Prioritized #358 planning, #338 blocked branch, #300 staging coordination"
+    },
+    {
+      "step": 4,
+      "result": "No open PR threads"
+    },
+    {
+      "step": "4a",
+      "result": "No open PR findings checklist"
+    },
+    {
+      "step": 5,
+      "result": "No PR action; #338 agent branch creation blocked; #358 planning only"
+    },
+    {
+      "step": 6,
+      "result": "No historical open PRs"
+    },
+    {
+      "step": 7,
+      "result": "No new agent prompts; #338 prior blocked report reviewed"
+    },
+    {
+      "step": 8,
+      "result": "No merge candidates; 0 open PRs"
+    },
+    {
+      "step": 9,
+      "result": "No new class I decisions; #358 execution remains unauthorized"
+    },
+    {
+      "step": 10,
+      "result": "Report prepared; migration 0057 production hold preserved"
+    }
+  ],
+  "writes": [
+    "state lease",
+    "run event",
+    "index"
+  ],
+  "merges": [],
+  "production_actions": []
+}
