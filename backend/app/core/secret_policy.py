@@ -22,14 +22,12 @@ exception message, a log line or standard output.
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
 
 # Shipped in .env.example / docs. Compared case-insensitively against the whole, trimmed value.
 KNOWN_EXAMPLE_VALUES = frozenset(
@@ -80,50 +78,17 @@ def is_valid_fernet_key(key: str) -> bool:
     sealed or opened a row is, by construction, valid here."""
     try:
         return len(base64.urlsafe_b64decode(key.encode())) == 32
-    except (ValueError, binascii.Error, UnicodeEncodeError):
+    except ValueError:  # binascii.Error and UnicodeEncodeError are ValueError subclasses
         return False
 
 
-def database_url_password(url: str | None) -> str | None:
-    """The decoded password carried by a database URL, or None when it has none.
+def check_database_password(password: str | None) -> str | None:
+    """Category a database password is rejected under, or None. Never returns the password.
 
-    Handles percent-encoding (``CHANGE%5FME%5FAPP``), a driver suffix (``postgresql+asyncpg``) and the
-    ``?password=`` query form. A password containing unencoded URL delimiters is read as far as the last
-    ``@`` of the authority; the policy then also scans that raw userinfo (see ``check_database_url``)."""
-    if not url:
-        return None
-    userinfo = _raw_userinfo(url)
-    if userinfo is not None and ":" in userinfo:
-        return unquote(userinfo.split(":", 1)[1])
-    try:
-        query = parse_qs(urlsplit(url).query)
-    except ValueError:
-        return None
-    values = query.get("password")
-    return unquote(values[-1]) if values else None
-
-
-def _raw_userinfo(url: str) -> str | None:
-    rest = url.split("://", 1)[1] if "://" in url else url
-    # The authority ends at the first "/" after the LAST "@", so a "/" inside a password is tolerated.
-    head, sep, _tail = rest.rpartition("@")
-    return head if sep else None
-
-
-def check_database_url(url: str | None) -> str | None:
-    """Category the database URL's password is rejected under, or None. Never returns the password."""
-    password = database_url_password(url)
-    if password is None or not password.strip():
-        return EMPTY
-    category = classify_secret(password, database_password=True)
-    if category is not None:
-        return category
-    # Defence in depth for odd encodings: scan the raw (still encoded) userinfo and its decoding too.
-    userinfo = _raw_userinfo(url or "") or ""
-    for candidate in (userinfo, unquote(userinfo), unquote(unquote(userinfo))):
-        if _PLACEHOLDER_MARKERS.search(candidate) or any(known in candidate.lower() for known in KNOWN_EXAMPLE_VALUES):
-            return PLACEHOLDER
-    return None
+    The caller supplies the password the driver will actually use: ``Settings`` takes it from SQLAlchemy's
+    own URL parser (the one the engine uses), so policy and connection can never disagree about where the
+    credentials sit in the URL."""
+    return classify_secret(password, database_password=True)
 
 
 def check_fernet_keys(v1: str | None, extra_json: str | None) -> list[tuple[str, str]]:
@@ -165,6 +130,30 @@ def format_findings(findings: list[tuple[str, str]]) -> str:
 _DOTENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
 
+NEWLINE = chr(10)
+
+
+def _dotenv_value(raw: str) -> str:
+    """Value of one `.env` assignment as Compose reads it: a quoted value ends at its closing quote and
+    anything after it (a trailing `# comment`) is dropped; an unquoted value ends at ` #`."""
+    if raw[:1] in ("'", '"'):
+        quote = raw[0]
+        out: list[str] = []
+        i = 1
+        while i < len(raw):
+            ch = raw[i]
+            if quote == '"' and ch == "\\" and i + 1 < len(raw) and raw[i + 1] in ('"', "\\", "n"):
+                out.append(NEWLINE if raw[i + 1] == "n" else raw[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                return "".join(out)
+            out.append(ch)
+            i += 1
+        return raw  # unterminated quote: keep it verbatim (it will not look like a valid secret)
+    return raw.split(" #", 1)[0].rstrip() if " #" in raw else raw
+
+
 def read_dotenv(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     try:
@@ -178,10 +167,7 @@ def read_dotenv(path: Path) -> dict[str, str]:
         if not match:
             continue
         name, raw = match.groups()
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
-            raw = raw[1:-1]
-        elif " #" in raw:
-            raw = raw.split(" #", 1)[0].rstrip()
+        raw = _dotenv_value(raw)
         values[name] = raw
     return values
 

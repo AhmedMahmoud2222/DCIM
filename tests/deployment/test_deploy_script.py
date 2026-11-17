@@ -165,6 +165,41 @@ class ScriptTests(unittest.TestCase):
         result = self.run_script(env)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    # Provenance (AGY P3, PR #362): the requested release's own policy judges the secrets.
+    def commit_release(self, message, policy_text):
+        policy = self.repo/'backend/app/core/secret_policy.py'
+        if policy_text is None:
+            git(self.repo, 'rm', '-q', 'backend/app/core/secret_policy.py')
+        else:
+            policy.write_text(policy_text)
+            git(self.repo, 'add', 'backend/app/core/secret_policy.py')
+        git(self.repo, 'commit', '-qm', message)
+        sha = git(self.repo, 'rev-parse', 'HEAD')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        git(self.repo, 'checkout', '-q', '--detach', self.new)  # the deploy host is still on the previous release
+        return sha
+
+    def test_release_policy_not_the_checked_out_policy_is_applied(self):
+        stricter = 'import sys\nprint("release-policy-applied", file=sys.stderr)\nsys.exit(1)\n'
+        release = self.commit_release('release with stricter policy', stricter)
+        result = subprocess.run(['bash', str(self.repo/'scripts/deploy-docker-compose.sh'), release, 'staging'],
+                                cwd=self.repo, env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('release-policy-applied', result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(git(self.repo, 'rev-parse', 'HEAD'), self.new)
+        self.assertEqual((self.repo/'.deployment-sha').read_text().strip(), self.old)
+
+    def test_release_that_predates_the_policy_is_judged_by_the_current_one(self):
+        release = self.commit_release('release without policy file', None)
+        env = dict(self.env, JWT_SECRET_KEY='CHANGE_ME_AT_LEAST_32_CHARACTERS')
+        result = subprocess.run(['bash', str(self.repo/'scripts/deploy-docker-compose.sh'), release, 'staging'],
+                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('JWT_SECRET_KEY', result.stderr)
+        self.assertNotIn('CHANGE_ME_AT_LEAST_32_CHARACTERS', result.stdout + result.stderr)
+        self.assertFalse(self.calls.exists())
+
     def test_two_process_lock_and_stable_inode(self):
         env = dict(self.env, MOCK_SLEEP='3')
         first = subprocess.Popen(['bash',str(self.repo/'scripts/deploy-docker-compose.sh'),self.new,'staging'],
