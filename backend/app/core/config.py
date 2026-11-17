@@ -7,6 +7,8 @@ from cryptography.fernet import Fernet
 from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core import secret_policy
+
 
 class Settings(BaseSettings):
     # hide_input_in_errors: a validation error must never echo configured secrets (JWT key, credential
@@ -171,6 +173,30 @@ class Settings(BaseSettings):
             except (ValueError, TypeError):
                 raise ValueError(f"Credential encryption key v{number} is not a valid Fernet key.") from None
         return versions
+
+    @model_validator(mode="after")
+    def _production_rejects_insecure_secrets(self) -> "Settings":
+        """DB-08 (Issue #359): fail closed in production on empty, example or placeholder secrets.
+
+        The contract lives in app.core.secret_policy and is shared with the deployment preflight.
+        Messages name variables and categories only; no configured value is ever included."""
+        if self.environment != "production":
+            return self
+        findings: list[tuple[str, str]] = []
+        category = secret_policy.classify_secret(self.jwt_secret_key)
+        if category:
+            findings.append(("JWT_SECRET_KEY", category))
+        category = secret_policy.check_database_url(self.database_url)
+        if category:
+            findings.append(("DATABASE_URL password", category))
+        # v1 has only its historical min_length check outside production. Fernet() is what every
+        # encrypt/decrypt calls, so a v1 key that ever sealed a row passes this identical rule.
+        if not secret_policy.is_valid_fernet_key(self.credential_encryption_key):
+            findings.append(("CREDENTIAL_ENCRYPTION_KEY", secret_policy.INVALID_FERNET))
+        if findings:
+            detail = secret_policy.format_findings(findings)
+            raise ValueError(f"Insecure configuration rejected for ENVIRONMENT=production (values withheld): {detail}")
+        return self
 
     @model_validator(mode="after")
     def _production_requires_malware_scanning(self) -> "Settings":

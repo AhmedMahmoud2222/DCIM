@@ -28,7 +28,19 @@ acquire_lock() {
     flock -w "${LOCK_TIMEOUT:-300}" 200 || { fail 'deployment lock unavailable'; return 1; }
 }
 
+# Rejects empty/example/placeholder secrets with the same policy the application enforces at startup
+# (backend/app/core/secret_policy.py, stdlib only). Runs first, before git, Docker or Compose is touched.
+# Secrets are read from the environment and DEPLOY_DIR/.env (environment wins, as in Compose); none is
+# passed on a command line, and only variable names and categories are printed.
+secrets_preflight() {
+    local policy="$REPO_ROOT/backend/app/core/secret_policy.py"
+    [[ -f "$policy" ]] || { fail 'secret policy module missing'; return 1; }
+    command -v python3 >/dev/null || { fail 'python3 is required for secret validation'; return 1; }
+    python3 -I "$policy" "$DEPLOY_DIR/.env" || { fail 'insecure or placeholder production secrets'; return 1; }
+}
+
 validate() {
+    secrets_preflight || return 1
     [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail 'full canonical SHA required'; return 1; }
     [[ "$TARGET" == staging ]] || { fail 'production deployment is disabled'; return 1; }
     [[ "$(cd "$DEPLOY_DIR" && pwd -P)" == "$(cd "$REPO_ROOT" && pwd -P)" ]] || { fail 'DEPLOY_DIR must equal script repository root'; return 1; }
