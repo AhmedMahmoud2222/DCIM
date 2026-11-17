@@ -74,23 +74,40 @@ async def world(client, auth_headers):
             "room_b": site_b["room"], "site_a": site_a, "site_b": site_b}
 
 
-def _install_pause(monkeypatch, module):
-    """Parks the first RESTRICTED caller of `module.ensure_rack_access` right after its check returns.
+class Pause:
+    """One-shot barrier parked right after a restricted caller's first scope check, before it takes any lock.
+
+    The barrier is inert until `arm()` is called, and `_race` arms it immediately before launching the victim.
+    Without that, any earlier restricted call to the same function (a set-up GET, a prior request in the test)
+    would consume the one shot and leave the real victim unparked (the CI TimeoutError of the selected-scope
+    test). It fires at most once, and `_race` sets `release` afterwards, so a later call can never hang."""
+
+    def __init__(self) -> None:
+        self.reached, self.release = asyncio.Event(), asyncio.Event()
+        self.armed = False
+        self.fired = 0
+
+    def arm(self) -> None:
+        self.armed = True
+
+
+def _install_pause(monkeypatch, module) -> Pause:
+    """Wraps `module.ensure_rack_access`: only an ARMED, RESTRICTED caller is parked, once.
 
     The pause is before any lock is taken, which is the exact check-versus-lock window of DB-26. Unrestricted
-    callers (the admin mover) and later calls pass straight through."""
+    callers (the admin mover) and unarmed calls pass straight through."""
     original = module.ensure_rack_access
-    reached, release, used = asyncio.Event(), asyncio.Event(), []
+    pause = Pause()
 
     async def _wrapped(db, scope, rack_id):
         await original(db, scope, rack_id)
-        if not scope.unrestricted and not used:
-            used.append(True)
-            reached.set()
-            await asyncio.wait_for(release.wait(), BLOCK_TIMEOUT_S * 2)
+        if pause.armed and not pause.fired and not scope.unrestricted:
+            pause.fired += 1
+            pause.reached.set()
+            await asyncio.wait_for(pause.release.wait(), BLOCK_TIMEOUT_S * 2)
 
     monkeypatch.setattr(module, "ensure_rack_access", _wrapped)
-    return reached, release
+    return pause
 
 
 @pytest.fixture
@@ -137,13 +154,16 @@ async def _admin_move(client, world, room: str, **extra):
 
 async def _race(per_request_client, pause, world, victim_call):
     """Victim parks after its precheck; the admin moves the rack A -> B and commits; the victim resumes."""
-    reached, release = pause
+    pause.arm()  # only now: earlier restricted calls in the test must not consume the one shot
     victim = asyncio.create_task(victim_call())
-    await asyncio.wait_for(reached.wait(), BLOCK_TIMEOUT_S)
+    await asyncio.wait_for(pause.reached.wait(), BLOCK_TIMEOUT_S)
+    assert pause.fired == 1
     mover = await _admin_move(per_request_client, world, world["room_b"])
     assert mover.status_code == 200, mover.text  # the victim holds no lock while parked
-    release.set()
-    return await asyncio.wait_for(victim, BLOCK_TIMEOUT_S), mover
+    pause.release.set()
+    response = await asyncio.wait_for(victim, BLOCK_TIMEOUT_S)
+    assert pause.fired == 1, "the barrier must fire for exactly the victim"
+    return response, mover
 
 
 # ----------------------------------------------------------------------------------- scenarios 1-3, 6
