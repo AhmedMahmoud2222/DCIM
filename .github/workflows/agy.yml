@@ -118,9 +118,17 @@ jobs:
       - name: Build review prompt from the trusted template
         run: python3 .github/scripts/agy_prompt.py build "${RUNNER_TEMP}/ctx" .github/agy/review-template.md "${RUNNER_TEMP}/prompt.txt"
       - name: Install agy
+        env:
+          AGY_INSTALLER_SHA256: ${{ vars.AGY_INSTALLER_SHA256 }}
         run: |
           set -euo pipefail
-          curl -fsSL https://antigravity.google/cli/install.sh | bash   # installer verifies a SHA512 checksum
+          curl -fsSL -o "${RUNNER_TEMP}/agy-install.sh" https://antigravity.google/cli/install.sh
+          if [[ -n "${AGY_INSTALLER_SHA256:-}" ]]; then
+            echo "${AGY_INSTALLER_SHA256}  ${RUNNER_TEMP}/agy-install.sh" | sha256sum --check --strict -
+          else
+            echo "::warning::AGY_INSTALLER_SHA256 is not set; the installer script is not pinned."
+          fi
+          bash "${RUNNER_TEMP}/agy-install.sh"   # the installer verifies a SHA512 checksum of the binary
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
       - name: Run agy headless
         env:

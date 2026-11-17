@@ -28,3 +28,4 @@ If the PR head moves during the run, the comment is marked stale.
 - The agent workspace is the default-branch commit; the PR code reaches agy only as a diff file, so a PR cannot plant agent instructions. The diff itself is untrusted, so a crafted diff could still try to steer agy while GEMINI_API_KEY is set. Use a key with a low quota and restrict `agy-agent` to the default branch.
 - Jobs hold no GitHub write token except `publish`, which holds no secret.
 - Headless flags for `agy` change between releases. Check `agy --help` if the run step fails.
+- Optional pin: set repository variable `AGY_INSTALLER_SHA256` to the sha256 of `https://antigravity.google/cli/install.sh`. The run then refuses a changed installer. Without it the run warns and continues.

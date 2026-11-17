@@ -37,10 +37,10 @@ def test_linked_issues():
     assert agy.linked_issues('Closes #4, fixes #9 and resolved: #4', 7) == [4, 7, 9]
 
 
-def test_template_placeholders_all_filled():
+def test_template_placeholders_all_filled(tmp_path):
     tpl = (pathlib.Path(_p).parents[1] / 'agy/review-template.md').read_text()
     pr = {'number': 5, 'title': 't', 'body': 'b', 'head': {'sha': 'h' * 40}, 'base': {'sha': 'b' * 40}}
-    out = agy.build_prompt(tpl, 'o/r', pr, [{'number': 4, 'title': 'i', 'body': 'x'}], [], [], '', '/tmp/d')
+    out = agy.build_prompt(tpl, 'o/r', pr, [{'number': 4, 'title': 'i', 'body': 'x'}], [], [], '', str(tmp_path / 'd'))
     assert '{{' not in out and 'h' * 40 in out and 'Verdict: Accepted' in out
 
 
