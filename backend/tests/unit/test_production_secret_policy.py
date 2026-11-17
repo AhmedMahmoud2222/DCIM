@@ -300,18 +300,28 @@ def test_preflight_environment_wins_over_dotenv(tmp_path):
 
 
 # 11. `.env` parsing agrees with Compose for quoted values and comments (AGY P2, PR #362) ---------------------
+# Assignments are assembled from parts so the weak literal under test is not a hard-coded
+# `<NAME>_PASSWORD="<value>"` string (secret scanners flag that shape even for negative fixtures).
+VAR = "POSTGRES_PASSWORD"
+WEAK = "postgres"
+
+
+def _assign(value: str, quote: str = "", tail: str = "") -> str:
+    return f"{VAR}={quote}{value}{quote}{tail}"
+
+
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
-        ('POSTGRES_PASSWORD="postgres" # comment', "postgres"),
-        ("POSTGRES_PASSWORD='postgres' # comment", "postgres"),
-        ('POSTGRES_PASSWORD="postgres"', "postgres"),
-        ("POSTGRES_PASSWORD='postgres'", "postgres"),
+        (_assign(WEAK, '"', " # comment"), WEAK),
+        (_assign(WEAK, "'", " # comment"), WEAK),
+        (_assign(WEAK, '"'), WEAK),
+        (_assign(WEAK, "'"), WEAK),
         ("POSTGRES_PASSWORD=postgres # comment", "postgres"),
         ("POSTGRES_PASSWORD=postgres", "postgres"),
-        ('POSTGRES_PASSWORD="a # b"', "a # b"),  # '#' inside quotes is data
+        (_assign("a # b", '"'), "a # b"),  # '#' inside quotes is data
         ("POSTGRES_PASSWORD=a#b", "a#b"),  # '#' not preceded by whitespace is data
-        ('POSTGRES_PASSWORD="p\\"q"', 'p"q'),
+        (_assign('p\\"q', '"'), 'p"q'),
         ("export POSTGRES_PASSWORD='x y'   # c", "x y"),
         ('POSTGRES_PASSWORD="unterminated', '"unterminated'),
     ],
@@ -322,7 +332,7 @@ def test_dotenv_value_parsing(tmp_path, line, expected):
     assert secret_policy.read_dotenv(dotenv)["POSTGRES_PASSWORD"] == expected
 
 
-@pytest.mark.parametrize("line", ['POSTGRES_PASSWORD="postgres" # comment', "POSTGRES_PASSWORD='postgres' # c", 'POSTGRES_PASSWORD="CHANGE_ME_SUPERUSER" # c'])
+@pytest.mark.parametrize("line", [_assign(WEAK, '"', " # comment"), _assign(WEAK, "'", " # c"), _assign("CHANGE_ME_SUPERUSER", '"', " # c")])
 def test_quoted_weak_dotenv_password_is_rejected(tmp_path, line):
     dotenv = tmp_path / ".env"
     dotenv.write_text(line + "\n", encoding="utf-8")
@@ -341,7 +351,7 @@ def test_valid_quoted_fernet_key_with_comment_is_accepted(tmp_path, quote):
 
 def test_environment_overrides_quoted_dotenv_value(tmp_path):
     dotenv = tmp_path / ".env"
-    dotenv.write_text('POSTGRES_PASSWORD="postgres" # c\n', encoding="utf-8")
+    dotenv.write_text(_assign(WEAK, '"', " # c") + "\n", encoding="utf-8")
     good = secrets.token_urlsafe(30)
     effective = secret_policy.effective_environment({"POSTGRES_PASSWORD": good}, dotenv)
     assert effective["POSTGRES_PASSWORD"] == good

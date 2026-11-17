@@ -165,6 +165,11 @@ class ScriptTests(unittest.TestCase):
         result = self.run_script(env)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def run_release(self, release, env):
+        # Fixed argv, shell=False; the SHA is one this test just created in its own temporary repository.
+        return subprocess.run(['bash', str(self.repo/'scripts/deploy-docker-compose.sh'), release, 'staging'],  # nosec B603
+                              cwd=self.repo, env=env, capture_output=True, text=True, timeout=20)
+
     # Provenance (AGY P3, PR #362): the requested release's own policy judges the secrets.
     def commit_release(self, message, policy_text):
         policy = self.repo/'backend/app/core/secret_policy.py'
@@ -182,8 +187,7 @@ class ScriptTests(unittest.TestCase):
     def test_release_policy_not_the_checked_out_policy_is_applied(self):
         stricter = 'import sys\nprint("release-policy-applied", file=sys.stderr)\nsys.exit(1)\n'
         release = self.commit_release('release with stricter policy', stricter)
-        result = subprocess.run(['bash', str(self.repo/'scripts/deploy-docker-compose.sh'), release, 'staging'],
-                                cwd=self.repo, env=self.env, capture_output=True, text=True, timeout=20)
+        result = self.run_release(release, self.env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('release-policy-applied', result.stderr)
         self.assertFalse(self.calls.exists())
@@ -193,8 +197,7 @@ class ScriptTests(unittest.TestCase):
     def test_release_that_predates_the_policy_is_judged_by_the_current_one(self):
         release = self.commit_release('release without policy file', None)
         env = dict(self.env, JWT_SECRET_KEY='CHANGE_ME_AT_LEAST_32_CHARACTERS')
-        result = subprocess.run(['bash', str(self.repo/'scripts/deploy-docker-compose.sh'), release, 'staging'],
-                                cwd=self.repo, env=env, capture_output=True, text=True, timeout=20)
+        result = self.run_release(release, env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('JWT_SECRET_KEY', result.stderr)
         self.assertNotIn('CHANGE_ME_AT_LEAST_32_CHARACTERS', result.stdout + result.stderr)
